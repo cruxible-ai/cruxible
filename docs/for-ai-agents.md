@@ -1,8 +1,8 @@
 # Operating Playbill as an AI agent
 
 Playbill is designed so first-order discovery is cheap and exact. Start with
-filenames, identities, subjects, and compact summaries. Expand governance,
-provenance, evidence, and history only when the task requires it.
+the orient map, refs and values. Go deeper into evidence, governance and
+history with `get`'s `detail` only when the task requires it.
 
 ## Operating rules
 
@@ -11,9 +11,10 @@ provenance, evidence, and history only when the task requires it.
    acceptance.
 3. Review the frozen candidate before asking a human or another agent to sign.
 4. Never request, transmit, or place a principal private key in a repository.
-5. Use explain for governance/provenance context; do not infer authority from
-   presentation metadata.
-6. Search for an existing subject or Claim before minting an adjacent concept.
+5. Use `get(ref, detail="why")` for governance/provenance context; do not infer
+   authority from presentation metadata.
+6. Grep the floor or `query` for an existing Subject or Claim before minting an
+   adjacent concept.
 7. Record contradiction as negative evidence instead of creating only a new
    positive inverse.
 8. Treat diagnostic actions as links to governed proposal operations, never as
@@ -21,14 +22,20 @@ provenance, evidence, and history only when the task requires it.
 
 ## Discovery ladder
 
-Use the cheapest sufficient layer:
+Read with three verbs, cheapest first:
 
-1. grep or file listing for known identities and terms;
-2. list Documents or, once implemented, Claim/Procedure summaries;
-3. inspect a specific accepted subject;
-4. request explain summary;
-5. request evidence detail;
-6. read body bytes or full history only when necessary.
+1. `orient` maps the instance: each Subject kind with its predicates, artifact
+   and Claim counts, who you are, what needs attention, and the next calls;
+   `orient(kind=K)` widens one kind and `orient(section=S)` pages one family
+   (documents, queries, interfaces, principals, policies, runs, ...);
+2. to find something by name, grep the floor (`.playbill/floor/`, which
+   `cruxible playbill floor export` writes) and take the ref a hit names;
+   without a shell, `query(contains=...)` searches Claim values;
+3. `query` answers a question as rows of values with verdict flags: a Subject
+   kind with `where`, `select` and `follow`, or a named query;
+4. `get` reads one thing by any reference, values first; `detail` goes deeper
+   only when needed: `evidence`, `why`, `history`, `proof`, or a Document
+   `body` by byte range.
 
 This avoids loading an entire structured graph into context merely to answer a
 local question. Stable subject identities, ClaimType contracts, Procedure
@@ -52,6 +59,14 @@ w.sec.vuln.severity.high                # a value only this predicate admits
 w.sec.vuln.severity.cardinality         # object_kind, cardinality, permitted_roles,
                                         # allowed_object_subject_kinds, referent_sensitivity
 ~~~
+
+`print(w.describe())` lists the verbs that act on the world -- `pb.orient()`,
+`pb.query(...)`, `pb.get(ref)`, grepping the exported floor, and the writes --
+then every Subject kind with its fields. `w.kinds` and `w.predicates` answer as
+attributes or as calls (`w.kinds()`), `dir(cruxible_client)` lists every public
+name, every public SDK member's docstring ends by naming the next call
+(`help(pb.query)`), and refs print short: `SubjectRef('sec.package/click' @
+0123456789ab)`.
 
 Dotted kinds nest, so `w.sec.package` and `w.dev.batch` are namespaces on the
 same tree as the predicates. A Subject that does not exist refuses `AbsentSubject`
@@ -81,21 +96,26 @@ silently pick a winning Claim. Each Claim retains its identity, revision, value,
 verdict, and evidence references. Use `world.prefetch(subjects=(...),
 predicates=(...), max_claims=...)` to populate complete, bounded selections.
 When you only need values and verdicts -- a status table, a checklist, a view --
-use `world.values(subjects=(...), predicates=(...))`: one request that returns
-each live Claim's value, object, verdict and status without full Claim views.
-The CLI (`playbill claim values --kind K --predicate P`) and MCP
-(`cruxible_playbill_claim_values`) expose the same read for every Subject of one
-kind.
+use `world.values(subjects=(...), predicates=(...))`: one `query` per Subject
+kind that returns each live Claim's subject, predicate, Claim ID, value,
+verdict, status and role without full Claim views. The CLI
+(`cruxible playbill query KIND --select P --claims`) and MCP
+(`cruxible_playbill_query` with `claims: true`) expose the same read for every
+Subject of one kind; `status` adds Claims resolution overturned or refused, or
+retired ones.
 To read one thing you have a reference to, use `get`: `pb.get(ref,
 detail=...)`, `cruxible playbill get REF`, or `cruxible_playbill_get`. It takes
 any reference form you have seen (a Claim id or prefix, `kind/id`, a predicate,
-`Document:<name>`, a proposal id, ...), answers values first with verdict flags,
+`Document:<name>`, `Principal:<id>`, `ProviderInterface:<name>`, a proposal id,
+...), answers values first with verdict flags,
 and refuses a wrong name with the nearest names. `detail` goes deeper:
 `evidence`, `why`, `history` (newest first, paged), `proof`, or a Document
 `body` by byte range. A summary cuts a long string value to 500 characters and
 marks it `truncated`; `evidence` and `proof` read it whole.
-Use `pb.run_query(name_or_ref, parameters=...)` for named joins and filtered
-populations, checking truncation before assuming completeness.
+Use `pb.run_query(name_or_ref, parameters=...)` for a named query's replay
+receipt (the Claims each row read, paths, verdict), checking truncation before
+assuming completeness; `query(name=..., receipt="full")` carries the same
+receipt.
 To ask any question over accepted state in one call, use `query`: MCP
 `cruxible_playbill_query`, CLI `cruxible playbill query KIND --where 'f=v'`, SDK
 `pb.query(kind, where=[{"field": ..., "eq": ...}], select=[...])` or the typed

@@ -414,11 +414,20 @@ def build_authoring_intent_event(
     )
 
 
-def _refuse_pre_revises_intent(event: dict[str, object]) -> None:
-    """Name an intent stored before a Claim's revision field was `revises`.
+_RENAMED_CLAIM_REF_FIELDS = (
+    # (payload tag prefix, the field `claim_ref` became)
+    ("playbill-claim-authoring-payload-", "revises"),
+    ("playbill-claim-retirement-authoring-payload-", "retires"),
+)
 
-    Such an intent spells it `claim_ref`, which no longer validates and whose
-    digests no current build reproduces, so it can only be recreated.
+
+def _refuse_pre_revises_intent(event: dict[str, object]) -> None:
+    """Name an intent stored before `claim_ref` was renamed `revises` or `retires`.
+
+    A Claim member spelled its revision `claim_ref` before it was `revises`, and
+    a retirement member named the Claim it retires `claim_ref` before it was
+    `retires`. Such an intent no longer validates and no current build
+    reproduces its digests, so it can only be recreated.
     """
 
     intent = event.get("intent")
@@ -426,19 +435,21 @@ def _refuse_pre_revises_intent(event: dict[str, object]) -> None:
     if not isinstance(intent, dict) or not isinstance(payload, dict):
         return
     members = payload.get("members")
-    if not any(
-        isinstance(item, dict)
-        and str(item.get("tag", "")).startswith("playbill-claim-authoring-payload-")
-        and "claim_ref" in item
-        for item in (payload, *(members if isinstance(members, list) else ()))
-    ):
-        return
-    intent_id = str(intent.get("intent_id"))
-    raise AuthoringIntentStoreError(
-        f"AuthoringIntent {intent_id!r} predates the `revises` Claim field and cannot be "
-        "read by this build; discard it (remove its entry under authoring-intents) and "
-        "author it again"
-    )
+    for item in (payload, *(members if isinstance(members, list) else ())):
+        if not isinstance(item, dict) or "claim_ref" not in item:
+            continue
+        tag = str(item.get("tag", ""))
+        renamed = next(
+            (field for prefix, field in _RENAMED_CLAIM_REF_FIELDS if tag.startswith(prefix)), None
+        )
+        if renamed is None:
+            continue
+        intent_id = str(intent.get("intent_id"))
+        raise AuthoringIntentStoreError(
+            f"AuthoringIntent {intent_id!r} predates the `{renamed}` field and cannot be "
+            "read by this build; discard it (remove its entry under authoring-intents) and "
+            "author it again"
+        )
 
 
 def _authoring_event_input(

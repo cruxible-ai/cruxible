@@ -52,29 +52,39 @@ def test_sdk_resolves_once_and_runs_at_the_bound_coordinate(tmp_path):
     definition = active_work_query()
     calls = []
 
-    def get(instance_id, name, *, at):
-        calls.append(("get", name, at))
+    def get(instance_id, *, request):
+        calls.append(("get", request.ref, request.at))
+        assert request.ref == f"query:{definition.identity.name}" and request.detail == "proof"
         return SimpleNamespace(
-            name=definition.identity.name,
-            coordinate=coordinate,
-            envelope=definition.model_dump(mode="json"),
-            artifact_digest=query_definition_digest(definition).tagged,
+            proof={
+                "coordinate": coordinate.model_dump(mode="json"),
+                "name": definition.identity.name,
+                "identity": f"QueryDefinition:{definition.identity.name}",
+                "path": f"queries/{definition.identity.name}.json",
+                "artifact_digest": query_definition_digest(definition).tagged,
+                "envelope": definition.model_dump(mode="json"),
+            },
+            accepted_coordinate=coordinate,
+            history=None,
         )
 
-    def run(instance_id, name, **kwargs):
-        calls.append(("run", name, kwargs))
-        return "typed-wire-response"
+    class _Ran(Exception):
+        pass
 
-    client.get_playbill_query_definition = get
-    client.run_playbill_query = run
+    def query(instance_id, *, request):
+        calls.append(("query", request))
+        raise _Ran
+
+    client.playbill_get = get
+    client.query_playbill = query
     binding = pb.query_binding(definition.identity.name)
     assert isinstance(binding, QueryBinding)
-    assert (
+    with pytest.raises(_Ran):
         pb.run_query(binding, parameters=binding.parameters(status="ready"))
-        == "typed-wire-response"
-    )
-    assert calls[-1][2]["at"].git_oid == coordinate.git_oid
-    assert calls[-1][2]["parameters"] == {"status": "ready"}
+    request = calls[-1][1]
+    assert request.at.git_oid == coordinate.git_oid
+    assert request.name == definition.identity.name
+    assert request.params == {"status": "ready"} and request.receipt == "full"
     with pytest.raises(TypeError, match="binding.parameters"):
         pb.run_query(binding, parameters={"status": "ready"})
     with pytest.raises(ValueError, match="digest"):

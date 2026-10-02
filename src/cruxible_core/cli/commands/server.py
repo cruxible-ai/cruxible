@@ -16,7 +16,6 @@ This group holds both the daemon-launch verb and the client RPCs:
 from __future__ import annotations
 
 import os
-import secrets
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -41,7 +40,6 @@ from cruxible_core.cli.commands._common import (
 from cruxible_core.cli.main import handle_errors, long_running_command
 from cruxible_core.runtime.permissions import PERMISSION_MODE_NAMES
 from cruxible_core.server.config import (
-    get_runtime_bootstrap_secret,
     get_server_state_root,
     is_server_auth_enabled,
 )
@@ -167,52 +165,6 @@ def _observe_stop(
         time.sleep(_RESTART_POLL_INTERVAL_SECONDS)
 
 
-def _write_bootstrap_secret_file(path: Path, secret: str) -> Path:
-    resolved = path.expanduser()
-    resolved.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(resolved, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        handle.write(f"{secret}\n")
-    resolved.chmod(0o600)
-    return resolved
-
-
-def _prepare_generated_bootstrap_secret(bootstrap_secret_file: str | None) -> None:
-    """Generate the one-time runtime bootstrap secret when auth needs one."""
-    if not is_server_auth_enabled() or get_runtime_bootstrap_secret() is not None:
-        return
-
-    secret = secrets.token_urlsafe(32)
-    os.environ["CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET"] = secret
-
-    written_path: Path | None = None
-    if bootstrap_secret_file is not None:
-        written_path = _write_bootstrap_secret_file(Path(bootstrap_secret_file), secret)
-
-    if written_path is not None:
-        click.echo(f"Wrote bootstrap secret file: {written_path} (0600)", err=True)
-        click.echo(
-            "Set CRUXIBLE_SERVER_BEARER_TOKEN to the bootstrap secret file contents, "
-            "then run `cruxible playbill host create`.",
-            err=True,
-        )
-        click.echo(
-            f"Claim admin token: cruxible credential claim-bootstrap --secret-file {written_path}",
-            err=True,
-        )
-        return
-
-    click.echo("Generated runtime bootstrap secret:", err=True)
-    click.echo(secret, err=True)
-    click.echo("Save it now; this value is printed only once.", err=True)
-    click.echo(
-        "Set CRUXIBLE_SERVER_BEARER_TOKEN to the bootstrap secret, then run "
-        "`cruxible playbill host create`.",
-        err=True,
-    )
-    click.echo("Claim admin token: cruxible credential claim-bootstrap", err=True)
-
-
 @click.group("server")
 def server_group() -> None:
     """Launch and inspect the Cruxible daemon."""
@@ -251,10 +203,23 @@ def server_group() -> None:
     ),
 )
 @click.option(
+    "--auth",
+    "auth",
+    is_flag=True,
+    default=False,
+    help=(
+        "Require bearer credentials (also CRUXIBLE_SERVER_AUTH=true). A Unix-socket "
+        "daemon defaults to auth off; a TCP daemon refuses to start without it."
+    ),
+)
+@click.option(
     "--bootstrap-secret-file",
     default=None,
     type=click.Path(dir_okay=False),
-    help="Write an auto-generated runtime bootstrap secret to this file with mode 0600.",
+    help=(
+        "Also write the runtime bootstrap secret to this file (mode 0600). It is always "
+        "written to <state-root>/daemon/bootstrap-secret and never printed."
+    ),
 )
 @handle_errors
 @long_running_command
@@ -264,6 +229,7 @@ def server_start_cmd(
     state_root: str | None,
     socket_path: str | None,
     capability_ceiling: str | None,
+    auth: bool,
     bootstrap_secret_file: str | None,
 ) -> None:
     """Launch the Cruxible daemon in the foreground.
@@ -276,8 +242,21 @@ def server_start_cmd(
     capability ceiling is fixed for the daemon process lifetime. Use a durable
     `--state-root` (e.g. `~/.cruxible`), not a volatile temp path. Stop
     with Ctrl-C.
+
+    Auth: a Unix-socket daemon defaults to auth off and says so on start, since
+    every process that can reach its 0700 socket directory already runs as this
+    OS user. A TCP daemon refuses to start without auth. `--auth` (or
+    `CRUXIBLE_SERVER_AUTH=true`) opts in. With auth on, the bootstrap secret is
+    written owner-only to `<state-root>/daemon/bootstrap-secret` and never
+    printed; `server status`, `restart` and `stop` read it from there.
     """
-    _prepare_generated_bootstrap_secret(bootstrap_secret_file)
+    if auth:
+        os.environ["CRUXIBLE_SERVER_AUTH"] = "true"
+    if bootstrap_secret_file is not None and not is_server_auth_enabled():
+        raise click.UsageError(
+            "--bootstrap-secret-file needs auth, and this daemon would start with auth "
+            "off; repair: add --auth (or set CRUXIBLE_SERVER_AUTH=true)"
+        )
     # Imported lazily so `cruxible server start --help` (and the rest of the CLI)
     # never pays the uvicorn/server import cost, and so the optional `server`
     # extra is only required when actually launching.
@@ -289,6 +268,12 @@ def server_start_cmd(
         state_root=state_root,
         socket_path=socket_path,
         capability_ceiling=capability_ceiling,
+        auth=auth,
+        bootstrap_secret_file=(
+            None
+            if bootstrap_secret_file is None
+            else str(Path(bootstrap_secret_file).expanduser().resolve())
+        ),
     )
 
 
@@ -404,8 +389,8 @@ def server_install_service_cmd(
         if config.auth_enabled and not durable_credentials_available(root):
             raise click.UsageError(
                 "recorded auth-on service no longer has an active durable runtime credential; "
-                "repair: run `cruxible server start --bootstrap-secret-file PATH`, claim the "
-                "bootstrap credential, then rerun install-service"
+                "repair: run `cruxible server start --auth --bootstrap-secret-file PATH`, "
+                "claim the bootstrap credential, then rerun install-service"
             )
         click.echo(render_service(config).decode("utf-8"), nl=False)
         return
@@ -414,7 +399,7 @@ def server_install_service_cmd(
     if auth_enabled and not durable_credentials_available(root):
         raise click.UsageError(
             "auth-on unattended startup requires an active durable runtime credential; "
-            "repair: run `cruxible server start --bootstrap-secret-file PATH`, claim the "
+            "repair: run `cruxible server start --auth --bootstrap-secret-file PATH`, claim the "
             "bootstrap credential, then rerun install-service"
         )
     config = build_service_config(
@@ -432,6 +417,12 @@ def server_install_service_cmd(
         ),
         auth_enabled=auth_enabled,
     )
+    if config.socket_path is None and not config.auth_enabled:
+        raise click.UsageError(
+            "service_install.tcp_requires_auth: a TCP daemon refuses to start without auth, "
+            "so this service would never come up; repair: rerun install-service with "
+            "--socket PATH, or with --auth"
+        )
     if print_only:
         click.echo(render_service(config).decode("utf-8"), nl=False)
         return
@@ -503,7 +494,7 @@ def _echo_instance_scoped_status(
         click.echo(f"  Reason: {host.reason.code}: {host.reason.detail}")
     if identity is not None:
         click.echo(
-            f"Actor: {identity.actor_id} ({identity.credential_permission_mode}, "
+            f"Actor: {identity.actor_id or 'none'} ({identity.credential_permission_mode}, "
             f"principal {identity.principal_registration_status})"
         )
 

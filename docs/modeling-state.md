@@ -34,11 +34,11 @@ referents rather than whichever phrase an author happened to use.
 
 Before minting a new subject:
 
-1. search exact identity and aliases;
-2. search type and namespace;
-3. search optional recall-only tags;
-4. inspect near candidates;
-5. choose reuse, alias, or an explicit distinct-from disposition.
+1. `get` the exact identity, and grep the floor for it and its aliases;
+2. `orient(kind=K)` the type, and `query` it for near values;
+3. grep optional recall-only tags in the floor;
+4. `get` near candidates;
+5. reuse an existing subject, add an alias, or mint a new one.
 
 Aliases affect resolution and therefore require stronger authority than
 recall-only tags.

@@ -9,11 +9,18 @@ from fastapi import APIRouter
 from cruxible_client import contracts
 from cruxible_core.runtime.permissions import PermissionMode, check_permission
 from cruxible_core.server.auth import get_current_auth_context
+from cruxible_core.server.credential_minting import (
+    mint_principal_credential,
+    rotate_principal_credential,
+)
 from cruxible_core.server.credentials import (
     RuntimeCredentialRecord,
     get_runtime_credential_store,
 )
-from cruxible_core.server.request_models import RuntimeCredentialCreateRequest
+from cruxible_core.server.request_models import (
+    RuntimeCredentialCreateRequest,
+    RuntimeCredentialRotateRequest,
+)
 from cruxible_core.server.routes import resolve_server_instance_id
 
 router = APIRouter(prefix="/api/v1", tags=["runtime-credentials"])
@@ -37,6 +44,7 @@ def _record_to_contract(
     return contracts.RuntimeCredentialMetadata(
         credential_id=record.credential_id,
         instance_id=record.instance_id,
+        principal_id=record.principal_id,
         label=record.label,
         permission_mode=_credential_permission_mode(record.permission_mode),
         created_at=record.created_at,
@@ -49,18 +57,18 @@ def _record_to_contract(
     "/{instance_id}/runtime/credentials",
     response_model=contracts.RuntimeCredentialResult,
 )
-async def create_runtime_credential(
+def create_runtime_credential(
     instance_id: str,
     req: RuntimeCredentialCreateRequest,
 ) -> contracts.RuntimeCredentialResult:
     resolved_instance_id = _authorize_runtime_credentials(instance_id)
-    auth_context = get_current_auth_context()
-    store = get_runtime_credential_store()
-    created = store.create_credential(
+    created = mint_principal_credential(
         instance_id=resolved_instance_id,
-        label=req.label,
+        principal_id=req.principal_id,
         permission_mode=PermissionMode[req.permission_mode.upper()],
-        created_by=auth_context.principal_id if auth_context else None,
+        label=req.label,
+        principal_proof=req.principal_proof,
+        auth_context=get_current_auth_context(),
     )
     return contracts.RuntimeCredentialResult(
         credential=_record_to_contract(created.record),
@@ -72,7 +80,7 @@ async def create_runtime_credential(
     "/{instance_id}/runtime/credentials",
     response_model=contracts.RuntimeCredentialListResult,
 )
-async def list_runtime_credentials(
+def list_runtime_credentials(
     instance_id: str,
 ) -> contracts.RuntimeCredentialListResult:
     resolved_instance_id = _authorize_runtime_credentials(instance_id)
@@ -86,7 +94,7 @@ async def list_runtime_credentials(
     "/{instance_id}/runtime/credentials/{credential_id}/revoke",
     response_model=contracts.RuntimeCredentialResult,
 )
-async def revoke_runtime_credential(
+def revoke_runtime_credential(
     instance_id: str,
     credential_id: str,
 ) -> contracts.RuntimeCredentialResult:
@@ -104,17 +112,17 @@ async def revoke_runtime_credential(
     "/{instance_id}/runtime/credentials/{credential_id}/rotate",
     response_model=contracts.RuntimeCredentialResult,
 )
-async def rotate_runtime_credential(
+def rotate_runtime_credential(
     instance_id: str,
     credential_id: str,
+    req: RuntimeCredentialRotateRequest | None = None,
 ) -> contracts.RuntimeCredentialResult:
     resolved_instance_id = _authorize_runtime_credentials(instance_id)
-    auth_context = get_current_auth_context()
-    store = get_runtime_credential_store()
-    created = store.rotate_credential(
+    created = rotate_principal_credential(
         instance_id=resolved_instance_id,
         credential_id=credential_id,
-        rotated_by=auth_context.principal_id if auth_context else None,
+        principal_proof=None if req is None else req.principal_proof,
+        auth_context=get_current_auth_context(),
     )
     return contracts.RuntimeCredentialResult(
         credential=_record_to_contract(created.record),

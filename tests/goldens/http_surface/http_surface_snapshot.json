@@ -63,9 +63,6 @@
   "/api/v1/{instance_id}/playbill/claim-attestations/recover": {
     "POST": null
   },
-  "/api/v1/{instance_id}/playbill/claim-types": {
-    "GET": "PlaybillClaimTypeList"
-  },
   "/api/v1/{instance_id}/playbill/claim-types/evidence-rules/upgrade": {
     "POST": "EvidenceRuleUpgradeResultV1"
   },
@@ -75,32 +72,14 @@
   "/api/v1/{instance_id}/playbill/claim-types/proposals": {
     "POST": "PlaybillProposalInspection | PlaybillClaimTypeInputProposalResult"
   },
-  "/api/v1/{instance_id}/playbill/claim-types/{predicate}": {
-    "GET": "PlaybillClaimTypeView"
-  },
-  "/api/v1/{instance_id}/playbill/claims": {
-    "GET": "PlaybillClaimList"
+  "/api/v1/{instance_id}/playbill/claim-types/upgrade": {
+    "POST": "ClaimTypeUpgradeResultV1"
   },
   "/api/v1/{instance_id}/playbill/claims/backings": {
     "POST": "ClaimBackingsResultV1"
   },
   "/api/v1/{instance_id}/playbill/claims/read-batch": {
     "POST": "ClaimReadBatchResultV1"
-  },
-  "/api/v1/{instance_id}/playbill/claims/values": {
-    "POST": "ClaimValuesResultV1"
-  },
-  "/api/v1/{instance_id}/playbill/claims/{claim_id}/retire": {
-    "POST": "PlaybillClaimRetirePreflight | PlaybillClaimRetireResult"
-  },
-  "/api/v1/{instance_id}/playbill/claims/{identity}": {
-    "GET": "PlaybillClaimViewV2"
-  },
-  "/api/v1/{instance_id}/playbill/claims/{identity}/explanation": {
-    "POST": "PlaybillClaimExplanationV2 | PlaybillClaimExplanationV3"
-  },
-  "/api/v1/{instance_id}/playbill/claims/{identity}/history": {
-    "GET": "PlaybillClaimHistory"
   },
   "/api/v1/{instance_id}/playbill/compiler/proposals": {
     "POST": "PlaybillProposalInspection"
@@ -120,35 +99,23 @@
   "/api/v1/{instance_id}/playbill/curation/suppress": {
     "POST": "PlaybillCurationActionResult"
   },
-  "/api/v1/{instance_id}/playbill/discover": {
-    "POST": "PlaybillDiscoveryResult | PlaybillInterfaceInventory"
-  },
-  "/api/v1/{instance_id}/playbill/documents": {
-    "GET": "PlaybillDocumentList"
-  },
   "/api/v1/{instance_id}/playbill/documents/proposals": {
     "POST": "PlaybillProposalInspection"
   },
-  "/api/v1/{instance_id}/playbill/documents/{identity}": {
-    "GET": "PlaybillDocumentView"
-  },
-  "/api/v1/{instance_id}/playbill/documents/{identity}/body": {
-    "GET": "PlaybillBodyRead"
-  },
-  "/api/v1/{instance_id}/playbill/documents/{identity}/history": {
-    "GET": "PlaybillDocumentHistory"
-  },
-  "/api/v1/{instance_id}/playbill/expand": {
-    "POST": "PlaybillContextCapsule"
-  },
-  "/api/v1/{instance_id}/playbill/explain": {
-    "POST": "PlaybillExplainResult | PlaybillExplainUnsupportedDetail"
+  "/api/v1/{instance_id}/playbill/floor/delta": {
+    "POST": "PlaybillFloorDeltaV1"
   },
   "/api/v1/{instance_id}/playbill/floor/export": {
     "POST": "PlaybillFloorExport"
   },
   "/api/v1/{instance_id}/playbill/get": {
     "POST": "PlaybillGetResultV1"
+  },
+  "/api/v1/{instance_id}/playbill/get-batch": {
+    "POST": "PlaybillGetBatchResultV1"
+  },
+  "/api/v1/{instance_id}/playbill/head": {
+    "GET": "PlaybillHeadV1"
   },
   "/api/v1/{instance_id}/playbill/host": {
     "GET": "PlaybillHostInspectionV1"
@@ -201,17 +168,11 @@
   "/api/v1/{instance_id}/playbill/orient": {
     "GET": "PlaybillOrientResultV1"
   },
-  "/api/v1/{instance_id}/playbill/policies": {
-    "GET": "PlaybillPolicyInForceList"
-  },
   "/api/v1/{instance_id}/playbill/predictions": {
     "POST": "PlaybillPredictResultV2"
   },
   "/api/v1/{instance_id}/playbill/predictions/{prediction_id}/settlements": {
     "POST": "PlaybillSettleResultV2"
-  },
-  "/api/v1/{instance_id}/playbill/principals": {
-    "GET": "PlaybillPrincipalList"
   },
   "/api/v1/{instance_id}/playbill/principals/proposals": {
     "POST": "PlaybillProposalInspection"
@@ -282,23 +243,17 @@
   "/api/v1/{instance_id}/playbill/providers/install": {
     "POST": "PlaybillProviderInstallResultV1"
   },
-  "/api/v1/{instance_id}/playbill/queries": {
-    "GET": "PlaybillQueryDefinitionList"
-  },
-  "/api/v1/{instance_id}/playbill/queries/{name}": {
-    "GET": "PlaybillQueryDefinitionView"
-  },
-  "/api/v1/{instance_id}/playbill/queries/{name}/run": {
-    "POST": "PlaybillQueryRun"
-  },
   "/api/v1/{instance_id}/playbill/query": {
     "POST": "PlaybillQueryResult"
   },
   "/api/v1/{instance_id}/playbill/resolution-contracts/query": {
     "POST": "ResolutionContractsResultV1"
   },
-  "/api/v1/{instance_id}/playbill/search": {
-    "POST": "PlaybillSearchResult"
+  "/api/v1/{instance_id}/playbill/retire": {
+    "POST": "WriteOutcome"
+  },
+  "/api/v1/{instance_id}/playbill/set": {
+    "POST": "WriteOutcome"
   },
   "/api/v1/{instance_id}/playbill/since": {
     "POST": "PlaybillSinceResult"
@@ -312,18 +267,6 @@
   "/api/v1/{instance_id}/playbill/sources/proposals": {
     "POST": "PlaybillProposalInspection"
   },
-  "/api/v1/{instance_id}/playbill/subject-index": {
-    "GET": "PlaybillSubjectIndex"
-  },
-  "/api/v1/{instance_id}/playbill/subjects": {
-    "GET": "PlaybillSubjectList"
-  },
-  "/api/v1/{instance_id}/playbill/subjects/{subject_kind}/{subject_id}": {
-    "GET": "PlaybillSubjectView"
-  },
-  "/api/v1/{instance_id}/playbill/subjects/{subject_kind}/{subject_id}/history": {
-    "GET": "PlaybillSubjectHistory"
-  },
   "/api/v1/{instance_id}/playbill/whoami": {
     "GET": "PlaybillWhoAmI"
   },
@@ -332,6 +275,9 @@
   },
   "/api/v1/{instance_id}/playbill/workspace-registration": {
     "GET": "PlaybillHostWorkspaceRegistrationV1"
+  },
+  "/api/v1/{instance_id}/playbill/write": {
+    "POST": "WriteOutcome"
   },
   "/api/v1/{instance_id}/runtime/bootstrap/claim": {
     "POST": "RuntimeCredentialBootstrapResult"

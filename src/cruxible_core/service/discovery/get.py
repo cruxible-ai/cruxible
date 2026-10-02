@@ -25,12 +25,17 @@ from datetime import datetime
 from typing import Any, cast
 
 from cruxible_client.contracts import PlaybillAcceptedCoordinate as ClientCoordinate
+from cruxible_client.contracts.approval_policy import ApprovalPolicyV1
 from cruxible_client.contracts.captures import (
     CaptureContractV1,
     parse_capture_envelope,
 )
 from cruxible_client.contracts.claim_reads import ClaimValuesRequestV1, ClaimValueV1
-from cruxible_client.contracts.claim_types import ClaimType
+from cruxible_client.contracts.claim_types import (
+    ClaimType,
+    effective_evidence_requirement,
+    effective_revision_evidence,
+)
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
     ExactContentClaimObject,
@@ -49,6 +54,7 @@ from cruxible_client.contracts.get_reads import (
     GET_DETAILS_BY_KIND,
     GET_HISTORY_DEFAULT_LIMIT,
     PlaybillByteRangeV1,
+    PlaybillGetApprovalPolicyCardV1,
     PlaybillGetAttestationEvidenceV1,
     PlaybillGetBodyV1,
     PlaybillGetCaptureContractCardV1,
@@ -59,11 +65,16 @@ from cruxible_client.contracts.get_reads import (
     PlaybillGetContenderV1,
     PlaybillGetCoordinateV1,
     PlaybillGetDocumentCardV1,
+    PlaybillGetEvidenceRuleV1,
     PlaybillGetEvidenceV1,
     PlaybillGetHistoryV1,
+    PlaybillGetPrincipalCardV1,
     PlaybillGetProcedureCardV1,
+    PlaybillGetProcedureTrackRecordV1,
     PlaybillGetProposalCardV1,
     PlaybillGetProposalChangeV1,
+    PlaybillGetProviderInterfaceCardV1,
+    PlaybillGetProviderInterfaceProviderV1,
     PlaybillGetQueryCardV1,
     PlaybillGetQueryParameterV1,
     PlaybillGetRefKind,
@@ -78,22 +89,49 @@ from cruxible_client.contracts.get_reads import (
     PlaybillReadSurface,
     summary_value,
 )
+from cruxible_client.contracts.operational_reads import capture_handle
+from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRuleV3
+from cruxible_client.contracts.projection_extensions import ProjectionFact
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
 from cruxible_client.contracts.repairs import RepairOperationV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import utc_now
 from cruxible_client.contracts.triggers import TriggerV1
+from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
+from cruxible_core.service.discovery.discovery import (
+    AcceptedProviderInterface,
+    accepted_provider_interfaces,
+)
 from cruxible_core.service.discovery.exact_content import ExactContentReader
 from cruxible_core.service.discovery.field_names import short_field_name
+from cruxible_core.service.discovery.operational import (
+    LIVE_CARD_FIELDS,
+    capture_card,
+    capture_hex,
+    captures_with_prefix,
+    is_line_digest,
+    line_card,
+    lines_with_digest,
+    live_view,
+    mandate_card,
+    resolution_contract_card,
+    uncited_capture_present,
+)
+from cruxible_core.service.discovery.operational_viewer import OperationalViewer
 from cruxible_core.service.discovery.read_flags import (
     answer_flags,
     ordered_flags,
     unsure_holds,
     verdict_flags,
+)
+from cruxible_core.service.discovery.runs import (
+    procedure_run_card,
+    procedure_run_proof,
+    run_ids_with_prefix,
 )
 from cruxible_core.service.list_pages import (
     ListContinuation,
@@ -132,6 +170,15 @@ _TYPED_PREFIXES: Mapping[str, PlaybillGetRefKind] = {
     "CaptureContract": "capture_contract",
     "Trigger": "trigger",
     "Proposal": "proposal",
+    "Line": "line",
+    "Capture": "capture",
+    "ResolutionContract": "resolution_contract",
+    "Mandate": "mandate",
+    "ProcedureMandate": "mandate",
+    "ProcedureRun": "procedure_run",
+    "Principal": "principal",
+    "ApprovalPolicy": "approval_policy",
+    "ProviderInterface": "provider_interface",
 }
 # The projection's artifact kind for each reference kind, and back.
 _PROJECTION_KIND: Mapping[PlaybillGetRefKind, str] = {
@@ -143,6 +190,11 @@ _PROJECTION_KIND: Mapping[PlaybillGetRefKind, str] = {
     "query": "query-definition",
     "capture_contract": "capture-contract",
     "trigger": "trigger",
+    "line": "line",
+    "resolution_contract": "resolution-contract",
+    "mandate": "procedure-mandate",
+    "approval_policy": "approval-policy",
+    "provider_interface": "provider-interface",
 }
 _REF_KIND = {value: key for key, value in _PROJECTION_KIND.items()}
 _QUALIFIER: Mapping[PlaybillGetRefKind, str] = {
@@ -154,6 +206,11 @@ _QUALIFIER: Mapping[PlaybillGetRefKind, str] = {
     "query": "QueryDefinition",
     "capture_contract": "CaptureContract",
     "trigger": "Trigger",
+    "line": "Line",
+    "resolution_contract": "ResolutionContract",
+    "mandate": "ProcedureMandate",
+    "approval_policy": "ApprovalPolicy",
+    "provider_interface": "ProviderInterface",
 }
 _NAMED_KINDS: tuple[PlaybillGetRefKind, ...] = (
     "document",
@@ -161,6 +218,9 @@ _NAMED_KINDS: tuple[PlaybillGetRefKind, ...] = (
     "query",
     "capture_contract",
     "trigger",
+    "line",
+    "resolution_contract",
+    "mandate",
 )
 _DISPLAY_PREFIX: Mapping[PlaybillGetRefKind, str] = {
     "claim_type": "ClaimType",
@@ -170,6 +230,27 @@ _DISPLAY_PREFIX: Mapping[PlaybillGetRefKind, str] = {
     "capture_contract": "CaptureContract",
     "trigger": "Trigger",
     "proposal": "Proposal",
+    "line": "Line",
+    "resolution_contract": "ResolutionContract",
+    "mandate": "Mandate",
+    "capture": "Capture",
+    "procedure_run": "ProcedureRun",
+    "principal": "Principal",
+    "approval_policy": "ApprovalPolicy",
+    "provider_interface": "ProviderInterface",
+}
+# The orient section that lists each operational kind, named by a refusal
+# that has no nearer candidate to offer.
+_ORIENT_SECTION: Mapping[PlaybillGetRefKind, str] = {
+    "line": "lines",
+    "capture": "captures",
+    "resolution_contract": "predictions",
+    "mandate": "mandates",
+    "capture_contract": "capture_contracts",
+    "procedure_run": "runs",
+    "principal": "principals",
+    "approval_policy": "policies",
+    "provider_interface": "interfaces",
 }
 
 
@@ -191,6 +272,10 @@ def _name(identity: str) -> str:
 
 
 def _display(kind: PlaybillGetRefKind, identity: str) -> str:
+    if kind == "capture":
+        return f"Capture:{identity}"
+    if kind == "procedure_run":
+        return f"ProcedureRun:{identity}"
     name = _name(identity) if kind != "proposal" else identity
     if kind in {"claim", "subject"}:
         return name
@@ -230,10 +315,14 @@ def _not_found(
     candidates: Sequence[str],
     *,
     surface: PlaybillReadSurface,
+    section: str | None = None,
 ) -> ReadRefusalError:
     if candidates:
         repair = RepairOperationV1(operation="playbill.get", arguments={"ref": candidates[0]})
         line = f"Run {_render_get(surface, candidates[0])}"
+    elif section is not None:
+        repair = RepairOperationV1(operation="playbill.orient", arguments={"section": section})
+        line = f'Run orient(section="{section}") to list them, then get one of its rows'
     else:
         repair = RepairOperationV1(operation="playbill.orient")
         line = "Run orient to see what exists, then get one of its names"
@@ -272,13 +361,38 @@ def resolve_get_ref(
     value = ref.strip()
     if not value:
         raise _not_found("artifact", ref, (), surface=surface)
-    if value.startswith("sha256:") or value.startswith("refs/"):
+    if value.startswith("sha256:"):
+        # The identity digest next names a due Line by, else a proposal id.
+        if is_line_digest(value):
+            with instance.bind_accepted_projection(coordinate) as projection:
+                lines = lines_with_digest(
+                    projection.typed.connection, value, limit=_MAX_CANDIDATES + 1
+                )
+                if len(lines) > 1:
+                    raise _ambiguous(value, [_display("line", item) for item in lines])
+                if lines:
+                    row = _envelope(projection, lines[0])
+                    return ResolvedRef(
+                        "line", lines[0], _display("line", lines[0]), row.path if row else None
+                    )
         return _resolve_proposal(instance, value)
+    if value.startswith("refs/"):
+        return _resolve_proposal(instance, value)
+    if value.startswith("CAP-"):
+        return _resolve_capture(instance, coordinate, value, ref=value, surface=surface)
+    if value.startswith("RUN-"):
+        return _resolve_run(instance, value, ref=value, surface=surface)
     head, separator, rest = value.partition(":")
     if separator and head in _TYPED_PREFIXES:
         kind = _TYPED_PREFIXES[head]
         if kind == "proposal":
             return _resolve_proposal(instance, rest)
+        if kind == "capture":
+            return _resolve_capture(instance, coordinate, rest, ref=value, surface=surface)
+        if kind == "procedure_run":
+            return _resolve_run(instance, rest, ref=value, surface=surface)
+        if kind == "principal":
+            return _resolve_principal(instance, coordinate, rest, ref=value, surface=surface)
         with instance.bind_accepted_projection(coordinate) as projection:
             return _resolve_typed(projection, kind, rest, ref=value, surface=surface)
     with instance.bind_accepted_projection(coordinate) as projection:
@@ -334,6 +448,123 @@ def _envelope(projection: Any, identity: str) -> Any | None:
     return projection.typed.envelope(identity)
 
 
+_RUN_PREFIX = re.compile(r"^RUN-[0-9a-f]{12,64}$")
+
+
+def _resolve_run(
+    instance: PlaybillInstance, value: str, *, ref: str, surface: PlaybillReadSurface
+) -> ResolvedRef:
+    """A Procedure run id, or a unique prefix of at least 12 hex after ``RUN-``."""
+
+    if not _RUN_PREFIX.fullmatch(value):
+        raise ReadRefusalError(
+            "playbill.get.ref_malformed",
+            f"{ref!r} is not a Procedure run id",
+            candidates=(),
+            repair=RepairOperationV1(operation="playbill.orient", arguments={"section": "runs"}),
+            repair_line="Pass RUN- plus at least 12 lowercase hex of the run id",
+            context={"ref": ref},
+        )
+    matches = run_ids_with_prefix(instance, value, limit=_MAX_CANDIDATES + 1)
+    if len(matches) > 1:
+        raise _ambiguous(ref, [_display("procedure_run", item) for item in matches])
+    if not matches:
+        raise _not_found("Procedure run", ref, (), surface=surface, section="runs")
+    return ResolvedRef("procedure_run", matches[0], _display("procedure_run", matches[0]))
+
+
+def _principals_at(
+    instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate
+) -> dict[str, PrincipalRecord]:
+    """The principal registry of the accepted generation at ``coordinate``, by ID."""
+
+    generation = next(
+        item for item in instance.accepted_history() if item.oid == coordinate.git_oid
+    )
+    return {
+        item.principal_id: PrincipalRecord.model_validate(item.model_dump(mode="json"))
+        for item in generation.principals.principals
+    }
+
+
+def _resolve_principal(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    name: str,
+    *,
+    ref: str,
+    surface: PlaybillReadSurface,
+) -> ResolvedRef:
+    """``Principal:<id>``: one record of the registry at the read coordinate."""
+
+    registry = _principals_at(instance, coordinate)
+    if name in registry:
+        identity = f"Principal:{name}"
+        return ResolvedRef("principal", identity, identity, f"principals/{name}.json")
+    raise _not_found(
+        "Principal",
+        ref,
+        tuple(f"Principal:{item}" for item in nearest(name, registry)),
+        surface=surface,
+        section="principals",
+    )
+
+
+def _resolve_capture(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    value: str,
+    *,
+    ref: str,
+    surface: PlaybillReadSurface,
+) -> ResolvedRef:
+    """``CAP-<12+ hex>``, ``Capture:<digest>`` or a unique digest prefix, to one Capture.
+
+    A full digest names itself: cited, or held in the store uncited. A prefix
+    resolves as every verb resolves one (``resolve_capture_handle``): among
+    Captures cited at the coordinate and retained ones that verify there, so a
+    handle the write verbs accepted opens here too.
+    """
+
+    hex_digits = capture_hex(value)
+    if hex_digits is None:
+        raise ReadRefusalError(
+            "playbill.get.ref_malformed",
+            f"{ref!r} is not a Capture reference",
+            candidates=(),
+            repair=RepairOperationV1(
+                operation="playbill.orient", arguments={"section": "captures"}
+            ),
+            repair_line=(
+                "Pass CAP- plus at least 12 lowercase hex of the digest, or Capture:sha256:<64 hex>"
+            ),
+            context={"ref": ref},
+        )
+    if len(hex_digits) == 64:
+        digest = "sha256:" + hex_digits
+        with instance.bind_accepted_projection(coordinate) as projection:
+            cited = captures_with_prefix(projection.typed.connection, hex_digits, limit=1)
+        if cited or uncited_capture_present(instance, digest):
+            return ResolvedRef("capture", digest, _display("capture", digest))
+        raise _not_found("Capture", ref, (), surface=surface, section="captures")
+    from cruxible_core.service.evidence.capture_reads import (
+        CaptureHandleAmbiguous,
+        CaptureHandleExhausted,
+        CaptureHandleResolved,
+        capture_handle_exhausted,
+        resolve_capture_handle,
+    )
+
+    resolution = resolve_capture_handle(instance, coordinate, hex_digits)
+    if isinstance(resolution, CaptureHandleResolved):
+        return ResolvedRef("capture", resolution.digest, _display("capture", resolution.digest))
+    if isinstance(resolution, CaptureHandleAmbiguous):
+        raise _ambiguous(ref, [_display("capture", item) for item in resolution.candidates])
+    if isinstance(resolution, CaptureHandleExhausted):
+        raise capture_handle_exhausted(ref, field="ref")
+    raise _not_found("Capture", ref, (), surface=surface, section="captures")
+
+
 def _resolve_typed(
     projection: Any,
     kind: PlaybillGetRefKind,
@@ -373,12 +604,17 @@ def _resolve_typed(
         "query": "QueryDefinition",
         "capture_contract": "CaptureContract",
         "trigger": "Trigger",
+        "line": "Line",
+        "resolution_contract": "ResolutionContract",
+        "mandate": "ProcedureMandate",
+        "approval_policy": "ApprovalPolicy",
+        "provider_interface": "ProviderInterface",
     }[kind]
     candidates = tuple(
         item if kind == "subject" else f"{_DISPLAY_PREFIX[kind]}:{item}"
         for item in nearest(name, names)
     )
-    raise _not_found(what, ref, candidates, surface=surface)
+    raise _not_found(what, ref, candidates, surface=surface, section=_ORIENT_SECTION.get(kind))
 
 
 def _names_of(projection: Any, kind: PlaybillGetRefKind) -> tuple[str, ...]:
@@ -523,6 +759,19 @@ def _render_get(
         arguments.append(f"at={json.dumps(at.git_oid)}")
     arguments[0] = f"ref={arguments[0]}"
     return f"cruxible_playbill_get({', '.join(arguments)})"
+
+
+def _render_read_capture(surface: PlaybillReadSurface, digest: str) -> str:
+    """The body-permission read of one Capture's material, spelled for the surface."""
+
+    if surface == "cli":
+        return f"cruxible playbill capture read {digest}"
+    if surface == "sdk":
+        return (
+            "client.read_playbill_capture(instance_id, "
+            f"CaptureReadRequestV1(capture_digest={json.dumps(digest)}))"
+        )
+    return f'cruxible_playbill_read_capture(request={{"capture_digest": {json.dumps(digest)}}})'
 
 
 def _value_was_cut(
@@ -834,7 +1083,23 @@ def _claim_type_card(
                 (claim_type.predicate,),
             ).fetchone()[0]
         )
-    evidence = CaptureContractNames(instance, coordinate).admitted(claim_type, qualified=True)
+    names = CaptureContractNames(instance, coordinate)
+    evidence = names.admitted(claim_type, qualified=True)
+    rules = tuple(
+        PlaybillGetEvidenceRuleV1(
+            rule_id=rule.rule_id,
+            roles=rule.claim_roles,
+            contracts=(
+                tuple(item.target.qualified for item in rule.capture_contracts)
+                if isinstance(rule, ClaimEvidenceAdmissionRuleV3)
+                else tuple(
+                    names.name(digest, qualified=True) for digest in rule.capture_contract_digests
+                )
+            ),
+            admission=rule.admission,
+        )
+        for rule in claim_type.evidence_admission_policy.rules
+    )
     object_type, members = _object_description(claim_type)
     next_steps = [_render_get(surface, resolved.display, "proof")]
     next_steps.extend(
@@ -846,8 +1111,14 @@ def _claim_type_card(
         object=object_type,
         cardinality=claim_type.cardinality,
         members=members,
-        description=cast(str | None, getattr(claim_type, "description", None)),
+        description=claim_type.description,
+        member_descriptions=claim_type.member_descriptions,
+        roles=claim_type.permitted_roles,
+        default_role=claim_type.default_role,
+        evidence_requirement=effective_evidence_requirement(claim_type),
+        revision_evidence=effective_revision_evidence(claim_type),
         evidence=evidence,
+        evidence_rules=rules,
         live_claims=live,
         next=tuple(next_steps),
     )
@@ -876,8 +1147,98 @@ def _document_card(
         revision=shell.lifecycle.revision,
         next=(
             _render_get(surface, resolved.display, "body"),
+            _render_get(surface, resolved.display, "why"),
             _render_get(surface, resolved.display, "history"),
         ),
+    )
+
+
+def _principal_card(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    surface: PlaybillReadSurface,
+) -> PlaybillGetPrincipalCardV1:
+    record = _principals_at(instance, coordinate)[_name(resolved.identity)]
+    return PlaybillGetPrincipalCardV1(
+        principal=record.principal_id,
+        kind=record.kind,
+        status=record.status,
+        algorithm=record.algorithm,
+        public_key=record.public_key,
+        next=(_render_get(surface, resolved.display, "proof"),),
+    )
+
+
+def _approval_policy_card(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    surface: PlaybillReadSurface,
+) -> PlaybillGetApprovalPolicyCardV1:
+    with instance.bind_accepted_projection(coordinate) as projection:
+        policy = cast(ApprovalPolicyV1, projection.typed.source(resolved.identity))
+    return PlaybillGetApprovalPolicyCardV1(
+        policy=resolved.display,
+        mode=policy.mode,
+        next=(
+            _render_get(surface, resolved.display, "history"),
+            _render_get(surface, resolved.display, "proof"),
+        ),
+    )
+
+
+def _live_interface(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    installed_classifier_digests: frozenset[str] = frozenset(),
+) -> AcceptedProviderInterface:
+    """The live accepted inventory entry of one provider interface, or a coded refusal."""
+
+    for item in accepted_provider_interfaces(
+        instance, coordinate, installed_classifier_digests=installed_classifier_digests
+    ):
+        if item.entry.identity == resolved.identity:
+            return item
+    raise ReadRefusalError(
+        "playbill.get.ref_not_found",
+        f"{resolved.display} is retired; no live provider interface carries that name",
+        http_status=404,
+        candidates=(),
+        repair=RepairOperationV1(operation="playbill.orient", arguments={"section": "interfaces"}),
+        repair_line='Run orient(section="interfaces") to list the live interfaces',
+        context={"ref": resolved.display},
+    )
+
+
+def _provider_interface_card(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    surface: PlaybillReadSurface,
+) -> PlaybillGetProviderInterfaceCardV1:
+    from cruxible_core.service.discovery.orient import interface_row
+
+    row = interface_row(_live_interface(instance, coordinate, resolved))
+    return PlaybillGetProviderInterfaceCardV1(
+        interface=resolved.display,
+        description=row.description,
+        input=row.input,
+        output=row.output,
+        effect=row.effect,
+        providers=tuple(
+            PlaybillGetProviderInterfaceProviderV1(
+                provider=item.provider, implementation_digest=item.implementation_digest
+            )
+            for item in row.providers
+        ),
+        interface_digest=row.interface_digest,
+        next=(_render_get(surface, resolved.display, "proof"),),
     )
 
 
@@ -914,6 +1275,10 @@ def _procedure_card(
         inputs["parameters"] = _pin_name(definition.parameter_contract)
     if definition.pin_slots:
         inputs["slots"] = [slot.slot_name for slot in definition.pin_slots]
+    with instance.bind_accepted_projection(coordinate) as projection:
+        promoted = projection.typed.facts(
+            "playbill.procedure.track_record", identity=resolved.identity
+        )
     return PlaybillGetProcedureCardV1(
         procedure=_name(resolved.identity),
         description=definition.description,
@@ -921,7 +1286,30 @@ def _procedure_card(
         readiness=readiness.state,
         required_slots=readiness.required_slots,
         unsupported_nodes=len(readiness.unsupported_nodes),
+        track_record=tuple(
+            _track_record_entry(fact)
+            for fact in sorted(promoted, key=lambda item: item.fact_key.encode("utf-8"))
+        ),
         next=(_render_get(surface, resolved.display, "proof"),),
+    )
+
+
+def _track_record_entry(fact: ProjectionFact) -> PlaybillGetProcedureTrackRecordV1:
+    """One ``playbill.procedure.track_record`` fact, as the Procedure card shows it."""
+
+    value = cast(Mapping[str, Any], fact.value)
+
+    def digest(name: str) -> str:
+        tagged = value[name]
+        return str(tagged["$digest"] if isinstance(tagged, Mapping) else tagged)
+
+    return PlaybillGetProcedureTrackRecordV1(
+        promotion=fact.fact_key,
+        first_sequence=value["first_sequence"],
+        last_sequence=value["last_sequence"],
+        output=value["output"],
+        output_digest=digest("output_digest"),
+        promotion_digest=digest("promotion_digest"),
     )
 
 
@@ -1131,7 +1519,7 @@ def _claim_evidence(
             source = version.contract.logical_source_identities[0]
         captures.append(
             PlaybillGetCaptureEvidenceV1(
-                capture=_short_digest(account.capture_digest),
+                capture=capture_handle(account.capture_digest),
                 contract=account.capture_contract_identity,
                 version=names.version_number(
                     account.capture_contract_identity, account.capture_contract_digest
@@ -1189,15 +1577,30 @@ def _revision(
     surface: PlaybillReadSurface,
 ) -> PlaybillGetRevisionV1:
     generation = history.generation(entry.sequence)
-    record = history.read_generation_record(entry.sequence, instance.blob_at)
+    # Genesis carries no change-set record: its instant is the bootstrap's and
+    # nobody approved it.
+    record = (
+        None
+        if generation.source_record_path is None
+        else history.read_generation_record(entry.sequence, instance.blob_at)
+    )
     value, content_digest = (None, None) if entry.value is None else entry.value()
     cut_value = summary_value(value)
     return PlaybillGetRevisionV1(
         revision=entry.revision,
         sequence=entry.sequence,
-        accepted=str(record.candidate.timestamp),
-        actor=generation.actor_id or record.actor_binding.actor_id,
-        approved_by=tuple(dict.fromkeys(item.attestation.signer_id for item in record.approvals)),
+        git_oid=generation.git_oid[:12],
+        accepted=(
+            instance.accepted_evaluation_time(generation.git_oid).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            if record is None
+            else str(record.candidate.timestamp)
+        ),
+        actor=generation.actor_id or (None if record is None else record.actor_binding.actor_id),
+        approved_by=(
+            ()
+            if record is None
+            else tuple(dict.fromkeys(item.attestation.signer_id for item in record.approvals))
+        ),
         lifecycle=entry.lifecycle,
         value=cut_value,
         next=(
@@ -1448,6 +1851,7 @@ def _body(
         document=_name(resolved.identity),
         media_type=read.media_type,
         size=size,
+        body_digest=read.body_digest,
         range=window_range,
         text=text,
         content_base64=encoded,
@@ -1464,8 +1868,22 @@ def _proof(
     *,
     evaluation_time: datetime,
     access: BodyAccessContext,
+    viewer: OperationalViewer | None = None,
+    installed_classifier_digests: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     at = AcceptedCoordinate.from_internal(coordinate)
+    # A run id and a Capture digest are bare identities, not `Kind:name`.
+    if resolved.kind == "procedure_run":
+        return procedure_run_proof(instance, resolved.identity, viewer=viewer)
+    if resolved.kind == "capture":
+        envelope = parse_capture_envelope(
+            instance.body_store().read(resolved.identity, access=_SERVICE_ACCESS)
+        )
+        return {
+            "coordinate": at.model_dump(mode="json"),
+            "capture_digest": resolved.identity,
+            "envelope": envelope.model_dump(mode="json"),
+        }
     name = _name(resolved.identity) if resolved.kind != "proposal" else resolved.identity
     if resolved.kind == "claim":
         from cruxible_core.service.claims.claims import service_get_playbill_claim
@@ -1510,7 +1928,32 @@ def _proof(
             name=name,
             request=ProcedureReadinessRequestV1(at=at, evaluation_time=evaluation_time),
         ).model_dump(mode="json")
-    if resolved.kind in ("capture_contract", "trigger"):
+    if resolved.kind == "provider_interface":
+        item = _live_interface(
+            instance,
+            coordinate,
+            resolved,
+            installed_classifier_digests=installed_classifier_digests,
+        )
+        return {
+            "coordinate": at.model_dump(mode="json"),
+            "entry": item.entry.model_dump(mode="json"),
+        }
+    if resolved.kind == "principal":
+        record = _principals_at(instance, coordinate)[name]
+        return {
+            "coordinate": at.model_dump(mode="json"),
+            "path": resolved.path,
+            "record": record.model_dump(mode="json"),
+        }
+    if resolved.kind in {
+        "capture_contract",
+        "trigger",
+        "line",
+        "resolution_contract",
+        "mandate",
+        "approval_policy",
+    }:
         with instance.bind_accepted_projection(coordinate) as projection:
             source = projection.typed.source(resolved.identity)
             row = projection.typed.envelope(resolved.identity)
@@ -1519,7 +1962,7 @@ def _proof(
             "coordinate": at.model_dump(mode="json"),
             "path": row.path if row else None,
             "artifact_digest": row.artifact_digest if row else None,
-            "envelope": source.model_dump(mode="json"),
+            "envelope": None if source is None else source.model_dump(mode="json"),
         }
     # Proposals are operational: the status entry and the retained records.
     return {
@@ -1564,11 +2007,15 @@ def service_playbill_get(
     *,
     request: PlaybillGetRequestV1,
     access: BodyAccessContext,
+    viewer: OperationalViewer | None = None,
+    installed_classifier_digests: frozenset[str] = frozenset(),
 ) -> PlaybillGetResultV1:
     """Resolve one reference and answer it at one ``detail`` level.
 
     ``access`` gates Document bodies. Exact-content Claim values are Claim
-    values, so every caller reads them as text.
+    values, so every caller reads them as text. ``viewer`` is the
+    authenticated reader: a Line or run card names a runtime arming
+    credential only to that credential or an admin (``None`` sees none).
     """
 
     continuation, at = _history_continuation(instance, request)
@@ -1577,7 +2024,8 @@ def service_playbill_get(
     resolved = resolve_get_ref(instance, coordinate, request.ref, surface=request.surface)
     if resolved.kind == "proposal":
         # Proposals are operational state, read only as of the current head;
-        # one response never mixes an older requested generation with it.
+        # one response never mixes an older requested generation with it. (A
+        # Procedure run is read live whatever at names, and says so: `live`.)
         head = instance.accepted_coordinate()
         if request.at is not None and coordinate.git_oid != head.git_oid:
             raise ReadRefusalError(
@@ -1607,6 +2055,10 @@ def service_playbill_get(
     fields: dict[str, Any] = {}
     surface = request.surface
     content = ExactContentReader(instance)
+
+    def render(ref: str, detail: str | None) -> str:
+        return _render_get(surface, ref, detail)
+
     if request.detail == "summary":
         if resolved.kind == "claim":
             card = _claim_card(
@@ -1640,9 +2092,53 @@ def service_playbill_get(
             card = _capture_contract_card(instance, coordinate, resolved, surface=surface)
         elif resolved.kind == "trigger":
             card = _trigger_card(instance, coordinate, resolved, surface=surface)
+        elif resolved.kind == "line":
+            card = line_card(
+                instance,
+                coordinate,
+                resolved.identity,
+                evaluation_time=evaluation_time,
+                render=render,
+                viewer=viewer,
+            )
+        elif resolved.kind == "capture":
+            card = capture_card(
+                instance,
+                coordinate,
+                resolved.identity,
+                render=render,
+                read_capture=functools.partial(_render_read_capture, surface),
+            )
+        elif resolved.kind == "resolution_contract":
+            card = resolution_contract_card(instance, coordinate, resolved.identity, render=render)
+        elif resolved.kind == "procedure_run":
+            card = procedure_run_card(
+                instance,
+                resolved.identity,
+                evaluation_time=evaluation_time,
+                render=render,
+                viewer=viewer,
+            )
+        elif resolved.kind == "principal":
+            card = _principal_card(instance, coordinate, resolved, surface=surface)
+        elif resolved.kind == "approval_policy":
+            card = _approval_policy_card(instance, coordinate, resolved, surface=surface)
+        elif resolved.kind == "provider_interface":
+            card = _provider_interface_card(instance, coordinate, resolved, surface=surface)
+        elif resolved.kind == "mandate":
+            card = mandate_card(
+                instance,
+                coordinate,
+                resolved.identity,
+                evaluation_time=evaluation_time,
+                render=render,
+            )
         else:
             card = _proposal_card(instance, resolved, surface=surface)
         fields["card"] = card
+        live = LIVE_CARD_FIELDS.get(resolved.kind)
+        if live is not None:
+            fields["live"] = live_view(instance, live)
     elif request.detail == "evidence":
         fields["evidence"] = _claim_evidence(
             instance, coordinate, resolved, evaluation_time=evaluation_time, content=content
@@ -1664,8 +2160,16 @@ def service_playbill_get(
         )
     elif request.detail == "proof":
         fields["proof"] = _proof(
-            instance, coordinate, resolved, evaluation_time=evaluation_time, access=access
+            instance,
+            coordinate,
+            resolved,
+            evaluation_time=evaluation_time,
+            access=access,
+            viewer=viewer,
+            installed_classifier_digests=installed_classifier_digests,
         )
+        if resolved.kind == "procedure_run":
+            fields["live"] = live_view(instance, ("proof",))
     else:
         fields["body"] = _body(
             instance,

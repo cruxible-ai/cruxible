@@ -77,8 +77,9 @@ proposition and its semantic subjects independently of any one source document.
 One compiler can discover several candidate Claims in a Document, and an author
 can choose to propose only one.
 
-Subjects shrink the discovery surface: agents first search stable subject
-identities and ClaimType contracts, then expand provenance or evidence on demand.
+Subjects shrink the discovery surface: agents first orient on stable Subject
+kinds and ClaimType contracts (or grep the floor for a name), then `get`
+provenance or evidence on demand.
 Optional recall-only tags may assist fuzzy retrieval without becoming identity
 or authority.
 
@@ -138,10 +139,11 @@ The cold path selects exhaust, compiles semantic candidates, and settles
 governed objects. The stream says what happened; the ledger says what has been
 accepted. These are complementary roles, not two accepted-state authorities.
 
-## Explain
+## Why
 
-Any semantic subject can request a coordinate-bound explanation of its
-governance, provenance, and attestation coverage.
+`get(ref, detail="why")` answers a coordinate-bound explanation of any
+Subject's, Claim's or Document's governance, provenance, and attestation
+coverage.
 
 Explanation is read-only. Deterministic actions returned by diagnostics are
 references to governed operations—an invitation to propose—not embedded

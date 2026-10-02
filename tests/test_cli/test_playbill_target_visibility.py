@@ -45,8 +45,12 @@ EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("playbill", "claim-type", "propose"): "active",
     ("playbill", "claim-type", "migrate"): "active",
     ("playbill", "claim-type", "upgrade-evidence-rules"): "active",
+    ("playbill", "claim-type", "upgrade"): "active",
     ("playbill", "block", "depublish"): "active",
-    ("playbill", "claim", "retire"): "active",
+    ("playbill", "set"): "active",
+    ("playbill", "add"): "active",
+    ("playbill", "retire"): "active",
+    ("playbill", "write"): "active",
     ("playbill", "claim", "attest"): "active",
     ("playbill", "predict"): "active",
     ("playbill", "settle"): "active",
@@ -724,57 +728,59 @@ def test_the_world_stub_leaf_is_a_read_and_stays_out_of_the_mutating_inventory(
         compiler_digest="sha256:" + "bb" * 32,
     )
 
+    envelope = {
+        "artifact_format": "playbill-claim-type-v1",
+        "identity": {"kind": "ClaimType", "name": "sec.vuln.severity"},
+        "predicate": "sec.vuln.severity",
+        "allowed_subject_kinds": ("sec.vulnerability",),
+        "object_kind": "literal",
+        "literal_schema": {"type": "string", "enum": ["high"]},
+        "allowed_object_subject_kinds": (),
+        "cardinality": "one",
+        "permitted_roles": ("observation",),
+        "referent_sensitivity": "identity",
+        "lifecycle": {"state": "live"},
+    }
+
     class StubClient:
-        def search_playbill(
-            self, instance_id: str, **values: object
-        ) -> contracts.PlaybillSearchResult:
+        """The world stub reads the head, the ClaimType section and one proof batch."""
+
+        def playbill_head(self, instance_id: str, **_values: object) -> contracts.PlaybillHeadV1:
             assert instance_id == "inst_read"
-            return contracts.PlaybillSearchResult(
-                mode="orient",
+            return contracts.PlaybillHeadV1(
+                instance=instance_id,
+                coordinate=coordinate.model_dump(mode="json"),  # type: ignore[arg-type]
+                generation=1,
+            )
+
+        def orient_playbill(self, instance_id: str, **values: object) -> object:
+            from types import SimpleNamespace
+
+            assert instance_id == "inst_read" and values["section"] == "claim_types"
+            return SimpleNamespace(
                 coordinate=coordinate,
-                evaluation_time="2026-09-07T12:00:00Z",
-                rows=[],
-                orientation={"state": "empty"},
-                selection_basis_digest="sha256:" + "cc" * 32,
+                claim_types=(SimpleNamespace(predicate="sec.vuln.severity"),),
                 truncated=False,
-                result_digest="sha256:" + "dd" * 32,
+                next_cursor=None,
             )
 
-        def list_playbill_claim_types(
-            self, instance_id: str, **_values: object
-        ) -> contracts.PlaybillClaimTypeList:
-            assert instance_id == "inst_read"
-            return contracts.PlaybillClaimTypeList(
+        def playbill_get_batch(self, instance_id: str, *, request: object) -> object:
+            from types import SimpleNamespace
+
+            return SimpleNamespace(
                 coordinate=coordinate,
-                claim_types=[
-                    contracts.PlaybillClaimTypeView(
-                        coordinate=coordinate,
-                        path="claim-types/sec.vuln.severity.json",
-                        predicate="sec.vuln.severity",
-                        identity="ClaimType:sec.vuln.severity",
-                        artifact_digest="sha256:" + "ee" * 32,
-                        envelope={
-                            "artifact_format": "playbill-claim-type-v1",
-                            "identity": {"kind": "ClaimType", "name": "sec.vuln.severity"},
-                            "predicate": "sec.vuln.severity",
-                            "allowed_subject_kinds": ("sec.vulnerability",),
-                            "object_kind": "literal",
-                            "literal_schema": {"type": "string", "enum": ["high"]},
-                            "allowed_object_subject_kinds": (),
-                            "cardinality": "one",
-                            "permitted_roles": ("observation",),
-                            "referent_sensitivity": "identity",
-                            "lifecycle": {"state": "live"},
-                        },
-                    )
-                ],
+                results=(SimpleNamespace(proof={"envelope": envelope}),),
             )
 
-        def list_playbill_subject_index(
-            self, instance_id: str, **_values: object
-        ) -> contracts.PlaybillSubjectIndex:
-            assert instance_id == "inst_read"
-            return contracts.PlaybillSubjectIndex(coordinate=coordinate, subjects=[])
+        def query_playbill(self, instance_id: str, *, request: object) -> object:
+            from types import SimpleNamespace
+
+            return SimpleNamespace(
+                receipt=SimpleNamespace(coordinate=coordinate),
+                rows=(),
+                truncated=False,
+                next_cursor=None,
+            )
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
     result = CliRunner().invoke(

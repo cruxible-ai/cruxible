@@ -53,12 +53,6 @@ class PlaybillClaimTypeView(_StrictClaimTypeServiceModel):
     envelope: dict[str, object]
 
 
-class PlaybillClaimTypeList(_StrictClaimTypeServiceModel):
-    tag: Literal["playbill-claim-type-list-v1"] = "playbill-claim-type-list-v1"
-    coordinate: PlaybillAcceptedCoordinate
-    claim_types: tuple[PlaybillClaimTypeView, ...]
-
-
 def _resolve_coordinate(
     instance: PlaybillInstance,
     at: PlaybillAcceptedCoordinate | None,
@@ -202,40 +196,20 @@ class ClaimTypeNotFoundError(ClaimNotFoundError):
     def __init__(self, predicate: str, *, nearest: tuple[str, ...]) -> None:
         self.predicate = predicate
         self.nearest = nearest
-        self.repair = RepairOperationV1(operation="playbill.claim-type.list")
+        self.repair = RepairOperationV1(
+            operation="playbill.orient", arguments={"section": "claim_types"}
+        )
         hint = f"; nearest: {', '.join(nearest)}" if nearest else ""
         super().__init__(
             f"{self.error_code}: no accepted ClaimType has predicate {predicate!r}{hint}; "
-            "run `cruxible playbill claim-type list` for every declared predicate"
+            "run `cruxible playbill orient --section claim_types` for every declared predicate"
         )
-
-
-def service_list_playbill_claim_types(
-    instance: PlaybillInstance,
-    *,
-    at: PlaybillAcceptedCoordinate | None = None,
-) -> PlaybillClaimTypeList:
-    """Return every accepted ClaimType in byte-sorted ledger-path order."""
-
-    coordinate = _resolve_coordinate(instance, at)
-    with instance.bind_accepted_projection(coordinate) as projection:
-        views = []
-        for row in sorted(projection.typed.envelopes(kind="claim-type"), key=lambda row: row.path):
-            claim_type = projection.typed.source(row.identity)
-            assert claim_type is not None
-            views.append(_view(claim_type, path=row.path, coordinate=coordinate))
-    return PlaybillClaimTypeList(
-        coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
-        claim_types=tuple(views),
-    )
 
 
 __all__ = [
     "ClaimTypeNotFoundError",
-    "PlaybillClaimTypeList",
     "PlaybillClaimTypeView",
     "service_get_playbill_claim_type",
-    "service_list_playbill_claim_types",
     "service_propose_playbill_claim_type",
     "service_propose_playbill_claim_type_input",
     "nearest_names",

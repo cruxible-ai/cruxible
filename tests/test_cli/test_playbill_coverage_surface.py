@@ -293,11 +293,13 @@ def test_cli_delivers_coverage_for_a_governed_working_file_and_drops_it_on_edit(
     _bootstrap(cruxible, tmp_path)
     claim_identity = _govern_the_bytes(cruxible, tmp_path)
 
-    # 1. The floor exports its own coverage boundary beside the render manifest,
+    # 1. The floor's opt-in discovery part carries its own coverage boundary,
     #    enumerated like every other floor file.
     monkeypatch.chdir(tmp_path)
     floor = tmp_path / ".playbill/floor"
-    exported = cruxible.json("playbill", "floor", "export")
+    default = cruxible.json("playbill", "floor", "export")
+    assert "coverage-manifest.json" not in {item["path"] for item in default["files"]}
+    exported = cruxible.json("playbill", "floor", "export", "--force", "--with-discovery")
     boundary = json.loads((floor / "coverage-manifest.json").read_text(encoding="utf-8"))
     assert "coverage-manifest.json" in {item["path"] for item in exported["files"]}
     assert boundary["format"] == "playbill-coverage-manifest-v2"
@@ -409,7 +411,7 @@ def test_cli_delivers_exact_then_relocated_exact_then_drifted_for_a_foreign_sour
     # The daemon fetched nothing, and the accepted law evidence says so: every
     # Capture behind this Claim is graded self-asserted, including the one that
     # names a logical source.
-    explained = cruxible.json("playbill", "claim", "explain", claim_identity)
+    explained = cruxible.json("playbill", "get", claim_identity, "--detail", "why")["why"]
     assert {item["provenance_grade"] for item in explained["law_evidence"]["verdict_captures"]} == {
         "self-asserted"
     }

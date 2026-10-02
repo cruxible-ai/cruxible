@@ -46,7 +46,7 @@ from tests.test_ledger.test_activation import _sign
 
 
 def service_export_playbill_floor(*args, **kwargs):
-    # Frozen v2 regression corpus; v3 has its own completeness tests.
+    # Frozen v2 regression corpus; v4 has its own completeness tests.
     return _export(*args, format_version=2, **kwargs)
 
 

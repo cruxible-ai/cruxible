@@ -16,7 +16,11 @@ The core contains no LLM.
 # Install dependencies
 uv sync --all-extras
 
-# Run tests
+# Run the full suite in parallel (pytest-xdist; CI and scripts/ci_parity.sh run it this way).
+# --dist loadfile keeps each file on one worker, so module-scoped fixtures build once.
+uv run pytest -n auto --dist loadfile
+
+# Run tests serially (small selections, debugging)
 uv run pytest
 
 # Run Docker image tests (requires Docker)

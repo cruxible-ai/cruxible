@@ -30,13 +30,17 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "by exact digest to identity rules. It only proposes; rules whose meaning would "
         "change are left as they are and reported."
     ),
+    "cruxible_playbill_claim_type_upgrade": (
+        "Use to move ClaimTypes before v7 to v7, which states revision_evidence "
+        "(default replace: a statement-changing revision keeps only the evidence it cites) "
+        "and evidence_requirement (kept at self). It only proposes; dry_run proposes nothing."
+    ),
     "cruxible_playbill_kit_remove": (
         "Use when you want to retire what a kit installed. It only proposes; live Claims "
         "that depend on those definitions block it."
     ),
     "cruxible_server_info": (
-        "Use when you need adapter and daemon versions with state, auth, and host metadata; "
-        "an instance-scoped credential gets its own instance's host and identity."
+        "Use when you need adapter and daemon versions with state, auth, and host metadata."
     ),
     "cruxible_playbill_init": (
         "Use when you need to bootstrap Playbill from client-generated public keys."
@@ -74,13 +78,14 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_orient": (
         "Use first, to see what an instance holds: each Subject kind with its count and "
         "predicates (type, enum members, accepted evidence), artifact counts, named queries, "
-        "whether you can author, what needs attention, and runnable next calls. Pass kind for "
-        "one kind in full with sample Subject IDs, or section to page documents, procedures, "
-        "claim_types, queries, or interfaces (the provider interfaces a Procedure can call)."
+        "Claims by status, whether you can author, what needs attention, and runnable next "
+        "calls. Pass kind for one kind in full with sample Subject IDs, or section to page "
+        "documents, procedures, claim_types, queries, interfaces, principals, policies, or an "
+        "operational family (runs, lines, captures, ...)."
     ),
     "cruxible_playbill_whoami": (
         "Use when you need which instance this server acts on, who you are there, and "
-        "the adapter and daemon versions."
+        "whether you can author (and the repair when not)."
     ),
     "cruxible_playbill_proposal_list": (
         "Use when you need to find open proposals or inspect terminal proposal outcomes. "
@@ -92,25 +97,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_proposal_withdraw": (
         "Use when an open proposal can never be activated and should leave the open inventory."
     ),
-    "cruxible_playbill_list_documents": (
-        "Use when you need accepted Documents and their exact coordinate."
-    ),
-    "cruxible_playbill_get_document": (
-        "Use when you need one accepted Document envelope and structured facts."
-    ),
-    "cruxible_playbill_dereference": (
-        "Use when you need verified accepted body bytes and have body-read permission."
-    ),
     "cruxible_playbill_read_capture": (
         "Use when you need verified retained Capture evidence for inspection or Claim authoring. "
         "Requires body-read permission; max_bytes bounds returned material. "
         "Never refetches sources."
-    ),
-    "cruxible_playbill_history": (
-        "Use when you need one Document's replay-verified accepted history."
-    ),
-    "cruxible_playbill_explain": (
-        "Use when you need coordinate-bound governance, provenance, and attestation coverage."
     ),
     "cruxible_playbill_source_context": (
         "Use when a local client needs path-free accepted inputs before compiling sources."
@@ -122,25 +112,12 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_propose_source_bundle": (
         "Use when you need to propose frozen source bytes without sending a local path."
     ),
-    "cruxible_playbill_list_principals": (
-        "Use when you need accepted public principal records and their coordinate."
-    ),
     "cruxible_playbill_compiler_upgrade": (
         "Use to propose an explicit compiler upgrade bound to the exact accepted base. "
         "Requires admin permission; approve and activate through the normal proposal workflow."
     ),
     "cruxible_playbill_propose_principal_change": (
         "Use when you need a governed principal registration, rotation, revocation, or recovery."
-    ),
-    "cruxible_playbill_list_subjects": (
-        "Use when you need which accepted Subjects exist, one page at a time, optionally of "
-        "one subject_kind; read one Subject's envelope and facts with get_subject."
-    ),
-    "cruxible_playbill_get_subject": (
-        "Use when you need one accepted Subject envelope and its structured facts."
-    ),
-    "cruxible_playbill_subject_history": (
-        "Use when you need one Subject's accepted lineage across generations."
     ),
     "cruxible_playbill_propose_claim_type": (
         "Use when you need a governed ClaimType before any Claim can state that predicate; "
@@ -150,16 +127,6 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "cruxible_playbill_claim_type_migrate": (
         "Use when a ClaimType and all of its dependent Claim dispositions must change atomically."
-    ),
-    "cruxible_playbill_list_claim_types": (
-        "Use when you need the accepted predicate vocabulary an instance admits."
-    ),
-    "cruxible_playbill_get_claim_type": (
-        "Use when you need one predicate's accepted structure, cardinality, and policy."
-    ),
-    "cruxible_playbill_claim_retire": (
-        "Use when one Claim and its transitive Claim dependents must retire with explicit "
-        "attribution in one governed ChangeSet."
     ),
     "cruxible_playbill_claim_attest": (
         "Use when you examined a Claim and want to sign support, contradict, or unsure on it, "
@@ -218,43 +185,26 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when a published page block is being taken down for good, so the registration "
         "that demands its frame is released instead of asking for the block back."
     ),
-    "cruxible_playbill_list_claims": (
-        "Use when you need accepted Claims, optionally narrowed to a Subject, subject_kind "
-        "or predicate."
+    "cruxible_playbill_set": (
+        "Use to change one value: set a field of a Subject (kind/id) to a value. It replaces "
+        "the live value (no Claim ID needed), adds a missing Subject of a known kind, and "
+        "accepts in the same call when policy lets you; otherwise it answers awaiting_approval "
+        "with the approve call. Check each change's verdict and the warnings."
     ),
-    "cruxible_playbill_claim_values": (
-        "Use when you need a status table: the value and verdict of each live Claim for "
-        "every Subject of one kind (or named subject_ids) and the given predicates, "
-        "without full Claim views."
+    "cruxible_playbill_retire": (
+        "Use to end one live Claim: by Claim ID, or by Subject and field when it holds one "
+        "value. Its dependent Claims retire with it, in one change set."
+    ),
+    "cruxible_playbill_write": (
+        "Use to make several changes as one change set: set, add (one more value in a "
+        "many-valued field, e.g. two links) and retire, all accepted or refused together."
     ),
     "cruxible_playbill_get": (
         "Use when you have a reference to one thing -- a Claim id or prefix, kind/id, a "
-        "predicate, Document:/Procedure:/query:/CaptureContract:<name>, or a proposal id -- "
-        "and want its values. detail: summary (default card), evidence, why, history, proof "
-        "(full envelope), body (Document bytes by range). A wrong name refuses with the "
-        "nearest names."
-    ),
-    "cruxible_playbill_get_claim": (
-        "Use when you need one accepted Claim envelope and its structured facts."
-    ),
-    "cruxible_playbill_claim_history": (
-        "Use when you need one Claim's accepted lineage across generations."
-    ),
-    "cruxible_playbill_explain_claim": (
-        "Use when you need why one Claim holds: its verdict, law evidence, and sources."
-    ),
-    "cruxible_playbill_list_query_definitions": (
-        "Use when you need the accepted named entrypoints an instance publishes."
-    ),
-    "cruxible_playbill_policies_in_force": (
-        "Use when you need the live governed policy inventory at the accepted coordinate. "
-        "Returns one page (default limit 25); when truncated, pass next_cursor back as cursor."
-    ),
-    "cruxible_playbill_get_query_definition": (
-        "Use when you need one entrypoint's parameters, budgets, and result contract."
-    ),
-    "cruxible_playbill_run_query": (
-        "Use when you need accepted state answered by a named entrypoint with a replay receipt."
+        "predicate, ClaimType:/Document:/Procedure:/query:/Principal:/ProviderInterface:<name>, "
+        "ApprovalPolicy:instance, or a proposal id -- and want its values. detail: summary "
+        "(default card), evidence, why, history, proof (full envelope), body (Document bytes "
+        "by range). A wrong name refuses with the nearest names."
     ),
     "cruxible_playbill_query": (
         "Use to answer any question over accepted state in one call. Compact: kind "
@@ -262,9 +212,12 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         '{"field": "adoption_state", "eq": "adopted"} (also ne, lt, lte, gt, gte, in, '
         "exists, contains), select, follow and order_by; contains alone searches every "
         "Claim value; kind ClaimType or Procedure lists definitions. Or pass a query name "
-        "with params. Rows lead with values and carry flags (stale, contested, "
-        "contradicted, unsure_hold); when truncated, pass next_cursor back as cursor. A "
-        "wrong name refuses with the nearest valid names."
+        "with params (budgets, receipt=full for its replay receipt). Rows lead with values "
+        "and carry flags (stale, contested, contradicted, uncovered, unsure_hold); status "
+        "adds overturned, refused or retired Claims (retired also lists retired Subjects) "
+        "and claims=true names each cell's Claims. "
+        "When truncated, pass next_cursor back as cursor. A wrong name refuses with the "
+        "nearest valid names."
     ),
     "cruxible_playbill_query_spec": (
         "Use when compact filters cannot say it: run one full QueryDefinitionSpecV1 inline "
@@ -336,14 +289,6 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when a predicted Claim and its matching later observation are accepted: pass the "
         "prediction id and the observation's Claim ID."
     ),
-    "cruxible_playbill_discover": (
-        "Use when you do not yet know which interface or Subject names the state you want. "
-        "truncated means a budget clipped the hits; raise budget or narrow the query."
-    ),
-    "cruxible_playbill_search": (
-        "Use search mode to find accepted Claims, Procedures, or installed demands; "
-        "list mode for deterministic pagination; orient mode for counts and exact follow-ups."
-    ),
     "cruxible_playbill_curation_list": (
         "List mechanically detected curation patterns. Supply an explicit workspace_observation "
         "only when the client has scanned declared blocks; the daemon never reads workspace files. "
@@ -364,9 +309,6 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "cruxible_playbill_since": (
         "Use when you need the exact accepted ChangeSet members after a known generation."
-    ),
-    "cruxible_playbill_expand": (
-        "Use when you need one address's bounded governance, provenance, and relation context."
     ),
     "cruxible_playbill_floor_export": (
         "Use when you need the accepted floor as greppable files: return the bytes, write "

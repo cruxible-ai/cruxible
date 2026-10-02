@@ -11,8 +11,11 @@ from typing import cast
 import click
 
 from cruxible_client import CruxibleClient, contracts
+from cruxible_client.authoring.signing import sign_runtime_credential_mint
+from cruxible_client.contracts.runtime_credentials import RuntimeCredentialPrincipalProofV1
 from cruxible_core.cli.commands import _common
 from cruxible_core.cli.main import handle_errors
+from cruxible_core.cli.principal_settings import set_principal_settings_token
 from cruxible_core.server.config import get_server_state_root
 from cruxible_core.server.credentials import (
     RuntimeCredentialRecord,
@@ -42,6 +45,32 @@ def _require_server_client(command_name: str) -> tuple[CruxibleClient, str]:
     return client, _common._require_instance_id()
 
 
+def sign_principal_mint(
+    *,
+    instance_id: str,
+    principal_id: str,
+    permission_mode: contracts.RuntimeCredentialPermissionMode,
+    label: str,
+    key_dir: Path,
+) -> RuntimeCredentialPrincipalProofV1:
+    """Sign the principal's consent with the key `playbill init`/`principal add` wrote."""
+
+    private_key = key_dir.expanduser() / f"{principal_id}.ed25519"
+    if not private_key.is_file():
+        raise click.UsageError(
+            f"no private key for principal {principal_id} at {private_key}; repair: pass the "
+            "--key-dir that `playbill init` or `playbill principal add` wrote for it"
+        )
+    return sign_runtime_credential_mint(
+        instance_id=instance_id,
+        principal_id=principal_id,
+        permission_mode=permission_mode,
+        label=label,
+        private_key_path=private_key,
+        forbidden_roots=(),
+    )
+
+
 def _read_bootstrap_secret(secret_file: str | None) -> str:
     if secret_file is not None:
         try:
@@ -64,6 +93,7 @@ def _credential_metadata_from_record(
     return contracts.RuntimeCredentialMetadata(
         credential_id=record.credential_id,
         instance_id=record.instance_id,
+        principal_id=record.principal_id,
         label=record.label,
         permission_mode=cast(
             contracts.RuntimeCredentialPermissionMode,
@@ -78,6 +108,7 @@ def _credential_metadata_from_record(
 def _echo_credential_metadata(credential: contracts.RuntimeCredentialMetadata) -> None:
     click.echo(f"Credential ID: {credential.credential_id}")
     click.echo(f"Instance ID: {credential.instance_id}")
+    click.echo(f"Principal: {credential.principal_id or 'none (unbound: cannot author)'}")
     click.echo(f"Label: {credential.label}")
     click.echo(f"Permission mode: {credential.permission_mode}")
     click.echo(f"Created at: {credential.created_at}")
@@ -120,7 +151,21 @@ def claim_bootstrap_cmd(secret_file: str | None, output_json: bool) -> None:
 
 
 @credential_group.command("mint")
-@click.option("--label", required=True, help="Human-readable credential label.")
+@click.option(
+    "--principal-id",
+    required=True,
+    help="Principal the credential acts as. It must be registered and active.",
+)
+@click.option(
+    "--key-dir",
+    default=None,
+    type=click.Path(file_okay=False),
+    help=(
+        "The principal's key directory. Signs the principal's consent to this "
+        "credential; needed unless this request already acts as that principal."
+    ),
+)
+@click.option("--label", default=None, help="Description only (default: the principal ID).")
 @click.option(
     "--mode",
     "permission_mode",
@@ -136,21 +181,57 @@ def claim_bootstrap_cmd(secret_file: str | None, output_json: bool) -> None:
 )
 @click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON.")
 @handle_errors
-def mint_cmd(label: str, permission_mode: str, output_json: bool) -> None:
-    """Mint a new runtime bearer credential."""
+def mint_cmd(
+    principal_id: str,
+    key_dir: str | None,
+    label: str | None,
+    permission_mode: str,
+    output_json: bool,
+) -> None:
+    """Mint a bearer credential that acts as one principal.
+
+    Minting needs that principal's authority, not just an admin credential:
+    either this request already acts as the principal, or `--key-dir` signs the
+    principal's single-use consent with its registered key.
+    """
     client, instance_id = _require_server_client("credential mint")
+    mode = cast(contracts.RuntimeCredentialPermissionMode, permission_mode)
+    proof = (
+        None
+        if key_dir is None
+        else sign_principal_mint(
+            instance_id=instance_id,
+            principal_id=principal_id,
+            permission_mode=mode,
+            label=label or principal_id,
+            key_dir=Path(key_dir),
+        )
+    )
     result = client.create_runtime_credential(
         instance_id,
+        principal_id=principal_id,
+        permission_mode=mode,
         label=label,
-        permission_mode=cast(contracts.RuntimeCredentialPermissionMode, permission_mode),
+        principal_proof=proof,
+    )
+    settings = (
+        None
+        if key_dir is None or not result.token
+        else set_principal_settings_token(Path(key_dir), result.token)
     )
     if output_json:
-        _common._emit_json(result.model_dump(mode="json"))
+        payload = result.model_dump(mode="json")
+        if settings is not None:
+            payload["token"] = None
+            payload["settings_path"] = str(settings)
+        _common._emit_json(payload)
         return
 
     click.echo("Credential minted.")
     _echo_credential_metadata(result.credential)
-    if result.token:
+    if settings is not None:
+        click.echo(f"Token written to {settings} (not printed).")
+    elif result.token:
         _echo_token_once(result.token, label="Token")
 
 
@@ -177,6 +258,7 @@ def list_cmd(output_json: bool) -> None:
                     credential.credential_id,
                     credential.permission_mode,
                     status,
+                    credential.principal_id or "-",
                     credential.label,
                     credential.created_at,
                     credential.created_by or "",
@@ -372,13 +454,52 @@ def revoke_cmd(credential_id: str) -> None:
 
 @credential_group.command("rotate")
 @click.argument("credential_id")
+@click.option(
+    "--key-dir",
+    default=None,
+    type=click.Path(file_okay=False),
+    help=(
+        "The bound principal's key directory. Signs its consent to the replacement; "
+        "needed unless this request already acts as that principal."
+    ),
+)
 @handle_errors
-def rotate_cmd(credential_id: str) -> None:
-    """Rotate a runtime bearer credential and print the replacement token once."""
+def rotate_cmd(credential_id: str, key_dir: str | None) -> None:
+    """Rotate a runtime bearer credential and print the replacement token once.
+
+    A credential bound to a principal is replaced only with that principal's
+    authority, exactly as minting one: this request acts as the principal, or
+    `--key-dir` signs its consent. An admin may revoke it but never receives it.
+    """
     client, instance_id = _require_server_client("credential rotate")
-    result = client.rotate_runtime_credential(instance_id, credential_id)
+    proof = None
+    if key_dir is not None:
+        listed = client.list_runtime_credentials(instance_id)
+        target = next(
+            (item for item in listed.credentials if item.credential_id == credential_id), None
+        )
+        if target is None or target.principal_id is None:
+            raise click.UsageError(
+                f"credential {credential_id} is not an active principal-bound credential of "
+                "this instance; --key-dir signs only for a bound one"
+            )
+        proof = sign_principal_mint(
+            instance_id=instance_id,
+            principal_id=target.principal_id,
+            permission_mode=target.permission_mode,
+            label=target.label,
+            key_dir=Path(key_dir),
+        )
+    result = client.rotate_runtime_credential(instance_id, credential_id, principal_proof=proof)
+    settings = (
+        None
+        if key_dir is None or not result.token
+        else set_principal_settings_token(Path(key_dir), result.token)
+    )
 
     click.echo("Credential rotated.")
     _echo_credential_metadata(result.credential)
-    if result.token:
+    if settings is not None:
+        click.echo(f"Token written to {settings} (not printed).")
+    elif result.token:
         _echo_token_once(result.token, label="Token")

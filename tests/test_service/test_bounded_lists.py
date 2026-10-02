@@ -12,8 +12,7 @@ from cruxible_client.contracts.claims import LiteralClaimObject, parse_claim, re
 from cruxible_core.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
-from cruxible_core.service.claims.policies import list_playbill_policies_in_force
-from cruxible_core.service.claims.subjects import service_list_playbill_subjects
+from cruxible_core.service.claims.policies import service_playbill_policies_in_force
 from cruxible_core.service.discovery.curation import (
     PlaybillCurationListRequestV1,
     service_list_playbill_curation,
@@ -108,16 +107,16 @@ def test_withdrawing_an_unseen_proposal_between_pages_makes_the_cursor_stale(
 
 def test_policy_pages_walk_the_whole_inventory(tmp_path: Path) -> None:
     instance, _owner = seed_claims(tmp_path)
-    whole = list_playbill_policies_in_force(instance)
+    whole = service_playbill_policies_in_force(instance)
     assert len(whole.policies) >= 3
     assert whole.truncated is False
 
-    first = list_playbill_policies_in_force(instance, limit=2)
+    first = service_playbill_policies_in_force(instance, limit=2)
     walked = list(first.policies)
     cursor = first.next_cursor
     assert first.truncated is True and cursor is not None
     while cursor is not None:
-        page = list_playbill_policies_in_force(instance, limit=2, cursor=cursor)
+        page = service_playbill_policies_in_force(instance, limit=2, cursor=cursor)
         walked.extend(page.policies)
         cursor = page.next_cursor
     assert walked == list(whole.policies)
@@ -129,7 +128,7 @@ def test_policy_pages_walk_the_whole_inventory(tmp_path: Path) -> None:
         compiler_digest="sha256:" + "4" * 64,
     )
     with pytest.raises(PlaybillListCursorMismatch, match="different coordinate"):
-        list_playbill_policies_in_force(instance, at=other, cursor=first.next_cursor)
+        service_playbill_policies_in_force(instance, at=other, cursor=first.next_cursor)
     with pytest.raises(PlaybillListCursorMismatch, match="policies-in-force"):
         service_list_playbill_proposals(instance, cursor=first.next_cursor)
 
@@ -225,40 +224,3 @@ def test_a_curation_cursor_refuses_once_accepted_state_moves(tmp_path: Path) -> 
     activate(instance, owner, _propose(instance, "moves-state", "wi-60"))
     with pytest.raises(PlaybillListCursorStale, match="accepted state moved"):
         _curation(instance, limit=1, cursor=cursor)
-
-
-def test_subject_pages_are_compact_rows_walked_with_a_cursor(tmp_path: Path) -> None:
-    instance, _owner = seed_claims(tmp_path)
-    whole = service_list_playbill_subjects(instance)
-    assert len(whole.subjects) >= 2
-    assert whole.truncated is False and whole.next_cursor is None
-    # Rows name the Subject and count its live Claims; no envelope, no facts.
-    assert set(type(whole.subjects[0]).model_fields) == {
-        "subject_kind",
-        "subject_id",
-        "lifecycle",
-        "live_claims",
-    }
-    assert sum(row.live_claims for row in whole.subjects) > 0
-
-    first = service_list_playbill_subjects(instance, limit=1)
-    assert first.truncated is True and first.next_cursor is not None
-    walked = list(first.subjects)
-    cursor = first.next_cursor
-    while cursor is not None:
-        page = service_list_playbill_subjects(instance, limit=1, cursor=cursor)
-        walked.extend(page.subjects)
-        cursor = page.next_cursor
-    assert walked == list(whole.subjects)
-
-    kind = whole.subjects[0].subject_kind
-    of_kind = service_list_playbill_subjects(instance, subject_kind=kind, limit=1)
-    assert of_kind.subject_kind_filter == kind
-    assert all(row.subject_kind == kind for row in of_kind.subjects)
-    # A cursor minted for one selection does not continue another.
-    with pytest.raises(PlaybillListCursorMismatch):
-        service_list_playbill_subjects(
-            instance, limit=1, cursor=first.next_cursor, subject_kind=kind
-        )
-    with pytest.raises(PlaybillListCursorMismatch):
-        service_list_playbill_subjects(instance, cursor="not-a-cursor")

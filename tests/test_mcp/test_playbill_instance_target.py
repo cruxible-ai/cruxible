@@ -29,11 +29,14 @@ def _whoami() -> contracts.PlaybillWhoAmI:
     return contracts.PlaybillWhoAmI(
         actor_id="agent-a",
         credential_label="agent-a",
-        actor_id_source="runtime_credential_label",
+        actor_id_source="runtime_credential",
+        authenticated=True,
         credential_permission_mode="governed_write",
         principal_registration_status="active",
         active_principal_ids=["agent-a"],
         coordinate=_COORDINATE,
+        can_author=True,
+        authoring_refusal=None,
     )
 
 

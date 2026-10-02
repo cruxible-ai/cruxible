@@ -13,7 +13,6 @@ from cruxible_client.contracts.canonical import (
     canonical_bytes,
     file_digest,
 )
-from cruxible_client.contracts.discovery import DESCRIPTOR_CLAIM_TYPE_SEEDS
 from cruxible_client.contracts.errors import ProjectionFormatError, SubjectFormatError
 from cruxible_client.contracts.subjects import SubjectShell, parse_subject, render_subject
 from cruxible_core.compiler.compiler import (
@@ -196,12 +195,3 @@ def test_calibration_readings_have_no_governed_path_kind() -> None:
     # Calibration readings are compute-produced, CAS-pinned artifacts. Registering a
     # governed tree path would collapse the ratified policy/readings/mandates split.
     assert "calibration-reading" not in {entry.kind for entry in P2_C_ARTIFACT_KINDS.entries()}
-
-
-def test_descriptor_claim_type_identity_seed_list_is_exact() -> None:
-    assert tuple(item.identity.qualified for item in DESCRIPTOR_CLAIM_TYPE_SEEDS) == (
-        "ClaimType:semantic.alias",
-        "ClaimType:semantic.distinct_from",
-        "ClaimType:semantic.related_to",
-        "ClaimType:semantic.tag",
-    )

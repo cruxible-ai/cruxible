@@ -436,7 +436,7 @@ def test_an_accepted_promotion_projects_its_line_track_record_through_the_floor(
         proposal_name="line-track-promotion",
     )
 
-    floor = service_export_playbill_floor(instance)
+    floor = service_export_playbill_floor(instance, include=("discovery",))
     assert "procedures/orders-triage.card.json" in floor
     with instance.bind_accepted_projection(instance.accepted_coordinate()) as handle:
         facts = handle.typed.facts("playbill.line.track_record")

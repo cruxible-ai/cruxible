@@ -7,13 +7,12 @@ import json
 import os
 import re
 import time
-from collections import OrderedDict
-from collections.abc import Collection, Iterator, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast, overload
 
 from pydantic import SecretStr, TypeAdapter
 
@@ -61,13 +60,14 @@ from cruxible_client.authoring.sdk_types import (
     PendingClaimTypeRef,
     PendingSubjectRef,
     ProcedureRef,
+    ProcedureSlotRef,
     QueryRef,
     ReferenceKindError,
     ReferentSensitivity,
     RefKind,
-    SlotRef,
     SourceMapEntry,
     SourceRef,
+    SourceSelectionError,
     SubjectRef,
     TypedRef,
 )
@@ -88,7 +88,9 @@ from cruxible_client.authoring.workspace import (
     observe_playbill_next_workspace,
     observe_playbill_next_workspace_with_coverage,
     refresh_workspace_floor,
+    workspace_floor_freshness,
 )
+from cruxible_client.authoring.write_evidence import observe_changes
 from cruxible_client.contracts.acquisition_policies import (
     SourceAcquisitionPolicyV1,
 )
@@ -141,9 +143,7 @@ from cruxible_client.contracts.authoring.models import (
 )
 from cruxible_client.contracts.canonical import (
     CanonicalValue,
-    Sha256Value,
     normalize_canonical,
-    typed_digest,
 )
 from cruxible_client.contracts.capture_reads import CaptureReadRequestV1
 from cruxible_client.contracts.captures import (
@@ -159,6 +159,10 @@ from cruxible_client.contracts.claim_attestations import (
     PreparedClaimAttestationRequestV1,
 )
 from cruxible_client.contracts.claim_type_structure import ClaimRole as ClaimRoleValue
+from cruxible_client.contracts.claim_type_upgrade import (
+    ClaimTypeUpgradeRequestV1,
+    ClaimTypeUpgradeResultV1,
+)
 from cruxible_client.contracts.claim_types import (
     ClaimAttestationConsequencePolicyV1,
     ClaimEvidenceFreshnessV1,
@@ -171,20 +175,30 @@ from cruxible_client.contracts.claims import (
     ClaimArtifactV3,
     ClaimRetireDependentV1,
     ClaimRetirementReason,
-    ClaimRetireRequestV1,
     ClaimUnsupportedFormatError,
     LiteralClaimObject,
     SubjectClaimObject,
 )
-from cruxible_client.contracts.compact_query import QueryFilterV1, QueryFollowV1
+from cruxible_client.contracts.compact_query import (
+    QueryClaimStatus,
+    QueryFilterV1,
+    QueryFollowDirection,
+    QueryFollowV1,
+    QueryReceiptDetail,
+)
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV2,
     ProjectionCurrencyPolicy,
 )
+from cruxible_client.contracts.errors import WriteRefusalError
 from cruxible_client.contracts.get_reads import (
+    GET_BATCH_MAX_REFS,
     PlaybillByteRangeV1,
     PlaybillExactContentRefV1,
+    PlaybillGetBatchRequestV1,
     PlaybillGetDetail,
+    PlaybillGetProcedureCardV1,
+    PlaybillGetProcedureTrackRecordV1,
     PlaybillGetRequestV1,
     PlaybillGetResultV1,
 )
@@ -225,8 +239,25 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import format_datetime
 from cruxible_client.contracts.triggers import InternalActionName, TriggerScheduleV1
+from cruxible_client.contracts.write import (
+    AddChange,
+    Change,
+    ClaimValue,
+    Evidence,
+    ExpectedValue,
+    PlaybillRetireRequestV1,
+    PlaybillSetRequestV1,
+    PlaybillWriteRequestV1,
+    RetireChange,
+    SetChange,
+    SlotRef,
+    WriteAccept,
+    WriteOutcome,
+    WriteRetireReason,
+    WriteRole,
+)
 from cruxible_client.errors import CoreError
-from cruxible_client.transport.http import CruxibleClient
+from cruxible_client.transport.http import CruxibleClient, configured_principal_id
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from cruxible_client.authoring.world import World
@@ -241,9 +272,6 @@ _SUBJECT_RE = re.compile(
 # Anything outside the set is skew, not caller error; see _claim_type_object_kind.
 _CLAIM_TYPE_OBJECT_KINDS = frozenset({"literal", "subject", "exact_content"})
 _CLAIM_ADAPTER: TypeAdapter[ClaimArtifactAny] = TypeAdapter(ClaimArtifactAny)
-_RETIRE_CLOSURE_MISMATCH_CODE = "playbill.claim.retire_closure_mismatch"
-_CLAIM_RETIRE_OPERATION_DOMAIN = "playbill-claim-retire-operation-v1"
-_RETIREMENT_SUBMISSION_CACHE_LIMIT = 128
 
 
 def _coordinate(value: api.PlaybillAcceptedCoordinate | Mapping[str, object]) -> AcceptedCoordinate:
@@ -353,6 +381,11 @@ _GET_REF_KINDS: Mapping[str, RefKind] = {
     "document": RefKind.DOCUMENT,
     "capture_contract": RefKind.CAPTURE_CONTRACT,
     "proposal": RefKind.PROPOSAL,
+    "line": RefKind.LINE,
+    "capture": RefKind.CAPTURE,
+    "resolution_contract": RefKind.RESOLUTION_CONTRACT,
+    "mandate": RefKind.MANDATE,
+    "procedure_run": RefKind.PROCEDURE_RUN,
 }
 
 _REFERENCE_KINDS: Mapping[RefKind, str] = {
@@ -485,6 +518,13 @@ def _claim_from_public_view(view: api.PlaybillClaimViewV2) -> ClaimArtifactAny:
 
 @dataclass(frozen=True)
 class KnowledgeCard:
+    """What ``pb.get(ref)`` answered: the kind, identity and coordinate, and the value.
+
+    ``value`` is a ``ClaimView`` for a Claim summary, the values-first card for any other
+    summary, and the detail's payload otherwise. Next: ``card.ref`` to pass the thing on as a
+    typed ref, or ``pb.get(card.identity, detail=...)`` for another detail.
+    """
+
     kind: RefKind
     identity: str
     coordinate: AcceptedCoordinate
@@ -492,6 +532,12 @@ class KnowledgeCard:
 
     @property
     def ref(self) -> TypedRef:
+        """This thing as a typed ref at the coordinate it was read at.
+
+        Raises ``ReferenceKindError`` for a kind that mints no ref (an operational card).
+        Next: pass it as ``subject=``, ``predicate=`` or ``value=``, or back to ``pb.get``.
+        """
+
         constructors = {
             RefKind.SUBJECT: SubjectRef,
             RefKind.CLAIM_TYPE: ClaimTypeRef,
@@ -507,33 +553,24 @@ class KnowledgeCard:
 
 
 @dataclass(frozen=True)
-class SearchPage:
-    coordinate: AcceptedCoordinate
-    evaluation_time: str
-    rows: tuple[dict[str, object], ...]
-    result_digest: str
-    cursor: dict[str, object] | None
-    truncated: bool
-    orientation: dict[str, object] | None = None
-
-
-@dataclass(frozen=True)
 class NextPage:
+    """The whole ``pb.next(...)`` queue for this caller: iterate it for the items.
+
+    ``status`` is the environment the queue was read in. A row whose repair this caller cannot
+    run stays with ``repair_requires`` set. Next: run an item's ``repair.command``, or
+    ``pb.get(item.subject_identity)`` to look first.
+    """
+
     coordinate: AcceptedCoordinate
     evaluation_time: str
     items: tuple[api.PlaybillNextItem, ...]
     result_digest: str
     observed_domains: tuple[str, ...]
     unobserved_domains: tuple[str, ...]
-    # The environment the queue was read in, including how many rows and
-    # findings were left out because this caller cannot perform their repair.
+    # The environment the queue was read in. A row whose repair this caller
+    # cannot perform stays in `items` with `repair_requires` set.
     status: api.PlaybillNextStatus
     attestation_head_digest: str | None = None
-
-    @property
-    def hidden(self) -> int:
-        """Rows and findings withheld because this caller cannot perform their repair."""
-        return self.status.hidden
 
     def __iter__(self):  # type: ignore[no-untyped-def]
         return iter(self.items)
@@ -541,14 +578,28 @@ class NextPage:
 
 @dataclass(frozen=True)
 class ClaimTypeDraft:
+    """A ClaimType definition built by ``pb.claim_type(...)``, not yet proposed.
+
+    Next: ``draft.propose(proposal_name=...)``, or
+    ``pb.changes(rationale=...).claim_type(draft)`` to define it beside Claims that use it.
+    """
+
     _playbill: Playbill = field(repr=False, compare=False)
     definition: ClaimType
 
     @property
     def predicate(self) -> str:
+        """The predicate this ClaimType defines. Next: ``draft.propose(proposal_name=...)``."""
+
         return self.definition.predicate
 
     def propose(self, *, proposal_name: str) -> Proposal:
+        """Propose this ClaimType as its own proposal.
+
+        Next: ``proposal.review()``, then ``proposal.approve(...)`` and
+        ``proposal.accept()``.
+        """
+
         result = self._playbill._client.propose_playbill_claim_type(
             self._playbill._instance_id,
             claim_type=self.definition.model_dump(mode="json"),
@@ -576,6 +627,12 @@ class _IntentDraft:
     source_map: DiagnosticSourceMap
 
     def prepare(self) -> Intent:
+        """Compile and preflight this draft as an intent, without submitting it.
+
+        Next: ``intent.refused`` and ``intent.diagnostics`` (each names its call site), then
+        ``intent.submit()``.
+        """
+
         result = self._playbill._client.compile_playbill_authoring(
             self._playbill._instance_id,
             payload=self.payload.model_dump(mode="json"),
@@ -592,6 +649,9 @@ class _IntentDraft:
         Equivalent to ``prepare().submit()`` without the separate preflight and
         its round trips. A refused preflight returns an unsubmitted intent whose
         ``refused`` and ``diagnostics`` report it, exactly as ``prepare()`` does.
+
+        Next: ``intent.proposal`` for the proposal, then ``proposal.review()``;
+        ``intent.diagnostics`` if it was refused.
         """
 
         result = self._playbill._client.submit_playbill_authoring(
@@ -613,7 +673,17 @@ class _IntentDraft:
 
 @dataclass(frozen=True)
 class ClaimDraft(_IntentDraft):
+    """One Claim drafted by ``pb.claim(...)``.
+
+    Next: ``draft.submit()``, or ``draft.prepare()`` first.
+    """
+
     def derived_by(self, derivation: object) -> ClaimDraft:
+        """Not served: derivation carry needs its own approved contract.
+
+        Raises ``CapabilityNotServed``. Next: ``draft.submit()`` without it.
+        """
+
         del derivation
         raise CapabilityNotServed(
             code="playbill.sdk.derivation_carry_not_served",
@@ -624,7 +694,10 @@ class ClaimDraft(_IntentDraft):
 
 @dataclass(frozen=True)
 class Prediction:
-    """A proposed governed test; its hypothesis already exists in accepted state."""
+    """A proposed governed test; its hypothesis already exists in accepted state.
+
+    Next: ``prediction.proposal.review()``; once accepted, ``pb.settle(...)`` settles it.
+    """
 
     _playbill: Playbill = field(repr=False, compare=False)
     contract_identity: str
@@ -634,11 +707,21 @@ class Prediction:
 
     @property
     def proposal(self) -> Proposal:
+        """The proposal that carries this prediction's ResolutionContract.
+
+        Next: ``prediction.proposal.review()``, then approve and ``accept()``.
+        """
+
         return Proposal(self._playbill, self.proposal_id)
 
 
 @dataclass(frozen=True)
 class PredictionSettlement:
+    """How one prediction settled: its outcome and the relation that decided it.
+
+    Next: ``pb.get(prediction_id)`` for the settled window.
+    """
+
     prediction_id: str
     outcome: bool
     relation: dict[str, object]
@@ -646,11 +729,21 @@ class PredictionSettlement:
 
 @dataclass(frozen=True)
 class ProcedureDraft(_IntentDraft):
+    """One Procedure drafted by ``pb.procedure(definition=...)``.
+
+    Next: ``draft.submit()``; once accepted, ``pb.accepted_procedure(name).run(...)``.
+    """
+
     pass
 
 
 @dataclass(frozen=True)
 class QueryDraft(_IntentDraft):
+    """One named query drafted by ``pb.query_definition(definition=...)``.
+
+    Next: ``draft.submit()``; once accepted, ``pb.query(name=..., params={...})``.
+    """
+
     pass
 
 
@@ -743,6 +836,9 @@ class ChangeSetDraft:
     lowers once, proposes once and generates once, and the whole intent admits
     or refuses together. There is no member ceiling -- how many members one
     daemon will receive in a single submission is an operator admission knob.
+
+    Next: add members (``.claim``, ``.subject``, ``.claim_type``, ``.retire``, ...), then
+    ``.submit()``.
     """
 
     _playbill: Playbill = field(repr=False, compare=False)
@@ -767,7 +863,10 @@ class ChangeSetDraft:
         subject_definition: SubjectDraft | None = None,
         claim_type_definition: ClaimTypeDraft | None = None,
     ) -> ChangeSetDraft:
-        """Add one Claim to this changeset; the signature is `Playbill.claim`'s."""
+        """Add one Claim to this changeset; the signature is `Playbill.claim`'s.
+
+        Next: more members, then ``.submit()``.
+        """
 
         draft = self._playbill._claim_draft(
             sites=capture_keyword_sites("claim", stacklevel=1),
@@ -803,6 +902,8 @@ class ChangeSetDraft:
 
         It becomes accepted only when this changeset passes ordinary approval
         and activation. The authenticated submitter need not be its signer.
+
+        Next: ``.submit()``.
         """
         self._members.append(
             _ChangeSetMember(
@@ -825,7 +926,10 @@ class ChangeSetDraft:
         signer: ClaimAttestationV2Signer,
         valid_until: datetime | None = None,
     ) -> ChangeSetDraft:
-        """Sign an exact Claim and stage it in this governed batch."""
+        """Sign an exact Claim and stage it in this governed batch.
+
+        Next: ``.submit()``.
+        """
         identity = claim.address if isinstance(claim, ClaimRef) else claim
         prepared = PreparedClaimAttestationRequestV1(
             claim_id=identity.removeprefix("Claim:"),
@@ -874,6 +978,8 @@ class ChangeSetDraft:
         The ref it returns is usable as `subject=` or `value=` in the same set,
         which is what lets one changeset define a Subject and say something
         about it without the caller retyping the address as a string.
+
+        Next: ``.claim(subject=ref, ...)`` about it, then ``.submit()``.
         """
 
         shell = definition.shell if isinstance(definition, SubjectDraft) else definition
@@ -891,7 +997,10 @@ class ChangeSetDraft:
         )
 
     def capture_contract(self, contract: CaptureContractV1) -> ChangeSetDraft:
-        """Define one CaptureContract inside this changeset."""
+        """Define one CaptureContract inside this changeset.
+
+        Next: more members, then ``.submit()``.
+        """
 
         self._members.append(
             _ChangeSetMember(
@@ -904,7 +1013,10 @@ class ChangeSetDraft:
         return self
 
     def resolution_contract(self, contract: ResolutionContractV1) -> ChangeSetDraft:
-        """Define one ResolutionContract inside this changeset."""
+        """Define one ResolutionContract inside this changeset.
+
+        Next: more members, then ``.submit()``.
+        """
 
         self._members.append(
             _ChangeSetMember(
@@ -917,7 +1029,10 @@ class ChangeSetDraft:
         return self
 
     def acquisition_policy(self, policy: SourceAcquisitionPolicyV1) -> ChangeSetDraft:
-        """Define one SourceAcquisitionPolicy inside this changeset."""
+        """Define one SourceAcquisitionPolicy inside this changeset.
+
+        Next: ``.line(..., acquisition_policy=name)``, then ``.submit()``.
+        """
 
         self._members.append(
             _ChangeSetMember(
@@ -932,7 +1047,10 @@ class ChangeSetDraft:
     def procedure(
         self, *, definition: ProcedureInput | ProcedureSequence | ProcedureBlueprint
     ) -> ChangeSetDraft:
-        """Compose a Procedure with its Line and mandate in one existing changeset."""
+        """Compose a Procedure with its Line and mandate in one existing changeset.
+
+        Next: ``.line(name=..., procedure=...)`` to run it, then ``.submit()``.
+        """
         draft = self._playbill.procedure(definition=definition)
         assert isinstance(draft.payload, (ProcedureAuthoringPayloadV1, ProcedureAuthoringPayloadV2))
         self._members.append(
@@ -946,7 +1064,10 @@ class ChangeSetDraft:
         return self
 
     def procedure_mandate(self, definition: ProcedureMandateInputV1) -> ChangeSetDraft:
-        """Stage a typed mandate through the shared authoring-input lowering."""
+        """Stage a typed mandate through the shared authoring-input lowering.
+
+        Next: more members, then ``.submit()``.
+        """
         payload = lower_authoring_input(definition)
         assert isinstance(payload, ProcedureMandateAuthoringPayloadV1)
         self._members.append(
@@ -993,6 +1114,8 @@ class ChangeSetDraft:
         and defaults to it. A Line that proposes or settles also needs a live
         ProcedureMandate covering its Procedure before it can run or be armed;
         an observe-only Line needs none.
+
+        Next: ``.submit()``; once accepted, ``pb.arm_line(name)`` or ``pb.run_line(name)``.
         """
 
         self._members.append(
@@ -1054,7 +1177,10 @@ class ChangeSetDraft:
         *,
         vocabulary: Sequence[ClaimTypeRef] = (),
     ) -> ChangeSetDraft:
-        """Add a named query after its vocabulary definitions in this changeset."""
+        """Add a named query after its vocabulary definitions in this changeset.
+
+        Next: ``.submit()``; once accepted, ``pb.query(name=..., params={...})``.
+        """
         draft = self._playbill.query_definition(definition=definition, vocabulary=vocabulary)
         assert isinstance(draft.payload, QueryDefinitionAuthoringPayloadV1)
         self._members.append(
@@ -1076,6 +1202,8 @@ class ChangeSetDraft:
         The ref it returns is usable as `predicate=` in the same set, and
         carries the object kind the definition declares so a Claim under it
         lowers without reading a ClaimType that is not accepted yet.
+
+        Next: ``.claim(predicate=ref, ...)`` under it, then ``.submit()``.
         """
 
         value = definition.definition if isinstance(definition, ClaimTypeDraft) else definition
@@ -1103,18 +1231,20 @@ class ChangeSetDraft:
     ) -> ChangeSetDraft:
         """Retire one accepted Claim, and its live closure, inside this changeset.
 
-        Takes exactly what `Playbill.retire_claim` takes: the SDK's own rows
-        and refs spell a Claim identity `Claim:CLM-...`, so a builder that
-        refused the prefix made one library disagree with itself. The member
-        carries the one canonical bare spelling, which is what keeps two
-        spellings of one retirement on one member identity and one digest.
+        Takes a Claim ID in either spelling the SDK's rows and refs use
+        (`CLM-...` or `Claim:CLM-...`). The member carries the one canonical bare
+        spelling as `retires`, which is what keeps two spellings of one
+        retirement on one member identity and one digest. `Playbill.retire` is
+        the typed write verb for the common case: it computes the closure.
+
+        Next: more members, then ``.submit()``.
         """
 
         address = _address(claim, RefKind.CLAIM).removeprefix("Claim:")
         self._members.append(
             _ChangeSetMember(
                 payload=ClaimRetirementMemberV1(
-                    claim_ref=address,
+                    retires=address,
                     reason=reason,
                     effective_until=effective_until,
                     dependents=tuple(dependents),
@@ -1140,6 +1270,8 @@ class ChangeSetDraft:
         dependents with `carry`, `rescind`, `retire` and `re_author`; the
         closure must be exact, and preflight names every member of it that is
         still missing.
+
+        Next: ``.prepare()``; its diagnostics name any dependent still missing.
         """
 
         value = successor.definition if isinstance(successor, ClaimTypeDraft) else successor
@@ -1172,12 +1304,18 @@ class ChangeSetDraft:
         return self
 
     def prepare(self) -> Intent:
-        """Compile and preflight the whole changeset as one intent."""
+        """Compile and preflight the whole changeset as one intent.
+
+        Next: ``intent.diagnostics`` if refused, else ``intent.submit()``.
+        """
 
         return self._compiled().prepare()
 
     def submit(self) -> Intent:
-        """Compile and submit the whole changeset as one intent in one request."""
+        """Compile and submit the whole changeset as one intent in one request.
+
+        Next: ``intent.proposal.review()``, then approve and accept it.
+        """
 
         return self._compiled().submit()
 
@@ -1232,16 +1370,300 @@ class ChangeSetDraft:
         )
 
 
+class _Unset(Enum):
+    TOKEN = "unset"
+
+
+_UNSET = _Unset.TOKEN
+WriteAt = AcceptedCoordinate | api.PlaybillAcceptedCoordinate | str | None
+
+
+def _write_subject(subject: str | SubjectRef) -> str:
+    return subject.address if isinstance(subject, SubjectRef) else subject
+
+
+def _write_field(field_name: str | ClaimTypeRef) -> str:
+    return field_name.address if isinstance(field_name, ClaimTypeRef) else field_name
+
+
+def _write_value(value: ClaimValue | SubjectRef | LiteralValue) -> ClaimValue:
+    if isinstance(value, SubjectRef):
+        return value.address
+    if isinstance(value, LiteralValue):
+        if not isinstance(value.value, bool | int | float | str):
+            raise ValueError("the write verbs take a scalar value; this literal is structured")
+        return value.value
+    return value
+
+
+WriteExpect = (
+    ClaimValue | SubjectRef | LiteralValue | Sequence[ClaimValue | SubjectRef | LiteralValue]
+)
+
+
+def _write_expect(expect: WriteExpect | None) -> ExpectedValue | None:
+    """``expect`` on the wire: one value, or every live value as a tuple."""
+
+    if expect is None:
+        return None
+    if isinstance(expect, bool | int | float | str | SubjectRef | LiteralValue):
+        return _write_value(expect)
+    return tuple(_write_value(item) for item in expect)
+
+
+def _write_target(target: str | ClaimRef | SlotRef) -> str | SlotRef:
+    if isinstance(target, ClaimRef):
+        return target.address
+    return target
+
+
+_WriteSubject = str | SubjectRef
+_WriteField = str | ClaimTypeRef
+_WriteValue = ClaimValue | SubjectRef | LiteralValue
+
+
+def _batch_operands(
+    verb: str, operands: tuple[Any, ...], subject: _WriteSubject | None
+) -> tuple[str | None, str, ClaimValue]:
+    """``(subject, field, value)`` positionally, or ``(field, value)`` with a default subject."""
+
+    if len(operands) == 3:
+        if subject is not None:
+            raise TypeError(f"{verb}() names its subject once: positionally or as subject=")
+        subject, field_name, value = operands
+    elif len(operands) == 2:
+        field_name, value = operands
+    else:
+        raise TypeError(
+            f"{verb}() takes (subject, field, value), or (field, value) under a default subject"
+        )
+    return (
+        None if subject is None else _write_subject(subject),
+        _write_field(field_name),
+        _write_value(value),
+    )
+
+
+class WriteBatch:
+    """Changes that are written together, as one change set: ``pb.changes(because=...)``.
+
+    ``set`` replaces a single-value field, ``add`` puts one more value in a
+    many-valued field, and ``retire`` ends one live Claim; ``write()`` sends them
+    all and returns the outcome, raising ``WriteRefusalError`` on a refusal.
+
+    ``pb.changes(because=..., subject="kind/id")`` names the Subject once:
+    ``.set(field, value)`` and ``.add(field, value)`` are about it, and
+    ``.retire(SlotRef(field=...))`` ends one of its fields. A change that names
+    its own subject overrides the default.
+    """
+
+    def __init__(
+        self, playbill: Playbill, *, because: str, subject: _WriteSubject | None = None
+    ) -> None:
+        self._playbill = playbill
+        self.because = because
+        self.subject = None if subject is None else _write_subject(subject)
+        self.changes: list[Change] = []
+
+    @overload
+    def set(
+        self,
+        subject: _WriteSubject,
+        field: _WriteField,
+        value: _WriteValue,
+        /,
+        *,
+        evidence: Evidence | None = None,
+        role: WriteRole | None = None,
+        contend: bool = False,
+        expect: WriteExpect | None = None,
+    ) -> WriteBatch: ...
+
+    @overload
+    def set(
+        self,
+        field: _WriteField,
+        value: _WriteValue,
+        /,
+        *,
+        subject: _WriteSubject | None = None,
+        evidence: Evidence | None = None,
+        role: WriteRole | None = None,
+        contend: bool = False,
+        expect: WriteExpect | None = None,
+    ) -> WriteBatch: ...
+
+    def set(
+        self,
+        *operands: Any,
+        subject: _WriteSubject | None = None,
+        evidence: Evidence | None = None,
+        role: WriteRole | None = None,
+        contend: bool = False,
+        expect: WriteExpect | None = None,
+    ) -> WriteBatch:
+        """Replace the live value of one single-value field.
+
+        Spelled ``set(field, value)`` or ``set(subject, field, value)``. ``expect`` refuses
+        unless the field holds that value now. Next: more changes, then ``.write()``.
+        """
+
+        named, field_name, value = _batch_operands("set", operands, subject)
+        self.changes.append(
+            SetChange(
+                subject=named,
+                field=field_name,
+                value=value,
+                evidence=evidence,
+                role=role,
+                contend=contend,
+                expect=_write_expect(expect),
+            )
+        )
+        return self
+
+    @overload
+    def add(
+        self,
+        subject: _WriteSubject,
+        field: _WriteField,
+        value: _WriteValue,
+        /,
+        *,
+        evidence: Evidence | None = None,
+        role: WriteRole | None = None,
+        expect_absent: bool = False,
+    ) -> WriteBatch: ...
+
+    @overload
+    def add(
+        self,
+        field: _WriteField,
+        value: _WriteValue,
+        /,
+        *,
+        subject: _WriteSubject | None = None,
+        evidence: Evidence | None = None,
+        role: WriteRole | None = None,
+        expect_absent: bool = False,
+    ) -> WriteBatch: ...
+
+    def add(
+        self,
+        *operands: Any,
+        subject: _WriteSubject | None = None,
+        evidence: Evidence | None = None,
+        role: WriteRole | None = None,
+        expect_absent: bool = False,
+    ) -> WriteBatch:
+        """Add one more value to a many-valued field.
+
+        Spelled ``add(field, value)`` or ``add(subject, field, value)``.
+        ``expect_absent=True`` refuses a value already there. Next: more changes, then
+        ``.write()``.
+        """
+
+        named, field_name, value = _batch_operands("add", operands, subject)
+        self.changes.append(
+            AddChange(
+                subject=named,
+                field=field_name,
+                value=value,
+                evidence=evidence,
+                role=role,
+                expect_absent=expect_absent,
+            )
+        )
+        return self
+
+    def retire(
+        self,
+        target: str | ClaimRef | SlotRef,
+        *,
+        because: str | None = None,
+        reason: WriteRetireReason = "was-rescinded",
+        expect: WriteExpect | None = None,
+    ) -> WriteBatch:
+        """End one live Claim, named by ID or ``SlotRef(subject=..., field=...)``.
+
+        Its dependents retire with it. Next: more changes, then ``.write()``.
+        """
+
+        self.changes.append(
+            RetireChange(
+                target=_write_target(target),
+                because=because,
+                reason=reason,
+                expect=_write_expect(expect),
+            )
+        )
+        return self
+
+    def write(
+        self,
+        *,
+        dry_run: bool = False,
+        accept: WriteAccept = "if_allowed",
+        at: WriteAt | _Unset = _UNSET,
+    ) -> WriteOutcome:
+        """Send every change as one change set and return the outcome.
+
+        ``dry_run=True`` checks and writes nothing; ``accept="never"`` only proposes; ``at``
+        refuses if a field moved since that coordinate. A refusal raises
+        ``WriteRefusalError``. Next: ``outcome.next`` for what is still needed,
+        ``outcome.warnings`` for verdicts that are not supported.
+        """
+
+        if not self.changes:
+            raise ValueError("a write needs at least one change")
+        return self._playbill._write(
+            PlaybillWriteRequestV1(
+                because=self.because,
+                subject=self.subject,
+                changes=tuple(self.changes),
+                dry_run=dry_run,
+                accept=accept,
+                at=self._playbill._write_at(at),
+                surface="sdk",
+                full_coordinate=True,
+            )
+        )
+
+    def __repr__(self) -> str:
+        spelled = ", ".join(
+            f"{item.op} {item.subject or self.subject or ''} {item.field}".replace("  ", " ")
+            if not isinstance(item, RetireChange)
+            else f"retire {item.target}"
+            for item in self.changes
+        )
+        about = "" if self.subject is None else f", subject={self.subject!r}"
+        return f"WriteBatch(because={self.because!r}{about}, changes=[{spelled}])"
+
+
 @dataclass(frozen=True)
 class SubjectDraft(_IntentDraft):
+    """One Subject definition drafted by ``pb.subject(...)`` or ``w.<kind>.define(id)``.
+
+    Next: ``draft.submit()``, or ``pb.changes(rationale=...).subject(draft)`` with other
+    members.
+    """
+
     shell: SubjectShell
 
     @property
     def address(self) -> str:
+        """The Subject's ``kind/id``. Next: ``draft.submit()``, then ``pb.get(draft.address)``."""
+
         return self.shell.identity.name
 
 
 class Intent:
+    """One authoring intent: a draft compiled by the daemon, then preflighted and submitted.
+
+    An intent is revised in place (``reprepare``, ``rebase``) and owns the proposal its
+    submission makes. Next: ``intent.submit()``, then ``intent.proposal.review()``.
+    """
+
     def __init__(
         self,
         playbill: Playbill,
@@ -1264,6 +1686,8 @@ class Intent:
         draft: _IntentDraft,
         result: api.PlaybillAuthoringPreflightResult,
     ) -> Intent:
+        """Build the handle for an intent a preflight just named. Next: ``intent.submit()``."""
+
         intent_id = result.certificate.get("intent_id")
         if not isinstance(intent_id, str):
             raise ValueError("preflight certificate did not name an intent")
@@ -1272,8 +1696,31 @@ class Intent:
         ).intent
         return cls(playbill, draft, raw, preflight=result)
 
+    def __repr__(self) -> str:
+        # No I/O: only what this handle last observed.
+        status = self._candidate_status
+        if self.refused:
+            state = f"refused, {len(self.diagnostics)} diagnostics"
+        elif status is not None:
+            state = status.state
+        elif self._preflight is not None:
+            state = "prepared"
+        else:
+            state = "not observed"
+        proposal = (
+            ""
+            if status is None or status.proposal_id is None
+            else f", proposal={status.proposal_id!r}"
+        )
+        return (
+            f"Intent({self._raw.get('intent_id')!r}, "
+            f"revision={self._raw.get('intent_revision')}, {state}{proposal})"
+        )
+
     @property
     def intent_id(self) -> str:
+        """The intent's ID. Next: ``pb.resume_intent(intent_id)`` from another process."""
+
         value = self._raw.get("intent_id")
         if not isinstance(value, str):
             raise ValueError("authoring intent response omitted intent_id")
@@ -1281,6 +1728,8 @@ class Intent:
 
     @property
     def revision(self) -> int:
+        """The intent revision last read. Next: ``intent.status()`` for its candidate state."""
+
         value = self._raw.get("intent_revision")
         if not isinstance(value, int):
             raise ValueError("authoring intent response omitted intent_revision")
@@ -1288,19 +1737,33 @@ class Intent:
 
     @property
     def refused(self) -> bool:
+        """Whether the last preflight refused. Next: ``intent.diagnostics`` for why."""
+
         return self._preflight is not None and self._preflight.verdict == "refused"
 
     @property
     def lint(self) -> api.PlaybillClaimTypeProposalLint | None:
+        """The ClaimType lint the last preflight returned, if any. Next: ``intent.warnings``."""
+
         return None if self._preflight is None else self._preflight.lint
 
     @property
     def warnings(self) -> tuple[dict[str, Any], ...]:
+        """Lint warnings from the last preflight.
+
+        Next: fix them, then ``intent.reprepare(draft=...)``.
+        """
+
         lint = self.lint
         return () if lint is None else tuple(lint.warnings)
 
     @property
     def diagnostics(self) -> tuple[Diagnostic, ...]:
+        """Why the last preflight refused, each with its repair and Python call site.
+
+        Next: fix the draft and ``intent.reprepare(draft=...)``.
+        """
+
         if self._preflight is None:
             return ()
         raw_diagnostics = self._preflight.frontier.get("diagnostics", [])
@@ -1330,6 +1793,11 @@ class Intent:
 
     @property
     def path_to_acceptance(self) -> tuple[dict[str, object], ...]:
+        """The remaining steps to acceptance, read fresh from the daemon.
+
+        Next: the first step's operation, often ``proposal.review()`` and approval.
+        """
+
         status = self.status()
         return tuple(cast(dict[str, object], item) for item in status.path_to_acceptance)
 
@@ -1340,6 +1808,8 @@ class Intent:
         Populated by resume_intent(), submit() or status(); None means no proposal was observed
         for this local intent revision. Call status() for fresh server state.
         This handle is not review, approval, or proof of activation eligibility.
+
+        Next: ``proposal.review()``.
         """
 
         status = self._candidate_status
@@ -1349,7 +1819,10 @@ class Intent:
 
     @property
     def publication(self) -> Publication | None:
-        """The one publication a singular Claim intent owns, if it has one."""
+        """The one publication a singular Claim intent owns, if it has one.
+
+        Next: ``publication.status()``, or ``publication.abandon()``.
+        """
 
         expectation = self._raw.get("insertion_expectation")
         if not isinstance(expectation, Mapping):
@@ -1361,7 +1834,10 @@ class Intent:
 
     @property
     def publications(self) -> tuple[Publication, ...]:
-        """Every publication this intent owns, one per publishing Claim member."""
+        """Every publication this intent owns, one per publishing Claim member.
+
+        Next: ``publication.status()`` on each.
+        """
 
         expectations = self._raw.get("insertion_expectations")
         if not isinstance(expectations, list) or not expectations:
@@ -1379,6 +1855,11 @@ class Intent:
         ).intent
 
     def prepare(self) -> Intent:
+        """Preflight this intent again at current head, without changing its draft.
+
+        Next: ``intent.refused`` and ``intent.diagnostics``, then ``intent.submit()``.
+        """
+
         self._candidate_status = None
         result = self._playbill._client.preflight_playbill_authoring_intent(
             self._playbill._instance_id, self.intent_id
@@ -1390,6 +1871,11 @@ class Intent:
         return self
 
     def reprepare(self, *, draft: ClaimDraft | ProcedureDraft | SubjectDraft) -> Intent:
+        """Replace this intent's draft and preflight the new revision.
+
+        Next: ``intent.diagnostics`` if refused, else ``intent.submit()``.
+        """
+
         if draft._playbill is not self._playbill:
             raise ValueError("replacement draft belongs to another Playbill connection")
         self._candidate_status = None
@@ -1410,6 +1896,12 @@ class Intent:
         return self
 
     def submit(self) -> Intent:
+        """Submit this intent: the daemon admits it as a proposal.
+
+        Next: ``intent.proposal.review()``, then approve and ``accept()``;
+        ``intent.status()`` for its state.
+        """
+
         self._candidate_status = None
         result = self._playbill._client.submit_playbill_authoring_intent(
             self._playbill._instance_id, self.intent_id
@@ -1419,6 +1911,12 @@ class Intent:
         return self
 
     def status(self) -> api.PlaybillCandidateStatus:
+        """Read this intent's candidate state fresh from the daemon.
+
+        Next: ``intent.path_to_acceptance`` for what remains, or ``intent.rebase()`` if head
+        moved past it.
+        """
+
         status = self._playbill._client.playbill_authoring_intent_status(
             self._playbill._instance_id, self.intent_id
         )
@@ -1426,6 +1924,11 @@ class Intent:
         return status
 
     def rebase(self) -> Intent:
+        """Rebase this intent onto current head, dropping its last preflight.
+
+        Next: ``intent.prepare()``, then ``intent.submit()``.
+        """
+
         self._candidate_status = None
         self._raw = self._playbill._client.rebase_playbill_authoring_intent(
             self._playbill._instance_id, self.intent_id
@@ -1440,34 +1943,24 @@ class Intent:
         timeout: Duration,
         poll_interval: Duration,
     ) -> api.PlaybillCandidateStatus:
+        """Poll ``status()`` until accepted, terminal or superseded, or until ``timeout``.
+
+        Next: ``pb.get(ref)`` to read what was accepted.
+        """
+
         return cast(
             api.PlaybillCandidateStatus,
             _wait_for_status(self.status, timeout=timeout, poll_interval=poll_interval),
         )
 
 
-def _all_proposals(
-    client: CruxibleClient,
-    instance_id: str,
-    *,
-    status: Literal["open", "settled", "incomplete"] | None = None,
-) -> Iterator[api.PlaybillProposalListEntry]:
-    """Every listed proposal, following the list's pages at one pinned coordinate."""
-    cursor: str | None = None
-    while True:
-        page = client.list_playbill_proposals(
-            instance_id,
-            status=status,
-            limit=api.PLAYBILL_PROPOSAL_LIST_MAX_LIMIT,
-            cursor=cursor,
-        )
-        yield from page.entries
-        if page.next_cursor is None:
-            return
-        cursor = page.next_cursor
-
-
 class Proposal:
+    """A handle on one admitted proposal, by ID; nothing is read until asked.
+
+    Next: ``proposal.review()``, then ``proposal.approve(signer=..., reviewed=...)`` and
+    ``proposal.accept()``.
+    """
+
     def __init__(
         self,
         playbill: Playbill,
@@ -1483,6 +1976,8 @@ class Proposal:
     def from_inspection(
         cls, playbill: Playbill, inspection: api.PlaybillProposalInspection
     ) -> Proposal:
+        """The handle for a proposal an inspection names. Next: ``proposal.review()``."""
+
         proposal_id = inspection.proposal.get("admission", {}).get("proposal_id")
         if not isinstance(proposal_id, str):
             proposal_id = inspection.proposal.get("proposal_id")
@@ -1491,21 +1986,43 @@ class Proposal:
         return cls(playbill, proposal_id, lint=inspection.lint)
 
     def review(self) -> ReviewedProposal:
-        """Fetch an immutable full review; inspect its details before approving."""
+        """Fetch an immutable full review; inspect its details before approving.
+
+        Next: ``proposal.approve(signer=..., reviewed=review)``.
+        """
         return review_proposal(self._playbill, self.proposal_id)
+
+    def accept(self) -> api.PlaybillActivationReceipt:
+        """Accept this proposal once its approvals are in: ``Playbill.accept`` by handle.
+
+        Next: ``pb.at(receipt.accepted_coordinate)`` to read exactly what was accepted.
+        """
+        return self._playbill.accept(self.proposal_id)
+
+    def __repr__(self) -> str:
+        warnings = "" if not self.warnings else f", warnings={len(self.warnings)}"
+        return f"Proposal({self.proposal_id!r}{warnings})"
 
     def approve(
         self, *, signer: ApprovalSigner, reviewed: ReviewedProposal
     ) -> api.PlaybillApprovalReceipt:
-        """Sign this exact review with caller-configured custody; never activate."""
+        """Sign this exact review with caller-configured custody; never activate.
+
+        Next: ``proposal.accept()`` once enough approvals are in.
+        """
         return approve_reviewed(self._playbill, self.proposal_id, signer=signer, reviewed=reviewed)
 
     @property
     def warnings(self) -> tuple[dict[str, Any], ...]:
+        """Lint warnings the proposal was admitted with. Next: ``proposal.review()``."""
+
         return () if self.lint is None else tuple(self.lint.warnings)
 
     def status(self) -> api.PlaybillProposalListEntry:
-        """This proposal's current status, read by ID."""
+        """This proposal's current status, read by ID.
+
+        Next: ``proposal.accept()`` while open, or ``pb.next(...)`` if it went stale.
+        """
         return self._playbill._client.playbill_proposal_status(
             self._playbill._instance_id, self.proposal_id
         )
@@ -1516,6 +2033,11 @@ class Proposal:
         timeout: Duration,
         poll_interval: Duration,
     ) -> api.PlaybillProposalListEntry:
+        """Poll ``status()`` until the proposal settles, or until ``timeout``.
+
+        Next: ``pb.get(ref)`` to read what was accepted.
+        """
+
         deadline = time.monotonic_ns() + timeout.value * 1_000
         while True:
             status = self.status()
@@ -1533,6 +2055,8 @@ class Publication:
     block is declared with `block repin` over accepted Claims instead. What
     remains is the exit an instance that already published needs -- read the
     state, and abandon (depublish) the expectation.
+
+    Next: ``publication.status()``, then ``publication.abandon()``.
     """
 
     def __init__(self, intent: Intent, expectation: dict[str, object]) -> None:
@@ -1541,16 +2065,24 @@ class Publication:
 
     @property
     def state(self) -> str:
+        """The expectation's state as last read. Next: ``publication.status()`` to read it
+        fresh.
+        """
+
         return str(self._expectation.get("state", "terminal"))
 
     @property
     def expectation_id(self) -> str:
+        """The expectation's ID. Next: ``publication.abandon()``."""
+
         value = self._expectation.get("expectation_id")
         if not isinstance(value, str):
             raise ValueError("insertion expectation omitted its ID")
         return value
 
     def status(self) -> str:
+        """Read the expectation's state fresh. Next: ``publication.abandon()`` to depublish it."""
+
         self._intent._refresh_raw()
         expectations = self._intent._raw.get("insertion_expectations")
         if isinstance(expectations, list):
@@ -1561,6 +2093,8 @@ class Publication:
         return self.state
 
     def abandon(self) -> Publication:
+        """Abandon (depublish) this expectation. Next: ``publication.status()``."""
+
         result = self._intent._playbill._client.abandon_playbill_authoring_insertion(
             self._intent._playbill._instance_id,
             self._intent.intent_id,
@@ -1583,27 +2117,37 @@ def _wait_for_status(call: Any, *, timeout: Duration, poll_interval: Duration) -
 
 
 class Playbill:
+    """One connection to one Playbill instance: read, write, see what needs doing.
+
+    Open one with ``Playbill.connect()``. Reading: ``pb.orient()`` maps what exists,
+    ``pb.query(kind, ...)`` answers questions over it, ``pb.get(ref)`` opens one thing, and the
+    exported floor under ``.playbill/floor/current/`` is plain files to grep. ``pb.world()``
+    hands back the vocabulary as objects; ``pb.world().describe()`` lists every verb and field.
+    Writing: ``pb.set``, ``pb.retire`` and ``pb.changes(because=...)``; authoring anything else:
+    ``pb.changes(rationale=...)``. Next: ``pb.next(expiring_within=...)`` for what needs
+    attention.
+    """
+
     def __init__(
         self,
         *,
         client: CruxibleClient,
         instance_id: str,
-        workspace: Path,
+        workspace: Path | None,
         access_profile: AccessProfile,
         clock: Any,
     ) -> None:
         self._client = client
         self._instance_id = instance_id
-        self._workspace = workspace.expanduser().resolve()
+        # None: a connection with no workspace. Reads serve; orient reports no
+        # floor; the members that read or write workspace files refuse.
+        self._workspace = None if workspace is None else workspace.expanduser().resolve()
         self._workspace_sources: WorkspaceSources | None = None
         self._access_profile = access_profile
         self._clock = clock
         self._coordinate: AcceptedCoordinate | None = None
         self._pinned = False
         self._owns_client = True
-        self._retirement_submissions: OrderedDict[str, tuple[ClaimRetireRequestV1, str]] = (
-            OrderedDict()
-        )
         # An accepted ClaimType at an exact coordinate never changes, so one read
         # answers every Claim this connection drafts under that predicate there.
         self._claim_type_envelopes: dict[tuple[str, str], Mapping[str, object]] = {}
@@ -1616,10 +2160,22 @@ class Playbill:
         target: str | None = None,
         instance: str | None = None,
         token: SecretStr | None = None,
+        principal_id: str | None = None,
         workspace: Path | None = None,
         access_profile: AccessProfile | None = None,
         at: AcceptedCoordinate | api.PlaybillAcceptedCoordinate | None = None,
     ) -> Playbill:
+        """Open a connection to one instance on a daemon.
+
+        The context file fills whatever is not passed. ``target`` is an ``http(s)://`` URL
+        or ``unix:<socket>``; ``instance`` the instance ID; ``token`` the bearer credential
+        (default ``CRUXIBLE_SERVER_BEARER_TOKEN``); ``principal_id`` the principal of an
+        auth-off daemon. ``at`` pins every read to one accepted coordinate; without it the
+        connection is live and reads current head. One identity read names the head; nothing
+        else is read. Use it as a context manager to close it. Next: ``pb.orient()`` to see
+        what exists.
+        """
+
         context_path = (
             Path(context).expanduser().resolve()
             if context is not None
@@ -1665,6 +2221,7 @@ class Playbill:
             base_url=resolved.server_url,
             socket_path=resolved.server_socket,
             token=raw_token,
+            principal_id=(principal_id if principal_id is not None else configured_principal_id()),
         )
         try:
             client_compatibility.check_daemon_compatibility(client)
@@ -1701,7 +2258,7 @@ class Playbill:
         client: CruxibleClient,
         *,
         instance_id: str,
-        workspace: Path,
+        workspace: Path | None,
         access_profile: AccessProfile | None = None,
         clock: Any = None,
     ) -> Playbill:
@@ -1720,7 +2277,20 @@ class Playbill:
         result.refresh()
         return result
 
+    def __repr__(self) -> str:
+        # Safe on a half-built connection, and no I/O: what this handle holds.
+        coordinate = getattr(self, "_coordinate", None)
+        at = "no coordinate yet" if coordinate is None else f"at {coordinate.git_oid[:12]}"
+        mode = "pinned" if getattr(self, "_pinned", False) else "live"
+        return f"Playbill({getattr(self, '_instance_id', '?')!r}, {at}, {mode})"
+
     def close(self) -> None:
+        """Close the transport this connection owns.
+
+        A borrowed ``at()`` context leaves it open. Next: ``Playbill.connect()`` to open
+        another.
+        """
+
         if self._owns_client:
             self._client.close()
 
@@ -1729,6 +2299,17 @@ class Playbill:
 
     def __exit__(self, *_args: object) -> None:
         self.close()
+
+    @property
+    def _workspace_root(self) -> Path:
+        """This connection's workspace, or a typed refusal when it was opened without one."""
+
+        if self._workspace is None:
+            raise SourceSelectionError(
+                f"{SourceSelectionError.code}: this connection has no workspace; "
+                "connect with workspace= to read or write workspace files"
+            )
+        return self._workspace
 
     @property
     def _sources(self) -> WorkspaceSources:
@@ -1741,7 +2322,7 @@ class Playbill:
         """
 
         if self._workspace_sources is None:
-            self._workspace_sources = WorkspaceSources(self._workspace)
+            self._workspace_sources = WorkspaceSources(self._workspace_root)
         return self._workspace_sources
 
     @property
@@ -1750,6 +2331,9 @@ class Playbill:
 
         This property performs no I/O. Live reads resolve current head in their
         own request, so this value is not a freshness check.
+
+        Next: ``pb.at(pb.coordinate)`` to pin later reads to it, or ``pb.orient()`` to read
+        current head.
         """
         if self._coordinate is None:
             raise ValueError("Playbill has not installed an orientation coordinate")
@@ -1762,6 +2346,8 @@ class Playbill:
         Writes still undergo current daemon admission and may reject stale input.
         The owning connection must remain open; closing this borrowed context
         does not close its parent's transport. Operational queues remain live.
+
+        Next: any read on the returned context, e.g. ``pb.at(coordinate).get(ref)``.
         """
         result = Playbill(
             client=self._client,
@@ -1797,7 +2383,10 @@ class Playbill:
 
     @property
     def block(self) -> ProjectionBlocks:
-        """Client-only declaration stamps; prose remains wholly agent-owned."""
+        """Client-only declaration stamps; prose remains wholly agent-owned.
+
+        Next: ``pb.block.sync()`` to check every declared block.
+        """
 
         return ProjectionBlocks(self)
 
@@ -1807,14 +2396,15 @@ class Playbill:
         The wire read returns a fact array keyed by schema id, so answering
         "what does this Claim say, and is it believed" means walking that array
         by hand every time. This is that walk, once.
+
+        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
         """
 
         identity = _address(claim, RefKind.CLAIM) if isinstance(claim, ClaimRef) else claim
-        requested = self._read_at(claim.coordinate if isinstance(claim, ClaimRef) else None)
-        view = self._client.get_playbill_claim(
-            self._instance_id, identity, at=requested, evaluation_time=self._evaluation_time()
-        )
-        self._observe_read(_coordinate(view.coordinate), expected=requested)
+        proof = self._get(
+            identity, "proof", None, claim.coordinate if isinstance(claim, ClaimRef) else None
+        ).proof
+        view = api.PlaybillClaimViewV2.model_validate(proof)
         return self._with_exact_text(
             self._typed_claim_view(view, identity), _coordinate(view.coordinate)
         )
@@ -1901,7 +2491,12 @@ class Playbill:
     def capture(
         self, capture: str | CaptureRef, *, max_bytes: int = 4 * 1024 * 1024
     ) -> CaptureView:
-        """Open retained evidence at this SDK coordinate, without refetching it."""
+        """Open retained evidence at this SDK coordinate, without refetching it.
+
+        ``capture`` is a digest, a ``CAP-<12+ hex>`` handle or a ``CaptureRef``. Next:
+        ``view.text()`` or ``view.json()`` for the material, or pass ``view.ref`` as
+        ``supported_by=``.
+        """
         if isinstance(capture, CaptureRef):
             self._assert_coordinate(capture.coordinate)
         result = self._client.read_playbill_capture(
@@ -1921,6 +2516,8 @@ class Playbill:
 
         The complete batch preserves input order and all single-view fields.
         Use explicit batches for larger selections; no population read is implied.
+
+        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
         """
         from cruxible_client.contracts.claim_reads import ClaimReadBatchRequestV1
 
@@ -1960,6 +2557,8 @@ class Playbill:
 
         ``hypothesis`` is a Claim ID (``CLM-...``); the daemon resolves its
         accepted version. An exact ``ClaimVersionReferenceV1`` is the advanced form.
+
+        Next: ``pb.settle(contract, observation=...)`` once an observation is accepted.
         """
         return self._client.resolution_contracts(
             self._instance_id,
@@ -1971,6 +2570,8 @@ class Playbill:
 
         The contract's ``hypothesis`` may be a Claim ID (``ResolutionContractInputV1``);
         the daemon pins the exact accepted version it resolves to.
+
+        Next: ``prediction.proposal.review()``, then approve and ``accept()`` it.
         """
         result = self._client.predict_playbill(
             self._instance_id, request=PlaybillPredictRequestV2(contract=contract)
@@ -1999,6 +2600,8 @@ class Playbill:
         (as ``next`` names it); ``observation`` is the settling Claim's ID. The
         daemon resolves the exact contract, window and Claim version. Exact
         references are accepted as the advanced form.
+
+        Next: ``pb.next(expiring_within=...)``; a settled window leaves the queue.
         """
         if (terminal_run_id is None) != (terminal_record_digest is None):
             raise ValueError("terminal settlement requires its run and record digest")
@@ -2035,6 +2638,8 @@ class Playbill:
         Restores the daemon's latest revision, preflight and observed proposal.
         Python call-site locations are process-local and are not reconstructed.
         Review, approval, acceptance and workspace refresh remain explicit.
+
+        Next: ``intent.status()``, then ``intent.submit()`` if it was never submitted.
         """
         raw = self._client.resume_playbill_authoring_intent(self._instance_id, intent_id).intent
         preflight = raw.get("last_preflight")
@@ -2051,7 +2656,11 @@ class Playbill:
         )
 
     def proposal(self, proposal_id: str) -> Proposal:
-        """Return a handle for an existing proposal without creating or approving it."""
+        """Return a handle for an existing proposal without creating or approving it.
+
+        Next: ``proposal.review()``, then ``proposal.approve(...)`` and
+        ``proposal.accept()``.
+        """
         return Proposal(self, proposal_id)
 
     def accept(self, proposal_id: str) -> api.PlaybillActivationReceipt:
@@ -2062,6 +2671,9 @@ class Playbill:
         The receipt's coordinate becomes this live connection's last observation.
         Subsequent live reads select current head; use at(receipt.accepted_coordinate)
         for exact readback. Explicitly pinned contexts and World snapshots stay fixed.
+
+        Next: ``pb.at(receipt.accepted_coordinate)`` to read exactly what was accepted, or
+        ``pb.refresh_workspace(at=...)`` to export the floor there.
         """
 
         receipt = self._client.activate_playbill_proposal(self._instance_id, proposal_id)
@@ -2079,11 +2691,13 @@ class Playbill:
         Reports the coordinate written, or a failed/not_configured status.
         Does not advance this connection's read coordinate or check agent-owned
         projection blocks; use block.sync() separately for that inspection.
+
+        Next: grep ``.playbill/floor/current/`` for what it wrote.
         """
 
         coordinate = api.PlaybillAcceptedCoordinate.model_validate(at.model_dump(mode="json"))
         return refresh_workspace_floor(
-            self._client, self._instance_id, workspace=self._workspace, at=coordinate
+            self._client, self._instance_id, workspace=self._workspace_root, at=coordinate
         )
 
     def activate(
@@ -2099,31 +2713,66 @@ class Playbill:
         set. Use accept() and refresh_workspace() to schedule maintenance
         separately. A live connection remembers the acceptance coordinate; pinned
         contexts and existing World snapshots stay fixed.
+
+        Next: grep ``.playbill/floor/current/``, or ``pb.get(ref)`` to read the accepted
+        change.
         """
 
         result = activate_with_workspace_refresh(
             self._client,
             self._instance_id,
             proposal_id,
-            workspace=self._workspace,
+            workspace=self._workspace_root,
             sync=not no_sync,
         )
         if result.status == "accepted" and result.accepted_coordinate is not None:
             self._observe_read(_coordinate(result.accepted_coordinate), expected=None)
         return result
 
-    def refresh(self) -> SearchPage:
-        page = self._search(
-            mode="orient",
-            query=None,
-            kinds=("claim", "demand", "procedure"),
-            statuses=(),
-            at_active_coordinate=self._pinned,
+    def upgrade_claim_types(
+        self,
+        *claim_types: str | ClaimTypeRef,
+        revision_evidence: Literal["replace", "accumulate"] = "replace",
+        dry_run: bool = False,
+    ) -> ClaimTypeUpgradeResultV1:
+        """Propose moving live ClaimTypes to v7 as one reviewed change set.
+
+        Names no ClaimType to move every live one before v7. v7 states what a
+        statement-changing revision keeps (``revision_evidence``, default
+        ``replace``); every Claim is carried with its backing intact. ``dry_run``
+        evaluates the change set and proposes nothing. Approve as usual.
+
+        Next: ``pb.proposal(result.proposal_id).review()`` and approve it.
+        """
+
+        for item in claim_types:
+            if isinstance(item, ClaimTypeRef):
+                self._assert_coordinate(item.coordinate)
+        request = ClaimTypeUpgradeRequestV1(
+            claim_types=tuple(_address(item, RefKind.CLAIM_TYPE) for item in claim_types),
+            revision_evidence=revision_evidence,
+            dry_run=dry_run,
         )
-        self._coordinate = page.coordinate
-        return page
+        return self._client.upgrade_playbill_claim_types(self._instance_id, request)
+
+    def refresh(self) -> api.PlaybillHeadV1:
+        """Re-read the accepted head (a pinned context re-reads its own coordinate).
+
+        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
+        """
+
+        requested = self._read_at() if self._pinned else None
+        head = self._client.playbill_head(self._instance_id, at=requested)
+        self._observe_read(_coordinate(head.coordinate.model_dump(mode="json")), expected=requested)
+        self._coordinate = _coordinate(head.coordinate.model_dump(mode="json"))
+        return head
 
     def file(self, path: str | Path) -> FileSelector:
+        """Select text from a catalogued workspace file, to cite as evidence.
+
+        Next: ``pb.file(path).anchor("text found once")`` and pass it as ``supported_by=``.
+        """
+
         return self._sources.select(path)
 
     def subject(
@@ -2133,6 +2782,14 @@ class Playbill:
         pins: Sequence[ArtifactPin],
         lifecycle: ArtifactLifecycle,
     ) -> SubjectDraft:
+        """Draft one Subject definition (``kind/id``) with its pins and lifecycle.
+
+        A write that names a missing Subject of a known kind adds it for you; this is for
+        defining one explicitly, or alongside other members of a change set. Next:
+        ``draft.submit()``, or ``pb.changes(rationale=...).subject(draft)`` to define it
+        with other members.
+        """
+
         address = _address(subject, RefKind.SUBJECT)
         if isinstance(subject, SubjectRef):
             self._assert_coordinate(subject.coordinate)
@@ -2174,6 +2831,11 @@ class Playbill:
         evidence_freshness: Duration | None,
         attestation_consequence_policy: ClaimAttestationConsequencePolicyV1 | None = None,
     ) -> ClaimTypeDraft:
+        """Draft a ClaimType, reading its accepted definition through get.
+
+        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
+        """
+
         kind = _enum(object_kind, ClaimObjectKind, label="claim-type object kind")
         arity = _enum(cardinality, Cardinality, label="claim-type cardinality")
         sensitivity = _enum(
@@ -2211,12 +2873,11 @@ class Playbill:
         )
         lifecycle = ArtifactLifecycle()
         if isinstance(predicate, ClaimTypeRef):
-            predecessor = self._client.get_playbill_claim_type(
-                self._instance_id,
-                name,
-                at=_api_coordinate(predicate.coordinate),
+            predecessor = self._get(f"ClaimType:{name}", "proof", None, predicate.coordinate)
+            assert predecessor.proof is not None
+            lifecycle = ArtifactLifecycle(
+                predecessor_digest=str(predecessor.proof["artifact_digest"])
             )
-            lifecycle = ArtifactLifecycle(predecessor_digest=predecessor.artifact_digest)
         definition = ClaimType(
             artifact_format="playbill-claim-type-v5",
             identity=ArtifactIdentity(kind="ClaimType", name=name),
@@ -2260,31 +2921,218 @@ class Playbill:
         takes neither a kind filter nor a cursor; a world with a thousand
         Subjects therefore costs the vocabulary at `world()` and that one list
         the first time any Subject is named.
+
+        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
         """
 
         from cruxible_client.authoring.world import build_world
 
         requested = self._read_at()
-        listing = self._client.list_playbill_claim_types(self._instance_id, at=requested)
-        coordinate = _coordinate(listing.coordinate)
+        names: list[str] = []
+        cursor: str | None = None
+        coordinate: AcceptedCoordinate | None = None
+        while True:
+            page = self._client.orient_playbill(
+                self._instance_id,
+                section="claim_types",
+                limit=api.PLAYBILL_ORIENT_MAX_LIMIT,
+                cursor=cursor,
+                at=requested if coordinate is None else _api_coordinate(coordinate),
+                surface="sdk",
+            )
+            coordinate = _coordinate(page.coordinate.model_dump(mode="json"))
+            names.extend(f"ClaimType:{item.predicate}" for item in page.claim_types or ())
+            if not page.truncated or page.next_cursor is None:
+                break
+            cursor = page.next_cursor
+        assert coordinate is not None
         self._observe_read(coordinate, expected=requested)
+        envelopes: list[Mapping[str, object]] = []
+        for start in range(0, len(names), GET_BATCH_MAX_REFS):
+            batch = self._client.playbill_get_batch(
+                self._instance_id,
+                request=PlaybillGetBatchRequestV1(
+                    refs=tuple(names[start : start + GET_BATCH_MAX_REFS]),
+                    at=_api_coordinate(coordinate),
+                    evaluation_time=datetime.fromisoformat(self._evaluation_time()),
+                ),
+            )
+            if _coordinate(batch.coordinate) != coordinate:
+                raise ValueError("the ClaimType read returned a different accepted coordinate")
+            envelopes.extend(
+                cast(Mapping[str, object], (result.proof or {})["envelope"])
+                for result in batch.results
+            )
         return build_world(
             self.at(coordinate),
             coordinate=coordinate,
-            claim_type_envelopes=tuple(view.envelope for view in listing.claim_types),
+            claim_type_envelopes=tuple(envelopes),
         )
 
-    def changes(self, *, rationale: str | None = None) -> ChangeSetDraft:
+    @overload
+    def changes(self, *, because: str, subject: str | SubjectRef | None = None) -> WriteBatch: ...
+
+    @overload
+    def changes(self, *, rationale: str | None = None) -> ChangeSetDraft: ...
+
+    def changes(
+        self,
+        *,
+        rationale: str | None = None,
+        because: str | None = None,
+        subject: str | SubjectRef | None = None,
+    ) -> ChangeSetDraft | WriteBatch:
         """Open one changeset that any mix of members can be authored into.
+
+        ``changes(because=...)`` opens the typed write batch instead:
+        ``.set(...)``, ``.add(...)`` and ``.retire(...)`` changes, sent together by
+        ``.write()``; ``subject=`` names the Subject of every change that names
+        none. ``changes(rationale=...)`` is the full authoring changeset.
 
         `pb.claim(...)` still authors exactly one Claim. This is the same
         authoring surface for an intent that carries more than one: it lowers
         once, proposes once, and admits or refuses whole. The draft retains the
         last observed coordinate for its vocabulary lookups and typed references;
         current daemon admission still checks whether its inputs are stale.
+
+        Next: ``.set(...)``/``.add(...)`` then ``.write()`` on a write batch;
+        ``.claim(...)`` and friends then ``.submit()`` on a changeset.
         """
 
+        if because is not None:
+            if rationale is not None:
+                raise ValueError(
+                    "pass because (a write batch) or rationale (a changeset), not both"
+                )
+            return WriteBatch(self, because=because, subject=subject)
+        if subject is not None:
+            raise ValueError("subject= names the default Subject of a write batch (because=)")
         return ChangeSetDraft(self.at(self.coordinate), rationale)
+
+    # -- the write verbs -------------------------------------------------------
+
+    def _write_at(self, at: WriteAt | _Unset) -> api.PlaybillAcceptedCoordinate | str | None:
+        """The read coordinate a write names: by default this context's own."""
+
+        if isinstance(at, _Unset):
+            return None if self._coordinate is None else _api_coordinate(self.coordinate)
+        if at is None or isinstance(at, str):
+            return at
+        return api.PlaybillAcceptedCoordinate.model_validate(at.model_dump(mode="json"))
+
+    def _write(self, request: PlaybillWriteRequestV1) -> WriteOutcome:
+        """Send one write and answer its outcome, or raise its refusal."""
+
+        request = request.model_copy(
+            update={"changes": observe_changes(request.changes, workspace=self._workspace_root)}
+        )
+        outcome = self._client.playbill_write(self._instance_id, request=request)
+        return self._written(outcome)
+
+    def _written(self, outcome: WriteOutcome) -> WriteOutcome:
+        pinned = outcome.accepted_coordinate
+        if outcome.status == "accepted" and pinned is not None:
+            self._observe_read(_coordinate(pinned), expected=None)
+        if not outcome.refused:
+            return outcome
+        refusal = outcome.refusal
+        if refusal is not None and refusal.code == "playbill.write.slot_changed" and pinned:
+            # The refusal showed the value the slot holds now; setting again
+            # replaces that value, which is its repair.
+            self._observe_read(_coordinate(pinned), expected=None)
+        raise WriteRefusalError(
+            "playbill.write.refused" if refusal is None else refusal.code,
+            "the write refused" if refusal is None else refusal.message,
+            change=None if refusal is None else refusal.change,
+            candidates=() if refusal is None else refusal.candidates,
+            repair_line=None if refusal is None else refusal.repair,
+            field_path=None if refusal is None else refusal.field_path,
+            outcome=outcome,
+        )
+
+    def set(
+        self,
+        subject: str | SubjectRef,
+        field: str | ClaimTypeRef,
+        value: ClaimValue | SubjectRef | LiteralValue,
+        *,
+        because: str,
+        evidence: Evidence | None = None,
+        role: WriteRole | None = None,
+        contend: bool = False,
+        expect: WriteExpect | None = None,
+        dry_run: bool = False,
+        accept: WriteAccept = "if_allowed",
+        at: WriteAt | _Unset = _UNSET,
+    ) -> WriteOutcome:
+        """Put one value in one field of one Subject, replacing the live value.
+
+        The Claim it replaces is found for you, and a missing Subject of a known
+        kind is added. It accepts in the same call when policy lets you
+        (``accept="never"`` only proposes); ``dry_run`` checks everything and
+        writes nothing. By default it refuses when the field changed since this
+        context's coordinate; ``expect`` compares by value instead: it refuses
+        unless the field holds that value now (a list for several, ``[]`` for
+        none). A refusal raises ``WriteRefusalError``; check
+        ``outcome.warnings`` for a verdict that is not supported.
+
+        Next: ``outcome.next`` names what is still needed; ``pb.get(f"{subject}")`` reads
+        the value back with its verdict.
+        """
+
+        request = PlaybillSetRequestV1(
+            subject=_write_subject(subject),
+            field=_write_field(field),
+            value=_write_value(value),
+            because=because,
+            evidence=evidence,
+            role=role,
+            contend=contend,
+            expect=_write_expect(expect),
+            dry_run=dry_run,
+            accept=accept,
+            at=self._write_at(at),
+            surface="sdk",
+            full_coordinate=True,
+        )
+        if request.evidence is not None:
+            (change,) = observe_changes((request.change(),), workspace=self._workspace_root)
+            request = request.model_copy(update={"evidence": cast(SetChange, change).evidence})
+        return self._written(self._client.playbill_set(self._instance_id, request=request))
+
+    def retire(
+        self,
+        target: str | ClaimRef | SlotRef,
+        *,
+        because: str,
+        reason: WriteRetireReason = "was-rescinded",
+        expect: WriteExpect | None = None,
+        dry_run: bool = False,
+        accept: WriteAccept = "if_allowed",
+        at: WriteAt | _Unset = _UNSET,
+    ) -> WriteOutcome:
+        """End one live Claim, named by ID or ``SlotRef(subject=..., field=...)``.
+
+        Claims that depend on it retire with it, in one change set. ``expect``
+        refuses unless its field holds that value now (every live value, as a
+        list, for a many-valued field).
+
+        Next: ``outcome.next`` names what is still needed; ``pb.get(ref, detail="history")``
+        shows the retirement.
+        """
+
+        request = PlaybillRetireRequestV1(
+            target=_write_target(target),
+            because=because,
+            reason=reason,
+            expect=_write_expect(expect),
+            dry_run=dry_run,
+            accept=accept,
+            at=self._write_at(at),
+            surface="sdk",
+            full_coordinate=True,
+        )
+        return self._written(self._client.playbill_retire(self._instance_id, request=request))
 
     def claim(
         self,
@@ -2304,6 +3152,17 @@ class Playbill:
         subject_definition: SubjectDraft | None = None,
         claim_type_definition: ClaimTypeDraft | None = None,
     ) -> ClaimDraft:
+        """Author exactly one Claim, as a draft to submit.
+
+        The write verbs (``pb.set``, ``pb.changes(because=...)``) cover the common case and
+        infer the role, revision and evidence; this is the full authoring surface: role,
+        rationale, qualifiers, effective periods, explicit revisions, dispositions and
+        Subject or ClaimType definitions in the same intent. Evidence is ``supported_by=``
+        (a ``pb.file(...).anchor(...)`` selection or a ``CaptureRef``), ``copied_from=``, or
+        ``self_source=`` text. Next: ``draft.submit()`` (or ``draft.prepare()`` to preflight
+        first), then ``intent.proposal.review()``.
+        """
+
         return self._claim_draft(
             sites=capture_keyword_sites("claim", stacklevel=1),
             subject=subject,
@@ -2656,11 +3515,9 @@ class Playbill:
         key = (predicate_name, coordinate.git_oid)
         envelope = self._claim_type_envelopes.get(key)
         if envelope is None:
-            envelope = self._client.get_playbill_claim_type(
-                self._instance_id,
-                predicate_name,
-                at=_api_coordinate(coordinate),
-            ).envelope
+            proof = self._get(f"ClaimType:{predicate_name}", "proof", None, coordinate).proof
+            assert proof is not None
+            envelope = proof["envelope"]
             self._claim_type_envelopes[key] = envelope
         return envelope
 
@@ -2740,164 +3597,6 @@ class Playbill:
             return "literal"
         return cast(Literal["literal", "subject", "exact_content"], object_kind)
 
-    def retire_claim(
-        self,
-        claim: str | ClaimRef,
-        *,
-        reason: ClaimRetirementReason,
-        mode: Literal["preflight", "submit"] = "preflight",
-        effective_until: datetime | None = None,
-        dependents: Sequence[ClaimRetireDependentV1] = (),
-    ) -> api.PlaybillClaimRetireResponse:
-        """Preflight or submit one attributed, dependency-closed Claim retirement."""
-
-        claim_address = _address(claim, RefKind.CLAIM)
-        coordinate = claim.coordinate if isinstance(claim, ClaimRef) else self.coordinate
-        request = ClaimRetireRequestV1(
-            mode=mode,
-            claim_ref=claim_address,
-            reason=reason,
-            effective_until=effective_until,
-            expected_coordinate=coordinate,
-            dependents=tuple(dependents),
-        )
-        claim_id = claim_address.removeprefix("Claim:")
-        try:
-            result = self._client.retire_playbill_claim(
-                self._instance_id,
-                claim_id,
-                request=request.model_dump(mode="json"),
-            )
-        except CoreError as original:
-            if (
-                isinstance(claim, ClaimRef)
-                or mode != "submit"
-                or getattr(original, "error_code", None) != _RETIRE_CLOSURE_MISMATCH_CODE
-            ):
-                raise
-            try:
-                history = self._client.playbill_claim_history(self._instance_id, claim_id)
-                cached = self._retirement_submissions.get(claim_id)
-                if cached is None:
-                    submitted_request, submitted_operation_digest = (
-                        self._retirement_submission_from_history(
-                            claim_id=claim_id,
-                            request=request,
-                            entries=history.entries,
-                        )
-                    )
-                else:
-                    self._retirement_submissions.move_to_end(claim_id)
-                    submitted_request, submitted_operation_digest = cached
-                replay_request = request.model_copy(
-                    update={"expected_coordinate": submitted_request.expected_coordinate}
-                )
-                if replay_request != submitted_request:
-                    raise ValueError("retirement request differs from submitted operation")
-                replayed = self._client.retire_playbill_claim(
-                    self._instance_id,
-                    claim_id,
-                    request=replay_request.model_dump(mode="json"),
-                )
-            except (CoreError, KeyError, TypeError, ValueError):
-                raise original from None
-            if (
-                getattr(replayed, "outcome", None) != "already_retired"
-                or replayed.operation_digest != submitted_operation_digest
-            ):
-                raise original
-            self._retirement_submissions.pop(claim_id, None)
-            return replayed
-        if mode == "submit" and getattr(result, "outcome", None) == "proposed":
-            self._retirement_submissions[claim_id] = (request, result.operation_digest)
-            self._retirement_submissions.move_to_end(claim_id)
-            while len(self._retirement_submissions) > _RETIREMENT_SUBMISSION_CACHE_LIMIT:
-                self._retirement_submissions.popitem(last=False)
-        return result
-
-    def _retirement_submission_from_history(
-        self,
-        *,
-        claim_id: str,
-        request: ClaimRetireRequestV1,
-        entries: Sequence[Mapping[str, Any]],
-    ) -> tuple[ClaimRetireRequestV1, str]:
-        """Recover one accepted retirement's original request coordinate and digest."""
-
-        retirement = next(
-            (entry for entry in entries if entry.get("lifecycle_state") == "retired"),
-            None,
-        )
-        if retirement is None:
-            raise ValueError("accepted Claim history has no retirement")
-        candidate_digest = retirement.get("candidate_digest")
-        predecessor_digest = retirement.get("predecessor_digest")
-        if not isinstance(candidate_digest, str) or not isinstance(predecessor_digest, str):
-            raise ValueError("accepted retirement history lacks candidate evidence")
-
-        matches = tuple(
-            entry
-            for entry in _all_proposals(self._client, self._instance_id, status="settled")
-            if entry.candidate_digest == candidate_digest and entry.terminal_reason == "accepted"
-        )
-        if len(matches) != 1:
-            raise ValueError("accepted retirement candidate does not name one proposal")
-        inspection = self._client.inspect_playbill_proposal(
-            self._instance_id, matches[0].proposal_id
-        )
-        proposal = inspection.proposal
-        admission = proposal.get("admission")
-        candidate = proposal.get("candidate")
-        if not isinstance(admission, Mapping) or not isinstance(candidate, Mapping):
-            raise ValueError("accepted retirement proposal evidence is incomplete")
-        if candidate.get("candidate_digest") != candidate_digest:
-            raise ValueError("accepted retirement proposal candidate differs from history")
-
-        law_evidence = candidate.get("law_evidence")
-        if not isinstance(law_evidence, list) or not law_evidence:
-            raise ValueError("accepted retirement candidate lacks law coordinates")
-        coordinates = {
-            json.dumps(item.get("evaluation_coordinate"), sort_keys=True, separators=(",", ":"))
-            for item in law_evidence
-            if isinstance(item, Mapping) and isinstance(item.get("evaluation_coordinate"), Mapping)
-        }
-        if len(coordinates) != 1:
-            raise ValueError("accepted retirement candidate mixes law coordinates")
-        coordinate_payload = json.loads(next(iter(coordinates)))
-        coordinate_payload["tag"] = "playbill-accepted-coordinate-v1"
-        coordinate = AcceptedCoordinate.model_validate(coordinate_payload)
-        if admission.get("proposed_base_oid") != coordinate.git_oid:
-            raise ValueError("accepted retirement proposal base differs from its law coordinate")
-
-        actor_id = admission.get("actor_id")
-        target_ref = admission.get("target_ref")
-        if not isinstance(actor_id, str) or not isinstance(target_ref, str):
-            raise ValueError("accepted retirement proposal lacks operation attribution")
-        target_prefix = f"refs/proposals/{actor_id}/claim-retire-"
-        if not target_ref.startswith(target_prefix):
-            raise ValueError("accepted retirement proposal has another operation family")
-        operation_digest = "sha256:" + target_ref.removeprefix(target_prefix)
-        Sha256Value.from_tagged(operation_digest)
-        root = ClaimRetireDependentV1(
-            artifact_identity=ArtifactIdentity(kind="Claim", name=claim_id),
-            predecessor_digest=predecessor_digest,
-            reason=request.reason,
-            effective_until=request.effective_until,
-        )
-        reproduced = typed_digest(
-            Sha256Value,
-            _CLAIM_RETIRE_OPERATION_DOMAIN,
-            {
-                "actor_principal_id": actor_id,
-                "expected_accepted_coordinate": coordinate.model_dump(mode="json"),
-                "root": root.model_dump(mode="json"),
-                "dependents": [item.model_dump(mode="json") for item in request.dependents],
-            },
-        ).tagged
-        if reproduced != operation_digest:
-            raise ValueError("retirement request differs from accepted operation")
-        return request.model_copy(update={"expected_coordinate": coordinate}), operation_digest
-
     def query_definition(
         self,
         *,
@@ -2910,6 +3609,9 @@ class Playbill:
         that their versions still match the intent base; same-set refs resolve
         after sibling definitions. Both ontology and relationship queries use
         this path, including declarative CLI/MCP inputs.
+
+        Next: ``draft.submit()``; once accepted, ``pb.query(name=..., params={...})`` runs
+        it.
         """
         payload = lower_authoring_input(definition)
         assert isinstance(payload, QueryDefinitionAuthoringPayloadV1)
@@ -2946,26 +3648,22 @@ class Playbill:
 
         Discovery never installs a provider or authorizes its execution. Multiple
         implementations require an explicit selection rather than an arbitrary default.
+
+        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
         """
         identity = (
             interface
             if interface.startswith("ProviderInterface:")
             else "ProviderInterface:" + interface
         )
-        inventory = self._client.discover_playbill(
-            self._instance_id,
-            profile="interfaces",
-            at=self._read_at(None),
-        )
-        if not isinstance(inventory, api.PlaybillInterfaceInventory):
-            raise ValueError("Provider interface discovery returned no inventory")
-        matches = [entry for entry in inventory.interfaces if entry.identity == identity]
-        if len(matches) != 1:
-            raise ValueError(f"No unique accepted provider interface {identity!r}")
-        return ProviderBinding.from_interface(matches[0], provider=provider).model_copy(
+        read = self._get(identity, "proof", None, None)
+        if read.proof is None or read.accepted_coordinate is None:
+            raise ValueError(f"No accepted provider interface {identity!r}")
+        entry = api.PlaybillProviderInterfaceEntry.model_validate(read.proof["entry"])
+        return ProviderBinding.from_interface(entry, provider=provider).model_copy(
             update={
                 "coordinate": AcceptedCoordinate.model_validate(
-                    inventory.coordinate.model_dump(mode="json")
+                    read.accepted_coordinate.model_dump(mode="json")
                 )
             },
             deep=True,
@@ -2990,6 +3688,9 @@ class Playbill:
         Activation, retirement, and the optional acquisition-policy name are
         also carried by this input. The daemon resolves the policy at the same
         base as the graph's other dependencies.
+
+        Next: ``draft.submit()``, then ``pb.accepted_procedure(name).run(...)`` once
+        accepted.
         """
 
         sites = capture_keyword_sites("procedure", stacklevel=1)
@@ -3070,12 +3771,19 @@ class Playbill:
         )
 
     def query_binding(self, query: str | QueryRef) -> QueryBinding:
-        """Read an exact query and its parameter types through accepted discovery."""
+        """Read an exact query and its parameter types through accepted discovery.
+
+        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
+        """
         name = _address(query, RefKind.QUERY)
-        requested = self._read_at(query.coordinate if isinstance(query, QueryRef) else None)
-        view = self._client.get_playbill_query_definition(self._instance_id, name, at=requested)
+        proof = self._get(
+            f"query:{name}",
+            "proof",
+            None,
+            query.coordinate if isinstance(query, QueryRef) else None,
+        ).proof
+        view = api.PlaybillQueryDefinitionView.model_validate(proof)
         coordinate = _coordinate(view.coordinate)
-        self._observe_read(coordinate, expected=requested)
         return QueryBinding(
             QueryRef(view.name, coordinate),
             QueryDefinitionV1.model_validate(view.envelope),
@@ -3089,7 +3797,10 @@ class Playbill:
         parameters: Mapping[str, object] | None = None,
         budgets: QueryBudgetsV1 | None = None,
     ) -> api.PlaybillQueryRun:
-        """Run a named query at this SDK view's coordinate with a replay receipt."""
+        """Run a named query at this SDK view's coordinate with a replay receipt.
+
+        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
+        """
         if isinstance(query, QueryBinding):
             if parameters is not None and not isinstance(parameters, Record):
                 raise TypeError("a QueryBinding requires parameters made by binding.parameters")
@@ -3097,13 +3808,37 @@ class Playbill:
             query = query.ref
         name = _address(query, RefKind.QUERY)
         requested = self._read_at(query.coordinate if isinstance(query, QueryRef) else None)
-        return self._client.run_playbill_query(
+        # The named query's full receipt is the run: its replayable result and
+        # execution receipt; one rendered row is enough beside it.
+        page = self._client.query_playbill(
             self._instance_id,
-            name,
-            evaluation_time=self._evaluation_time(),
-            parameters=None if parameters is None else dict(parameters),
-            at=requested,
-            budgets=None if budgets is None else budgets.model_dump(mode="json"),
+            request=api.PlaybillQueryRequestV1.model_validate(
+                {
+                    "name": name,
+                    "params": None if parameters is None else dict(parameters),
+                    "budgets": budgets,
+                    "receipt": "full",
+                    "limit": 1,
+                    "at": None if requested is None else requested.model_dump(mode="json"),
+                    "evaluation_time": self._evaluation_time(),
+                }
+            ),
+        )
+        self._observe_read(
+            _coordinate(page.receipt.coordinate.model_dump(mode="json")), expected=requested
+        )
+        replay = page.receipt.replay
+        if replay is None:  # pragma: no cover - a full receipt always carries its replay
+            raise ValueError("the named query answered no replay receipt")
+        return api.PlaybillQueryRun(
+            coordinate=api.PlaybillAcceptedCoordinate.model_validate(
+                page.receipt.coordinate.model_dump(mode="json")
+            ),
+            name=name,
+            definition_path=replay.definition_path,
+            definition_digest=page.receipt.spec_digest,
+            result=replay.result,
+            receipt=replay.execution,
         )
 
     def query(
@@ -3113,7 +3848,13 @@ class Playbill:
         where: Sequence[QueryFilterV1 | Mapping[str, object]] | None = None,
         contains: str | None = None,
         select: Sequence[str] | None = None,
-        follow: Sequence[QueryFollowV1 | Mapping[str, str] | tuple[str, str]] | None = None,
+        follow: Sequence[
+            QueryFollowV1
+            | Mapping[str, str]
+            | tuple[str, str]
+            | tuple[str, str, QueryFollowDirection]
+        ]
+        | None = None,
         order_by: Sequence[str] | None = None,
         limit: int = api.PLAYBILL_QUERY_DEFAULT_LIMIT,
         cursor: str | None = None,
@@ -3122,6 +3863,10 @@ class Playbill:
         params: Mapping[str, object] | None = None,
         at: AcceptedCoordinate | str | None = None,
         evaluation_time: datetime | str | None = None,
+        status: Sequence[QueryClaimStatus] = ("live",),
+        claims: bool = False,
+        budgets: QueryBudgetsV1 | None = None,
+        receipt: QueryReceiptDetail = "compact",
     ) -> QueryResult:
         """Answer any question over accepted state: one page of values with flags.
 
@@ -3129,10 +3874,21 @@ class Playbill:
         filters such as ``{"field": "adoption_state", "eq": "adopted"}``,
         ``select``, ``follow`` and ``order_by``), a ``spec``, or a query ``name``
         with ``params``. ``next_page()`` continues a truncated answer.
+
+        A follow is ``(field, alias)`` forward along the kind's own predicate, or
+        ``(field, alias, "reverse")`` backwards along another kind's predicate
+        that points at this kind, e.g. ``("dev.batch.delivers", "batch",
+        "reverse")`` from ``dev.roadmap_item``; a mapping or ``QueryFollowV1``
+        with ``direction`` works too.
+
+        Next: ``result.next_page()`` while truncated; ``pb.get(ref)`` on any row's ref or
+        Claim ID for its evidence and history.
         """
 
         follows = [
-            {"field": item[0], "as": item[1]} if isinstance(item, tuple) else item
+            dict(zip(("field", "as", "direction"), item, strict=False))
+            if isinstance(item, tuple)
+            else item
             for item in follow or ()
         ]
         request = api.PlaybillQueryRequestV1.model_validate(
@@ -3153,6 +3909,10 @@ class Playbill:
                 "spec": spec,
                 "name": None if name is None else _address(name, RefKind.QUERY),
                 "params": None if params is None else dict(params),
+                "status": tuple(status),
+                "claims": claims,
+                "budgets": budgets,
+                "receipt": receipt,
             }
         )
         return self._run_query_request(request, at=at, evaluation_time=evaluation_time)
@@ -3204,6 +3964,12 @@ class Playbill:
         return QueryResult(page, fetch=fetch)
 
     def accepted_procedure(self, procedure: str | ProcedureRef) -> Procedure:
+        """A handle on one accepted Procedure, read lazily.
+
+        Next: ``procedure.run(input=procedure.input(...))``, or ``pb.get(procedure.ref)``
+        for its readiness and track record.
+        """
+
         name = _address(procedure, RefKind.PROCEDURE)
         requested = self._read_at(
             procedure.coordinate if isinstance(procedure, ProcedureRef) else None
@@ -3219,7 +3985,11 @@ class Playbill:
         limit: int = 100,
         cursor: str | None = None,
     ) -> LineTriggerCheckResultV1:
-        """Inspect trigger eligibility and retained admissions without starting work."""
+        """Inspect trigger eligibility and retained admissions without starting work.
+
+        Next: ``pb.evaluate_line(...)`` for a missed range, or ``pb.dispatch_line(line)``
+        for pending work.
+        """
         return self._client.check_playbill_line(
             self._instance_id,
             line,
@@ -3232,6 +4002,9 @@ class Playbill:
         Runs use this connection's credential, rechecked before each admission,
         and the Line version current now. Work already pending stays for
         `dispatch_line`. Arming it again unchanged returns `outcome="already_armed"`.
+
+        Next: ``pb.line_status(line)``, or ``pb.get(f"Line:{line}")`` for its occurrences
+        and runs.
         """
         return self._client.arm_playbill_line(self._instance_id, line)
 
@@ -3239,11 +4012,17 @@ class Playbill:
         """Stop a Line admitting work on its own; admitted runs are not cancelled.
 
         A Line whose arm already stopped returns `outcome="already_disarmed"`.
+
+        Next: ``pb.arm_line(line)`` to resume it.
         """
         return self._client.disarm_playbill_line(self._instance_id, line)
 
     def line_status(self, line: str) -> api.LineArmV1:
-        """The Line's current arm, or its last one and why it stopped."""
+        """The Line's current arm, or its last one and why it stopped.
+
+        Next: ``pb.arm_line(line)`` if it stopped, or ``pb.get(f"Line:{line}")`` for its
+        runs.
+        """
         return self._client.playbill_line_status(self._instance_id, line)
 
     def evaluate_line(
@@ -3255,7 +4034,10 @@ class Playbill:
         limit: int = 100,
         cursor: str | None = None,
     ) -> api.LineTriggerCheckResultV1:
-        """Explicitly turn a missed range into pending occurrences."""
+        """Explicitly turn a missed range into pending occurrences.
+
+        Next: ``pb.dispatch_line(line)`` to admit what it found.
+        """
         return self._client.evaluate_playbill_line(
             self._instance_id,
             line,
@@ -3265,7 +4047,10 @@ class Playbill:
     def dispatch_line(
         self, line: str, *, occurrence_id: str | None = None, limit: int = 1, retry: bool = False
     ) -> api.LineDispatchResultV1:
-        """Admit pending work using this connection's current actor and authority."""
+        """Admit pending work using this connection's current actor and authority.
+
+        Next: ``pb.get(f"ProcedureRun:{item.run_id}")`` for each admitted run.
+        """
         return self._client.dispatch_playbill_line(
             self._instance_id,
             line,
@@ -3287,6 +4072,9 @@ class Playbill:
 
         ``trigger`` names the Trigger this occurrence fires on; omit it only for
         a Line no live Trigger aims at, which runs when run explicitly.
+
+        Next: ``run.succeeded`` and ``run.result``, or
+        ``pb.get(f"ProcedureRun:{run.run_id}")``.
         """
 
         result = self._client.run_playbill_line(
@@ -3312,9 +4100,17 @@ class Playbill:
         ``ref`` is a typed ref or any string form an agent sees: ``CLM-…`` or a
         unique prefix, ``kind/id``, a predicate, ``ClaimType:``/``Document:``/
         ``Procedure:``/``query:``/``CaptureContract:<name>``, an artifact path,
-        or a proposal id. A wrong or ambiguous name refuses with the nearest
-        names. A Claim summary is a ``ClaimView``; other summaries are the
-        values-first card; other details carry that detail's payload.
+        a proposal id, or an operational reference: ``Line:<name>`` (or the
+        Line identity digest ``next`` names), ``CAP-<12+ hex>`` /
+        ``Capture:<digest>``, ``ResolutionContract:<name>``, ``Mandate:<name>``
+        and ``ProcedureRun:<run_id>`` (or ``RUN-<12+ hex>``). A wrong or
+        ambiguous name refuses with the nearest names. A Claim summary is a
+        ``ClaimView``; other summaries are the values-first card; other
+        details carry that detail's payload.
+
+        Next: ``detail="evidence"`` for what backs a Claim, ``detail="history"`` for its
+        revisions, ``detail="proof"`` for the full envelope; ``card.ref`` passes the thing
+        on as a typed ref.
         """
 
         if isinstance(ref, SourceRef):
@@ -3434,23 +4230,6 @@ class Playbill:
             matches[0],
         )
 
-    def search(
-        self,
-        *,
-        query: str,
-        kinds: Collection[str],
-        statuses: Collection[str],
-    ) -> SearchPage:
-        return self._search(mode="search", query=query, kinds=kinds, statuses=statuses)
-
-    def list(
-        self,
-        *,
-        kinds: Collection[str],
-        statuses: Collection[str],
-    ) -> SearchPage:
-        return self._search(mode="list", query=None, kinds=kinds, statuses=statuses)
-
     def orient(
         self,
         *,
@@ -3464,10 +4243,18 @@ class Playbill:
         With no arguments: each Subject kind with its count and predicates,
         artifact counts, named queries, whether this caller can author, what
         needs attention, and ``next`` suggestions written as SDK calls.
-        ``kind`` reads one kind in full with sample Subject IDs; ``section``
+        ``kind`` reads one kind in full with sample Subject IDs and the
+        predicates that point at it (``incoming``: follow one with
+        ``query(kind, follow=[(predicate, alias, "reverse")])``); ``section``
         pages documents, procedures, claim_types, queries or interfaces (the
-        provider interfaces a Procedure can call). Follow
-        ``next_cursor`` while ``truncated``.
+        provider interfaces a Procedure can call), or an operational family:
+        runs, lines, captures, capture_contracts, predictions or mandates. Follow
+        ``next_cursor`` while ``truncated``. When this workspace holds an
+        exported floor, ``floor`` says the coordinate it is at and how many
+        generations it is behind this answer.
+
+        Next: the answer's own ``next`` calls; ``pb.query(kind, ...)`` for values,
+        ``pb.get(ref)`` for one thing.
         """
 
         requested = self._read_at()
@@ -3485,66 +4272,10 @@ class Playbill:
             result.coordinate,
             expected=requested if cursor is None else None,
         )
-        return result
-
-    def _search(
-        self,
-        *,
-        mode: Literal["search", "list", "orient"],
-        query: str | None,
-        kinds: Collection[str],
-        statuses: Collection[str],
-        subject: Mapping[str, object] | None = None,
-        cursor: Mapping[str, object] | None = None,
-        at_active_coordinate: bool = True,
-    ) -> SearchPage:
-        result = self._client.search_playbill(
-            self._instance_id,
-            mode=mode,
-            query=query,
-            kinds=tuple(kinds),
-            statuses=tuple(statuses),
-            subject=None if subject is None else dict(subject),
-            cursor=None if cursor is None else dict(cursor),
-            at=(None if not at_active_coordinate else self._read_at()),
-            evaluation_time=self._evaluation_time(),
-        )
-        self._observe_read(
-            _coordinate(result.coordinate),
-            expected=self._read_at() if at_active_coordinate else None,
-        )
-        return SearchPage(
-            coordinate=_coordinate(result.coordinate),
-            evaluation_time=result.evaluation_time,
-            rows=tuple(cast(dict[str, object], row) for row in result.rows),
-            result_digest=result.result_digest,
-            cursor=cast(dict[str, object] | None, result.next_cursor),
-            truncated=result.truncated,
-            orientation=cast(dict[str, object] | None, result.orientation),
-        )
-
-    def explain(self, ref: str | TypedRef) -> object:
-        if isinstance(ref, ClaimRef) or (
-            isinstance(ref, str) and ref.removeprefix("Claim:").startswith("CLM-")
-        ):
-            identity = ref.address if isinstance(ref, ClaimRef) else ref
-            requested = self._read_at(ref.coordinate if isinstance(ref, ClaimRef) else None)
-            result = self._client.explain_playbill_claim(
-                self._instance_id,
-                identity,
-                at=requested,
-                evaluation_time=self._evaluation_time(),
-            )
-            self._observe_read(_coordinate(result.coordinate), expected=requested)
+        if self._workspace is None:
+            # No workspace, no floor to compare: the floor is unknown, not stale.
             return result
-        if isinstance(ref, SubjectRef):
-            self._read_at(ref.coordinate)
-            return self._client.explain_playbill_subject(
-                self._instance_id,
-                subject=_subject_address(ref.address).model_dump(mode="json"),
-                at=_api_coordinate(ref.coordinate),
-            )
-        raise ReferenceKindError("explain requires a ClaimRef or SubjectRef in G6")
+        return workspace_floor_freshness(self._workspace, result)
 
     def _append_attestation(
         self,
@@ -3568,7 +4299,11 @@ class Playbill:
         note: str | None = None,
         valid_until: datetime | None = None,
     ) -> ClaimAttestationAppendResultV1:
-        """Sign that the caller examined the current exact Claim and append it once."""
+        """Sign that the caller examined the current exact Claim and append it once.
+
+        Next: ``pb.get(claim)`` shows the attestation among the Claim's flags;
+        ``detail="evidence"`` lists it.
+        """
 
         identity = claim.address if isinstance(claim, ClaimRef) else claim
         return self._append_attestation(
@@ -3596,20 +4331,34 @@ class Playbill:
         *,
         signer: ClaimAttestationV2Signer,
     ) -> ClaimAttestationAppendResultV1:
-        """Append a pre-staged new-Capture observation after exact client signing."""
+        """Append a pre-staged new-Capture observation after exact client signing.
+
+        Next: ``pb.get(claim, detail="evidence")`` to see it among the Claim's attestations.
+        """
 
         if request.attestation_basis != "new_capture":
             raise ValueError("attest_new_capture requires attestation_basis='new_capture'")
         return self._append_attestation(prepared=request, signer=signer)
 
     def next(self, *, expiring_within: Duration) -> NextPage:
+        """Read the whole queue of work that needs this caller.
+
+        The queue covers accepted state and this workspace. Every page is read, pinned to
+        the first page's instant, coordinate and attestation head; ``expiring_within`` says
+        how far ahead expiring evidence counts. Each item names its ``reason``, the thing it
+        is about and its ``repair``, rendered as an SDK call this caller can run
+        (``repair_requires`` names what a withheld one needs). ``page.status`` reports the
+        environment: the floor, the ledger mirror, providers, Line dispatch. Next: run an
+        item's ``repair.command``, or ``pb.get(item.subject_identity)`` to look first.
+        """
+
         requested_coordinate = self._read_at()
         access_profile = self._access_profile.model_dump()
         observation, scanned_coordinate = observe_playbill_next_workspace_with_coverage(
             self._client,
             self._instance_id,
-            self._workspace,
-            observation=observe_playbill_next_workspace(self._workspace),
+            self._workspace_root,
+            observation=observe_playbill_next_workspace(self._workspace_root),
             coordinate=requested_coordinate,
             access_profile=access_profile,
             # Only procedure-projection-only workspaces need a separate head
@@ -3661,7 +4410,11 @@ class Playbill:
         max_bytes: int = 65_536,
         cursor: api.PlaybillSinceCursor | Mapping[str, object] | None = None,
     ) -> api.PlaybillSinceResult:
-        """Read accepted changes at current head, a pinned context, or the cursor's snapshot."""
+        """Read accepted changes at current head, a pinned context, or the cursor's snapshot.
+
+        Next: pass ``result.next_cursor`` back as ``cursor`` while truncated;
+        ``pb.get(ref)`` on a changed artifact.
+        """
 
         result = self._client.since_playbill(
             self._instance_id,
@@ -3681,14 +4434,17 @@ class Playbill:
         """Read one page of the curation queue with one explicit attributed workspace scan.
 
         A truncated page carries ``next_cursor``; pass it back as ``cursor``.
+
+        Next: ``pb.curation_overrule(...)``, ``pb.curation_accept_fixed(...)`` or
+        ``pb.curation_suppress(...)`` on an item.
         """
 
         access_profile = self._access_profile.model_dump()
         observation, _coordinate = observe_playbill_next_workspace_with_coverage(
             self._client,
             self._instance_id,
-            self._workspace,
-            observation=observe_playbill_next_workspace(self._workspace),
+            self._workspace_root,
+            observation=observe_playbill_next_workspace(self._workspace_root),
             access_profile=access_profile,
         )
         return self._client.list_playbill_curation(
@@ -3709,7 +4465,11 @@ class Playbill:
         max_bytes: int = 65_536,
         cursor: api.PlaybillAuditCursor | Mapping[str, object] | None = None,
     ) -> api.PlaybillAuditResult:
-        """Rank visible Claim verification work without changing governed state."""
+        """Rank visible Claim verification work without changing governed state.
+
+        Next: ``pb.get(row's Claim ID, detail="evidence")``, then ``pb.attest(...)`` once
+        examined.
+        """
 
         result = self._client.audit_playbill(
             self._instance_id,
@@ -3733,7 +4493,10 @@ class Playbill:
         reason: str,
         attribution_refs: tuple[str, ...] = (),
     ) -> api.PlaybillCurationActionResult:
-        """Record that a detector pattern is mechanically inapplicable."""
+        """Record that a detector pattern is mechanically inapplicable.
+
+        Next: ``pb.curation_list()``; the item no longer asks.
+        """
 
         return self._client.overrule_playbill_curation(
             self._instance_id,
@@ -3753,7 +4516,10 @@ class Playbill:
         accepted_changeset_digest: str,
         attribution_refs: tuple[str, ...] = (),
     ) -> api.PlaybillCurationActionResult:
-        """Link an item to an exact already-accepted resolving ChangeSet."""
+        """Link an item to an exact already-accepted resolving ChangeSet.
+
+        Next: ``pb.curation_list()``; the item is resolved.
+        """
 
         return self._client.accept_fixed_playbill_curation(
             self._instance_id,
@@ -3775,7 +4541,10 @@ class Playbill:
         until_generation: int | None = None,
         attribution_refs: tuple[str, ...] = (),
     ) -> api.PlaybillCurationActionResult:
-        """Hide matching open work without resolving or stopping detection."""
+        """Hide matching open work without resolving or stopping detection.
+
+        Next: ``pb.curation_list()``; matching work is hidden until it lapses.
+        """
 
         return self._client.suppress_playbill_curation(
             self._instance_id,
@@ -3799,6 +4568,11 @@ class Playbill:
 
 
 class ProjectionBlocks:
+    """Declared projection blocks: client-side stamps over accepted Claims in workspace files.
+
+    Next: ``pb.block.sync()`` to check every block.
+    """
+
     def __init__(self, playbill: Playbill) -> None:
         self._playbill = playbill
 
@@ -3821,6 +4595,8 @@ class ProjectionBlocks:
 
         Compact markers are the default: digest references with local manifests. Subsequent
         repins preserve that format.
+
+        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
         """
         source_id = _address(source, RefKind.SOURCE)
         if isinstance(source, SourceRef):
@@ -3842,7 +4618,7 @@ class ProjectionBlocks:
         return repin_projection_block(
             self._playbill._client,
             self._playbill._instance_id,
-            workspace=self._playbill._workspace,
+            workspace=self._playbill._workspace_root,
             source_id=source_id,
             block_id=block_id,
             claims=claim_refs if claims is not None else None,
@@ -3863,12 +4639,15 @@ class ProjectionBlocks:
         check: bool = False,
         detach: Sequence[str | Path] = (),
     ) -> api.PlaybillBlockSyncResultV1:
-        """Check every block; policy controls whether drift fails the check."""
+        """Check every block; policy controls whether drift fails the check.
+
+        Next: ``pb.next(...)`` names each drifted block with its repair.
+        """
 
         return sync_projection_blocks(
             self._playbill._client,
             self._playbill._instance_id,
-            workspace=self._playbill._workspace,
+            workspace=self._playbill._workspace_root,
             paths=paths,
             all_sources=all,
             check=check,
@@ -3878,7 +4657,10 @@ class ProjectionBlocks:
 
 @dataclass(frozen=True)
 class MeasurementOutcome:
-    """One declared measurement's standing after an evaluation or inspection."""
+    """One declared measurement's standing after an evaluation or inspection.
+
+    Next: ``procedure.readings(run=...)`` for retained readings.
+    """
 
     measurement_name: str
     status: str
@@ -3892,7 +4674,10 @@ class MeasurementOutcome:
 
 @dataclass(frozen=True)
 class MeasurementBatch:
-    """The result of one measurement evaluation: rows plus the three coordinates."""
+    """The result of one measurement evaluation: rows plus the three coordinates.
+
+    Next: ``batch[name]`` for one measurement's outcome.
+    """
 
     run_id: str | None
     activation_coordinate: AcceptedCoordinate
@@ -3932,6 +4717,12 @@ def _measurement_batch(raw: api.PlaybillProcedureMeasureResultV1) -> Measurement
 
 
 class Procedure:
+    """A handle on one accepted Procedure by name, read lazily.
+
+    Next: ``procedure.run(input=procedure.input(...))``, or ``pb.get(procedure.ref)`` for its
+    readiness and track record.
+    """
+
     def __init__(
         self, playbill: Playbill, name: str, coordinate: AcceptedCoordinate | None
     ) -> None:
@@ -3942,7 +4733,10 @@ class Procedure:
 
     @property
     def definition(self) -> ProcedureArtifactAny:
-        """Exact accepted definition used for typed inputs and nested bindings."""
+        """Exact accepted definition used for typed inputs and nested bindings.
+
+        Next: ``procedure.input(...)`` to build a typed input.
+        """
         if self._artifact is None:
             reading = self.readiness()
             if reading.artifact is None:
@@ -3958,14 +4752,26 @@ class Procedure:
 
     @property
     def input(self) -> RecordConstructor:
+        """The typed constructor for this Procedure's input record.
+
+        Next: ``procedure.run(input=procedure.input(...))``.
+        """
+
         return procedure_record_constructor(self.definition, "input")
 
     @property
     def ref(self) -> ProcedureRef:
+        """This Procedure as a typed ref. Next: ``pb.get(procedure.ref)``."""
+
         coordinate = self._coordinate or _coordinate(self.readiness().coordinate)
         return ProcedureRef(self._name, coordinate)
 
     def readiness(self) -> api.PlaybillProcedureReadiness:
+        """Whether this Procedure can run now, and which slots still need binding.
+
+        Next: ``procedure.bind(bindings=...)`` for open slots, else ``procedure.run(...)``.
+        """
+
         requested = self._playbill._read_at(self._coordinate)
         result = self._playbill._client.playbill_procedure_readiness(
             self._playbill._instance_id,
@@ -3977,18 +4783,23 @@ class Procedure:
         return result
 
     def bind(
-        self, *, bindings: Mapping[str | SlotRef, TypedRef]
+        self, *, bindings: Mapping[str | ProcedureSlotRef, TypedRef]
     ) -> api.PlaybillProcedureBindResult:
         # Binding is a current-state write with the existing daemon admission
         # contract, not a snapshot read. Preserve its observed-reference guard.
+        """Bind this Procedure's open slots to accepted things.
+
+        Next: ``procedure.readiness()``, then ``procedure.run(...)``.
+        """
+
         coordinate = self._coordinate or self._playbill.coordinate
         self._playbill._assert_coordinate(coordinate)
         rows: list[dict[str, object]] = []
         for key, value in bindings.items():
             slot = key if isinstance(key, str) else _address(key, RefKind.SLOT)
-            if isinstance(key, SlotRef) and key.coordinate != coordinate:
+            if isinstance(key, ProcedureSlotRef) and key.coordinate != coordinate:
                 raise ValueError("procedure binding references must match its observed coordinate")
-            if isinstance(value, SlotRef):
+            if isinstance(value, ProcedureSlotRef):
                 raise ReferenceKindError("a slot cannot be bound to another slot")
             if value.coordinate != coordinate:
                 raise ValueError("procedure binding references must match its observed coordinate")
@@ -4015,6 +4826,12 @@ class Procedure:
         resolution_contract: ResolutionContractReferenceV1 | None = None,
         trigger_event: TriggerEventReferenceV1 | None = None,
     ) -> ProcedureRun:
+        """Run this Procedure on a typed input and return the run.
+
+        Next: ``run.succeeded`` and ``run.result``, or
+        ``pb.get(f"ProcedureRun:{run.run_id}")``.
+        """
+
         if at is not None and self._coordinate is not None and at != self._coordinate:
             raise ValueError("run coordinate differs from the pinned Procedure")
         if at is not None:
@@ -4048,6 +4865,8 @@ class Procedure:
         Pending measurements are reported, not evaluated; a standing resolution
         is returned rather than re-derived; calling again with the same run
         replays the same reading.
+
+        Next: ``batch[name]`` for one measurement.
         """
 
         if at is not None and self._coordinate is not None and at != self._coordinate:
@@ -4086,6 +4905,8 @@ class Procedure:
         instant and coordinate the first page was answered at travel inside
         it, so passing the cursor back with the same ``run``/``measurements``
         pages the same selection even though this call stamps a fresh clock.
+
+        Next: ``procedure.measure(run=...)`` to credit a run.
         """
 
         if at is not None and self._coordinate is not None and at != self._coordinate:
@@ -4109,6 +4930,12 @@ class Procedure:
 
 
 class ProcedureRun:
+    """One Procedure run as the daemon reported it.
+
+    Next: ``run.result`` once ``run.succeeded``; ``pb.get(f"ProcedureRun:{run.run_id}")`` for
+    its card.
+    """
+
     def __init__(
         self,
         playbill: Playbill,
@@ -4122,18 +4949,32 @@ class ProcedureRun:
 
     @property
     def run_id(self) -> str | None:
+        """The run's ID; None when admission refused it.
+
+        Next: ``pb.get(f"ProcedureRun:{run.run_id}")``.
+        """
+
         return self._raw.run_id
 
     @property
     def status(self) -> str:
+        """The run's status. Next: ``run.refresh()`` while ``running``."""
+
         return self._raw.status
 
     @property
     def succeeded(self) -> bool:
+        """Whether the run succeeded. Next: ``run.result``."""
+
         return self._raw.status == "succeeded"
 
     @property
     def result(self) -> Record:
+        """The run's output record, typed by the Procedure's output contract.
+
+        Raises unless the run succeeded. Next: write what it found with ``pb.set(...)``.
+        """
+
         if not self.succeeded:
             raise ValueError(f"Procedure has no successful output: {self.status}")
         if self._output is None:
@@ -4145,6 +4986,10 @@ class ProcedureRun:
 
     @property
     def outcome(self) -> api.PlaybillProcedureRunState:
+        """The run's full served state. Next: ``run.terminal_egress`` for what its terminals
+        did.
+        """
+
         return self._raw.model_copy(deep=True)
 
     @property
@@ -4154,20 +4999,34 @@ class ProcedureRun:
         A settle terminal reports `settle_outcome`: `settled` with the
         `accepted_git_oid`, or `proposed` with its `proposal_id` and
         `fallback_reason`.
+
+        Next: ``pb.proposal(egress.proposal_id).review()`` for a proposed settle.
         """
         return tuple(item.model_copy(deep=True) for item in self._raw.terminal_egress)
 
     @property
     def receipt(self) -> str | None:
+        """The run receipt's digest. Next: ``pb.get(f"ProcedureRun:{run.run_id}",
+        detail="proof")``.
+        """
+
         return self._raw.receipt_digest
 
     @property
     def coordinate(self) -> AcceptedCoordinate:
+        """The coordinate the run was bound to.
+
+        Next: ``pb.at(run.coordinate)`` to read what it read.
+        """
+
         return _coordinate(self._raw.coordinate)
 
     @property
     def children(self) -> tuple[ProcedureRun, ...]:
-        """Read the retained child runs through the same authorized run service."""
+        """Read the retained child runs through the same authorized run service.
+
+        Next: ``child.result`` on each.
+        """
         return tuple(
             ProcedureRun(
                 self._playbill,
@@ -4179,25 +5038,25 @@ class ProcedureRun:
         )
 
     @property
-    def track_record(self) -> object:
-        result = self._playbill._client.search_playbill(
-            self._playbill._instance_id,
-            mode="search",
-            query=str(self._raw.procedure_identity.get("name", "")),
-            kinds=("procedure",),
-            statuses=(),
-            at=self._raw.coordinate,
-            evaluation_time=self._raw.evaluation_time,
-        )
-        matches = [
-            row
-            for row in result.rows
-            if row.get("identity") == self._raw.procedure_identity.get("qualified")
-            or row.get("name") == self._raw.procedure_identity.get("name")
-        ]
-        return matches[0].get("track_record") if len(matches) == 1 else None
+    def track_record(self) -> tuple[PlaybillGetProcedureTrackRecordV1, ...]:
+        """This run's Procedure's accepted track record: one entry per promotion.
+
+        Read from ``pb.get("Procedure:<name>")`` in this connection's context
+        (its live head, or the coordinate it is pinned to), so promotions
+        accepted after this run count too. Empty until a promotion of the
+        Procedure's run exhaust is accepted. Next: ``pb.get(...)`` with
+        ``detail="proof"`` for the Procedure's full accepted definition.
+        """
+
+        name = str(self._raw.procedure_identity["name"])
+        card = self._playbill._get(f"Procedure:{name}", "summary", None, None).card
+        if not isinstance(card, PlaybillGetProcedureCardV1):
+            raise ValueError(f"get did not answer Procedure:{name} with a Procedure card")
+        return card.track_record
 
     def refresh(self) -> ProcedureRun:
+        """Read this run's state again. Next: ``run.status``."""
+
         if self.run_id is None:
             return self
         self._raw = self._playbill._client.get_playbill_procedure_run(
@@ -4206,7 +5065,10 @@ class ProcedureRun:
         return self
 
     def measure(self, *, measurements: Sequence[str] = ()) -> MeasurementBatch:
-        """Credit this run's exact grain with every due measurement's standing answer."""
+        """Credit this run's exact grain with every due measurement's standing answer.
+
+        Next: ``batch[name]`` for one measurement.
+        """
 
         if self.run_id is None:
             raise ValueError(
@@ -4237,7 +5099,6 @@ __all__ = [
     "QueryDraft",
     "Publication",
     "SDK_CONTRACT_SNAPSHOT_DIGEST",
-    "SearchPage",
     "SubjectDraft",
     "carry",
     "re_author",

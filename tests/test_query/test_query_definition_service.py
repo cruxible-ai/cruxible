@@ -16,7 +16,6 @@ from cruxible_core.indexes.typed_state import TypedStateReader
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.discovery.query_definitions import (
     service_get_playbill_query_definition,
-    service_list_playbill_query_definitions,
 )
 from tests.core_support._candidate_support import submit_query_definition_candidate
 from tests.core_support._knowledge_loop_support import (
@@ -53,16 +52,6 @@ def test_accepted_query_definition_reads_back_at_its_accepted_coordinate(tmp_pat
     assert view.artifact_digest == query_definition_digest(work_item_query()).tagged
     assert view.coordinate.git_oid == instance.accepted_coordinate().git_oid
     assert view.envelope["artifact_format"] == "playbill-query-definition-v1"
-
-
-def test_query_definition_listing_is_the_byte_sorted_accepted_inventory(tmp_path: Path) -> None:
-    instance, _owner = _accept_query(tmp_path)
-
-    listing = service_list_playbill_query_definitions(instance)
-
-    paths = tuple(item.path for item in listing.query_definitions)
-    assert paths == (query_definition_path(QUERY_NAME),)
-    assert listing.coordinate.git_oid == instance.accepted_coordinate().git_oid
 
 
 def test_absent_query_definition_is_refused_rather_than_returned_empty(tmp_path: Path) -> None:
@@ -131,11 +120,7 @@ def test_query_definition_reads_only_selected_accepted_sources(
     monkeypatch.setattr(TypedStateReader, "member_bytes", counted)
     monkeypatch.setattr(instance, "tree_at", no_tree)
     monkeypatch.setattr(instance, "immutable_tree_at", no_tree)
-    selected = service_get_playbill_query_definition(instance, name=QUERY_NAME)
-    assert reads == [query_definition_path(QUERY_NAME)]
-    reads.clear()
-    listing = service_list_playbill_query_definitions(instance)
-    assert listing.query_definitions == (selected,)
+    service_get_playbill_query_definition(instance, name=QUERY_NAME)
     assert reads == [query_definition_path(QUERY_NAME)]
     reads.clear()
     with pytest.raises(ClaimNotFoundError):

@@ -903,7 +903,7 @@ def test_a_dependent_this_set_also_retires_refuses_naming_both_members(
             )
         ),
     )
-    retirement = ClaimRetirementMemberV1(claim_ref=claims["wi-2"], reason="was-wrong")
+    retirement = ClaimRetirementMemberV1(retires=claims["wi-2"], reason="was-wrong")
     payload = _change_set(succession, retirement)
     positions = {
         authoring_member_identity(member): index for index, member in enumerate(payload.members)
@@ -1293,3 +1293,127 @@ def test_a_succession_over_the_record_ceiling_refuses_before_it_is_lowered(
         "max_change_set_record_bytes": 3 * per_member,
         "projected_change_set_record_bytes": 21 * per_member,
     }
+
+
+def test_an_oversized_closure_refusal_keeps_its_code_and_names_what_is_missing(
+    tmp_path: Path,
+) -> None:
+    """Regression (operational-reads G): a closure over the repair limit used to vanish.
+
+    Forty dependents' inventory rows exceed the frozen 16 KiB repair limit, so
+    the repair's own validator failed and preflight replaced the coded refusal
+    with a generic `lowering_invalid` whose only repair was "revise the
+    payload" -- dropping the very list of missing members. The repair is now
+    cut to fit: every missing identity is named, the inventory rows are a
+    counted prefix, and the refusal keeps its code.
+    """
+
+    instance, _owner, coordinator, succession = _retiring_succession_world(tmp_path, dependents=40)
+    owed = [item.identity.qualified for item in succession.dependents]
+    omitted = succession.model_copy(update={"dependents": succession.dependents[:1]})
+    intent = coordinator.create(
+        actor=AuthenticatedActor(actor_id="owner"),
+        payload=_change_set(omitted),
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+
+    with pytest.raises(AuthoringLoweringError) as raised:
+        lower_authoring(instance, intent=intent, actor_id="owner")
+
+    error = raised.value
+    assert error.code == "playbill.authoring.claim_type_succession_closure_incomplete"
+    replacement = error.repairs[0].replacement
+    assert isinstance(replacement, dict)
+    assert replacement["missing"] == owed[1:]
+    assert replacement["unexpected"] == []
+    assert replacement["truncated"] is True
+    assert replacement["required_dependents_count"] == 40
+    assert 0 < len(replacement["required_dependents"]) < 40
+    assert "carry_all" in error.repairs[0].description
+
+    # Preflight reports the same coded refusal, not lowering_invalid.
+    result = coordinator.preflight(intent.intent_id, actor=AuthenticatedActor(actor_id="owner"))
+    codes = [item.code for item in result.frontier.diagnostics]
+    assert "playbill.authoring.claim_type_succession_closure_incomplete" in codes
+    assert "playbill.authoring.lowering_invalid" not in codes
+
+
+def test_carry_all_fills_the_closure_server_side_including_retired_claims(
+    tmp_path: Path,
+) -> None:
+    """A succession names only its exceptions; the daemon carries the rest.
+
+    The dogfood owner fix could not be written by hand: its closure held
+    retired Claims no SDK read lists, and its refusal was too large to name
+    them. `carry_all` asks the daemon to carry every closure member the
+    member does not name to the successor, retired ones included.
+    """
+
+    instance, owner, coordinator, claims = _affects_package_world(tmp_path)
+    actor = AuthenticatedActor(actor_id="owner")
+    retire = coordinator.create(
+        actor=actor,
+        payload=_change_set(ClaimRetirementMemberV1(retires=claims["wi-3"], reason="was-wrong")),
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+    _accept(instance, owner, coordinator, retire.intent_id, actor)
+
+    succession = ClaimTypeSuccessionMemberV1(
+        successor=_enum_successor(instance, enum=["demo-package", "other-package"]),
+        carry_all=True,
+    )
+    assert "carry_all" in succession.model_dump(mode="json")
+    exact = succession.model_copy(update={"carry_all": False})
+    assert "carry_all" not in exact.model_dump(mode="json")
+    intent = coordinator.create(
+        actor=actor,
+        payload=_change_set(succession),
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+    _accept(instance, owner, coordinator, intent.intent_id, actor)
+
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    type_path = claim_type_path(PREDICATE)
+    migrated = parse_claim_type(tree[type_path], path=type_path)
+    for key in ("wi-42", "wi-2", "wi-3"):
+        path = claim_path(claims[key])
+        claim = parse_claim(tree[path], path=path)
+        assert claim.statement.claim_type_digest == claim_type_digest(migrated).tagged, key
+    retired_path = claim_path(claims["wi-3"])
+    assert parse_claim(tree[retired_path], path=retired_path).lifecycle.state == "retired"
+
+
+def test_every_authoring_surface_carries_the_carry_all_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The flag rides the one authoring payload model every surface validates."""
+
+    import asyncio
+    import json
+
+    from cruxible_core.mcp.server import create_server
+    from cruxible_core.server.app import create_app
+
+    monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", "full")
+    tools = {tool.name: tool for tool in asyncio.run(create_server().list_tools())}
+    authoring = [
+        name for name, tool in tools.items() if "carry_all" in json.dumps(tool.inputSchema)
+    ]
+    assert "cruxible_playbill_authoring_create" in authoring
+    assert "carry_all" in json.dumps(create_app().openapi())
+    # The CLI and the SDK send the same model's JSON: the flag survives a round trip.
+    member = ClaimTypeSuccessionMemberV1.model_validate(
+        {
+            "successor": _literal_affects_package()
+            .model_copy(
+                update={
+                    "lifecycle": ArtifactLifecycle(
+                        predecessor_digest="sha256:" + "a" * 64, state="live"
+                    )
+                }
+            )
+            .model_dump(mode="json"),
+            "carry_all": True,
+        }
+    )
+    assert member.carry_all is True

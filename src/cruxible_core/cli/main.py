@@ -49,8 +49,12 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("playbill", "claim-type", "propose"): "active",
     ("playbill", "claim-type", "migrate"): "active",
     ("playbill", "claim-type", "upgrade-evidence-rules"): "active",
+    ("playbill", "claim-type", "upgrade"): "active",
     ("playbill", "block", "depublish"): "active",
-    ("playbill", "claim", "retire"): "active",
+    ("playbill", "set"): "active",
+    ("playbill", "add"): "active",
+    ("playbill", "retire"): "active",
+    ("playbill", "write"): "active",
     ("playbill", "claim", "attest"): "active",
     ("playbill", "predict"): "active",
     ("playbill", "settle"): "active",
@@ -148,6 +152,8 @@ def handle_errors(f: Any) -> Any:
                 command_path = _command_path(ctx)
                 target_mode = MUTATING_COMMAND_TARGETS.get(command_path)
                 if command_path == ("playbill", "claim-type", "propose") and kwargs.get("template"):
+                    target_mode = None
+                if command_path == ("playbill", "write") and kwargs.get("schema"):
                     target_mode = None
                 if target_mode is not None and target_mode != "manual":
                     # Runtime import avoids the main <-> commands import cycle.
@@ -483,18 +489,10 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 attr="block_group",
             ),
             "document": _group(
-                "Propose and read governed Documents.",
+                "Propose governed Documents.",
                 {
                     "propose": _command(
                         "playbill", "propose_document", "Propose a Document envelope."
-                    ),
-                    "list": _command("playbill", "list_documents", "List accepted Documents."),
-                    "get": _command("playbill", "get_document", "Read an accepted Document."),
-                    "body": _command(
-                        "playbill", "get_document_body", "Dereference verified body bytes."
-                    ),
-                    "history": _command(
-                        "playbill", "document_history", "Read accepted Document history."
                     ),
                 },
                 module="playbill",
@@ -535,20 +533,8 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 module="playbill",
                 attr="proposal_group",
             ),
-            "subject": _group(
-                "Read identity-only governed Subjects.",
-                {
-                    "list": _command("playbill", "list_subjects", "List accepted Subjects."),
-                    "get": _command("playbill", "get_subject", "Read an accepted Subject."),
-                    "history": _command(
-                        "playbill", "subject_history", "Read accepted Subject history."
-                    ),
-                },
-                module="playbill",
-                attr="subject_group",
-            ),
             "claim-type": _group(
-                "Propose and read the governed predicate vocabulary.",
+                "Propose and upgrade the governed predicate vocabulary.",
                 {
                     "propose": _command(
                         "playbill", "propose_claim_type", "Propose a ClaimType interface."
@@ -563,37 +549,22 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                         "upgrade_evidence_rules",
                         "Propose moving ClaimTypes to identity evidence rules.",
                     ),
-                    "list": _command("playbill", "list_claim_types", "List accepted ClaimTypes."),
-                    "get": _command("playbill", "get_claim_type", "Read one accepted ClaimType."),
+                    "upgrade": _command(
+                        "playbill",
+                        "upgrade_claim_types",
+                        "Propose moving ClaimTypes to v7 (revision evidence stated).",
+                    ),
                 },
                 module="playbill",
                 attr="claim_type_group",
             ),
             "claim": _group(
-                "Read, explain, and retire first-class Claims.",
+                "Attest to first-class Claims.",
                 {
                     "attest": _command(
                         "playbill",
                         "attest_claim",
                         "Sign that this caller examined the current exact Claim.",
-                    ),
-                    "retire": _command(
-                        "playbill",
-                        "retire_claim",
-                        "Preflight or submit attributed Claim retirement.",
-                    ),
-                    "list": _command("playbill", "list_claims", "List accepted Claims."),
-                    "values": _command(
-                        "playbill",
-                        "claim_values",
-                        "Tabulate live Claim values and verdicts for one Subject kind.",
-                    ),
-                    "get": _command("playbill", "get_claim", "Read an accepted Claim."),
-                    "history": _command(
-                        "playbill", "claim_history", "Read accepted Claim history."
-                    ),
-                    "explain": _command(
-                        "playbill", "explain_claim", "Explain one Claim's verdict and evidence."
                     ),
                 },
                 module="playbill",
@@ -686,31 +657,10 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 module="playbill",
                 attr="compiler_group",
             ),
-            "query": _group(
-                "Query accepted state; read and execute named entrypoints.",
-                {
-                    "list": _command(
-                        "playbill", "list_query_definitions", "List accepted entrypoints."
-                    ),
-                    "get": _command(
-                        "playbill", "get_query_definition", "Read one accepted entrypoint."
-                    ),
-                    "run": _command(
-                        "playbill", "run_query", "Execute an entrypoint with a replay receipt."
-                    ),
-                },
-                module="playbill",
-                attr="query_group",
-            ),
-            "policy": _group(
-                "Read governed policies in force.",
-                {
-                    "list": _command(
-                        "playbill", "list_policies_in_force", "List live governed policies."
-                    ),
-                },
-                module="playbill",
-                attr="policy_group",
+            "query": _command(
+                "playbill",
+                "query_group",
+                "Query accepted state: values with flags, a spec, or a named query.",
             ),
             "procedure": _group(
                 "Inspect, bind, run, and measure accepted Procedures.",
@@ -790,22 +740,24 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 module="playbill",
                 attr="curation_group",
             ),
-            "discover": _command(
-                "playbill", "discover", "Find accepted interfaces and Subjects by name."
-            ),
             "get": _command(
                 "playbill", "get_by_ref", "Read one governed thing by reference, values first."
             ),
-            "search": _command("playbill", "search", "Search accepted Claims and Procedures."),
-            "since": _command("playbill", "since", "Read accepted ChangeSet history."),
-            "list": _command(
-                "playbill", "search_list", "List accepted state in deterministic pages."
+            "set": _command(
+                "playbill", "set_value", "Set one field of one Subject, replacing its value."
             ),
+            "add": _command(
+                "playbill", "add_value", "Add one value to a many-valued field of one Subject."
+            ),
+            "retire": _command(
+                "playbill", "retire", "Retire one live Claim, by ID or by Subject and field."
+            ),
+            "write": _command(
+                "playbill", "write_changes", "Apply set, add and retire changes as one change set."
+            ),
+            "since": _command("playbill", "since", "Read accepted ChangeSet history."),
             "orient": _command(
                 "playbill", "orient", "Map accepted state: kinds, attention and next commands."
-            ),
-            "expand": _command(
-                "playbill", "expand", "Expand one address into a bounded context capsule."
             ),
             "world": _group(
                 "Read the accepted vocabulary as typed Python.",
@@ -852,9 +804,6 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 module="playbill",
                 attr="hook_group",
             ),
-            "explain": _command(
-                "playbill", "explain", "Explain governance at an accepted coordinate."
-            ),
             "sources": _group(
                 "Compile declared local files into exact-byte bundles.",
                 {
@@ -876,9 +825,6 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 {
                     "add": _command(
                         "playbill", "add_principal", "Propose an owner-approved principal."
-                    ),
-                    "list": _command(
-                        "playbill", "list_principals", "List accepted principal keys."
                     ),
                     "rotate": _command(
                         "playbill", "rotate_principal", "Self-rotate a principal key."
@@ -959,6 +905,15 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
     help="Opaque server-mode instance ID. Defaults to remembered CLI context.",
 )
 @click.option(
+    "--principal-id",
+    default=None,
+    envvar="CRUXIBLE_PRINCIPAL_ID",
+    help=(
+        "Principal this process acts as (also CRUXIBLE_PRINCIPAL_ID). With daemon auth "
+        "off it is a claim of identity, not authentication."
+    ),
+)
+@click.option(
     "--no-workspace",
     is_flag=True,
     default=False,
@@ -976,6 +931,7 @@ def cli(
     server_url: str | None,
     server_socket: str | None,
     instance_id: str | None,
+    principal_id: str | None,
     no_workspace: bool,
     json_compact: bool | None,
 ) -> None:
@@ -1009,6 +965,7 @@ def cli(
             "server_url": settings.server_url,
             "server_socket": settings.server_socket,
             "instance_id": resolved.instance_id,
+            "principal_id": (principal_id or "").strip() or None,
             "require_server": settings.require_server,
             "json_compact": json_compact,
             "target_transport_source": resolved.transport_source,

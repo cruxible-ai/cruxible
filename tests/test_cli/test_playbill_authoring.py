@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Literal, get_args
 
+import click
 import pytest
 from click.testing import CliRunner
 from fastapi.testclient import TestClient
@@ -259,7 +260,6 @@ def test_cli_examples_are_supported_and_schema_discoverable() -> None:
     claim_type_help = runner.invoke(cli, ["playbill", "claim-type", "propose", "--help"])
     claim_type_example = runner.invoke(cli, ["playbill", "claim-type", "propose", "--example"])
     claim_type_missing = runner.invoke(cli, ["playbill", "claim-type", "propose"])
-    retirement = runner.invoke(cli, ["playbill", "claim", "retire", "--example"])
     create_help = runner.invoke(cli, ["playbill", "authoring", "create", "--help"])
 
     assert claim_type_help.exit_code == 0, claim_type_help.output
@@ -269,12 +269,6 @@ def test_cli_examples_are_supported_and_schema_discoverable() -> None:
     assert "No such option: --example" in claim_type_example.output
     assert claim_type_missing.exit_code == 2
     assert "provide exactly one of --input or --template" in claim_type_missing.output
-
-    assert retirement.exit_code == 0, retirement.output
-    retirement_payload = json.loads(retirement.stdout)
-    assert retirement_payload["tag"] == "playbill-claim-retire-request-v1"
-    assert retirement_payload["mode"] == "preflight"
-    assert retirement_payload["expected_coordinate"]["tag"] == ("playbill-accepted-coordinate-v1")
 
     assert create_help.exit_code == 0, create_help.output
     assert "PAYLOAD_FILE" in create_help.output
@@ -465,69 +459,6 @@ def test_cli_claim_type_migration_submit_names_the_proposal_and_next_step(
     assert f"Next: cruxible playbill proposal approve {proposal_id}" in result.stdout
 
 
-def test_cli_claim_retire_passes_the_model_validated_request(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:  # type: ignore[no-untyped-def]
-    claim_id = "CLM-0123456789abcdef0123456789abcdef"
-    payload = tmp_path / "retire.json"
-    payload.write_text(
-        json.dumps(
-            {
-                "tag": "playbill-claim-retire-request-v1",
-                "mode": "preflight",
-                "claim_ref": f"Claim:{claim_id}",
-                "reason": "was-rescinded",
-                "effective_until": None,
-                "expected_coordinate": COORDINATE.model_dump(mode="json"),
-                "dependents": [],
-            }
-        )
-    )
-
-    class StubClient:
-        def retire_playbill_claim(
-            self,
-            instance_id: str,
-            selected_claim_id: str,
-            *,
-            request: dict[str, object],
-        ) -> contracts.PlaybillClaimRetireResponse:
-            assert (instance_id, selected_claim_id) == ("inst_authoring", claim_id)
-            assert request["reason"] == "was-rescinded"
-            return contracts.PlaybillClaimRetirePreflight(
-                operation_digest="sha256:" + "8" * 64,
-                coordinate=COORDINATE,
-                root_identity={"kind": "Claim", "name": claim_id},
-                root_predecessor_digest="sha256:" + "9" * 64,
-                reason="was-rescinded",
-                effective_until=None,
-                required_dependents=[],
-                diagnostics=[],
-                submit_ready=True,
-            )
-
-    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
-    result = CliRunner().invoke(
-        cli,
-        [
-            "--server-url",
-            "https://authoring.example.test",
-            "--instance-id",
-            "inst_authoring",
-            "playbill",
-            "claim",
-            "retire",
-            claim_id,
-            str(payload),
-            "--json",
-        ],
-    )
-
-    assert result.exit_code == 0, result.output
-    assert json.loads(result.stdout)["submit_ready"] is True
-
-
 def test_cli_status_is_a_read_and_emits_no_write_target(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     class StubClient:
         def playbill_authoring_intent_status(
@@ -569,11 +500,14 @@ def test_cli_whoami_explains_credential_binding_and_lists_open_proposals(
             return contracts.PlaybillWhoAmI(
                 actor_id="owner",
                 credential_label="owner",
-                actor_id_source="runtime_credential_label",
+                actor_id_source="runtime_credential",
+                authenticated=True,
                 credential_permission_mode="governed_write",
                 principal_registration_status="active",
                 active_principal_ids=["daemon", "owner"],
                 coordinate=COORDINATE,
+                can_author=True,
+                authoring_refusal=None,
             )
 
         def list_playbill_proposals(
@@ -616,7 +550,7 @@ def test_cli_whoami_explains_credential_binding_and_lists_open_proposals(
     proposals = runner.invoke(cli, [*base, "proposal", "list", "--status", "open"])
 
     assert identity.exit_code == proposals.exit_code == 0
-    assert "Actor ID comes from credential label: owner" in identity.output
+    assert "Actor ID is the principal this bearer credential is bound to" in identity.output
     assert "governed_write" in identity.output
     assert "open  -  sha256:" in proposals.output
     assert calls == ["whoami:inst_authoring", "proposals:inst_authoring:open"]
@@ -839,12 +773,12 @@ def test_propose_help_names_the_sanctioned_proposal_paths() -> None:
     assert "Deprecated" not in claim_type.output
     removed = runner.invoke(cli, ["playbill", "subject", "propose"])
     assert removed.exit_code != 0
-    assert "No such command 'propose'" in removed.output
+    assert "No such command 'subject'" in removed.output
     # `playbill query KIND` answers a query itself, so `propose` is read as a
-    # kind there; what matters is that no propose subcommand exists.
+    # kind there; what matters is that query has no subcommands at all.
     from cruxible_core.cli.commands.playbill import query_group
 
-    assert "propose" not in query_group.commands
+    assert not isinstance(query_group, click.Group)
 
 
 @pytest.mark.parametrize(

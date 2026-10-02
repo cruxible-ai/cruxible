@@ -251,11 +251,18 @@ class ClaimTypeSuccessionInput(_StrictInputModel):
     kind: Literal["claim_type_succession"]
     successor: ClaimType
     dependents: tuple[ClaimTypeSuccessionDependentV1, ...] = ()
+    carry_all: bool = Field(
+        default=False,
+        description=(
+            "Carry every closure member dependents does not name to the successor, computed "
+            "by the daemon (retired Claims included); dependents then names only exceptions."
+        ),
+    )
 
 
 class ClaimRetirementInput(_StrictInputModel):
     kind: Literal["claim_retirement"]
-    claim_id: str
+    retires: str = Field(description="Claim ID this member retires, parallel to revises.")
     reason: ClaimRetirementReason
     effective_until: datetime | None = None
     dependents: tuple[ClaimRetireDependentV1, ...] = ()
@@ -425,7 +432,7 @@ def _subject_address(shorthand: str, *, field_path: str) -> SemanticAddress:
             "playbill.authoring.input_subject_invalid",
             field_path,
             "Subject must use canonical <subject-kind>/<subject-id> shorthand.",
-            "Replace it with a subject shown by playbill subject list.",
+            "Replace it with a subject shown by playbill query KIND.",
         )
     return SemanticAddress.whole_artifact(subject_path(match["kind"], match["id"]))
 
@@ -737,10 +744,11 @@ def _change_set_member(member: AuthoringChangeSetMemberInputV1) -> AuthoringChan
         return ClaimTypeSuccessionMemberV1(
             successor=member.successor,
             dependents=member.dependents,
+            carry_all=member.carry_all,
         )
     if isinstance(member, ClaimRetirementInput):
         return ClaimRetirementMemberV1(
-            claim_ref=member.claim_id,
+            retires=member.retires,
             reason=member.reason,
             effective_until=member.effective_until,
             dependents=member.dependents,

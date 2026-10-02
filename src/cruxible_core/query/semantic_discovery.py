@@ -719,23 +719,6 @@ def discover(
     )
 
 
-def resolved_equivalence_address(page: DiscoveryPageV1) -> SemanticAddress | None:
-    """Return the one address an equivalence-grade basis resolved, or None.
-
-    A page whose only hits came from tags, lexical tokens, structural signatures,
-    or a dependency walk resolves nothing: those bases broaden recall and are
-    rendered for review. An ambiguous alias resolves nothing either, because
-    choosing between two validly named targets is not the server's call.
-    """
-
-    resolved = byte_sorted_addresses(
-        hit.address
-        for hit in page.hits
-        if any(MATCH_BASIS_RESOLVES_EQUIVALENCE[item.basis] for item in hit.match_basis)
-    )
-    return resolved[0] if len(resolved) == 1 else None
-
-
 __all__ = [
     "DISCOVERY_ENTRY_KINDS",
     "DISCOVERY_PROFILE_KINDS",
@@ -752,5 +735,4 @@ __all__ = [
     "discover",
     "discovery_tokens",
     "discovery_vocabulary_digest",
-    "resolved_equivalence_address",
 ]

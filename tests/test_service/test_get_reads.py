@@ -199,7 +199,8 @@ def test_evidence_names_each_capture_by_contract_identity_and_version(
     assert capture.version == 1
     assert capture.source == "fixture.work-items"
     assert capture.admitted is True
-    assert len(capture.capture) == len("sha256:") + 12
+    # The CAP- handle a card prints; get and read_capture both accept it.
+    assert capture.capture.startswith("CAP-") and len(capture.capture) == len("CAP-") + 12
     digest = capture_contract_digest(_CONTRACT).tagged
     assert digest not in json.dumps(evidence.model_dump(mode="json"))
 
@@ -237,6 +238,31 @@ def test_a_document_reads_as_metadata_then_body_by_range(world: dict[str, Any]) 
     assert (part.range.start, part.range.end, part.size) == (2, 8, len(_BODY))
     history = _get(instance, "Document:design", detail="history").history
     assert history is not None and len(history.revisions) == 1
+    # The body names its whole digest, which proof's facts carry too.
+    proof = _get(instance, "Document:design", detail="proof").proof
+    assert whole.body_digest == part.body_digest
+    assert whole.body_digest in json.dumps(proof)
+
+
+def test_a_document_explains_why_as_explain_did(world: dict[str, Any]) -> None:
+    from cruxible_client.contracts.semantic import SemanticAddress
+    from cruxible_core.service.discovery.explain import service_explain_playbill_subject
+    from cruxible_core.service.discovery.get import resolve_get_ref
+    from cruxible_core.service.read_refusals import resolve_read_coordinate
+
+    instance = world["instance"]
+    result = _get(instance, "Document:design", detail="why")
+    coordinate = resolve_read_coordinate(instance, None)
+    resolved = resolve_get_ref(instance, coordinate, "Document:design")
+    expected = service_explain_playbill_subject(
+        instance,
+        subject=SemanticAddress.whole_artifact(resolved.path or ""),
+        at=result.accepted_coordinate
+        or _get(instance, "Document:design", detail="proof").accepted_coordinate,  # type: ignore[arg-type]
+        detail="summary",
+        access=_ACCESS,
+    )
+    assert result.why == expected.model_dump(mode="json")
 
 
 def test_a_body_over_the_cap_refuses_with_the_range_repair(
@@ -294,7 +320,7 @@ def test_a_detail_that_does_not_apply_refuses_naming_the_ones_that_do(
     refused = _refusal(world["instance"], "Document:design", detail="evidence")
 
     assert refused.error_code == "playbill.get.detail_unsupported"
-    assert refused.context["allowed"] == ["summary", "history", "proof", "body"]
+    assert refused.context["allowed"] == ["summary", "why", "history", "proof", "body"]
 
 
 def test_a_proposal_reads_by_id_prefix_with_its_next_step(world: dict[str, Any]) -> None:
@@ -580,13 +606,17 @@ def test_a_held_stale_dependency_shows_the_unsure_hold_next_parks(
     # coverage -- is the instance's own.
     earlier = "sha256:" + "0" * 64
 
+    def with_input(claim: Any) -> Any:
+        if claim.identity.qualified != dependent.identity.qualified:
+            return claim
+        backing = claim.backing.model_copy(update={"input_claim_digests": (earlier,)})
+        return claim.model_copy(update={"backing": backing})
+
     def recorded(facts: Any) -> Any:
         rows = []
         for row in facts.claims:
-            claim = row.accepted.claim
-            if claim.identity.qualified == dependent.identity.qualified:
-                backing = claim.backing.model_copy(update={"input_claim_digests": (earlier,)})
-                claim = claim.model_copy(update={"backing": backing})
+            claim = with_input(row.accepted.claim)
+            if claim is not row.accepted.claim:
                 row = row.model_copy(
                     update={"accepted": row.accepted.model_copy(update={"claim": claim})}
                 )
@@ -596,6 +626,14 @@ def test_a_held_stale_dependency_shows_the_unsure_hold_next_parks(
     real_facts = next_module.build_accepted_query_facts
     real_read = next_module._AcceptedQueryFactsRead.build
     real_lineages = next_module._bounded_claim_lineages
+    real_dependencies = next_module._claim_dependency_items
+
+    def dependencies(*args: Any, claims: Any = None, **kwargs: Any) -> Any:
+        # The fold first asks the parsed population whether any Claim consumes
+        # another; the recorded input must be visible there as well as in facts.
+        if claims is not None:
+            claims = tuple(with_input(claim) for claim in claims)
+        return real_dependencies(*args, claims=claims, **kwargs)
 
     def lineages(*args: Any, **kwargs: Any) -> Any:
         found, incomplete = real_lineages(*args, **kwargs)
@@ -615,6 +653,7 @@ def test_a_held_stale_dependency_shows_the_unsure_hold_next_parks(
         lambda self, **kwargs: recorded(real_read(self, **kwargs)),
     )
     monkeypatch.setattr(next_module, "_bounded_claim_lineages", lineages)
+    monkeypatch.setattr(next_module, "_claim_dependency_items", dependencies)
 
     (row,) = _rows(_next(instance), "claim_dependency_stale", dependent.identity.qualified)
     assert row.related_identities == (source.identity.qualified,)

@@ -2,6 +2,175 @@
 
 ## Unreleased
 
+- **Reads are orient, query and get; the older read surfaces are removed.**
+  Every read of accepted state now goes through three verbs on every surface:
+  `orient` (the map, or one `kind`, or one `section`), `query` and `get`. The
+  per-family reads are cut outright, with no aliases:
+  - MCP tools: `cruxible_playbill_search`, `_discover`, `_expand`,
+    `_list_claims`, `_claim_values`, `_get_claim`, `_claim_history`,
+    `_explain_claim`, `_list_subjects`, `_get_subject`, `_subject_history`,
+    `_list_claim_types`, `_get_claim_type`, `_list_documents`,
+    `_get_document`, `_dereference`, `_history`, `_explain`,
+    `_list_principals`, `_policies_in_force`, `_list_query_definitions`,
+    `_get_query_definition` and `_run_query`.
+  - CLI commands: `playbill document list/get/body/history`, `explain`,
+    `principal list`, the `subject` group, `claim-type list/get`,
+    `claim list/values/get/history/explain`, the `policy` group,
+    `query list/get/run`, `discover`, `search`, `list` and `expand`.
+  - `CruxibleClient` methods: `list_playbill_principals`,
+    `list_playbill_documents`, `get_playbill_document`,
+    `dereference_playbill_document`, `playbill_document_history`,
+    `explain_playbill_subject`, `list_playbill_subjects`,
+    `list_playbill_subject_index`, `get_playbill_subject`,
+    `playbill_subject_history`, `list_playbill_claim_types`,
+    `get_playbill_claim_type`, `list_playbill_claims`,
+    `read_playbill_claim_values`, `get_playbill_claim`,
+    `playbill_claim_history`, `explain_playbill_claim`,
+    `list_playbill_query_definitions`, `list_playbill_policies_in_force`,
+    `get_playbill_query_definition`, `run_playbill_query`,
+    `discover_playbill`, `search_playbill` and `expand_playbill`.
+  - SDK members: `Playbill.search`, `Playbill.list`, `Playbill.explain` and
+    the `SearchPage` type.
+  - Contracts: `PlaybillSearchResult`, `PlaybillDiscoveryResult`,
+    `PlaybillInterfaceInventory`, `PlaybillContextCapsule`,
+    `PlaybillSubjectList`/`Index`/`IndexEntry`/`View`/`History`,
+    `PlaybillClaimList`/`History`/`View`, `PlaybillClaimExplanationV2`/`V3`,
+    `PlaybillClaimTypeList`/`View`, `PlaybillDocumentList`/`View`/`History`,
+    `PlaybillBodyRead`, `PlaybillExplainResult`,
+    `PlaybillExplainUnsupportedDetail`, `PlaybillPrincipalList` and
+    `PlaybillQueryDefinitionList`, with the expand models
+    (`ExpandRequestV1`, `ExpansionBudgetV1`, `ContextCapsuleV1`,
+    `ContextMaterialV1`) in `cruxible_client.contracts.discovery`.
+
+  The replacements: `orient(section=...)` pages `documents`, `procedures`,
+  `claim_types`, `queries`, `interfaces`, `principals` and `policies` beside
+  the operational sections; an `interfaces` row carries `interface_digest`,
+  `providers` (`[{provider, implementation_digest}]`) and
+  `operation_contract`. `get` gains `Principal:<id>`, `ApprovalPolicy:instance`
+  and `ProviderInterface:<name>` references, Documents take `detail="why"`, and
+  body answers carry `body_digest`. A compact `query` lists a kind's live
+  Subjects. `query` gains `status` (opt-in `overturned`, `refused`, `retired`
+  beside the default `live`; `retired` also lists retired Subjects, each row
+  then stating `lifecycle`), `claims=True`
+  (each cell's Claims as `rows[].claims[column]` with claim, value, verdict,
+  status, role and qualifier), an `uncovered` flag, `budgets` for a named
+  query up to its maximum, named-query `params` that may bind an optional
+  parameter to `null`, and `receipt="full"`, which runs the definition's
+  declared budgets (never the compact page's server ceiling) and adds
+  `receipt.replay` (`definition_path`, the `ClaimQueryResultV1` result and the
+  `QueryExecutionReceiptV1` execution receipt). Every query records the Claims
+  its page served as `playbill.claim.get` consumption. In the SDK,
+  `Playbill.refresh()` returns `PlaybillHeadV1` (`instance`, `coordinate`,
+  `generation`) from the new `CruxibleClient.playbill_head` (`GET
+  /{id}/playbill/head`); `Playbill.run_query()` still returns
+  `PlaybillQueryRun`, built from the named query's full receipt;
+  `World.values()` returns `PlaybillQueryClaimValueV1` rows read through
+  `query`, now including overturned and refused live Claims;
+  `WorldSubject.explain()` returns `get`'s `why`; and `claim_view` reads
+  `get(detail="proof")`. `CruxibleClient.playbill_get_batch` (`POST
+  /get-batch`, up to 64 refs) is an SDK-internal route beside the kept
+  `read_playbill_claim_batch` and `get_playbill_claim_backings`. A Playbill
+  opened on an injected client with no workspace reads normally, reports no
+  floor from `orient`, and refuses workspace-file members with
+  `SourceSelectionError`.
+
+  Accepted losses: there is no cross-kind name search (grep the floor under
+  `.playbill/floor/`, then `get` the ref), the `semantic.*` relation edges
+  `expand` returned are not served, and Subject list rows no longer carry live
+  Claim counts. Earlier entries in this section that describe the removed
+  tools, commands and methods (including `search`, `list`, `discover`,
+  `expand`, `explain`, `subject get`/`history` and the incoming-relationship
+  Subject profiles) are superseded by this one.
+
+- **The SDK is discoverable from Python itself.** `World.describe()` lists the
+  verbs (`pb.orient`, `pb.query`, `pb.get`, grepping the floor, the writes)
+  and every Subject kind with its fields; `w.kinds` and `w.predicates` work as
+  attributes and as calls; `dir(cruxible_client)` lists the lazily loaded
+  names; every public SDK member's docstring names the next call; `Playbill`,
+  `Intent` and `Proposal` print readable reprs (no I/O), and refs print short
+  (`SubjectRef('sec.package/click' @ 0123456789ab)`, `CaptureRef(CAP-... )`,
+  with `CaptureRef.handle`).
+
+- **One `CAP-` handle resolver for reads and writes.** `get`, `read_capture`
+  and the write verbs' `--capture` now resolve a handle or digest prefix through
+  the same bounded lookup: a Capture accepted Claims cite, or one the instance
+  holds that verifies at the coordinate. A handle the write path accepted for a
+  Capture nothing cites yet used to refuse `not_found` in `get` and
+  `read_capture`; it now opens there too. A prefix more Captures share than one
+  lookup examines refuses `playbill.capture.ref_scan_exhausted` on reads, as it
+  already refused `playbill.write.capture_scan_exhausted` on writes.
+
+- **Stale proposals stay their author's work, and leave once superseded.** A
+  `proposal_stale` row in `next` now shows only to the proposal's author (the
+  caller's principal; a read without one shows none), since only the author may
+  readmit. A readmission is linked exactly to its source (its target ref
+  recomputed from the source and the coordinate its evaluation names), so a
+  source whose readmission was accepted leaves the queue for good instead of
+  reappearing at the next head, and one whose readmission is still live yields
+  that readmission's row. `proposal readmit` now refuses
+  `playbill.proposal.readmit_already_accepted` (naming `accepted_as` when a
+  readmission carried the change) apart from
+  `playbill.proposal.readmit_not_stale`, where it used to say "only a settled
+  stale proposal may be readmitted" for both.
+
+- **`procedure_run_status` withholds another principal's arming credential.**
+  An armed run acts as its arming credential's principal, and the status read
+  returned that actor and the receipt carrying it to every caller. It now
+  applies the Line and run cards' rule: unless the caller is an admin, the
+  arming credential, or a credential bound to the same principal, the
+  attribution answers as `ProcedureRunAttributionWithheldV1` (everything but
+  the actor) and the receipt as `ProcedureRunReceiptWithheldV1`, with
+  `receipt_digest` still naming it. `get` with `detail="proof"` uses the same
+  two typed markers instead of a nulled actor and an untyped marker.
+
+- **The write verbs read `@kind/id` as a Subject.** `set`, `retire` and
+  `write` accept `@dev.roadmap_item/x` wherever they take a Subject: the
+  change's subject, a slot, a Subject-valued value and an `expect`. It used to
+  refuse `value_kind_not_admitted` with a repair naming the very kind it was
+  given. No Subject kind starts with `@`, so the sigil is unambiguous there; a
+  literal or exact-content value keeps its text as written.
+
+- **`get` on a Procedure shows its track record, and the SDK reads it.** The
+  Procedure card carries `track_record`: one entry per accepted promotion of
+  the Procedure's run exhaust (promotion name, record range, reducer output
+  and digests). `ProcedureRun.track_record` now reads it through `get` and
+  returns those entries; it used to look for a key search rows never carried,
+  so it always answered `None`.
+
+- **`next` no longer reports `status.hidden`.** The count was always 0: since
+  operational reads, a row whose repair the caller cannot run stays in the
+  queue with `repair_requires`. The field leaves `PlaybillNextStatus`, and the
+  SDK's `NextPage.hidden` property goes with it.
+
+- **The floor is the grep-first front door to accepted state.** `playbill floor
+  export` now leads with `current/<kind>/<id>.yaml`: a one-line header (ref,
+  kind, `at <git_oid> gen <n>`), then each field's current value under its short
+  name with the `CLM-` Claim and `CAP-` Capture handles, then the verdict flags
+  as of that coordinate. Exact-content values (rulings) are written as their
+  text, long ones whole in a sibling `.txt` file; Documents are readable
+  `documents/<name>.<ext>` files (bodies only for a caller who may read them);
+  `current/<kind>/INDEX` lists every Subject with a title and its states.
+  Digests, addresses and full statements move to `provenance/` and the
+  manifest. The discovery cards (`subjects/`, `claim-types/`, `procedures/`)
+  and `coverage-manifest.json` are now opt-in (`floor export --with-discovery`,
+  `include=["discovery"]`), and the format is `playbill-floor-export-v4`; the
+  unreleased v3 layout is gone. A daemon re-renders only what the change records touched since its
+  last export, and `orient` reports `floor: {at, generations_behind}` for the
+  workspace's floor. The loop: grep, read the header, `get` the ref for live
+  verdicts, write with the verbs.
+
+- **ClaimTypes no longer need a distinction Claim beside adjacent vocabulary.**
+  The current ClaimType acceptance laws (`playbill.claim-type.v1`, `v3`, `v4`
+  and `v5` at revision 5, `v6` at revision 2) drop the vocabulary reuse check:
+  a new ClaimType whose predicate leaf or structure matches an accepted one,
+  such as `dev.track.title` beside `dev.batch.title`, is accepted without a
+  `semantic.distinct_from` Claim, and the `playbill.reuse.*` refusals are gone.
+  Generations and pending proposals judged under the previous revisions still
+  settle and replay under them unchanged. The reuse models
+  (`VocabularyReuseLawEvidenceV1`, `DiscoveryHintsV1` and related) and the
+  unused descriptor-seed and descriptor-authority contracts leave
+  `cruxible_client.contracts.discovery`.
+
 - **Kits travel as OCI artifacts.** `cruxible playbill kit push` publishes a kit
   as a content-addressed OCI artifact (manifest config blob, one deterministic
   tar layer) and prints its digest-pinned reference; `kit pull` fetches and

@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import get_args
+from typing import Any, get_args
 
 import pytest
 
@@ -31,7 +31,6 @@ from cruxible_client.contracts.claim_types import (
     render_claim_type,
 )
 from cruxible_client.contracts.claims import (
-    ClaimRetireRequestV1,
     LiteralClaimObject,
     claim_artifact_digest,
     claim_citation_references,
@@ -54,7 +53,6 @@ from cruxible_client.contracts.semantic import ContentSpan
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
 from cruxible_client.contracts.subjects import render_subject, subject_path
 from cruxible_core.authoring.store import AUTHORING_INTENTS_ENV
-from cruxible_core.claims.claim_retirement import ClaimRetireResultV1, service_retire_claim
 from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeDependentDispositionV1,
     ClaimTypeMigrationRequestV1,
@@ -73,7 +71,6 @@ from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.proposals.settlement import ChangeActorBinding
 from cruxible_core.service.authoring.documents import (
-    service_activate_playbill_proposal,
     service_propose_playbill_document,
     service_submit_playbill_approval,
 )
@@ -145,12 +142,14 @@ RepairCase = Callable[[Path, pytest.MonkeyPatch], None]
 ClosedLoopKey = tuple[str, str | None]
 
 EXPECTED_OPERATIONS = {
-    "claim_conflicted": "playbill.authoring.create",
-    "claim_uncovered": "playbill.authoring.bind",
-    "claim_stale_evidence": "playbill.authoring.bind",
-    "citation_drifted": "playbill.authoring.bind",
-    "citation_source_unobserved": "playbill.authoring.bind",
-    "evidence_expiring": "playbill.authoring.bind",
+    # A contest is resolved by retiring all but one contender in one write.
+    "claim_conflicted": "playbill.write",
+    # Stating a Claim again on new evidence is the default-profile set verb.
+    "claim_uncovered": "playbill.set",
+    "claim_stale_evidence": "playbill.set",
+    "citation_drifted": "playbill.set",
+    "citation_source_unobserved": "playbill.set",
+    "evidence_expiring": "playbill.set",
     "floor_invalid": "playbill.floor.export",
     "projection_dirty": "playbill.block.repin",
     # Nothing renders a block, so no sync converges one: a drifted block is
@@ -162,11 +161,13 @@ EXPECTED_OPERATIONS = {
     # demands it; a marker the page has mangled is repaired by restoring it.
     "projection_marker_invalid": frozenset({"playbill.block.repin", "playbill.block.depublish"}),
     "claim_dependency_stale": "playbill.authoring.create",
-    "claim_attestation_threshold_met": "playbill.authoring.create",
+    "claim_attestation_threshold_met": "playbill.set",
     "claim_contradicting_evidence_available": "playbill.authoring.create",
     "claim_new_evidence_supporting": "playbill.authoring.create",
     "claim_new_evidence_unreviewed": "playbill.authoring.create",
     "document_modified": "playbill.document.propose",
+    # Restoring a bound file, or fixing its catalog locator, is a workspace edit.
+    "workspace_binding_missing": "hand_edit",
     "unregistered_projection_block": "playbill.block.repin",
     "proposal_stale": "playbill.proposal.readmit",
     "proposal_awaiting_approval": "playbill.proposal.approve",
@@ -218,17 +219,18 @@ def _request(
     )
 
 
-def _row(instance, reason: str, request: PlaybillNextRequestV1):  # type: ignore[no-untyped-def]
+def _row(instance, reason: str, request: PlaybillNextRequestV1, **caller: Any):  # type: ignore[no-untyped-def]
     return next(
         item
-        for item in service_playbill_next(instance, request=request).items
+        for item in service_playbill_next(instance, request=request, **caller).items
         if item.reason == reason
     )
 
 
-def _assert_gone(instance, reason: str, request: PlaybillNextRequestV1) -> None:  # type: ignore[no-untyped-def]
+def _assert_gone(instance, reason: str, request: PlaybillNextRequestV1, **caller: Any) -> None:  # type: ignore[no-untyped-def]
     assert all(
-        item.reason != reason for item in service_playbill_next(instance, request=request).items
+        item.reason != reason
+        for item in service_playbill_next(instance, request=request, **caller).items
     )
 
 
@@ -808,43 +810,9 @@ def _citation_drifted_v4(
     )
 
     if drift_state == "gone":
-        coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
-        retirement = service_retire_claim(
-            instance,
-            claim_id=current.identity.name,
-            request=ClaimRetireRequestV1(
-                mode="submit",
-                claim_ref=current.identity.qualified,
-                reason="was-rescinded",
-                expected_coordinate=coordinate,
-            ),
-            actor=AuthenticatedActor(actor_id="owner"),
-        )
-        assert isinstance(retirement, ClaimRetireResultV1)
-        assert retirement.proposal is not None
-        proposal = retirement.proposal.proposal
-        candidate = proposal.candidate
-        assert candidate is not None
-        if candidate.approval_requirements:
-            approval = _sign(
-                client_material(instance.root.parent, instance),
-                candidate.candidate_digest,
-                instance.accepted_coordinate().semantic_root,
-            )
-            service_submit_playbill_approval(
-                instance,
-                proposal_id=proposal.admission.proposal_id,
-                attestation=approval.attestation,
-                authenticated_submitter="owner",
-            )
-        assert (
-            service_activate_playbill_proposal(
-                instance,
-                proposal_id=proposal.admission.proposal_id,
-                activated_by="owner",
-            ).status
-            == "accepted"
-        )
+        from tests.core_support._retirement_support import retire_claim
+
+        retire_claim(instance, owner, current.identity.name)
         _assert_key_gone(
             instance,
             key,
@@ -1253,6 +1221,50 @@ def _claim_attestation_door(
     )
 
 
+def _workspace_binding_missing(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    from cruxible_client.authoring.workspace import observe_playbill_next_workspace
+
+    (root / "instance").mkdir()
+    instance, _owner = initialize_local(root / "instance")
+    workspace = root / "workspace"
+    (workspace / ".playbill").mkdir(parents=True)
+    (workspace / ".playbill/sources.yaml").write_text(
+        "tag: playbill-source-catalog-v1\n"
+        "catalog_kind: portable\n"
+        "entries:\n"
+        "  - name: program-cards\n"
+        "    locator: docs/program/cards.md\n"
+        "    document_id: program-cards\n"
+        "    document_kind: program_page\n"
+        "    title: Cards\n"
+        "    media_type: text/markdown\n"
+        "    governance_scope: [dev]\n",
+        encoding="utf-8",
+    )
+
+    def observed() -> PlaybillNextWorkspaceObservationV1:
+        # What the client observes of its catalog's bindings; the per-source
+        # scans are the coverage enrichment's, and not this row's concern.
+        return PlaybillNextWorkspaceObservationV1.model_validate(
+            {
+                "source_observations": [],
+                "missing_bindings": observe_playbill_next_workspace(workspace).get(
+                    "missing_bindings", []
+                ),
+            }
+        )
+
+    row = _row(instance, "workspace_binding_missing", _request(instance, workspace=observed()))
+    assert row.subject_identity == "program-cards"
+    assert row.repair.operation == EXPECTED_OPERATIONS["workspace_binding_missing"]
+    assert row.repair.target == "docs/program/cards.md"
+
+    # The repair: restore the bound file.
+    (workspace / "docs/program").mkdir(parents=True)
+    (workspace / "docs/program/cards.md").write_text("# Cards\n", encoding="utf-8")
+    _assert_gone(instance, "workspace_binding_missing", _request(instance, workspace=observed()))
+
+
 def _unregistered_projection_block(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # The borrowed body runs outside its module's autouse fixture, and its
     # legacy publication road registers on accepted intents, which only a
@@ -1282,17 +1294,21 @@ def _proposal_stale(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
         timestamp="2026-08-24T17:00:01.000000Z",
     )
     stale_id = overtaken.proposal.admission.proposal_id
+    author = {"caller_principal_id": "owner"}
     assert all(
         item.reason != "proposal_stale"
-        for item in service_playbill_next(instance, request=_request(instance)).items
+        for item in service_playbill_next(instance, request=_request(instance), **author).items
     )
     _accept(instance, owner, first)
 
-    row = _row(instance, "proposal_stale", _request(instance))
+    row = _row(instance, "proposal_stale", _request(instance), **author)
     assert row.subject_identity == stale_id
     assert row.repair.operation == EXPECTED_OPERATIONS["proposal_stale"]
     assert row.repair.command == f"cruxible playbill proposal readmit {stale_id}"
     assert row.detail["actor_id"] == "owner"
+    # Only the author may readmit, so only the author's queue carries the row.
+    _assert_gone(instance, "proposal_stale", _request(instance), caller_principal_id="reviewer")
+    _assert_gone(instance, "proposal_stale", _request(instance))
     hidden = PlaybillNextRequestV1(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         evaluation_time=EVALUATION_TIME,
@@ -1302,12 +1318,12 @@ def _proposal_stale(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     )
     assert all(
         item.reason != "proposal_stale"
-        for item in service_playbill_next(instance, request=hidden).items
+        for item in service_playbill_next(instance, request=hidden, **author).items
     )
 
     readmitted = service_readmit_playbill_proposal(instance, proposal_id=stale_id, actor_id="owner")
     assert readmitted.proposal.proposal.evaluation.verdict == "candidate"
-    _assert_gone(instance, "proposal_stale", _request(instance))
+    _assert_gone(instance, "proposal_stale", _request(instance), **author)
 
 
 def _proposal_awaiting_approval(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1686,6 +1702,7 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
         reason="claim_new_evidence_unreviewed",
     ),
     ("document_modified", None): _document_modified,
+    ("workspace_binding_missing", None): _workspace_binding_missing,
     ("unregistered_projection_block", None): _unregistered_projection_block,
     ("proposal_stale", None): _proposal_stale,
     ("proposal_awaiting_approval", None): _proposal_awaiting_approval,
@@ -1724,8 +1741,8 @@ def test_every_next_reason_has_an_effective_named_repair(
     CLOSED_LOOP_CASES[key](case_root, monkeypatch)
 
 
-def test_next_shows_a_settle_row_only_to_a_caller_who_can_settle(tmp_path: Path) -> None:
-    """R07: a row whose repair the caller cannot run is hidden and counted."""
+def test_next_withholds_the_settle_repair_from_a_caller_who_cannot_settle(tmp_path: Path) -> None:
+    """R07, option (b): the row stays; a repair the caller cannot run is withheld."""
 
     from tests.test_consumers import test_prediction_settlement as worker
 
@@ -1740,12 +1757,13 @@ def test_next_shows_a_settle_row_only_to_a_caller_who_can_settle(tmp_path: Path)
     (row,) = settle_rows(governed)
     bound = row.detail["bound_contract_id"]
     assert row.repair.command == f"cruxible playbill settle {bound}"
-    assert governed.status.hidden == 0
     assert "hidden" not in governed.status.model_dump(mode="json")
 
     read_only = service_playbill_next(instance, request=request, caller_rung=0)
-    assert settle_rows(read_only) == []
-    assert read_only.status.hidden == 1
+    (withheld,) = settle_rows(read_only)
+    assert withheld.repair is None
+    assert withheld.repair_requires.tool == "cruxible_playbill_settle"
+    assert withheld.repair_requires.because == ("tier",)
 
     mcp = request.model_copy(
         update={
@@ -1757,8 +1775,11 @@ def test_next_shows_a_settle_row_only_to_a_caller_who_can_settle(tmp_path: Path)
     assert mcp_row.repair.command == f'cruxible_playbill_settle(prediction_id="{bound}")'
 
     default_profile = mcp.model_copy(update={"caller_tools": ("cruxible_playbill_next",)})
-    hidden = service_playbill_next(instance, request=default_profile, caller_rung=1)
-    assert settle_rows(hidden) == [] and hidden.status.hidden == 1
+    profiled = service_playbill_next(instance, request=default_profile, caller_rung=1)
+    (kept,) = settle_rows(profiled)
+    assert kept.repair is None and kept.repair_requires.because == ("profile",)
+    assert kept.repair_requires.profile == "full"
+    assert profiled.total_items == governed.total_items
 
 
 def test_next_applies_prediction_window_time_at_read_without_a_worker_tick(tmp_path: Path) -> None:

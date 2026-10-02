@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import base64
-import hashlib
 import json
 import subprocess
 from pathlib import Path
@@ -13,10 +11,11 @@ from click.testing import CliRunner
 
 from cruxible_client import contracts
 from cruxible_client.authoring.workspace import observe_playbill_next_workspace
-from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.errors import ProposalActivationRequestInvalid
+from cruxible_client.contracts.floor import PlaybillFloorDeltaV1
 from cruxible_core.cli.context import CliContextState, save_cli_context
 from cruxible_core.cli.main import cli
+from tests.support.floor_exports import delta_from_export, floor_v5_export
 
 
 def _coordinate() -> contracts.PlaybillAcceptedCoordinate:
@@ -28,40 +27,12 @@ def _coordinate() -> contracts.PlaybillAcceptedCoordinate:
     )
 
 
-def _export(*, corrupt: bool = False) -> contracts.PlaybillFloorExport:
-    content = b'{"fresh":true}\n'
-    inventory = [
-        {
-            "path": "cards/fresh.json",
-            "content_digest": "sha256:" + hashlib.sha256(content).hexdigest(),
-            "byte_length": len(content),
-        }
-    ]
-    manifest = {
-        "tag": "playbill-floor-manifest-v2",
-        "format": "playbill-floor-export-v2",
-        "coordinate": _coordinate().model_dump(mode="json"),
-        "files": inventory,
-        "floor_digest": typed_digest(
-            Sha256Value,
-            "playbill-floor-export-v2",
-            {"files": inventory},
-        ).tagged,
-    }
-    return contracts.PlaybillFloorExport(
-        coordinate=_coordinate(),
-        manifest=manifest,
-        files=[
-            contracts.PlaybillFloorFile(
-                path="manifest.json",
-                content_base64=base64.b64encode(json.dumps(manifest).encode()).decode(),
-            ),
-            contracts.PlaybillFloorFile(
-                path="cards/fresh.json",
-                content_base64=base64.b64encode(b"corrupt" if corrupt else content).decode(),
-            ),
-        ],
-    )
+def _export() -> contracts.PlaybillFloorExport:
+    return floor_v5_export({"cards/fresh.json": b'{"fresh":true}\n'}, coordinate=_coordinate())
+
+
+def _delta(*, corrupt: bool = False) -> PlaybillFloorDeltaV1:
+    return delta_from_export(_export(), corrupt="cards/fresh.json" if corrupt else None)
 
 
 def _workspace(tmp_path: Path) -> Path:
@@ -114,15 +85,17 @@ def _install_client(
                 workspace_advertisement={"status": "not_attached", "workspace_path": None},
             )
 
-        def export_playbill_floor(
+        def playbill_floor_delta(
             self,
             instance_id: str,
             *,
             at=None,  # type: ignore[no-untyped-def]
-        ) -> contracts.PlaybillFloorExport:
+            base_generation: int | None = None,
+            base_renderer: str | None = None,
+        ) -> PlaybillFloorDeltaV1:
             assert instance_id == "inst_test"
             assert at == (_coordinate() if status == "accepted" else None)
-            return _export(corrupt=corrupt)
+            return _delta(corrupt=corrupt)
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
 
@@ -142,15 +115,17 @@ def test_floor_export_records_missing_config_and_clears_floor_missing(
     save_cli_context(CliContextState(server_url="http://test", instance_id="inst_test"))
 
     class StubClient:
-        def export_playbill_floor(
+        def playbill_floor_delta(
             self,
             instance_id: str,
             *,
             at=None,  # type: ignore[no-untyped-def]
-        ) -> contracts.PlaybillFloorExport:
+            base_generation: int | None = None,
+            base_renderer: str | None = None,
+        ) -> PlaybillFloorDeltaV1:
             assert instance_id == "inst_test"
             assert at is None
-            return _export()
+            return _delta()
 
     monkeypatch.setattr(
         "cruxible_core.cli.commands._common._get_client",
@@ -161,7 +136,7 @@ def test_floor_export_records_missing_config_and_clears_floor_missing(
 
     assert result.exit_code == 0, result.output
     config = json.loads((workspace / ".playbill" / "coverage.json").read_text())
-    assert config["floor_output"]["format"] == "playbill-floor-export-v3"
+    assert config["floor_output"]["format"] == "playbill-floor-export-v5"
     observation = observe_playbill_next_workspace(workspace)
     assert observation["floor_status"] != "missing"
     assert observation["floor_status"] != "not_configured"

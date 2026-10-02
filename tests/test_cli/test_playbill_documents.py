@@ -133,6 +133,8 @@ def test_cli_init_refuses_a_shared_key_dir_with_a_chmod_repair(monkeypatch, tmp_
             "init",
             "--key-dir",
             str(custody),
+            "--principal-id",
+            "owner",
         ],
     )
 
@@ -191,6 +193,8 @@ def test_cli_init_writes_an_explicit_remote_workspace_config(monkeypatch, tmp_pa
             str(workspace),
             "--key-dir",
             str(tmp_path / "custody"),
+            "--principal-id",
+            "owner",
             "--json",
         ],
     )
@@ -199,7 +203,7 @@ def test_cli_init_writes_an_explicit_remote_workspace_config(monkeypatch, tmp_pa
     config = json.loads((workspace / ".playbill" / "coverage.json").read_text())
     assert config["server_url"] == "https://playbill.example.test"
     assert config["instance_id"] == "inst_cli_init"
-    assert config["floor_output"]["format"] == "playbill-floor-export-v3"
+    assert config["floor_output"]["format"] == "playbill-floor-export-v5"
 
 
 def test_unix_socket_host_attach_uses_the_containing_git_worktree(
@@ -304,52 +308,13 @@ def test_explicit_remote_workspace_config_never_sends_the_client_path(
     CoverageWorkspaceConfigV2.model_validate(config)
     assert config == {
         "floor_output": {
-            "format": "playbill-floor-export-v3",
+            "format": "playbill-floor-export-v5",
             "tag": "playbill-floor-output-v1",
         },
         "instance_id": "inst_remote",
         "server_url": "https://playbill.example.test",
         "tag": "playbill-coverage-workspace-config-v2",
     }
-
-
-def test_cli_lists_documents_with_their_canonical_coordinate(monkeypatch) -> None:
-    class StubClient:
-        def list_playbill_documents(self, instance_id: str) -> contracts.PlaybillDocumentList:
-            assert instance_id == "inst_cli"
-            return contracts.PlaybillDocumentList(
-                coordinate=COORDINATE,
-                documents=[
-                    contracts.PlaybillDocumentView(
-                        coordinate=COORDINATE,
-                        envelope={
-                            "identity": "document:design",
-                            "path": "documents/design.json",
-                        },
-                        facts=[],
-                    )
-                ],
-            )
-
-    monkeypatch.setattr(
-        "cruxible_core.cli.commands._common._get_client",
-        lambda: StubClient(),
-    )
-    result = CliRunner().invoke(
-        cli,
-        [
-            "--server-url",
-            "https://playbill.invalid",
-            "--instance-id",
-            "inst_cli",
-            "playbill",
-            "document",
-            "list",
-        ],
-    )
-    assert result.exit_code == 0, result.output
-    assert "document:design  documents/design.json" in result.stdout
-    assert f"Coordinate: {COORDINATE.git_oid}" in result.stdout
 
 
 def test_document_example_is_local_and_model_constructed(monkeypatch) -> None:
@@ -368,3 +333,71 @@ def test_document_example_is_local_and_model_constructed(monkeypatch) -> None:
     assert payload["body_digest"] == "sha256:" + "0" * 64
     assert payload["governance_scope"]
     assert payload["lifecycle"]["revision"] == 1
+
+
+def test_cli_init_needs_an_owner_principal_and_claims_it_on_an_auth_off_daemon(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+    monkeypatch.delenv("CRUXIBLE_SERVER_BEARER_TOKEN", raising=False)
+    monkeypatch.delenv("CRUXIBLE_PRINCIPAL_ID", raising=False)
+    claimed: list[object] = []
+
+    class StubClient:
+        def init_playbill(self, instance_id: str, **_kwargs: object) -> object:
+            from cruxible_core.cli.commands._common import _root_ctx_obj
+
+            claimed.append(_root_ctx_obj().get("principal_id"))
+            return contracts.PlaybillInitResult(
+                instance_id=instance_id,
+                coordinate=COORDINATE,
+                trust_root={},
+                recovery_posture="normal",
+                approval_policy_mode="self_approval_allowed",
+                workspace_advertisement={"status": "not_attached", "workspace_path": None},
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    base = ["--server-url", "https://playbill.invalid", "--instance-id", "inst_cli_init"]
+
+    missing = CliRunner().invoke(cli, [*base, "playbill", "init", "--key-dir", str(tmp_path / "a")])
+    conflicting = CliRunner().invoke(
+        cli,
+        [
+            *base[:2],
+            "--principal-id",
+            "alice",
+            *base[2:],
+            "playbill",
+            "init",
+            "--key-dir",
+            str(tmp_path / "b"),
+            "--principal-id",
+            "bob",
+        ],
+    )
+    made = CliRunner().invoke(
+        cli,
+        [*base, "playbill", "init", "--key-dir", str(tmp_path / "c"), "--principal-id", "alice"],
+    )
+
+    assert missing.exit_code == 2
+    assert "cruxible playbill init --principal-id ID --key-dir DIR" in missing.output
+    assert conflicting.exit_code == 2
+    assert "disagrees with the configured principal alice" in conflicting.output
+    assert made.exit_code == 0, made.output
+    assert claimed == ["alice"]
+    assert "Owner principal: alice" in made.output
+    settings = tmp_path / "c" / "cruxible.env"
+    assert f"Owner settings: {settings.resolve()}" in made.output
+    assert "a claim of identity" in made.output
+    assert stat.S_IMODE(settings.stat().st_mode) == 0o600
+    written = settings.read_text()
+    assert "export CRUXIBLE_PRINCIPAL_ID=alice" in written
+    assert "export CRUXIBLE_INSTANCE_ID=inst_cli_init" in written
+    assert "export CRUXIBLE_SERVER_URL=https://playbill.invalid" in written
+    assert (
+        f"export CRUXIBLE_PRINCIPAL_KEY={(tmp_path / 'c' / 'alice.ed25519').resolve()}" in written
+    )
+    assert "BEARER_TOKEN" not in written

@@ -74,6 +74,9 @@ def is_time_bearing_field(name: str, annotation: str) -> bool:
 # `observed_at` the instant the daemon evaluated the source, while an attestation
 # is `observed_at` the time its attestor asserts.
 CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
+    # A signed mint consent is accepted only within a window around the
+    # daemon's clock; issued_at anchors that window.
+    ("RuntimeCredentialMintStatementV1", "issued_at"): "VALIDITY WINDOW",
     ("LineArmV1", "armed_at"): "VALIDITY WINDOW",
     ("LineArmV1", "evaluated_until"): "VALIDITY WINDOW",
     ("LineArmV1", "stopped_at"): "VALIDITY WINDOW",
@@ -134,7 +137,7 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("ChangeSetRecordV2", "sequence"): "SETTLEMENT ORDER",
     ("ChangeSetRecordV3", "sequence"): "SETTLEMENT ORDER",
     ("CheckpointGeneration", "sequence"): "SETTLEMENT ORDER",
-    ("ClaimAdjudicationRuleV1", "max_evidence_age"): "VALIDITY WINDOW",
+    ("_ClaimAdjudicationRuleBase", "max_evidence_age"): "VALIDITY WINDOW",
     ("ClaimAdmissionCandidateContextV1", "evaluation_time"): "EVALUATION INSTANT",
     ("ClaimAttestationAppendResultV1", "partition_sequence"): "SETTLEMENT ORDER",
     ("ClaimAttestationAppendResultV1", "recorded_at"): "ASSERTION TIME",
@@ -161,8 +164,6 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("ClaimQueryResultV1", "expires_at"): "VALIDITY WINDOW",
     ("ClaimReferentContext", "observed_at"): "ASSERTION TIME",
     ("ClaimRetireDependentV1", "effective_until"): "VALIDITY WINDOW",
-    ("ClaimRetirePreflightV1", "effective_until"): "VALIDITY WINDOW",
-    ("ClaimRetireRequestV1", "effective_until"): "VALIDITY WINDOW",
     ("ClaimRetirementInput", "effective_until"): "VALIDITY WINDOW",
     ("ClaimRetirementMemberV1", "effective_until"): "VALIDITY WINDOW",
     ("ClaimRetirementResultItemV1", "effective_until"): "VALIDITY WINDOW",
@@ -178,7 +179,6 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("ConsumptionEpochV1", "consumption_epoch_generation"): "SETTLEMENT ORDER",
     ("ConsumptionObservationGapV1", "unobserved_from_generation"): "SETTLEMENT ORDER",
     ("ConsumptionObservationResumeV1", "observed_from_generation"): "SETTLEMENT ORDER",
-    ("ContextCapsuleV1", "evaluation_time"): "EVALUATION INSTANT",
     ("CoverageManifestFileV1", "written_at"): "ASSERTION TIME",
     ("CoverageManifestFileV2", "written_at"): "ASSERTION TIME",
     ("CurationAcceptedFixedV1", "resolved_generation"): "SETTLEMENT ORDER",
@@ -199,10 +199,22 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("ExhaustPromotionV1", "last_sequence"): "SETTLEMENT ORDER",
     ("ExhaustReceiptSetManifestV1", "first_sequence"): "SETTLEMENT ORDER",
     ("ExhaustReceiptSetManifestV1", "last_sequence"): "SETTLEMENT ORDER",
-    ("ExpandRequestV1", "evaluation_time"): "EVALUATION INSTANT",
     ("ExternalSourceReadRequestV1", "observed_at"): "EVALUATION INSTANT",
     ("FloorGenerationPairV1", "current_generation"): "SETTLEMENT ORDER",
     ("FloorGenerationPairV1", "floor_generation"): "SETTLEMENT ORDER",
+    # The floor carries no verdicts and no instants: a file's changed_at is the
+    # accepted generation that last touched one of its inputs.
+    ("PlaybillFloorEntryV5", "changed_at"): "SETTLEMENT ORDER",
+    ("PlaybillFloorManifestV5", "generation"): "SETTLEMENT ORDER",
+    ("PlaybillFloorHeadV1", "generation"): "SETTLEMENT ORDER",
+    ("PlaybillFloorDeltaFileV1", "changed_at"): "SETTLEMENT ORDER",
+    ("PlaybillFloorDeltaV1", "base_generation"): "SETTLEMENT ORDER",
+    ("PlaybillFloorApplyResultV1", "generation"): "SETTLEMENT ORDER",
+    ("FloorManifestFileV1", "changed_at"): "SETTLEMENT ORDER",
+    ("FloorFreshnessManifestV2", "generation"): "SETTLEMENT ORDER",
+    ("FloorInputs", "generation"): "SETTLEMENT ORDER",
+    ("_SubjectRender", "changed_at"): "SETTLEMENT ORDER",
+    ("_SubjectRender", "own_changed_at"): "SETTLEMENT ORDER",
     ("GovernedActorContext", "timestamp"): "ASSERTION TIME",
     ("InputAcquisitionRuleV1", "max_age"): "VALIDITY WINDOW",
     ("InsertionExpectationV2", "expires_at"): "VALIDITY WINDOW",
@@ -235,7 +247,6 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("PlaybillBlockSyncReadResultV1", "generation"): "SETTLEMENT ORDER",
     ("PlaybillBlockSyncSuccessorCandidateV1", "generation"): "SETTLEMENT ORDER",
     ("PlaybillCandidateStatus", "accepted_generation"): "SETTLEMENT ORDER",
-    ("PlaybillClaimExplanationV1", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillQueryReceiptV1", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillQueryRequestV1", "evaluation_time"): "EVALUATION INSTANT",
     ("_RowRenderer", "evaluation_time"): "EVALUATION INSTANT",
@@ -244,11 +255,9 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("PlaybillClaimExplanationV3", "admission_evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillClaimExplanationV3", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillClaimHistoryEntry", "sequence"): "SETTLEMENT ORDER",
-    ("PlaybillClaimRetirePreflight", "effective_until"): "VALIDITY WINDOW",
     ("PlaybillClaimVerdictQueryV1", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillClaimVerdictQueryV2", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillClaimViewV2", "admission_evaluation_time"): "EVALUATION INSTANT",
-    ("PlaybillContextCapsule", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillCurationActionResult", "generation"): "SETTLEMENT ORDER",
     ("PlaybillCurationActionResultV1", "generation"): "SETTLEMENT ORDER",
     ("PlaybillCurationListRequestV1", "evaluation_time"): "EVALUATION INSTANT",
@@ -288,7 +297,6 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("PlaybillReviewOperationalEventV1", "accepted_generation"): "SETTLEMENT ORDER",
     ("PlaybillReviewOperationalEventV1", "recorded_at"): "ASSERTION TIME",
     ("PlaybillReviewOperationalEventV1", "sequence"): "SETTLEMENT ORDER",
-    ("PlaybillSearchOrientationV1", "generation"): "SETTLEMENT ORDER",
     # The accepted candidate's own timestamp: the author's assertion of when
     # the head generation was made, surfaced by orient beside its sequence.
     ("PlaybillOrientResultV1", "accepted_at"): "ASSERTION TIME",
@@ -298,14 +306,43 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("PlaybillGetRequestV1", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillGetResultV1", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillGetProposalCardV1", "admitted_at"): "ASSERTION TIME",
+    ("PlaybillGetProcedureTrackRecordV1", "first_sequence"): "SETTLEMENT ORDER",
+    ("PlaybillGetProcedureTrackRecordV1", "last_sequence"): "SETTLEMENT ORDER",
     ("PlaybillGetCaptureEvidenceV1", "observed_at"): "ASSERTION TIME",
     ("PlaybillGetAttestationEvidenceV1", "at"): "ASSERTION TIME",
     ("PlaybillGetRevisionV1", "sequence"): "SETTLEMENT ORDER",
     ("PlaybillGetCoordinateV1", "generation"): "SETTLEMENT ORDER",
     ("_RevisionEntry", "sequence"): "SETTLEMENT ORDER",
-    ("PlaybillSearchRequestV1", "evaluation_time"): "EVALUATION INSTANT",
-    ("PlaybillSearchResult", "evaluation_time"): "EVALUATION INSTANT",
-    ("PlaybillSearchResultV1", "evaluation_time"): "EVALUATION INSTANT",
+    # Operational reads: Lines, Captures, predictions, mandates and runs. An
+    # arm's and an occurrence's instants are the dispatch store's validity
+    # windows; a Capture's observed_at is its producer's assertion; a run's
+    # times are its admission's evaluation instant, which the deterministic
+    # executor clock stamps on every journal record of the run.
+    ("PlaybillGetLineArmV1", "armed_at"): "VALIDITY WINDOW",
+    ("PlaybillGetLineArmV1", "stopped_at"): "VALIDITY WINDOW",
+    ("PlaybillGetLineOccurrenceV1", "eligible_at"): "VALIDITY WINDOW",
+    ("PlaybillGetCaptureCardV1", "observed_at"): "ASSERTION TIME",
+    ("PlaybillOrientCaptureV1", "observed_at"): "ASSERTION TIME",
+    ("PlaybillGetPredictionWindowV1", "starts_at"): "VALIDITY WINDOW",
+    ("PlaybillGetPredictionWindowV1", "ends_at"): "VALIDITY WINDOW",
+    ("PlaybillOrientPredictionV1", "next_close"): "VALIDITY WINDOW",
+    ("PlaybillGetMandateCardV1", "valid_from"): "VALIDITY WINDOW",
+    ("PlaybillGetMandateCardV1", "expires_at"): "VALIDITY WINDOW",
+    ("PlaybillOrientMandateV1", "expires_at"): "VALIDITY WINDOW",
+    ("PlaybillRunRowV1", "started_at"): "EVALUATION INSTANT",
+    ("PlaybillGetProcedureRunCardV1", "started_at"): "EVALUATION INSTANT",
+    ("PlaybillGetRunCurrentNodeV1", "started_at"): "EVALUATION INSTANT",
+    ("PlaybillGetPendingInputV1", "waiting_since"): "EVALUATION INSTANT",
+    ("PlaybillGetRunNodeV1", "sequence"): "SETTLEMENT ORDER",
+    # The accepted head a live operational read was taken at.
+    ("PlaybillLiveHeadV1", "generation"): "SETTLEMENT ORDER",
+    # The accepted head (or named coordinate) a head read answers.
+    ("PlaybillHeadV1", "generation"): "SETTLEMENT ORDER",
+    # One internal get batch, evaluated at one instant.
+    ("PlaybillGetBatchRequestV1", "evaluation_time"): "EVALUATION INSTANT",
+    # The instant a query's first page pinned; its cursor continues it.
+    ("_QueryCursor", "evaluation_time"): "EVALUATION INSTANT",
+    ("RunLocator", "admitted_at"): "EVALUATION INSTANT",
     ("PlaybillSinceCursor", "last_generation"): "SETTLEMENT ORDER",
     ("PlaybillSinceCursor", "lower_generation"): "SETTLEMENT ORDER",
     ("PlaybillSinceRequest", "generation"): "SETTLEMENT ORDER",
@@ -346,6 +383,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("ProcedureRunAdmissionV1", "admitted_at"): "ASSERTION TIME",
     ("ProcedureRunAdmissionV3", "occurrence_evaluation_time"): "EVALUATION INSTANT",
     ("ProcedureRunAttributionV1", "recorded_time"): "ASSERTION TIME",
+    ("ProcedureRunAttributionWithheldV1", "recorded_time"): "ASSERTION TIME",
+    ("_LinkedReadmission", "accepted_sequence"): "SETTLEMENT ORDER",
     ("ProcedureRunBudgetObservedV1", "wall_clock_microseconds"): "VALIDITY WINDOW",
     ("ProcedureRunIndexEntryV1", "first_sequence"): "SETTLEMENT ORDER",
     ("ProcedureRunIndexEntryV1", "last_sequence"): "SETTLEMENT ORDER",

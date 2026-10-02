@@ -42,6 +42,10 @@ UNDECLARED_HAND_EDIT_CHANGE = "read_the_refusal_details_and_revise_the_named_art
 # is declared here beside the vocabularies it covers, never derived from the
 # code, and the served refusal models read it when a producer carries none.
 DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
+    "workspace_binding_missing": (
+        "Restore the bound file at the catalog entry's locator, or correct or remove "
+        "that entry in the workspace source catalog."
+    ),
     "trigger_capture_stale": (
         "Acquire a fresh Capture and evaluate its new occurrence. "
         "Freshness is checked at admission time."

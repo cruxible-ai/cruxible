@@ -130,21 +130,13 @@ def _resolver(client: Any, instance_id: str) -> ResolveCoverage:
 
 
 def _floor_generation_resolver(client: Any, instance_id: str) -> ResolveFloorGenerations:
-    """Use the same search-orient wire as the CLI hook for floor freshness."""
+    """Use the same head read as the CLI hook for floor freshness."""
 
     def generation(at: AcceptedCoordinate | None) -> int:
-        answer = client.search_playbill(
-            instance_id,
-            mode="orient",
-            kinds=("claim", "demand", "procedure"),
-            at=None if at is None else at.model_dump(mode="json"),
+        head = client.playbill_head(
+            instance_id, at=None if at is None else at.model_dump(mode="json")
         )
-        if answer.orientation is None:
-            raise RuntimeError("Playbill orient returned no floor generation")
-        value = answer.orientation.get("generation")
-        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-            raise RuntimeError("Playbill orient returned an invalid floor generation")
-        return value
+        return int(head.generation)
 
     def resolve(coordinate: AcceptedCoordinate) -> FloorGenerationPairV1:
         return FloorGenerationPairV1(
@@ -404,14 +396,14 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
 
 
 def export_arm_surface(destination: Path) -> Path:
-    """Write floor-v2 artifacts and the coverage boundary as one tree."""
+    """Write the floor, with its discovery cards and coverage boundary, as one tree."""
 
     destination.mkdir(parents=True, exist_ok=True)
     subprocess.run(["git", "init", "-q", "-b", "main", str(destination)], check=True)
     previous = Path.cwd()
     try:
         os.chdir(destination)
-        run_cli_json("playbill", "floor", "export")
+        run_cli_json("playbill", "floor", "export", "--with-discovery")
     finally:
         os.chdir(previous)
     return destination / ".playbill/floor"

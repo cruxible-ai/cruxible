@@ -159,7 +159,7 @@ def change_set_example() -> ChangeSetInput:
             ),
             ClaimRetirementInput(
                 kind="claim_retirement",
-                claim_id="CLM-" + "0" * 32,
+                retires="CLM-" + "0" * 32,
                 reason="was-rescinded",
             ),
         ),

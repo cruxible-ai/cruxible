@@ -597,13 +597,15 @@ VOCABULARY_DESCRIPTOR_PREDICATES = frozenset(
 
 
 def vocabulary_terms(source: Any, *, path: str) -> tuple[tuple[str, str, str, str, str], ...]:
-    """Rows of the reuse vocabulary index one live owner contributes.
+    """Rows of the vocabulary index one live owner contributes.
 
     A live ClaimType or Subject contributes its identity, canonical tokens and
     structural signature for its own whole-artifact interface; a live
     descriptor Claim contributes the alias, tag or relation label it states
     about a whole-artifact address. ``term`` is the exact normalized match key
-    the reuse law compares; ``value`` is the raw text an interface carries.
+    the retired reuse law compared; ``value`` is the raw text an interface
+    carries. Only replay and settlement under the historical ClaimType law
+    revisions read this index (``proposals.historical_reuse``).
     """
     from cruxible_client.contracts.claim_type_structure import claim_type_structural_signature
     from cruxible_client.contracts.claims import (

@@ -175,3 +175,33 @@ def test_availability_refuses_a_fifo_without_waiting_for_a_writer(tmp_path):
     os.mkfifo(path)
     # Opening a FIFO for reading blocks until a writer appears; this must not.
     assert store.availability(digest) == "corrupt"
+
+
+def test_scan_streams_a_bounded_prefix_including_a_dry_runs_held_bodies(
+    tmp_path: Path,
+) -> None:
+    from cruxible_core.storage.cas import DryRunBodyStore
+
+    root = tmp_path / "cas"
+    root.mkdir()
+    store = ContentAddressedBodyStore(root)
+    stored = sorted(store.store(f"body {index}".encode()).digest for index in range(40))
+    whole = store.scan("", budget=1000)
+    assert whole.complete and whole.digests == tuple(stored) and whole.examined == 40
+    first = stored[0].removeprefix("sha256:")
+    one = store.scan(first[:12], budget=1000)
+    assert one.complete and one.digests == (stored[0],)
+    partial = store.scan("", budget=10)
+    assert not partial.complete and partial.examined == 10 and len(partial.digests) <= 10
+    absent = first[:2] + ("0" if first[2] != "0" else "1") * 10
+    near = store.scan(absent, budget=1000, nearest=3)
+    assert near.complete and near.digests == () and len(near.nearest) <= 3
+    with pytest.raises(PlaybillCasError):
+        store.scan("A", budget=10)
+    assert store.peek(stored[0], 4) == b"body"
+    held: dict[str, bytes] = {}
+    dry = DryRunBodyStore(store, held)
+    extra = dry.store(b"held only").digest
+    assert extra in dry.scan("", budget=1000).digests
+    assert extra not in store.scan("", budget=1000).digests
+    assert dry.peek(extra, 4) == b"held"

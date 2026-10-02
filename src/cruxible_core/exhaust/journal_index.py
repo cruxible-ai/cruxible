@@ -13,6 +13,7 @@ import sqlite3
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from functools import wraps
 from typing import TYPE_CHECKING, Any, Callable, ParamSpec, TypeVar
@@ -74,6 +75,38 @@ def journal_locked(function: Callable[_P, _R]) -> Callable[_P, _R]:
 
 def _key(stream: JournalStreamIdentityV1) -> str:
     return canonical_bytes(stream.model_dump(mode="json")).decode()
+
+
+#: Where a run page stopped: (the index's identity, the admission row's position).
+RunLocatorKey = tuple[str, int]
+
+
+class RunPageInvalidated(Exception):
+    """A run page key minted before the index was rebuilt: continue from page one."""
+
+
+@dataclass(frozen=True)
+class RunLocator:
+    """One admitted run as the index locates it, without reading any payload."""
+
+    run_id: str
+    admitted_at: str
+    partition_id: str
+    admission_payload_digest: str
+    #: The ``attempt_finalized`` payload; ``None`` while the run is running.
+    final_payload_digest: str | None
+    nodes_done: int
+    index_identity: str
+    #: The admission record's position in the index: immutable once written.
+    row_id: int
+
+    @property
+    def finished(self) -> bool:
+        return self.final_payload_digest is not None
+
+    @property
+    def key(self) -> RunLocatorKey:
+        return (self.index_identity, self.row_id)
 
 
 class JournalIndex:
@@ -301,6 +334,114 @@ class JournalIndex:
                 sql += " LIMIT ?"
                 args.append(limit)
             return tuple(self.read_row(row) for row in conn.execute(sql, args).fetchall())
+
+    def run_locators(
+        self,
+        stream: JournalStreamIdentityV1,
+        *,
+        limit: int,
+        partition_id: str | None = None,
+        run_id: str | None = None,
+        running_only: bool = False,
+        after: RunLocatorKey | None = None,
+    ) -> tuple[tuple[RunLocator, ...], bool]:
+        """Admitted runs, newest admission first: a locator read.
+
+        Index rows only: no payload is read. The order is the admission
+        record's position in this index, which never changes once written, so
+        a page continues by key and a run that finishes between pages is never
+        repeated or skipped. A run's status is a displayed field, never part of
+        the order; ``running_only`` filters to runs whose ``attempt_finalized``
+        record has not landed. A key minted before the index was rebuilt names
+        positions that no longer exist, so it refuses rather than guess.
+        """
+
+        where = ["a.stream=?", "a.event_kind='admission_bound'", "a.run_id IS NOT NULL"]
+        args: list[Any] = [_key(stream)]
+        if partition_id is not None:
+            where.append("a.partition_id=?")
+            args.append(partition_id)
+        if run_id is not None:
+            where.append("a.run_id=?")
+            args.append(run_id)
+        final = (
+            "(SELECT f.payload_digest FROM records f WHERE f.stream=a.stream "
+            "AND f.run_id=a.run_id AND f.event_kind='attempt_finalized' "
+            "ORDER BY f.sequence DESC LIMIT 1)"
+        )
+        if running_only:
+            where.append(f"{final} IS NULL")
+        with self.connection() as conn:
+            identity = conn.execute(
+                "SELECT identity FROM index_identity WHERE singleton=1"
+            ).fetchone()[0]
+            if after is not None:
+                if after[0] != identity:
+                    raise RunPageInvalidated(
+                        "the run index was rebuilt since this page's first read"
+                    )
+                where.append("a.id<?")
+                args.append(after[1])
+            rows = conn.execute(
+                f"SELECT a.id AS row_id, a.run_id AS run_id, a.recorded_at AS admitted_at, "
+                f"a.partition_id AS partition_id, a.payload_digest AS payload_digest, "
+                f"{final} AS final_digest, "
+                "(SELECT count(*) FROM records n WHERE n.stream=a.stream "
+                "AND n.run_id=a.run_id AND n.event_kind='node_fired') AS nodes "
+                "FROM records a WHERE " + " AND ".join(where) + " ORDER BY a.id DESC LIMIT ?",
+                (*args, limit + 1),
+            ).fetchall()
+        return (
+            tuple(
+                RunLocator(
+                    run_id=row["run_id"],
+                    admitted_at=row["admitted_at"],
+                    partition_id=row["partition_id"],
+                    admission_payload_digest=row["payload_digest"],
+                    final_payload_digest=row["final_digest"],
+                    nodes_done=int(row["nodes"]),
+                    index_identity=str(identity),
+                    row_id=int(row["row_id"]),
+                )
+                for row in rows[:limit]
+            ),
+            len(rows) > limit,
+        )
+
+    def run_ids_with_prefix(
+        self, stream: JournalStreamIdentityV1, prefix: str, *, limit: int
+    ) -> tuple[str, ...]:
+        """Admitted run ids starting with ``prefix``, in id order: a locator read."""
+
+        with self.connection() as conn:
+            return tuple(
+                str(row[0])
+                for row in conn.execute(
+                    "SELECT DISTINCT run_id FROM records WHERE stream=? "
+                    "AND event_kind='admission_bound' AND run_id>=? AND run_id<? "
+                    "ORDER BY run_id LIMIT ?",
+                    (_key(stream), prefix, prefix + "\uffff", limit),
+                )
+            )
+
+    def run_counts(
+        self, stream: JournalStreamIdentityV1, *, partition_id: str | None = None
+    ) -> tuple[int, int]:
+        """How many runs were admitted, and how many of them are still running."""
+
+        where = "a.stream=? AND a.event_kind='admission_bound' AND a.run_id IS NOT NULL"
+        args: list[Any] = [_key(stream)]
+        if partition_id is not None:
+            where += " AND a.partition_id=?"
+            args.append(partition_id)
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT count(*), coalesce(sum(NOT EXISTS(SELECT 1 FROM records f "
+                "WHERE f.stream=a.stream AND f.run_id=a.run_id "
+                "AND f.event_kind='attempt_finalized')),0) FROM records a WHERE " + where,
+                args,
+            ).fetchone()
+        return int(row[0]), int(row[1])
 
     def positions(
         self, stream: JournalStreamIdentityV1, *, event_kind: str | None = None

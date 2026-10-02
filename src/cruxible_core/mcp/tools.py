@@ -8,14 +8,28 @@ from functools import wraps
 from typing import Annotated, Any, Callable, Literal, cast
 
 from mcp.server.fastmcp import FastMCP
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic.json_schema import SkipJsonSchema
 
 from cruxible_client import contracts
 from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
+from cruxible_client.contracts.attestations import ApprovalAttestation
+from cruxible_client.contracts.authoring.models import WorkingSelectionObservationV1
 from cruxible_client.contracts.capture_reads import CaptureReadRequestV1, CaptureReadV1
+from cruxible_client.contracts.captures import CanonicalDurationV1
 from cruxible_client.contracts.claim_attestations import ClaimAttestationAppendResultV1
-from cruxible_client.contracts.claim_reads import ClaimValuesResultV1
-from cruxible_client.contracts.compact_query import QueryFilterV1, QueryFollowV1
+from cruxible_client.contracts.claim_type_upgrade import (
+    ClaimTypeUpgradeRequestV1,
+    ClaimTypeUpgradeResultV1,
+)
+from cruxible_client.contracts.compact_query import (
+    QueryClaimStatus,
+    QueryFilterV1,
+    QueryFollowV1,
+    QueryReceiptDetail,
+)
+from cruxible_client.contracts.declared_blocks import ProjectionBlockStamp
+from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeResultV1
 from cruxible_client.contracts.get_reads import (
     GET_HISTORY_MAX_LIMIT,
@@ -30,15 +44,37 @@ from cruxible_client.contracts.kits import (
     PlaybillKitRemoveRequestV1,
     PlaybillKitStatusV1,
 )
-from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.provider_installation import (
     PlaybillProviderCatalogV1,
     PlaybillProviderInstallRequestV1,
     PlaybillProviderInstallResultV1,
 )
 from cruxible_client.contracts.query.definitions import QueryDefinitionSpecV1
+from cruxible_client.contracts.query.grammar import QueryBudgetsV1
 from cruxible_client.contracts.source_catalog import SourceCompilationBundle
+from cruxible_client.contracts.types import PrincipalRecord
+from cruxible_client.contracts.write import (
+    AddChange,
+    CaptureEvidence,
+    ClaimValue,
+    ContractEvidence,
+    ExpectedValue,
+    FileEvidence,
+    RetireChange,
+    SelfEvidence,
+    SetChange,
+    SlotRef,
+    WriteAccept,
+    WriteOutcome,
+    WriteRetireReason,
+    WriteRole,
+)
 from cruxible_core.claims.claim_type_inputs import ClaimTypeInputV1
+from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequest
+from cruxible_core.coverage.adapter import WorkingSourceObservationV1
+from cruxible_core.coverage.contracts import CoverageAccessProfileV1, CoverageCardBudgetV1
+from cruxible_core.coverage.indexes import CoverageScanBudgetV1
+from cruxible_core.curation.audit import AuditCursorV1
 from cruxible_core.curation.curation_calibration import (
     AUDIT_BUDGET_DEFAULT_MAX_BYTES,
     AUDIT_BUDGET_DEFAULT_MAX_ROWS,
@@ -51,11 +87,103 @@ from cruxible_core.mcp import handlers
 from cruxible_core.mcp.results import McpServerInfoResult, McpWhoAmIResult
 from cruxible_core.mcp.target import MCP_INSTANCE_ENV, require_instance_id
 from cruxible_core.mcp.tool_prompts import tool_description
+from cruxible_core.service.discovery.next import PlaybillNextWorkspaceObservationV1
+from cruxible_core.service.procedures.procedure_runs import ProcedureSlotBindingRequestV1
+
+
+class McpRootAlias(BaseModel):
+    """One named workspace root used by source catalog compilation."""
+
+    model_config = ConfigDict(extra="forbid")
+    alias: str = Field(min_length=1)
+    path: str = Field(min_length=1)
+
+
+class McpSourceBinding(BaseModel):
+    """One workspace path bound to a declared logical source."""
+
+    model_config = ConfigDict(extra="forbid")
+    path: str = Field(min_length=1)
+    source_id: str = Field(min_length=1)
+
+
+def _root_aliases(rows: list[McpRootAlias] | None) -> dict[str, str] | None:
+    if rows is None:
+        return None
+    result = {row.alias: row.path for row in rows}
+    if len(result) != len(rows):
+        raise ValueError("root_aliases names an alias more than once")
+    return result
+
+
+def _source_bindings(rows: list[McpSourceBinding] | None) -> dict[str, str] | None:
+    if rows is None:
+        return None
+    result = {row.path: row.source_id for row in rows}
+    if len(result) != len(rows):
+        raise ValueError("bindings names a path more than once")
+    return result
+
+
+class McpFileEvidence(FileEvidence):
+    """File evidence as an MCP caller names it; this adapter reads the file.
+
+    The daemon never reads workspace files, so the adapter fills ``observation``
+    before the request leaves it. The field stays out of the advertised schema.
+    """
+
+    observation: SkipJsonSchema[WorkingSelectionObservationV1 | None] = None
+
+
+McpEvidence = Annotated[
+    SelfEvidence | CaptureEvidence | McpFileEvidence | ContractEvidence,
+    Field(discriminator="kind"),
+]
+_EVIDENCE_DEFAULT = "Default: the write's `because` as self evidence."
+
+
+class McpSetChange(SetChange):
+    __doc__ = SetChange.__doc__
+
+    evidence: McpEvidence | None = Field(default=None, description=_EVIDENCE_DEFAULT)
+
+
+class McpAddChange(AddChange):
+    __doc__ = AddChange.__doc__
+
+    evidence: McpEvidence | None = Field(default=None, description=_EVIDENCE_DEFAULT)
+
+
+McpChange = Annotated[McpSetChange | McpAddChange | RetireChange, Field(discriminator="op")]
+
 
 InstanceId = Annotated[
     str | None,
     Field(description=f"Instance to act on; defaults to the server's {MCP_INSTANCE_ENV}."),
 ]
+
+
+ReadAt = Annotated[
+    str | int | None,
+    Field(
+        description=(
+            "Read at an accepted generation: its git oid (a unique prefix of 12+ hex "
+            "characters is enough) or its generation number; default the current head."
+        )
+    ),
+]
+
+
+def _dump(model: BaseModel | None) -> dict[str, Any] | None:
+    """A typed MCP argument as the JSON object its handler validates again."""
+
+    return None if model is None else model.model_dump(mode="json")
+
+
+def _read_at(at: Any) -> Any:
+    """A read's ``at`` for the handler: a generation number travels as its decimal."""
+
+    return str(at) if isinstance(at, int) and not isinstance(at, bool) else at
 
 
 def register_tools(
@@ -123,6 +251,17 @@ def register_tools(
         return handlers.handle_playbill_kit_add(require_instance_id(instance_id), request)
 
     @_tool
+    def cruxible_playbill_claim_type_upgrade(
+        instance_id: InstanceId = None,
+        *,
+        request: ClaimTypeUpgradeRequestV1,
+    ) -> ClaimTypeUpgradeResultV1:
+        """Propose moving live ClaimTypes to v7 (dry_run evaluates and proposes nothing)."""
+        return handlers.handle_playbill_claim_type_upgrade(
+            require_instance_id(instance_id), request
+        )
+
+    @_tool
     def cruxible_playbill_evidence_rules_upgrade(
         instance_id: InstanceId = None,
     ) -> EvidenceRuleUpgradeResultV1:
@@ -142,7 +281,7 @@ def register_tools(
     def cruxible_playbill_init(
         instance_id: InstanceId = None,
         *,
-        principals: list[dict[str, Any]],
+        principals: list[PrincipalRecord],
         operating_profile: Literal["local", "cloud"] = "local",
         require_independent_approval: bool = False,
         git_object_format: Literal["sha1", "sha256"] | None = None,
@@ -153,7 +292,7 @@ def register_tools(
         """
         return handlers.handle_playbill_init(
             require_instance_id(instance_id),
-            principals,
+            [item.model_dump(mode="json") for item in principals],
             operating_profile,
             require_independent_approval,
             git_object_format=git_object_format,
@@ -170,13 +309,16 @@ def register_tools(
     def cruxible_playbill_propose_document(
         instance_id: InstanceId = None,
         *,
-        shell: dict[str, Any],
+        shell: DocumentShell,
         proposal_name: str,
         source_compilation_digest: str | None = None,
     ) -> contracts.PlaybillProposalInspection:
         """Propose a governed Document create or supersession."""
         return handlers.handle_playbill_propose_document(
-            require_instance_id(instance_id), shell, proposal_name, source_compilation_digest
+            require_instance_id(instance_id),
+            shell.model_dump(mode="json"),
+            proposal_name,
+            source_compilation_digest,
         )
 
     @_tool
@@ -230,11 +372,11 @@ def register_tools(
         instance_id: InstanceId = None,
         *,
         proposal_id: str,
-        attestation: dict[str, Any],
+        attestation: ApprovalAttestation,
     ) -> contracts.PlaybillApprovalReceipt:
         """Submit a public approval attestation."""
         return handlers.handle_playbill_submit_approval(
-            require_instance_id(instance_id), proposal_id, attestation
+            require_instance_id(instance_id), proposal_id, attestation.model_dump(mode="json")
         )
 
     @_tool
@@ -299,15 +441,7 @@ def register_tools(
         cursor: Annotated[
             str | None, Field(description="next_cursor from the previous page of this view.")
         ] = None,
-        at: Annotated[
-            str | contracts.PlaybillAcceptedCoordinate | None,
-            Field(
-                description=(
-                    "An accepted coordinate, or one accepted generation's Git OID "
-                    "(a unique prefix of 12+ hex characters is enough)."
-                )
-            ),
-        ] = None,
+        at: ReadAt = None,
         evaluation_time: Annotated[
             str | None, Field(description="ISO-8601 instant; defaults to now.")
         ] = None,
@@ -319,7 +453,7 @@ def register_tools(
             section=section,
             limit=limit,
             cursor=cursor,
-            at=at,
+            at=_read_at(at),
             evaluation_time=evaluation_time,
         )
 
@@ -362,57 +496,11 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_list_documents(
-        instance_id: InstanceId = None,
-    ) -> contracts.PlaybillDocumentList:
-        """List accepted Documents at the current coordinate."""
-        return handlers.handle_playbill_list_documents(require_instance_id(instance_id))
-
-    @_tool
-    def cruxible_playbill_get_document(
-        instance_id: InstanceId = None, *, identity: str
-    ) -> contracts.PlaybillDocumentView:
-        """Read one accepted Document envelope and facts."""
-        return handlers.handle_playbill_get_document(require_instance_id(instance_id), identity)
-
-    @_tool
     def cruxible_playbill_read_capture(
         instance_id: InstanceId = None, *, request: CaptureReadRequestV1
     ) -> CaptureReadV1:
         """Read exact retained Capture evidence with a byte budget and body permission."""
         return handlers.handle_playbill_read_capture(require_instance_id(instance_id), request)
-
-    @_tool
-    def cruxible_playbill_dereference(
-        instance_id: InstanceId = None, *, identity: str
-    ) -> contracts.PlaybillBodyRead:
-        """Dereference verified accepted body bytes."""
-        return handlers.handle_playbill_dereference(require_instance_id(instance_id), identity)
-
-    @_tool
-    def cruxible_playbill_history(
-        instance_id: InstanceId = None, *, identity: str
-    ) -> contracts.PlaybillDocumentHistory:
-        """Read one Document's replay-verified history."""
-        return handlers.handle_playbill_history(require_instance_id(instance_id), identity)
-
-    @_tool
-    def cruxible_playbill_explain(
-        instance_id: InstanceId = None,
-        *,
-        subject: dict[str, Any],
-        at: dict[str, Any],
-        detail: Literal["summary", "evidence", "proof"] = "summary",
-        include_body: bool = False,
-    ) -> contracts.PlaybillExplainResult | contracts.PlaybillExplainUnsupportedDetail:
-        """Explain governance and provenance at an exact coordinate."""
-        return handlers.handle_playbill_explain(
-            require_instance_id(instance_id),
-            subject,
-            at,
-            detail=detail,
-            include_body=include_body,
-        )
 
     @_tool
     def cruxible_playbill_source_context(
@@ -426,7 +514,7 @@ def register_tools(
         instance_id: InstanceId = None,
         *,
         bundle: Annotated[
-            dict[str, Any] | None,
+            SourceCompilationBundle | None,
             Field(description="A compiled source bundle; omit when passing catalog_path."),
         ] = None,
         catalog_path: Annotated[
@@ -435,54 +523,47 @@ def register_tools(
         ] = None,
         repository_root: str = ".",
         local_catalog_path: str | None = None,
-        root_aliases: dict[str, str] | None = None,
+        root_aliases: list[McpRootAlias] | None = None,
     ) -> contracts.PlaybillSourceCheckResult:
         """Compare a compiled bundle or catalog-declared workspace sources with accepted state."""
         return handlers.handle_playbill_source_check(
             require_instance_id(instance_id),
-            bundle=bundle,
+            bundle=None if bundle is None else bundle.model_dump(mode="json"),
             catalog_path=catalog_path,
             repository_root=repository_root,
             local_catalog_path=local_catalog_path,
-            root_aliases=root_aliases,
+            root_aliases=_root_aliases(root_aliases),
         )
 
     @_tool
     def cruxible_playbill_propose_source_bundle(
         instance_id: InstanceId = None,
         *,
-        bundle: dict[str, Any],
+        bundle: SourceCompilationBundle,
         source_name: str,
         proposal_name: str,
     ) -> contracts.PlaybillProposalInspection:
         """Propose frozen source bytes without a client path."""
         return handlers.handle_playbill_propose_source_bundle(
             require_instance_id(instance_id),
-            bundle,
+            bundle.model_dump(mode="json"),
             source_name=source_name,
             proposal_name=proposal_name,
         )
-
-    @_tool
-    def cruxible_playbill_list_principals(
-        instance_id: InstanceId = None,
-    ) -> contracts.PlaybillPrincipalList:
-        """List accepted public principal records."""
-        return handlers.handle_playbill_list_principals(require_instance_id(instance_id))
 
     @_tool
     def cruxible_playbill_compiler_upgrade(
         instance_id: InstanceId = None,
         *,
         target_compiler_digest: str,
-        base: dict[str, Any],
+        base: contracts.PlaybillAcceptedCoordinate,
         proposal_name: str,
     ) -> contracts.PlaybillProposalInspection:
         """Propose an admin-only compiler upgrade; review, approve and activate separately."""
         return handlers.handle_playbill_compiler_upgrade(
             require_instance_id(instance_id),
             target_compiler_digest,
-            base,
+            base.model_dump(mode="json"),
             proposal_name,
         )
 
@@ -490,44 +571,12 @@ def register_tools(
     def cruxible_playbill_propose_principal_change(
         instance_id: InstanceId = None,
         *,
-        principal: dict[str, Any],
+        principal: PrincipalRecord,
         proposal_name: str,
     ) -> contracts.PlaybillProposalInspection:
         """Propose principal registration, rotation, revocation, or recovery."""
         return handlers.handle_playbill_propose_principal_change(
-            require_instance_id(instance_id), principal, proposal_name
-        )
-
-    @_tool
-    def cruxible_playbill_list_subjects(
-        instance_id: InstanceId = None,
-        subject_kind: str | None = None,
-        limit: Annotated[
-            int, Field(ge=1, le=contracts.PLAYBILL_SUBJECT_LIST_MAX_LIMIT)
-        ] = contracts.PLAYBILL_SUBJECT_LIST_DEFAULT_LIMIT,
-        cursor: str | None = None,
-    ) -> contracts.PlaybillSubjectList:
-        """One page of Subjects (kind, id, live Claim count); follow next_cursor while truncated."""
-        return handlers.handle_playbill_list_subjects(
-            require_instance_id(instance_id), subject_kind=subject_kind, limit=limit, cursor=cursor
-        )
-
-    @_tool
-    def cruxible_playbill_get_subject(
-        instance_id: InstanceId = None, *, subject_kind: str, subject_id: str
-    ) -> contracts.PlaybillSubjectView:
-        """Read one accepted Subject envelope, facts, and incoming relations."""
-        return handlers.handle_playbill_get_subject(
-            require_instance_id(instance_id), subject_kind, subject_id
-        )
-
-    @_tool
-    def cruxible_playbill_subject_history(
-        instance_id: InstanceId = None, *, subject_kind: str, subject_id: str
-    ) -> contracts.PlaybillSubjectHistory:
-        """Read one Subject's accepted lineage."""
-        return handlers.handle_playbill_subject_history(
-            require_instance_id(instance_id), subject_kind, subject_id
+            require_instance_id(instance_id), principal.model_dump(mode="json"), proposal_name
         )
 
     @_tool
@@ -546,37 +595,11 @@ def register_tools(
     def cruxible_playbill_claim_type_migrate(
         instance_id: InstanceId = None,
         *,
-        request: dict[str, Any],
+        request: ClaimTypeMigrationRequest,
     ) -> contracts.PlaybillClaimTypeMigrationResponse:
         """Propose one ClaimType successor and its dependent dispositions atomically."""
         return handlers.handle_playbill_migrate_claim_type(
-            require_instance_id(instance_id), request
-        )
-
-    @_tool
-    def cruxible_playbill_list_claim_types(
-        instance_id: InstanceId = None,
-    ) -> contracts.PlaybillClaimTypeList:
-        """List accepted ClaimType interfaces."""
-        return handlers.handle_playbill_list_claim_types(require_instance_id(instance_id))
-
-    @_tool
-    def cruxible_playbill_get_claim_type(
-        instance_id: InstanceId = None, *, predicate: str
-    ) -> contracts.PlaybillClaimTypeView:
-        """Read one accepted ClaimType by predicate."""
-        return handlers.handle_playbill_get_claim_type(require_instance_id(instance_id), predicate)
-
-    @_tool
-    def cruxible_playbill_claim_retire(
-        instance_id: InstanceId = None,
-        *,
-        claim_id: str,
-        request: dict[str, Any],
-    ) -> contracts.PlaybillClaimRetireResponse:
-        """Preflight or submit one attributed Claim retirement closure."""
-        return handlers.handle_playbill_retire_claim(
-            require_instance_id(instance_id), claim_id, request
+            require_instance_id(instance_id), request.model_dump(mode="json")
         )
 
     @_tool
@@ -597,7 +620,7 @@ def register_tools(
             ),
         ] = None,
         referent_coordinate: Annotated[
-            dict[str, Any] | None,
+            contracts.PlaybillAcceptedCoordinate | None,
             Field(description="With capture_digests: the accepted coordinate you read."),
         ] = None,
         attested_at: Annotated[
@@ -619,7 +642,7 @@ def register_tools(
             note,
             valid_until,
             capture_digests=capture_digests,
-            referent_coordinate=referent_coordinate,
+            referent_coordinate=_dump(referent_coordinate),
             attested_at=attested_at,
         )
 
@@ -768,10 +791,12 @@ def register_tools(
     def cruxible_playbill_block_declare(
         instance_id: InstanceId = None,
         *,
-        stamp: dict[str, Any],
+        stamp: ProjectionBlockStamp,
     ) -> contracts.PlaybillBlockDeclareResultV1:
         """Register one projection block a workspace just stamped into its page."""
-        return handlers.handle_playbill_block_declare(require_instance_id(instance_id), stamp)
+        return handlers.handle_playbill_block_declare(
+            require_instance_id(instance_id), stamp.model_dump(mode="json")
+        )
 
     @_tool
     def cruxible_playbill_block_depublish(
@@ -786,47 +811,6 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_list_claims(
-        instance_id: InstanceId = None,
-        *,
-        subject_path: str | None = None,
-        predicate: str | None = None,
-        include_retired: bool = False,
-        subject_kind: str | None = None,
-    ) -> contracts.PlaybillClaimList:
-        """List accepted Claims, optionally by Subject, Subject kind or predicate."""
-        return handlers.handle_playbill_list_claims(
-            require_instance_id(instance_id),
-            subject_path=subject_path,
-            predicate=predicate,
-            include_retired=include_retired,
-            subject_kind=subject_kind,
-        )
-
-    @_tool
-    def cruxible_playbill_claim_values(
-        instance_id: InstanceId = None,
-        *,
-        subject_kind: str,
-        predicates: list[str],
-        subject_ids: list[str] | None = None,
-        evaluation_time: str | None = None,
-    ) -> ClaimValuesResultV1:
-        """Status table: each live Claim's value and verdict for Subjects of one kind.
-
-        Covers every Subject of ``subject_kind`` (or only ``subject_ids``) for the
-        given fully qualified predicates, one row per Claim with ``subject_id``,
-        ``value`` and ``verdict``, without full Claim views.
-        """
-        return handlers.handle_playbill_claim_values(
-            require_instance_id(instance_id),
-            subject_kind=subject_kind,
-            predicates=predicates,
-            subject_ids=subject_ids,
-            evaluation_time=evaluation_time,
-        )
-
-    @_tool
     def cruxible_playbill_get(
         instance_id: InstanceId = None,
         *,
@@ -836,7 +820,9 @@ def register_tools(
                 description=(
                     "Any reference you have seen: CLM-… (or a unique prefix), kind/id, "
                     "a predicate, ClaimType:/Document:/Procedure:/query:/CaptureContract:<name>, "
-                    "an artifact path, or a proposal id or prefix."
+                    "an artifact path, a proposal id or prefix, or an operational reference: "
+                    "Line:<name> (or the Line identity digest next names), CAP-<12+ hex> or "
+                    "Capture:<digest>, ResolutionContract:<name>, Mandate:<name>."
                 )
             ),
         ],
@@ -845,15 +831,7 @@ def register_tools(
             PlaybillByteRangeV1 | None,
             Field(description='Byte range [start, end) of a Document body; detail="body" only.'),
         ] = None,
-        at: Annotated[
-            contracts.PlaybillAcceptedCoordinate | str | None,
-            Field(
-                description=(
-                    "Accepted coordinate or git oid (or a unique 12+ hex prefix) to read at; "
-                    "default current head."
-                )
-            ),
-        ] = None,
+        at: ReadAt = None,
         evaluation_time: Annotated[
             str | None,
             Field(description="ISO-8601 instant verdicts are evaluated at; default now."),
@@ -877,88 +855,190 @@ def register_tools(
             ref=ref,
             detail=detail,
             range=range,
-            at=at,
+            at=_read_at(at),
             evaluation_time=evaluation_time,
             limit=limit,
             cursor=cursor,
         )
 
     @_tool
-    def cruxible_playbill_get_claim(
+    def cruxible_playbill_set(
         instance_id: InstanceId = None,
         *,
-        identity: str,
-        evaluation_time: str | None = None,
-    ) -> contracts.PlaybillClaimViewV2:
-        """Read one accepted Claim with its capture-admission accounts."""
-        return handlers.handle_playbill_get_claim(
+        subject: Annotated[str, Field(description="The Subject as kind/id.")],
+        field: Annotated[
+            str,
+            Field(description="A field of the Subject's kind, as orient names it."),
+        ],
+        value: Annotated[
+            ClaimValue,
+            Field(
+                description=(
+                    "The value: an enum member, text, number or boolean; a Subject as kind/id "
+                    "for a Subject-valued field; the text itself for exact content."
+                )
+            ),
+        ],
+        because: Annotated[str, Field(description="Why; also the default evidence.")],
+        evidence: Annotated[
+            McpEvidence | None,
+            Field(
+                description=(
+                    'Default {"kind": "self", "self": because}. Or {"kind": "capture", '
+                    '"capture": "CAP-<12 hex>" or "sha256:…"}, {"kind": "contract", "contract": '
+                    '"<CaptureContract>"} (its newest Capture about the Subject), or '
+                    '{"kind": "file", "file": "PATH#ANCHOR"}.'
+                )
+            ),
+        ] = None,
+        role: Annotated[
+            WriteRole | None,
+            Field(description="Only when the field permits more than one role."),
+        ] = None,
+        contend: Annotated[
+            bool,
+            Field(description="Contest the live value instead of replacing it."),
+        ] = False,
+        expect: Annotated[
+            ExpectedValue | None,
+            Field(
+                description=(
+                    "Compare-and-set: the value you read (a list for several, [] for none); "
+                    "refuses slot_changed, showing the value, if the field holds another."
+                )
+            ),
+        ] = None,
+        dry_run: Annotated[
+            bool, Field(description="Run every check up to the commit; write nothing.")
+        ] = False,
+        accept: Annotated[
+            WriteAccept,
+            Field(description="if_allowed: accept now when policy lets you; never: propose only."),
+        ] = "if_allowed",
+        at: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "The coordinate you read at (git oid or 12+ hex prefix); the set refuses "
+                    "if the field changed since. Default: current head."
+                )
+            ),
+        ] = None,
+    ) -> WriteOutcome:
+        """Put one value in one field of one Subject, replacing the live value."""
+        return handlers.handle_playbill_set(
             require_instance_id(instance_id),
-            identity,
-            evaluation_time=evaluation_time,
+            subject=subject,
+            field=field,
+            value=value,
+            because=because,
+            evidence=evidence,
+            role=role,
+            contend=contend,
+            expect=expect,
+            dry_run=dry_run,
+            accept=accept,
+            at=at,
         )
 
     @_tool
-    def cruxible_playbill_claim_history(
-        instance_id: InstanceId = None, *, identity: str
-    ) -> contracts.PlaybillClaimHistory:
-        """Read one Claim's accepted lineage."""
-        return handlers.handle_playbill_claim_history(require_instance_id(instance_id), identity)
-
-    @_tool
-    def cruxible_playbill_explain_claim(
+    def cruxible_playbill_retire(
         instance_id: InstanceId = None,
         *,
-        identity: str,
-        evaluation_time: str | None = None,
-    ) -> contracts.PlaybillClaimExplanationV2 | contracts.PlaybillClaimExplanationV3:
-        """Explain one Claim's verdict, law evidence, and sources."""
-        return handlers.handle_playbill_explain_claim(
-            require_instance_id(instance_id), identity, evaluation_time=evaluation_time
-        )
-
-    @_tool
-    def cruxible_playbill_list_query_definitions(
-        instance_id: InstanceId = None,
-    ) -> contracts.PlaybillQueryDefinitionList:
-        """List accepted QueryDefinition entrypoints."""
-        return handlers.handle_playbill_list_query_definitions(require_instance_id(instance_id))
-
-    @_tool
-    def cruxible_playbill_policies_in_force(
-        instance_id: InstanceId = None,
-        limit: Annotated[
-            int, Field(ge=1, le=contracts.PLAYBILL_POLICY_LIST_MAX_LIMIT)
-        ] = contracts.PLAYBILL_POLICY_LIST_DEFAULT_LIMIT,
-        cursor: str | None = None,
-    ) -> contracts.PlaybillPolicyInForceList:
-        """List one page of live governed policies; pass next_cursor back while truncated."""
-        return handlers.handle_playbill_policies_in_force(
-            require_instance_id(instance_id), limit=limit, cursor=cursor
-        )
-
-    @_tool
-    def cruxible_playbill_get_query_definition(
-        instance_id: InstanceId = None, *, name: str
-    ) -> contracts.PlaybillQueryDefinitionView:
-        """Read one accepted QueryDefinition and its contract."""
-        return handlers.handle_playbill_get_query_definition(require_instance_id(instance_id), name)
-
-    @_tool
-    def cruxible_playbill_run_query(
-        instance_id: InstanceId = None,
-        *,
-        name: str,
-        parameters: dict[str, Any] | None = None,
-        evaluation_time: str | None = None,
-        budgets: dict[str, Any] | None = None,
-    ) -> contracts.PlaybillQueryRun:
-        """Execute an accepted QueryDefinition and return its execution receipt."""
-        return handlers.handle_playbill_run_query(
+        target: Annotated[
+            str | SlotRef,
+            Field(
+                description=(
+                    'A Claim ID (CLM-…), or {"subject": "kind/id", "field": "…"} for the '
+                    "one live value of a field."
+                )
+            ),
+        ],
+        because: Annotated[str, Field(description="Why it ends.")],
+        reason: Annotated[
+            WriteRetireReason,
+            Field(
+                description=("was-rescinded (withdrawn), was-wrong (it was false), or superseded.")
+            ),
+        ] = "was-rescinded",
+        expect: Annotated[
+            ExpectedValue | None,
+            Field(
+                description=(
+                    "Compare-and-set: the field's live value (every live value, as a list, "
+                    "for a many-valued field); refuses slot_changed if it holds another."
+                )
+            ),
+        ] = None,
+        dry_run: Annotated[
+            bool, Field(description="Run every check up to the commit; write nothing.")
+        ] = False,
+        accept: Annotated[
+            WriteAccept,
+            Field(description="if_allowed: accept now when policy lets you; never: propose only."),
+        ] = "if_allowed",
+        at: Annotated[
+            str | None,
+            Field(description="The coordinate you read at; default: current head."),
+        ] = None,
+    ) -> WriteOutcome:
+        """End one live Claim, and what depends on it, in one change set."""
+        return handlers.handle_playbill_retire(
             require_instance_id(instance_id),
-            name,
-            parameters=parameters,
-            evaluation_time=evaluation_time,
-            budgets=budgets,
+            target=target,
+            because=because,
+            reason=reason,
+            expect=expect,
+            dry_run=dry_run,
+            accept=accept,
+            at=at,
+        )
+
+    @_tool
+    def cruxible_playbill_write(
+        instance_id: InstanceId = None,
+        *,
+        changes: Annotated[
+            list[McpChange],
+            Field(
+                min_length=1,
+                description=(
+                    'Each {"op": "set"|"add", "subject", "field", "value"} or '
+                    '{"op": "retire", "target"}; add puts one more value in a many-valued field.'
+                ),
+            ),
+        ],
+        because: Annotated[str, Field(description="Why: the change set's rationale.")],
+        subject: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "The Subject (kind/id) of every change that names none; a change's own "
+                    "subject overrides it."
+                )
+            ),
+        ] = None,
+        dry_run: Annotated[
+            bool, Field(description="Run every check up to the commit; write nothing.")
+        ] = False,
+        accept: Annotated[
+            WriteAccept,
+            Field(description="if_allowed: accept now when policy lets you; never: propose only."),
+        ] = "if_allowed",
+        at: Annotated[
+            str | None,
+            Field(description="The coordinate you read at; default: current head."),
+        ] = None,
+    ) -> WriteOutcome:
+        """Apply set, add and retire changes together as one change set."""
+        return handlers.handle_playbill_write(
+            require_instance_id(instance_id),
+            changes=changes,
+            because=because,
+            subject=subject,
+            dry_run=dry_run,
+            accept=accept,
+            at=at,
         )
 
     @_tool
@@ -976,8 +1056,12 @@ def register_tools(
         ] = contracts.PLAYBILL_QUERY_DEFAULT_LIMIT,
         cursor: str | None = None,
         name: str | None = None,
-        params: dict[str, str | int | bool] | None = None,
-        at: AcceptedCoordinate | str | None = None,
+        params: dict[str, str | int | bool | None] | None = None,
+        status: list[QueryClaimStatus] | None = None,
+        claims: bool = False,
+        budgets: QueryBudgetsV1 | None = None,
+        receipt: QueryReceiptDetail = "compact",
+        at: ReadAt = None,
         evaluation_time: str | None = None,
     ) -> contracts.PlaybillQueryResult:
         """Query accepted state: rows of values with flags; pass next_cursor while truncated."""
@@ -993,7 +1077,11 @@ def register_tools(
             cursor=cursor,
             name=name,
             params=params,
-            at=at,
+            status=status,
+            claims=claims,
+            budgets=budgets,
+            receipt=receipt,
+            at=_read_at(at),
             evaluation_time=evaluation_time,
         )
 
@@ -1006,7 +1094,7 @@ def register_tools(
             int, Field(ge=1, le=contracts.PLAYBILL_QUERY_MAX_LIMIT)
         ] = contracts.PLAYBILL_QUERY_DEFAULT_LIMIT,
         cursor: str | None = None,
-        at: AcceptedCoordinate | str | None = None,
+        at: ReadAt = None,
         evaluation_time: str | None = None,
     ) -> contracts.PlaybillQueryResult:
         """Run one full QueryDefinition spec inline: the query verb's rows, flags and paging."""
@@ -1015,7 +1103,7 @@ def register_tools(
             spec=spec,
             limit=limit,
             cursor=cursor,
-            at=at,
+            at=_read_at(at),
             evaluation_time=evaluation_time,
         )
 
@@ -1038,13 +1126,13 @@ def register_tools(
         instance_id: InstanceId = None,
         *,
         name: str,
-        bindings: list[dict[str, Any]],
+        bindings: list[ProcedureSlotBindingRequestV1],
     ) -> contracts.PlaybillProcedureBindResult:
         """Propose exact accepted bindings for one Procedure's open slots."""
         return handlers.handle_playbill_procedure_bind(
             require_instance_id(instance_id),
             name,
-            bindings=bindings,
+            bindings=[item.model_dump(mode="json") for item in bindings],
         )
 
     @_tool
@@ -1052,9 +1140,14 @@ def register_tools(
         instance_id: InstanceId = None,
         *,
         name: str,
-        input: Any,
+        input: Annotated[
+            JsonValue,
+            Field(
+                description="The Procedure's input; checked against its accepted input contract."
+            ),
+        ],
         evaluation_time: str | None = None,
-        at: dict[str, Any] | None = None,
+        at: contracts.PlaybillAcceptedCoordinate | None = None,
         resolution_contract: contracts.ResolutionContractReferenceV1 | None = None,
         trigger_event: contracts.TriggerEventReferenceV1 | None = None,
     ) -> contracts.PlaybillProcedureRunState:
@@ -1065,7 +1158,7 @@ def register_tools(
             evaluation_time=evaluation_time,
             resolution_contract=resolution_contract,
             trigger_event=trigger_event,
-            at=at,
+            at=_dump(at),
             input=input,
         )
 
@@ -1226,60 +1319,13 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_discover(
-        instance_id: InstanceId = None,
-        *,
-        query: str | None = None,
-        entrypoint: str | None = None,
-        evaluation_time: str | None = None,
-        profile: Literal["interfaces", "subjects", "all"] = "interfaces",
-        budget: dict[str, Any] | None = None,
-    ) -> contracts.PlaybillDiscoveryResult | contracts.PlaybillInterfaceInventory:
-        """Find accepted interfaces and Subjects by exact or lexical match."""
-        return handlers.handle_playbill_discover(
-            require_instance_id(instance_id),
-            query=query,
-            entrypoint=entrypoint,
-            evaluation_time=evaluation_time,
-            profile=profile,
-            budget=budget,
-        )
-
-    @_tool
-    def cruxible_playbill_search(
-        instance_id: InstanceId = None,
-        *,
-        mode: Literal["search", "list", "orient"],
-        query: str | None = None,
-        kinds: list[Literal["claim", "procedure", "demand"]] | None = None,
-        subject: dict[str, Any] | None = None,
-        statuses: list[Literal["accepted", "conflicted", "overturned", "refused", "retired"]]
-        | None = None,
-        cursor: dict[str, Any] | None = None,
-        evaluation_time: str | None = None,
-        budgets: dict[str, Any] | None = None,
-    ) -> contracts.PlaybillSearchResult:
-        """Search, list, or orient over accepted Claims and Procedures."""
-        return handlers.handle_playbill_search(
-            require_instance_id(instance_id),
-            mode=mode,
-            query=query,
-            kinds=kinds,
-            subject=subject,
-            statuses=statuses,
-            cursor=cursor,
-            evaluation_time=evaluation_time,
-            budgets=budgets,
-        )
-
-    @_tool
     def cruxible_playbill_next(
         instance_id: InstanceId = None,
         *,
         evaluation_time: str | None = None,
-        access_profile: dict[str, Any] | None = None,
+        access_profile: CoverageAccessProfileV1 | None = None,
         expiring_within: Annotated[
-            dict[str, Any] | None,
+            CanonicalDurationV1 | None,
             Field(
                 description=(
                     "Evidence-expiration lead window as {'microseconds': N}; defaults to 7 days."
@@ -1297,8 +1343,8 @@ def register_tools(
         return handlers.handle_playbill_next(
             require_instance_id(instance_id),
             evaluation_time=evaluation_time,
-            access_profile=access_profile,
-            expiring_within=expiring_within,
+            access_profile=_dump(access_profile),
+            expiring_within=_dump(expiring_within),
             since_result_digest=since_result_digest,
             limit=limit,
             cursor=cursor,
@@ -1309,21 +1355,21 @@ def register_tools(
         instance_id: InstanceId = None,
         *,
         generation: int,
-        at: dict[str, Any] | None = None,
-        access_profile: dict[str, Any] | None = None,
+        at: contracts.PlaybillAcceptedCoordinate | None = None,
+        access_profile: CoverageAccessProfileV1 | None = None,
         max_rows: Annotated[int, Field(ge=1, le=1000)] = 100,
         max_bytes: Annotated[int, Field(ge=1, le=1_048_576)] = 65_536,
-        cursor: dict[str, Any] | None = None,
+        cursor: contracts.PlaybillSinceCursor | None = None,
     ) -> contracts.PlaybillSinceResult:
         """Read accepted ChangeSet members after one generation."""
         return handlers.handle_playbill_since(
             require_instance_id(instance_id),
             generation=generation,
-            at=at,
-            access_profile=access_profile,
+            at=_dump(at),
+            access_profile=_dump(access_profile),
             max_rows=max_rows,
             max_bytes=max_bytes,
-            cursor=cursor,
+            cursor=_dump(cursor),
         )
 
     @_tool
@@ -1331,8 +1377,8 @@ def register_tools(
         instance_id: InstanceId = None,
         *,
         evaluation_time: str,
-        access_profile: dict[str, Any] | None = None,
-        workspace_observation: dict[str, Any] | None = None,
+        access_profile: CoverageAccessProfileV1 | None = None,
+        workspace_observation: PlaybillNextWorkspaceObservationV1 | None = None,
         limit: Annotated[
             int, Field(ge=1, le=contracts.PLAYBILL_CURATION_LIST_MAX_LIMIT)
         ] = contracts.PLAYBILL_CURATION_LIST_DEFAULT_LIMIT,
@@ -1345,8 +1391,8 @@ def register_tools(
         return handlers.handle_playbill_curation_list(
             require_instance_id(instance_id),
             evaluation_time=evaluation_time,
-            access_profile=access_profile,
-            workspace_observation=workspace_observation,
+            access_profile=_dump(access_profile),
+            workspace_observation=_dump(workspace_observation),
             limit=limit,
             cursor=cursor,
         )
@@ -1356,7 +1402,7 @@ def register_tools(
         instance_id: InstanceId = None,
         *,
         evaluation_time: str,
-        access_profile: dict[str, Any] | None = None,
+        access_profile: CoverageAccessProfileV1 | None = None,
         claim_type_identities: list[str] | None = None,
         subject_kinds: list[str] | None = None,
         max_rows: Annotated[
@@ -1367,18 +1413,18 @@ def register_tools(
             int,
             Field(ge=AUDIT_BUDGET_MIN_MAX_BYTES, le=AUDIT_BUDGET_MAX_MAX_BYTES),
         ] = AUDIT_BUDGET_DEFAULT_MAX_BYTES,
-        cursor: dict[str, Any] | None = None,
+        cursor: AuditCursorV1 | None = None,
     ) -> contracts.PlaybillAuditResult:
         """Read ranked Claim verification work and record completed coverage."""
         return handlers.handle_playbill_audit(
             require_instance_id(instance_id),
             evaluation_time=evaluation_time,
-            access_profile=access_profile,
+            access_profile=_dump(access_profile),
             claim_type_identities=claim_type_identities or [],
             subject_kinds=subject_kinds or [],
             max_rows=max_rows,
             max_bytes=max_bytes,
-            cursor=cursor,
+            cursor=_dump(cursor),
         )
 
     @_tool
@@ -1444,36 +1490,18 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_expand(
-        instance_id: InstanceId = None,
-        *,
-        address: dict[str, Any],
-        facets: list[str] | None = None,
-        evaluation_time: str | None = None,
-        budget: dict[str, Any] | None = None,
-    ) -> contracts.PlaybillContextCapsule:
-        """Expand one accepted address into a bounded context capsule."""
-        return handlers.handle_playbill_expand(
-            require_instance_id(instance_id),
-            address,
-            evaluation_time=evaluation_time,
-            facets=facets or [],
-            budget=budget,
-        )
-
-    @_tool
     def cruxible_playbill_coverage(
         instance_id: InstanceId = None,
         *,
         observations: Annotated[
-            list[dict[str, Any]] | None,
+            list[WorkingSourceObservationV1] | None,
             Field(description="Working-source observations you built; omit with bindings."),
         ] = None,
         bindings: Annotated[
-            dict[str, str] | None,
+            list[McpSourceBinding] | None,
             Field(
                 description=(
-                    "Logical source bindings; the adapter reads the selected workspace "
+                    "Path/source_id bindings; the adapter reads the selected workspace "
                     "files (files, ranges, grep_results_path, or whole_working_set)."
                 )
             ),
@@ -1484,20 +1512,24 @@ def register_tools(
         whole_working_set: Annotated[
             bool, Field(description="With bindings, cover every declared workspace file.")
         ] = False,
-        budget: dict[str, Any] | None = None,
-        scan_budget: dict[str, Any] | None = None,
+        budget: CoverageCardBudgetV1 | None = None,
+        scan_budget: CoverageScanBudgetV1 | None = None,
     ) -> contracts.PlaybillCoverageResult:
         """Resolve what working sources have to do with accepted state."""
         return handlers.handle_playbill_coverage(
             require_instance_id(instance_id),
-            observations=observations,
-            bindings=bindings,
+            observations=(
+                None
+                if observations is None
+                else [item.model_dump(mode="json") for item in observations]
+            ),
+            bindings=_source_bindings(bindings),
             files=tuple(files or ()),
             ranges=tuple(ranges or ()),
             grep_results_path=grep_results_path,
             whole_working_set=whole_working_set,
-            budget=budget,
-            scan_budget=scan_budget,
+            budget=_dump(budget),
+            scan_budget=_dump(scan_budget),
         )
 
     @_tool
@@ -1507,7 +1539,7 @@ def register_tools(
         catalog_path: str,
         repository_root: str = ".",
         local_catalog_path: str | None = None,
-        root_aliases: dict[str, str] | None = None,
+        root_aliases: list[McpRootAlias] | None = None,
     ) -> SourceCompilationBundle:
         """Compile declared workspace sources against accepted daemon context."""
         return handlers.handle_playbill_workspace_source_compile(
@@ -1515,7 +1547,7 @@ def register_tools(
             catalog_path=catalog_path,
             repository_root=repository_root,
             local_catalog_path=local_catalog_path,
-            root_aliases=root_aliases or {},
+            root_aliases=_root_aliases(root_aliases) or {},
         )
 
     @_tool
@@ -1535,6 +1567,16 @@ def register_tools(
         force: Annotated[
             bool, Field(description="write only: replace a non-empty floor directory.")
         ] = False,
+        include: Annotated[
+            list[contracts.PlaybillFloorExportPart] | None,
+            Field(
+                description=(
+                    "bytes/write: opt-in floor parts. 'discovery' adds the discovery cards "
+                    "(subjects/, claim-types/, procedures/, coverage-manifest.json) to the "
+                    "grep-first current/, documents/ and provenance/."
+                )
+            ),
+        ] = None,
     ) -> (
         contracts.PlaybillFloorExport
         | contracts.PlaybillWorkspaceFloorWriteResult
@@ -1545,6 +1587,7 @@ def register_tools(
             require_instance_id(instance_id),
             mode=mode,
             force=force,
+            include=tuple(include or ()),
         )
 
     return registered

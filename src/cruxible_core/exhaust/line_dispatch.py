@@ -48,6 +48,7 @@ CREATE INDEX IF NOT EXISTS unresolved
  ON pending(line_id,eligible_at,occurrence_id) WHERE disposition='pending';
 CREATE INDEX IF NOT EXISTS armed_work
  ON pending(session_id,eligible_at,occurrence_id) WHERE disposition='pending';
+CREATE INDEX IF NOT EXISTS pending_by_run ON pending(run_id) WHERE run_id IS NOT NULL;
 """
 
 

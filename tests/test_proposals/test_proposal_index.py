@@ -336,6 +336,9 @@ def test_graceful_process_exit_reuses_exact_checkpoint_on_restart(tmp_path):
     first = _submit(instance, "one")
     for number in range(3):
         _submit(instance, f"unrelated-{number}", timestamp=f"2026-08-11T12:31:0{number}.000000Z")
+    # Let the queued advisory review-ref refresh finish: it reads the index and
+    # could otherwise rewrite the checkpoint after the close below.
+    instance.settled_workspace_advertisement()
     evidence = instance.proposal_evidence()
     index_path = evidence.index.path
     instance._accepted_history_index.close()
@@ -374,6 +377,10 @@ def test_close_never_blesses_foreign_database_or_source_corruption(tmp_path):
 
     instance, _ = initialize_local(tmp_path)
     first = _submit(instance, "one")
+    # The submission queues an advisory review-ref refresh that reads (and would
+    # repair) this index; let it finish so the foreign delete below is the last
+    # write the reopened owner sees.
+    instance.settled_workspace_advertisement()
     evidence = instance.proposal_evidence()
     index_path = evidence.index.path
     with sqlite3.connect(index_path) as connection:

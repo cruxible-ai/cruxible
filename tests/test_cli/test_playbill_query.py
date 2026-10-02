@@ -31,7 +31,6 @@ def _isolated_context(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 class _StubClient:
     def __init__(self) -> None:
         self.requests: list[PlaybillQueryRequestV1] = []
-        self.listed = 0
 
     def query_playbill(
         self, instance_id: str, *, request: PlaybillQueryRequestV1
@@ -64,12 +63,6 @@ class _StubClient:
                 coordinate=COORDINATE,  # type: ignore[arg-type]
                 evaluation_time=datetime(2026, 9, 28, tzinfo=UTC),
             ),
-        )
-
-    def list_playbill_query_definitions(self, instance_id: str) -> Any:
-        self.listed += 1
-        return contracts.PlaybillQueryDefinitionList(
-            coordinate=contracts.PlaybillAcceptedCoordinate(**COORDINATE), query_definitions=[]
         )
 
 
@@ -173,14 +166,48 @@ def test_malformed_input_refuses_with_the_syntax(stub: _StubClient) -> None:
     assert stub.requests == []
 
 
-def test_the_named_entrypoint_leaves_still_answer(stub: _StubClient) -> None:
-    listed = _run("list")
-    assert listed.exit_code == 0, listed.output
-    assert stub.listed == 1 and stub.requests == []
+def test_follow_in_follows_a_relation_backwards_in_command_line_order(
+    stub: _StubClient,
+) -> None:
+    result = _run(
+        "dev.roadmap_item",
+        "--follow-in",
+        "dev.batch.delivers:batch",
+        "--follow",
+        "refines:parent",
+        "--follow-in=governs:decision",
+        "--select",
+        "batch,batch.state",
+    )
 
-    helped = _run()
-    assert helped.exit_code == 0
-    assert "Query accepted state" in helped.output and "run" in helped.output
+    assert result.exit_code == 0, result.output
+    follow = stub.requests[0].follow
+    assert [(item.field, item.as_, item.direction) for item in follow] == [
+        ("dev.batch.delivers", "batch", "reverse"),
+        ("refines", "parent", "forward"),
+        ("governs", "decision", "reverse"),
+    ]
+    # The next-page command repeats the reverse follows as written; nothing to quote.
+    last = result.output.splitlines()[-1]
+    assert "--follow-in dev.batch.delivers:batch" in last and "'" not in last
+
+    for bad in ("dev.batch.delivers", ":batch"):
+        refused = _run("dev.roadmap_item", "--follow-in", bad)
+        assert refused.exit_code != 0
+        assert "field:alias" in refused.output and "dev.batch.delivers:batch" in refused.output
+        assert "--follow-in" in refused.output
+    assert len(stub.requests) == 1
+
+
+def test_follow_order_falls_back_when_the_raw_arguments_disagree() -> None:
+    from cruxible_core.cli.commands.playbill import _follow_order
+
+    parsed = _follow_order(
+        ["k", "--contains", "--follow", "--follow-in", "a:b"], ("x:y",), ("a:b",)
+    )
+    assert parsed == [("--follow", "x:y"), ("--follow-in", "a:b")]
+    ordered = _follow_order(["k", "--follow-in", "a:b", "--follow", "x:y"], ("x:y",), ("a:b",))
+    assert ordered == [("--follow-in", "a:b"), ("--follow", "x:y")]
 
 
 def test_table_cells_show_exact_content_text_cut_values_and_markers() -> None:
@@ -224,3 +251,32 @@ def test_table_cells_show_exact_content_text_cut_values_and_markers() -> None:
     assert "Affirmed." in table
     assert "Reversed Reversed" in table and "…" in table
     assert "<unavailable 40 bytes sha256:cdcdcdcdcdcd>" in table
+
+
+def test_status_claims_budgets_and_receipt_reach_the_request(stub: _StubClient) -> None:
+    result = _run(
+        "dev.roadmap_item",
+        "--status",
+        "live",
+        "--status",
+        "retired",
+        "--claims",
+        "--json",
+    )
+    assert result.exit_code == 0, result.output
+    request = stub.requests[-1]
+    assert request.status == ("live", "retired") and request.claims is True
+
+    named = _run(
+        "--name",
+        "dev.items",
+        "--budgets",
+        '{"max_results": 7, "max_traversal_depth": 0}',
+        "--receipt",
+        "full",
+        "--json",
+    )
+    assert named.exit_code == 0, named.output
+    request = stub.requests[-1]
+    assert request.budgets is not None and request.budgets.max_results == 7
+    assert request.receipt == "full"

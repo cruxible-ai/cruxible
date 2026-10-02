@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import json
 import subprocess
@@ -13,16 +12,17 @@ import pytest
 
 from cruxible_client import contracts
 from cruxible_client.contracts.artifacts import ArtifactIdentity
-from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV2,
     ProjectionClaimBackingV1,
     frame_projection_block,
 )
+from cruxible_client.contracts.floor import PlaybillFloorDeltaV1
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.mcp import handlers
 from cruxible_core.mcp.workspace import resolve_workspace_path
+from tests.support.floor_exports import delta_from_export, floor_v5_export
 
 
 def _coordinate(seed: str = "1") -> contracts.PlaybillAcceptedCoordinate:
@@ -35,39 +35,7 @@ def _coordinate(seed: str = "1") -> contracts.PlaybillAcceptedCoordinate:
 
 
 def _export() -> contracts.PlaybillFloorExport:
-    content = b'{"fresh":true}\n'
-    inventory = [
-        {
-            "path": "cards/fresh.json",
-            "content_digest": "sha256:" + hashlib.sha256(content).hexdigest(),
-            "byte_length": len(content),
-        }
-    ]
-    manifest = {
-        "tag": "playbill-floor-manifest-v2",
-        "format": "playbill-floor-export-v2",
-        "coordinate": _coordinate().model_dump(mode="json"),
-        "files": inventory,
-        "floor_digest": typed_digest(
-            Sha256Value,
-            "playbill-floor-export-v2",
-            {"files": inventory},
-        ).tagged,
-    }
-    return contracts.PlaybillFloorExport(
-        coordinate=_coordinate(),
-        manifest=manifest,
-        files=[
-            contracts.PlaybillFloorFile(
-                path="manifest.json",
-                content_base64=base64.b64encode(json.dumps(manifest).encode()).decode(),
-            ),
-            contracts.PlaybillFloorFile(
-                path="cards/fresh.json",
-                content_base64=base64.b64encode(content).decode(),
-            ),
-        ],
-    )
+    return floor_v5_export({"cards/fresh.json": b'{"fresh":true}\n'}, coordinate=_coordinate())
 
 
 class _StubClient:
@@ -90,16 +58,21 @@ class _StubClient:
     ) -> contracts.PlaybillFloorExport:
         return _export()
 
-    def search_playbill(self, instance_id: str, *, mode: str) -> contracts.PlaybillSearchResult:
-        return contracts.PlaybillSearchResult(
-            mode="orient",
-            coordinate=_coordinate(),
-            evaluation_time="2026-08-22T00:00:00Z",
-            rows=[],
-            orientation={},
-            selection_basis_digest="sha256:" + "5" * 64,
-            truncated=False,
-            result_digest="sha256:" + "6" * 64,
+    def playbill_floor_delta(
+        self,
+        instance_id: str,
+        *,
+        at=None,  # type: ignore[no-untyped-def]
+        base_generation: int | None = None,
+        base_renderer: str | None = None,
+    ) -> PlaybillFloorDeltaV1:
+        return delta_from_export(_export())
+
+    def playbill_head(self, instance_id: str) -> contracts.PlaybillHeadV1:
+        return contracts.PlaybillHeadV1(
+            instance=instance_id,
+            coordinate=_coordinate().model_dump(mode="json"),  # type: ignore[arg-type]
+            generation=3,
         )
 
 
@@ -231,6 +204,11 @@ def test_library_mode_activate_checks_an_attached_workspace(
         ),
     )
     monkeypatch.setattr(handlers.playbill_api, "playbill_export_floor", lambda _instance: _export())
+    monkeypatch.setattr(
+        handlers.playbill_api,
+        "playbill_floor_delta",
+        lambda _instance, **_kwargs: delta_from_export(_export()),
+    )
 
     checked: list[contracts.PlaybillProjectionCheckRequestV1] = []
 
@@ -402,3 +380,75 @@ def test_workspace_path_refuses_symlink_escape(tmp_path: Path) -> None:
 
     with pytest.raises(DataValidationError, match="escapes the configured root"):
         resolve_workspace_path("escape/source.md", root=workspace, kind="file")
+
+
+def _export_files(files: dict[str, bytes]) -> contracts.PlaybillFloorExport:
+    return floor_v5_export(files, coordinate=_coordinate())
+
+
+class _PartsClient(_StubClient):
+    """Exports the discovery cards only when asked for them."""
+
+    def __init__(self) -> None:
+        self.includes: list[tuple[str, ...]] = []
+
+    def export_playbill_floor(  # type: ignore[override]
+        self,
+        instance_id: str,
+        *,
+        at=None,
+        include=(),  # type: ignore[no-untyped-def]
+    ) -> contracts.PlaybillFloorExport:
+        self.includes.append(tuple(include))
+        files = {"current/k/a.yaml": b"# k/a  kind=k\n"}
+        if "discovery" in include:
+            files["subjects/k/a.profile.json"] = b"{}\n"
+        return _export_files(files)
+
+    def playbill_floor_delta(  # type: ignore[override]
+        self,
+        instance_id: str,
+        *,
+        at=None,  # type: ignore[no-untyped-def]
+        base_generation: int | None = None,
+        base_renderer: str | None = None,
+    ) -> PlaybillFloorDeltaV1:
+        # The default floor travels as a delta, never with the discovery cards.
+        self.includes.append(())
+        return delta_from_export(_export_files({"current/k/a.yaml": b"# k/a  kind=k\n"}))
+
+
+def test_an_mcp_write_with_discovery_survives_an_activation_refresh(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    client = _PartsClient()
+    monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(workspace))
+    monkeypatch.setattr(handlers, "_get_client", lambda: client)
+    profile = workspace / ".playbill/floor/subjects/k/a.profile.json"
+
+    written = handlers.handle_playbill_floor_export(
+        "inst_test", mode="write", force=True, include=("discovery",)
+    )
+
+    assert written.status == "written"
+    assert profile.is_file()
+    config = json.loads((workspace / ".playbill/coverage.json").read_text(encoding="utf-8"))
+    assert config["floor_output"] == {
+        "tag": "playbill-floor-output-v1",
+        "format": "playbill-floor-export-v5",
+        "include": ["discovery"],
+    }
+
+    activated = handlers.handle_playbill_activate("inst_test", "proposal-1")
+
+    assert activated.floor_refresh.status == "refreshed"
+    assert client.includes == [("discovery",), ("discovery",)]
+    assert profile.is_file()
+
+    # Writing without the part records that too, and the next refresh follows it.
+    handlers.handle_playbill_floor_export("inst_test", mode="write", force=True)
+    handlers.handle_playbill_activate("inst_test", "proposal-2")
+    assert client.includes[-2:] == [(), ()]
+    assert not profile.exists()

@@ -23,7 +23,7 @@ from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.errors import PlaybillError, PlaybillFormatError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.authoring.store import AuthoringIntentStore
-from cruxible_core.derived.memo import memo_get, memo_put
+from cruxible_core.derived.memo import memo_clear, memo_get, memo_put
 from cruxible_core.runtime.instance import PlaybillInstance
 
 
@@ -80,7 +80,7 @@ def _intent_stream_identity(root: Path) -> tuple[object, ...] | None:
 def reset_bound_publication_registration_memo() -> None:
     """Forget every in-process publication fold."""
 
-    _REGISTRATION_MEMO.clear()
+    memo_clear(_REGISTRATION_MEMO)
 
 
 def bound_publication_registrations(

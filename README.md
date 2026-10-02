@@ -123,26 +123,28 @@ uv sync --all-extras
 uv run pytest -q tests/test_playbill tests/test_architecture/test_playbill_dp0_boundaries.py
 ~~~
 
-Start a local daemon in one shell:
+Start a local daemon in one shell. A Unix-socket daemon runs with auth off and
+says so when it starts: every process of your OS user is equally trusted. (A TCP
+daemon refuses to start without `--auth`.)
 
 ~~~bash
 uv run cruxible server start \
-  --state-root /tmp/cruxible-playbill-dev \
-  --bootstrap-secret-file /tmp/cruxible-playbill-bootstrap
+  --socket /tmp/cruxible-playbill-run/daemon.sock \
+  --state-root /tmp/cruxible-playbill-dev
 ~~~
 
-In another shell, authorize the bootstrap session, allocate a host, and create
-a client-held owner key outside the workspace:
+In another shell, allocate a host and make yourself its owner, with a
+client-held key outside the workspace. No bootstrap secret is needed locally:
 
 ~~~bash
-export CRUXIBLE_SERVER_URL=http://127.0.0.1:8100
-export CRUXIBLE_SERVER_BEARER_TOKEN="$(cat /tmp/cruxible-playbill-bootstrap)"
+export CRUXIBLE_SERVER_SOCKET=/tmp/cruxible-playbill-run/daemon.sock
 
-uv run cruxible playbill host create --instance-id playbill-demo
+uv run cruxible playbill host create --instance-id inst_demo
 uv run cruxible playbill init \
   --key-dir /tmp/cruxible-playbill-owner \
-  --principal-id bootstrap-admin
-uv run cruxible playbill document list
+  --principal-id me
+export CRUXIBLE_PRINCIPAL_ID=me
+uv run cruxible playbill orient
 ~~~
 
 The init command prints each generated private-key path and sends only public
@@ -158,6 +160,10 @@ Runtime bearer credentials and Playbill principals solve different problems:
 
 - bearer credentials authorize transport operations and carry a capability tier;
 - Playbill principals identify and attribute governed acts at exact coordinates;
+- on an auth-off Unix-socket daemon, the configured principal ID
+  (`CRUXIBLE_PRINCIPAL_ID`) is a claim of identity, not authentication: every
+  process of the same OS user is equally trusted. Approvals are still signed
+  with the principal's private key;
 - repository branch protection and CODEOWNERS supply organizational review;
 - local key directories support attribution and repository hygiene, not a
   security boundary; actual custody separation belongs at the Cloud

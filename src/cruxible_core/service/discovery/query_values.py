@@ -35,6 +35,9 @@ class LiveValue:
     # byte range of that content the Claim states, when it states one.
     exact: bool = False
     span: tuple[int, int] | None = None
+    role: str = "normative"
+    qualifier: str | None = None
+    lifecycle: str = "live"
 
 
 def _chunks(values: Sequence[str]) -> Iterable[Sequence[str]]:
@@ -57,6 +60,21 @@ def subject_labels(connection: sqlite3.Connection, paths: Iterable[str]) -> dict
     return labels
 
 
+def subject_lifecycles(connection: sqlite3.Connection, paths: Iterable[str]) -> dict[str, str]:
+    """Map Subject paths to their lifecycle, ``live`` or ``retired``."""
+
+    wanted = sorted(set(paths))
+    lifecycles: dict[str, str] = {}
+    for chunk in _chunks(wanted):
+        marks = ",".join("?" for _ in chunk)
+        for path, lifecycle in connection.execute(
+            f"SELECT path, lifecycle FROM subjects WHERE path IN ({marks})",
+            tuple(chunk),
+        ):
+            lifecycles[str(path)] = "retired" if lifecycle == "retired" else "live"
+    return lifecycles
+
+
 def subjects_of_kind(connection: sqlite3.Connection, kind: str) -> dict[str, str]:
     return {
         str(path): f"{kind}/{subject_id}"
@@ -70,7 +88,7 @@ _VALUE_COLUMNS = (
     "c.identity, c.subject_path, c.predicate, c.object_kind, "
     "s.subject_kind, s.subject_id, c.object_content_digest, c.literal_type, "
     "c.literal_text, c.literal_boolean, c.literal_integer_text, c.artifact_digest, "
-    "c.object_span_start_text, c.object_span_end_text"
+    "c.object_span_start_text, c.object_span_end_text, c.role, c.qualifier"
 )
 
 
@@ -90,6 +108,8 @@ def _value_of(row: Sequence[Any], source: Any) -> object:
         _digest,
         _span_start,
         _span_end,
+        _role,
+        _qualifier,
     ) = row
     if object_kind == "subject":
         return None if object_kind_name is None else f"{object_kind_name}/{object_id}"
@@ -113,8 +133,9 @@ def read_live_values(
     *,
     subject_paths: Sequence[str] | None,
     predicates: Sequence[str] | None,
+    lifecycle: str = "live",
 ) -> list[LiveValue]:
-    """Every live Claim value for these Subjects and predicates (``None`` means all)."""
+    """Every live (or retired) Claim value for these Subjects and predicates (``None``: all)."""
 
     if subject_paths is not None and not subject_paths:
         return []
@@ -126,7 +147,7 @@ def read_live_values(
         base = (
             f"SELECT {_VALUE_COLUMNS} FROM claims c "
             "LEFT JOIN subjects s ON s.path = c.object_path "
-            "WHERE c.lifecycle='live'"
+            "WHERE c.lifecycle=?"
         )
         predicate_clause = ""
         predicate_values: tuple[str, ...] = ()
@@ -137,14 +158,14 @@ def read_live_values(
             )
         batches: list[tuple[str, tuple[str, ...]]] = []
         if subject_paths is None:
-            batches.append((base + predicate_clause, predicate_values))
+            batches.append((base + predicate_clause, (lifecycle, *predicate_values)))
         else:
             for chunk in _chunks(sorted(set(subject_paths))):
                 marks = ",".join("?" for _ in chunk)
                 batches.append(
                     (
                         base + f" AND c.subject_path IN ({marks})" + predicate_clause,
-                        (*chunk, *predicate_values),
+                        (lifecycle, *chunk, *predicate_values),
                     )
                 )
         for sql, parameters in batches:
@@ -162,6 +183,9 @@ def read_live_values(
                             if row[3] != "exact_content" or row[12] is None
                             else (int(row[12]), int(row[13]))
                         ),
+                        role=str(row[14]),
+                        qualifier=None if row[15] is None else str(row[15]),
+                        lifecycle=lifecycle,
                     )
                 )
     return values
@@ -220,6 +244,7 @@ def ensure_values(
     *,
     paths: Iterable[str],
     predicates: Iterable[str],
+    lifecycle: str = "live",
 ) -> None:
     """Load any (Subject, predicate) slots the index has not read yet."""
 
@@ -234,6 +259,7 @@ def ensure_values(
             coordinate,
             subject_paths=sorted(missing_paths),
             predicates=sorted(missing_predicates),
+            lifecycle=lifecycle,
         )
     )
     index.mark_loaded(missing_paths, missing_predicates)
@@ -246,5 +272,6 @@ __all__ = [
     "ensure_values",
     "read_live_values",
     "subject_labels",
+    "subject_lifecycles",
     "subjects_of_kind",
 ]

@@ -56,8 +56,8 @@ from cruxible_client.contracts.policies import (
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.semantic import SemanticAddress
-from cruxible_client.errors import CoreError
 from cruxible_core import __version__ as DAEMON_VERSION
+from tests.test_client._read_fakes import ClaimTypeRead
 
 _DIGEST = "sha256:" + "1" * 64
 _COORDINATE = api.PlaybillAcceptedCoordinate(
@@ -75,19 +75,55 @@ class _Client:
         self.coverage_observations: object | None = None
         self.curation_actions: list[tuple[str, dict[str, object]]] = []
         self.audit_request: dict[str, object] | None = None
-        self.retirement_request: dict[str, object] | None = None
         self.claim_type_object_kinds: dict[str, str] = {"sec.vuln.affects_package": "subject"}
         self.claim_type_reads = 0
 
-    def get_playbill_claim_type(
+    def playbill_head(self, instance_id: str, *, at: object = None) -> api.PlaybillHeadV1:
+        return api.PlaybillHeadV1(
+            instance=instance_id,
+            coordinate=_COORDINATE.model_dump(mode="json"),  # type: ignore[arg-type]
+            generation=4,
+        )
+
+    def playbill_get(self, instance_id: str, *, request: Any) -> Any:
+        """``get(detail="proof")`` over this fake's ClaimType and Claim views."""
+
+        from cruxible_client.contracts.get_reads import (
+            PlaybillGetCoordinateV1,
+            PlaybillGetResultV1,
+        )
+
+        assert request.detail == "proof"
+        if request.ref.startswith("ClaimType:"):
+            kind = "claim_type"
+            view: Any = self._claim_type_view(
+                instance_id, request.ref.removeprefix("ClaimType:"), at=request.at
+            )
+        else:
+            kind = "claim"
+            view = self._claim_view(instance_id, request.ref, at=request.at)
+        return PlaybillGetResultV1(
+            ref=request.ref,
+            kind=kind,  # type: ignore[arg-type]
+            detail="proof",
+            proof=view.model_dump(mode="json"),
+            coordinate=PlaybillGetCoordinateV1(git_oid=view.coordinate.git_oid[:12], generation=4),
+            accepted_coordinate=view.coordinate,
+            evaluation_time=request.evaluation_time or datetime(2026, 9, 1, tzinfo=UTC),
+        )
+
+    def _claim_view(self, _instance_id: str, _identity: str, **_values: Any) -> Any:
+        raise AssertionError("this fake reads no Claim")
+
+    def _claim_type_view(
         self,
         _instance_id: str,
         predicate: str,
         *,
         at: api.PlaybillAcceptedCoordinate,
-    ) -> api.PlaybillClaimTypeView:
+    ) -> ClaimTypeRead:
         self.claim_type_reads += 1
-        return api.PlaybillClaimTypeView(
+        return ClaimTypeRead(
             coordinate=at,
             path=f"claim-types/{predicate}.json",
             predicate=predicate,
@@ -100,18 +136,6 @@ class _Client:
         from types import SimpleNamespace
 
         return SimpleNamespace(coordinate=_COORDINATE)
-
-    def search_playbill(self, _instance_id: str, **values: object) -> api.PlaybillSearchResult:
-        return api.PlaybillSearchResult(
-            mode=values["mode"],
-            coordinate=_COORDINATE,
-            evaluation_time=str(values["evaluation_time"]),
-            rows=[],
-            orientation={"state": "empty"} if values["mode"] == "orient" else None,
-            selection_basis_digest="sha256:" + "4" * 64,
-            truncated=False,
-            result_digest="sha256:" + "5" * 64,
-        )
 
     def since_playbill(self, _instance_id: str, **values: object) -> api.PlaybillSinceResult:
         result_values: dict[str, object] = {
@@ -191,26 +215,6 @@ class _Client:
                 omission_reasons=[],
             ),
             result_digest="sha256:" + "7" * 64,
-        )
-
-    def retire_playbill_claim(
-        self,
-        _instance_id: str,
-        claim_id: str,
-        *,
-        request: dict[str, object],
-    ) -> api.PlaybillClaimRetireResponse:
-        self.retirement_request = {"claim_id": claim_id, **request}
-        return api.PlaybillClaimRetirePreflight(
-            operation_digest="sha256:" + "8" * 64,
-            coordinate=_COORDINATE,
-            root_identity={"kind": "Claim", "name": claim_id},
-            root_predecessor_digest="sha256:" + "9" * 64,
-            reason=request["reason"],  # type: ignore[arg-type]
-            effective_until=request.get("effective_until"),  # type: ignore[arg-type]
-            required_dependents=[],
-            diagnostics=[],
-            submit_ready=True,
         )
 
     def _curation_action(
@@ -455,37 +459,6 @@ def test_sdk_declared_block_refuses_every_citation_role_inside_it(
     assert copy.payload.source.source_content == page
 
 
-def test_sdk_retirement_owns_claim_ref_and_coordinate_plumbing(tmp_path: Path) -> None:
-    _workspace(tmp_path)
-    client = _Client()
-    pb = Playbill._from_client(  # type: ignore[arg-type]
-        client,
-        instance_id="inst_test",
-        workspace=tmp_path,
-        clock=lambda: datetime(2026, 8, 24, 12, tzinfo=UTC),
-    )
-
-    result = pb.retire_claim(
-        "Claim:CLM-0123456789abcdef0123456789abcdef",
-        reason="was-wrong",
-        mode="submit",
-    )
-
-    assert result.tag == "playbill-claim-retire-preflight-v1"
-    assert client.retirement_request == {
-        "claim_id": "CLM-0123456789abcdef0123456789abcdef",
-        "tag": "playbill-claim-retire-request-v1",
-        "mode": "submit",
-        "claim_ref": "Claim:CLM-0123456789abcdef0123456789abcdef",
-        "reason": "was-wrong",
-        "effective_until": None,
-        "expected_coordinate": AcceptedCoordinate.model_validate(
-            _COORDINATE.model_dump(mode="json")
-        ).model_dump(mode="json"),
-        "dependents": [],
-    }
-
-
 def test_sdk_procedure_run_binds_its_typed_input_contract_coordinate(tmp_path: Path) -> None:
     _workspace(tmp_path)
 
@@ -649,251 +622,83 @@ def test_sdk_line_run_carries_the_asserted_identity_and_occurrence(tmp_path: Pat
     assert client.line_request["trigger"] == "on-anchor"
 
 
-def test_sdk_plain_retirement_replay_uses_accepted_operation_coordinate(
-    tmp_path: Path,
-) -> None:
-    _workspace(tmp_path)
-    operation_digest = "sha256:" + "d" * 64
+def test_procedure_run_track_record_reads_the_procedure_card_from_get(tmp_path: Path) -> None:
+    """The track record comes from `get` on the run's Procedure, not a search row.
 
-    class ReplayClient(_Client):
+    Search rows never carried ``track_record``, so the old read always answered
+    None. The Procedure card does, one entry per accepted promotion.
+    """
+
+    _workspace(tmp_path)
+    from cruxible_client.contracts.get_reads import (
+        PlaybillGetCoordinateV1,
+        PlaybillGetProcedureCardV1,
+        PlaybillGetProcedureTrackRecordV1,
+        PlaybillGetResultV1,
+    )
+
+    entry = PlaybillGetProcedureTrackRecordV1(
+        promotion="daily-summary-runs",
+        first_sequence=1,
+        last_sequence=4,
+        output={"succeeded": 3, "halted": 1},
+        output_digest="sha256:" + "6" * 64,
+        promotion_digest="sha256:" + "7" * 64,
+    )
+
+    class TrackRecordClient(_Client):
         def __init__(self) -> None:
             super().__init__()
-            self.requests: list[dict[str, object]] = []
+            self.gets: list[Any] = []
 
-        def playbill_claim_history(
-            self, _instance_id: str, identity: str
-        ) -> api.PlaybillClaimHistory:
-            return api.PlaybillClaimHistory(
-                identity=f"Claim:{identity}",
-                entries=[
-                    {
-                        "sequence": 5,
-                        "coordinate": _COORDINATE.model_dump(mode="json"),
-                        "lifecycle_state": "retired",
-                    }
-                ],
+        def playbill_get(self, _instance_id: str, *, request: Any) -> PlaybillGetResultV1:
+            self.gets.append(request)
+            return PlaybillGetResultV1(
+                ref=request.ref,
+                kind="procedure",
+                detail=request.detail,
+                card=PlaybillGetProcedureCardV1(
+                    procedure="daily-summary",
+                    inputs={"input": "daily-summary-input"},
+                    readiness="ready",
+                    track_record=(entry,),
+                ),
+                coordinate=PlaybillGetCoordinateV1(git_oid="a" * 12, generation=3),
+                accepted_coordinate=_COORDINATE,
+                evaluation_time=datetime(2026, 8, 24, 12, tzinfo=UTC),
             )
 
-        def retire_playbill_claim(
-            self,
-            _instance_id: str,
-            claim_id: str,
-            *,
-            request: dict[str, object],
-        ) -> api.PlaybillClaimRetireResponse:
-            self.requests.append(request)
-            if len(self.requests) == 1:
-                return api.PlaybillClaimRetireResult(
-                    outcome="proposed",
-                    operation_digest=operation_digest,
-                    coordinate=_COORDINATE,
-                    retirements=[],
-                )
-            if len(self.requests) == 2:
-                error = CoreError(
-                    "playbill.claim.retire_closure_mismatch: expected accepted operation"
-                )
-                error.error_code = "playbill.claim.retire_closure_mismatch"
-                raise error
-            assert request["expected_coordinate"] == AcceptedCoordinate.model_validate(
-                _COORDINATE.model_dump(mode="json")
-            ).model_dump(mode="json")
-            return api.PlaybillClaimRetireResult(
-                outcome="already_retired",
-                operation_digest=operation_digest,
-                coordinate=_COORDINATE,
-                retirements=[
-                    {
-                        "artifact_identity": {"kind": "Claim", "name": claim_id},
-                        "predecessor_digest": "sha256:" + "e" * 64,
-                        "reason": request["reason"],
-                        "effective_until": request["effective_until"],
-                        "successor_digest": "sha256:" + "f" * 64,
-                    }
-                ],
-            )
-
-    client = ReplayClient()
+    client = TrackRecordClient()
     pb = Playbill._from_client(  # type: ignore[arg-type]
         client,
         instance_id="inst_test",
         workspace=tmp_path,
         clock=lambda: datetime(2026, 8, 24, 12, tzinfo=UTC),
     )
+    from cruxible_client.authoring.sdk import ProcedureRun
 
-    proposed = pb.retire_claim(
-        "Claim:CLM-0123456789abcdef0123456789abcdef",
-        reason="was-wrong",
-        mode="submit",
-    )
-    assert proposed.outcome == "proposed"
-    pb._coordinate = AcceptedCoordinate(  # type: ignore[attr-defined]
-        git_oid="b" * 40,
-        semantic_root="sha256:" + "b" * 64,
-        generation_root="sha256:" + "c" * 64,
-        compiler_digest="sha256:" + "3" * 64,
-    )
-    result = pb.retire_claim(
-        "Claim:CLM-0123456789abcdef0123456789abcdef",
-        reason="was-wrong",
-        mode="submit",
-    )
-
-    assert result.outcome == "already_retired"
-    assert result.operation_digest == proposed.operation_digest
-    assert len(client.requests) == 3
-
-
-def test_sdk_plain_retirement_replay_never_masks_a_genuine_mismatch(
-    tmp_path: Path,
-) -> None:
-    _workspace(tmp_path)
-    original = CoreError(
-        "playbill.claim.retire_closure_mismatch: accepted retirement attribution differs"
-    )
-    original.error_code = "playbill.claim.retire_closure_mismatch"
-
-    class MismatchClient(_Client):
-        calls = 0
-
-        def playbill_claim_history(
-            self, _instance_id: str, identity: str
-        ) -> api.PlaybillClaimHistory:
-            return api.PlaybillClaimHistory(
-                identity=f"Claim:{identity}",
-                entries=[
-                    {
-                        "sequence": 5,
-                        "coordinate": _COORDINATE.model_dump(mode="json"),
-                        "lifecycle_state": "retired",
-                    }
-                ],
-            )
-
-        def retire_playbill_claim(
-            self,
-            _instance_id: str,
-            _claim_id: str,
-            *,
-            request: dict[str, object],
-        ) -> api.PlaybillClaimRetireResponse:
-            self.calls += 1
-            if self.calls == 1:
-                return api.PlaybillClaimRetireResult(
-                    outcome="proposed",
-                    operation_digest="sha256:" + "d" * 64,
-                    coordinate=_COORDINATE,
-                    retirements=[],
-                )
-            if self.calls == 2:
-                raise original
-            error = CoreError(
-                "playbill.claim.retire_closure_mismatch: different reason remains refused"
-            )
-            error.error_code = "playbill.claim.retire_closure_mismatch"
-            raise error
-
-    client = MismatchClient()
-    pb = Playbill._from_client(  # type: ignore[arg-type]
-        client,
-        instance_id="inst_test",
-        workspace=tmp_path,
-        clock=lambda: datetime(2026, 8, 24, 12, tzinfo=UTC),
+    run = ProcedureRun(
+        pb,
+        api.PlaybillProcedureRunState(
+            run_id="RUN-" + "a" * 64,
+            procedure_identity={"kind": "Procedure", "name": "daily-summary"},
+            procedure_artifact_digest=_DIGEST,
+            bound_coordinate=_COORDINATE,
+            head_at_admission=_COORDINATE,
+            lane="current",
+            evaluation_time="2026-08-24T12:00:00+00:00",
+            status="succeeded",
+            pending_inputs=[],
+            outcomes=[],
+            next_operation={"kind": "done"},
+            result={"ok": True},
+        ),
     )
 
-    pb.retire_claim(
-        "Claim:CLM-0123456789abcdef0123456789abcdef",
-        reason="was-wrong",
-        mode="submit",
-    )
-
-    with pytest.raises(CoreError) as raised:
-        pb.retire_claim(
-            "Claim:CLM-0123456789abcdef0123456789abcdef",
-            reason="was-rescinded",
-            mode="submit",
-        )
-
-    assert raised.value is original
-    assert client.calls == 2
-
-
-def test_sdk_retirement_replay_requires_the_typed_closure_mismatch_code(
-    tmp_path: Path,
-) -> None:
-    _workspace(tmp_path)
-    original = CoreError(
-        "playbill.claim.retire_closure_mismatch: text alone is not a typed refusal"
-    )
-
-    class TextOnlyClient(_Client):
-        history_calls = 0
-
-        def retire_playbill_claim(
-            self,
-            _instance_id: str,
-            _claim_id: str,
-            *,
-            request: dict[str, object],
-        ) -> api.PlaybillClaimRetireResponse:
-            raise original
-
-        def playbill_claim_history(
-            self, _instance_id: str, identity: str
-        ) -> api.PlaybillClaimHistory:
-            self.history_calls += 1
-            raise AssertionError(identity)
-
-    client = TextOnlyClient()
-    pb = Playbill._from_client(  # type: ignore[arg-type]
-        client,
-        instance_id="inst_test",
-        workspace=tmp_path,
-        clock=lambda: datetime(2026, 8, 24, 12, tzinfo=UTC),
-    )
-
-    with pytest.raises(CoreError) as raised:
-        pb.retire_claim(
-            "Claim:CLM-0123456789abcdef0123456789abcdef",
-            reason="was-wrong",
-            mode="submit",
-        )
-
-    assert raised.value is original
-    assert client.history_calls == 0
-
-
-def test_sdk_retirement_submission_fast_path_is_lru_bounded(tmp_path: Path) -> None:
-    _workspace(tmp_path)
-
-    class ProposalClient(_Client):
-        def retire_playbill_claim(
-            self,
-            _instance_id: str,
-            _claim_id: str,
-            *,
-            request: dict[str, object],
-        ) -> api.PlaybillClaimRetireResponse:
-            return api.PlaybillClaimRetireResult(
-                outcome="proposed",
-                operation_digest="sha256:" + "d" * 64,
-                coordinate=_COORDINATE,
-                retirements=[],
-            )
-
-    pb = Playbill._from_client(  # type: ignore[arg-type]
-        ProposalClient(),
-        instance_id="inst_test",
-        workspace=tmp_path,
-        clock=lambda: datetime(2026, 8, 24, 12, tzinfo=UTC),
-    )
-    claim_ids = [f"CLM-{index:032x}" for index in range(129)]
-    for claim_id in claim_ids:
-        pb.retire_claim(claim_id, reason="was-wrong", mode="submit")
-
-    assert len(pb._retirement_submissions) == 128  # type: ignore[attr-defined]
-    assert claim_ids[0] not in pb._retirement_submissions  # type: ignore[attr-defined]
-    assert claim_ids[-1] in pb._retirement_submissions  # type: ignore[attr-defined]
+    assert run.track_record == (entry,)
+    (request,) = client.gets
+    assert request.ref == "Procedure:daily-summary"
+    assert request.detail == "summary"
 
 
 def test_subject_draft_prepares_through_the_authoring_coordinator(tmp_path: Path) -> None:
@@ -1343,7 +1148,7 @@ def test_claim_view_mints_capture_refs_from_typed_admission_accounts(tmp_path: P
     _workspace(tmp_path)
 
     class ClaimClient(_Client):
-        def get_playbill_claim(
+        def _claim_view(
             self,
             _instance_id: str,
             _identity: str,

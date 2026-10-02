@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from cruxible_core.claims.claim_retirement import service_retire_claim
 from cruxible_core.coverage.contracts import (
     CoverageAccessProfileV1,
 )
@@ -13,7 +12,6 @@ from cruxible_core.evidence.citation_relations import (
     RELATION_RETIRED_CONFLICT_SCHEMA,
     retired_activation_live_candidates,
 )
-from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.service.claims.claims import service_explain_playbill_claim
 from cruxible_core.service.claims.retirement_context import ClaimRetirementContextV1
 from cruxible_core.service.discovery.next import (
@@ -24,13 +22,8 @@ from tests.core_support._citation_relations_oracle import (
     RELATION_USE_SCHEMA,
     build_citation_relation_facts,
 )
+from tests.core_support._retirement_support import retire_claim
 from tests.test_authoring.test_authoring_existing_capture import shared_capture_world
-from tests.test_claims.test_claim_retirement import (
-    _activate as _activate_retirement,
-)
-from tests.test_claims.test_claim_retirement import (
-    _request as _retirement_request,
-)
 from tests.test_proposals.test_retirement_citing_advisory import (
     COPY_CLAIM_ID,
     SOURCE_CLAIM_ID,
@@ -48,13 +41,7 @@ def _access() -> CoverageAccessProfileV1:
 
 
 def _retire_claim(instance, owner, claim_id: str) -> None:  # type: ignore[no-untyped-def]
-    result = service_retire_claim(
-        instance,
-        claim_id=claim_id,
-        request=_retirement_request(instance, mode="submit"),
-        actor=AuthenticatedActor(actor_id="owner"),
-    )
-    _activate_retirement(instance, owner, result)
+    retire_claim(instance, owner, claim_id)
     instance.refresh()
 
 

@@ -14,6 +14,7 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicyV3,
     ClaimEvidenceAdmissionRuleV3,
 )
+from cruxible_core.runtime.permissions import PermissionMode
 from cruxible_core.service.discovery import orient as orient_module
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.orient import OrientCaller, service_playbill_orient
@@ -31,12 +32,29 @@ from tests.core_support._knowledge_loop_support import (
 )
 from tests.test_claims.test_claims import _claim_type
 
-OWNER = OrientCaller("owner", "active", "admin")
+OWNER = OrientCaller("owner", "admin")
 UPGRADE_NOTE = "1 ClaimType still names CaptureContracts by digest; run evidence_rules_upgrade"
 
 
+@pytest.fixture(scope="module")
+def seeded(tmp_path_factory: pytest.TempPathFactory):  # type: ignore[no-untyped-def]
+    """One world for the module's read-only orient tests.
+
+    Tests that mutate the instance or patch what orient folds take
+    ``own_seeded`` instead, so no memo or state crosses between them.
+    """
+
+    return _seeded_world(tmp_path_factory.mktemp("orient-seeded"))
+
+
 @pytest.fixture
-def seeded(tmp_path: Path):  # type: ignore[no-untyped-def]
+def own_seeded(tmp_path: Path):  # type: ignore[no-untyped-def]
+    """A world of this test's own, for tests that decommission or patch."""
+
+    return _seeded_world(tmp_path)
+
+
+def _seeded_world(tmp_path: Path):  # type: ignore[no-untyped-def]
     instance, owner = seed_claims(tmp_path)
     for name, description in ((QUERY_NAME, "Every work item."), ("project.work_items_b", None)):
         inspection = submit_query_definition_candidate(
@@ -75,7 +93,7 @@ def test_default_orient_names_each_kind_with_its_predicates_as_values(seeded) ->
 
     wire = result.model_dump(mode="json")
     # Absent optional parts are left off the wire rather than sent as nulls.
-    assert "kind_detail" not in wire and "reason" not in wire["you"]
+    assert "kind_detail" not in wire and "authoring_refusal" not in wire["you"]
     assert "description" not in wire["kinds"][0]["predicates"][0]
     assert "sha256:" not in json.dumps(wire["kinds"])
 
@@ -89,7 +107,7 @@ def test_attention_names_digest_named_rules_and_suggests_the_upgrade(seeded) -> 
 
 
 def test_attention_reuses_a_next_item_that_already_surfaces_the_upgrade(
-    seeded,  # type: ignore[no-untyped-def]
+    own_seeded,  # type: ignore[no-untyped-def]
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     item = SimpleNamespace(
@@ -114,7 +132,7 @@ def test_attention_reuses_a_next_item_that_already_surfaces_the_upgrade(
         ),
     )
 
-    attention = service_playbill_orient(seeded, caller=OWNER).attention
+    attention = service_playbill_orient(own_seeded, caller=OWNER).attention
 
     assert attention is not None and attention.next_items == 7
     assert attention.top == (
@@ -127,23 +145,39 @@ def test_attention_reuses_a_next_item_that_already_surfaces_the_upgrade(
 
 
 @pytest.mark.parametrize(
-    ("caller", "reason"),
+    ("caller", "code"),
     [
-        (None, "no authenticated actor"),
-        (OrientCaller("stranger", "absent", "admin"), "has no active principal"),
-        (OrientCaller("gone", "revoked", "admin"), "registration: revoked"),
-        (OrientCaller("owner", "active", "read_only"), "read_only"),
+        (None, "playbill.identity.credential_unbound"),
+        (OrientCaller("stranger", "admin"), "playbill.identity.principal_absent"),
+        (
+            OrientCaller("operator", "admin", configured=False),
+            "playbill.identity.principal_unconfigured",
+        ),
+        (OrientCaller("owner", "read_only"), "playbill.identity.permission_insufficient"),
     ],
 )
 def test_you_cannot_author_without_an_active_principal_and_says_why(
     seeded,  # type: ignore[no-untyped-def]
     caller: OrientCaller | None,
-    reason: str,
+    code: str,
 ) -> None:
+    from cruxible_core.service.identity import authoring_refusal
+
     you = service_playbill_orient(seeded, caller=caller).you
 
     assert you is not None and you.can_author is False
-    assert you.reason is not None and reason in you.reason
+    assert you.authoring_refusal is not None and you.authoring_refusal.code == code
+    # The same refusal whoami reports and authoring returns.
+    assert you.authoring_refusal == authoring_refusal(
+        seeded,
+        actor_id=None if caller is None else caller.actor_id,
+        configured=True if caller is None else caller.configured,
+        credential_id=None,
+        credential_label=None,
+        permission_mode=PermissionMode[
+            (caller.credential_permission_mode if caller else "read_only").upper()
+        ],
+    )
 
 
 def test_next_suggestions_are_rendered_for_each_surface(seeded) -> None:  # type: ignore[no-untyped-def]
@@ -299,10 +333,10 @@ def test_identity_rules_name_their_contracts_and_unknown_digests_stay_short(
         assert names.name("sha256:" + "ab" * 32) == "unresolved:abababababab"
 
 
-def test_a_decommissioned_instance_still_orients_and_says_why(seeded) -> None:  # type: ignore[no-untyped-def]
-    seeded.decommission(reason="migrated to a new host", decommissioned_by="owner")
+def test_a_decommissioned_instance_still_orients_and_says_why(own_seeded) -> None:  # type: ignore[no-untyped-def]
+    own_seeded.decommission(reason="migrated to a new host", decommissioned_by="owner")
 
-    attention = service_playbill_orient(seeded, caller=OWNER).attention
+    attention = service_playbill_orient(own_seeded, caller=OWNER).attention
 
     assert attention is not None
     assert any(
@@ -431,15 +465,16 @@ def test_sdk_suggestions_are_python_literals_and_mcp_keeps_json() -> None:
     )
 
 
-def test_a_decommissioned_instance_cannot_be_authored_even_by_an_active_writer(seeded) -> None:  # type: ignore[no-untyped-def]
-    seeded.decommission(reason="migrated to a new host", decommissioned_by="owner")
+def test_a_decommissioned_instance_cannot_be_authored_even_by_an_active_writer(own_seeded) -> None:  # type: ignore[no-untyped-def]
+    own_seeded.decommission(reason="migrated to a new host", decommissioned_by="owner")
 
-    you = service_playbill_orient(seeded, caller=OWNER).you
+    you = service_playbill_orient(own_seeded, caller=OWNER).you
 
     assert you is not None and you.can_author is False
     assert you.actor == "owner" and you.principal == "owner"
-    assert you.reason is not None
-    assert "decommissioned" in you.reason and "migrated to a new host" in you.reason
+    assert you.authoring_refusal is not None
+    assert you.authoring_refusal.code == "playbill.instance.decommissioned"
+    assert "migrated to a new host" in you.authoring_refusal.detail
 
 
 def _accept_interfaces(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-untyped-def]
@@ -535,42 +570,44 @@ def _accept_interfaces(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type
 def test_orient_pages_the_provider_interfaces_a_procedure_can_call(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from cruxible_client.contracts.orient import PlaybillOrientInterfaceV1
-    from cruxible_core.service.discovery.discovery import service_discover_playbill_semantic
+    from cruxible_core.service.discovery.discovery import accepted_provider_interfaces
 
     instance = _accept_interfaces(tmp_path, monkeypatch)
 
     first = service_playbill_orient(instance, section="interfaces", limit=1, surface="mcp")
     assert first.section == "interfaces" and first.truncated and first.next_cursor
-    assert first.interfaces == (
-        PlaybillOrientInterfaceV1(
-            name="demo.fetch",
-            description="Fetch one resource over HTTP.",
-            input=("max_bytes?: integer", "url: string"),
-            output=("playbill-provider-result-to-external-capture-v1",),
-            effect="external_read",
-        ),
+    (fetch,) = first.interfaces or ()
+    assert (fetch.name, fetch.description, fetch.input, fetch.output, fetch.effect) == (
+        "demo.fetch",
+        "Fetch one resource over HTTP.",
+        ("max_bytes?: integer", "url: string"),
+        ("playbill-provider-result-to-external-capture-v1",),
+        "external_read",
     )
-    # get reads no interface, so the only suggestion continues the page.
+    # A row carries what a Procedure node pins: the interface digest and its
+    # operation contract; demo.fetch has no Provider yet.
+    assert fetch.interface_digest.startswith("sha256:") and fetch.providers == ()
+    assert fetch.operation_contract is not None
     assert first.next == (
+        'cruxible_playbill_get(ref="ProviderInterface:demo.fetch")',
         f'cruxible_playbill_orient(section="interfaces", cursor="{first.next_cursor}")',
     )
     rest = service_playbill_orient(instance, section="interfaces", cursor=first.next_cursor)
     assert rest.interfaces is not None
     ((demo),) = rest.interfaces
-    assert (demo.name, demo.input, demo.output, demo.effect, demo.providers) == (
+    assert (demo.name, demo.input, demo.output, demo.effect) == (
         "demo.interface",
         (),
         (),
         "external_read",
-        ("demo-provider",),
     )
+    ((implementation),) = demo.providers
+    assert implementation.provider == "demo-provider"
+    assert implementation.implementation_digest.startswith("sha256:")
 
-    # The rows come from discover's own inventory: the same interfaces, in order.
-    inventory = service_discover_playbill_semantic(
-        instance, evaluation_time="2026-08-16T21:00:00Z", profile="interfaces"
-    )
-    assert [item.identity.removeprefix("ProviderInterface:") for item in inventory.interfaces] == [  # type: ignore[union-attr]
+    # The rows come from the one accepted inventory: the same interfaces, in order.
+    inventory = accepted_provider_interfaces(instance, instance.accepted_coordinate())
+    assert [item.entry.identity.removeprefix("ProviderInterface:") for item in inventory] == [
         "demo.fetch",
         "demo.interface",
     ]
@@ -660,18 +697,24 @@ def test_modal_evidence_ties_are_independent_of_predicate_order() -> None:
 
 
 def test_attention_summary_preserves_complete_orient_bytes(
-    seeded,  # type: ignore[no-untyped-def]
+    own_seeded,  # type: ignore[no-untyped-def]
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from datetime import UTC, datetime
 
     from cruxible_client.contracts.canonical import canonical_bytes
-    from cruxible_core.service.claims.claims import _claim_law_evidence_index
+    from cruxible_core.service.evidence.evidence import _claim_read_history_index
+
+    def _claim_law_evidence_index(instance, *, at):  # type: ignore[no-untyped-def]
+        """The entire law-evidence map, materialized from retained locators."""
+
+        return dict(_claim_read_history_index(instance, coordinate=at).law_evidence)
+
     from cruxible_core.service.discovery import next as next_module
     from cruxible_core.service.discovery.next import PlaybillNextSummary, service_playbill_next
 
     moment = datetime(2026, 9, 29, tzinfo=UTC)
-    optimized = service_playbill_orient(seeded, caller=OWNER, evaluation_time=moment)
+    optimized = service_playbill_orient(own_seeded, caller=OWNER, evaluation_time=moment)
     dependency_fold = next_module._claim_dependency_items
 
     def original_dependencies(*args, **kwargs):  # type: ignore[no-untyped-def]
@@ -693,7 +736,39 @@ def test_attention_summary_preserves_complete_orient_bytes(
     monkeypatch.setattr(next_module, "_claim_dependency_items", original_dependencies)
     monkeypatch.setattr(next_module, "_claim_threshold_evidence", _claim_law_evidence_index)
     monkeypatch.setattr(orient_module, "summarize_playbill_next", full_queue)
-    previous = service_playbill_orient(seeded, caller=OWNER, evaluation_time=moment)
+    previous = service_playbill_orient(own_seeded, caller=OWNER, evaluation_time=moment)
     assert canonical_bytes(optimized.model_dump(mode="json")) == canonical_bytes(
         previous.model_dump(mode="json")
     )
+
+
+def test_get_reads_one_provider_interface_card_and_its_inventory_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
+    from cruxible_core.service.discovery.discovery import accepted_provider_interfaces
+    from cruxible_core.service.discovery.get import service_playbill_get
+    from cruxible_core.storage.cas import BodyAccessContext
+
+    instance = _accept_interfaces(tmp_path, monkeypatch)
+    access = BodyAccessContext(principal_id="reader", can_read_body=False)
+
+    card = service_playbill_get(
+        instance,
+        request=PlaybillGetRequestV1(ref="ProviderInterface:demo.interface"),
+        access=access,
+    )
+    assert card.kind == "provider_interface" and card.card is not None
+    shown = card.card.model_dump(mode="json")
+    assert [item["provider"] for item in shown["providers"]] == ["demo-provider"]
+    proof = service_playbill_get(
+        instance,
+        request=PlaybillGetRequestV1(ref="ProviderInterface:demo.interface", detail="proof"),
+        access=access,
+    )
+    (entry,) = (
+        item.entry
+        for item in accepted_provider_interfaces(instance, instance.accepted_coordinate())
+        if item.entry.identity == "ProviderInterface:demo.interface"
+    )
+    assert proof.proof is not None and proof.proof["entry"] == entry.model_dump(mode="json")

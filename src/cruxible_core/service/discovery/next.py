@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import shlex
-from collections import OrderedDict, defaultdict
+from collections import Counter, OrderedDict, defaultdict
 from collections.abc import Callable, Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -60,6 +60,7 @@ from cruxible_client.contracts.claims import (
     ClaimArtifactV3,
     ClaimLawEvidenceAny,
     LiteralClaimObject,
+    SubjectClaimObject,
     _is_claim_type_rederivation,
     claim_artifact_digest,
     claim_citation_references,
@@ -79,6 +80,7 @@ from cruxible_client.contracts.declared_blocks import (
 from cruxible_client.contracts.documents import document_path, parse_document
 from cruxible_client.contracts.errors import PlaybillError, ProposalIntegrityError
 from cruxible_client.contracts.primitives import canonical_json
+from cruxible_client.contracts.principals import PlaybillAuthoringRefusalV1
 from cruxible_client.contracts.procedure_mandates import ProcedureMandateV1, ProcedureMandateV2
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
@@ -126,11 +128,12 @@ from cruxible_core.service.claims.claims import (
     service_list_playbill_claims,
 )
 from cruxible_core.service.claims.verdict_memo import invariance_interval
+from cruxible_core.service.discovery.claim_status import claim_resolution_statuses
 from cruxible_core.service.discovery.query import (
     _AcceptedQueryFactsRead,
     build_accepted_query_facts,
+    verify_retired_claim_adjudication,
 )
-from cruxible_core.service.discovery.search import claim_resolution_statuses
 from cruxible_core.service.evidence.evidence import (
     ClaimVerdictReadContext,
     _record_verdict_time_boundaries,
@@ -410,6 +413,15 @@ PlaybillNextSourceObservationAny: TypeAlias = (
 )
 
 
+class PlaybillNextMissingBindingV1(_StrictNextModel):
+    """A catalog entry binding a workspace file that does not exist."""
+
+    tag: Literal["playbill-next-missing-binding-v1"] = "playbill-next-missing-binding-v1"
+    source_id: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
+    document_id: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.-]{0,255}$")
+    locator: str = Field(min_length=1, max_length=4096)
+
+
 class PlaybillNextWorkspaceObservationV1(_StrictNextModel):
     tag: Literal["playbill-next-workspace-observation-v1"] = (
         "playbill-next-workspace-observation-v1"
@@ -421,6 +433,18 @@ class PlaybillNextWorkspaceObservationV1(_StrictNextModel):
     presentation_policy: PlaybillPresentationPolicyAny | None = None
     presentation_policy_notes: tuple[PlaybillPresentationPolicyNoteV1, ...] = ()
     projection_coverage: PlaybillProjectionCoverageObservationV1 | None = None
+    # Catalog entries whose bound workspace file is missing; each is a repair row.
+    missing_bindings: tuple[PlaybillNextMissingBindingV1, ...] = ()
+
+    @field_validator("missing_bindings")
+    @classmethod
+    def _missing(
+        cls, value: tuple[PlaybillNextMissingBindingV1, ...]
+    ) -> tuple[PlaybillNextMissingBindingV1, ...]:
+        ids = tuple(item.source_id for item in value)
+        if ids != tuple(sorted(set(ids), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("next missing bindings must be sorted and unique by source_id")
+        return value
 
     @field_validator("drift_observations")
     @classmethod
@@ -478,7 +502,8 @@ class PlaybillNextRequestV1(_StrictNextModel):
     # Who reads the queue, so each repair is one this caller can run: the
     # surface picks the syntax a repair renders in (a CLI command, or an MCP
     # tool call), and an MCP caller lists the tools its session advertises, so
-    # a row whose repair is a tool it lacks is hidden and counted instead.
+    # a row whose repair is a tool it lacks keeps its place with the repair
+    # withheld and `repair_requires` naming what running it needs.
     # Absent, rows render as CLI commands.
     caller_surface: Literal["cli", "mcp", "sdk"] | None = Field(
         default=None, exclude_if=lambda value: value is None
@@ -559,6 +584,55 @@ class PlaybillNextRepairV1(_StrictNextModel):
         return self
 
 
+#: The permission tiers a repair can need, by name (``PermissionMode`` lowercased).
+NextRepairTier: TypeAlias = Literal["read_only", "governed_write", "graph_write", "admin"]
+_TIER_BY_RUNG: tuple[NextRepairTier, ...] = ("read_only", "governed_write", "graph_write", "admin")
+#: Why a repair is withheld from this caller.
+NextRepairGate: TypeAlias = Literal["tier", "profile", "authoring"]
+
+
+class PlaybillNextRepairRequirementV1(_StrictNextModel):
+    """What running a withheld repair needs that this caller does not have.
+
+    A row whose repair this caller cannot run stays in the queue: the work is
+    real whoever reads it. Only the repair is withheld, and this says why --
+    the permission ``tier`` the repair's ``tool`` runs at, and/or the MCP tool
+    ``profile`` that advertises it (``full`` advertises every tool; the CLI
+    runs every repair a tier allows). ``authoring`` is a caller that cannot
+    author on this instance at all -- an unbound credential, a principal that
+    is not configured, registered or active, or a decommissioned instance --
+    and ``authoring_refusal`` carries whoami's code, detail and repair.
+    """
+
+    tag: Literal["playbill-next-repair-requirement-v1"] = "playbill-next-repair-requirement-v1"
+    operation: NextRepairOperation
+    tool: str
+    tier: NextRepairTier
+    profile: Literal["full"] | None = Field(default=None, exclude_if=lambda value: value is None)
+    because: tuple[NextRepairGate, ...] = Field(min_length=1)
+    authoring_refusal: PlaybillAuthoringRefusalV1 | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @model_validator(mode="after")
+    def _profile(self) -> "PlaybillNextRepairRequirementV1":
+        if ("profile" in self.because) != (self.profile is not None):
+            raise ValueError("a next repair requirement names a profile exactly when it needs one")
+        if ("authoring" in self.because) != (self.authoring_refusal is not None):
+            raise ValueError(
+                "a next repair requirement names the authoring refusal exactly when it needs one"
+            )
+        return self
+
+
+def _repair_or_requirement(
+    repair: "PlaybillNextRepairV1 | None",
+    requires: PlaybillNextRepairRequirementV1 | None,
+) -> None:
+    if (repair is None) == (requires is None):
+        raise ValueError("a next row carries its repair or what running it requires, not both")
+
+
 class PlaybillNextFindingV1(_StrictNextModel):
     """One more finding about the same underlying fact as the row that carries it."""
 
@@ -568,12 +642,21 @@ class PlaybillNextFindingV1(_StrictNextModel):
     subject_identity: str
     related_identities: tuple[str, ...] = ()
     detail: object = Field(default_factory=dict)
-    repair: PlaybillNextRepairV1
+    #: ``None`` when this caller cannot run it; ``repair_requires`` then says why.
+    repair: PlaybillNextRepairV1 | None
+    repair_requires: PlaybillNextRepairRequirementV1 | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @field_validator("detail", mode="before")
     @classmethod
     def _detail(cls, value: object) -> CanonicalValue:
         return normalize_canonical(value)
+
+    @model_validator(mode="after")
+    def _withheld(self) -> "PlaybillNextFindingV1":
+        _repair_or_requirement(self.repair, self.repair_requires)
+        return self
 
 
 class PlaybillNextItemV1(_StrictNextModel):
@@ -584,12 +667,17 @@ class PlaybillNextItemV1(_StrictNextModel):
     subject_identity: str
     related_identities: tuple[str, ...] = ()
     detail: object = Field(default_factory=dict)
-    repair: PlaybillNextRepairV1
+    #: ``None`` when this caller's surface, tool profile or permission tier cannot
+    #: run it: the row stays, and ``repair_requires`` says what running it needs.
+    repair: PlaybillNextRepairV1 | None
     # The row's other findings about the same block, source, document,
     # evidence or conflicted slot, each keeping its own reason, detail and
     # repair. Absent on a row that stands alone, so its bytes do not change.
     findings: tuple[PlaybillNextFindingV1, ...] = Field(
         default=(), exclude_if=lambda value: not value
+    )
+    repair_requires: PlaybillNextRepairRequirementV1 | None = Field(
+        default=None, exclude_if=lambda value: value is None
     )
 
     @field_validator("item_id")
@@ -612,6 +700,7 @@ class PlaybillNextItemV1(_StrictNextModel):
 
     @model_validator(mode="after")
     def _identity(self) -> "PlaybillNextItemV1":
+        _repair_or_requirement(self.repair, self.repair_requires)
         if self.item_id != playbill_next_item_id(self):
             raise ValueError("next item ID does not reproduce")
         return self
@@ -644,8 +733,12 @@ class PlaybillNextHealthV1(_StrictNextModel):
     repair: PlaybillNextRepairV1 | None = None
     #: The facet needs a repair this caller's surface, tool profile or
     #: permission tier cannot perform, so its repair was dropped. The facet
-    #: itself is not left out, so it is not counted in ``status.hidden``.
+    #: itself is kept.
     repair_hidden: bool = Field(default=False, exclude_if=lambda value: not value)
+    #: What running the withheld repair needs; set exactly when ``repair_hidden``.
+    repair_requires: PlaybillNextRepairRequirementV1 | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @field_validator("detail", mode="before")
     @classmethod
@@ -656,6 +749,8 @@ class PlaybillNextHealthV1(_StrictNextModel):
     def _hidden_repair(self) -> "PlaybillNextHealthV1":
         if self.repair_hidden and self.repair is not None:
             raise ValueError("a next status facet hides its repair or carries it, not both")
+        if self.repair_hidden != (self.repair_requires is not None):
+            raise ValueError("a next status facet says what its hidden repair requires")
         return self
 
 
@@ -682,13 +777,10 @@ class PlaybillNextStatusV1(_StrictNextModel):
     consumers: PlaybillNextHealthV1
     triggers: PlaybillNextHealthV1
     #: Rows parked by a current ``unsure`` attestation whose basis is unchanged.
+    #: No row is left out for the caller: one whose repair this caller's
+    #: surface, tool profile or permission tier cannot run is kept with its
+    #: repair withheld and ``repair_requires`` set.
     held: int = Field(default=0, ge=0)
-    #: Rows and nested findings whose repair this caller's surface, tool
-    #: profile or permission tier cannot perform, so they were left out of
-    #: ``items``. Another caller -- the CLI, or a higher-tier credential -- sees
-    #: them. A status facet whose repair is withheld says so itself
-    #: (``repair_hidden``) and is not counted here.
-    hidden: int = Field(default=0, ge=0, exclude_if=lambda value: value == 0)
 
     @model_validator(mode="after")
     def _states(self) -> "PlaybillNextStatusV1":
@@ -793,7 +885,9 @@ class PlaybillNextResultV2(PlaybillNextResultV1):
 _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
     "playbill.authoring.create": "playbill authoring create",
     "playbill.authoring.bind": "playbill authoring bind",
-    "playbill.claim.retire": "playbill claim retire",
+    "playbill.claim.retire": "playbill retire",
+    "playbill.set": "playbill set",
+    "playbill.write": "playbill write",
     "playbill.floor.export": "playbill floor export",
     "playbill.block.depublish": "playbill block depublish",
     "playbill.block.repin": "playbill block repin",
@@ -810,17 +904,15 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
 # Each of these needs a local file. The queue knows the path only if the row
 # carried it, so the placeholder is filled from the arguments when they name it
 # and dropped -- with the flag that introduces it -- when they do not. A bare
-# `REQUEST_FILE` left in the line is not a hint, it is an unrunnable command
+# `PAYLOAD_FILE` left in the line is not a hint, it is an unrunnable command
 # presented as a runnable one, which is the one thing `command` must never be.
 _REPAIR_COMMAND_OPERANDS: Mapping[str, tuple[str, ...]] = {
     "playbill.authoring.create": ("PAYLOAD_FILE",),
     "playbill.authoring.bind": ("--payload-file", "PAYLOAD_FILE"),
-    "playbill.claim.retire": ("REQUEST_FILE",),
     "playbill.document.propose": ("--envelope", "ENVELOPE_FILE"),
 }
 _REPAIR_COMMAND_PLACEHOLDERS: Mapping[str, str] = {
     "PAYLOAD_FILE": "payload_file",
-    "REQUEST_FILE": "request_file",
     "ENVELOPE_FILE": "envelope_file",
 }
 _ATTESTATION_REPAIR_EXAMPLES: Mapping[str, str] = {
@@ -861,7 +953,9 @@ NextCallerSurface: TypeAlias = Literal["cli", "mcp", "sdk"]
 _REPAIR_TOOLS: Mapping[str, str | None] = {
     "playbill.authoring.create": "cruxible_playbill_authoring_create",
     "playbill.authoring.bind": "cruxible_playbill_authoring_bind",
-    "playbill.claim.retire": "cruxible_playbill_claim_retire",
+    "playbill.claim.retire": "cruxible_playbill_retire",
+    "playbill.set": "cruxible_playbill_set",
+    "playbill.write": "cruxible_playbill_write",
     "playbill.floor.export": "cruxible_playbill_floor_export",
     "playbill.block.depublish": "cruxible_playbill_block_depublish",
     "playbill.block.repin": None,
@@ -876,6 +970,9 @@ _REPAIR_TOOLS: Mapping[str, str | None] = {
     "hand_edit": None,
 }
 _GOVERNED_WRITE_RUNG = 1
+#: Repairs whose served door writes nothing and so never meets the principal
+#: boundary; every other served repair is refused to a caller that cannot author.
+_AUTHORING_FREE_REPAIRS = frozenset({"playbill.floor.export"})
 
 
 def _tool_rung(tool: str) -> int:
@@ -884,6 +981,127 @@ def _tool_rung(tool: str) -> int:
     from cruxible_core.runtime.permissions import TOOL_PERMISSIONS
 
     return int(TOOL_PERMISSIONS[tool]) - 1
+
+
+#: The most contenders a contest row offers a keep-one option for.
+_MAX_CONTEST_OPTIONS = 8
+
+
+def _restated_set(values: Mapping[str, object]) -> dict[str, object] | None:
+    """The set call a `playbill.set` repair names, from its arguments, or None."""
+
+    subject, field, value = values.get("subject"), values.get("field"), values.get("value")
+    if not isinstance(subject, str) or not isinstance(field, str):
+        return None
+    if not isinstance(value, str | int | bool):
+        return None
+    restated: dict[str, object] = {"subject": subject, "field": field, "value": value}
+    role = values.get("role")
+    if isinstance(role, str):
+        restated["role"] = role
+    capture = values.get("capture_digest")
+    if isinstance(capture, str):
+        restated["evidence"] = {"kind": "capture", "capture": capture}
+    return restated
+
+
+def _write_changes(values: Mapping[str, object]) -> list[dict[str, object]]:
+    changes = values.get("changes")
+    if not isinstance(changes, list | tuple):
+        return []
+    return [dict(item) for item in changes if isinstance(item, Mapping)]
+
+
+def _cli_scalar(value: object) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def _claim_set_arguments(
+    claim: ClaimArtifactAny, claim_type: ClaimType | None
+) -> dict[str, object] | None:
+    """The `set` that restates one live Claim, or None where `set` cannot say it.
+
+    A repair that asks for a Claim to be stated again -- on new evidence, or as
+    an acknowledgement -- is the `set` verb on its Subject and field, which the
+    default profile serves. It cannot restate a qualified Claim, a derivation
+    (only its Procedure produces one), a many-valued field (`set` replaces one
+    value), or an exact-content or structured value (no scalar to pass); those
+    keep their authoring repair.
+    """
+
+    statement = claim.statement
+    if claim_type is None or claim_type.cardinality != "one":
+        return None
+    if statement.qualifier is not None or statement.role == "derivation":
+        return None
+    obj = statement.object
+    value: object
+    if isinstance(obj, LiteralClaimObject) and isinstance(obj.value, str | int | bool):
+        value = obj.value
+    elif isinstance(obj, SubjectClaimObject):
+        value = obj.address.artifact_path.removeprefix("subjects/").removesuffix(".json")
+    else:
+        return None
+    return {
+        "subject": statement.subject.artifact_path.removeprefix("subjects/").removesuffix(".json"),
+        "field": statement.predicate,
+        "value": value,
+        "role": statement.role,
+    }
+
+
+def _claim_type_at(
+    instance: PlaybillInstance, git_oid: str, predicate: str, memo: dict[str, ClaimType | None]
+) -> ClaimType | None:
+    if predicate not in memo:
+        path = claim_type_path(predicate)
+        content = instance.blob_at(git_oid, path)
+        memo[predicate] = None if content is None else parse_claim_type(content, path=path)
+    return memo[predicate]
+
+
+def _live_claim_set_arguments(
+    instance: PlaybillInstance, git_oid: str, claim_id: str, memo: dict[str, ClaimType | None]
+) -> dict[str, object] | None:
+    """`_claim_set_arguments` for a Claim named by ID, when it is live at ``git_oid``."""
+
+    path = claim_path(claim_id)
+    content = instance.blob_at(git_oid, path)
+    if content is None:
+        return None
+    claim = parse_claim(content, path=path)
+    if claim.lifecycle.state != "live":
+        return None
+    return _claim_set_arguments(
+        claim, _claim_type_at(instance, git_oid, claim.statement.predicate, memo)
+    )
+
+
+def _restating_repair(
+    fallback: NextRepairOperation,
+    *,
+    target: str,
+    required_change: str,
+    arguments: Mapping[str, object],
+    set_arguments: Mapping[str, object] | None,
+) -> PlaybillNextRepairV1:
+    """A repair through `set` when it can restate the Claim, else its authoring door."""
+
+    if set_arguments is None:
+        return PlaybillNextRepairV1(
+            operation=fallback,
+            target=target,
+            required_change=required_change,
+            arguments=dict(arguments),
+        )
+    return PlaybillNextRepairV1(
+        operation="playbill.set",
+        target=target,
+        required_change=required_change,
+        arguments={**arguments, **set_arguments},
+    )
 
 
 def _mcp_call(tool: str, **arguments: object) -> str:
@@ -932,6 +1150,14 @@ def _mcp_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         )
     if operation == "playbill.floor.export":
         return _mcp_call("cruxible_playbill_floor_export", mode="write")
+    if operation == "playbill.claim.retire" and text("claim_id"):
+        # Why it ends is the retirer's to say: `because` is the argument left to add.
+        return _mcp_call("cruxible_playbill_retire", target=text("claim_id"))
+    if operation == "playbill.set" and (restated := _restated_set(values)) is not None:
+        # `because` (and the file evidence a recapture needs) is the caller's to add.
+        return _mcp_call("cruxible_playbill_set", **restated)
+    if operation == "playbill.write" and (changes := _write_changes(values)):
+        return _mcp_call("cruxible_playbill_write", changes=changes)
     return None
 
 
@@ -999,7 +1225,15 @@ def _sdk_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         handle = _sdk_call("playbill.proposal", proposal)
         return f"{handle}.approve(reviewed={handle}.review())"
     if operation == "playbill.claim.retire" and (claim := text("claim_id")):
-        return _sdk_call("playbill.retire_claim", claim)
+        return _sdk_call("playbill.retire", claim)
+    if operation == "playbill.set" and (restated := _restated_set(values)) is not None:
+        subject, field, value = (restated.pop(key) for key in ("subject", "field", "value"))
+        return _sdk_call("playbill.set", subject, field, value, **restated)
+    if operation == "playbill.write":
+        changes = _write_changes(values)
+        if len(changes) == 1 and changes[0].get("op") == "retire":
+            return _sdk_call("playbill.retire", changes[0]["target"])
+        return None
     if operation == "playbill.block.repin" and (source := text("source_id")):
         block = text("block_id")
         if block is None:
@@ -1101,11 +1335,30 @@ def _repair_command(
         if not isinstance(proposal_id, str) or not isinstance(signer_id, str):
             return None
         parts.extend([shlex.quote(proposal_id), "--signer-id", shlex.quote(signer_id)])
+    elif operation == "playbill.set":
+        restated = _restated_set(values)
+        if restated is None:
+            return None
+        parts.extend(
+            shlex.quote(_cli_scalar(restated[key])) for key in ("subject", "field", "value")
+        )
+        role = restated.get("role")
+        if isinstance(role, str):
+            parts.extend(["--role", shlex.quote(role)])
+        evidence = restated.get("evidence")
+        if isinstance(evidence, Mapping) and isinstance(evidence.get("capture"), str):
+            parts.extend(["--capture", shlex.quote(str(evidence["capture"]))])
+    elif operation == "playbill.write":
+        changes = _write_changes(values)
+        if len(changes) != 1 or changes[0].get("op") != "retire":
+            return None
+        return f"cruxible playbill retire {shlex.quote(str(changes[0]['target']))}"
     elif operation == "playbill.claim.retire":
+        # Why it ends is the retirer's to say: `--because` is the operand left to add.
         claim_id = values.get("claim_id")
-        if isinstance(claim_id, str):
-            parts.append(shlex.quote(claim_id))
-        parts.extend(_repair_operands(operation, values))
+        if not isinstance(claim_id, str) or not claim_id:
+            return None
+        parts.append(shlex.quote(claim_id))
     elif operation in _REPAIR_COMMAND_OPERANDS:
         parts.extend(_repair_operands(operation, values))
     return " ".join(parts)
@@ -1125,13 +1378,27 @@ def _item(
     subject_identity: str,
     related_identities: tuple[str, ...] = (),
     detail: object,
-    repair: PlaybillNextRepairV1,
+    repair: PlaybillNextRepairV1 | None,
     surface: NextCallerSurface | None = None,
+    repair_requires: PlaybillNextRepairRequirementV1 | None = None,
 ) -> PlaybillNextItemV1:
+    if repair is None:
+        return _withheld_item(
+            severity=severity,
+            reason=reason,
+            subject_identity=subject_identity,
+            related_identities=related_identities,
+            detail=detail,
+            repair_requires=repair_requires,
+        )
     # Composed here rather than at each emitting site: a row whose command was
     # forgotten would be indistinguishable from one that has no command.
     command = _repair_command(repair.operation, arguments=repair.arguments, surface=surface)
-    example = _ATTESTATION_REPAIR_EXAMPLES.get(repair.required_change)
+    example = (
+        _ATTESTATION_REPAIR_EXAMPLES.get(repair.required_change)
+        if repair.operation == "playbill.authoring.create"
+        else None
+    )
     if example is not None and isinstance(repair.arguments, Mapping):
         claim_id = repair.arguments.get("claim_id")
         capture_digest = repair.arguments.get("capture_digest")
@@ -1175,6 +1442,34 @@ def _item(
         related_identities=related_identities,
         detail=detail,
         repair=repair,
+    )
+    return PlaybillNextItemV1.model_validate(
+        {**values, "item_id": playbill_next_item_id(provisional)}
+    )
+
+
+def _withheld_item(
+    *,
+    severity: NextSeverity,
+    reason: NextReason,
+    subject_identity: str,
+    related_identities: tuple[str, ...],
+    detail: object,
+    repair_requires: PlaybillNextRepairRequirementV1 | None,
+) -> PlaybillNextItemV1:
+    """A row this caller cannot repair: kept, its repair withheld, its requirement named."""
+
+    values = {
+        "severity": severity,
+        "reason": reason,
+        "subject_identity": subject_identity,
+        "related_identities": related_identities,
+        "detail": detail,
+        "repair": None,
+        "repair_requires": repair_requires,
+    }
+    provisional = PlaybillNextItemV1.model_construct(
+        _fields_set=None, item_id="sha256:" + "0" * 64, **values
     )
     return PlaybillNextItemV1.model_validate(
         {**values, "item_id": playbill_next_item_id(provisional)}
@@ -1350,6 +1645,7 @@ def _with_findings(
             related_identities=item.related_identities,
             detail=item.detail,
             repair=item.repair,
+            repair_requires=item.repair_requires,
         )
         for item in rest
     )
@@ -1370,6 +1666,7 @@ def _with_findings(
         "severity": severity,
         "related_identities": related,
         "repair": head.repair,
+        "repair_requires": head.repair_requires,
         "findings": findings,
     }
     provisional = PlaybillNextItemV1.model_construct(
@@ -1533,8 +1830,7 @@ class _Holds:
     def covers(self, row: PlaybillNextItemV1 | PlaybillNextFindingV1) -> bool:
         detail = row.detail if isinstance(row.detail, Mapping) else {}
         if row.reason == "claim_conflicted":
-            arguments = row.repair.arguments if isinstance(row.repair.arguments, Mapping) else {}
-            contenders = arguments.get("claim_ids")
+            contenders = _repair_arguments(row).get("claim_ids")
             if not isinstance(contenders, list) or not contenders:
                 return False
             versions = self._versions(contenders)
@@ -1665,9 +1961,10 @@ def _held_claims(
         for row in _hold_members(item):
             if not holds.covers(row):
                 continue
+            # The Claims ``covers`` decided over: a conflict's contenders, else the
+            # row's subject. A stale dependency's upstream Claims are not held.
             named = {row.subject_identity}
-            arguments = row.repair.arguments if isinstance(row.repair.arguments, Mapping) else {}
-            contenders = arguments.get("claim_ids")
+            contenders = _repair_arguments(row).get("claim_ids")
             if isinstance(contenders, list):
                 named.update(str(contender) for contender in contenders)
             held.update(named & identities)
@@ -1877,7 +2174,15 @@ def _row_of(finding: PlaybillNextFindingV1) -> PlaybillNextItemV1:
         related_identities=finding.related_identities,
         detail=finding.detail,
         repair=finding.repair,
+        repair_requires=finding.repair_requires,
     )
+
+
+def _repair_arguments(row: PlaybillNextItemV1 | PlaybillNextFindingV1) -> Mapping[str, object]:
+    repair = row.repair
+    if repair is None or not isinstance(repair.arguments, Mapping):
+        return {}
+    return repair.arguments
 
 
 def _item_sort_key(item: PlaybillNextItemV1) -> tuple[int, bytes, bytes, bytes]:
@@ -2073,14 +2378,29 @@ def _claim_attestation_threshold_items(
                         ),
                         "attestation_digests": list(attestation_digests),
                     },
-                    repair=PlaybillNextRepairV1(
-                        operation="playbill.authoring.create",
-                        target=claim.identity.qualified,
-                        required_change="resolve_attestation_threshold",
-                        arguments={
-                            "claim_id": claim.identity.name,
-                            "rule_id": rule.rule_id,
-                        },
+                    # Enough independent contradiction retires the Claim; any
+                    # other threshold is resolved by stating it again.
+                    repair=(
+                        PlaybillNextRepairV1(
+                            operation="playbill.claim.retire",
+                            target=claim.identity.qualified,
+                            required_change="resolve_attestation_threshold",
+                            arguments={
+                                "claim_id": claim.identity.name,
+                                "rule_id": rule.rule_id,
+                            },
+                        )
+                        if rule.stance == "contradict"
+                        else _restating_repair(
+                            "playbill.authoring.create",
+                            target=claim.identity.qualified,
+                            required_change="resolve_attestation_threshold",
+                            arguments={
+                                "claim_id": claim.identity.name,
+                                "rule_id": rule.rule_id,
+                            },
+                            set_arguments=_claim_set_arguments(claim, claim_type),
+                        )
                     ),
                 )
             )
@@ -2126,6 +2446,7 @@ def _claim_items(
         generation_root=coordinate.generation_root,
         compiler_digest=coordinate.compiler_digest,
     )
+    claim_types: dict[str, ClaimType | None] = {}
     # The threshold fold reads evidence only for types with a consequence policy.
     # Materializing the whole historical map here costs one read per Claim.
     law_evidence = _claim_threshold_evidence(instance, at=internal)
@@ -2171,11 +2492,37 @@ def _claim_items(
                 subject_identity=subject,
                 related_identities=identities,
                 detail=detail,
-                repair=PlaybillNextRepairV1(
-                    operation="playbill.authoring.create",
-                    target=subject,
-                    required_change="revise_claims_into_distinct_qualifiers",
-                    arguments=arguments,
+                # No contender is picked here: that decision is the caller's. The
+                # row offers one runnable option per contender -- keep it, retire
+                # the others, as one write -- and leaves `because` to the caller.
+                # A contest wider than the row's bound keeps the authoring door.
+                repair=(
+                    PlaybillNextRepairV1(
+                        operation="playbill.write",
+                        target=subject,
+                        required_change="revise_claims_into_distinct_qualifiers",
+                        arguments={
+                            **arguments,
+                            "options": [
+                                {
+                                    "keep": keep.removeprefix("Claim:"),
+                                    "changes": [
+                                        {"op": "retire", "target": other.removeprefix("Claim:")}
+                                        for other in identities
+                                        if other != keep
+                                    ],
+                                }
+                                for keep in identities
+                            ],
+                        },
+                    )
+                    if len(identities) <= _MAX_CONTEST_OPTIONS
+                    else PlaybillNextRepairV1(
+                        operation="playbill.authoring.create",
+                        target=subject,
+                        required_change="revise_claims_into_distinct_qualifiers",
+                        arguments=arguments,
+                    )
                 ),
             )
         else:
@@ -2227,11 +2574,20 @@ def _claim_items(
                             "predicate": claim.statement.predicate,
                             "verdict": verdict.verdict,
                         },
-                        repair=PlaybillNextRepairV1(
-                            operation="playbill.authoring.bind",
+                        repair=_restating_repair(
+                            "playbill.authoring.bind",
                             target=claim.identity.qualified,
                             required_change="recapture_expired_evidence",
                             arguments={"claim_id": claim.identity.name},
+                            set_arguments=_claim_set_arguments(
+                                claim,
+                                _claim_type_at(
+                                    instance,
+                                    internal.git_oid,
+                                    claim.statement.predicate,
+                                    claim_types,
+                                ),
+                            ),
                         ),
                     )
                 )
@@ -2266,11 +2622,20 @@ def _claim_items(
                                 "expirations": [item.model_dump(mode="json") for item in expiring],
                                 "predicate": claim.statement.predicate,
                             },
-                            repair=PlaybillNextRepairV1(
-                                operation="playbill.authoring.bind",
+                            repair=_restating_repair(
+                                "playbill.authoring.bind",
                                 target=claim.identity.qualified,
                                 required_change="recapture_expiring_evidence",
                                 arguments={"claim_id": claim.identity.name},
+                                set_arguments=_claim_set_arguments(
+                                    claim,
+                                    _claim_type_at(
+                                        instance,
+                                        internal.git_oid,
+                                        claim.statement.predicate,
+                                        claim_types,
+                                    ),
+                                ),
                             ),
                         )
                     )
@@ -2293,11 +2658,17 @@ def _claim_items(
                             "mismatched rules commonly leave a Claim uncovered."
                         ),
                     },
-                    repair=PlaybillNextRepairV1(
-                        operation="playbill.authoring.bind",
+                    repair=_restating_repair(
+                        "playbill.authoring.bind",
                         target=claim.identity.qualified,
                         required_change="add_admissible_evidence",
                         arguments={"claim_id": claim.identity.name},
+                        set_arguments=_claim_set_arguments(
+                            claim,
+                            _claim_type_at(
+                                instance, internal.git_oid, claim.statement.predicate, claim_types
+                            ),
+                        ),
                     ),
                 )
             )
@@ -2344,6 +2715,8 @@ class _CitationCommitment:
     original_end: int | None = None
     whole_source: bool = False
     lineage_note: CitationLineageNote | None = None
+    # The `set` that restates the citing Claim, as sorted items, when it can.
+    set_arguments: tuple[tuple[str, object], ...] | None = None
 
 
 def _whole_source_selection(envelope: object) -> bool:
@@ -2414,6 +2787,7 @@ def _citation_commitments(
     store = instance.body_store()
     access = BodyAccessContext(principal_id="playbill-next", can_read_body=True)
     result: dict[str, _CitationCommitment] = {}
+    citation_claim_types: dict[str, ClaimType | None] = {}
     facts = (
         build_accepted_query_facts(instance, coordinate=internal_coordinate)
         if facts_reader is None
@@ -2493,6 +2867,22 @@ def _citation_commitments(
                     original_end=None if selection_span is None else selection_span[1],
                     whole_source=_whole_source_selection(envelope),
                     lineage_note=lineage_note,
+                    set_arguments=(
+                        None
+                        if (
+                            restated := _claim_set_arguments(
+                                claim,
+                                _claim_type_at(
+                                    instance,
+                                    internal_coordinate.git_oid,
+                                    claim.statement.predicate,
+                                    citation_claim_types,
+                                ),
+                            )
+                        )
+                        is None
+                        else tuple(sorted(restated.items()))
+                    ),
                 )
     except Exception as exc:
         raise PlaybillNextAcceptedStateInvalid(
@@ -2675,6 +3065,7 @@ def _claim_attestation_door_items(
 
     if access_profile is not None and not access_profile.permits("instance"):
         return ()
+    door_claim_types: dict[str, ClaimType | None] = {}
 
     from cruxible_client.contracts.claim_attestations import claim_attestation_v2_envelope_digest
 
@@ -2797,14 +3188,19 @@ def _claim_attestation_door_items(
                         "current_at_append": current_at_append,
                         "lineage_status": lineage_status,
                     },
-                    repair=PlaybillNextRepairV1(
-                        operation="playbill.authoring.create",
+                    # Each door example revises the Claim citing this Capture as
+                    # evidence: the `set` of its field with capture evidence.
+                    repair=_restating_repair(
+                        "playbill.authoring.create",
                         target=statement.claim_identity.qualified,
                         required_change=required_change,
                         arguments={
                             "claim_id": claim_id,
                             "capture_digest": capture_digest,
                         },
+                        set_arguments=_live_claim_set_arguments(
+                            instance, coordinate.git_oid, claim_id, door_claim_types
+                        ),
                     ),
                 )
             )
@@ -2828,6 +3224,9 @@ def _claim_dependency_items(
     # No consumed Claim inputs means there can be no stale dependency edge.
     # Check the accepted population before building replay/visibility facts.
     if claims is not None and not any(claim.backing.input_claim_digests for claim in claims):
+        # The skipped retired build would have refused an accepted retired
+        # Claim whose adjudication rule no longer reproduces; still refuse.
+        verify_retired_claim_adjudication(instance, coordinate=coordinate)
         return ()
 
     facts = (
@@ -3101,8 +3500,8 @@ def _citation_unobserved_item(
             **lineage_detail,
             **collapsed_detail,
         },
-        repair=PlaybillNextRepairV1(
-            operation="playbill.authoring.bind",
+        repair=_restating_repair(
+            "playbill.authoring.bind",
             target=commitment.claim_identity,
             required_change="observe_cited_source",
             arguments={
@@ -3110,6 +3509,13 @@ def _citation_unobserved_item(
                 "citation_id": commitment.citation_id,
                 "source_id": source_id,
             },
+            # A row standing for a whole defective source scan restates no one
+            # Claim: the scan is what has to be observed again.
+            set_arguments=(
+                None
+                if commitment.set_arguments is None or source_scan_notes
+                else dict(commitment.set_arguments)
+            ),
         ),
     )
 
@@ -3172,23 +3578,30 @@ def _citation_drift_item(
         subject_identity=commitment.claim_identity,
         related_identities=(commitment.citation_id,),
         detail=detail,
-        repair=PlaybillNextRepairV1(
-            operation="playbill.claim.retire" if gone else "playbill.authoring.bind",
-            target=commitment.claim_identity,
-            required_change=(
-                "retire_claim_with_attribution" if gone else "adjudicate_citation_drift"
-            ),
-            arguments={
-                "claim_id": commitment.claim_identity.removeprefix("Claim:"),
-                **(
-                    {"expected_coordinate": coordinate.model_dump(mode="json")}
-                    if gone
-                    else {
-                        "citation_id": commitment.citation_id,
-                        **({} if source_id is None else {"source_id": source_id}),
-                    }
+        repair=(
+            PlaybillNextRepairV1(
+                operation="playbill.claim.retire",
+                target=commitment.claim_identity,
+                required_change="retire_claim_with_attribution",
+                arguments={
+                    "claim_id": commitment.claim_identity.removeprefix("Claim:"),
+                    "expected_coordinate": coordinate.model_dump(mode="json"),
+                },
+            )
+            if gone
+            else _restating_repair(
+                "playbill.authoring.bind",
+                target=commitment.claim_identity,
+                required_change="adjudicate_citation_drift",
+                arguments={
+                    "claim_id": commitment.claim_identity.removeprefix("Claim:"),
+                    "citation_id": commitment.citation_id,
+                    **({} if source_id is None else {"source_id": source_id}),
+                },
+                set_arguments=(
+                    None if commitment.set_arguments is None else dict(commitment.set_arguments)
                 ),
-            },
+            )
         ),
     )
 
@@ -3751,6 +4164,10 @@ def _consumers_health(
             for health in healths
             if health.kind == kind.name
         )
+    # Armed Lines are governed consumers: their health is not a finding the
+    # facet's state is about, but an instance caller reads it here without
+    # the daemon's registry.
+    arms = Counter(health.state for health in healths if health.kind == "line")
     states = {str(worker["state"]) for worker in workers}
     state = (
         "not_running"
@@ -3761,7 +4178,14 @@ def _consumers_health(
         if "lagging" in states
         else "current"
     )
-    return PlaybillNextHealthV1(state=state, detail={"workers": workers})
+    detail: dict[str, object] = {"workers": workers}
+    if arms:
+        detail["line_arms"] = {
+            "running": arms["running"],
+            "stalled": arms["stalled"],
+            "stopped": arms["stopped"],
+        }
+    return PlaybillNextHealthV1(state=state, detail=detail)
 
 
 def _procedure_catalog_health(
@@ -3886,14 +4310,34 @@ def _document_items(
     access_profile: CoverageAccessProfileV1,
     observation: PlaybillNextWorkspaceObservationV1 | None,
 ) -> tuple[PlaybillNextItemV1, ...]:
-    if (
-        observation is None
-        or observation.source_observations is None
-        or not access_profile.permits("instance")
-    ):
+    if observation is None or not access_profile.permits("instance"):
         return ()
+    items: list[PlaybillNextItemV1] = [
+        _item(
+            severity="repair",
+            reason="workspace_binding_missing",
+            subject_identity=binding.source_id,
+            related_identities=(
+                () if binding.document_id is None else (f"document:{binding.document_id}",)
+            ),
+            detail={
+                "source_id": binding.source_id,
+                "document_id": binding.document_id,
+                "locator": binding.locator,
+                "message": "the source catalog binds a workspace file that does not exist",
+            },
+            repair=PlaybillNextRepairV1(
+                operation="hand_edit",
+                target=binding.locator,
+                required_change="restore_the_bound_file_or_fix_its_catalog_locator",
+                arguments={"source_id": binding.source_id, "locator": binding.locator},
+            ),
+        )
+        for binding in observation.missing_bindings
+    ]
+    if observation.source_observations is None:
+        return tuple(items)
     tree = ClaimVerdictReadContext(instance, coordinate).tree
-    items: list[PlaybillNextItemV1] = []
     for source in observation.source_observations:
         document_id = getattr(source, "document_id", None)
         if document_id is None:
@@ -3936,6 +4380,7 @@ def _proposal_items(
     instance: PlaybillInstance,
     *,
     coordinate: PlaybillAcceptedCoordinate,
+    caller_principal_id: str | None,
     access_profile: CoverageAccessProfileV1,
 ) -> tuple[PlaybillNextItemV1, ...]:
     """Stale proposals: admitted work that can no longer activate where it stands.
@@ -3943,14 +4388,23 @@ def _proposal_items(
     Activation settles a candidate only onto the state it was evaluated
     against, so a proposal whose parent head has moved past waits on its
     author: readmit rebases the same tree onto the current head, and withdraw
-    says it will never be settled. Either one closes the row.
+    says it will never be settled. Either one closes the row, and so does a
+    readmission that carries the change: once it is accepted the source is
+    superseded, not stale work.
+
+    Only the author may readmit, so a row shows only to its author: the
+    daemon's authenticated caller, never a request field. A queue read
+    without one -- library mode, or an unattributed request -- has no rows
+    here, as with approvals.
     """
 
-    if not access_profile.permits("instance"):
+    if caller_principal_id is None or not access_profile.permits("instance"):
         return ()
     evidence = instance.proposal_evidence()
     items: list[PlaybillNextItemV1] = []
-    for proposal in stale_unreadmitted_proposals(instance, coordinate):
+    for proposal in stale_unreadmitted_proposals(
+        instance, coordinate, actor_id=caller_principal_id
+    ):
         detail: dict[str, object] = {
             "actor_id": proposal.actor_id,
             "admitted_at": proposal.admitted_at,
@@ -4495,11 +4949,13 @@ class _CallerView:
         surface: NextCallerSurface | None,
         tools: tuple[str, ...] | None,
         caller_rung: int | None,
+        authoring_refusal: PlaybillAuthoringRefusalV1 | None = None,
     ) -> None:
         self.instance = instance
         self.surface = surface
         self.tools = None if tools is None else frozenset(tools)
         self.caller_rung = caller_rung
+        self.authoring_refusal = authoring_refusal
         self._line_rungs: dict[str, int] = {}
 
     def _required_rung(self, repair: PlaybillNextRepairV1, tool: str) -> int:
@@ -4525,17 +4981,59 @@ class _CallerView:
                 self._line_rungs[line] = _GOVERNED_WRITE_RUNG
         return max(static, self._line_rungs[line])
 
-    def can_run(self, repair: PlaybillNextRepairV1) -> bool:
+    def requirement(self, repair: PlaybillNextRepairV1) -> PlaybillNextRepairRequirementV1 | None:
+        """What this caller lacks to run ``repair``, or ``None`` when it can run it."""
+
         tool = _REPAIR_TOOLS[repair.operation]
         if tool is None:
-            return True
-        if self.surface == "mcp" and self.tools is not None and tool not in self.tools:
-            return False
-        return self.caller_rung is None or self.caller_rung >= self._required_rung(repair, tool)
+            return None
+        unadvertised = self.surface == "mcp" and self.tools is not None and tool not in self.tools
+        unauthored = (
+            self.authoring_refusal is not None and repair.operation not in _AUTHORING_FREE_REPAIRS
+        )
+        if self.caller_rung is None and not unadvertised and not unauthored:
+            return None
+        rung = self._required_rung(repair, tool)
+        because: list[NextRepairGate] = []
+        if self.caller_rung is not None and self.caller_rung < rung:
+            because.append("tier")
+        if unadvertised:
+            because.append("profile")
+        if unauthored:
+            because.append("authoring")
+        if not because:
+            return None
+        return PlaybillNextRepairRequirementV1(
+            operation=repair.operation,
+            tool=tool,
+            tier=_TIER_BY_RUNG[min(rung, len(_TIER_BY_RUNG) - 1)],
+            profile="full" if unadvertised else None,
+            because=tuple(because),
+            authoring_refusal=self.authoring_refusal if unauthored else None,
+        )
 
-    def _render(self, row: PlaybillNextItemV1 | PlaybillNextFindingV1) -> PlaybillNextItemV1:
-        """One row or nested finding as a standalone row, its repair for this surface."""
+    def can_run(self, repair: PlaybillNextRepairV1) -> bool:
+        return self.requirement(repair) is None
 
+    def _shown(self, row: PlaybillNextItemV1 | PlaybillNextFindingV1) -> PlaybillNextItemV1:
+        """One row or nested finding as a standalone row, as this caller sees its repair.
+
+        A repair the caller cannot run is withheld and named by what it needs;
+        one it can run is rendered for its surface.
+        """
+
+        requires = row.repair_requires if row.repair is None else self.requirement(row.repair)
+        if row.repair is None or requires is not None:
+            return _withheld_item(
+                severity=row.severity,
+                reason=row.reason,
+                subject_identity=row.subject_identity,
+                related_identities=row.related_identities,
+                detail=row.detail,
+                repair_requires=requires,
+            )
+        if self.surface in {None, "cli"}:
+            return row if isinstance(row, PlaybillNextItemV1) else _row_of(row)
         return _item(
             severity=row.severity,
             reason=row.reason,
@@ -4546,58 +5044,42 @@ class _CallerView:
             surface=self.surface,
         )
 
-    def items(
-        self, found: Iterable[PlaybillNextItemV1]
-    ) -> tuple[tuple[PlaybillNextItemV1, ...], int]:
-        """Drop rows and findings this caller cannot repair, counting each.
-
-        A row's nested findings are work in their own right, so each is judged
-        on its own. A finding the caller cannot repair is counted in
-        ``hidden``; one it can repair stays inside its row, or stands as its
-        own row when the row that carried it is hidden. Rows keep their CLI
-        rendering here: holds and grouping rebuild rows, so `render` runs once,
-        after them.
-        """
-
-        kept: list[PlaybillNextItemV1] = []
-        hidden = 0
-        for item in found:
-            runnable = [finding for finding in item.findings if self.can_run(finding.repair)]
-            hidden += len(item.findings) - len(runnable)
-            if not self.can_run(item.repair):
-                hidden += 1
-                kept.extend(_row_of(finding) for finding in runnable)
-            elif len(runnable) == len(item.findings):
-                kept.append(item)
-            else:
-                # Rebuilt, never copied: the item id digests the findings it carries.
-                kept.append(
-                    _with_findings(item.model_copy(update={"findings": ()}), map(_row_of, runnable))
-                )
-        return tuple(kept), hidden
+    def _changes(self, row: PlaybillNextItemV1 | PlaybillNextFindingV1) -> bool:
+        if self.surface not in {None, "cli"}:
+            return True
+        return row.repair is not None and self.requirement(row.repair) is not None
 
     def render(self, items: Iterable[PlaybillNextItemV1]) -> tuple[PlaybillNextItemV1, ...]:
-        """Render each row's repair, and each nested finding's, for this caller's surface.
+        """Render each row's repair, and each nested finding's, for this caller.
 
-        The one render point: it runs after holds and grouping, which rebuild
-        rows from their findings in the default (CLI) rendering.
+        The one render point: it runs after holds and grouping, which read and
+        rebuild rows from their findings with every repair in its default (CLI)
+        rendering. No row is left out here. A repair this caller's surface, tool
+        profile or tier cannot run is withheld, and the row says what running it
+        requires (``repair_requires``); a CLI row whose repairs all run keeps
+        its bytes.
         """
 
-        if self.surface in {None, "cli"}:
-            return tuple(items)
-        return tuple(
-            _with_findings(self._render(item), map(self._render, item.findings))
-            if item.findings
-            else self._render(item)
-            for item in items
-        )
+        rendered: list[PlaybillNextItemV1] = []
+        for item in items:
+            if not self._changes(item) and not any(map(self._changes, item.findings)):
+                rendered.append(item)
+                continue
+            head = self._shown(item.model_copy(update={"findings": ()}))
+            rendered.append(
+                _with_findings(head, map(self._shown, item.findings)) if item.findings else head
+            )
+        return tuple(rendered)
 
     def health(self, health: PlaybillNextHealthV1) -> PlaybillNextHealthV1:
         repair = health.repair
         if repair is None or repair.operation == "hand_edit":
             return health
-        if not self.can_run(repair):
-            return health.model_copy(update={"repair": None, "repair_hidden": True})
+        requires = self.requirement(repair)
+        if requires is not None:
+            return health.model_copy(
+                update={"repair": None, "repair_hidden": True, "repair_requires": requires}
+            )
         if self.surface in {None, "cli"}:
             return health
         command = _repair_command(
@@ -4608,17 +5090,18 @@ class _CallerView:
 
 def _caller_queue(
     found: Iterable[PlaybillNextItemV1], caller: _CallerView, holds: _Holds | _StoredHolds | None
-) -> tuple[tuple[PlaybillNextItemV1, ...], int, int]:
-    """The caller's queue from every row found: filtered, held, grouped and rendered.
+) -> tuple[tuple[PlaybillNextItemV1, ...], int]:
+    """The caller's queue from every row found: held, grouped and rendered.
 
-    Returns the sorted rows with the hidden and held counts.
+    Returns the sorted rows with the held count. Nothing is left out for the
+    caller: a repair it cannot run is withheld at render, and the row stays.
     """
 
-    kept, hidden = caller.items(found)
+    kept = tuple(found)
     held = 0
     if holds is not None:
         kept, held = _apply_holds(kept, holds)
-    return tuple(sorted(caller.render(_group_items(kept)), key=_item_sort_key)), hidden, held
+    return tuple(sorted(caller.render(_group_items(kept)), key=_item_sort_key)), held
 
 
 @dataclass(frozen=True)
@@ -4630,7 +5113,6 @@ class _NextQueue:
     consumer_healths: tuple[ConsumerHealth, ...]
     caller: _CallerView
     items: tuple[PlaybillNextItemV1, ...]
-    hidden: int
     held: int
 
 
@@ -4641,6 +5123,7 @@ def _next_queue(
     caller_principal_id: str | None,
     caller_rung: int | None,
     read_context: ClaimVerdictReadContext | None = None,
+    caller_authoring_refusal: PlaybillAuthoringRefusalV1 | None = None,
 ) -> _NextQueue:
     """The single fold for full next and its bounded attention summary."""
 
@@ -4762,6 +5245,7 @@ def _next_queue(
         *_proposal_items(
             instance,
             coordinate=public_coordinate,
+            caller_principal_id=caller_principal_id,
             access_profile=request.access_profile,
         ),
         *_approval_items(
@@ -4792,6 +5276,7 @@ def _next_queue(
         surface=request.caller_surface,
         tools=request.caller_tools,
         caller_rung=caller_rung,
+        authoring_refusal=caller_authoring_refusal,
     )
     holds = (
         stored.holds
@@ -4814,7 +5299,7 @@ def _next_queue(
         and request.access_profile.permits("instance")
         else None
     )
-    items, hidden, held = _caller_queue(found, caller, holds)
+    items, held = _caller_queue(found, caller, holds)
     return _NextQueue(
         coordinate,
         attestation_head,
@@ -4823,7 +5308,6 @@ def _next_queue(
         consumer_healths,
         caller,
         items,
-        hidden,
         held,
     )
 
@@ -4880,35 +5364,42 @@ def service_playbill_next(
     consumers_running: bool = False,
     caller_principal_id: str | None = None,
     caller_rung: int | None = None,
+    caller_authoring_refusal: PlaybillAuthoringRefusalV1 | None = None,
 ) -> PlaybillNextResultV1 | PlaybillNextResultV2:
     """Fold accepted state and explicit client observations into one repair queue.
 
     `caller_principal_id` is the daemon's authenticated caller, passed beside
     the request rather than inside it so no request can name someone else.
     `caller_rung` is that caller's permission tier (``PermissionMode.value -
-    1``): a row whose repair is a settle, Line dispatch or Line arm the tier
-    cannot perform is left out and counted in ``status.hidden``, as is one whose
-    MCP tool the request's ``caller_tools`` does not list. ``None`` is an
-    in-process caller that holds every tier.
+    1``): a row whose repair the tier cannot perform, or whose MCP tool the
+    request's ``caller_tools`` does not list, stays in the queue with its repair
+    withheld and ``repair_requires`` naming the tool and the tier or profile it
+    needs. ``None`` is an in-process caller that holds every tier.
+    `caller_authoring_refusal` is why that caller cannot author here (whoami's
+    refusal, less the tier, which `caller_rung` already gates): every repair
+    that writes is then withheld with it, since running it would be refused.
     """
 
     continuation = None if request.cursor is None else _continuation_of(request.cursor)
     if continuation is not None:
         request = _continued(request, continuation)
     queue = _next_queue(
-        instance, request=request, caller_principal_id=caller_principal_id, caller_rung=caller_rung
+        instance,
+        request=request,
+        caller_principal_id=caller_principal_id,
+        caller_rung=caller_rung,
+        caller_authoring_refusal=caller_authoring_refusal,
     )
     coordinate = queue.coordinate
     public_coordinate = PlaybillAcceptedCoordinate.from_internal(coordinate)
     attestation_head = queue.attestation_head
     observed, unobserved = queue.observed, queue.unobserved
     consumer_healths, caller = queue.consumer_healths, queue.caller
-    items, hidden, held = queue.items, queue.hidden, queue.held
+    items, held = queue.items, queue.held
     terminal = instance.descriptor.decommissioned
     status = PlaybillNextStatusV1(
         blocking=terminal is not None,
         held=held,
-        hidden=hidden,
         instance=(
             PlaybillNextHealthV1(state="active")
             if terminal is None
@@ -5006,7 +5497,11 @@ def service_playbill_next(
     result_digest = playbill_next_result_digest(provisional)
     full = result_model.model_validate({**values, "result_digest": result_digest})
     scope = _queue_scope(
-        instance, request, caller_principal_id=caller_principal_id, caller_rung=caller_rung
+        instance,
+        request,
+        caller_principal_id=caller_principal_id,
+        caller_rung=caller_rung,
+        caller_authoring_refusal=caller_authoring_refusal,
     )
     _remember_queue(result_digest, full.items, scope=scope)
     answer = (
@@ -5023,7 +5518,7 @@ def service_playbill_next(
 # scoped to the instance and access profile that produced them: a delta names
 # removed rows, so diffing against a queue read with wider access would hand
 # this caller rows its own read withholds. The caller's principal is in the
-# scope too, since approval rows are that principal's alone.
+# scope too, since approval and stale-proposal rows are that principal's alone.
 _QUEUE_MEMO: OrderedDict[tuple[str, str], tuple[PlaybillNextItemV1, ...]] = OrderedDict()
 _QUEUE_MEMO_LIMIT = 32
 _QUEUE_MEMO_LOCK = RLock()
@@ -5035,6 +5530,7 @@ def _queue_scope(
     *,
     caller_principal_id: str | None,
     caller_rung: int | None = None,
+    caller_authoring_refusal: PlaybillAuthoringRefusalV1 | None = None,
 ) -> str:
     return typed_digest(
         Sha256Value,
@@ -5048,6 +5544,9 @@ def _queue_scope(
             "caller_surface": request.caller_surface,
             "caller_tools": None if request.caller_tools is None else sorted(request.caller_tools),
             "caller_rung": caller_rung,
+            "caller_authoring_refusal": (
+                None if caller_authoring_refusal is None else caller_authoring_refusal.code
+            ),
         },
     ).tagged
 

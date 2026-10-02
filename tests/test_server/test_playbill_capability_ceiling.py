@@ -128,6 +128,7 @@ def test_admin_credential_is_clamped_and_cannot_mint_above_ceiling(
         instance_id=host_id,
         label="found-admin",
         created_by="test",
+        principal_id="found-admin",
     )
     monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
     client = _client_at_ceiling(monkeypatch, "governed_write")
@@ -144,7 +145,7 @@ def test_admin_credential_is_clamped_and_cannot_mint_above_ceiling(
     )
     mint = client.post(
         f"/api/v1/{host_id}/runtime/credentials",
-        json={"label": "attempted-admin", "permission_mode": "admin"},
+        json={"principal_id": "attempted-admin", "permission_mode": "admin"},
         headers=headers,
     )
 

@@ -30,7 +30,7 @@ def test_metadata_batch_is_bounded_and_does_not_read_claim_verdicts():
                 ),
             )
 
-        def get_playbill_claim(self, *args, **kwargs):
+        def playbill_get(self, *args, **kwargs):
             raise AssertionError("stamping must not materialize a verdict")
 
     names = tuple("CLM-" + f"{i:032x}" for i in range(300))

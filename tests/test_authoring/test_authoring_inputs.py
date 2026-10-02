@@ -45,7 +45,6 @@ from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.lowering import lower_authoring
 from cruxible_core.authoring.store import AuthoringIntentStore
-from cruxible_core.claims.claim_retirement import ClaimRetireResultV1, service_retire_claim
 from cruxible_core.claims.claim_type_inputs import (
     ClaimTypeInputV1,
     ClaimTypeInputValidationError,
@@ -60,13 +59,13 @@ from cruxible_core.service.evidence.evidence import service_evaluate_playbill_cl
 from tests.core_support._candidate_support import submit_subject_candidate
 from tests.core_support._claim_type_support import claim_type_input_example
 from tests.core_support._knowledge_loop_support import accept_proposal
+from tests.core_support._retirement_support import retire_claim
 from tests.core_support._support import initialize_local
 from tests.test_authoring.test_authoring_preflight import (
     TIMESTAMP,
     _seed_claim_surface,
 )
 from tests.test_authoring.test_authoring_procedures import _slot_definition
-from tests.test_claims.test_claim_retirement import _activate, _request
 from tests.test_claims.test_claim_type_migrations import _accepted_claim_world
 
 
@@ -186,14 +185,7 @@ def test_input_compile_typed_refuses_a_terminal_v3_claim_with_v2_backing(
 ) -> None:
     instance, claim_id, owner = _accepted_claim_world(tmp_path)
     actor = AuthenticatedActor(actor_id="owner")
-    retired = service_retire_claim(
-        instance,
-        claim_id=claim_id,
-        request=_request(instance, mode="submit"),
-        actor=actor,
-    )
-    assert isinstance(retired, ClaimRetireResultV1)
-    _activate(instance, owner, retired)
+    retire_claim(instance, owner, claim_id)
 
     result = _coordinator(instance).compile_input(
         actor=actor,

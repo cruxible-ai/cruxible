@@ -330,16 +330,65 @@ class ProposalContentUnavailable(ProposalAdmissionError):
         )
 
 
+class ProposalReadmitAlreadyAccepted(ProposalAdmissionError):
+    """Readmission refused: the change this proposal carries is already accepted.
+
+    Either history accepted the proposal itself, or it accepted the proposal's
+    readmission (``accepted_as``), which carried the same change under another
+    proposal id. Readmitting it again would only propose the change twice.
+    """
+
+    error_code = "playbill.proposal.readmit_already_accepted"
+
+    def __init__(self, proposal_id: str, *, accepted_as: str | None = None) -> None:
+        self.proposal_id = proposal_id
+        self.accepted_as = accepted_as
+        how = (
+            "it was accepted"
+            if accepted_as is None
+            else f"its readmission {accepted_as} was accepted"
+        )
+        super().__init__(
+            f"{self.error_code}: proposal {proposal_id} is not stale work: {how}, so "
+            "its change is in accepted state; run `cruxible playbill next` for what "
+            "still needs you"
+        )
+
+
+class ProposalReadmitNotStale(ProposalAdmissionError):
+    """Readmission refused: only a stale proposal is readmitted, and this one is not."""
+
+    error_code = "playbill.proposal.readmit_not_stale"
+
+    def __init__(self, proposal_id: str, *, status: str) -> None:
+        self.proposal_id = proposal_id
+        self.status = status
+        repair = (
+            "it can still be activated where it stands; run `cruxible playbill proposal "
+            f"status {proposal_id}`"
+            if status == "open"
+            else "author the change again as a new proposal"
+        )
+        super().__init__(
+            f"{self.error_code}: only a stale proposal may be readmitted; proposal "
+            f"{proposal_id} is {status}: {repair}"
+        )
+
+
 class ProposalReadmitRequiresResubmission(ProposalAdmissionError):
     """A generated closure must be rebuilt rather than byte-rebased."""
 
     error_code = "playbill.proposal.readmit_requires_resubmission"
 
-    def __init__(self) -> None:
+    def __init__(self, reason: str | None = None) -> None:
         super().__init__(
-            f"{self.error_code}: this stale proposal is a generated dependency-closure "
-            "migration; rerun claim-type migration preflight/submit at current head so "
-            "the dependent inventory and pins are rebuilt"
+            f"{self.error_code}: "
+            + (
+                reason
+                or "this stale proposal is a generated dependency-closure "
+                "migration; rerun claim-type migration preflight/submit at current head so "
+                "the dependent inventory and pins are rebuilt"
+            )
         )
 
 
@@ -447,6 +496,53 @@ class ReadRefusalError(CoreError):
         return refusal
 
 
+class WriteRefusalError(CoreError):
+    """A write verb (``set``, ``retire``, ``write``) refused for a reason the caller can repair.
+
+    The daemon answers a refused write as an outcome (``status: refused``) with
+    its ``refusal``; the SDK raises this with that outcome attached, and the
+    service raises it internally before rendering the outcome. ``change`` is the
+    index of the change that refused, ``candidates`` the valid names it most
+    likely meant, and ``repair_line`` the one-line fix.
+    """
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        change: int | None = None,
+        candidates: Iterable[str] = (),
+        repair_line: str | None = None,
+        field_path: str | None = None,
+        outcome: Any = None,
+    ) -> None:
+        self.error_code = code
+        self.change = change
+        self.candidates = tuple(candidates)
+        self.repair_line = repair_line
+        self.field_path = field_path
+        self.outcome = outcome
+        self.detail = message
+        self.context: dict[str, Any] = {}
+        if change is not None:
+            self.context["change"] = change
+        if self.candidates:
+            self.context["candidates"] = list(self.candidates)
+        if repair_line is not None:
+            self.context["repair_line"] = repair_line
+        if field_path is not None:
+            self.context["field_path"] = field_path
+        text = f"{code}: {message}"
+        if field_path is not None:
+            text += f" (at {field_path})"
+        if self.candidates:
+            text += f"; nearest: {', '.join(self.candidates)}"
+        if repair_line is not None:
+            text += f". {repair_line}"
+        super().__init__(text)
+
+
 class ProjectionError(PlaybillError):
     """Base refusal for deterministic Playbill projection operations."""
 
@@ -489,6 +585,8 @@ __all__ = [
     "PrincipalIntegrityError",
     "ProposalActivationRequestInvalid",
     "ProposalAdmissionError",
+    "ProposalReadmitAlreadyAccepted",
+    "ProposalReadmitNotStale",
     "ProposalReadmitRequiresResubmission",
     "ProposalContentUnavailable",
     "ProposalNotFoundError",
@@ -506,4 +604,5 @@ __all__ = [
     "SettlementIntegrityError",
     "SubjectFormatError",
     "SubjectNotFoundError",
+    "WriteRefusalError",
 ]

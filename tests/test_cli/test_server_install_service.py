@@ -49,12 +49,15 @@ def test_launchd_and_systemd_render_exact_start_flags_without_secrets(tmp_path: 
     assert arguments[arguments.index("--socket") + 1] == darwin.socket_path
     assert plist["RunAtLoad"] is False
     assert plist["KeepAlive"] is False
+    # Normal priority on both platforms, never launchd's default throttling.
+    assert plist["ProcessType"] == "Interactive"
 
     linux = darwin.model_copy(update={"platform": "linux"})
     unit = render_systemd_service(linux).decode("utf-8")
     assert f'ExecStart="{linux.executable}" "server" "start"' in unit
     assert '"--capability-ceiling" "governed_write"' in unit
     assert "Restart=on-failure" in unit
+    assert "Nice=0" in unit.splitlines()
     for forbidden in ("bearer", "bootstrap", "password", "secret", "token"):
         assert forbidden.encode() not in (render_launchd_service(darwin) + unit.encode()).lower()
 
@@ -116,7 +119,7 @@ def test_print_is_pure_and_an_auth_flag_against_an_auth_off_latch_refuses(
     )
     assert refused.exit_code == 1
     assert "service_install.auth_posture_mismatch" in refused.output
-    assert "cruxible server start --bootstrap-secret-file PATH" in refused.output
+    assert "cruxible server start --auth --bootstrap-secret-file PATH" in refused.output
 
 
 @pytest.mark.parametrize(
@@ -475,6 +478,29 @@ def test_install_service_refuses_an_auth_required_root_with_no_durable_credentia
     assert "auth-on unattended startup requires an active durable runtime credential" in (
         result.output
     )
-    assert "cruxible server start --bootstrap-secret-file PATH" in result.output
+    assert "cruxible server start --auth --bootstrap-secret-file PATH" in result.output
     assert not (root / "daemon" / SERVICE_CONFIG_NAME).exists()
     reset_registry()
+
+
+def test_install_service_refuses_a_tcp_service_without_auth(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path, "linux")
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.server.current_service_platform", lambda: "linux"
+    )
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.server.resolved_cruxible_executable",
+        lambda: Path(config.executable),
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        ["server", "install-service", "--state-root", config.state_root, "--print"],
+    )
+
+    assert result.exit_code == 2
+    assert "service_install.tcp_requires_auth" in result.output
+    assert "--socket PATH" in result.output

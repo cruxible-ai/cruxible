@@ -459,7 +459,10 @@ class EvaluationRows:
     def vocabulary_matches(
         self, *, terms: Iterable[str], identity: str, signature_term: str
     ) -> tuple[str, ...]:
-        """Target paths whose indexed vocabulary could match: a superset, by term."""
+        """Target paths whose indexed vocabulary could match: a superset, by term.
+
+        Read only by the historical reuse reproducer (``proposals.historical_reuse``).
+        """
         table = self.table("vocabulary_terms")
         keys = sorted(set(terms))
         found = {

@@ -7,6 +7,8 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.inputs import (
     ClaimInput,
@@ -52,7 +54,6 @@ from cruxible_core.service.authoring.documents import (
 )
 from cruxible_core.service.claims.subjects import (
     service_get_playbill_subject,
-    service_list_playbill_subjects,
 )
 from cruxible_core.service.floor.floor import service_export_playbill_floor
 from tests.core_support._support import client_material, initialize_local
@@ -428,7 +429,7 @@ def test_subject_input_accepts_cve_package_relation_and_populates_floor_profiles
     accept_cve_affects_package_relation(instance, owner)
     predicate = AFFECTS_PACKAGE
 
-    floor = service_export_playbill_floor(instance)
+    floor = service_export_playbill_floor(instance, include=("discovery",))
     outbound = json.loads(floor["subjects/sec.vulnerability/cve-2026-0001.profile.json"])[
         "relations"
     ]
@@ -463,20 +464,14 @@ def test_the_object_subjects_profile_lists_the_incoming_relation(tmp_path: Path)
     vulnerability = service_get_playbill_subject(
         instance, identity="Subject:sec.vulnerability/cve-2026-0001"
     )
-    listed = service_list_playbill_subjects(instance)
 
     assert [group.predicate for group in package.incoming] == [AFFECTS_PACKAGE]
     edge = package.incoming[0].claims[0]
     assert edge.subject_identity == "subjects/sec.vulnerability/cve-2026-0001.json"
     assert edge.claim_identity.startswith("Claim:")
     assert len(package.incoming[0].claims) == 1
-    # The asserting end still carries no incoming edge, and the list surface
-    # carries only compact rows, never envelopes or edges.
+    # The asserting end still carries no incoming edge.
     assert vulnerability.incoming == ()
-    assert {(row.subject_kind, row.subject_id) for row in listed.subjects} >= {
-        ("sec.package", "demo"),
-        ("sec.vulnerability", "cve-2026-0001"),
-    }
 
 
 def test_preflight_returns_independent_refusals_in_one_frontier(tmp_path: Path) -> None:
@@ -549,11 +544,23 @@ def test_preflight_accepts_a_client_selected_occurrence_from_multiple_matches(
 
 def test_preflight_refuses_an_actor_absent_from_the_principal_registry(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from cruxible_core.authoring import coordinator as coordinator_module
+    from cruxible_core.errors import PrincipalRefusedError
+
     instance, owner = initialize_local(tmp_path)
     _seed_claim_surface(instance, owner)
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     actor = AuthenticatedActor(actor_id="unregistered-writer")
+    # Create refuses such an actor before any work...
+    with pytest.raises(PrincipalRefusedError, match="playbill.identity.principal_absent"):
+        coordinator.create(
+            actor=actor, payload=_self_source_payload(), canonical_timestamp=TIMESTAMP
+        )
+    # ...and preflight still refuses one whose principal lapsed after its draft
+    # was opened, which is the only way such a draft exists.
+    monkeypatch.setattr(coordinator_module, "require_authoring_principal", lambda *_a: None)
     intent = coordinator.create(
         actor=actor,
         payload=_self_source_payload(),

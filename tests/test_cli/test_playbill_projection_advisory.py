@@ -38,9 +38,8 @@ def test_cli_review_sends_bounded_coordinate_bound_projection_observation(
                 proposal_id=selector,
             )
 
-        def search_playbill(self, instance_id: str, *, mode: str) -> SimpleNamespace:
+        def playbill_head(self, instance_id: str) -> SimpleNamespace:
             assert instance_id == "inst_review"
-            assert mode == "orient"
             return SimpleNamespace(coordinate=COORDINATE)
 
         def review_playbill_proposal(

@@ -78,11 +78,28 @@ def test_orient_tool_declares_every_parameter(monkeypatch: pytest.MonkeyPatch) -
     }
     assert schema.get("required", []) == []
     section = schema["properties"]["section"]["anyOf"][0]
-    assert section["enum"] == ["documents", "procedures", "claim_types", "queries", "interfaces"]
-    # `at` is a Git OID string or a declared coordinate object, never a free-form dict.
-    coordinate = schema["$defs"]["PlaybillAcceptedCoordinate"]
-    assert coordinate["additionalProperties"] is False
-    assert set(coordinate["properties"]) >= {"git_oid", "semantic_root"}
+    assert section["enum"] == [
+        "documents",
+        "procedures",
+        "claim_types",
+        "queries",
+        "interfaces",
+        "runs",
+        "running",
+        "lines",
+        "captures",
+        "capture_contracts",
+        "predictions",
+        "mandates",
+        "principals",
+        "policies",
+    ]
+    # `at` is a git OID (or unique prefix) or a generation number, never a free-form dict.
+    assert {member.get("type") for member in schema["properties"]["at"]["anyOf"]} == {
+        "string",
+        "integer",
+        "null",
+    }
 
 
 @pytest.mark.parametrize("remote", [False, True])
@@ -108,3 +125,22 @@ def test_mcp_orient_forwards_the_advertised_tools(
     handlers.handle_playbill_orient("inst")
     assert seen["caller_tools"] == tuple(sorted(tools))
     assert seen["surface"] == "mcp"
+
+
+def test_mcp_orient_reports_the_mcp_workspace_floor(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    import json
+
+    floor = tmp_path / ".playbill/floor"
+    floor.mkdir(parents=True)
+    (floor / "manifest.json").write_text(
+        json.dumps({"coordinate": {"git_oid": "9" * 64}, "generation": 1}), encoding="utf-8"
+    )
+    monkeypatch.setattr(handlers, "_get_client", lambda: None)
+    monkeypatch.setattr(
+        "cruxible_core.runtime.playbill_api.playbill_orient", lambda *_a, **_k: _answer()
+    )
+    monkeypatch.setattr(handlers, "optional_mcp_git_workspace_root", lambda: tmp_path)
+
+    result = handlers.handle_playbill_orient("inst")
+
+    assert result.floor == contracts.PlaybillOrientFloorV1(at="9" * 64, generations_behind=3)

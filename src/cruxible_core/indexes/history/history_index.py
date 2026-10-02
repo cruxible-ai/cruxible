@@ -14,13 +14,16 @@ import hashlib
 import json
 import os
 import secrets
+import shutil
 import sqlite3
 import stat
+import tempfile
 import threading
 import weakref
 from collections import OrderedDict
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -336,6 +339,101 @@ class HistoryReader:
             )
         )
 
+    def member_paths_after(self, sequence: int) -> frozenset[str]:
+        """Every member path the change records after ``sequence`` touched, to this cutoff."""
+        if sequence < 0 or sequence > self.sequence:
+            raise PlaybillFormatError("generation is outside requested accepted history")
+        return frozenset(
+            str(row[0])
+            for row in self._connection.execute(
+                "SELECT DISTINCT member_path FROM accepted_member_locations "
+                "WHERE sequence>? AND sequence<=?",
+                (sequence, self.sequence),
+            )
+        )
+
+    def latest_sequences(
+        self, paths: Iterable[str] | None = None, *, at_most: int | None = None
+    ) -> dict[str, int]:
+        """The latest accepted sequence that touched each path, in bulk.
+
+        ``paths=None`` answers for every path history ever touched. ``at_most``
+        cuts history earlier than this reader's own cutoff. A path never touched
+        by then is absent.
+        """
+
+        cutoff = self.sequence if at_most is None else min(at_most, self.sequence)
+        if paths is None:
+            return {
+                str(path): int(sequence)
+                for path, sequence in self._connection.execute(
+                    "SELECT member_path, MAX(sequence) FROM accepted_member_locations "
+                    "WHERE sequence<=? GROUP BY member_path",
+                    (cutoff,),
+                )
+            }
+        wanted = tuple(dict.fromkeys(paths))
+        found: dict[str, int] = {}
+        for start in range(0, len(wanted), 500):
+            chunk = wanted[start : start + 500]
+            for path, sequence in self._connection.execute(
+                "SELECT member_path, MAX(sequence) FROM accepted_member_locations "
+                "WHERE sequence<=? AND member_path IN ("
+                + ",".join("?" for _ in chunk)
+                + ") GROUP BY member_path",
+                (cutoff, *chunk),
+            ):
+                found[str(path)] = int(sequence)
+        return found
+
+    def member_sequences(self, paths: Iterable[str]) -> dict[str, tuple[int, ...]]:
+        """Every distinct sequence that touched each path, ascending, to this cutoff."""
+
+        wanted = tuple(dict.fromkeys(paths))
+        found: dict[str, list[int]] = {path: [] for path in wanted}
+        for start in range(0, len(wanted), 500):
+            chunk = wanted[start : start + 500]
+            for path, sequence in self._connection.execute(
+                "SELECT DISTINCT member_path, sequence FROM accepted_member_locations "
+                "WHERE sequence<=? AND member_path IN ("
+                + ",".join("?" for _ in chunk)
+                + ") ORDER BY member_path, sequence",
+                (self.sequence, *chunk),
+            ):
+                found[str(path)].append(int(sequence))
+        return {path: tuple(values) for path, values in found.items()}
+
+    def member_paths_by_sequence(self, sequences: Iterable[int]) -> dict[int, tuple[str, ...]]:
+        """The member paths each of ``sequences`` touched, in member order."""
+
+        wanted = tuple(sorted(set(sequences)))
+        found: dict[int, list[str]] = {sequence: [] for sequence in wanted}
+        for start in range(0, len(wanted), 500):
+            chunk = wanted[start : start + 500]
+            for sequence, path in self._connection.execute(
+                "SELECT sequence, member_path FROM accepted_member_locations WHERE sequence<=? "
+                "AND sequence IN ("
+                + ",".join("?" for _ in chunk)
+                + ") ORDER BY sequence, member_ordinal",
+                (self.sequence, *chunk),
+            ):
+                found[int(sequence)].append(str(path))
+        return {sequence: tuple(paths) for sequence, paths in found.items()}
+
+    def member_paths_between(self, low: int, high: int) -> frozenset[str]:
+        """Every member path the change records in ``(low, high]`` touched."""
+
+        if not 0 <= low <= high <= self.sequence:
+            raise PlaybillFormatError("generation is outside requested accepted history")
+        return frozenset(
+            str(row[0])
+            for row in self._connection.execute(
+                "SELECT DISTINCT member_path FROM accepted_member_locations "
+                "WHERE sequence>? AND sequence<=?",
+                (low, high),
+            )
+        )
+
     def latest_member(self, path: str) -> AcceptedMemberLocation | None:
         row = self._connection.execute(
             "SELECT * FROM accepted_member_locations WHERE member_path=? AND sequence<=? "
@@ -643,6 +741,25 @@ def _member_digest(member: object) -> str | None:
     return value if isinstance(value, str) else None
 
 
+_DETACHED_READS: ContextVar[bool] = ContextVar("detached_history_reads", default=False)
+
+
+@contextmanager
+def detached_history_reads() -> Iterator[None]:
+    """Serve accepted-history reads in this context without writing the derived index.
+
+    A dry run reads history the way a write does, but must leave every file as
+    it found it. A read the working file cannot serve as it stands is caught up
+    in a private in-memory copy instead of in the file.
+    """
+
+    token = _DETACHED_READS.set(True)
+    try:
+        yield
+    finally:
+        _DETACHED_READS.reset(token)
+
+
 class AcceptedHistoryIndex:
     """Shared derived owner; no source mutation and no frozen compiler schema change."""
 
@@ -729,6 +846,18 @@ class AcceptedHistoryIndex:
         start after the recorded sequence instead of re-deriving every
         generation from the ledger.
         """
+        found = self._recorded_readiness(connection, recovered)
+        if found is None:
+            return None
+        ready, chain = found
+        self._chain = (ready[0], chain)
+        return ready
+
+    def _recorded_readiness(
+        self, connection: sqlite3.Connection, recovered: RecoveredInstanceState
+    ) -> tuple[tuple[int, str, str, str, int], str] | None:
+        """The recorded readiness and its chain, when ``connection`` still carries them."""
+
         try:
             if self._record is None:
                 return None
@@ -750,8 +879,7 @@ class AcceptedHistoryIndex:
         chain = _history_chain(connection, through=sequence)
         if chain != claimed:
             return None
-        self._chain = (sequence, chain)
-        return (sequence, root, instance_id, compiler, schema)
+        return (sequence, root, instance_id, compiler, schema), chain
 
     def _record_verified_through(
         self, connection: sqlite3.Connection, ready: tuple[int, str, str, str, int]
@@ -935,6 +1063,15 @@ class AcceptedHistoryIndex:
             finally:
                 clean_connection.close()
             return
+        if _DETACHED_READS.get():
+            try:
+                with self._detached_read(recovered, load_envelopes, at=at) as reader:
+                    yield reader
+            except sqlite3.DatabaseError as exc:
+                raise ProjectionIntegrityError(
+                    "accepted history index could not be read; repair or retry required"
+                ) from exc
+            return
         connection: sqlite3.Connection | None = None
         try:
             # Serialize only synchronization and snapshot acquisition. Neither
@@ -1018,6 +1155,94 @@ class AcceptedHistoryIndex:
                     self._writer.rollback()
             if connection is not None:
                 connection.close()
+
+    @contextmanager
+    def _detached_read(
+        self,
+        recovered: RecoveredInstanceState,
+        load_envelopes: EnvelopeLoader,
+        *,
+        at: AcceptedCoordinate | None,
+    ) -> Iterator[HistoryReader]:
+        """Serve one read from a private in-memory copy, leaving the working file as it is.
+
+        Under ``detached_history_reads`` nothing derived may be written, so a read
+        the clean snapshot cannot serve (a cold or behind-head index) catches up
+        a copy instead: the rows the file holds, synchronized from the ledger
+        exactly as a working read would, then discarded.
+        """
+
+        with self._lock:
+            known_stamp, known_ready = self._stamp, self._ready
+            trust_record = self._chain is None and self._trust_record
+        before = self._file_stamp()
+        connection = sqlite3.connect(":memory:", check_same_thread=False)
+        try:
+            carried = self._copy_working_rows(connection, stamp=before)
+            ready: tuple[int, str, str, str, int] | None = None
+            if carried:
+                if before == known_stamp:
+                    ready = known_ready
+                elif trust_record:
+                    recorded = self._recorded_readiness(connection, recovered)
+                    ready = None if recorded is None else recorded[0]
+            self._sync(connection, recovered, load_envelopes, ready)
+            reader = HistoryReader(connection, recovered.head.sequence, self._canonical_records)
+            reader.resolve(
+                AcceptedCoordinate(
+                    git_oid=recovered.head.oid,
+                    semantic_root=recovered.head.semantic_root.tagged,
+                    generation_root=recovered.head.generation_root.tagged,
+                    compiler_digest=recovered.coordinate.compiler.rule_digest,
+                )
+            )
+            if at is not None:
+                reader = HistoryReader(
+                    connection, reader.resolve(at).sequence, self._canonical_records
+                )
+            yield reader
+        finally:
+            connection.close()
+
+    def _copy_working_rows(
+        self, memory: sqlite3.Connection, *, stamp: tuple[int, ...] | None
+    ) -> bool:
+        """Copy the working file into ``memory``; whether its rows came with it.
+
+        Opening the file itself, even read-only, can create or rewrite the WAL
+        and its shared memory beside it. The database and its WAL are copied
+        into a scratch directory instead and read from there; a file that moved
+        while it was copied leaves the copy empty, to be rebuilt from the ledger.
+        """
+
+        copied = False
+        if stamp is not None:
+            with tempfile.TemporaryDirectory(prefix="cruxible-history-") as scratch:
+                copy = Path(scratch) / self.path.name
+                shutil.copyfile(self.path, copy)
+                wal = self.path.with_name(self.path.name + "-wal")
+                if wal.is_file():
+                    shutil.copyfile(wal, copy.with_name(copy.name + "-wal"))
+                if self._file_stamp() == stamp:
+                    source = sqlite3.connect(copy)
+                    try:
+                        source.backup(memory)
+                    finally:
+                        source.close()
+                    copied = True
+        schema = _schema_rows(memory)
+        if schema == _EXPECTED_SCHEMA:
+            return copied
+        if not schema:
+            memory.executescript(_SCHEMA)
+        elif schema == _PRE_MEMBER_SCHEMA:
+            memory.executescript(_MEMBER_SCHEMA)
+            memory.executescript(_GENERATION_ROOT_INDEX)
+        elif schema == _PRE_ROOT_INDEX_SCHEMA:
+            memory.executescript(_GENERATION_ROOT_INDEX)
+        else:
+            raise ProjectionIntegrityError("history index schema differs; rebuild required")
+        return False
 
     def _sync(
         self,

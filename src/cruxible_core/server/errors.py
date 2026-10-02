@@ -21,6 +21,8 @@ from cruxible_client.contracts.errors import (
     ProposalEvaluationIntegrityError,
     ProposalIntegrityError,
     ProposalNotFoundError,
+    ProposalReadmitAlreadyAccepted,
+    ProposalReadmitNotStale,
     ProposalSelectorAmbiguousError,
     SettlementIntegrityError,
     SubjectNotFoundError,
@@ -50,6 +52,7 @@ from cruxible_core.errors import (
     InstanceNotFoundError,
     InstanceScopeError,
     PermissionDeniedError,
+    PrincipalRefusedError,
     RuntimeCredentialNotFoundError,
 )
 from cruxible_core.evidence.claim_attestation_store import ClaimAttestationStoreError
@@ -173,6 +176,8 @@ def _status_for_error(exc: CoreError) -> int:
         # can repair, never a daemon fault: the class declares its own 4xx so
         # the code and the repair the envelope carries are actionable.
         return exc.http_status
+    if isinstance(exc, PrincipalRefusedError):
+        return exc.http_status
     if isinstance(exc, AuthenticationError):
         return 401
     if isinstance(exc, (CustomerCodeExecutionUnsupportedError, HostedProfileUnknownError)):
@@ -291,6 +296,12 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         context["selector"] = exc.selector
         context["candidates"] = list(exc.candidates)
         context["repair_commands"] = list(exc.repair_commands)
+    if isinstance(exc, ProposalReadmitAlreadyAccepted):
+        context["proposal_id"] = exc.proposal_id
+        context["accepted_as"] = exc.accepted_as
+    if isinstance(exc, ProposalReadmitNotStale):
+        context["proposal_id"] = exc.proposal_id
+        context["status"] = exc.status
 
     body = ErrorResponse(
         error_type=exc.__class__.__name__,

@@ -11,11 +11,11 @@ import pytest
 from cruxible_core.indexes.sqlite import ProjectionHandle
 from cruxible_core.service.claims import claims as playbill_claims
 from cruxible_core.service.claims.claims import (
-    _claim_law_evidence_index,
     service_get_playbill_claim,
     service_list_playbill_claims,
 )
 from cruxible_core.service.evidence import evidence as playbill_evidence
+from cruxible_core.service.evidence.evidence import _claim_read_history_index
 from tests.core_support._knowledge_loop_support import seed_claims
 
 
@@ -47,7 +47,6 @@ def test_repeated_claim_reads_select_only_their_evidence_and_rebuild_admission_a
     monkeypatch.setattr(playbill_claims, "parse_claim_law_evidence", parse)
     monkeypatch.setattr(playbill_evidence, "parse_claim_law_evidence", parse)
     monkeypatch.setattr(playbill_claims, "_claim_admission_accounts", accounts)
-    monkeypatch.setattr(playbill_claims, "_claim_law_evidence_index", full_index)
     monkeypatch.setattr(instance, "accepted_history", full_index)
     monkeypatch.setattr(instance, "tree_at", full_index)
     monkeypatch.setattr(instance, "paths_at", full_index)
@@ -66,22 +65,17 @@ def test_repeated_claim_reads_select_only_their_evidence_and_rebuild_admission_a
     assert accounts_built == 20
 
 
-def test_claim_history_mapping_is_owned_and_bounded_to_its_coordinate(
+def test_claim_history_mapping_is_bounded_to_its_coordinate(
     tmp_path: Path,
 ) -> None:
     instance, _owner = seed_claims(tmp_path)
     current = instance.accepted_coordinate()
     previous = instance.coordinate_for_oid(instance.accepted_history()[-2].oid)
-    current_index = _claim_law_evidence_index(instance, at=current)
-    previous_index = _claim_law_evidence_index(instance, at=previous)
+    current_index = dict(_claim_read_history_index(instance, coordinate=current).law_evidence)
+    previous_index = dict(_claim_read_history_index(instance, coordinate=previous).law_evidence)
     assert len(previous_index) == 1
     assert len(current_index) == 2
     assert previous_index.items() <= current_index.items()
-
-    current_index.clear()
-    previous_index.clear()
-    assert len(_claim_law_evidence_index(instance, at=current)) == 2
-    assert len(_claim_law_evidence_index(instance, at=previous)) == 1
 
 
 def test_short_claim_id_resolves_from_typed_owner_rows(tmp_path: Path, monkeypatch) -> None:

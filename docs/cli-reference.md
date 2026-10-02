@@ -8,6 +8,7 @@ The public CLI has four top-level command groups.
 --server-url TEXT
 --server-socket TEXT
 --instance-id TEXT
+--principal-id TEXT
 --no-workspace
 --json-compact
 --version
@@ -25,6 +26,20 @@ exactly one of `server_url` or `server_socket`; its root must agree with the roo
 of `.playbill/sources.yaml` when both exist. The global context is only a
 fallback, its remembered instance remains bound to the transport on which it
 was selected, and entering one workspace never retargets another.
+
+`--principal-id` (or `CRUXIBLE_PRINCIPAL_ID`) names the principal this process
+acts as; the CLI, SDK (`Playbill.connect(principal_id=...)`) and MCP server all
+send it with every request. The daemon checks that it names a registered, active
+principal on the instance before any write and attributes the work to it; an
+unregistered or revoked ID is refused on writes (`playbill.identity.principal_absent`
+/ `principal_revoked`) with the command that repairs it. Reads stay open, so an
+agent can read (and `whoami` explains its standing) while its registration
+awaits activation. With daemon auth off the principal ID is a
+claim of identity, not authentication: every process of the same OS user is
+equally trusted and could claim any principal. With auth on the bearer
+credential decides who acts, and a principal ID that disagrees with it is refused
+(`playbill.identity.principal_claim_mismatch`). Approvals are unaffected either
+way: they are signed with the principal's private key.
 
 `CRUXIBLE_CLIENT_TIMEOUT_S` (default 180) bounds how long a client waits for a
 daemon that has accepted a request. An SDK `Playbill.connect()` reads only the
@@ -58,10 +73,10 @@ Manage runtime bearer credentials:
 
 ~~~text
 cruxible credential claim-bootstrap [--secret-file PATH] [--json]
-cruxible credential mint --label LABEL --mode TIER [--json]
+cruxible credential mint --principal-id ID --mode TIER [--key-dir DIR] [--label TEXT] [--json]
 cruxible credential list [--json]
-cruxible credential rotate
-cruxible credential revoke
+cruxible credential rotate CREDENTIAL_ID [--key-dir DIR]
+cruxible credential revoke CREDENTIAL_ID
 cruxible credential recover-admin [--state-root DIR] [--instance-id ID] [--json]
 ~~~
 
@@ -72,8 +87,37 @@ refuses only a transport chosen for that invocation (`--server-url`,
 exactly one has a directory under `<state-root>/instances`, that instance is the
 target; otherwise pass `--instance-id`.
 
-These credentials authorize transport operations. They are distinct from
-Playbill signing principals.
+These credentials authorize transport operations. Each one acts as exactly one
+Playbill principal, stored with the credential; the label is a description and
+never decides who acts. `credential mint` refuses unless that principal is
+registered and active (`playbill.identity.principal_absent` /
+`principal_revoked`) and ordinary (a recovery principal never holds one:
+`runtime_credential.principal_not_ordinary`), and it needs the principal's own authority, not just an
+admin credential: either the request already acts as that principal, or
+`--key-dir` signs the principal's single-use consent with its registered key
+(`runtime_credential.principal_authority_required`,
+`principal_proof_invalid`, `principal_proof_replayed`). On a daemon with auth
+off, where a bearer credential authenticates nothing, minting is refused
+(`runtime_credential.auth_off`, repair: `cruxible server start --auth`) and
+nothing is stored, so the state root is never silently latched into requiring
+auth. Revoking a principal
+revokes every credential that acts as it: the next request with one is refused
+with `playbill.identity.principal_revoked` and the rows are marked revoked.
+Rotation keeps the principal, tier and label, so rotating a bound credential
+needs the same authority minting it would: the request acts as that principal,
+or `credential rotate --key-dir DIR` signs its consent. Any admin may revoke a
+credential, but never receives a replacement for someone else's principal.
+
+The bootstrap claim and `recover-admin` mint unbound operator credentials: they
+carry transport authority (host, init, credentials, daemon lifecycle) but act as
+no principal, so they cannot author or perform any other instance write --
+body store, ledger mirror binding and publication, attestation recovery
+included (`playbill.identity.credential_unbound`).
+`playbill init` under such a credential designates the owner it names.
+Credentials minted before credentials named a principal are migrated as
+unbound, never rebound from their label; repair each by minting a bound one with
+`cruxible credential mint --principal-id ID --key-dir DIR --mode TIER`, then
+revoking the old one.
 
 `credential mint --mode` picks a cumulative tier. `read_only` reads only.
 `governed_write` also proposes and authors, but cannot submit approvals or
@@ -85,7 +129,7 @@ permission refusal names the tier it needs and what that tier allows.
 ## server
 
 ~~~text
-cruxible server start [--state-root DIR] [--socket PATH | --host HOST --port PORT]
+cruxible server start [--state-root DIR] [--socket PATH | --host HOST --port PORT] [--auth]
 cruxible server install-service [SERVER-START FLAGS] [--print] [--replace]
 cruxible server status
 cruxible server restart
@@ -93,7 +137,43 @@ cruxible server stop [--timeout SECONDS] [--json]
 ~~~
 
 server start is the long-running daemon process and does not connect to an
-existing server. With `--socket`, the socket is bound with mode 0600;
+existing server.
+
+Auth depends on the transport. A Unix-socket daemon defaults to auth off and
+prints one line saying so when it starts: every process that can reach its
+owner-only socket directory already runs as your OS user, and bearer tokens
+would protect nothing from a process that can read the token files anyway. A
+TCP daemon, loopback included, refuses to start without auth
+(`cruxible.server.tcp_requires_auth`), because any local user or network peer
+that can reach the port could otherwise act as any principal. `--auth` is the
+explicit opt-in on either transport; `CRUXIBLE_SERVER_AUTH=true` is its
+environment form. Once a state root has run with auth it refuses to start
+without it (`cruxible.server.auth_latched`).
+
+With auth on, the daemon's runtime bootstrap secret (its unscoped operator
+credential) is never printed to stdout, stderr or the request log. Once the
+daemon holds the state-root lock it writes the secret owner-only (0600) to
+`<state-root>/daemon/bootstrap-secret`, and prints only that path. An in-place
+restart keeps the same secret. `server status`, `server restart` and
+`server stop` use that file by default when no `CRUXIBLE_SERVER_BEARER_TOKEN` is
+set, so a local restart needs no credential typed in. The secret is never sent:
+each such request carries a MAC keyed by the secret over its method, path,
+body digest, a fresh nonce, a timestamp and the daemon's unpredictable boot id
+(read from the live lock record), and the daemon accepts it only if the boot id
+is its own current process image's, the MAC verifies under its own secret, the
+timestamp is within 60 seconds of its clock, and the nonce is new
+(`runtime_bootstrap.operator_mac_boot_changed`, `operator_mac_invalid`,
+`operator_mac_stale`, `operator_mac_replayed`). A request captured before an
+in-place restart therefore cannot be replayed after it. Only `server status`, `restart`
+and `stop` accept a signed request. As defense in depth the secret is read only
+while a live daemon holds the state-root lock and the lock records exactly the
+transport the command is about to use (the socket path, or the bound host and
+port as written: `localhost`, `127.0.0.1` and `::1` are different endpoints,
+since IPv4 and IPv6 loopback can host different listeners on one port). A relay
+or a process that took over the endpoint receives nothing it can reuse. An
+explicit `CRUXIBLE_SERVER_BEARER_TOKEN` is sent as a bearer token, as before. `--bootstrap-secret-file PATH` also writes a 0600 copy to
+PATH; it needs auth and is refused on an auth-off start, which removes any stale
+state-root copy. With `--socket`, the socket is bound with mode 0600;
 a missing socket directory is created 0700; a socket directory that is not
 yours and owner-only, or an ancestor another user could use to replace it, is
 refused at startup. State defaults to `~/.cruxible`; `--state-root` overrides
@@ -137,9 +217,34 @@ record without writing. Installation refuses an existing unit unless
 with `launchctl start ai.cruxible.daemon` on macOS,
 `systemctl --user start cruxible.service` on Linux, or run
 `cruxible server start`. Auth defaults to the state root's durable auth latch;
-an explicit `--auth`/`--no-auth` disagreement is refused. Service files contain
+an explicit `--auth`/`--no-auth` disagreement is refused, and a TCP service
+without auth is refused (`service_install.tcp_requires_auth`). Service files contain
 no bearer or bootstrap secret, and auth-on installation requires an active
-durable runtime credential first.
+durable runtime credential first. The rendered units run the daemon at normal
+priority: the launchd agent sets `ProcessType` to `Interactive` (left unset,
+launchd throttles the job's CPU and I/O), and the systemd unit sets `Nice=0`.
+
+Run the daemon at normal priority however it is started. Agents wait on its
+answers, and a niced daemon on a busy host turns a seconds-long floor export
+into a minute-long one. zsh starts `&` background jobs at nice 5 (its
+`BG_NICE` option, on by default), so `cruxible server start ... &` from an
+interactive zsh runs niced; prefer the installed service, or run
+`setopt NO_BG_NICE` first. `ps -o pid,ni,rss,command -p <pid>` shows the
+daemon's nice value (`NI`) and resident set (`RSS`, in KiB).
+
+Give the daemon enough memory to keep its working set resident. A floor
+export holds several hundred MB per instance at its peak (about 640 MB on a
+state of about 3,000 Claims). When the daemon's resident set is far below
+that and the host is swapping, the first request after idle pages the heap
+back in, and full garbage collections over that heap (from a quarter of a
+second to several seconds each on such a state) run at swap speed. Free
+memory on the host, or move the daemon to a host with headroom; the daemon
+has no memory or garbage-collection settings to tune.
+
+Every request line in `<state-root>/daemon/logs/server.log` carries
+`duration_ms`, the wall time from the request's arrival to its log line, so a
+slow request can be attributed to its route. Route handlers run in the
+daemon's threadpool, so one slow request does not hold up the others.
 
 `server status` answers an instance-scoped credential with its own host and
 identity (`"scope": "instance"`) instead of refusing; the daemon-wide view below
@@ -364,7 +469,7 @@ those blocks (`playbill block depublish`) or retire their backing Claims first.
 
 ~~~text
 cruxible playbill init --key-dir DIR
-  [--principal-id ID]
+  --principal-id ID
   [--reviewer-key-dir DIR]
   [--require-independent-approval]
   [--recovery-key-dir DIR]
@@ -374,6 +479,13 @@ cruxible playbill init --key-dir DIR
   [--object-format sha1|sha256]
   [--mirror-url URL]
 ~~~
+
+Makes you the owner under `--principal-id` (default: the configured
+`CRUXIBLE_PRINCIPAL_ID` / global `--principal-id`; they must agree). On an
+auth-off daemon the init request claims that principal, so no bootstrap secret
+is needed; set `CRUXIBLE_PRINCIPAL_ID` to it afterwards so later commands act as
+the owner. An init whose caller is not one of the owner principals it names is
+refused with `playbill.identity.init_owner_mismatch`.
 
 Generates a client-held ordinary key outside the workspace and bootstraps the
 ledger with its public principal record. A missing `--key-dir` is created with
@@ -430,6 +542,14 @@ cruxible playbill capture read CAPTURE_DIGEST [--max-bytes BYTES]
 ```
 
 Verify a retained Capture and return its evidence metadata and bounded material as JSON.
+CAPTURE_DIGEST is the full digest, the `CAP-<12 hex>` handle `get --detail
+evidence` and Capture cards print, or a `sha256:` prefix of 12+ hex; a handle
+or prefix must name one Capture, resolved exactly as the write verbs resolve
+`--capture`: one accepted Claims cite, or one the instance holds that verifies
+(`playbill.capture.ref_ambiguous` lists the candidates,
+`playbill.capture.not_found` points at `orient --section captures`, and
+`playbill.capture.ref_scan_exhausted` asks for a longer handle when more share
+the prefix than one bounded lookup examines).
 Uses body-read permission and never refetches the external source. The SDK equivalent
 is `pb.capture(digest)`; its `.ref` can be passed to Claim authoring as `supported_by`.
 
@@ -687,29 +807,31 @@ with the matching `CruxibleClient` methods.
 
 ~~~text
 cruxible playbill document propose --envelope FILE --name NAME
-cruxible playbill document list
-cruxible playbill document get IDENTITY
-cruxible playbill document body IDENTITY [--output FILE]
-cruxible playbill document history IDENTITY
 ~~~
 
-## playbill subject
+`document propose` is the only Document subcommand; Documents are read through
+the general reads:
 
-~~~text
-cruxible playbill subject list [--kind KIND] [--limit N] [--cursor CURSOR]
-cruxible playbill subject get KIND/ID
-cruxible playbill subject history KIND/ID
-~~~
+| To | Run |
+|---|---|
+| list accepted Documents | `cruxible playbill orient --section documents` |
+| read one Document's envelope | `cruxible playbill get Document:NAME` |
+| read its body | `cruxible playbill get Document:NAME --detail body [--range a:b] [--output FILE]` |
+| explain it | `cruxible playbill get Document:NAME --detail why` |
+| read its revisions | `cruxible playbill get Document:NAME --detail history` |
+
+`--detail body` answers one page of at most 64 KiB; `--range start:end` reads a
+byte range, and `--output FILE` writes the body's exact bytes to a new file,
+paging past the cap.
 
 A Subject is an identity-only referent named by its canonical `kind/name`
-address — the spelling the SDK, claim objects, floor profiles, and `explain` all
-use.
-
-`subject get` renders the Subject's own facts and an `incoming` section: every
-live Claim whose subject-valued object is this Subject, grouped by predicate and
-naming the asserting Subject and the Claim id. A relation is stored once, on the
-asserting Subject, so without this section nothing answers "what touches this
-package" from the object side.
+address, the spelling the SDK, claim objects, floor profiles, and `get` all
+use. `cruxible playbill get KIND/ID` renders the Subject's own facts and an
+`incoming` section: every live Claim whose subject-valued object is this
+Subject, grouped by predicate and naming the asserting Subject and the Claim
+id. A relation is stored once, on the asserting Subject, so without this
+section nothing answers "what touches this package" from the object side.
+`--detail history` reads the Subject's revisions.
 
 ## playbill claim-type
 
@@ -718,9 +840,11 @@ cruxible playbill claim-type propose --template
 cruxible playbill claim-type propose --input FILE --name NAME
 cruxible playbill claim-type migrate REQUEST_FILE
 cruxible playbill claim-type upgrade-evidence-rules
-cruxible playbill claim-type list
-cruxible playbill claim-type get PREDICATE
+cruxible playbill claim-type upgrade [--claim-type P]... [--revision-evidence replace|accumulate] [--dry-run]
 ~~~
+
+Read the accepted ClaimTypes with `cruxible playbill orient --section
+claim_types`, one ClaimType with `cruxible playbill get ClaimType:PREDICATE`.
 
 A ClaimType is the governed interface a predicate must satisfy before any Claim
 may state it. `propose --input` accepts a complete `ClaimTypeInputV1`; ClaimType
@@ -764,6 +888,27 @@ not overlap may not start matching the same evidence. It lists, per ClaimType,
 the accepted contract versions a converted rule newly admits, and leaves the
 rest unchanged with the reason. Approve and activate the proposal as usual.
 
+ClaimType v7 adds a `description`, `member_descriptions` for a literal enum, a
+`default_role` a write takes when it names none, an `evidence_requirement`
+(`none`: the Claim's own origin supports it; `self`: the evidence rules decide;
+`captured`: a Capture under a declared contract is required) and a
+`revision_evidence` rule (`replace`: a revision that changes its statement keeps
+exactly the evidence it cites; `accumulate`: it keeps everything its
+predecessors cited). A revision that states the same thing again keeps its
+evidence either way, and a carry never loses backing. `propose --input` lowers
+to v7: a new ClaimType takes `self` and `replace`. An edit follows JSON merge-patch
+against its predecessor: a v7 field left out keeps the predecessor's value (over
+a ClaimType before v7: no descriptions, no default role, `self` and
+`accumulate`), and an explicit `null` clears `description`,
+`member_descriptions` or `default_role`. Inherited member descriptions of
+values the edited enum dropped, or an inherited default role the edit no longer
+permits, are refused by name rather than dropped. ClaimTypes before v7
+never switch on their own: `upgrade` proposes one change set moving the named
+live ClaimTypes (default: all of them) to v7 with `evidence_requirement` kept at
+`self` and `--revision-evidence` (default `replace`), carrying their Claims with
+their backing intact. It lists each ClaimType's revision-evidence change;
+`--dry-run` evaluates the change set and proposes nothing.
+
 A CaptureContract successor must be compatible with its predecessor: it may
 widen the sources, modes, identities and evidence kinds it accepts and raise its
 budgets, and nothing else. A breaking change is a new contract identity. A
@@ -774,37 +919,29 @@ version; the refusal names them.
 ## playbill claim
 
 ~~~text
-cruxible playbill claim retire IDENTITY REQUEST_FILE
 cruxible playbill claim attest IDENTITY --support|--contradict|--unsure [--note TEXT]
   [--valid-until TS]
-cruxible playbill claim list [--subject PATH] [--kind KIND] [--predicate P] [--include-retired]
-cruxible playbill claim values --kind KIND [--subject ID ...] --predicate P [--predicate P ...]
-  [--evaluation-time TS] [--json]
-cruxible playbill claim get IDENTITY [--brief]
-cruxible playbill claim history IDENTITY
-cruxible playbill claim explain IDENTITY [--evaluation-time TS]
 ~~~
 
-`subject list` answers one page (default 50) of compact rows: `subject_kind`,
-`subject_id`, `lifecycle` and the count of live Claims; `subject get` reads one
-Subject's envelope and facts. A cut page carries `truncated` and `next_cursor`,
-which `--cursor` continues at the first page's coordinate; a cursor for another
-list or `--kind` is refused as `playbill.list.cursor_mismatch`.
-`subject list --kind` and `claim list --kind` narrow the listing to one Subject
-kind through the Subject index. `claim values` is the status-table read (the
-CLI form of the SDK's `world.values`): one row per live Claim, with its
-`subject_id`, predicate, value, verdict and resolution status, for every Subject
-of `--kind` (or only the named `--subject` IDs) and the given predicates,
-without full Claim views. It refuses rather than truncates past 8192 Claims.
+Claims are read through `playbill query`, `playbill get` and `playbill orient`.
+`cruxible playbill query KIND --select P --claims` is the status table: each
+cell names its Claims with their ID, value, verdict, resolution status and
+role, for every Subject of `KIND` (narrow with `--where 'subject_id in a,b'`);
+`--status overturned --status refused --status retired` adds the Claims
+resolution set aside or that were retired. A query lists a kind's live Subjects;
+`--status retired` also lists its retired Subjects, and every row then states its
+Subject's `lifecycle` (`live` or `retired`). `cruxible playbill get CLM-...`
+reads one Claim's card; `--detail why` its verdict with the law evidence and
+source handles it was computed from, `--detail history` its revisions, and
+`--detail proof` its full envelope and facts. `orient` counts Claims by status
+under `artifacts.claims`.
 
-Claims are authored through `playbill authoring create`/`compile`; the retired
-direct v1 proposal commands are not a second writer. `retire` preflights or submits one
-attributed retirement over the complete dependent Claim closure; the request
-must name every dependent reason and never receives a daemon-synthesized end
-time. explain returns the verdict together with the law evidence and source
-handles it was computed from. When the Claim shares anything with a retired
-Claim, explain also carries a `retirement_context` section, which the CLI prints
-beneath the verdict. It is review context, not queue work, so `next` does not
+Claims are written through `playbill set`, `add`, `retire` and `write`, or authored
+through `playbill authoring create`/`compile`; the retired direct v1 proposal
+commands are not a second writer. `playbill retire` retires a Claim with its
+complete dependent Claim closure in one change set. When a Claim shares anything
+with a retired Claim, `get CLM-... --detail why` also carries a
+`retirement_context` section. It is review context, not queue work, so `next` does not
 report it. It lists each retired Claim the Claim shares a capture, an exact
 external source, or a same-version cited span with, with the relation kind, the
 shared capture, and the retired Claim and citation witnesses. It is read from
@@ -817,9 +954,9 @@ how an agent leaves contested state contested instead of forcing a judgment it
 is not confident in: it holds the Claim's rows in `next` (see below) until what
 the agent examined changes. `--valid-until` ends the attestation, and with it
 the hold.
-`claim get --brief` renders the typed subject, predicate, object, role,
-qualifier, flat lifecycle state, and predecessor digest. JSON returns the same
-shape in the top-level `statement` field alongside the canonical envelope.
+`get CLM-... --detail proof --json` carries the typed statement (subject,
+predicate, object, role, qualifier, lifecycle, predecessor digest) in its
+top-level `statement` field alongside the canonical envelope.
 
 ## playbill claim-attestation
 
@@ -947,46 +1084,46 @@ for a caller any more: the marker must start in column zero, blocks cannot
 overlap, nest, or repeat an id, and marker-looking text inside a Markdown fence
 is not a declaration.
 
-## playbill policy
-
-~~~text
-cruxible playbill policy list [--limit N] [--cursor CURSOR] [--json]
-~~~
-
-Lists the live standalone and embedded governed policies at the accepted
-coordinate, one page at a time (default 25, at most 200). A cut page has
-`truncated: true` and a `next_cursor`; pass it back with `--cursor` to continue at
-the same coordinate.
-
 ## playbill query
 
 ~~~text
 cruxible playbill query [KIND] [--where 'f=v'|'f!=v'|'f<v'|'f<=v'|'f>v'|'f>=v'|'f in a,b'|'f exists'|'f !exists'|'f~text']...
-    [--contains TEXT] [--select a,b] [--follow field:alias] [--order-by f|-f]
-    [--limit N] [--cursor C] [--spec FILE | --name N --param k=v ...]
+    [--contains TEXT] [--select a,b] [--follow field:alias]... [--follow-in field:alias]...
+    [--order-by f|-f] [--status live|overturned|refused|retired]... [--claims]
+    [--limit N] [--cursor C]
+    [--spec FILE | --name N --param k=v ... [--budgets JSON] [--receipt compact|full]]
     [--at GIT_OID] [--evaluation-time TS] [--json]
-cruxible playbill query list
-cruxible playbill query get NAME
-cruxible playbill query run NAME [--parameters FILE] [--evaluation-time TS]
 ~~~
 
-Without a subcommand, `query` answers any question over accepted state in one
+`query` has no subcommands: it answers any question over accepted state in one
 call, the same read as MCP `cruxible_playbill_query` and SDK `pb.query`. KIND is
 a Subject kind, or `ClaimType` / `Procedure` for definitions; `--contains` alone
 searches every live Claim value across kinds. `--where` filters combine as
 all-of; a field is a predicate's full name, its name after the `KIND.` prefix,
 `subject_id`, or `alias.field` after `--follow`. `f!=v` also matches a Subject without the value.
+`--follow field:alias` hops forward along one of KIND's Subject-valued predicates;
+`--follow-in field:alias` hops backwards along another kind's predicate whose values
+name KIND's Subjects (for example `query dev.roadmap_item --follow-in
+dev.batch.delivers:batch` lists which batches deliver each item). Both repeat and
+mix, in command-line order. A reverse field is the predicate's full name, or its
+name after the pointing kind's prefix;
+`orient --kind KIND` lists the predicates that point at KIND as `incoming`. Either
+way there is one row per (Subject, followed Subject) pair, and without
+`--order-by` rows sort by the queried Subject, then each follow alias.
 Names and values are checked first: a wrong kind, field or enum member, or an
 operator that does not apply, refuses with its code, the nearest valid names and
 a repair. Text output is an aligned table of values and flags (`stale`,
-`contested`, `contradicted`, `unsure_hold`) followed by the next command when the
-page is truncated; `--json` gives the full answer with its receipt. `--spec` runs
-a `QueryDefinitionSpecV1` file inline; `--name` with `--param` runs an accepted
-named query.
-
-run executes one accepted QueryDefinition and prints its
-`playbill-query-execution-receipt-v1`: the definition digest, the resolved
-parameter digest, and the result digest that replays it.
+`contested`, `contradicted`, `uncovered`, `unsure_hold`) followed by the next
+command when the page is truncated; `--json` gives the full answer with its
+receipt. Cells show each slot's answer as `get` shows it; `--status` adds Claims
+resolution overturned or refused, or retired ones, and `--claims` names each
+cell's Claims (ID, status, verdict, role) beneath the table. `--spec` runs a
+`QueryDefinitionSpecV1` file inline; `--name` with `--param` runs an accepted
+named query (`orient --section queries` lists them, `get query:NAME --detail
+proof` reads one), `--budgets` sets its budgets up to the definition's maximum,
+and `--receipt full` adds its replay receipt (`receipt.replay`: the Claims each
+row read, traversal paths, bound parameters, verdict, and the
+`playbill-query-execution-receipt-v1` whose digests replay it).
 
 Author named queries through `playbill authoring compile`, then submit the intent
 and review/accept its proposal.
@@ -1226,7 +1363,15 @@ they match, with no explicit call. Runs use the arming caller's credential,
 which the daemon rechecks before every admission: a revoked credential, one
 moved to another instance, or one no longer permitted to dispatch stops the arm
 with that reason (`credential_revoked`, `credential_scope_changed`,
-`permission_insufficient`). Arming needs governed write, and keeps only the
+`permission_insufficient`, `credential_unbound`). The accepted standing of the
+principal the arm acts as is rechecked too: a credential's bound principal, or
+on an auth-off daemon the principal the arming request claimed, that is no
+longer active stops the arm (`principal_inactive`) and revokes that principal's
+credentials; an arm made with no principal claimed runs as the implicit local
+operator. An arm recorded before arms named this provenance cannot say which it
+was, so it is stopped (`arm_requires_rearm`) rather than carried across a
+restart, and `line status`, `server status` and `next` name the rearm repair.
+Arming needs governed write, and keeps only the
 credential's identifier, never a token. A Line that can propose
 or settle refuses to arm while no current mandate covers it. An arm is pinned to the
 Line version and the exact Trigger versions aimed at it when it was armed: any
@@ -1650,11 +1795,14 @@ generations or has not finished earlier sweep/retry work before another fire;
 this facet asks for
 attention), `stalled` (already a `consumer_stalled` row), or `not_running` when
 no consumer loop is running, as in a library read. There, worker rows stand as
-of the last pass. `detail.workers` lists each built-in worker's state
-and cursor, including disabled ones. The `next` entry keeps each part's figures under
-`queue`, `evidence` and `prediction`. Evidence rows carry when they were
-observed in their own detail; prediction rows omit observation timestamps so
-their identity stays stable while the finding is unchanged.
+of each worker's last pass. `detail.workers` lists each built-in worker's state
+and cursor, including disabled ones, and `detail.line_arms` counts the
+instance's armed Lines as `running`, `stalled` or `stopped` (the text header
+prints `Status: line arms ...` when any is stalled or stopped). The `next` entry
+keeps each part's figures under `queue`, `evidence` and `prediction`. Evidence
+rows carry when they were observed in their own detail; prediction rows omit
+observation timestamps so their identity stays stable while the finding is
+unchanged.
 
 A current `unsure` examined attestation holds a row, and `status.held` counts
 the rows held. A hold lasts only while its basis is unchanged:
@@ -1669,14 +1817,20 @@ the rows held. A hold lasts only while its basis is unchanged:
 A revised Claim, a later support or contradict from the same principal, or a
 lapsed validity window ends the hold, and the row returns.
 
-A row appears only when the caller can perform its repair: each repair needs
-the permission tier of the tool that performs it (approval needs graph write;
-settle, arm and authoring need governed write; a Line dispatch needs what the
-Line's runs need). A read-only credential sees only the rows it can repair.
-`status.hidden` counts the rows and nested findings left out, and the text
-output says so. A status facet (the compiler, floor, ledger mirror and so on)
-always reports its state; when its repair is one the caller cannot perform,
-the repair is dropped and the facet carries `repair_hidden: true` instead. Each repair's `command`
+Every caller sees every row. Each repair needs the permission tier of the tool
+that performs it (approval needs graph write; settle, arm and authoring need
+governed write; a Line dispatch needs what the Line's runs need). When the
+caller cannot perform a row's repair, or a nested finding's, the row stays: its
+`repair` is withheld (`null`) and `repair_requires` names the `tool`, the `tier`
+it runs at, and `because` (`tier`, or `profile` when an MCP session's tool
+profile does not advertise it; `profile: "full"` does; or `authoring` when the
+caller cannot author on the instance at all, with `authoring_refusal` carrying
+the code, detail and repair `whoami` reports). The text output prints
+`repair withheld: <tool> needs the <tier> tier`, led by the identity repair
+when authoring gates it. Nothing is left out. A status facet (the compiler, floor, ledger mirror and
+so on) always reports its state; when its repair is one the caller cannot
+perform, the repair is dropped and the facet carries `repair_hidden: true` and
+`repair_requires` instead. Each repair's `command`
 renders for the caller's surface: a CLI command here, an MCP tool call on
 `cruxible_playbill_next`.
 Empty `items` means only that no work exists in the explicitly observed domains.
@@ -1711,8 +1865,12 @@ is `stale`: a candidate neither accepted, refused nor withdrawn whose parent is
 no longer the coordinate's semantic root, so it cannot activate. The row names
 the proposal's author in `detail.actor_id`; its repair is
 `cruxible playbill proposal readmit PROPOSAL_ID`, which only that author may
-run, and `proposal withdraw` is the alternative when the change is no longer
-wanted. A readmission at the same coordinate, or a withdrawal, closes the row.
+run, so only the author's queue shows the row (the principal `whoami` reports;
+a read with no principal shows none). `proposal withdraw` is the alternative
+when the change is no longer wanted. A readmission at the same coordinate, or a
+withdrawal, closes the row; so does a readmission that still carries the
+change: an accepted one supersedes the source for good, and a live one that went
+stale shows as its own row instead.
 A proposal a settle terminal made carries `detail.settle_submission` (`mode`
 and `mandate_digest`). A `delegated` settle that went stale is automation that
 did not finish: readmitting it re-evaluates it as an ordinary proposal that
@@ -1782,6 +1940,75 @@ Audit reads do not create qualifying consumption touches or change governed
 state. Follow `next_cursor` only while its accepted coordinate, evaluation time,
 scope, and operational input head remain unchanged.
 
+## playbill set, add, retire and write
+
+~~~text
+cruxible playbill set SUBJECT FIELD VALUE --because TEXT
+  [--evidence-file PATH#ANCHOR | --capture CAP-HANDLE|DIGEST | --evidence-contract NAME]
+  [--role ROLE] [--contend] [--expect VALUE... | --expect-absent]
+  [--workspace-root DIR] [--dry-run] [--no-accept] [--at GIT_OID] [--json]
+cruxible playbill add SUBJECT FIELD VALUE --because TEXT
+  [--evidence-file PATH#ANCHOR | --capture CAP-HANDLE|DIGEST | --evidence-contract NAME]
+  [--role ROLE] [--expect-absent]
+  [--workspace-root DIR] [--dry-run] [--no-accept] [--at GIT_OID] [--json]
+cruxible playbill retire TARGET [FIELD] --because TEXT
+  [--reason was-rescinded|was-wrong|superseded] [--expect VALUE]... [--dry-run] [--no-accept]
+  [--at GIT_OID] [--json]
+cruxible playbill write FILE [--because TEXT] [--workspace-root DIR] [--dry-run] [--no-accept]
+  [--at GIT_OID] [--json]
+cruxible playbill write --schema
+~~~
+
+`set` puts VALUE in FIELD of SUBJECT (`kind/id`). On a single-value field it
+replaces the live value: the Claim it revises is found for you. A Subject of a
+known kind that does not exist yet is added in the same change set; a
+Subject-valued VALUE must already exist. FIELD is a field of the kind as
+`orient` names it, or the full predicate. VALUE is text: an enum member, a
+number or `true`/`false` for such fields, a Subject as `kind/id` (`@kind/id`
+names the same Subject, in SUBJECT too), or the text itself for exact content
+(which is also its own evidence). The default evidence
+is `--because` as self evidence; `--evidence-file` cites text found once in a
+catalogued workspace file, read on this side, and `--capture` an existing
+Capture by its sha256 digest or its handle `CAP-<12+ hex>` (a digest prefix
+unique among the verified Captures the instance holds, cited or not; ambiguous
+or unknown handles refuse with the nearest handles). `--evidence-contract NAME` cites the newest verified Capture of
+that CaptureContract about SUBJECT, cited or not: one an accepted Claim on
+SUBJECT cites, or whose own source names SUBJECT; with none it refuses
+`playbill.write.contract_capture_not_found`. Only a Capture committed as exact
+bytes can back a Claim: when the newest is a canonical value (as the external
+record reader commits records) it refuses `contract_capture_not_citable`
+naming it, or cites an older exact-bytes Capture with a
+`newer_capture_not_citable` warning. Either resolves to the digest
+before the write is lowered, and the change prints the Capture as
+`evidence CAP-<12 hex>`. The write accepts in the same call when the approval policy and your
+tier allow it; otherwise it prints the eligible approvers and the approve
+command. `--no-accept` only proposes. `--dry-run` runs every check and writes
+nothing; pass its coordinate back as `--at` to refuse
+(`playbill.write.slot_changed`) if the field moved since. `--expect VALUE` is
+the compare-and-set by value: it refuses `playbill.write.slot_changed`, showing
+what the field holds, unless it holds exactly VALUE (repeat `--expect` for every
+value of a many-valued field); `--expect-absent` expects the field to hold
+nothing. Both compose with `--at`. Each change prints
+before and after, its Claim and its verdict; a verdict other than `supported`
+prints a warning with its repair.
+
+`add` puts one more VALUE in a many-valued FIELD, beside the values already
+there; a value already live is answered as done, and `--expect-absent` refuses
+it instead (`playbill.write.value_already_present`). `retire` ends one live
+Claim, named by ID or by SUBJECT FIELD when that field holds one value; the
+Claims that depend on it retire with it; `--expect` compares the field's values
+as on `set`. `write` applies a
+FILE (YAML or JSON) of changes as one change set: `{"because": ..., "changes":
+[...]}`, or a bare list with `--because`, each change
+`{"op": "set" | "add", "subject", "field", "value"}` or
+`{"op": "retire", "target"}`. `add` puts one more value in a many-valued field;
+two adds on one field land in one change set. A top-level `"subject"` is the
+Subject of every change that names none (a retire's target may then be
+`{"field": ...}`); a change's own subject overrides it, and a change with
+neither refuses `playbill.write.subject_required`. `--schema` prints what FILE
+holds. A refusal prints its code, the nearest valid names and the repair, and
+exits 1.
+
 ## playbill get
 
 ~~~text
@@ -1794,7 +2021,23 @@ Reads one thing by any reference form you have seen: `CLM-...` (or a unique
 prefix of at least four hex digits), `kind/id` or `Subject:kind/id`, a
 predicate (full, or a leaf unique across kinds) or `ClaimType:<predicate>`,
 `Document:<name>`, `Procedure:<name>`, `query:<name>`, `CaptureContract:<name>`,
-an artifact path, or a proposal id or prefix. `--detail` picks the depth:
+an artifact path, or a proposal id or prefix. Operational things resolve too:
+`Line:<name>` (or the Line identity digest `next` names a due Line by, in full
+or as a 12+ hex prefix) answers the Line's Procedure, trigger, authority, its
+arms (the principal kind, state and stop reason, and who armed each: a runtime
+credential's id and label only to that credential or an admin, otherwise
+`armed_by_withheld`), due and
+waiting occurrences and recent runs; `CAP-<12+ hex>` or `Capture:<digest>`
+answers a Capture's contract and version, observation time, size, availability
+and the Claims (and their Subjects) that cite it; `ResolutionContract:<name>`
+answers the hypothesis Claim, window, rule and bound-window state; and
+`Mandate:<name>` (or `ProcedureMandate:<name>`) answers the grant, validity and
+state. Arms, occurrences, runs, windows and capture availability are
+operational state with no history: they are always read as of now at the
+current head, whatever `--at` names, and the answer says so with `live`
+(`as_of`: that head's 12-hex git oid and generation; `fields`: what was read
+live). `orient` marks its runs, lines and predictions sections, and its map's
+arm attention and run counts, the same way. `--detail` picks the depth:
 `summary` (default) prints a values-first card -- a Subject's Claims as an
 aligned table, a Claim's value, verdict and flags (`stale`, `contested`,
 `contradicted`, `unsure_hold`) -- `evidence` lists a Claim's captures by
@@ -1806,28 +2049,18 @@ a Document's bytes. A body over 64 KiB needs `--range`. A summary cuts a string
 value over 500 characters and says how long it is; `--detail evidence` or
 `proof` shows it whole. Subject rows carry the Claim id behind each value. A
 summary's coordinate is the git oid's 12-hex prefix and the generation; the
-full accepted coordinate is under `--detail proof`. A wrong or ambiguous REF
+full accepted coordinate is under `--detail proof`. `--at` takes a git oid, a
+unique 12+ hex prefix of one, or a generation number, so either half of a
+printed coordinate reads back; each history row prints both (`seq N at
+<12 hex>`). Evidence names each Capture by its `CAP-<12 hex>` handle, which
+`get` and `capture read` both accept. A wrong or ambiguous REF
 refuses with a code and the nearest names. `--json` prints the whole structured
 result.
-
-## playbill discover
-
-~~~text
-cruxible playbill discover [--query TEXT] [--entrypoint NAME]
-  [--profile interfaces|subjects|all]
-  [--evaluation-time TS]
-~~~
-
-Exactly one of --query or --entrypoint selects the page. Matching is exact and
-lexical over the accepted naming layer; it is never a similarity score. When a
-budget clips the hits, the result says `truncated: true` at the top level
-(`page.coverage` names the budget); discovery has no cursor, so narrow the query
-or raise the budget.
 
 ## playbill orient
 
 ~~~text
-cruxible playbill orient [--kind KIND | --section documents|procedures|claim_types|queries]
+cruxible playbill orient [--kind KIND | --section SECTION]
   [--limit N] [--cursor C] [--at GIT_OID] [--evaluation-time TS] [--json]
 ~~~
 
@@ -1835,33 +2068,65 @@ The map of accepted state, in one call. With no option it prints each Subject
 kind with its live Subject count and its predicates (short name, cardinality,
 type or enum members, and the CaptureContracts whose evidence the ClaimType
 admits, by name), the artifact counts, the named queries with their parameters,
-who you are and whether you can author (and why not), what the `next` queue
-holds, and the next commands to run. When any live ClaimType still names
+who you are and whether you can author (when not, the same `authoring_refusal`
+code, detail and repair that `whoami` reports), what the `next` queue
+holds, and the next commands to run. When any Line was ever armed, attention
+counts the arms as the instance's Line consumer reports them (running,
+stalled, stopped) and names up to three stalled or stopped Lines with the stop
+reason, for any caller of the instance, without daemon scope; it also notes
+when armed Lines have no consumer loop running here and when the provider lane
+is unavailable. When any live ClaimType still names
 CaptureContracts by digest, attention says so and suggests
 `cruxible playbill claim-type upgrade-evidence-rules`.
 
 `--kind` reads one kind in full: every predicate with its roles, freshness
-horizon and live Claim count, plus up to five sample Subject IDs. A kind that
+horizon and live Claim count, the predicates of other kinds that point at it
+(`incoming`, full names: follow one backwards with `query KIND --follow-in
+PREDICATE:alias`), plus up to five sample Subject IDs. A kind that
 does not exist is refused as `playbill.orient.kind_not_found` with the nearest
 kinds. `--section` pages one artifact family as compact rows; follow
-`next_cursor` with `--cursor` while `truncated` is true. Kinds page the same way
+`next_cursor` with `--cursor` while `truncated` is true. `--section runs` lists
+Procedure runs, newest admission first, each with its Procedure, status,
+admission time, Line and finished-node count, and `--section running` lists
+only the runs still running. Both page by the admission's immutable position,
+so a run admitted or finished after the first page is never repeated or
+skipped; status is shown, never part of the order. Read one
+with `cruxible playbill get ProcedureRun:RUN-...` (or a `RUN-` prefix of 12+
+hex): nodes done over the graph's nodes, the node a running run is on,
+elapsed time (against the read's evaluation time while it runs, the measured
+wall clock once it finished), the last finished nodes, the Line, occurrence and
+arm that admitted it, and the receipt digest once it is terminal. Per-node
+durations are not shown: every journal record of a run carries the run's
+evaluation instant.
+The other operational sections page the same way: `lines` (each Line's
+Procedure, trigger, authority, latest arm state and due/waiting counts),
+`captures` (the Captures accepted Claims cite, newest first, keyset-paged,
+each as its `CAP-` handle), `capture_contracts` (version, grade, how many
+ClaimTypes admit each), `predictions` (each live ResolutionContract with its
+bound windows by status and the next close) and `mandates` (grant, state and
+expiry). The default map counts each family under `Artifacts` and never
+inlines their rows; each section suggests the `get` of its first row.
+`--section interfaces` lists the provider interfaces a Procedure node can call,
+each with its interface digest, operation contract and the implementing
+Providers with their implementation digests (`get ProviderInterface:NAME`
+reads one, `--detail proof` its accepted inventory entry). `--section
+principals` lists the principal registry (`get Principal:ID` reads one), and
+`--section policies` every live standalone or embedded governed policy with its
+declaring artifact (`get ApprovalPolicy:instance` reads the approval policy).
+The default map also counts every accepted Claim by status (accepted,
+conflicted, overturned, refused, retired) under `artifacts.claims`. Kinds page the same way
 when there are more than `--limit`. `--at` reads an earlier accepted generation.
 `--json` returns the whole structured answer, including the coordinate and
 generation.
 
-## playbill search and list
-
-~~~text
-cruxible playbill search QUERY [--kind KIND]... [--status STATUS]...
-  [--subject-path PATH] [--cursor JSON] [--evaluation-time TS]
-cruxible playbill list [--kind KIND]... [--status STATUS]...
-  [--subject-path PATH] [--cursor JSON] [--evaluation-time TS]
-~~~
-
-These are the generic headless discovery surface for Claims, Procedures, and
-installed demand policies. Their text output starts with a count header.
-Until demand policy is installed it explicitly reports
-`demand: not_installed`.
+When the current Git worktree holds this instance's floor (see
+[playbill floor](#playbill-floor)), orient also reports
+`floor: {at, generations_behind}`: the accepted Git OID the floor was exported
+at, and how many accepted generations it is behind this answer (`null` for a
+floor exported before generations were stamped). The text output prints
+`Floor: .playbill/floor at <oid>, N generation(s) behind; refresh: cruxible
+playbill floor export --force`. It reads only the floor's `manifest.json` (its
+coordinate and generation); it never re-exports.
 
 ## playbill world
 
@@ -1891,47 +2156,144 @@ Returns signed accepted ChangeSet members in `(GENERATION, pinned head]` order.
 Follow `next_cursor` to continue against the same historical head even if main
 advances; the cursor binds the lower bound, access profile, and page budgets.
 
-## playbill expand
-
-~~~text
-cruxible playbill expand ARTIFACT_PATH [--facet NAME]... [--evaluation-time TS]
-~~~
-
-Returns one bounded context capsule for an accepted address. Repeat --facet to
-narrow what the capsule carries.
-
 ## playbill floor
 
 ~~~text
-cruxible playbill floor export [--force]
+cruxible playbill floor export [--force] [--with-discovery]
 ~~~
 
 Writes the deterministic greppable floor of accepted state to the fixed derived
-cache `.playbill/floor/` under the current workspace. The daemon returns bytes
-keyed by floor path and never writes a client path; export refuses a non-empty
-floor unless `--force` is given, except that a floor already holding exactly
-this export (as it does right after an activation) is a no-op success reported
-as `unchanged`. The export carries its own coverage boundary
-in `coverage-manifest.json`, enumerated in the root manifest like every other
-floor file. `floor_output.path` is obsolete and refused; a v2 coverage config
-enables refresh with only the fixed profile. `floor export` records that profile
-when the config lacks it, so the following `next` observation no longer reports
-the floor as `missing` after a successful export:
+cache `.playbill/floor/` under the current workspace. The floor is the
+grep-first front door to accepted state: agents search it with grep and read
+the file a hit lands in. It does no matching of its own. The read and write
+verbs (`get`, `query`, `orient`, `set`, `retire`, `write`) confirm live
+verdicts and act.
+
+### The loop
+
+1. **Grep.** `grep -rn "some text" .playbill/floor/current`.
+2. **Read the header.** Every `current/` file starts with one line naming its
+   ref and the generation it last changed, for example
+   `# dev.roadmap_item/surface-pass  kind=dev.roadmap_item  changed gen 412`.
+3. **Get the ref for live verdicts.** `cruxible playbill get dev.roadmap_item/surface-pass`.
+   The floor shows accepted values and no verdicts; `orient` says how many
+   generations behind the head the floor is.
+4. **Write with the verbs.** `cruxible playbill set dev.roadmap_item/surface-pass
+   adoption_state adopted --because "…"`.
+
+An agent without a shell searches the values with
+`cruxible playbill query --contains "some text"` (`cruxible_playbill_query`
+with `contains` on MCP) instead.
+
+### What is in the floor
+
+The floor is a pure function of the accepted coordinate (and the pinned review
+notes snapshot its change rationale is read from). It holds no source content:
+Document and evidence bodies stay behind `get`, and the ledger clone is the
+audit path.
+
+| Path | What it holds |
+|---|---|
+| `current/<kind>/<id>.yaml` | One file per Subject, values first (below). |
+| `current/<kind>/<id>.<field>.txt` | A text value too long to inline (over 2 KiB or 40 lines), whole; never truncated. |
+| `current/<kind>/INDEX` | One tab-separated line per Subject of the kind: ref, a title-like value, `field=value` for each state-like field. |
+| `changes/<seq>.json` | The accepted change that introduced a current Claim revision: time, actor, the rationale its proposal recorded, and the refs it changed. |
+| `sources/INDEX` | One tab-separated line per evidence source current Claims cite (self-source Captures excluded) and per accepted Document: source, CaptureContract, locator, citing-Claim count, the generation it last changed. |
+| `projections/INDEX` | Written by the client from its own workspace bindings, outside the daemon manifest: one line per workspace file bound to accepted state (Document body, evidence source, rendered block), its role, bound ref and the generation that ref last changed. A bound file that does not exist is a `workspace_binding_missing` row in `next`, not a line here. |
+| `manifest.json` | The coordinate, its generation, the renderer, and every file's digest and `changed_at`, bound into the floor digest. |
+| `subjects/`, `claim-types/`, `procedures/`, `coverage-manifest.json` | Only with `--with-discovery`: the discovery cards other tools read (they carry digests and addresses) and the export's coverage boundary. They need the whole accepted facts read, so they cost most of an export. |
+| `README.md` | This loop, for an agent that lands in the floor cold. |
+
+A `current/` file is a strict subset of YAML, so it both greps line by line and
+parses with any YAML reader:
+
+~~~yaml
+# project.work_item/wi-1  kind=project.work_item  changed gen 5
+governs:
+  - project.work_item/wi-2  # CLM-985cd53c0dc20d4eb15481d8980bf35c
+  - project.work_item/wi-3  # CLM-b5d5f511045eb94131d21f2a59595484
+measured: 3  # CLM-714a14a1891fef7eb464b69de3a4e2c6
+ruling: |  # CLM-ca6f1cf4aa8db970935fe9792c07b509
+  Rulings are text.
+  Every line of this one greps on its own.
+status: ready  # CLM-ee98966ed497f1b629f44bf4eb686cb5
+title: "Tidy the CLI: part #1"  # CLM-77795e37bc864490c35f2c603f2a12d6
+incoming:
+  - governs <- project.work_item/wi-4  # CLM-0f3a…
+~~~
+
+- Fields use the same short names `orient` advertises and `query` resolves.
+  Every live Claim of a slot is shown: a many-valued field, or a single-valued
+  one with several live Claims, lists every value.
+- Each value ends with the Claim that states it (`CLM-…`); `get` on it lists the
+  Captures behind it. A Subject-valued field shows the other Subject's ref.
+- `incoming:` lists the live Subject-valued Claims of other Subjects that point
+  here, as `<field> <- <ref>`, so either end of an edge greps.
+- `flags:` carries only the structural `contested`: a single-valued field with
+  more than one distinct live value. No verdict (stale, uncovered,
+  contradicted) is in the floor: verdicts move with time and evidence, which no
+  coordinate fixes.
+- An exact-content value (a ruling) is its text, read by digest. Accepted
+  bodies (and the Capture envelopes `sources/INDEX` reads) are retained for as
+  long as their Claim is in history, so the floor is fixed by the coordinate;
+  one lost anyway refuses a fresh render as an integrity failure rather than
+  publishing a different floor. Bytes that are not UTF-8 text show as
+  `{exact_content: binary, bytes: N}`.
+
+### Freshness and deltas
+
+Every file is stamped with `changed_at`, the latest accepted generation that
+touched any of its inputs (for a `current/` file: the Subject, its Claims of
+any lifecycle, the Claims pointing at it, and the ClaimTypes naming its
+fields). A file's bytes differ between two generations exactly when its stamp
+moved, so a floor at generation B lacks exactly the files stamped after B plus
+the paths dropped since. `orient` reports `floor: {at, generations_behind}`
+from the manifest alone.
+
+The manifest also names the review notes the change rationale was read from
+(`notes_digest`, the digest of every rationale `changes/` shows); a rationale
+revised after acceptance changes it, and a refresh then replaces the floor
+whole.
+
+The daemon keeps a rebuildable floor index on each instance and advances it by
+the ledger diff. `floor export` and every refresh send the generation and
+renderer of the floor the workspace holds to `POST /playbill/floor/delta`,
+which answers with a delta (or the whole floor, for a missing, newer or
+foreign base). One shared apply verifies the base and head manifest digests
+and the bytes actually installed before writing anything (a hand-edited,
+missing or stray file makes it ask for the whole floor, which repairs it while
+keeping the client's own `projections/INDEX`), writes each file atomically
+through directory descriptors that never follow a link, and writes
+`manifest.json` last, so an interrupted refresh resumes cleanly.
+
+### Writing the directory
+
+The daemon returns bytes keyed by floor path and never writes a client path;
+export refuses a non-empty directory that holds no floor unless `--force` is
+given, and a floor already at the head is a no-op success reported as
+`unchanged`. With `--with-discovery` the export is a full export and also
+carries its coverage boundary in `coverage-manifest.json`. `floor_output.path`
+is obsolete and refused; a v2 coverage config enables refresh with only the
+fixed profile. `floor export` records that profile, and its opt-in parts, so a
+refresh after an activation exports the same parts and the following `next`
+observation no longer reports the floor as `missing` after a successful export:
 
 ~~~json
 {
   "tag": "playbill-coverage-workspace-config-v2",
   "floor_output": {
     "tag": "playbill-floor-output-v1",
-    "format": "playbill-floor-export-v2"
+    "format": "playbill-floor-export-v5",
+    "include": ["discovery"]
   }
 }
 ~~~
 
-Floor export v2 pretty-prints every JSON card with stable key ordering for grep
-quality. `manifest.json` inventories and digests those exact rendered bytes, so
-repeated exports at one accepted coordinate remain byte-identical. Historical v1
-manifests and compact JSON spelling remain readable without reinterpretation.
+`include` is present only for a floor exported `--with-discovery`. A profile an
+earlier build recorded at an older format is refused until
+`floor export --force` rewrites it. `manifest.json` inventories and digests the
+exact rendered bytes, so repeated exports at one accepted coordinate remain
+byte-identical.
 
 ## playbill coverage
 
@@ -2030,8 +2392,18 @@ cruxible playbill proposal activate PROPOSAL_ID [--workspace-root DIR]
   [--no-sync]
 ~~~
 
-`cruxible playbill whoami` names the credential-derived actor, its effective
-permission mode, accepted principal-registration status, and current coordinate.
+`cruxible playbill whoami` names the actor and where its ID came from (the
+credential's principal, the configured principal ID, or the local operator),
+whether a credential authenticates it (with auth off the ID is a claim, not
+authentication), its effective permission mode, accepted principal-registration
+status, and current coordinate. It also says whether this actor can author and,
+if not, why: `can_author` and `authoring_refusal` carry exactly the code, detail
+and repair authoring would return (`playbill.identity.principal_unconfigured`,
+`principal_absent`, `principal_revoked`, `credential_unbound`,
+`permission_insufficient`, or `playbill.instance.decommissioned`). Authoring
+refuses such an actor at `authoring create`, before any payload is compiled or
+preflighted, rather than at proposal evaluation
+(`playbill.proposal.creator_principal_invalid`).
 `proposal list` prints a labeled `COORDINATE_TIME` column and deterministically
 separates current open candidates from accepted, refused, and stale terminal
 evidence so retries do not depend on remembered IDs. It returns one page
@@ -2045,7 +2417,10 @@ names exactly one admission; unknown and historical ambiguous selectors are
 typed refusals that point back to `proposal list`.
 `proposal readmit` replays a stale proposal's authored content through the current
 governed rebase and returns a fresh, idempotent proposal without changing the old
-proposal evidence. A stale generated ClaimType dependency-closure migration is not
+proposal evidence. It refuses `playbill.proposal.readmit_already_accepted` when
+the change is in accepted state -- the proposal itself was accepted, or its
+readmission was (`context.accepted_as`) -- and `playbill.proposal.readmit_not_stale`
+for an open or refused proposal. A stale generated ClaimType dependency-closure migration is not
 byte-rebased because its dependent inventory may have changed; rerun ClaimType
 migration preflight and submit at the current head instead.
 
@@ -2119,13 +2494,15 @@ ledger](#playbill-ledger) for what the mirror carries and how to get its URL.
 ## playbill principal
 
 ~~~text
-cruxible playbill principal list
-cruxible playbill principal add PRINCIPAL_ID --kind ordinary --key-dir DIR --name NAME
+cruxible playbill principal add PRINCIPAL_ID --key-dir DIR [--signer-key PATH]
+  [--mode governed_write] [--kind ordinary] [--name NAME] [--json]
 cruxible playbill principal rotate ...
 cruxible playbill principal revoke ...
 cruxible playbill principal recover ...
 ~~~
 
+The principal registry is read with `cruxible playbill orient --section
+principals`, one principal with `cruxible playbill get Principal:ID`.
 Registration, rotation, revocation, and recovery are governed principal-change
 proposals. `principal add` generates the Ed25519 private key exclusively in the
 client-held `--key-dir` outside the current workspace and sends only its public
@@ -2142,6 +2519,28 @@ non-creator principals may record additional voluntary approvals. `--kind`
 is explicit and may be `ordinary` or `recovery`; the daemon kind is
 instance-owned. Recovery principals cannot approve ordinary Document candidates.
 
+`principal add` is the one command that sets up an agent. With `--signer-key`
+(your own private key; also `CRUXIBLE_PRINCIPAL_KEY`) it proposes the
+registration, approves it as you, and activates it. When the daemon runs with
+auth it then mints the new principal's bearer credential at `--mode` (default
+`governed_write`), signed with the new principal's key. Everything the agent
+needs lands owner-only in `DIR/cruxible.env`: the transport, the instance, its
+principal ID, its key path, and, with auth, its credential (written, never
+printed). The agent loads it with `set -a; . DIR/cruxible.env; set +a`; the CLI,
+SDK and MCP server all read those variables. Without `--signer-key` the
+registration is only proposed and the command prints each remaining step:
+`proposal approve`, `proposal activate`, and, with auth,
+`credential mint --principal-id ID --key-dir DIR`, which writes the token into
+the same settings file. `playbill init` writes the owner's settings file the
+same way. `proposal approve` defaults `--signer-id` to the configured principal
+and `--key` to `CRUXIBLE_PRINCIPAL_KEY`.
+
+A propose-only agent is a principal whose credential is `governed_write`: it
+can author and propose, and the tier refuses approvals and activation. That
+limit needs daemon auth; with auth off every process of the OS user is equally
+trusted and could load another principal's settings. See the
+[quickstart](quickstart.md#add-a-propose-only-agent) for the worked example.
+
 ## playbill sources
 
 ~~~text
@@ -2153,20 +2552,10 @@ cruxible playbill sources propose ...
 Compilation reads declared local files client-side and emits a path-free bundle.
 The daemon never reads a submitted client path.
 
-## playbill explain
-
-~~~text
-cruxible playbill explain IDENTITY
-  [--detail summary|evidence|proof]
-  [--include-body]
-~~~
-
-IDENTITY is one accepted Document identity (`document:fleet.policy-note`) or one
-Subject address (`sec.package/click`, or the `Subject:`-prefixed spelling), which
-resolves to that Subject rather than refusing.
-
-summary and evidence are implemented. proof is reserved and returns a typed
-unsupported-detail result.
+Governance and provenance explanations are `get` details:
+`cruxible playbill get Document:NAME --detail why`, `get KIND/ID --detail why`,
+or `get CLM-... --detail why`; `--detail proof` reads the full accepted
+envelope and facts.
 
 Use --json on operation commands for machine-readable output. Run any command
 with --help for its exact options.

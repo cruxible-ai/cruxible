@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -25,6 +24,7 @@ from cruxible_client import (
 from cruxible_client.authoring.bind import bind_working_selection_input
 from cruxible_client.authoring.examples import authoring_example
 from cruxible_client.authoring.inputs import ClaimInput, ProcedureInput, QueryDefinitionInput
+from cruxible_client.contracts import PlaybillClaimViewV2
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
@@ -41,6 +41,7 @@ from cruxible_client.contracts.captures import (
     render_capture_contract,
 )
 from cruxible_client.contracts.claim_types import claim_type_digest
+from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicyV1,
     ClaimResolutionPolicyV1,
@@ -64,7 +65,6 @@ from cruxible_client.contracts.query.grammar import (
     QueryProjectionV1,
     QuerySubjectFieldRefV1,
 )
-from cruxible_client.errors import CoreError
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.cli.main import cli
 from cruxible_core.ledger.signing import LocalEd25519ApprovalSigner
@@ -197,6 +197,28 @@ def _install_direct_capture_contract(
     )
     instance.refresh()
     return capture_contract_digest(contract).tagged
+
+
+def _claim_proof(transport: CruxibleClient, instance_id: str, claim_id: str) -> PlaybillClaimViewV2:
+    """One accepted Claim's full read, through get(detail="proof")."""
+
+    proof = transport.playbill_get(
+        instance_id, request=PlaybillGetRequestV1(ref=claim_id, detail="proof")
+    ).proof
+    return PlaybillClaimViewV2.model_validate(proof)
+
+
+def _accepted_claims(pb: Playbill, predicate: str) -> list[str]:
+    """Every accepted Claim of ``predicate`` across the demo's two Subject kinds."""
+
+    return [
+        entry["claim"]
+        for kind in ("secops.policy", "secops.service")
+        for row in pb.query(kind, select=[predicate], claims=True, limit=500).rows
+        for entries in (row.get("claims") or {}).values()
+        for entry in entries
+        if entry["status"] == "accepted"
+    ]
 
 
 def test_empty_evidence_policy_is_candidate_through_cli_and_sdk(
@@ -556,7 +578,7 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
     assert diagnostic.call_site.expression == "missing_revision_id"
 
     pb.refresh()
-    predecessor = transport.get_playbill_claim(instance_id, claim_id)
+    predecessor = _claim_proof(transport, instance_id, claim_id)
 
     current = pb.next(expiring_within=Duration.days(count=7))
     assert "workspace_sources" in current.observed_domains
@@ -579,9 +601,14 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
         "plane": "external",
         "identity": "corpus.vuln-response-runbook",
     }
-    assert drift.repair.operation == "playbill.authoring.bind"
+    # The repair is the set verb that restates the Claim on the redrifted source:
+    # the door on every profile (full is a superset), and the tool its tier gate names.
+    assert drift.repair.operation == "playbill.set"
     assert drift.repair.required_change == "adjudicate_citation_drift"
     assert drift.repair.arguments["source_id"] == "corpus.vuln-response-runbook"
+    assert drift.repair.arguments["claim_id"] == claim_id
+    assert drift.repair.command is not None
+    assert drift.repair.command.startswith("playbill.set(")
     runbook.write_text(original_runbook, encoding="utf-8")
     reverted = pb.next(expiring_within=Duration.days(count=7))
     assert not any(item.reason == "citation_drifted" for item in reverted.items)
@@ -668,7 +695,7 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
     assert proposal_id is not None
     _approve_and_activate(http, instance_id, private_key_path, proposal_id)
 
-    successor = transport.get_playbill_claim(instance_id, claim_id)
+    successor = _claim_proof(transport, instance_id, claim_id)
     facts = {fact["schema_id"]: fact["value"] for fact in successor.facts}
     assert facts["playbill.claim.statement"]["object"]["value"] == 72
     assert successor.envelope["predecessor_digest"] is not None
@@ -683,86 +710,6 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
     )
     after_successor = pb.next(expiring_within=Duration.days(count=7))
     assert all(item.reason != "citation_drifted" for item in after_successor.items)
-
-
-def test_sdk_retirement_replay_survives_a_fresh_http_client_process_boundary(
-    playbill_http: tuple[TestClient, str, Path],
-    tmp_path: Path,
-) -> None:
-    http, instance_id, private_key_path = playbill_http
-    workspace = tmp_path / "retirement-replay-world"
-    workspace.mkdir()
-    _catalog(workspace)
-
-    def fresh_playbill() -> Playbill:
-        transport = CruxibleClient(base_url="http://cruxible")
-        transport._client = http  # type: ignore[assignment]
-        return Playbill._from_client(transport, instance_id=instance_id, workspace=workspace)
-
-    author = fresh_playbill()
-    subject = author.subject(
-        subject="secops.policy/patch-sla",
-        pins=(),
-        lifecycle=ArtifactLifecycle(),
-    )
-    claim_type = author.claim_type(
-        predicate="secops.policy.patch_sla",
-        subject_kinds=("secops.policy",),
-        object_kind=ClaimObjectKind.LITERAL,
-        value_schema={"type": "integer"},
-        object_subject_kinds=(),
-        cardinality=Cardinality.ONE,
-        permitted_roles=(ClaimRole.NORMATIVE,),
-        referent_sensitivity=ReferentSensitivity.IDENTITY,
-        sources=("corpus.vuln-response-runbook",),
-        admission_policy=ClaimAdmissionPolicyV1(),
-        resolution_policy=ClaimResolutionPolicyV1(
-            cardinality="one",
-            eligible_verdicts=("supported",),
-            selector="only_contender",
-        ),
-        pins=(),
-        evidence_freshness=None,
-    )
-    intent = author.claim(
-        subject=subject.address,
-        predicate=claim_type.predicate,
-        value=48,
-        role=ClaimRole.NORMATIVE,
-        rationale="The runbook records the accepted patch deadline.",
-        supported_by=author.file("corpus/vuln-response-runbook.md").anchor("forty-eight hours"),
-        copied_from=None,
-        self_source=None,
-        qualifier=None,
-        effective_period=None,
-        revises=None,
-        dispositions={},
-        subject_definition=subject,
-        claim_type_definition=claim_type,
-    ).prepare()
-    assert not intent.refused, intent.diagnostics
-    intent.submit()
-    proposal_id = intent.status().proposal_id
-    assert proposal_id is not None
-    _approve_and_activate(http, instance_id, private_key_path, proposal_id)
-    claim_id = str(intent._raw["semantic_identity"])
-
-    submitter = fresh_playbill()
-    proposed = submitter.retire_claim(claim_id, reason="was-wrong", mode="submit")
-    assert proposed.outcome == "proposed"
-    assert proposed.proposal is not None
-    retirement_proposal_id = proposed.proposal.proposal["admission"]["proposal_id"]
-    _approve_and_activate(http, instance_id, private_key_path, retirement_proposal_id)
-
-    first_replay = fresh_playbill().retire_claim(claim_id, reason="was-wrong", mode="submit")
-    second_replay = fresh_playbill().retire_claim(claim_id, reason="was-wrong", mode="submit")
-    assert first_replay.outcome == "already_retired"
-    assert first_replay.model_dump(mode="json") == second_replay.model_dump(mode="json")
-    assert first_replay.operation_digest == proposed.operation_digest
-
-    with pytest.raises(CoreError) as mismatch:
-        fresh_playbill().retire_claim(claim_id, reason="was-rescinded", mode="submit")
-    assert mismatch.value.error_code == "playbill.claim.retire_closure_mismatch"
 
 
 def test_shipped_claim_type_and_flow_a_examples_compose_to_a_supported_claim(
@@ -832,8 +779,10 @@ def test_shipped_claim_type_and_flow_a_examples_compose_to_a_supported_claim(
     )
 
     claim_id = str(submitted.intent["semantic_identity"])
-    explained = transport.explain_playbill_claim(instance_id, claim_id)
-    assert explained.verdict["verdict"] == "supported"
+    explained = transport.playbill_get(
+        instance_id, request=PlaybillGetRequestV1(ref=claim_id, detail="why")
+    ).why
+    assert explained is not None and explained["verdict"]["verdict"] == "supported"
 
 
 def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
@@ -901,11 +850,7 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
     _approve_and_activate(http, instance_id, private_key_path, kev_proposal)
     assert kev.status().state == "accepted"
     pb.refresh()
-    kev_identity = next(
-        str(row["identity"]).removeprefix("Claim:")
-        for row in pb.list(kinds=("claim",), statuses=("accepted",)).rows
-        if row.get("predicate") == triage_type.predicate
-    )
+    kev_identity = _accepted_claims(pb, triage_type.predicate)[0]
 
     critical = pb.claim(
         subject=SubjectRef(policy_subject.address, pb.coordinate),
@@ -993,8 +938,7 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
         _approve_and_activate(http, instance_id, private_key_path, proposal_id)
         pb.refresh()
 
-    claim_rows = pb.list(kinds=("claim",), statuses=("accepted",)).rows
-    assert len([row for row in claim_rows if row.get("predicate") == triage_type.predicate]) == 6
+    assert len(_accepted_claims(pb, triage_type.predicate)) == 6
     guidance_subject = pb.subject(
         subject="secops.policy/response-guidance",
         pins=(),
@@ -1073,11 +1017,7 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
     assert query_proposal_id is not None
     _approve_and_activate(http, instance_id, private_key_path, query_proposal_id)
     pb.refresh()
-    queried = transport.run_playbill_query(
-        instance_id,
-        query.identity.name,
-        evaluation_time=datetime.now(UTC).isoformat(),
-    )
+    queried = pb.run_query(query.identity.name)
     assert queried.result.verdict == "completed"
     assert "response-guidance" in {
         field.value

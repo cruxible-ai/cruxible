@@ -306,7 +306,7 @@ def test_revised_sibling_dispositions_use_its_new_statement_and_retirement_updat
                 value="blocked",
                 dispositions=(observed,),
             ),
-            ClaimRetirementMemberV1(claim_ref=retired.identity.name, reason="was-rescinded"),
+            ClaimRetirementMemberV1(retires=retired.identity.name, reason="was-rescinded"),
         ),
         canonical_timestamp=TIMESTAMP,
     ).intent

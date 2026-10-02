@@ -39,15 +39,25 @@ accepted laws, principals, attestations, and compare-and-set settlement decide
 what becomes canonical.
 
 Every instance tool's instance_id defaults to the server's CRUXIBLE_INSTANCE_ID.
-Start with cruxible_playbill_whoami: it names the instance and who you are there,
-then cruxible_playbill_next for what needs attention.
 
-Read cheapest first: cruxible_playbill_claim_values for a status table of one
-Subject kind, list_claims and get_claim for Claims, search and expand to find
-things by name. Write with authoring_create or authoring_compile, then
-authoring_submit; authoring_example prints payload shapes. The returned status
-names every remaining approval and activation step. A proposal is not accepted
-state, an approval is not activation, and diagnostics never carry authority.
+Read with three verbs. cruxible_playbill_orient maps the instance: each Subject
+kind with its predicates, artifact and Claim counts, who you are, what needs
+attention, and the next calls to make; orient(kind=K) widens one kind and
+orient(section=S) pages one family (documents, queries, interfaces,
+principals, policies, runs, ...). cruxible_playbill_query answers any question
+as rows of values with verdict flags: a Subject kind with where/select/follow,
+contains for text in values, or a named query. cruxible_playbill_get reads one
+thing by any reference you have seen (CLM-..., kind/id, ClaimType:,
+Document:, query:, Principal:, ...) at a detail: summary, evidence, why,
+history, proof or body. To find something by name or text, grep the floor
+that `cruxible playbill floor export` writes: .playbill/floor/current/<kind>/<id>.yaml
+holds one Subject per file, its first line names its ref, and get reads that ref
+live. Without a shell, query with contains instead. cruxible_playbill_next lists
+what needs attention.
+
+Write with cruxible_playbill_set, retire or write; each proposes one change set
+and accepts it when policy lets you. A proposal is not accepted state, an
+approval is not activation, and diagnostics never carry authority.
 
 Setting up a host and its first principals is operator work on the cruxible CLI
 (server start, playbill host create, playbill init), not part of this tool set.

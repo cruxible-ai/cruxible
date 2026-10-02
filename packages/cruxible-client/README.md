@@ -102,9 +102,15 @@ evaluation-time source. The object initially has no observed coordinate and owns
 its transport. Prefer `connect()` for ordinary use so context and compatibility
 checks run.
 
+A Playbill built on an injected client with no workspace (the internal
+`_from_client(..., workspace=None)` path) still reads and writes accepted state:
+`orient()` reports no floor, and members that need workspace files refuse with
+`SourceSelectionError`.
+
 | Setting | Default / behavior |
 |---|---|
 | `CRUXIBLE_SERVER_BEARER_TOKEN` | Used when `token` is omitted; never creates a principal or grants rights. |
+| `CRUXIBLE_PRINCIPAL_ID` | Used when `principal_id` is omitted; the daemon checks it is a registered, active principal before any write and attributes the session to it; reads stay open. |
 | `CRUXIBLE_CLI_CONTEXT_PATH` | Otherwise `~/.cruxible/client-context.json`. |
 | `CRUXIBLE_CLIENT_TIMEOUT_S` | Ordinary HTTP read/write timeout: 180 seconds; connect/pool: 5 seconds. |
 | Default access profile | `sdk-default`, classes `("instance", "public")`, disclose restricted existence `True`. |
@@ -127,6 +133,7 @@ connect(
     target: str | None = None,
     instance: str | None = None,
     token: SecretStr | None = None,
+    principal_id: str | None = None,
     workspace: Path | None = None,
     access_profile: AccessProfile | None = None,
     at: AcceptedCoordinate | api.PlaybillAcceptedCoordinate | None = None,
@@ -143,6 +150,7 @@ Opens a transport, checks client/daemon contract compatibility, resolves context
 | `target` | `None` | Explicit HTTP(S) endpoint or unix:/absolute/socket. It does not select an arbitrary local instance directory. |
 | `instance` | `None` | Daemon instance ID. Omission uses resolved workspace/client context. |
 | `token` | `None` | Bearer credential as SecretStr; otherwise CRUXIBLE_SERVER_BEARER_TOKEN. |
+| `principal_id` | `None` | Principal this session acts as; otherwise CRUXIBLE_PRINCIPAL_ID. With daemon auth off it is a claim of identity, not authentication; with auth on it must equal the credential's principal. |
 | `workspace` | `None` | Client workspace root for source selection, projections, and configured floors. |
 | `access_profile` | `None` | Declared access classes and disclosure preference; server authorization remains authoritative. |
 | `at` | `None` | Explicit accepted coordinate. Omission follows the live/pinned object semantics stated above. |
@@ -201,10 +209,10 @@ Returns a borrowed pinned context without I/O. Accepted reads stay fixed; writes
 [Source](src/cruxible_client/authoring/sdk.py)
 
 ```text
-refresh() -> SearchPage
+refresh() -> api.PlaybillHeadV1
 ```
 
-Performs orientation in the current live or pinned context and records the observed coordinate.
+Re-reads the accepted head through `CruxibleClient.playbill_head` (a pinned context re-reads its own coordinate) and records the observed coordinate. `PlaybillHeadV1` carries only `instance`, `coordinate` and `generation`; call `orient()` for the map.
 
 **Conditions and effects:** A pinned context stays pinned; refresh does not accept proposals or update a local floor.
 
@@ -278,15 +286,22 @@ capture-contract and evidence-kind parameters, with no reducer digest parameter.
 
 ```text
 changes(*, rationale: str | None=None) -> ChangeSetDraft
+changes(*, because: str) -> WriteBatch
 ```
 
-Returns a changeset builder retaining the last observed coordinate for references and vocabulary.
+With `rationale` (or nothing), returns a changeset builder retaining the last
+observed coordinate for references and vocabulary. With `because`, returns a
+`WriteBatch` of typed write changes: `.set(subject, field, value, ...)`,
+`.add(subject, field, value, ...)` and `.retire(target, ...)`, sent as one change
+set by `.write(dry_run=False, accept="if_allowed", at=...)`, which returns the
+`WriteOutcome` or raises `WriteRefusalError`.
 
 **Conditions and effects:** No prepare/submit/accept at construction. The set admits or refuses as one governed decision.
 
 | Parameter | Default | Meaning |
 |---|---|---|
 | `rationale` | `None` | Author-supplied explanation retained with this Claim/change decision. |
+| `because` | `None` | Why: opens a `WriteBatch`, whose change set carries it as its rationale. |
 
 <a id="api-playbill-subject"></a>
 
@@ -407,34 +422,77 @@ Builds a ClaimDraft; may read accepted metadata to interpret objects and evidenc
 | `subject_definition` | `None` | Subject draft carried with the Claim, if defining its Subject in the same operation. |
 | `claim_type_definition` | `None` | ClaimType draft carried with the Claim, if defining its predicate in the same operation. |
 
-<a id="api-playbill-retire-claim"></a>
+<a id="api-playbill-set"></a>
 
-### `Playbill.retire_claim`
+### `Playbill.set`
 
 [Source](src/cruxible_client/authoring/sdk.py)
 
 ```text
-retire_claim(
-    claim: str | ClaimRef,
+set(
+    subject: str | SubjectRef,
+    field: str | ClaimTypeRef,
+    value: ClaimValue | SubjectRef | LiteralValue,
     *,
-    reason: ClaimRetirementReason,
-    mode: Literal['preflight', 'submit'] = 'preflight',
-    effective_until: datetime | None = None,
-    dependents: Sequence[ClaimRetireDependentV1] = (),
-) -> api.PlaybillClaimRetireResponse
+    because: str,
+    evidence: Evidence | None = None,
+    role: WriteRole | None = None,
+    contend: bool = False,
+    dry_run: bool = False,
+    accept: Literal['if_allowed', 'never'] = 'if_allowed',
+    at: AcceptedCoordinate | str | None = <this context's coordinate>,
+) -> WriteOutcome
 ```
 
-Preflights or submits an attributed retirement with explicit dependency closure.
+Puts one value in one field of one Subject. On a single-value field it replaces
+the live value; the Claim it revises is found for you. A missing Subject of a
+known kind is added in the same change set.
 
-**Conditions and effects:** Default mode is preflight. Submission is a governed proposal, not automatic acceptance.
+**Conditions and effects:** Accepts in the same call when the approval policy
+and the caller's tier allow it; otherwise the outcome is `awaiting_approval` with
+the eligible approvers and the approve call. `dry_run` runs every check and
+writes nothing. By default the write refuses `playbill.write.slot_changed` when
+the field moved since this context's coordinate; after that refusal the context
+has seen the new value, so setting again replaces it. A refusal raises
+`WriteRefusalError` carrying the outcome. Each change carries its `verdict`; a
+verdict other than `supported` comes with a warning in `outcome.warnings`.
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `claim` | Required | Claim ID or typed ClaimRef; typed refs also assert their observed coordinate. |
-| `reason` | Required | Attributed reason for refusal, retirement, or operational action as specified by the API. |
-| `mode` | `'preflight'` | preflight validates; submit requests the corresponding governed retirement proposal. |
-| `effective_until` | `None` | Optional effective-end instant for retirement. |
-| `dependents` | `()` | Explicit dependency-closure dispositions required by retirement or ClaimType succession. |
+| `subject` | Required | The Subject as `kind/id`, or a typed SubjectRef. |
+| `field` | Required | A field of the kind as `orient` names it, or the full predicate. |
+| `value` | Required | An enum member, text, number or boolean; a Subject for a Subject-valued field; the text itself for exact content. |
+| `because` | Required | Why; also the default self evidence. |
+| `evidence` | `None` | `SelfEvidence`, `CaptureEvidence` or `FileEvidence` (`PATH#ANCHOR`, read from this workspace). |
+| `role` | `None` | Only when the field permits more than one role. |
+| `contend` | `False` | Contest the live value instead of replacing it. |
+| `dry_run` | `False` | Check everything and write nothing. |
+| `accept` | `'if_allowed'` | `'never'` only proposes. |
+| `at` | this context's coordinate | The coordinate you read at; `None` checks against the head. |
+
+<a id="api-playbill-retire"></a>
+
+### `Playbill.retire`
+
+[Source](src/cruxible_client/authoring/sdk.py)
+
+```text
+retire(
+    target: str | ClaimRef | SlotRef,
+    *,
+    because: str,
+    reason: Literal['was-rescinded', 'was-wrong', 'superseded'] = 'was-rescinded',
+    dry_run: bool = False,
+    accept: Literal['if_allowed', 'never'] = 'if_allowed',
+    at: AcceptedCoordinate | str | None = <this context's coordinate>,
+) -> WriteOutcome
+```
+
+Ends one live Claim, named by Claim ID or by `SlotRef(subject=..., field=...)`
+for a field that holds one value. The Claims that depend on it retire with it,
+in one change set.
+
+**Conditions and effects:** As `Playbill.set`.
 
 <a id="api-playbill-query-definition"></a>
 
@@ -583,7 +641,7 @@ Reads a cataloged workspace file into a FileSelector using .playbill/sources.yam
 claim_view(claim: str | ClaimRef) -> ClaimView
 ```
 
-Reads and adapts one accepted Claim, including value, revision, verdict, and capture references.
+Reads and adapts one accepted Claim, including value, revision, verdict, and capture references. It reads `get(claim, detail="proof")`.
 
 **Conditions and effects:** Missing/redacted/version-incompatible artifacts are daemon refusals; a wrong reference kind refuses locally.
 
@@ -638,54 +696,15 @@ Reads retained capture metadata and available bytes at pb.coordinate. Does not r
 get(ref: str | TypedRef, *, detail: PlaybillGetDetail = "summary", range: tuple[int, int] | str | None = None) -> KnowledgeCard
 ```
 
-Reads one thing by reference; the daemon resolves the reference directly (never through search). `ref` is a typed Subject/ClaimType/Claim/Procedure/Query/Source ref (read at its coordinate) or any string an agent sees: `CLM-...` or a unique prefix, `kind/id`, a predicate (full or a unique leaf), `ClaimType:`/`Document:`/`Procedure:`/`query:`/`CaptureContract:<name>`, an artifact path, or a proposal id or prefix. A Claim summary is a `ClaimView`; other summaries are the values-first card (`PlaybillGetSubjectCardV1`, `PlaybillGetClaimTypeCardV1`, ...) from `cruxible_client.contracts.get_reads`; other details carry their payload (`PlaybillGetEvidenceV1`, whose `value` is the Claim's whole value; `PlaybillGetHistoryV1`, newest first, with every page read; `PlaybillGetBodyV1`; the explain dict for `why`; and for `proof` a `PlaybillClaimViewV2` on a Claim or the envelope dict otherwise). A summary card cuts a string value over 500 characters to `{value, truncated: true, length}`. The card's `coordinate` is the full accepted coordinate: the SDK asks the daemon for it (`full_coordinate`), where MCP and CLI summaries carry only the 12-hex git oid prefix and generation.
+Reads one thing by reference; the daemon resolves the reference directly (never through search). `ref` is a typed Subject/ClaimType/Claim/Procedure/Query/Source ref (read at its coordinate) or any string an agent sees: `CLM-...` or a unique prefix, `kind/id`, a predicate (full or a unique leaf), `ClaimType:`/`Document:`/`Procedure:`/`query:`/`CaptureContract:<name>`, an artifact path, a proposal id or prefix, or an operational reference (`Line:<name>` or the Line identity digest `next` names, `CAP-<12+ hex>`/`Capture:<digest>`, `ResolutionContract:<name>`, `Mandate:<name>`, `ProcedureRun:<run_id>` or `RUN-<12+ hex>`; their cards live in `cruxible_client.contracts.operational_reads`), or a governance reference: `Principal:<id>`, `ApprovalPolicy:instance`, `ProviderInterface:<name>`. A Claim summary is a `ClaimView`; other summaries are the values-first card (`PlaybillGetSubjectCardV1`, `PlaybillGetClaimTypeCardV1`, ...) from `cruxible_client.contracts.get_reads`; other details carry their payload (`PlaybillGetEvidenceV1`, whose `value` is the Claim's whole value; `PlaybillGetHistoryV1`, newest first, with every page read; `PlaybillGetBodyV1`, whose `body_digest` names the whole body even when `range` reads part of it; the explain dict for `why`, on a Claim, Subject or Document; and for `proof` a `PlaybillClaimViewV2` on a Claim or the envelope dict otherwise). A summary card cuts a string value over 500 characters to `{value, truncated: true, length}`. The card's `coordinate` is the full accepted coordinate: the SDK asks the daemon for it (`full_coordinate`), where MCP and CLI summaries carry only the 12-hex git oid prefix and generation.
 
 **Conditions and effects:** An unknown or ambiguous reference refuses with `playbill.get.ref_not_found` or `playbill.get.ref_ambiguous` and the nearest names; a detail that does not apply to the kind refuses naming the ones that do. A Document body over 64 KiB needs `range`. Inspect `kind` before using `value`.
 
 | Parameter | Default | Meaning |
 |---|---|---|
 | `ref` | Required | Typed reference or any supported reference string. |
-| `detail` | `"summary"` | `summary`, `evidence` (Claims), `why`, `history`, `proof`, or `body` (Documents). |
+| `detail` | `"summary"` | `summary`, `evidence` (Claims), `why` (Claims, Subjects, Documents), `history`, `proof`, or `body` (Documents). |
 | `range` | `None` | Document body bytes as `(start, end)` or `"start:end"`; `detail="body"` only. |
-
-<a id="api-playbill-search"></a>
-
-### `Playbill.search`
-
-[Source](src/cruxible_client/authoring/sdk.py)
-
-```text
-search(*, query: str, kinds: Collection[str], statuses: Collection[str]) -> SearchPage
-```
-
-Reads one compact search page with explicit kind/status filters.
-
-**Conditions and effects:** Check truncated/cursor. This high-level method has no cursor parameter; use the lower-level search_playbill for continuation.
-
-| Parameter | Default | Meaning |
-|---|---|---|
-| `query` | Required | Named query/QueryRef for run_query; search text for search. |
-| `kinds` | Required | Discovery kind filters; pass an explicit empty collection when no filter is intended. |
-| `statuses` | Required | Discovery status filters; pass an explicit empty collection when no filter is intended. |
-
-<a id="api-playbill-list"></a>
-
-### `Playbill.list`
-
-[Source](src/cruxible_client/authoring/sdk.py)
-
-```text
-list(*, kinds: Collection[str], statuses: Collection[str]) -> SearchPage
-```
-
-Reads one compact listing page with explicit kind/status filters.
-
-**Conditions and effects:** Check truncated/cursor; high-level list has no continuation argument.
-
-| Parameter | Default | Meaning |
-|---|---|---|
-| `kinds` | Required | Discovery kind filters; pass an explicit empty collection when no filter is intended. |
-| `statuses` | Required | Discovery status filters; pass an explicit empty collection when no filter is intended. |
 
 <a id="api-playbill-orient"></a>
 
@@ -703,7 +722,9 @@ orient(
 ) -> api.PlaybillOrientResultV1
 ```
 
-Maps accepted state in one call at the context’s coordinate: each Subject kind with its live count and predicates (type, cardinality, enum members, accepted evidence as CaptureContract names), artifact counts, named queries, `you` (whether this caller can author, and why not), `attention` from the `next` queue, and `next` suggestions written as SDK calls. `kind` reads one kind in full with sample Subject IDs; `section` pages `documents`, `procedures`, `claim_types` or `queries`.
+Maps accepted state in one call at the context’s coordinate: each Subject kind with its live count and predicates (type, cardinality, enum members, accepted evidence as CaptureContract names), artifact counts, named queries, `you` (whether this caller can author, and why not), `attention` from the `next` queue, and `next` suggestions written as SDK calls. `kind` reads one kind in full with sample Subject IDs and the predicates that point at it (`incoming`). `section` pages one family: `documents`, `procedures`, `claim_types`, `queries`, `interfaces`, `principals` or `policies`, or an operational one (`runs`, `running`, `lines`, `captures`, `capture_contracts`, `predictions`, `mandates`). An `interfaces` row carries `interface_digest`, `providers` (`[{provider, implementation_digest}]`) and `operation_contract`; read one in full with `get("ProviderInterface:<name>")`. When the workspace holds an exported floor, `floor` says its coordinate and how many generations it is behind; a connection without a workspace reports no floor.
+
+There is no cross-kind name search: grep the exported floor under `.playbill/floor/`, then `get` the reference you found.
 
 **Conditions and effects:** Follow `next_cursor` while `truncated`. A wrong kind is refused with the nearest kinds.
 
@@ -714,24 +735,6 @@ Maps accepted state in one call at the context’s coordinate: each Subject kind
 | `limit` | `50` | Kinds or section rows per page. |
 | `cursor` | `None` | `next_cursor` from the previous page of the same view. |
 
-<a id="api-playbill-explain"></a>
-
-### `Playbill.explain`
-
-[Source](src/cruxible_client/authoring/sdk.py)
-
-```text
-explain(ref: str | TypedRef) -> object
-```
-
-Expands Claim or Subject governance/provenance context.
-
-**Conditions and effects:** Only ClaimRef/SubjectRef or a recognized Claim ID string is accepted here; other kinds raise ReferenceKindError.
-
-| Parameter | Default | Meaning |
-|---|---|---|
-| `ref` | Required | Typed artifact reference or supported identity string; see get/explain for supported kinds. |
-
 <a id="api-playbill-run-query"></a>
 
 ### `Playbill.run_query`
@@ -740,20 +743,20 @@ Expands Claim or Subject governance/provenance context.
 
 ```text
 run_query(
-    query: str | QueryRef,
+    query: str | QueryRef | QueryBinding,
     *,
     parameters: Mapping[str, object] | None = None,
     budgets: QueryBudgetsV1 | None = None,
 ) -> api.PlaybillQueryRun
 ```
 
-Runs a named accepted query in the live/pinned/reference context with explicit evaluation time and returns result plus receipt.
+Runs a named accepted query in the live/pinned/reference context with explicit evaluation time and returns result plus receipt. It is `query(name=..., params=..., budgets=..., receipt="full")` underneath: the `PlaybillQueryRun` is built from that answer's replay receipt (`definition_path`, the `ClaimQueryResultV1` result and the `QueryExecutionReceiptV1` execution receipt). A full receipt runs the definition's declared budgets (or the ones you pass), never the compact page's server ceiling, so a replay's result and digest match the old `run_query`.
 
-**Conditions and effects:** The current wrapper contains result/receipt dictionaries. Check verdict and truncation; artifact_definitions is a checked typed property for artifact queries only.
+**Conditions and effects:** Check verdict and truncation; artifact_definitions is a checked typed property for artifact queries only.
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `query` | Required | Named query/QueryRef for run_query; search text for search. |
+| `query` | Required | Named query, QueryRef, or QueryBinding (whose `parameters` must come from `binding.parameters`). |
 | `parameters` | `None` | Invocation/query parameters in the declared canonical contract. |
 | `budgets` | `None` | Operation-specific bounds; the signature distinguishes QueryBudgetsV1 from Line budget mappings. |
 
@@ -770,7 +773,9 @@ query(
     where: Sequence[QueryFilterV1 | Mapping[str, object]] | None = None,
     contains: str | None = None,
     select: Sequence[str] | None = None,
-    follow: Sequence[QueryFollowV1 | Mapping[str, str] | tuple[str, str]] | None = None,
+    follow: Sequence[
+        QueryFollowV1 | Mapping[str, str] | tuple[str, str] | tuple[str, str, QueryFollowDirection]
+    ] | None = None,
     order_by: Sequence[str] | None = None,
     limit: int = 50,
     cursor: str | None = None,
@@ -779,6 +784,10 @@ query(
     params: Mapping[str, object] | None = None,
     at: AcceptedCoordinate | str | None = None,
     evaluation_time: datetime | str | None = None,
+    status: Sequence[QueryClaimStatus] = ("live",),
+    claims: bool = False,
+    budgets: QueryBudgetsV1 | None = None,
+    receipt: QueryReceiptDetail = "compact",
 ) -> QueryResult
 ```
 
@@ -794,6 +803,13 @@ Wrong kinds, fields, enum members and operators refuse with the nearest valid
 names. `QueryResult` has `.rows` (dicts of values plus `flags`), `.columns`,
 `.truncated`, `.next_page()`, `.pages()`, `.table()` and iterates its rows. `subject`, `subject_id` and `flags` are row metadata; a column with one of those names is served as `value.<name>`. A
 live connection reads the current head; a pinned one reads its coordinate.
+Row `flags` come from `stale`, `contested`, `contradicted`, `uncovered` and
+`unsure_hold`. With `claims=True` each row also carries
+`claims[column]`: a list of `{claim, value, verdict, status, role, qualifier?}`
+(`PlaybillQueryClaimV1`), where `status` is `accepted`, `conflicted`,
+`overturned`, `refused` or `retired`. A named query with `receipt="full"`
+adds `receipt.replay`: `definition_path`, `result` (`ClaimQueryResultV1`) and
+`execution` (`QueryExecutionReceiptV1`).
 
 | Parameter | Default | Meaning |
 |---|---|---|
@@ -801,11 +817,16 @@ live connection reads the current head; a pinned one reads its coordinate.
 | `where` | `None` | Typed filters or plain mappings, all-of. |
 | `contains` | `None` | Case-insensitive text in any live Claim value; alone, across kinds. |
 | `select` | `None` | Column fields; without it a kind shows up to 12 predicates. |
-| `follow` | `None` | One-hop relations as `(field, alias)`; later fields read `alias.field`. |
+| `follow` | `None` | One-hop relations as `(field, alias)`, or `(field, alias, "reverse")` along another kind's predicate that points here; later fields read `alias.field`. |
 | `order_by` | `None` | Fields, `-` prefixed for descending. |
+| `limit` / `cursor` | `50` / `None` | Rows per page (at most 500) and the `next_cursor` of the previous page. |
 | `spec` / `name` / `params` | `None` | The spec and named modes. |
 | `at` | `None` | A coordinate or git oid; the connection's otherwise. |
 | `evaluation_time` | `None` | The instant flags are evaluated at; the connection's clock otherwise. |
+| `status` | `("live",)` | Which Claims cells show: `live` (each slot's answer), plus opt-in `overturned`, `refused` or `retired`. Rows list live Subjects; `retired` also lists retired Subjects, each row then stating `lifecycle`. |
+| `claims` | `False` | Also answer each cell's Claims as `rows[].claims[column]`. |
+| `budgets` | `None` | Named query only: `QueryBudgetsV1`, up to the definition's maximum; its own default otherwise. |
+| `receipt` | `"compact"` | `"full"` adds a named query's replay receipt as `receipt.replay`. |
 
 <a id="api-playbill-since"></a>
 
@@ -1584,11 +1605,11 @@ retire(
 
 Retire one accepted Claim, and its live closure, inside this changeset.
 
-Takes exactly what `Playbill.retire_claim` takes: the SDK's own rows
-and refs spell a Claim identity `Claim:CLM-...`, so a builder that
-refused the prefix made one library disagree with itself. The member
-carries the one canonical bare spelling, which is what keeps two
-spellings of one retirement on one member identity and one digest.
+Takes a Claim ID in either spelling the SDK's rows and refs use
+(`CLM-...` or `Claim:CLM-...`). The member carries the one canonical bare
+spelling as `retires`, which is what keeps two spellings of one
+retirement on one member identity and one digest. `Playbill.retire` is
+the typed write verb for the common case: it computes the closure.
 
 | Parameter | Default | Meaning |
 |---|---|---|
@@ -1987,6 +2008,18 @@ review() -> ReviewedProposal
 
 Fetch an immutable full review; inspect its details before approving.
 
+<a id="api-proposal-accept"></a>
+
+### `Proposal.accept`
+
+[Source](src/cruxible_client/authoring/sdk.py)
+
+```text
+accept() -> api.PlaybillActivationReceipt
+```
+
+Accepts this proposal once its approvals are in: `Playbill.accept` by handle.
+
 <a id="api-proposal-approve"></a>
 
 ### `Proposal.approve`
@@ -2152,22 +2185,6 @@ Import: `cruxible_client.authoring.sdk.KnowledgeCard`. [Source](src/cruxible_cli
 ```text
 ref: TypedRef
 ```
-
-<a id="api-searchpage"></a>
-
-## `SearchPage`
-
-Import: `cruxible_client.authoring.sdk.SearchPage`. [Source](src/cruxible_client/authoring/sdk.py)
-
-| Field | Type | Default / construction |
-|---|---|---|
-| `coordinate` | `AcceptedCoordinate` | `Required` |
-| `evaluation_time` | `str` | `Required` |
-| `rows` | `tuple[dict[str, object], ...]` | `Required` |
-| `result_digest` | `str` | `Required` |
-| `cursor` | `dict[str, object] \| None` | `Required` |
-| `truncated` | `bool` | `Required` |
-| `orientation` | `dict[str, object] \| None` | `None` |
 
 <a id="api-nextpage"></a>
 
@@ -2491,25 +2508,37 @@ values(
     *,
     subjects: Sequence[str | SubjectRef],
     predicates: Sequence[str | ClaimTypeRef] = (),
-) -> tuple[ClaimValueV1, ...]
+) -> tuple[api.PlaybillQueryClaimValueV1, ...]
 ```
 
-Each live Claim's value and verdict for these Subjects, in one request and
-without full Claim views -- the cheaper read when only values and verdicts are
-needed. Every live contender of each selected slot is returned. Each
-`ClaimValueV1` carries `claim_id`, `subject_path`, `subject_id`, `predicate`, `qualifier`,
-`role`, `object_kind` (`literal`, `subject` or `exact_content`), `object` (the
-statement object exactly as accepted, including a Subject object's selector or
-an exact-content span), `value` (the literal, the object Subject's artifact
-path, or the content digest), the current `verdict` and the resolution
-`status`. Bounds: at most 1024 Subjects and 64 predicates per request, and at
-most 8192 returned Claims; a larger selection refuses rather than truncating.
+Each live Claim's value, verdict and status for these Subjects, read through
+`query` (one `query(kind, where=subject_id in ..., claims=True,
+status=("live", "overturned", "refused"))` per Subject kind, pinned to this
+World's coordinate) and without full Claim views -- the cheaper read when only
+values and verdicts are needed. Every live contender of each selected slot is
+returned, including Claims resolution overturned or refused. Each
+`PlaybillQueryClaimValueV1` carries `subject` (the Subject's `kind/id`),
+`predicate`, `claim`, `value`, `verdict`, `status` (`accepted`, `conflicted`,
+`overturned`, `refused` or `retired`), `role` and, when present, `qualifier`.
+Strings are Subject `kind/id` addresses or paths and fully qualified
+predicates; with no `predicates`, every predicate of each kind is read. Pages
+are followed to the end at the same coordinate.
 
 <a id="api-worldsubject"></a>
 
 ## `WorldSubject`
 
 Import: `cruxible_client.authoring.world.WorldSubject`. [Source](src/cruxible_client/authoring/world.py)
+
+Writes by field leaf: `subject.set(status="done", because=...)` sets
+single-value fields, `subject.add(governs=other, because=...)` adds to
+many-valued ones (`expect_absent=True` refuses a value already there instead of
+answering it as done), and `subject.retire("status", because=...)` retires a
+field's one live value. Every field in one call is one change of one change set, and
+names are checked against the World before the wire. A World's writes are
+checked from its coordinate advanced past its own accepted writes, so its
+references stay valid after them; only a field someone else moved refuses. The
+generated stub types `set` and `add` per kind, enum members as `Literal`s.
 
 <a id="api-worldsubject-subject-kind"></a>
 
@@ -2553,7 +2582,7 @@ Every live Claim this Subject is the subject of.
 explain() -> object
 ```
 
-Read this Subject's governance and provenance context.
+Read this Subject's governance and provenance context: the `why` payload of `get(subject, detail="why")` at this World's coordinate.
 
 <a id="api-worldsubject-getitem"></a>
 
@@ -2856,9 +2885,12 @@ Import: `cruxible_client.authoring.sdk_types.SourceRef`. [Source](src/cruxible_c
 
 <a id="api-slotref"></a>
 
-## `SlotRef`
+## `ProcedureSlotRef`
 
-Import: `cruxible_client.authoring.sdk_types.SlotRef`. [Source](src/cruxible_client/authoring/sdk_types.py)
+One input slot of a Procedure, as `Procedure.bind` names it. A Subject's field is
+`cruxible_client.contracts.write.SlotRef` (also `cruxible_client.SlotRef`).
+
+Import: `cruxible_client.authoring.sdk_types.ProcedureSlotRef`. [Source](src/cruxible_client/authoring/sdk_types.py)
 
 | Field | Type | Default / construction |
 |---|---|---|
@@ -3691,7 +3723,7 @@ readiness() -> api.PlaybillProcedureReadiness
 [Source](src/cruxible_client/authoring/sdk.py)
 
 ```text
-bind(*, bindings: Mapping[str | SlotRef, TypedRef]) -> api.PlaybillProcedureBindResult
+bind(*, bindings: Mapping[str | ProcedureSlotRef, TypedRef]) -> api.PlaybillProcedureBindResult
 ```
 
 <a id="api-procedure-run"></a>
@@ -3829,7 +3861,7 @@ coordinate: AcceptedCoordinate
 [Source](src/cruxible_client/authoring/sdk.py)
 
 ```text
-track_record: object
+track_record: tuple[PlaybillGetProcedureTrackRecordV1, ...]
 ```
 
 <a id="api-procedurerun-refresh"></a>
@@ -4737,8 +4769,9 @@ Import: `cruxible_client.contracts.authoring.inputs.AuthoringInputError`. [Sourc
 ## Lower-level HTTP client
 
 `CruxibleClient` is synchronous, exported from `cruxible_client`. Construct
-with exactly one of base_url or socket_path and an optional explicit bearer
-token; unlike Playbill.connect, this constructor does not resolve workspace
+with exactly one of base_url or socket_path, an optional explicit bearer
+token, and an optional principal ID sent as `X-Cruxible-Principal-Id` (with
+daemon auth off it is a claim of identity, not authentication); unlike Playbill.connect, this constructor does not resolve workspace
 context or perform the SDK compatibility/orientation workflow. Use a context
 manager or close(). Public methods below retain explicit instance IDs and
 typed request/response contracts. A method whose signature takes `request`
@@ -4754,7 +4787,7 @@ responses can raise validation errors; ambiguous transport completion must be
 checked before retrying a write.
 
 ```text
-CruxibleClient(*, base_url: str | None=None, socket_path: str | None=None, token: str | None=None) -> None
+CruxibleClient(*, base_url: str | None=None, socket_path: str | None=None, token: str | None=None, principal_id: str | None=None) -> None
 ```
 
 <a id="api-cruxibleclient-close"></a>
@@ -4986,12 +5019,21 @@ HTTP: `POST f'/api/v1/{instance_id}/runtime/bootstrap/claim'`.
 create_runtime_credential(
     instance_id: str,
     *,
-    label: str,
-    permission_mode: contracts.RuntimeCredentialPermissionMode = 'admin',
+    principal_id: str,
+    permission_mode: contracts.RuntimeCredentialPermissionMode,
+    label: str | None = None,
+    principal_proof: RuntimeCredentialPrincipalProofV1 | None = None,
 ) -> contracts.RuntimeCredentialResult
 ```
 
 HTTP: `POST f'/api/v1/{instance_id}/runtime/credentials'`.
+
+Mints a credential that acts as `principal_id`. The daemon refuses unless the
+principal is registered and active and the request carries its authority:
+either the request already acts as that principal, or `principal_proof` is its
+single-use consent signed with its registered key
+(`cruxible_client.authoring.signing.sign_runtime_credential_mint`). An admin
+credential alone is never enough. `label` is a description only.
 
 <a id="api-cruxibleclient-list-runtime-credentials"></a>
 
@@ -5024,10 +5066,20 @@ HTTP: `POST f'/api/v1/{instance_id}/runtime/credentials/{credential_id}/revoke'`
 [Source](src/cruxible_client/transport/http.py)
 
 ```text
-rotate_runtime_credential(instance_id: str, credential_id: str) -> contracts.RuntimeCredentialResult
+rotate_runtime_credential(
+    instance_id: str,
+    credential_id: str,
+    *,
+    principal_proof: RuntimeCredentialPrincipalProofV1 | None = None,
+) -> contracts.RuntimeCredentialResult
 ```
 
 HTTP: `POST f'/api/v1/{instance_id}/runtime/credentials/{credential_id}/rotate'`.
+
+A credential bound to a principal is replaced only with that principal's
+authority, exactly as minting one: the request acts as the principal, or
+`principal_proof` is its signed consent to the credential's current mode and
+label. An unbound operator credential rotates on the admin tier alone.
 
 <a id="api-cruxibleclient-init-playbill"></a>
 
@@ -5196,18 +5248,6 @@ propose_playbill_principal_change(
 
 HTTP: `POST f'/api/v1/{instance_id}/playbill/principals/proposals'`.
 
-<a id="api-cruxibleclient-list-playbill-principals"></a>
-
-### `CruxibleClient.list_playbill_principals`
-
-[Source](src/cruxible_client/transport/http.py)
-
-```text
-list_playbill_principals(instance_id: str) -> contracts.PlaybillPrincipalList
-```
-
-HTTP: `GET f'/api/v1/{instance_id}/playbill/principals'`.
-
 <a id="api-cruxibleclient-playbill-whoami"></a>
 
 ### `CruxibleClient.playbill_whoami`
@@ -5219,6 +5259,22 @@ playbill_whoami(instance_id: str) -> contracts.PlaybillWhoAmI
 ```
 
 HTTP: `GET f'/api/v1/{instance_id}/playbill/whoami'`.
+
+<a id="api-cruxibleclient-playbill-head"></a>
+
+### `CruxibleClient.playbill_head`
+
+[Source](src/cruxible_client/transport/http.py)
+
+```text
+playbill_head(
+    instance_id: str,
+    *,
+    at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | str | None = None,
+) -> contracts.PlaybillHeadV1
+```
+
+HTTP: `GET f'/api/v1/{instance_id}/playbill/head'`. The accepted head (or the coordinate `at` names) as `PlaybillHeadV1` `{instance, coordinate, generation}` and nothing else: the cheapest read, which `Playbill.refresh()` uses in place of `orient`.
 
 <a id="api-cruxibleclient-orient-playbill"></a>
 
@@ -5423,39 +5479,6 @@ activate_playbill_proposal(instance_id: str, proposal_id: str) -> contracts.Play
 
 HTTP: `POST f'/api/v1/{instance_id}/playbill/proposals/{proposal_id}/activate'`.
 
-<a id="api-cruxibleclient-list-playbill-documents"></a>
-
-### `CruxibleClient.list_playbill_documents`
-
-[Source](src/cruxible_client/transport/http.py)
-
-```text
-list_playbill_documents(
-    instance_id: str,
-    *,
-    at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-) -> contracts.PlaybillDocumentList
-```
-
-HTTP: `GET f'/api/v1/{instance_id}/playbill/documents'`.
-
-<a id="api-cruxibleclient-get-playbill-document"></a>
-
-### `CruxibleClient.get_playbill_document`
-
-[Source](src/cruxible_client/transport/http.py)
-
-```text
-get_playbill_document(
-    instance_id: str,
-    identity: str,
-    *,
-    at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-) -> contracts.PlaybillDocumentView
-```
-
-HTTP: `GET f'/api/v1/{instance_id}/playbill/documents/{identity}'`.
-
 <a id="api-cruxibleclient-read-playbill-capture"></a>
 
 ### `CruxibleClient.read_playbill_capture`
@@ -5467,54 +5490,6 @@ read_playbill_capture(instance_id: str, request: CaptureReadRequestV1) -> Captur
 ```
 
 HTTP: `POST f'/api/v1/{instance_id}/playbill/captures/read'`.
-
-<a id="api-cruxibleclient-dereference-playbill-document"></a>
-
-### `CruxibleClient.dereference_playbill_document`
-
-[Source](src/cruxible_client/transport/http.py)
-
-```text
-dereference_playbill_document(
-    instance_id: str,
-    identity: str,
-    *,
-    at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-) -> contracts.PlaybillBodyRead
-```
-
-HTTP: `GET f'/api/v1/{instance_id}/playbill/documents/{identity}/body'`.
-
-<a id="api-cruxibleclient-playbill-document-history"></a>
-
-### `CruxibleClient.playbill_document_history`
-
-[Source](src/cruxible_client/transport/http.py)
-
-```text
-playbill_document_history(instance_id: str, identity: str) -> contracts.PlaybillDocumentHistory
-```
-
-HTTP: `GET f'/api/v1/{instance_id}/playbill/documents/{identity}/history'`.
-
-<a id="api-cruxibleclient-explain-playbill-subject"></a>
-
-### `CruxibleClient.explain_playbill_subject`
-
-[Source](src/cruxible_client/transport/http.py)
-
-```text
-explain_playbill_subject(
-    instance_id: str,
-    *,
-    subject: Mapping[str, Any],
-    at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any],
-    detail: Literal['summary', 'evidence', 'proof'] = 'summary',
-    include_body: bool = False,
-) -> contracts.PlaybillExplainResult | contracts.PlaybillExplainUnsupportedDetail
-```
-
-HTTP: `POST f'/api/v1/{instance_id}/playbill/explain'`.
 
 <a id="api-cruxibleclient-playbill-source-context"></a>
 
@@ -5561,62 +5536,6 @@ propose_playbill_source_bundle(
 ```
 
 HTTP: `POST f'/api/v1/{instance_id}/playbill/sources/proposals'`.
-
-<a id="api-cruxibleclient-list-playbill-subjects"></a>
-
-### `CruxibleClient.list_playbill_subjects`
-
-[Source](src/cruxible_client/transport/http.py)
-
-```text
-list_playbill_subjects(
-    instance_id: str,
-    *,
-    at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-    subject_kind: str | None = None,
-    limit: int | None = None,
-    cursor: str | None = None,
-) -> contracts.PlaybillSubjectList
-```
-
-One page of compact Subject rows (`subject_kind`, `subject_id`, `lifecycle`,
-`live_claims`); follow `next_cursor` while `truncated`.
-
-HTTP: `GET f'/api/v1/{instance_id}/playbill/subjects'`.
-
-<a id="api-cruxibleclient-get-playbill-subject"></a>
-
-### `CruxibleClient.get_playbill_subject`
-
-[Source](src/cruxible_client/transport/http.py)
-
-```text
-get_playbill_subject(
-    instance_id: str,
-    subject_kind: str,
-    subject_id: str,
-    *,
-    at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-) -> contracts.PlaybillSubjectView
-```
-
-HTTP: `GET f'/api/v1/{instance_id}/playbill/subjects/{subject_kind}/{subject_id}'`.
-
-<a id="api-cruxibleclient-playbill-subject-history"></a>
-
-### `CruxibleClient.playbill_subject_history`
-
-[Source](src/cruxible_client/transport/http.py)
-
-```text
-playbill_subject_history(
-    instance_id: str,
-    subject_kind: str,
-    subject_id: str,
-) -> contracts.PlaybillSubjectHistory
-```
-
-HTTP: `GET f'/api/v1/{instance_id}/playbill/subjects/{subject_kind}/{subject_id}/history'`.
 
 <a id="api-cruxibleclient-propose-playbill-claim-type"></a>
 
@@ -5669,55 +5588,42 @@ migrate_playbill_claim_type(
 
 HTTP: `POST f'/api/v1/{instance_id}/playbill/claim-types/migrations'`.
 
-<a id="api-cruxibleclient-list-playbill-claim-types"></a>
+<a id="api-cruxibleclient-playbill-set"></a>
 
-### `CruxibleClient.list_playbill_claim_types`
-
-[Source](src/cruxible_client/transport/http.py)
-
-```text
-list_playbill_claim_types(
-    instance_id: str,
-    *,
-    at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-) -> contracts.PlaybillClaimTypeList
-```
-
-HTTP: `GET f'/api/v1/{instance_id}/playbill/claim-types'`.
-
-<a id="api-cruxibleclient-get-playbill-claim-type"></a>
-
-### `CruxibleClient.get_playbill_claim_type`
+### `CruxibleClient.playbill_set`
 
 [Source](src/cruxible_client/transport/http.py)
 
 ```text
-get_playbill_claim_type(
-    instance_id: str,
-    predicate: str,
-    *,
-    at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-) -> contracts.PlaybillClaimTypeView
+playbill_set(instance_id: str, *, request: PlaybillSetRequestV1) -> WriteOutcome
 ```
 
-HTTP: `GET f'/api/v1/{instance_id}/playbill/claim-types/{predicate}'`.
+HTTP: `POST f'/api/v1/{instance_id}/playbill/set'`. A refused write is an
+outcome (`status: refused`), not an HTTP error.
 
-<a id="api-cruxibleclient-retire-playbill-claim"></a>
+<a id="api-cruxibleclient-playbill-retire"></a>
 
-### `CruxibleClient.retire_playbill_claim`
+### `CruxibleClient.playbill_retire`
 
 [Source](src/cruxible_client/transport/http.py)
 
 ```text
-retire_playbill_claim(
-    instance_id: str,
-    claim_id: str,
-    *,
-    request: Mapping[str, Any],
-) -> contracts.PlaybillClaimRetireResponse
+playbill_retire(instance_id: str, *, request: PlaybillRetireRequestV1) -> WriteOutcome
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/claims/{claim_id}/retire'`.
+HTTP: `POST f'/api/v1/{instance_id}/playbill/retire'`.
+
+<a id="api-cruxibleclient-playbill-write"></a>
+
+### `CruxibleClient.playbill_write`
+
+[Source](src/cruxible_client/transport/http.py)
+
+```text
+playbill_write(instance_id: str, *, request: PlaybillWriteRequestV1) -> WriteOutcome
+```
+
+HTTP: `POST f'/api/v1/{instance_id}/playbill/write'`.
 
 <a id="api-cruxibleclient-append-playbill-claim-attestation"></a>
 
@@ -5979,25 +5885,6 @@ abandon_playbill_authoring_insertion(
 
 HTTP: `POST f'/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/abandon'`.
 
-<a id="api-cruxibleclient-list-playbill-claims"></a>
-
-### `CruxibleClient.list_playbill_claims`
-
-[Source](src/cruxible_client/transport/http.py)
-
-```text
-list_playbill_claims(
-    instance_id: str,
-    *,
-    at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-    subject_path: str | None = None,
-    predicate: str | None = None,
-    include_retired: bool = False,
-) -> contracts.PlaybillClaimList
-```
-
-HTTP: `GET f'/api/v1/{instance_id}/playbill/claims'`.
-
 <a id="api-cruxibleclient-read-playbill-claim-batch"></a>
 
 ### `CruxibleClient.read_playbill_claim_batch`
@@ -6012,7 +5899,23 @@ read_playbill_claim_batch(
 ) -> ClaimReadBatchResultV1
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/claims/read-batch'`.
+HTTP: `POST f'/api/v1/{instance_id}/playbill/claims/read-batch'`. SDK-internal: `Playbill.claim_views` and World reads use it.
+
+<a id="api-cruxibleclient-playbill-get-batch"></a>
+
+### `CruxibleClient.playbill_get_batch`
+
+[Source](src/cruxible_client/transport/http.py)
+
+```text
+playbill_get_batch(
+    instance_id: str,
+    *,
+    request: PlaybillGetBatchRequestV1,
+) -> PlaybillGetBatchResultV1
+```
+
+HTTP: `POST f'/api/v1/{instance_id}/playbill/get-batch'`. SDK-internal: several references read at one coordinate and one detail, so the SDK can read a whole vocabulary (every ClaimType envelope, for `world()`) in a few round trips. `PlaybillGetBatchRequestV1` takes `refs` (1 to 64), `detail` (`summary` or `proof`, default `proof`), `at` and `evaluation_time`; every result answers the coordinate the first one resolved. Agents call `Playbill.get` once per reference.
 
 <a id="api-cruxibleclient-get-playbill-claim-backings"></a>
 
@@ -6029,120 +5932,7 @@ get_playbill_claim_backings(
 ) -> ClaimBackingsResultV1
 ```
 
-HTTP: `POST f'/api/v1/{instance_id}/playbill/claims/backings'`.
-
-<a id="api-cruxibleclient-get-playbill-claim"></a>
-
-### `CruxibleClient.get_playbill_claim`
-
-[Source](src/cruxible_client/transport/http.py)
-
-```text
-get_playbill_claim(
-    instance_id: str,
-    identity: str,
-    *,
-    at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-    evaluation_time: str | None = None,
-) -> contracts.PlaybillClaimViewV2
-```
-
-HTTP: `GET f'/api/v1/{instance_id}/playbill/claims/{identity}'`.
-
-<a id="api-cruxibleclient-playbill-claim-history"></a>
-
-### `CruxibleClient.playbill_claim_history`
-
-[Source](src/cruxible_client/transport/http.py)
-
-```text
-playbill_claim_history(instance_id: str, identity: str) -> contracts.PlaybillClaimHistory
-```
-
-HTTP: `GET f'/api/v1/{instance_id}/playbill/claims/{identity}/history'`.
-
-<a id="api-cruxibleclient-explain-playbill-claim"></a>
-
-### `CruxibleClient.explain_playbill_claim`
-
-[Source](src/cruxible_client/transport/http.py)
-
-```text
-explain_playbill_claim(
-    instance_id: str,
-    identity: str,
-    *,
-    at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-    evaluation_time: str | None = None,
-) -> contracts.PlaybillClaimExplanationV2 | contracts.PlaybillClaimExplanationV3
-```
-
-HTTP: `POST f'/api/v1/{instance_id}/playbill/claims/{identity}/explanation'`.
-
-<a id="api-cruxibleclient-list-playbill-query-definitions"></a>
-
-### `CruxibleClient.list_playbill_query_definitions`
-
-[Source](src/cruxible_client/transport/http.py)
-
-```text
-list_playbill_query_definitions(
-    instance_id: str,
-    *,
-    at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-) -> contracts.PlaybillQueryDefinitionList
-```
-
-HTTP: `GET f'/api/v1/{instance_id}/playbill/queries'`.
-
-<a id="api-cruxibleclient-list-playbill-policies-in-force"></a>
-
-### `CruxibleClient.list_playbill_policies_in_force`
-
-[Source](src/cruxible_client/transport/http.py)
-
-```text
-list_playbill_policies_in_force(instance_id: str) -> contracts.PlaybillPolicyInForceList
-```
-
-HTTP: `GET f'/api/v1/{instance_id}/playbill/policies'`.
-
-<a id="api-cruxibleclient-get-playbill-query-definition"></a>
-
-### `CruxibleClient.get_playbill_query_definition`
-
-[Source](src/cruxible_client/transport/http.py)
-
-```text
-get_playbill_query_definition(
-    instance_id: str,
-    name: str,
-    *,
-    at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-) -> contracts.PlaybillQueryDefinitionView
-```
-
-HTTP: `GET f'/api/v1/{instance_id}/playbill/queries/{name}'`.
-
-<a id="api-cruxibleclient-run-playbill-query"></a>
-
-### `CruxibleClient.run_playbill_query`
-
-[Source](src/cruxible_client/transport/http.py)
-
-```text
-run_playbill_query(
-    instance_id: str,
-    name: str,
-    *,
-    at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-    evaluation_time: str | None = None,
-    parameters: Mapping[str, Any] | None = None,
-    budgets: Mapping[str, Any] | None = None,
-) -> contracts.PlaybillQueryRun
-```
-
-HTTP: `POST f'/api/v1/{instance_id}/playbill/queries/{name}/run'`.
+HTTP: `POST f'/api/v1/{instance_id}/playbill/claims/backings'`. SDK-internal, kept beside `read_playbill_claim_batch`.
 
 <a id="api-cruxibleclient-playbill-procedure-readiness"></a>
 
@@ -6414,71 +6204,6 @@ suppress_playbill_curation(
 
 HTTP: `POST f'/api/v1/{instance_id}/playbill/curation/suppress'`.
 
-<a id="api-cruxibleclient-discover-playbill"></a>
-
-### `CruxibleClient.discover_playbill`
-
-[Source](src/cruxible_client/transport/http.py)
-
-```text
-discover_playbill(
-    instance_id: str,
-    *,
-    query: str | None = None,
-    entrypoint: str | None = None,
-    at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-    evaluation_time: str | None = None,
-    profile: Literal['interfaces', 'subjects', 'all'] = 'interfaces',
-    budget: Mapping[str, Any] | None = None,
-) -> contracts.PlaybillDiscoveryResult | contracts.PlaybillInterfaceInventory
-```
-
-HTTP: `POST f'/api/v1/{instance_id}/playbill/discover'`.
-
-<a id="api-cruxibleclient-search-playbill"></a>
-
-### `CruxibleClient.search_playbill`
-
-[Source](src/cruxible_client/transport/http.py)
-
-```text
-search_playbill(
-    instance_id: str,
-    *,
-    mode: Literal['search', 'list', 'orient'],
-    query: str | None = None,
-    kinds: Sequence[str] = ('claim', 'demand', 'procedure'),
-    subject: Mapping[str, Any] | None = None,
-    statuses: Sequence[str] = (),
-    cursor: Mapping[str, Any] | None = None,
-    at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-    evaluation_time: str | None = None,
-    budgets: Mapping[str, Any] | None = None,
-) -> contracts.PlaybillSearchResult
-```
-
-HTTP: `POST f'/api/v1/{instance_id}/playbill/search'`.
-
-<a id="api-cruxibleclient-expand-playbill"></a>
-
-### `CruxibleClient.expand_playbill`
-
-[Source](src/cruxible_client/transport/http.py)
-
-```text
-expand_playbill(
-    instance_id: str,
-    *,
-    address: Mapping[str, Any],
-    at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-    evaluation_time: str | None = None,
-    facets: Sequence[str] = (),
-    budget: Mapping[str, Any] | None = None,
-) -> contracts.PlaybillContextCapsule
-```
-
-HTTP: `POST f'/api/v1/{instance_id}/playbill/expand'`.
-
 <a id="api-cruxibleclient-resolve-playbill-coverage"></a>
 
 ### `CruxibleClient.resolve_playbill_coverage`
@@ -6516,7 +6241,8 @@ export_playbill_floor(
     instance_id: str,
     *,
     at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-    format_version: Literal[2, 3] = 3,
+    format_version: Literal[2, 4] = 4,
+    include: Sequence[contracts.PlaybillFloorExportPart] = (),
     review_notes_oid: str | None = None,
 ) -> contracts.PlaybillFloorExport
 ```
@@ -6619,7 +6345,7 @@ include constructor/validator definitions for request and response contracts.
 | `PropertySchema` | `cruxible_client.contracts.procedures.contract_schema` · [Source](src/cruxible_client/contracts/procedures/contract_schema.py) |
 | `QueryRef` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
 | `ReferentSensitivity` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
-| `SlotRef` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
+| `ProcedureSlotRef` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
 | `SourceRef` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
 | `StateTapNodeV3` | `cruxible_client.contracts.procedures.models` · [Source](src/cruxible_client/contracts/procedures/models.py) |
 | `SubjectRef` | `cruxible_client.authoring.sdk_types` · [Source](src/cruxible_client/authoring/sdk_types.py) |
@@ -7521,7 +7247,7 @@ the checked revision. Open the linked model for its declared fields, validation
 rules, enum values, and historical format. The high-level SDK’s own return/value
 fields are documented above; these links keep wire schema definitions singular.
 
-**`contracts.__init__`** — [GitWorkspaceNoteV1](src/cruxible_client/contracts/__init__.py), [PlaybillHostResult](src/cruxible_client/contracts/__init__.py), [PlaybillHostWorkspaceRegistrationV1](src/cruxible_client/contracts/__init__.py), [PlaybillHostCompatibilityReasonV1](src/cruxible_client/contracts/__init__.py), [PlaybillHostInspectionV1](src/cruxible_client/contracts/__init__.py), [RuntimeCredentialBootstrapResult](src/cruxible_client/contracts/__init__.py), [RuntimeCredentialMetadata](src/cruxible_client/contracts/__init__.py), [RuntimeCredentialResult](src/cruxible_client/contracts/__init__.py), [RuntimeCredentialListResult](src/cruxible_client/contracts/__init__.py), [ProviderLaneStatusV1](src/cruxible_client/contracts/__init__.py), [ServerInfoResult](src/cruxible_client/contracts/__init__.py), [ServerRestartResult](src/cruxible_client/contracts/__init__.py), [ServerStopResult](src/cruxible_client/contracts/__init__.py), [IsolatedExecutorRegistrationV1](src/cruxible_client/contracts/__init__.py), [PlaybillAcceptedCoordinate](src/cruxible_client/contracts/__init__.py), [PlaybillInitResult](src/cruxible_client/contracts/__init__.py), [PlaybillCasObjectResult](src/cruxible_client/contracts/__init__.py), [PlaybillProposalInspection](src/cruxible_client/contracts/__init__.py), [PlaybillProposalListEntry](src/cruxible_client/contracts/__init__.py), [PlaybillProposalList](src/cruxible_client/contracts/__init__.py), [PlaybillProposalSelectorResultV1](src/cruxible_client/contracts/__init__.py), [PlaybillProposalReadmitResult](src/cruxible_client/contracts/__init__.py), [PlaybillProposalWithdrawResult](src/cruxible_client/contracts/__init__.py), [PlaybillWhoAmI](src/cruxible_client/contracts/__init__.py), [PlaybillRefusalInspection](src/cruxible_client/contracts/__init__.py), [PlaybillSemanticFieldValue](src/cruxible_client/contracts/__init__.py), [PlaybillSemanticFieldDelta](src/cruxible_client/contracts/__init__.py), [PlaybillReviewedMember](src/cruxible_client/contracts/__init__.py), [PlaybillProjectionAdvisory](src/cruxible_client/contracts/__init__.py), [PlaybillProjectionEvidence](src/cruxible_client/contracts/__init__.py), [PlaybillProposalReview](src/cruxible_client/contracts/__init__.py), [PlaybillApprovalChallenge](src/cruxible_client/contracts/__init__.py), [PlaybillApprovalReceipt](src/cruxible_client/contracts/__init__.py), [PlaybillActivationReceipt](src/cruxible_client/contracts/__init__.py), [PlaybillFloorRefreshResult](src/cruxible_client/contracts/__init__.py), [PlaybillWorkspaceActivationResult](src/cruxible_client/contracts/__init__.py), [PlaybillDocumentView](src/cruxible_client/contracts/__init__.py), [PlaybillDocumentList](src/cruxible_client/contracts/__init__.py), [PlaybillPrincipalList](src/cruxible_client/contracts/__init__.py), [PlaybillBodyRead](src/cruxible_client/contracts/__init__.py), [PlaybillDocumentHistory](src/cruxible_client/contracts/__init__.py), [PlaybillExplainResult](src/cruxible_client/contracts/__init__.py), [PlaybillExplainUnsupportedDetail](src/cruxible_client/contracts/__init__.py), [PlaybillSourceContext](src/cruxible_client/contracts/__init__.py), [PlaybillSourceCheckResult](src/cruxible_client/contracts/__init__.py), [PlaybillInstanceDecommissionResultV1](src/cruxible_client/contracts/__init__.py), [PlaybillLedgerMirrorV1](src/cruxible_client/contracts/__init__.py), [PlaybillSubjectIncomingClaimV1](src/cruxible_client/contracts/__init__.py), [PlaybillSubjectIncomingGroupV1](src/cruxible_client/contracts/__init__.py), [PlaybillSubjectView](src/cruxible_client/contracts/__init__.py), [PlaybillSubjectList](src/cruxible_client/contracts/__init__.py), [PlaybillSubjectHistory](src/cruxible_client/contracts/__init__.py), [PlaybillClaimTypeView](src/cruxible_client/contracts/__init__.py), [PlaybillClaimTypeList](src/cruxible_client/contracts/__init__.py), [PlaybillClaimTypeProposalLint](src/cruxible_client/contracts/__init__.py), [PlaybillClaimTypeInputProposalResult](src/cruxible_client/contracts/__init__.py), [PlaybillClaimTypeMigrationResult](src/cruxible_client/contracts/__init__.py), [PlaybillClaimTypeMigrationPreflight](src/cruxible_client/contracts/__init__.py), [PlaybillClaimTypeMigrationResultV2](src/cruxible_client/contracts/__init__.py), [PlaybillClaimTypeMigrationResultV3](src/cruxible_client/contracts/__init__.py), [PlaybillClaimView](src/cruxible_client/contracts/__init__.py), [PlaybillCaptureEvidenceKindAdmission](src/cruxible_client/contracts/__init__.py), [PlaybillCaptureAdmissionAccount](src/cruxible_client/contracts/__init__.py), [PlaybillClaimViewV2](src/cruxible_client/contracts/__init__.py), [PlaybillClaimList](src/cruxible_client/contracts/__init__.py), [PlaybillClaimHistory](src/cruxible_client/contracts/__init__.py), [PlaybillClaimRetirePreflight](src/cruxible_client/contracts/__init__.py), [PlaybillClaimRetireResult](src/cruxible_client/contracts/__init__.py), [PlaybillClaimExplanation](src/cruxible_client/contracts/__init__.py), [PlaybillClaimExplanationV2](src/cruxible_client/contracts/__init__.py), [PlaybillClaimExplanationV3](src/cruxible_client/contracts/__init__.py), [PlaybillCandidateStatus](src/cruxible_client/contracts/__init__.py), [PlaybillAuthoringIntentView](src/cruxible_client/contracts/__init__.py), [PlaybillAuthoringExampleResult](src/cruxible_client/contracts/__init__.py), [PlaybillAuthoringIntentList](src/cruxible_client/contracts/__init__.py), [PlaybillAuthoringPreflightResult](src/cruxible_client/contracts/__init__.py), [PlaybillAuthoringSubmitResult](src/cruxible_client/contracts/__init__.py), [PlaybillInsertionPrepareResult](src/cruxible_client/contracts/__init__.py), [PlaybillInsertionConfirmResultV2](src/cruxible_client/contracts/__init__.py), [PlaybillInsertionAbandonResult](src/cruxible_client/contracts/__init__.py), [PlaybillBlockDeclareResultV1](src/cruxible_client/contracts/__init__.py), [PlaybillBlockDepublishResultV1](src/cruxible_client/contracts/__init__.py), [PlaybillQueryDefinitionView](src/cruxible_client/contracts/__init__.py), [PlaybillQueryDefinitionList](src/cruxible_client/contracts/__init__.py), [PlaybillQueryRun](src/cruxible_client/contracts/__init__.py), [PlaybillProcedureReadiness](src/cruxible_client/contracts/__init__.py), [PlaybillPolicyInForce](src/cruxible_client/contracts/__init__.py), [PlaybillPolicyInForceList](src/cruxible_client/contracts/__init__.py), [PlaybillProcedureBindResult](src/cruxible_client/contracts/__init__.py), [PlaybillProcedureRunState](src/cruxible_client/contracts/__init__.py), [PlaybillNextResult](src/cruxible_client/contracts/__init__.py), [PlaybillCurationListResult](src/cruxible_client/contracts/__init__.py), [PlaybillCurationActionResult](src/cruxible_client/contracts/__init__.py), [PlaybillAuditFactors](src/cruxible_client/contracts/__init__.py), [PlaybillAuditEvidenceRef](src/cruxible_client/contracts/__init__.py), [PlaybillAuditRow](src/cruxible_client/contracts/__init__.py), [PlaybillAuditScope](src/cruxible_client/contracts/__init__.py), [PlaybillAuditCoveredClaim](src/cruxible_client/contracts/__init__.py), [PlaybillAuditCoverage](src/cruxible_client/contracts/__init__.py), [PlaybillAuditCursor](src/cruxible_client/contracts/__init__.py), [PlaybillAuditResult](src/cruxible_client/contracts/__init__.py), [PlaybillSinceCursor](src/cruxible_client/contracts/__init__.py), [PlaybillSinceRequest](src/cruxible_client/contracts/__init__.py), [PlaybillSinceRow](src/cruxible_client/contracts/__init__.py), [PlaybillSinceResult](src/cruxible_client/contracts/__init__.py), [PlaybillDiscoveryResult](src/cruxible_client/contracts/__init__.py), [PlaybillProviderInterfaceImplementation](src/cruxible_client/contracts/__init__.py), [PlaybillProviderInterfaceEntry](src/cruxible_client/contracts/__init__.py), [PlaybillInterfaceInventory](src/cruxible_client/contracts/__init__.py), [PlaybillSearchResult](src/cruxible_client/contracts/__init__.py), [PlaybillContextCapsule](src/cruxible_client/contracts/__init__.py), [PlaybillCoverageResult](src/cruxible_client/contracts/__init__.py), [PlaybillFloorFile](src/cruxible_client/contracts/__init__.py), [PlaybillFloorExport](src/cruxible_client/contracts/__init__.py), [PlaybillWorkspaceFloorWriteResult](src/cruxible_client/contracts/__init__.py), [PlaybillWorkspaceAttachResultV1](src/cruxible_client/contracts/__init__.py), [PlaybillWorkspaceDetachResultV1](src/cruxible_client/contracts/__init__.py), [PlaybillWorkspaceFloorStatus](src/cruxible_client/contracts/__init__.py).
+**`contracts.__init__`** — [GitWorkspaceNoteV1](src/cruxible_client/contracts/__init__.py), [PlaybillHostResult](src/cruxible_client/contracts/__init__.py), [PlaybillHostWorkspaceRegistrationV1](src/cruxible_client/contracts/__init__.py), [PlaybillHostCompatibilityReasonV1](src/cruxible_client/contracts/__init__.py), [PlaybillHostInspectionV1](src/cruxible_client/contracts/__init__.py), [RuntimeCredentialBootstrapResult](src/cruxible_client/contracts/__init__.py), [RuntimeCredentialMetadata](src/cruxible_client/contracts/__init__.py), [RuntimeCredentialResult](src/cruxible_client/contracts/__init__.py), [RuntimeCredentialListResult](src/cruxible_client/contracts/__init__.py), [ProviderLaneStatusV1](src/cruxible_client/contracts/__init__.py), [ServerInfoResult](src/cruxible_client/contracts/__init__.py), [ServerRestartResult](src/cruxible_client/contracts/__init__.py), [ServerStopResult](src/cruxible_client/contracts/__init__.py), [IsolatedExecutorRegistrationV1](src/cruxible_client/contracts/__init__.py), [PlaybillAcceptedCoordinate](src/cruxible_client/contracts/__init__.py), [PlaybillInitResult](src/cruxible_client/contracts/__init__.py), [PlaybillCasObjectResult](src/cruxible_client/contracts/__init__.py), [PlaybillProposalInspection](src/cruxible_client/contracts/__init__.py), [PlaybillProposalListEntry](src/cruxible_client/contracts/__init__.py), [PlaybillProposalList](src/cruxible_client/contracts/__init__.py), [PlaybillProposalSelectorResultV1](src/cruxible_client/contracts/__init__.py), [PlaybillProposalReadmitResult](src/cruxible_client/contracts/__init__.py), [PlaybillProposalWithdrawResult](src/cruxible_client/contracts/__init__.py), [PlaybillWhoAmI](src/cruxible_client/contracts/__init__.py), [PlaybillRefusalInspection](src/cruxible_client/contracts/__init__.py), [PlaybillSemanticFieldValue](src/cruxible_client/contracts/__init__.py), [PlaybillSemanticFieldDelta](src/cruxible_client/contracts/__init__.py), [PlaybillReviewedMember](src/cruxible_client/contracts/__init__.py), [PlaybillProjectionAdvisory](src/cruxible_client/contracts/__init__.py), [PlaybillProjectionEvidence](src/cruxible_client/contracts/__init__.py), [PlaybillProposalReview](src/cruxible_client/contracts/__init__.py), [PlaybillApprovalChallenge](src/cruxible_client/contracts/__init__.py), [PlaybillApprovalReceipt](src/cruxible_client/contracts/__init__.py), [PlaybillActivationReceipt](src/cruxible_client/contracts/__init__.py), [PlaybillFloorRefreshResult](src/cruxible_client/contracts/__init__.py), [PlaybillWorkspaceActivationResult](src/cruxible_client/contracts/__init__.py), [PlaybillSourceContext](src/cruxible_client/contracts/__init__.py), [PlaybillSourceCheckResult](src/cruxible_client/contracts/__init__.py), [PlaybillInstanceDecommissionResultV1](src/cruxible_client/contracts/__init__.py), [PlaybillLedgerMirrorV1](src/cruxible_client/contracts/__init__.py), [PlaybillClaimTypeProposalLint](src/cruxible_client/contracts/__init__.py), [PlaybillClaimTypeInputProposalResult](src/cruxible_client/contracts/__init__.py), [PlaybillClaimTypeMigrationResult](src/cruxible_client/contracts/__init__.py), [PlaybillClaimTypeMigrationPreflight](src/cruxible_client/contracts/__init__.py), [PlaybillClaimTypeMigrationResultV2](src/cruxible_client/contracts/__init__.py), [PlaybillClaimTypeMigrationResultV3](src/cruxible_client/contracts/__init__.py), [PlaybillCaptureEvidenceKindAdmission](src/cruxible_client/contracts/__init__.py), [PlaybillCaptureAdmissionAccount](src/cruxible_client/contracts/__init__.py), [PlaybillClaimViewV2](src/cruxible_client/contracts/__init__.py), [PlaybillCandidateStatus](src/cruxible_client/contracts/__init__.py), [PlaybillAuthoringIntentView](src/cruxible_client/contracts/__init__.py), [PlaybillAuthoringExampleResult](src/cruxible_client/contracts/__init__.py), [PlaybillAuthoringIntentList](src/cruxible_client/contracts/__init__.py), [PlaybillAuthoringPreflightResult](src/cruxible_client/contracts/__init__.py), [PlaybillAuthoringSubmitResult](src/cruxible_client/contracts/__init__.py), [PlaybillInsertionAbandonResult](src/cruxible_client/contracts/__init__.py), [PlaybillBlockDeclareResultV1](src/cruxible_client/contracts/__init__.py), [PlaybillBlockDepublishResultV1](src/cruxible_client/contracts/__init__.py), [PlaybillQueryDefinitionView](src/cruxible_client/contracts/__init__.py), [PlaybillQueryRun](src/cruxible_client/contracts/__init__.py), [PlaybillProcedureReadiness](src/cruxible_client/contracts/__init__.py), [PlaybillPolicyInForce](src/cruxible_client/contracts/__init__.py), [PlaybillPolicyInForceList](src/cruxible_client/contracts/__init__.py), [PlaybillProcedureBindResult](src/cruxible_client/contracts/__init__.py), [PlaybillProcedureRunState](src/cruxible_client/contracts/__init__.py), [PlaybillNextResult](src/cruxible_client/contracts/__init__.py), [PlaybillCurationListResult](src/cruxible_client/contracts/__init__.py), [PlaybillCurationActionResult](src/cruxible_client/contracts/__init__.py), [PlaybillAuditFactors](src/cruxible_client/contracts/__init__.py), [PlaybillAuditEvidenceRef](src/cruxible_client/contracts/__init__.py), [PlaybillAuditRow](src/cruxible_client/contracts/__init__.py), [PlaybillAuditScope](src/cruxible_client/contracts/__init__.py), [PlaybillAuditCoveredClaim](src/cruxible_client/contracts/__init__.py), [PlaybillAuditCoverage](src/cruxible_client/contracts/__init__.py), [PlaybillAuditCursor](src/cruxible_client/contracts/__init__.py), [PlaybillAuditResult](src/cruxible_client/contracts/__init__.py), [PlaybillSinceCursor](src/cruxible_client/contracts/__init__.py), [PlaybillSinceRequest](src/cruxible_client/contracts/__init__.py), [PlaybillSinceRow](src/cruxible_client/contracts/__init__.py), [PlaybillSinceResult](src/cruxible_client/contracts/__init__.py), [PlaybillProviderInterfaceImplementation](src/cruxible_client/contracts/__init__.py), [PlaybillProviderInterfaceEntry](src/cruxible_client/contracts/__init__.py), [PlaybillCoverageResult](src/cruxible_client/contracts/__init__.py), [PlaybillFloorFile](src/cruxible_client/contracts/__init__.py), [PlaybillFloorExport](src/cruxible_client/contracts/__init__.py), [PlaybillWorkspaceFloorWriteResult](src/cruxible_client/contracts/__init__.py), [PlaybillWorkspaceAttachResultV1](src/cruxible_client/contracts/__init__.py), [PlaybillWorkspaceDetachResultV1](src/cruxible_client/contracts/__init__.py), [PlaybillWorkspaceFloorStatus](src/cruxible_client/contracts/__init__.py).
 
 **`contracts.accepted_attestations`** — [AcceptedAttestationVerdictStatement](src/cruxible_client/contracts/accepted_attestations.py), [AcceptedClaimAttestationEvidenceV1](src/cruxible_client/contracts/accepted_attestations.py).
 
@@ -7563,7 +7289,7 @@ fields are documented above; these links keep wire schema definitions singular.
 
 **`contracts.claim_verdicts`** — [ClaimAdjudicationRuleV1](src/cruxible_client/contracts/claim_verdicts.py), [CaptureVerdictEvidenceV1](src/cruxible_client/contracts/claim_verdicts.py), [EvidenceControlComponentV1](src/cruxible_client/contracts/claim_verdicts.py), [ClaimVerdictResultV1](src/cruxible_client/contracts/claim_verdicts.py), [EvidenceFreshnessExpirationV1](src/cruxible_client/contracts/claim_verdicts.py), [ClaimVerdictResultV2](src/cruxible_client/contracts/claim_verdicts.py).
 
-**`contracts.claims`** — [ClaimFormatError](src/cruxible_client/contracts/claims.py), [ClaimUnsupportedFormatError](src/cruxible_client/contracts/claims.py), [LiteralClaimObject](src/cruxible_client/contracts/claims.py), [SubjectClaimObject](src/cruxible_client/contracts/claims.py), [ExactContentClaimObject](src/cruxible_client/contracts/claims.py), [ClaimStatement](src/cruxible_client/contracts/claims.py), [ClaimStatementCardV1](src/cruxible_client/contracts/claims.py), [ClaimReferentContext](src/cruxible_client/contracts/claims.py), [ClaimBacking](src/cruxible_client/contracts/claims.py), [ClaimCitationV1](src/cruxible_client/contracts/claims.py), [LegacyCitationReferenceV1](src/cruxible_client/contracts/claims.py), [ClaimBackingV2](src/cruxible_client/contracts/claims.py), [ClaimArtifactV2](src/cruxible_client/contracts/claims.py), [ClaimRetirementAttributionV1](src/cruxible_client/contracts/claims.py), [ClaimRetireDependentV1](src/cruxible_client/contracts/claims.py), [ClaimRetireRequestV1](src/cruxible_client/contracts/claims.py), [ClaimArtifactV3](src/cruxible_client/contracts/claims.py), [AcceptedClaim](src/cruxible_client/contracts/claims.py), [ClaimLawEvidenceV1](src/cruxible_client/contracts/claims.py), [ClaimLawEvidenceV2](src/cruxible_client/contracts/claims.py), [ClaimLawResult](src/cruxible_client/contracts/claims.py), [CitedSourceWindow](src/cruxible_client/contracts/claims.py), [CaptureEvidenceKindAdmission](src/cruxible_client/contracts/claims.py).
+**`contracts.claims`** — [ClaimFormatError](src/cruxible_client/contracts/claims.py), [ClaimUnsupportedFormatError](src/cruxible_client/contracts/claims.py), [LiteralClaimObject](src/cruxible_client/contracts/claims.py), [SubjectClaimObject](src/cruxible_client/contracts/claims.py), [ExactContentClaimObject](src/cruxible_client/contracts/claims.py), [ClaimStatement](src/cruxible_client/contracts/claims.py), [ClaimStatementCardV1](src/cruxible_client/contracts/claims.py), [ClaimReferentContext](src/cruxible_client/contracts/claims.py), [ClaimBacking](src/cruxible_client/contracts/claims.py), [ClaimCitationV1](src/cruxible_client/contracts/claims.py), [LegacyCitationReferenceV1](src/cruxible_client/contracts/claims.py), [ClaimBackingV2](src/cruxible_client/contracts/claims.py), [ClaimArtifactV2](src/cruxible_client/contracts/claims.py), [ClaimRetirementAttributionV1](src/cruxible_client/contracts/claims.py), [ClaimRetireDependentV1](src/cruxible_client/contracts/claims.py), [ClaimArtifactV3](src/cruxible_client/contracts/claims.py), [AcceptedClaim](src/cruxible_client/contracts/claims.py), [ClaimLawEvidenceV1](src/cruxible_client/contracts/claims.py), [ClaimLawEvidenceV2](src/cruxible_client/contracts/claims.py), [ClaimLawResult](src/cruxible_client/contracts/claims.py), [CitedSourceWindow](src/cruxible_client/contracts/claims.py), [CaptureEvidenceKindAdmission](src/cruxible_client/contracts/claims.py).
 
 **`contracts.compiler_upgrade`** — [CompilerUpgradeV1](src/cruxible_client/contracts/compiler_upgrade.py).
 
@@ -7573,7 +7299,7 @@ fields are documented above; these links keep wire schema definitions singular.
 
 **`contracts.diagnostics`** — [LocalDraftEdit](src/cruxible_client/contracts/diagnostics.py), [GovernedOperationReference](src/cruxible_client/contracts/diagnostics.py), [CompilerDiagnostic](src/cruxible_client/contracts/diagnostics.py).
 
-**`contracts.discovery`** — [DiscoveryHintsV1](src/cruxible_client/contracts/discovery.py), [SemanticReuseInterfaceV1](src/cruxible_client/contracts/discovery.py), [ProposedSemanticInterfaceV1](src/cruxible_client/contracts/discovery.py), [ReuseMatchV1](src/cruxible_client/contracts/discovery.py), [ReuseCandidateV1](src/cruxible_client/contracts/discovery.py), [ReuseDispositionV1](src/cruxible_client/contracts/discovery.py), [DistinctRelationMemberV1](src/cruxible_client/contracts/discovery.py), [VocabularyReuseRequestV1](src/cruxible_client/contracts/discovery.py), [VocabularyReuseLawEvidenceV1](src/cruxible_client/contracts/discovery.py), [DescriptorClaimTypeSeedV1](src/cruxible_client/contracts/discovery.py), [DescriptorAuthorityContextV1](src/cruxible_client/contracts/discovery.py), [DescriptorAuthorityResultV1](src/cruxible_client/contracts/discovery.py), [DiscoveryBudgetV1](src/cruxible_client/contracts/discovery.py), [ExpansionBudgetV1](src/cruxible_client/contracts/discovery.py), [DiscoveryMatchBasisV1](src/cruxible_client/contracts/discovery.py), [DiscoveryHitV1](src/cruxible_client/contracts/discovery.py), [DiscoveryRequestV1](src/cruxible_client/contracts/discovery.py), [DiscoveryPageV1](src/cruxible_client/contracts/discovery.py), [ExpandRequestV1](src/cruxible_client/contracts/discovery.py), [ContextCapsuleV1](src/cruxible_client/contracts/discovery.py), [ContextMaterialV1](src/cruxible_client/contracts/discovery.py).
+**`contracts.discovery`** — [DiscoveryBudgetV1](src/cruxible_client/contracts/discovery.py), [DiscoveryMatchBasisV1](src/cruxible_client/contracts/discovery.py), [DiscoveryHitV1](src/cruxible_client/contracts/discovery.py), [DiscoveryRequestV1](src/cruxible_client/contracts/discovery.py), [DiscoveryPageV1](src/cruxible_client/contracts/discovery.py).
 
 **`contracts.documents`** — [DocumentLink](src/cruxible_client/contracts/documents.py), [DocumentPin](src/cruxible_client/contracts/documents.py), [DocumentAuthority](src/cruxible_client/contracts/documents.py), [DocumentLifecycle](src/cruxible_client/contracts/documents.py), [DocumentShell](src/cruxible_client/contracts/documents.py), [DocumentArtifactAdapter](src/cruxible_client/contracts/documents.py), [BodyVerifierProtocol](src/cruxible_client/contracts/documents.py), [AcceptedDocument](src/cruxible_client/contracts/documents.py), [DocumentLawResult](src/cruxible_client/contracts/documents.py).
 
@@ -7729,7 +7455,10 @@ World attributes return live Claim contenders rather than silently selecting a
 scalar. Use `world.prefetch(subjects=(...), predicates=(...))` for bounded reads
 of known selections, then inspect each Claim's value and verdict; when only
 values and verdicts are needed, `world.values(subjects=(...), predicates=(...))`
-returns them without full Claim views. A returned
+returns them through `query` without full Claim views, overturned and refused
+contenders included. To find something by name across kinds, grep the exported
+floor under `.playbill/floor/` and pass the reference you find to `pb.get(...)`.
+A returned
 Claim's `subject` path can be passed directly to `pb.claim(subject=...)` or a
 changeset Claim writer when revising it. Acceptance and
 evidential support are distinct: an accepted Claim may remain unsupported under

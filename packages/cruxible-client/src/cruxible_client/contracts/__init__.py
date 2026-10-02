@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from typing import Any, Literal, TypeAlias
+from typing import Annotated, Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -96,6 +96,12 @@ from cruxible_client.contracts.orient import (
     PLAYBILL_ORIENT_MAX_LIMIT as PLAYBILL_ORIENT_MAX_LIMIT,
 )
 from cruxible_client.contracts.orient import (
+    PlaybillHeadV1 as PlaybillHeadV1,
+)
+from cruxible_client.contracts.orient import (
+    PlaybillOrientFloorV1 as PlaybillOrientFloorV1,
+)
+from cruxible_client.contracts.orient import (
     PlaybillOrientResultV1 as PlaybillOrientResultV1,
 )
 from cruxible_client.contracts.orient import (
@@ -104,6 +110,8 @@ from cruxible_client.contracts.orient import (
 from cruxible_client.contracts.orient import (
     PlaybillOrientSurface as PlaybillOrientSurface,
 )
+from cruxible_client.contracts.policy_rows import PlaybillPolicyInForce as PlaybillPolicyInForce
+from cruxible_client.contracts.policy_rows import PlaybillPolicyKind as PlaybillPolicyKind
 from cruxible_client.contracts.predictions import (
     ObservationSettlementEvidenceV2 as ObservationSettlementEvidenceV2,
 )
@@ -132,6 +140,7 @@ from cruxible_client.contracts.predictions import (
     TerminalSettlementEvidenceV2 as TerminalSettlementEvidenceV2,
 )
 from cruxible_client.contracts.primitives import canonical_json
+from cruxible_client.contracts.principals import PlaybillAuthoringRefusalV1
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifactAny as _ProcedureArtifactAny,
 )
@@ -169,11 +178,13 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureChildInvocationV1,
     ProcedurePendingSuccessorV1,
     ProcedureRunAttributionV1,
+    ProcedureRunAttributionWithheldV1,
     ProcedureRunReceiptV2,
     ProcedureRunReceiptV3,
     ProcedureRunReceiptV4,
     ProcedureRunReceiptV5,
     ProcedureRunReceiptV6,
+    ProcedureRunReceiptWithheldV1,
     ProcedureSourceObservationV1,
     ProcedureTerminalEgressV1,
     ProcedureTerminalV1,
@@ -290,21 +301,6 @@ PlaybillAuthoringExampleName = Literal[
     "change-set",
     "claim-type-succession",
 ]
-PlaybillPolicyKind: TypeAlias = Literal[
-    "approval_policy",
-    "procedure_runtime_policy",
-    "source_acquisition_policy",
-    "claim_evidence_admission_policy",
-    "claim_admission_policy",
-    "claim_resolution_policy",
-    "claim_evidence_freshness_policy",
-    "claim_attestation_consequence_policy",
-    "capture_retention_erasure_policy",
-    "query_evaluation_policy",
-    "document_activation_policy",
-    "procedure_activation_policy",
-    "trigger_schedule",
-]
 PlaybillNextReason: TypeAlias = Literal[
     "claim_conflicted",
     "claim_uncovered",
@@ -321,6 +317,7 @@ PlaybillNextReason: TypeAlias = Literal[
     "claim_new_evidence_supporting",
     "claim_new_evidence_unreviewed",
     "document_modified",
+    "workspace_binding_missing",
     "unregistered_projection_block",
     "projection_marker_invalid",
     "proposal_stale",
@@ -336,6 +333,8 @@ PlaybillNextRepairOperation: TypeAlias = Literal[
     "playbill.authoring.create",
     "playbill.authoring.bind",
     "playbill.claim.retire",
+    "playbill.set",
+    "playbill.write",
     "playbill.floor.export",
     "playbill.block.depublish",
     "playbill.block.repin",
@@ -361,13 +360,8 @@ PLAYBILL_NEXT_MAX_LIMIT = 1000
 #: `truncated` and carries the `next_cursor` that continues it.
 PLAYBILL_PROPOSAL_LIST_DEFAULT_LIMIT = 50
 PLAYBILL_PROPOSAL_LIST_MAX_LIMIT = 500
-PLAYBILL_POLICY_LIST_DEFAULT_LIMIT = 25
-PLAYBILL_POLICY_LIST_MAX_LIMIT = 200
 PLAYBILL_CURATION_LIST_DEFAULT_LIMIT = 25
 PLAYBILL_CURATION_LIST_MAX_LIMIT = 200
-PLAYBILL_SUBJECT_LIST_DEFAULT_LIMIT = 50
-PLAYBILL_SUBJECT_LIST_MAX_LIMIT = 500
-
 ProviderLaneUnavailableCodeV1: TypeAlias = Literal[
     "provider_process_lease_invalid",
     "provider_process_lease_missing",
@@ -469,6 +463,12 @@ class RuntimeCredentialBootstrapResult(BaseModel):
 class RuntimeCredentialMetadata(BaseModel):
     credential_id: str
     instance_id: str
+    # The principal this credential acts as. None only for the unbound
+    # operator credentials (the bootstrap claim, local recovery, and any
+    # credential minted before credentials named a principal): they carry
+    # transport authority but can never author.
+    principal_id: str | None = None
+    # A description only; it never decides who acts.
     label: str
     permission_mode: RuntimeCredentialPermissionMode
     created_at: str
@@ -690,13 +690,25 @@ class PlaybillWhoAmI(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-whoami-v1"] = "playbill-whoami-v1"
-    actor_id: str
-    credential_label: str
-    actor_id_source: Literal["runtime_credential_label", "local_operator"]
+    # None only for an unbound credential, which acts as no principal.
+    actor_id: str | None
+    # The credential's description; never the source of the actor ID.
+    credential_label: str | None
+    actor_id_source: Literal[
+        "runtime_credential", "unbound_credential", "principal_claim", "local_operator"
+    ]
+    # False when no bearer credential backs the identity: an auth-off daemon
+    # trusts every process of its OS user equally, so the actor ID is a claim.
+    authenticated: bool
     credential_permission_mode: Literal["read_only", "governed_write", "graph_write", "admin"]
-    principal_registration_status: Literal["active", "revoked", "absent"]
+    # None when the request names no principal (an unbound credential).
+    principal_registration_status: Literal["active", "revoked", "absent"] | None
     active_principal_ids: list[str]
     coordinate: PlaybillAcceptedCoordinate
+    # Whether authoring create would accept this actor, and the refusal it
+    # would return otherwise: the same code, detail and repair.
+    can_author: bool
+    authoring_refusal: PlaybillAuthoringRefusalV1 | None
 
 
 class PlaybillRefusalInspection(BaseModel):
@@ -877,82 +889,6 @@ class PlaybillWorkspaceActivationResult(PlaybillActivationReceipt):
     block_sync: PlaybillBlockSyncResultV1 | None = None
 
 
-class PlaybillDocumentView(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-document-read-v1"] = "playbill-document-read-v1"
-    coordinate_kind: Literal["canonical"] = "canonical"
-    coordinate: PlaybillAcceptedCoordinate
-    envelope: dict[str, Any]
-    facts: list[dict[str, Any]]
-
-
-class PlaybillDocumentList(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-document-list-v1"] = "playbill-document-list-v1"
-    coordinate: PlaybillAcceptedCoordinate
-    documents: list[PlaybillDocumentView]
-
-
-class PlaybillPrincipalList(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-principal-list-v1"] = "playbill-principal-list-v1"
-    coordinate: PlaybillAcceptedCoordinate
-    principals: list[dict[str, Any]]
-
-
-class PlaybillBodyRead(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-document-body-v1"] = "playbill-document-body-v1"
-    identity: str
-    coordinate: PlaybillAcceptedCoordinate
-    body_digest: str
-    media_type: str
-    content_base64: str
-
-
-class PlaybillDocumentHistory(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-document-history-v1"] = "playbill-document-history-v1"
-    identity: str
-    entries: list[dict[str, Any]]
-
-
-class PlaybillExplainResult(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-explain-v1"] = "playbill-explain-v1"
-    subject: dict[str, Any]
-    coordinate: PlaybillAcceptedCoordinate
-    detail: Literal["summary", "evidence"]
-    governance: dict[str, Any]
-    provenance: dict[str, Any]
-    attestation_coverage: dict[str, Any]
-    history: dict[str, Any]
-    source_mapping: dict[str, Any] | None
-    proof_references: list[dict[str, Any]]
-    redactions: list[str]
-    supported_details: list[str]
-
-
-class PlaybillExplainUnsupportedDetail(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-explain-unsupported-detail-v1"] = (
-        "playbill-explain-unsupported-detail-v1"
-    )
-    subject: dict[str, Any]
-    coordinate: PlaybillAcceptedCoordinate
-    requested_detail: Literal["proof"]
-    code: str
-    message: str
-    supported_details: list[str]
-
-
 class PlaybillSourceContext(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -1010,106 +946,6 @@ class PlaybillLedgerMirrorV1(BaseModel):
     published_refs: dict[str, str] = Field(default_factory=dict)
     wait_sequence: int | None = Field(default=None, ge=0)
     detail: str | None = None
-
-
-class PlaybillSubjectIncomingClaimV1(BaseModel):
-    """One live Claim whose subject-valued object is the profiled Subject."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-subject-incoming-claim-v1"] = "playbill-subject-incoming-claim-v1"
-    claim_identity: str
-    subject_identity: str
-
-
-class PlaybillSubjectIncomingGroupV1(BaseModel):
-    """Every incoming edge that arrives on one governed predicate."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-subject-incoming-group-v1"] = "playbill-subject-incoming-group-v1"
-    predicate: str
-    claims: list[PlaybillSubjectIncomingClaimV1]
-
-
-class PlaybillSubjectView(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-subject-read-v1"] = "playbill-subject-read-v1"
-    coordinate_kind: Literal["canonical"] = "canonical"
-    coordinate: PlaybillAcceptedCoordinate
-    envelope: dict[str, Any]
-    facts: list[dict[str, Any]]
-    incoming: list[PlaybillSubjectIncomingGroupV1] = []
-
-
-class PlaybillSubjectListRow(BaseModel):
-    """One Subject on a list page; the full envelope is on the Subject read."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    subject_kind: str
-    subject_id: str
-    lifecycle: Literal["live", "retired"]
-    live_claims: int = Field(ge=0)
-
-
-class PlaybillSubjectList(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-subject-list-v2"] = "playbill-subject-list-v2"
-    coordinate: PlaybillAcceptedCoordinate
-    subject_kind_filter: str | None = None
-    subjects: list[PlaybillSubjectListRow]
-    truncated: bool = False
-    next_cursor: str | None = None
-
-
-class PlaybillSubjectIndexEntry(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    identity: str
-    subject_kind: str
-    subject_id: str
-    lifecycle: Literal["live", "retired"]
-
-
-class PlaybillSubjectIndex(BaseModel):
-    """Which Subjects exist at one coordinate; no facts are compiled for it."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-subject-index-v1"] = "playbill-subject-index-v1"
-    coordinate: PlaybillAcceptedCoordinate
-    subjects: list[PlaybillSubjectIndexEntry]
-
-
-class PlaybillSubjectHistory(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-subject-history-v1"] = "playbill-subject-history-v1"
-    identity: str
-    entries: list[dict[str, Any]]
-
-
-class PlaybillClaimTypeView(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-claim-type-read-v1"] = "playbill-claim-type-read-v1"
-    coordinate: PlaybillAcceptedCoordinate
-    path: str
-    predicate: str
-    identity: str
-    artifact_digest: str
-    envelope: dict[str, Any]
-
-
-class PlaybillClaimTypeList(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-claim-type-list-v1"] = "playbill-claim-type-list-v1"
-    coordinate: PlaybillAcceptedCoordinate
-    claim_types: list[PlaybillClaimTypeView]
 
 
 class PlaybillClaimTypeProposalLint(BaseModel):
@@ -1205,16 +1041,6 @@ PlaybillClaimTypeMigrationResponse: TypeAlias = (
 )
 
 
-class PlaybillClaimView(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-claim-read-v1"] = "playbill-claim-read-v1"
-    coordinate_kind: Literal["canonical"] = "canonical"
-    coordinate: PlaybillAcceptedCoordinate
-    envelope: dict[str, Any]
-    facts: list[dict[str, Any]]
-
-
 class PlaybillCaptureEvidenceKindAdmission(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -1252,97 +1078,6 @@ class PlaybillClaimViewV2(BaseModel):
     admission_evaluation_time: str
     admission_accounts: list[PlaybillCaptureAdmissionAccount]
     statement: ClaimStatementCardV1
-
-
-class PlaybillClaimList(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-claim-list-v1"] = "playbill-claim-list-v1"
-    coordinate: PlaybillAcceptedCoordinate
-    claims: list[PlaybillClaimView]
-
-
-class PlaybillClaimHistory(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-claim-history-v1"] = "playbill-claim-history-v1"
-    identity: str
-    entries: list[dict[str, Any]]
-
-
-class PlaybillClaimRetirePreflight(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-claim-retire-preflight-v1"] = "playbill-claim-retire-preflight-v1"
-    operation_digest: str
-    coordinate: PlaybillAcceptedCoordinate
-    root_identity: dict[str, Any]
-    root_predecessor_digest: str
-    reason: Literal["was-rescinded", "was-wrong", "superseded"]
-    effective_until: str | None
-    required_dependents: list[dict[str, Any]]
-    # Advisory, never required: live Claims left citing this Claim's Captures.
-    citing_claims: list[dict[str, Any]] = []
-    diagnostics: list[dict[str, Any]]
-    submit_ready: bool
-
-
-class PlaybillClaimRetireResult(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-claim-retire-result-v1"] = "playbill-claim-retire-result-v1"
-    outcome: Literal["preflight", "proposed", "already_retired"]
-    operation_digest: str
-    coordinate: PlaybillAcceptedCoordinate
-    retirements: list[dict[str, Any]]
-    proposal: PlaybillProposalInspection | None = None
-
-
-PlaybillClaimRetireResponse: TypeAlias = PlaybillClaimRetirePreflight | PlaybillClaimRetireResult
-
-
-class PlaybillClaimExplanationV2(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-claim-explanation-v2"]
-    coordinate: PlaybillAcceptedCoordinate
-    evaluation_time: str
-    claim: PlaybillClaimView
-    law_evidence: dict[str, Any]
-    verdict: dict[str, Any]
-    exact_attestations: list[dict[str, Any]]
-    approval_coverage: Literal["containing_change_set"] = "containing_change_set"
-    source_handles: list[dict[str, Any]]
-    coverage: dict[str, Any]
-    admission_evaluation_time: str
-    admission_accounts: list[PlaybillCaptureAdmissionAccount]
-    # What this Claim shares with retired Claims; absent when it shares nothing.
-    retirement_context: dict[str, Any] | None = Field(
-        default=None,
-        exclude_if=lambda value: value is None,
-    )
-
-
-class PlaybillClaimExplanationV3(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-claim-explanation-v3"]
-    coordinate: PlaybillAcceptedCoordinate
-    evaluation_time: str
-    claim: PlaybillClaimView
-    law_evidence: dict[str, Any]
-    verdict: dict[str, Any]
-    exact_attestations: list[dict[str, Any]]
-    approval_coverage: Literal["containing_change_set"] = "containing_change_set"
-    source_handles: list[dict[str, Any]]
-    coverage: dict[str, Any]
-    admission_evaluation_time: str
-    admission_accounts: list[PlaybillCaptureAdmissionAccount]
-    freshness: list[dict[str, Any]]
-    retirement_context: dict[str, Any] | None = Field(
-        default=None,
-        exclude_if=lambda value: value is None,
-    )
 
 
 class PlaybillCandidateStatus(BaseModel):
@@ -1507,14 +1242,6 @@ class PlaybillQueryDefinitionView(BaseModel):
     envelope: dict[str, Any]
 
 
-class PlaybillQueryDefinitionList(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-query-definition-list-v1"] = "playbill-query-definition-list-v1"
-    coordinate: PlaybillAcceptedCoordinate
-    query_definitions: list[PlaybillQueryDefinitionView]
-
-
 class PlaybillQueryRun(BaseModel):
     """One executed query: its replayable result beside its execution receipt.
 
@@ -1574,20 +1301,6 @@ class PlaybillProcedureReadiness(BaseModel):
     next_operation: dict[str, Any]
 
 
-class PlaybillPolicyInForce(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-policy-in-force-v1"] = "playbill-policy-in-force-v1"
-    placement: Literal["embedded", "standalone"]
-    policy_kind: PlaybillPolicyKind
-    declaring_artifact_identity: str
-    declaring_artifact_kind: str
-    declaring_artifact_digest: str
-    path: str
-    field_path: str
-    policy: dict[str, Any]
-
-
 class PlaybillPolicyInForceList(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -1634,7 +1347,15 @@ class PlaybillProcedureRunState(BaseModel):
     outcomes: list[dict[str, Any]]
     next_operation: dict[str, Any]
     result: Any = None
-    attribution: ProcedureRunAttributionV1 | None = None
+    #: Withheld (actor left out) from a reader who may not see the run's
+    #: arming credential, as on the run card.
+    attribution: (
+        Annotated[
+            ProcedureRunAttributionV1 | ProcedureRunAttributionWithheldV1,
+            Field(discriminator="tag"),
+        ]
+        | None
+    ) = None
     semantic_replay_key_digest: str | None = None
     semantic_result_digest: str | None = None
     receipt: (
@@ -1643,6 +1364,7 @@ class PlaybillProcedureRunState(BaseModel):
         | ProcedureRunReceiptV4
         | ProcedureRunReceiptV5
         | ProcedureRunReceiptV6
+        | ProcedureRunReceiptWithheldV1
         | None
     ) = None
     receipt_digest: str | None = None
@@ -1668,6 +1390,27 @@ class PlaybillNextRepair(BaseModel):
     command: str | None = None
 
 
+class PlaybillNextRepairRequirement(BaseModel):
+    """What running a withheld repair needs that this caller does not have.
+
+    The row stays in the queue; only its repair is withheld. ``because`` names
+    the gate: the permission ``tier`` the ``tool`` runs at, the MCP tool
+    ``profile`` that advertises it, and/or ``authoring`` when this caller cannot
+    author here at all; ``authoring_refusal`` then carries whoami's code,
+    detail and repair.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-next-repair-requirement-v1"] = "playbill-next-repair-requirement-v1"
+    operation: PlaybillNextRepairOperation
+    tool: str
+    tier: Literal["read_only", "governed_write", "graph_write", "admin"]
+    profile: Literal["full"] | None = None
+    because: list[Literal["tier", "profile", "authoring"]]
+    authoring_refusal: PlaybillAuthoringRefusalV1 | None = None
+
+
 class PlaybillNextFinding(BaseModel):
     """One more finding about the same underlying fact as the row that carries it."""
 
@@ -1679,7 +1422,9 @@ class PlaybillNextFinding(BaseModel):
     subject_identity: str
     related_identities: list[str] = Field(default_factory=list)
     detail: Any = Field(default_factory=dict)
-    repair: PlaybillNextRepair
+    # None when this caller cannot run it; `repair_requires` then says why.
+    repair: PlaybillNextRepair | None
+    repair_requires: PlaybillNextRepairRequirement | None = None
 
 
 class PlaybillNextItem(BaseModel):
@@ -1692,11 +1437,14 @@ class PlaybillNextItem(BaseModel):
     subject_identity: str
     related_identities: list[str] = Field(default_factory=list)
     detail: Any = Field(default_factory=dict)
-    repair: PlaybillNextRepair
+    # None when this caller's surface, tool profile or tier cannot run it: the
+    # row stays, and `repair_requires` says what running it needs.
+    repair: PlaybillNextRepair | None
     findings: list[PlaybillNextFinding] = Field(
         default_factory=list,
         exclude_if=lambda value: not value,
     )
+    repair_requires: PlaybillNextRepairRequirement | None = None
 
     @field_validator("item_id")
     @classmethod
@@ -1716,6 +1464,7 @@ class PlaybillNextHealth(BaseModel):
     repair: PlaybillNextRepair | None = None
     # The facet needs a repair this caller cannot perform, so it was dropped.
     repair_hidden: bool = False
+    repair_requires: PlaybillNextRepairRequirement | None = None
 
 
 class PlaybillNextStatus(BaseModel):
@@ -1735,9 +1484,9 @@ class PlaybillNextStatus(BaseModel):
     consumers: PlaybillNextHealth
     #: Whether a live Trigger schedules every internal action.
     triggers: PlaybillNextHealth
+    #: Rows parked by a current ``unsure`` attestation. No row is left out for
+    #: the caller: one whose repair it cannot run keeps `repair_requires`.
     held: int = Field(default=0, ge=0)
-    #: Rows left out because this caller's surface, tools or tier cannot repair them.
-    hidden: int = Field(default=0, ge=0)
 
 
 class PlaybillNextResult(BaseModel):
@@ -2081,17 +1830,6 @@ class PlaybillSinceResult(BaseModel):
         return self
 
 
-class PlaybillDiscoveryResult(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-discovery-result-v1"] = "playbill-discovery-result-v1"
-    coordinate: PlaybillAcceptedCoordinate
-    page: dict[str, Any]
-    vocabulary_entry_count: int
-    # True when a budget clipped the page's hits (page.coverage says which and why).
-    truncated: bool = False
-
-
 class PlaybillProviderInterfaceImplementation(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -2121,56 +1859,6 @@ class PlaybillProviderInterfaceEntry(BaseModel):
     operation_contract: _ProviderOperationContractV1 | None = None
 
 
-class PlaybillInterfaceInventory(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-interface-inventory-v1"]
-    coordinate: PlaybillAcceptedCoordinate
-    provider_status: Literal["installed", "not_installed"]
-    interfaces: list[PlaybillProviderInterfaceEntry]
-
-
-class PlaybillSearchResult(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-search-result-v1"] = "playbill-search-result-v1"
-    mode: Literal["search", "list", "orient"]
-    coordinate: PlaybillAcceptedCoordinate
-    evaluation_time: str
-    rows: list[dict[str, Any]]
-    orientation: dict[str, Any] | None = None
-    selection_basis_digest: str
-    next_cursor: dict[str, Any] | None = None
-    truncated: bool
-    result_digest: str
-
-
-class PlaybillContextCapsule(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-context-capsule-v1"] = "playbill-context-capsule-v1"
-    address: dict[str, Any]
-    at: PlaybillAcceptedCoordinate
-    evaluation_time: str
-    canonical_summary: Any = None
-    governance: Any = None
-    provenance: Any = None
-    attestation_coverage: Literal[
-        "exact_subject",
-        "containing_artifact",
-        "containing_change_set",
-    ]
-    claim_context: Any = None
-    procedure_context: Any = None
-    claim_type_card: Any = None
-    subject_profile: Any = None
-    source_material: list[dict[str, Any]] = Field(default_factory=list)
-    relations: list[Any] = Field(default_factory=list)
-    next_reads: list[dict[str, Any]] = Field(default_factory=list)
-    coverage: dict[str, Any]
-    receipt_digest: str
-
-
 class PlaybillCoverageResult(BaseModel):
     """One resolved coverage answer: the whole `playbill-coverage-result-v1`.
 
@@ -2196,6 +1884,14 @@ class PlaybillFloorFile(BaseModel):
     content_base64: str
 
 
+PlaybillFloorExportPart = Literal["discovery"]
+"""An opt-in part of a v5 floor export.
+
+``discovery`` adds the discovery cards (``subjects/``, ``claim-types/``,
+``procedures/`` and ``coverage-manifest.json``) to the grep-first floor.
+"""
+
+
 class PlaybillFloorExport(BaseModel):
     """The deterministic greppable floor as base64 bytes keyed by floor path.
 
@@ -2207,7 +1903,7 @@ class PlaybillFloorExport(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal[
-        "playbill-floor-export-v1", "playbill-floor-export-v2", "playbill-floor-export-v3"
+        "playbill-floor-export-v1", "playbill-floor-export-v2", "playbill-floor-export-v5"
     ] = "playbill-floor-export-v2"
     coordinate: PlaybillAcceptedCoordinate
     manifest: dict[str, Any]

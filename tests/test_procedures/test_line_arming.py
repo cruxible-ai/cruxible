@@ -37,7 +37,7 @@ from cruxible_core.service.procedures.procedure_runs import _journal, _stream
 from tests.test_procedures.test_line_triggers import SELECTOR, capture, line_world
 from tests.test_procedures.test_procedure_run_surface import READ_TIME, _actor
 
-LOCAL = LineArmPrincipalV1(kind="local_operator", label="local-operator")
+LOCAL = LineArmPrincipalV1(kind="local_operator", label="operator")
 CREDENTIAL = LineArmPrincipalV1(
     kind="runtime_credential", credential_id="cred-arm", label="line-operator"
 )
@@ -82,6 +82,7 @@ def _credential(**update):  # type: ignore[no-untyped-def]
         permission_mode=PermissionMode.GOVERNED_WRITE,
         token_hash="unused",
         created_at="2026-09-01T00:00:00Z",
+        principal_id="owner",
     )
     return record if not update else record.__class__(**{**record.__dict__, **update})
 
@@ -365,14 +366,16 @@ def test_a_slow_line_never_stalls_another_lines_drain_or_runs_twice(monkeypatch)
 def test_local_operator_arms_stop_once_the_daemon_requires_authentication(monkeypatch):
     monkeypatch.setattr(line_arms, "is_server_auth_enabled", lambda: True)
     with pytest.raises(LineArmAuthorityLost) as lost:
-        arm_authority("instance", LOCAL, now=datetime.now(UTC))
+        arm_authority(_registry_instance("owner", "active"), LOCAL, now=datetime.now(UTC))
     assert lost.value.reason == "authentication_changed"
 
 
 def test_an_automatic_run_acts_as_the_arming_credential(monkeypatch):
     _credential_store(monkeypatch, _credential(instance_id="instance"))
-    actor, caller_rung = arm_authority("instance", CREDENTIAL, now=datetime.now(UTC))
-    assert (actor.actor_type, actor.actor_id) == ("service_account", "line-operator")
+    actor, caller_rung = arm_authority(
+        _registry_instance("owner", "active"), CREDENTIAL, now=datetime.now(UTC)
+    )
+    assert (actor.actor_type, actor.actor_id) == ("service_account", "owner")
     assert caller_rung == PermissionMode.GOVERNED_WRITE.value - 1
 
 
@@ -1209,3 +1212,208 @@ def test_an_armed_cron_line_ticks_on_calendar_instants_forward_only(tmp_path):
     match_and_dispatch(READ_TIME + timedelta(hours=1, minutes=5, seconds=1), daemon_id="restarted")
     assert ticks() == [READ_TIME + timedelta(minutes=5), READ_TIME + timedelta(hours=1, minutes=5)]
     assert _admissions(instance) == 2
+
+
+def test_an_unbound_arming_credential_stops_the_arm(tmp_path, monkeypatch):
+    instance, _line, procedure, start = _armed_world(tmp_path, principal=CREDENTIAL)
+    _credential_store(
+        monkeypatch, _credential(instance_id=instance.descriptor.instance_id, principal_id=None)
+    )
+    capture(instance, procedure, at=start + timedelta(seconds=1))
+    _match(instance, start + timedelta(seconds=2))
+    (arm,) = armed_work(instance, now=start + timedelta(seconds=2))
+
+    result = dispatch_armed_line(
+        _manager(instance), instance.descriptor.instance_id, arm, now=start + timedelta(seconds=3)
+    )
+
+    assert result is None
+    assert _admissions(instance) == 0
+
+
+def _registry_instance(principal_id: str, status: str):  # type: ignore[no-untyped-def]
+    from cruxible_client.contracts.types import PrincipalRecord
+
+    record = PrincipalRecord(
+        principal_id=principal_id, public_key="1" * 64, kind="ordinary", status=status
+    )
+    return SimpleNamespace(
+        descriptor=SimpleNamespace(instance_id="instance"),
+        accepted_history=lambda: [SimpleNamespace(principals=SimpleNamespace(principals=[record]))],
+    )
+
+
+def test_a_credential_arm_stops_and_revokes_once_its_principal_is_revoked(monkeypatch):
+    revoked: list[tuple[str, str]] = []
+    record = _credential(instance_id="instance", principal_id="line-operator")
+    monkeypatch.setattr(
+        line_arms,
+        "get_runtime_credential_store",
+        lambda: SimpleNamespace(
+            get=lambda _id: record,
+            revoke_credentials_of_principal=lambda *, instance_id, principal_id: revoked.append(
+                (instance_id, principal_id)
+            ),
+        ),
+    )
+
+    with pytest.raises(LineArmAuthorityLost) as lost:
+        arm_authority(
+            _registry_instance("line-operator", "revoked"), CREDENTIAL, now=datetime.now(UTC)
+        )
+
+    assert lost.value.reason == "principal_inactive"
+    assert revoked == [("instance", "line-operator")]
+
+
+def test_a_claimed_local_arm_stops_once_its_principal_is_no_longer_active(monkeypatch):
+    monkeypatch.setattr(line_arms, "is_server_auth_enabled", lambda: False)
+    claimed = LineArmPrincipalV1(kind="principal_claim", label="line-operator")
+
+    with pytest.raises(LineArmAuthorityLost) as lost:
+        arm_authority(
+            _registry_instance("line-operator", "revoked"), claimed, now=datetime.now(UTC)
+        )
+
+    assert lost.value.reason == "principal_inactive"
+
+
+def test_automatic_dispatch_stops_when_the_arming_principal_is_not_registered(
+    tmp_path, monkeypatch
+):
+    instance, line, procedure, start = _armed_world(tmp_path, principal=CREDENTIAL)
+    revoked: list[str] = []
+    record = _credential(instance_id=instance.descriptor.instance_id, principal_id="ghost")
+    monkeypatch.setattr(
+        line_arms,
+        "get_runtime_credential_store",
+        lambda: SimpleNamespace(
+            get=lambda _id: record,
+            revoke_credentials_of_principal=lambda *, instance_id, principal_id: revoked.append(
+                principal_id
+            ),
+        ),
+    )
+    capture(instance, procedure, at=start + timedelta(seconds=1))
+    _match(instance, start + timedelta(seconds=2))
+    (arm,) = armed_work(instance, now=start + timedelta(seconds=2))
+
+    result = dispatch_armed_line(
+        _manager(instance), instance.descriptor.instance_id, arm, now=start + timedelta(seconds=3)
+    )
+
+    assert result is None
+    assert _admissions(instance) == 0
+    assert revoked == ["ghost"]
+    assert service_line_status(instance, line.identity.name).state != "armed"
+
+
+def test_revoking_a_registered_principal_named_operator_stops_its_claimed_arm(monkeypatch):
+    """A claimed principal named ``operator`` is not the implicit local operator."""
+
+    from cruxible_core.server.auth import ResolvedAuthContext
+
+    monkeypatch.setattr(line_arms, "is_server_auth_enabled", lambda: False)
+    monkeypatch.setattr(
+        line_arms,
+        "get_current_auth_context",
+        lambda: ResolvedAuthContext(
+            credential_id=None,
+            credential_label=None,
+            credential_type="principal_claim",
+            instance_scope=None,
+            role=None,
+            effective_permission_mode=None,
+            principal_id="operator",
+        ),
+    )
+    armed = line_arms.current_arm_principal()
+    assert armed.kind == "principal_claim" and armed.label == "operator"
+
+    with pytest.raises(LineArmAuthorityLost) as lost:
+        arm_authority(_registry_instance("operator", "revoked"), armed, now=datetime.now(UTC))
+
+    assert lost.value.reason == "principal_inactive"
+
+
+def test_the_implicit_local_operator_never_reads_a_registered_principals_standing(
+    monkeypatch,
+):
+    monkeypatch.setattr(line_arms, "is_server_auth_enabled", lambda: False)
+    monkeypatch.setattr(line_arms, "get_current_auth_context", lambda: None)
+    implicit = line_arms.current_arm_principal()
+    assert implicit.kind == "local_operator"
+
+    # A revoked registered principal that happens to be named "operator" is a
+    # different identity: the implicit operator's authority is the OS user's.
+    actor, _rung = arm_authority(
+        _registry_instance("operator", "revoked"), implicit, now=datetime.now(UTC)
+    )
+
+    assert actor.actor_type == "human_user" and actor.actor_id == "operator"
+
+
+class _LegacyArmPrincipal:
+    """An arm principal exactly as code before arm-record provenance persisted it."""
+
+    def __init__(self, label: str) -> None:
+        self._record = {"kind": "local_operator", "credential_id": None, "label": label}
+
+    def model_dump(self, mode: str = "python") -> dict[str, object]:
+        return dict(self._record)
+
+
+@pytest.mark.parametrize("label", ["line-operator", "operator"])
+def test_an_old_format_arm_is_stopped_on_recovery_never_rolled_over_as_the_operator(
+    tmp_path, monkeypatch, label
+):
+    monkeypatch.setattr(line_arms, "is_server_auth_enabled", lambda: False)
+    instance, line, _procedure, start = _armed_world(
+        tmp_path,
+        principal=_LegacyArmPrincipal(label),  # type: ignore[arg-type]
+    )
+
+    # A daemon restart: the next matching pass must not carry the arm across.
+    _match(instance, start + timedelta(seconds=2), daemon_id="restarted-daemon")
+
+    status = service_line_status(instance, line.identity.name)
+    assert status.state == "stopped"
+    assert status.stop_reason == "arm_requires_rearm"
+    assert status.detail is not None and "rearm" in status.detail
+    from cruxible_core.consumers.lines import LINE_ARMS
+
+    (stopped,) = [
+        health
+        for health in LINE_ARMS.health(instance, now=start + timedelta(seconds=3))
+        if health.state == "stopped"
+    ]
+    assert stopped.detail["stop_reason"] == "arm_requires_rearm"
+    assert stopped.repair is not None and stopped.repair.operation == "playbill.line.arm"
+
+
+def test_an_old_format_claimed_arm_admits_nothing_even_with_its_principal_revoked(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(line_arms, "is_server_auth_enabled", lambda: False)
+    instance, line, procedure, start = _armed_world(
+        tmp_path,
+        principal=_LegacyArmPrincipal("line-operator"),  # type: ignore[arg-type]
+    )
+    capture(instance, procedure, at=start + timedelta(seconds=1))
+    _match(instance, start + timedelta(seconds=2))
+    arms = armed_work(instance, now=start + timedelta(seconds=2))
+
+    results = [
+        dispatch_armed_line(
+            _manager(instance),
+            instance.descriptor.instance_id,
+            arm,
+            now=start + timedelta(seconds=3),
+        )
+        for arm in arms
+    ]
+
+    assert all(result is None for result in results)
+    assert _admissions(instance) == 0
+    status = service_line_status(instance, line.identity.name)
+    assert status.state == "stopped" and status.stop_reason == "arm_requires_rearm"

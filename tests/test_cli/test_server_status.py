@@ -145,7 +145,7 @@ def test_status_reachable_daemon_missing_credential_names_repair(
     assert "--server-bearer-token" not in result.output
     assert "CRUXIBLE_SERVER_BEARER_TOKEN" in result.output
     assert "bootstrap-secret file" in result.output
-    assert "cruxible server start --bootstrap-secret-file PATH" in result.output
+    assert "cruxible server start --auth --bootstrap-secret-file PATH" in result.output
     assert "could not reach Cruxible server" not in result.output
 
 
@@ -328,11 +328,14 @@ def test_status_answers_an_instance_scoped_token_with_its_own_host(
             return contracts.PlaybillWhoAmI(
                 actor_id="agent",
                 credential_label="agent",
-                actor_id_source="runtime_credential_label",
+                actor_id_source="runtime_credential",
+                authenticated=True,
                 credential_permission_mode="admin",
                 principal_registration_status="active",
                 active_principal_ids=["agent"],
                 coordinate=coordinate,
+                can_author=True,
+                authoring_refusal=None,
             )
 
     _patch_client(monkeypatch, ScopedClient())

@@ -28,18 +28,12 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.runtime.instance import DESCRIPTOR_FILE, PlaybillInstance
-from cruxible_core.service.claims.subjects import (
-    service_get_playbill_subject,
-    service_list_playbill_subjects,
-)
+from cruxible_core.service.claims.subjects import service_get_playbill_subject
 from cruxible_core.service.discovery.next import (
     PlaybillNextRequestV1,
     service_playbill_next,
 )
-from cruxible_core.service.discovery.search import (
-    PlaybillSearchRequestV1,
-    service_search_playbill,
-)
+from cruxible_core.service.discovery.orient import service_playbill_orient
 from cruxible_core.service.proposals.publications import (
     service_declare_playbill_block,
     service_depublish_playbill_block,
@@ -116,20 +110,11 @@ def test_a_decommissioned_instance_refuses_writes_typed_and_keeps_serving_reads(
 
     # Reads keep serving at the accepted coordinate: the Subject read reaches the
     # projection and answers "no such Subject", not "this instance is closed".
-    assert service_list_playbill_subjects(instance).subjects == ()
     with pytest.raises(SubjectNotFoundError):
         service_get_playbill_subject(instance, identity="Subject:sec.package/absent")
-    orientation = service_search_playbill(
-        instance,
-        request=PlaybillSearchRequestV1(
-            mode="orient",
-            accepted_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
-            evaluation_time=EVALUATION_TIME,
-            access_profile=CoverageAccessProfileV1(profile_id="decommission-test"),
-        ),
-    ).orientation
-    assert orientation is not None
-    assert orientation.decommissioned is True
+    orientation = service_playbill_orient(instance, evaluation_time=EVALUATION_TIME)
+    assert orientation.attention is not None
+    assert any(note.startswith("instance decommissioned") for note in orientation.attention.notes)
 
     status = service_playbill_next(
         instance,

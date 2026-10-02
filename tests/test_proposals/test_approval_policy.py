@@ -37,7 +37,7 @@ from cruxible_core.service.authoring.documents import (
     service_propose_playbill_principal_change,
     service_submit_playbill_approval,
 )
-from cruxible_core.service.claims.policies import list_playbill_policies_in_force
+from cruxible_core.service.claims.policies import service_playbill_policies_in_force
 from cruxible_core.service.proposals.proposals import service_list_playbill_proposals
 from cruxible_core.service.proposals.review import service_prepare_playbill_approval
 from cruxible_core.storage.cas import BodyAccessContext
@@ -144,7 +144,7 @@ def test_runtime_policy_changes_by_singleton_proposal_and_lists_in_force(
 
     row = next(
         item
-        for item in list_playbill_policies_in_force(instance).policies
+        for item in service_playbill_policies_in_force(instance).policies
         if item.policy_kind == "procedure_runtime_policy"
     )
     assert row.declaring_artifact_identity == "ProcedureRuntimePolicy:instance"

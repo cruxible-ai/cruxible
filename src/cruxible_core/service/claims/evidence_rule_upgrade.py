@@ -222,7 +222,7 @@ def service_upgrade_evidence_rules(
     refused: list[EvidenceRuleRefusalV1] = []
     for path in sorted(item for item in tree if item.startswith("claim-types/")):
         claim_type = parse_claim_type(tree[path], path=path)
-        if claim_type.artifact_format == "playbill-claim-type-v6":
+        if claim_type.artifact_format in {"playbill-claim-type-v6", "playbill-claim-type-v7"}:
             continue
         if claim_type.lifecycle.state != "live":
             continue

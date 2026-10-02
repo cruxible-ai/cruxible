@@ -97,6 +97,9 @@ def render_launchd_service(config: ServiceInstallConfigV1) -> bytes:
         "ProgramArguments": _start_arguments(config),
         "RunAtLoad": False,
         "KeepAlive": False,
+        # Agents wait on every answer, so the daemon runs at normal priority.
+        # Left unset, launchd applies light CPU and I/O throttling to the job.
+        "ProcessType": "Interactive",
         "EnvironmentVariables": {
             "CRUXIBLE_SERVER_AUTH": "true" if config.auth_enabled else "false"
         },
@@ -113,6 +116,8 @@ def render_systemd_service(config: ServiceInstallConfigV1) -> bytes:
         "[Service]\n"
         f"ExecStart={command}\n"
         f"Environment=CRUXIBLE_SERVER_AUTH={auth}\n"
+        # Normal priority, stated rather than inherited from the user manager.
+        "Nice=0\n"
         "Restart=on-failure\n\n"
         "[Install]\n"
         "WantedBy=default.target\n"
@@ -162,7 +167,7 @@ def resolve_service_auth_posture(state_root: Path, requested: bool | None) -> bo
         return required
     if requested:
         repair = (
-            "run `cruxible server start --bootstrap-secret-file PATH`, claim the bootstrap "
+            "run `cruxible server start --auth --bootstrap-secret-file PATH`, claim the bootstrap "
             "credential, then rerun install-service with --auth"
         )
     else:

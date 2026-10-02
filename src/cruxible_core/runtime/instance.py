@@ -92,6 +92,7 @@ from cruxible_core.derived.derived_state import (
     SnapshotTree,
     advance_accepted_tree,
 )
+from cruxible_core.derived.memo import memo_get, memo_put
 from cruxible_core.exhaust.producer_receipts import local_producer_receipt_resolver
 from cruxible_core.governance.keys import (
     ALLOWED_SIGNERS_FILE,
@@ -161,7 +162,12 @@ from cruxible_core.proposals.settlement import (
     prepare_generation,
     render_generation_descriptor,
 )
-from cruxible_core.storage.cas import CasObjectMetadata, ContentAddressedBodyStore
+from cruxible_core.storage.cas import (
+    CasObjectMetadata,
+    ContentAddressedBodyStore,
+    DryRunBodyStore,
+    dry_run_held_bodies,
+)
 
 if TYPE_CHECKING:
     from cruxible_core.evidence.claim_attestation_store import ClaimAttestationEvidenceStore
@@ -344,6 +350,9 @@ class PlaybillInstance:
         # review-context snapshot and access profile. Bounded by the floor service.
         self.floor_structure_memo: OrderedDict[tuple[object, ...], object] = OrderedDict()
         self.floor_export_memo: OrderedDict[tuple[object, ...], object] = OrderedDict()
+        # The last export's per-Subject current/ renders, so the next export at a
+        # later coordinate re-renders only what the change records touched.
+        self.floor_current_memo: OrderedDict[tuple[object, ...], object] = OrderedDict()
         self._body_store_cache: (
             tuple[tuple[Path, Path, tuple[int, int, int] | None], ContentAddressedBodyStore] | None
         ) = None
@@ -661,7 +670,7 @@ class PlaybillInstance:
         """
         entries = tuple(layout.model_dump().items())
         key = (str(root), entries)
-        remembered = _VALIDATED_PATHS.get(key)
+        remembered = memo_get(_VALIDATED_PATHS, key)
         if remembered is not None:
             binding, cached = remembered
             try:
@@ -675,10 +684,7 @@ class PlaybillInstance:
             binding = _path_binding(root, entries)
         except OSError:
             return paths
-        _VALIDATED_PATHS[key] = (binding, dict(paths))
-        _VALIDATED_PATHS.move_to_end(key)
-        while len(_VALIDATED_PATHS) > _VALIDATED_PATH_CAPACITY:
-            _VALIDATED_PATHS.popitem(last=False)
+        memo_put(_VALIDATED_PATHS, key, (binding, dict(paths)), capacity=_VALIDATED_PATH_CAPACITY)
         return paths
 
     @staticmethod
@@ -777,8 +783,19 @@ class PlaybillInstance:
             return history.identities_for_digest(digest)
 
     def body_store(self) -> ContentAddressedBodyStore:
-        """Return PB-C's inert, access-controlled content-addressed body store."""
+        """Return PB-C's inert, access-controlled content-addressed body store.
 
+        Inside ``dry_run_bodies()`` the store holds what it is asked to store in
+        memory instead, so a dry run takes the write's own path and writes nothing.
+        """
+
+        store = self._disk_body_store()
+        held = dry_run_held_bodies()
+        if held is None:
+            return store
+        return cast(ContentAddressedBodyStore, DryRunBodyStore(store, held))
+
+    def _disk_body_store(self) -> ContentAddressedBodyStore:
         paths = self._validated_paths(self.root, self.descriptor.storage)
         try:
             algorithm = _lstat_identity(paths["cas"] / "sha256")
@@ -1609,11 +1626,14 @@ class PlaybillInstance:
         return self._ledger.read_proposal_note(kind, oid)
 
     def read_proposal_notes(
-        self, pairs: Sequence[tuple[str, str]]
+        self, pairs: Sequence[tuple[str, str]], *, notes_commit: str | None = None
     ) -> dict[tuple[str, str], bytes | None]:
-        """Read several projected proposal notes in one fresh ledger read."""
+        """Read several projected proposal notes in one fresh ledger read.
 
-        return self._ledger.read_proposal_notes(pairs)
+        ``notes_commit`` pins one immutable notes commit instead of the moving ref.
+        """
+
+        return self._ledger.read_proposal_notes(pairs, notes_commit=notes_commit)
 
     def review_operational_store(self) -> ReviewOperationalStore:
         """Return the local append-only review observation store.

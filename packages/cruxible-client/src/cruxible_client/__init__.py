@@ -1,4 +1,11 @@
-"""Client package for talking to a governed Cruxible daemon."""
+"""Client package for talking to a governed Cruxible daemon.
+
+Start with ``pb = Playbill.connect()``, then read: ``pb.orient()`` maps
+accepted state, ``pb.query(kind, ...)`` answers questions over it, ``pb.get(ref)``
+opens one thing, and the exported floor (``.playbill/floor/current/``) is
+greppable. ``pb.world().describe()`` names every verb and the vocabulary;
+``pb.next(...)`` says what needs attention.
+"""
 
 from __future__ import annotations
 
@@ -37,9 +44,9 @@ if TYPE_CHECKING:
         PendingClaimTypeRef,
         PendingSubjectRef,
         ProcedureRef,
+        ProcedureSlotRef,
         QueryRef,
         ReferentSensitivity,
-        SlotRef,
         SourceRef,
         SubjectRef,
         TypedRef,
@@ -84,6 +91,7 @@ if TYPE_CHECKING:
         StateTapNodeV3,
         TransformNodeV3,
     )
+    from cruxible_client.contracts.write import SlotRef
     from cruxible_client.transport.http import CruxibleClient
 
 from .provider_installation import install_provider_package
@@ -146,6 +154,7 @@ __all__ = [
     "ProcedureOwnedContractV1",
     "ProcedurePinSlotRefV1",
     "ProcedurePinSlotV1",
+    "ProcedureSlotRef",
     "ProjectNodeV3",
     "PropertySchema",
     "QueryNameError",
@@ -165,6 +174,15 @@ __all__ = [
 ]
 
 __version__ = "0.5.1"
+
+
+def __dir__() -> list[str]:
+    """Every public name, though most load only on first use.
+
+    Next: ``Playbill.connect(...)`` to open a connection, then ``pb.orient()``.
+    """
+
+    return sorted({*__all__, "__version__"})
 
 
 def __getattr__(name: str) -> Any:
@@ -220,7 +238,7 @@ def __getattr__(name: str) -> Any:
         "ProcedureRef",
         "QueryRef",
         "ReferentSensitivity",
-        "SlotRef",
+        "ProcedureSlotRef",
         "SourceRef",
         "SubjectRef",
         "TypedRef",
@@ -228,6 +246,10 @@ def __getattr__(name: str) -> Any:
         from cruxible_client.authoring import sdk_types
 
         return getattr(sdk_types, name)
+    if name == "SlotRef":
+        from cruxible_client.contracts.write import SlotRef
+
+        return SlotRef
     if name in {
         "KindNamespace",
         "World",

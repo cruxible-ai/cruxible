@@ -1,189 +1,300 @@
-"""Searchable current state and explicitly attributed review context for floor v3.
+"""The floor's README and its changes/ files.
 
-Accepted values come only from the accepted tree. Review prose is a separate
-Git-note snapshot, never a Claim or proof of adoption. No evidence bodies,
-working files, or authoring-intent exhaust are read.
+Accepted values come only from the accepted tree. Review prose is read from the
+proposal note of the exact candidate each accepted change published, by path,
+and is shown as attributed rationale, never as a Claim or proof of adoption.
+No evidence bodies, working files, or authoring-intent exhaust are read.
 """
 
 from __future__ import annotations
 
 import json
-from collections import defaultdict
+import re
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.claims import ClaimArtifactAny, claim_artifact_digest, claim_path
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.primitives import pretty_json
 from cruxible_client.contracts.proposal_models import (
     ProposalAdmissionRecord,
     ProposalEvaluationRecord,
 )
-from cruxible_core.indexes.history.history_index import AcceptedGenerationLocation
-from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.indexes.history.history_index import AcceptedGenerationLocation, HistoryReader
 from cruxible_core.proposals.proposal_notes import admission_bytes, evaluation_bytes
-from cruxible_core.proposals.settlement import ChangeSetRecordAnyVersion
 from cruxible_core.runtime.instance import PlaybillInstance
 
-MAX_REVIEW_SNAPSHOT_BYTES = 64 * 1024 * 1024
+CHANGES_PREFIX = "changes/"
+NOTES_REF = "refs/notes/playbill-eval"
+
+FLOOR_README = """\
+# Playbill floor
+
+Accepted state as plain files, for grep. Search here; confirm and act with the
+verbs. The floor does no matching of its own: grep is the search.
+
+## What to grep
+
+- `current/<kind>/<id>.yaml`: one file per Subject. Its first line is
+  `# <ref>  kind=<kind>  changed gen <n>`: the latest accepted generation that
+  changed anything the file shows (the Subject, its Claims, the Claims
+  pointing at it, or the ClaimTypes naming its fields). Then each field's
+  value under its short name, each followed by `# CLM-...`, the Claim that
+  states it. A many-valued field, or a single-valued one with several live
+  Claims, lists every live value. A Subject-valued field shows the other
+  Subject's ref. `flags:` marks a single-valued field holding more than one
+  distinct live value `contested`. `incoming:` lists the live edges other
+  Subjects point here, one `<field> <- <ref>` line each, so either end of an
+  edge greps.
+- `current/<kind>/<id>.<field>.txt`: a text value too long to inline, whole.
+- `current/<kind>/INDEX`: one tab-separated line per Subject of that kind: its
+  ref, a title-like value, and its state-like fields.
+- `changes/<seq>.json`: the accepted change that introduced a current Claim
+  revision: its time, actor, the rationale its proposal recorded, and the refs
+  it changed.
+- `sources/INDEX`: one tab-separated line per evidence source current Claims
+  cite: the source, its CaptureContract, a locator (a Document ref, or an
+  external source's selector type), how many current Claims cite it, and the
+  generation it last changed. Every accepted Document is listed, cited or not.
+- `projections/INDEX`: written by the client from its own workspace, never by
+  the daemon: one line per workspace file bound to accepted state (a Document
+  body, an evidence source, a rendered block), its role, the ref it is bound
+  to, and the generation that ref last changed.
+
+The floor shows accepted values, never verdicts: whether a value is still
+supported moves with time and evidence, which no coordinate fixes. `get`
+answers with the live verdict.
+
+## The loop
+
+1. `grep -rn "some text" .playbill/floor/current`
+2. Read the hit's first line: its ref, and the generation it last changed.
+3. `cruxible playbill get <ref>` for the live values and verdicts (`orient`
+   says how far behind the floor is).
+4. Change state with the write verbs (`cruxible playbill set|retire|write`).
+
+An agent without a shell asks `query --contains "some text"` instead. A
+Document's body is read with `get Document:<name> --detail body`.
+
+## Retention
+
+A ruling or other exact-content value shows its text, read by digest from the
+body store, and `sources/INDEX` reads each cited Capture's envelope the same
+way. Accepted bodies and Captures are retained for as long as their Claim is in
+accepted history, so what the floor shows is fixed by the coordinate. One that
+is nevertheless lost refuses a fresh render as an integrity failure; the floor
+is never published differently for the same accepted state.
+
+`manifest.json` names the review notes the change rationale was read from
+(`notes_digest`); a rationale revised after acceptance makes a refresh replace
+the floor whole.
+
+## Not for grep
+
+- `manifest.json` names the accepted coordinate and its generation, and binds
+  every file by digest, and by the generation it last changed, into the floor
+  digest. A refresh fetches only the files changed since the floor's own
+  generation.
+- Only with `floor export --with-discovery`: `subjects/`, `claim-types/` and
+  `procedures/`, the discovery cards other tools read (they carry digests and
+  addresses), and `coverage-manifest.json`, the export's coverage boundary.
+
+History, rejected proposals, full evaluation transcripts, Document and evidence
+bodies, and authoring-intent exhaust are not exported, so no match here does
+not prove absence. The ledger clone is the audit path.
+"""
 
 
 def _render(value: object) -> bytes:
     return pretty_json(json.loads(canonical_bytes(value))).encode("utf-8") + b"\n"
 
 
+_CLAIM_MEMBER = re.compile(r"claims/[0-9a-f]{2}/(CLM-[0-9a-f]{32})\.json")
+
+
+def member_ref(path: str) -> str:
+    """How a change names one member path: the handle ``get`` resolves."""
+
+    if path.startswith("subjects/") and path.endswith(".json"):
+        return path.removeprefix("subjects/").removesuffix(".json")
+    if (match := _CLAIM_MEMBER.fullmatch(path)) is not None:
+        return match.group(1)
+    if path.startswith("documents/") and path.endswith(".json"):
+        return "Document:" + path.removeprefix("documents/").removesuffix(".json")
+    if path.startswith("claim-types/") and path.endswith(".json"):
+        return "ClaimType:" + path.removeprefix("claim-types/").removesuffix(".json").replace(
+            "/", "."
+        )
+    return path
+
+
 def review_snapshot_oid(instance: PlaybillInstance) -> str | None:
-    return instance._ledger.mirror_refs().get("refs/notes/playbill-eval")
+    """The review notes commit the notes ref names now: one immutable snapshot."""
+
+    return instance._ledger._resolve_ref(NOTES_REF)
 
 
-def review_context(
-    instance: PlaybillInstance, notes_oid: str | None
-) -> tuple[dict[str, tuple[dict[str, object], ...]], str]:
-    """Read canonical note pairs from the exact immutable notes commit.
+def notes_changed_between(
+    instance: PlaybillInstance, before: str | None, after: str | None
+) -> frozenset[str] | None:
+    """The commits whose note differs between two notes snapshots; None for every one."""
 
-    Association to an accepted candidate is not approval of the author's prose.
-    Missing notes are explicit unavailable context, never invented rationale.
-    """
-    if notes_oid is None:
-        return {}, "unavailable"
-    entries = instance._ledger.list_tree_with_sizes(notes_oid)
-    if sum(entry.size or 0 for entry in entries) > MAX_REVIEW_SNAPSHOT_BYTES:
-        return {}, "review_snapshot_budget_exceeded"
-    notes = instance._ledger.read_tree(notes_oid)
-    by_candidate: dict[str, dict[str, dict[str, object]]] = defaultdict(dict)
-    for path, content in notes.items():
-        lines = content.splitlines(keepends=True)
-        if len(lines) % 2:
-            raise ProposalIntegrityError("floor review note has an incomplete record pair")
-        for i in range(0, len(lines), 2):
-            admission = ProposalAdmissionRecord.model_validate_json(lines[i])
-            evaluation = ProposalEvaluationRecord.model_validate_json(lines[i + 1])
-            if (
-                admission_bytes(admission) != lines[i]
-                or evaluation_bytes(evaluation) != lines[i + 1]
-                or admission.proposal_id != evaluation.proposal_id
-            ):
-                raise ProposalIntegrityError("floor review note is not a canonical proposal pair")
-            if evaluation.verdict != "candidate" or evaluation.candidate_digest is None:
-                continue
-            item: dict[str, object] = {
-                "proposal_id": admission.proposal_id,
-                "reported_actor": admission.actor_id,
-                "rationale": admission.rationale,
-                "candidate_commit_oid": admission.candidate_commit_oid,
-                "notes_commit_oid": notes_oid,
-                "note_path": path,
-            }
-            # Several note aliases may project the same proposal. Retain its
-            # prose once, selecting a stable alias rather than repeating it.
-            previous = by_candidate[evaluation.candidate_digest].get(admission.proposal_id)
-            if previous is None:
-                by_candidate[evaluation.candidate_digest][admission.proposal_id] = item
-            elif {k: v for k, v in previous.items() if k != "note_path"} != {
-                k: v for k, v in item.items() if k != "note_path"
-            }:
-                raise ProposalIntegrityError("floor note aliases disagree about a proposal")
-    return (
-        {
-            candidate: tuple(items[key] for key in sorted(items))
-            for candidate, items in by_candidate.items()
-        },
-        "available",
+    if before == after:
+        return frozenset()
+    if before is None or after is None:
+        return None
+    return frozenset(
+        change.path.replace("/", "") for change in instance._ledger.changed_entries(before, after)
     )
 
 
-def current_content(
+@dataclass(frozen=True)
+class ChangeNote:
+    """What one accepted change's review notes say: its proposals' commits and rationale."""
+
+    commits: tuple[str, ...]
+    rationale: tuple[str, ...]
+
+
+def _candidate_commits(
+    instance: PlaybillInstance, candidate_digests: Iterable[str]
+) -> dict[str, tuple[str, ...]]:
+    """Every proposal commit that published each candidate digest."""
+
+    digests = sorted(set(candidate_digests))
+    if not digests:
+        return {}
+    evidence = instance.proposal_evidence()
+    assert evidence.index is not None
+    found: dict[str, set[str]] = {digest: set() for digest in digests}
+    with evidence.index.read(evidence) as connection:
+        for start in range(0, len(digests), 500):
+            chunk = digests[start : start + 500]
+            for digest, candidate, review in connection.execute(
+                "SELECT candidate_digest,candidate_commit_oid,review_commit_oid FROM proposals "
+                "WHERE candidate_digest IN (" + ",".join("?" for _ in chunk) + ")",
+                chunk,
+            ):
+                found[str(digest)].update(oid for oid in (candidate, review) if oid is not None)
+    return {digest: tuple(sorted(oids)) for digest, oids in found.items()}
+
+
+def change_rationales(
     instance: PlaybillInstance,
-    *,
-    coordinate: AcceptedProjectionCoordinate,
-    claims: tuple[ClaimArtifactAny, ...],
+    generations: Iterable[AcceptedGenerationLocation],
     notes_oid: str | None,
-) -> dict[str, bytes]:
-    context, context_status = review_context(instance, notes_oid)
-    grouped: dict[str, list[dict[str, object]]] = defaultdict(list)
-    relevant_changes: dict[int, tuple[AcceptedGenerationLocation, ChangeSetRecordAnyVersion]] = {}
-    with instance.accepted_history_reader(
-        at=AcceptedCoordinate.from_internal(coordinate)
-    ) as history:
-        for claim in claims:
-            if claim.lifecycle.state != "live":
+) -> dict[int, tuple[str, ...]]:
+    """Each accepted change's review rationale, read by path from one notes commit."""
+
+    return {
+        sequence: note.rationale
+        for sequence, note in change_notes(instance, generations, notes_oid).items()
+    }
+
+
+def change_notes(
+    instance: PlaybillInstance,
+    generations: Iterable[AcceptedGenerationLocation],
+    notes_oid: str | None,
+) -> dict[int, ChangeNote]:
+    """Each accepted change's review notes, read by path from one notes commit.
+
+    A change's rationale is what the proposals that published its exact
+    candidate, by its own actor, recorded. A missing note is missing rationale,
+    never invented. ``notes_oid`` is one immutable notes commit, or None for no
+    notes at all.
+    """
+
+    wanted = [item for item in generations if item.candidate_digest is not None]
+    result: dict[int, ChangeNote] = {item.sequence: ChangeNote((), ()) for item in generations}
+    if notes_oid is None or not wanted:
+        return result
+    commits = _candidate_commits(instance, (str(item.candidate_digest) for item in wanted))
+    pairs = sorted({("evaluation", oid) for oids in commits.values() for oid in oids})
+    notes = instance.read_proposal_notes(pairs, notes_commit=notes_oid) if pairs else {}
+    for generation in wanted:
+        by_proposal: dict[str, str] = {}
+        for oid in commits.get(str(generation.candidate_digest), ()):
+            content = notes.get(("evaluation", oid))
+            if content is None:
                 continue
-            location = history.latest_member(claim_path(claim.identity.name))
-            sequence = None if location is None else location.sequence
-            if location is not None and location.sequence not in relevant_changes:
-                relevant_changes[location.sequence] = (
-                    history.generation(location.sequence),
-                    history.read_member_record(location, instance.blob_at),
-                )
-            grouped[claim.statement.subject.artifact_path].append(
-                {
-                    "claim": claim.identity.qualified,
-                    "artifact_digest": claim_artifact_digest(claim).tagged,
-                    "statement": claim.statement.model_dump(mode="json"),
-                    "latest_change_sequence": sequence,
-                }
-            )
-    files: dict[str, bytes] = {}
-    for subject, rows in sorted(grouped.items()):
-        relative = subject.removeprefix("subjects/")
-        sorted_claims = sorted(rows, key=lambda row: str(row["claim"]).encode())
-        files["current/" + relative] = _render(
-            {
-                "subject": subject,
-                "scope": (
-                    "all live accepted Claims; contenders are preserved; no current verdict implied"
-                ),
-                "claims": sorted_claims,
-            }
+            lines = content.splitlines(keepends=True)
+            if len(lines) % 2:
+                raise ProposalIntegrityError("floor review note has an incomplete record pair")
+            for i in range(0, len(lines), 2):
+                admission = ProposalAdmissionRecord.model_validate_json(lines[i])
+                evaluation = ProposalEvaluationRecord.model_validate_json(lines[i + 1])
+                if (
+                    admission_bytes(admission) != lines[i]
+                    or evaluation_bytes(evaluation) != lines[i + 1]
+                    or admission.proposal_id != evaluation.proposal_id
+                ):
+                    raise ProposalIntegrityError(
+                        "floor review note is not a canonical proposal pair"
+                    )
+                if (
+                    evaluation.verdict == "candidate"
+                    and evaluation.candidate_digest == generation.candidate_digest
+                    and admission.actor_id == generation.actor_id
+                ):
+                    if admission.rationale:
+                        by_proposal[admission.proposal_id] = admission.rationale
+        result[generation.sequence] = ChangeNote(
+            commits.get(str(generation.candidate_digest), ()),
+            tuple(dict.fromkeys(by_proposal[key] for key in sorted(by_proposal))),
         )
-    for sequence, (generation, record) in sorted(relevant_changes.items()):
-        review_entries = tuple(
-            row
-            for row in context.get(record.candidate_digest, ())
-            if row["reported_actor"] == record.actor_binding.actor_id
-        )
-        files[f"provenance/changes/{sequence:020d}.json"] = _render(
-            {
-                "kind": "accepted-change-with-associated-review-context",
-                "sequence": sequence,
-                "accepted_git_oid": generation.git_oid,
-                "candidate_digest": record.candidate_digest,
-                "actor": record.actor_binding.actor_id,
-                "timestamp": record.candidate.timestamp,
-                "affected_paths": sorted(member.path for member in record.members),
-                "review_context_status": context_status if review_entries else "unavailable",
-                "review_context": list(review_entries),
-                "interpretation": (
-                    "Review rationale is attributed context, "
-                    "not accepted Claim content or adoption."
-                ),
-                "claim_authoring_rationale": (
-                    "Not inferred from change rationale; "
-                    "unavailable unless represented in accepted content."
-                ),
-            }
-        )
-    files["provenance/snapshot.json"] = _render(
+    return result
+
+
+def change_file(
+    generation: AcceptedGenerationLocation,
+    *,
+    timestamp: str,
+    member_paths: Iterable[str],
+    rationale: tuple[str, ...],
+) -> bytes:
+    """``changes/<seq>.json``: one accepted change, its actor, rationale and refs."""
+
+    return _render(
         {
-            "accepted_git_oid": coordinate.git_oid,
-            "evaluation_notes_oid": notes_oid,
-            "status": context_status,
-            "rebuild_inputs": "accepted ledger plus this immutable Git notes snapshot",
-            "history": "Only changes introducing the current Claim revisions are exported.",
+            "sequence": generation.sequence,
+            "timestamp": timestamp,
+            "actor": generation.actor_id,
+            "rationale": list(rationale),
+            "changed": sorted({member_ref(path) for path in member_paths}),
         }
     )
-    files["README.md"] = (
-        "# Playbill searchable floor\n\n"
-        "Start with current/ for full live Claim values, including competing values. "
-        "These are accepted statements, not time-relative supported verdicts.\n\n"
-        "subjects/ and claim-types/ provide bounded discovery summaries. "
-        "provenance/ contains the latest changes behind current Claims and separately "
-        "attributed review rationale, where retained in the pinned Git notes snapshot.\n\n"
-        "History, rejected proposals, full evaluation transcripts, source bodies, and "
-        "authoring-intent exhaust are not exported. No match here does not prove "
-        "absence from those surfaces. Evidence and exact-content bodies require "
-        "their normal authorized expansion; this export never reads them.\n\n"
-        "The manifest binds every file. The accepted coordinate and the notes commit "
-        "in provenance/snapshot.json are separate rebuild inputs. "
-        "Agent-chosen projections can provide more useful reading layouts.\n"
-    ).encode()
+
+
+def change_path(sequence: int) -> str:
+    return f"{CHANGES_PREFIX}{sequence:020d}.json"
+
+
+def render_changes(
+    instance: PlaybillInstance,
+    history: HistoryReader,
+    rationales: Mapping[int, tuple[str, ...]],
+) -> dict[int, bytes]:
+    """Render the change file of each sequence in ``rationales``, with its rationale.
+
+    The members come from the history index and the time from the accepted
+    commit (the ledger stamps it from the candidate's own timestamp), so no
+    change-set record is re-read.
+    """
+
+    wanted = sorted(rationales)
+    if not wanted:
+        return {}
+    generations = [history.generation(sequence) for sequence in wanted]
+    members = history.member_paths_by_sequence(wanted)
+    files: dict[int, bytes] = {}
+    for generation in generations:
+        files[generation.sequence] = change_file(
+            generation,
+            timestamp=instance._ledger.commit_timestamps(generation.git_oid)[0].strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            ),
+            member_paths=members.get(generation.sequence, ()),
+            rationale=rationales.get(generation.sequence, ()),
+        )
     return files

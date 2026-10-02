@@ -28,7 +28,11 @@ def _leaf(name: str) -> str:
     return _SEGMENTS.split(name)[-1]
 
 
-def nearest(value: str, names: Iterable[str], *, limit: int = 5) -> tuple[str, ...]:
+NEAREST_LIMIT = 5
+"""How many candidate names a read refusal carries at most."""
+
+
+def nearest(value: str, names: Iterable[str], *, limit: int = NEAREST_LIMIT) -> tuple[str, ...]:
     """The accepted names a mistyped or shortened one most likely meant.
 
     A name matches on its whole spelling or on its last segment, so a typo in a
@@ -55,7 +59,10 @@ def nearest(value: str, names: Iterable[str], *, limit: int = 5) -> tuple[str, .
 OID_PREFIX_MIN = 12
 _MAX_OID_CANDIDATES = 5
 _OID_PREFIX = re.compile(rf"[0-9a-f]{{{OID_PREFIX_MIN},64}}")
-_AT_REPAIR = "Omit at to read the current head, or pass an accepted git oid or a unique prefix"
+_AT_REPAIR = (
+    "Omit at to read the current head, or pass an accepted git oid, a unique prefix of one, "
+    "or a generation number"
+)
 
 
 def _not_accepted(message: str, candidates: Iterable[str] = ()) -> ReadRefusalError:
@@ -69,9 +76,38 @@ def _not_accepted(message: str, candidates: Iterable[str] = ()) -> ReadRefusalEr
     )
 
 
-def _oid_for(instance: PlaybillInstance, at: str) -> str:
-    """The one accepted generation's oid that ``at`` (a full oid or a unique prefix) names."""
+#: A generation number: what ``orient``, history rows and receipts print as the
+#: accepted sequence. Shorter than any git-oid prefix ``at`` accepts, so the two
+#: spellings never collide.
+_GENERATION = re.compile(rf"(?:0|[1-9][0-9]{{0,{OID_PREFIX_MIN - 2}}})")
 
+
+def _oid_for_generation(instance: PlaybillInstance, at: str) -> str:
+    sequence = int(at)
+    history = instance.accepted_history()
+    for generation in history:
+        if generation.sequence == sequence:
+            return generation.oid
+    newest = [f"{item.sequence}" for item in reversed(history)][:_MAX_OID_CANDIDATES]
+    raise ReadRefusalError(
+        "playbill.read.coordinate_not_accepted",
+        f"at does not name an accepted generation of this instance (no generation {sequence}; "
+        f"the head is generation {history[-1].sequence if history else 0})",
+        http_status=404,
+        candidates=newest,
+        repair_line="Omit at to read the current head, or pass one of these generations",
+        context={"field_path": "at"},
+    )
+
+
+def _oid_for(instance: PlaybillInstance, at: str) -> str:
+    """The one accepted generation's oid that ``at`` names.
+
+    ``at`` is a full git oid, a unique prefix of one, or a generation number.
+    """
+
+    if _GENERATION.fullmatch(at):
+        return _oid_for_generation(instance, at)
     if not _OID_PREFIX.fullmatch(at):
         if len(at) < OID_PREFIX_MIN and re.fullmatch(r"[0-9a-f]+", at):
             raise ReadRefusalError(
@@ -103,11 +139,12 @@ def resolve_read_coordinate(
     instance: PlaybillInstance,
     at: ClientCoordinate | AcceptedCoordinate | str | None,
 ) -> AcceptedProjectionCoordinate:
-    """The accepted coordinate a read names: head, an exact coordinate, or a git oid.
+    """The accepted coordinate a read names: head, an exact coordinate, a git oid, or a generation.
 
     A git oid may be shortened to a unique prefix of at least ``OID_PREFIX_MIN``
     hex characters, so the compact coordinate a read prints can be passed back.
-    Prefixes resolve against accepted generations only.
+    A decimal of fewer digits is a generation number, the sequence ``orient``
+    and history rows print. Both resolve against accepted generations only.
     """
 
     if at is None:

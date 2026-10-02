@@ -321,16 +321,9 @@ def test_real_execution_accepts_but_manual_revision_cannot_reuse_its_provenance(
         )
     # Withdrawing a derived assertion is still ordinary governed authoring; it
     # preserves the original computation rather than claiming a different output.
-    from cruxible_core.claims.claim_retirement import service_retire_claim
-    from tests.test_claims.test_claim_retirement import _activate, _request
+    from tests.core_support._retirement_support import retire_claim
 
-    retirement = service_retire_claim(
-        instance,
-        claim_id=derived.identity.name,
-        request=_request(instance, mode="submit"),
-        actor=world.actor,
-    )
-    _activate(instance, world.owner, retirement)
+    retire_claim(instance, world.owner, derived.identity.name)
     path = claim_path(derived.identity.name)
     retired = parse_claim(instance.tree_at(instance.accepted_coordinate().git_oid)[path], path=path)
     assert retired.lifecycle.state == "retired"

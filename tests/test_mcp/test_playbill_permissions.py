@@ -21,29 +21,12 @@ def _tool_names() -> set[str]:
 
 
 _DEFAULT_PROFILE = {
-    "cruxible_playbill_claim_values",
-    "cruxible_playbill_search",
     "cruxible_playbill_next",
-    "cruxible_playbill_expand",
-    "cruxible_playbill_list_claims",
-    "cruxible_playbill_get_claim",
     "cruxible_playbill_get",
-    "cruxible_playbill_explain_claim",
-    "cruxible_playbill_list_claim_types",
-    "cruxible_playbill_get_claim_type",
-    "cruxible_playbill_list_subjects",
-    "cruxible_playbill_get_subject",
-    "cruxible_playbill_run_query",
     "cruxible_playbill_query",
-    "cruxible_playbill_authoring_example",
-    "cruxible_playbill_authoring_create",
-    "cruxible_playbill_authoring_compile",
-    "cruxible_playbill_authoring_preflight",
-    "cruxible_playbill_authoring_submit",
-    "cruxible_playbill_authoring_status",
-    "cruxible_playbill_authoring_get",
-    "cruxible_playbill_authoring_resume",
-    "cruxible_playbill_authoring_list_pending",
+    "cruxible_playbill_set",
+    "cruxible_playbill_retire",
+    "cruxible_playbill_write",
     "cruxible_playbill_proposal_list",
     "cruxible_playbill_review",
     "cruxible_playbill_approve",
@@ -72,6 +55,22 @@ def test_read_only_default_profile_keeps_only_its_reads(
     assert _tool_names() == {
         name for name in _DEFAULT_PROFILE if TOOL_PERMISSIONS[name] == PermissionMode.READ_ONLY
     }
+
+
+def test_the_write_verbs_replace_the_authoring_tools_in_the_default_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CRUXIBLE_MODE", "governed_write")
+    reset_permissions()
+    names = _tool_names()
+
+    assert {"cruxible_playbill_set", "cruxible_playbill_retire", "cruxible_playbill_write"} <= names
+    assert not {name for name in names if name.startswith("cruxible_playbill_authoring_")}
+    assert "cruxible_playbill_claim_retire" not in TOOL_PERMISSIONS
+    # add stays a change of cruxible_playbill_write on MCP: no tool of its own.
+    assert "cruxible_playbill_add" not in TOOL_PERMISSIONS
+    for verb in ("set", "retire", "write"):
+        assert TOOL_PERMISSIONS[f"cruxible_playbill_{verb}"] == PermissionMode.GOVERNED_WRITE
 
 
 def test_full_profile_advertises_the_uncurated_surface(

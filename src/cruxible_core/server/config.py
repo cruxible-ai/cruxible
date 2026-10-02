@@ -294,6 +294,22 @@ def is_origin_allowed(origin: str | None, environ: Mapping[str, str] | None = No
     return normalized in get_origin_allowlist(environ)
 
 
+class ServerAuthRequired(ConfigError):
+    """The daemon refuses to serve without auth on this transport or state root.
+
+    Carries one code per cause, so a refusal names the exact repair instead of
+    a shared sentence covering several different situations.
+    """
+
+    def __init__(self, error_code: str, message: str) -> None:
+        self.error_code = error_code
+        super().__init__(f"{error_code}: {message}")
+
+
+#: The one repair every auth-off refusal names: the explicit local opt-in.
+SERVER_AUTH_OPT_IN = "cruxible server start --auth"
+
+
 def validate_server_startup_settings(
     environ: Mapping[str, str] | None = None,
     *,
@@ -307,9 +323,11 @@ def validate_server_startup_settings(
     bootstrap_secret = get_runtime_bootstrap_secret(env)
 
     if auth_required and not auth_enabled:
-        raise ConfigError(
-            "Refusing to start the Cruxible daemon without auth because this server "
-            "state dir previously required auth. Set CRUXIBLE_SERVER_AUTH=true."
+        raise ServerAuthRequired(
+            "cruxible.server.auth_latched",
+            "this state root previously required auth, so the daemon refuses to serve "
+            f"it without auth; repair: `{SERVER_AUTH_OPT_IN}` (or set "
+            "CRUXIBLE_SERVER_AUTH=true)",
         )
 
     if auth_enabled and bootstrap_secret is None and not runtime_credentials_available:
@@ -319,13 +337,30 @@ def validate_server_startup_settings(
         )
 
     if env.get("CRUXIBLE_SERVER_SOCKET"):
+        # A Unix socket is reachable only through a 0700 directory this OS user
+        # owns, so every process that can connect already runs as the operator.
         return
 
-    host = env.get("CRUXIBLE_HOST", "127.0.0.1")
-    if not _is_loopback_host(host) and not auth_enabled:
-        raise ConfigError(
-            "Refusing to bind the Cruxible daemon to a non-loopback host without auth. "
-            "Set CRUXIBLE_SERVER_AUTH=true with CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET "
-            "or stored runtime credentials, "
-            "or bind CRUXIBLE_HOST to 127.0.0.1/localhost."
+    if not auth_enabled:
+        # A TCP port has no such boundary: loopback is reachable by every local
+        # user, and anything bound wider by the network. Without auth, any of
+        # them could claim any principal.
+        host = env.get("CRUXIBLE_HOST", "127.0.0.1")
+        port = env.get("CRUXIBLE_PORT", "8100")
+        raise ServerAuthRequired(
+            "cruxible.server.tcp_requires_auth",
+            f"a TCP daemon ({host}:{port}) refuses to start without auth, because any "
+            "process that can reach the port could act as any principal; repair: "
+            f"`{SERVER_AUTH_OPT_IN}`, or listen on a Unix socket with "
+            "`cruxible server start --socket PATH`",
         )
+
+
+def auth_off_startup_notice() -> str:
+    """The one line an auth-off daemon prints when it starts."""
+
+    return (
+        "Auth off: Unix-socket daemon; every process running as this OS user is equally "
+        "trusted and a principal ID is a claim, not authentication. "
+        f"Opt in with `{SERVER_AUTH_OPT_IN}`."
+    )

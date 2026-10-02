@@ -100,7 +100,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:6412bb24a482d1a295dc175b039c19d1bbc50d35fe12ede14befdfac8ab38656"
+    "sha256:3a931db0868bdec2e658d552bc37fbe5e99758ca720fe36252f019656f876999"
 )
 INSERTION_EXPECTATION_ID_DOMAIN = "playbill-insertion-expectation-id-v1"
 INSERTION_RESULT_KEY_DOMAIN = "playbill-insertion-result-key-v1"
@@ -175,6 +175,56 @@ class AuthoringReferenceExpectationV1(_StrictAuthoringModel):
         if not value or value != value.strip():
             raise ValueError("reference expectation address must be canonical")
         return value
+
+
+class AuthoringSlotExpectationV1(_StrictAuthoringModel):
+    """The exact live membership of one slot a change set depends on.
+
+    A typed write chooses what to revise, retire and disposition from the live
+    Claims of a slot (one Subject, predicate and qualifier). Admission checks
+    this membership at the head the candidate is evaluated at, and refuses when
+    a Claim joined or left the slot since ``minted_coordinate``: an evaluated
+    candidate is only ever settled at that same head, so a candidate that
+    passed can never activate over a slot it did not see.
+    """
+
+    tag: Literal["playbill-authoring-slot-expectation-v1"] = (
+        "playbill-authoring-slot-expectation-v1"
+    )
+    payload_path: str
+    artifact_kind: Literal["Slot"] = "Slot"
+    subject_path: str
+    predicate: str
+    qualifier: str | None = None
+    live_claims: tuple[str, ...]
+    minted_coordinate: AcceptedCoordinate
+
+    @field_validator("payload_path", "subject_path", "predicate")
+    @classmethod
+    def _canonical(cls, value: str) -> str:
+        if not value or value != value.strip() or any(char.isspace() for char in value):
+            raise ValueError("slot expectation names must be canonical")
+        return value
+
+    @field_validator("live_claims")
+    @classmethod
+    def _live_claims(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("ascii"))):
+            raise ValueError("slot expectation live_claims must be sorted and unique")
+        return value
+
+    @property
+    def address(self) -> str:
+        """The slot, spelled for ordering beside reference expectations."""
+
+        qualifier = "" if self.qualifier is None else f"@{self.qualifier}"
+        return f"{self.subject_path}#{self.predicate}{qualifier}"
+
+
+AuthoringExpectationV1: TypeAlias = Annotated[
+    AuthoringReferenceExpectationV1 | AuthoringSlotExpectationV1,
+    Field(discriminator="tag"),
+]
 
 
 class AuthoringReferenceSuccessorV1(_StrictAuthoringModel):
@@ -260,8 +310,8 @@ def authoring_program_stamp_operation_key(
 
 
 def canonical_reference_expectations(
-    values: tuple[AuthoringReferenceExpectationV1, ...],
-) -> tuple[AuthoringReferenceExpectationV1, ...]:
+    values: tuple[AuthoringExpectationV1, ...],
+) -> tuple[AuthoringExpectationV1, ...]:
     keys = tuple(
         (
             item.payload_path.encode("utf-8"),
@@ -279,7 +329,7 @@ def canonical_reference_expectations(
 
 
 def reference_expectations_digest(
-    values: tuple[AuthoringReferenceExpectationV1, ...],
+    values: tuple[AuthoringExpectationV1, ...],
 ) -> str:
     canonical_reference_expectations(values)
     return typed_digest(
@@ -1238,6 +1288,11 @@ class ClaimTypeSuccessionMemberV1(_StrictAuthoringModel):
     )
     successor: ClaimType
     dependents: tuple[ClaimTypeSuccessionDependentV1, ...] = ()
+    #: Carry every closure member `dependents` does not name to the successor,
+    #: computed by the daemon from the staged tree (retired Claims included).
+    #: `dependents` then names only the exceptions: a `retire` or `re_author`.
+    #: Absent from the wire when false, so an exact member's bytes never move.
+    carry_all: bool = Field(default=False, exclude_if=lambda value: not value)
 
     @field_validator("successor")
     @classmethod
@@ -1278,25 +1333,25 @@ class ClaimRetirementMemberV1(_StrictAuthoringModel):
     the second, member-local preflight mode of the standalone retirement route
     would only name the same inventory twice.
 
-    `claim_ref` is the bare Claim ID, spelled exactly as
-    `ClaimAuthoringPayloadV1.revises` spells it. Tolerating a `Claim:` prefix
-    here would give two spellings of one retirement the same member identity but
-    different payload digests, so create-dedup would miss and two live intents
-    could carry one semantic identity.
+    `retires` is the bare Claim ID, named and spelled exactly as
+    `ClaimAuthoringPayloadV1.revises` is. Tolerating a `Claim:` prefix here would
+    give two spellings of one retirement the same member identity but different
+    payload digests, so create-dedup would miss and two live intents could carry
+    one semantic identity.
     """
 
     tag: Literal["playbill-claim-retirement-authoring-payload-v1"] = (
         "playbill-claim-retirement-authoring-payload-v1"
     )
     mode: Literal["submit"] = "submit"
-    claim_ref: str
+    retires: str
     reason: ClaimRetirementReason
     effective_until: datetime | None = None
     dependents: tuple[ClaimRetireDependentV1, ...] = ()
 
-    @field_validator("claim_ref")
+    @field_validator("retires")
     @classmethod
-    def _claim_ref(cls, value: str) -> str:
+    def _retires(cls, value: str) -> str:
         claim_path(value)
         return value
 
@@ -1318,7 +1373,7 @@ class ClaimRetirementMemberV1(_StrictAuthoringModel):
 
     @property
     def claim_id(self) -> str:
-        return self.claim_ref
+        return self.retires
 
 
 AuthoringChangeSetMemberV1: TypeAlias = Annotated[
@@ -2394,14 +2449,14 @@ class AuthoringIntentV2(AuthoringIntentV1):
     """V1 intent state plus coordinate assertions that never enter authoring identity."""
 
     tag: Literal["playbill-authoring-intent-v2"] = "playbill-authoring-intent-v2"  # type: ignore[assignment]
-    reference_expectations: tuple[AuthoringReferenceExpectationV1, ...]
+    reference_expectations: tuple[AuthoringExpectationV1, ...]
 
     @field_validator("reference_expectations")
     @classmethod
     def _reference_expectations(
         cls,
-        value: tuple[AuthoringReferenceExpectationV1, ...],
-    ) -> tuple[AuthoringReferenceExpectationV1, ...]:
+        value: tuple[AuthoringExpectationV1, ...],
+    ) -> tuple[AuthoringExpectationV1, ...]:
         return canonical_reference_expectations(value)
 
 
@@ -2441,14 +2496,14 @@ class AuthoringIntentCreateRequestV2(_StrictAuthoringModel):
         "playbill-authoring-intent-create-request-v2"
     )
     payload: AuthoringPayloadV1
-    reference_expectations: tuple[AuthoringReferenceExpectationV1, ...]
+    reference_expectations: tuple[AuthoringExpectationV1, ...]
 
     @field_validator("reference_expectations")
     @classmethod
     def _reference_expectations(
         cls,
-        value: tuple[AuthoringReferenceExpectationV1, ...],
-    ) -> tuple[AuthoringReferenceExpectationV1, ...]:
+        value: tuple[AuthoringExpectationV1, ...],
+    ) -> tuple[AuthoringExpectationV1, ...]:
         return canonical_reference_expectations(value)
 
 
@@ -2457,15 +2512,15 @@ class AuthoringIntentCompileRequestV2(_StrictAuthoringModel):
         "playbill-authoring-intent-compile-request-v2"
     )
     payload: AuthoringPayloadV1
-    reference_expectations: tuple[AuthoringReferenceExpectationV1, ...]
+    reference_expectations: tuple[AuthoringExpectationV1, ...]
     intent_id: str | None = None
 
     @field_validator("reference_expectations")
     @classmethod
     def _reference_expectations(
         cls,
-        value: tuple[AuthoringReferenceExpectationV1, ...],
-    ) -> tuple[AuthoringReferenceExpectationV1, ...]:
+        value: tuple[AuthoringExpectationV1, ...],
+    ) -> tuple[AuthoringExpectationV1, ...]:
         return canonical_reference_expectations(value)
 
 
@@ -2474,15 +2529,15 @@ class AuthoringIntentCreateRequestV3(_StrictAuthoringModel):
         "playbill-authoring-intent-create-request-v3"
     )
     payload: AuthoringPayloadV1
-    reference_expectations: tuple[AuthoringReferenceExpectationV1, ...]
+    reference_expectations: tuple[AuthoringExpectationV1, ...]
     program_stamp: AuthoringProgramStampV1
 
     @field_validator("reference_expectations")
     @classmethod
     def _reference_expectations(
         cls,
-        value: tuple[AuthoringReferenceExpectationV1, ...],
-    ) -> tuple[AuthoringReferenceExpectationV1, ...]:
+        value: tuple[AuthoringExpectationV1, ...],
+    ) -> tuple[AuthoringExpectationV1, ...]:
         return canonical_reference_expectations(value)
 
 
@@ -2491,7 +2546,7 @@ class AuthoringIntentCompileRequestV3(_StrictAuthoringModel):
         "playbill-authoring-intent-compile-request-v3"
     )
     payload: AuthoringPayloadV1
-    reference_expectations: tuple[AuthoringReferenceExpectationV1, ...]
+    reference_expectations: tuple[AuthoringExpectationV1, ...]
     program_stamp: AuthoringProgramStampV1
     intent_id: str | None = None
 
@@ -2499,8 +2554,8 @@ class AuthoringIntentCompileRequestV3(_StrictAuthoringModel):
     @classmethod
     def _reference_expectations(
         cls,
-        value: tuple[AuthoringReferenceExpectationV1, ...],
-    ) -> tuple[AuthoringReferenceExpectationV1, ...]:
+        value: tuple[AuthoringExpectationV1, ...],
+    ) -> tuple[AuthoringExpectationV1, ...]:
         return canonical_reference_expectations(value)
 
 
@@ -2951,8 +3006,10 @@ __all__ = [
     "AuthoringPayloadV1",
     "AuthoringProgramOperationV1",
     "AuthoringProgramStampV1",
+    "AuthoringExpectationV1",
     "AuthoringReferenceExpectationV1",
     "AuthoringReferenceKind",
+    "AuthoringSlotExpectationV1",
     "AuthoringReferenceSuccessorV1",
     "AuthoringSubmitMemberV1",
     "AuthoringSubmitResultV1",

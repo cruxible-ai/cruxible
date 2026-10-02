@@ -28,6 +28,7 @@ from cruxible_client.authoring.blocks import (
     parse_projection_blocks,
     sync_projection_blocks,
 )
+from cruxible_client.authoring.floor_apply import apply_floor_delta, read_floor_manifest
 from cruxible_client.authoring.projection_manifests import load_projection_manifests
 from cruxible_client.authoring.selectors import WorkspaceSources
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
@@ -40,23 +41,53 @@ from cruxible_client.contracts.declared_blocks import (
     PlaybillPresentationPolicyV2,
     PlaybillProjectionCoverageBindingV1,
     PlaybillProjectionCoverageObservationV1,
+    projection_manifest_refs,
     projection_processing_policy,
     read_projection_source,
+    resolve_projection_manifest_digest,
     upgrade_playbill_presentation_policy,
 )
 from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.floor import (
+    PLAYBILL_FLOOR_FORMAT,
+    PLAYBILL_FLOOR_LOCAL_PATHS,
+    PlaybillFloorApplyResultV1,
+    PlaybillFloorDeltaV1,
+)
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.workspace_layout import PLAYBILL_FLOOR_PATH
 
 _CONFIG_PATH = PurePosixPath(".playbill/coverage.json")
 _CONFIG_EXCLUDE_RULE = b"/.playbill/coverage.json\n"
-_FLOOR_DOMAIN = "playbill-floor-export-v3"
+_FLOOR_DOMAIN = PLAYBILL_FLOOR_FORMAT
 _FLOOR_DOMAINS = {"playbill-floor-export-v2", _FLOOR_DOMAIN}
 _WORKSPACE_CONFIG_TAG = "playbill-coverage-workspace-config-v2"
 _FLOOR_OUTPUT = {
     "tag": "playbill-floor-output-v1",
     "format": _FLOOR_DOMAIN,
 }
+_FLOOR_PARTS: tuple[contracts.PlaybillFloorExportPart, ...] = ("discovery",)
+
+
+def _floor_output(include: Sequence[str] = ()) -> dict[str, Any]:
+    """The floor_output profile: the fixed format, plus any opt-in export parts."""
+
+    parts = sorted(set(include))
+    unknown = [part for part in parts if part not in _FLOOR_PARTS]
+    if unknown:
+        raise PlaybillWorkspaceError(f"unsupported floor export part(s): {', '.join(unknown)}")
+    return {**_FLOOR_OUTPUT, **({"include": parts} if parts else {})}
+
+
+def _profile_include(output: Mapping[str, Any]) -> tuple[contracts.PlaybillFloorExportPart, ...]:
+    include = output.get("include", [])
+    if not isinstance(include, list) or any(item not in _FLOOR_PARTS for item in include):
+        raise PlaybillWorkspaceError("coverage floor_output.include is not a list of export parts")
+    if include != sorted(set(include)) or not include and "include" in output:
+        raise PlaybillWorkspaceError("coverage floor_output.include must be sorted and nonempty")
+    return cast(tuple[contracts.PlaybillFloorExportPart, ...], tuple(include))
+
+
 _WORKSPACE_CONFIG_FIELDS = frozenset(
     {
         "tag",
@@ -309,11 +340,17 @@ def _planned_workspace_config(
         and existing.get("tag") in {"playbill-coverage-workspace-config-v1", _WORKSPACE_CONFIG_TAG}
         else {}
     )
+    previous_output = (existing or {}).get("floor_output")
+    previous_include = (
+        previous_output.get("include", []) if isinstance(previous_output, Mapping) else []
+    )
     desired.update(
         {
             "tag": _WORKSPACE_CONFIG_TAG,
             "instance_id": instance_id,
-            "floor_output": dict(_FLOOR_OUTPUT),
+            "floor_output": _floor_output(
+                previous_include if isinstance(previous_include, list) else ()
+            ),
         }
     )
     desired.pop("server_url", None)
@@ -380,19 +417,29 @@ def record_playbill_floor_output(
     instance_id: str,
     server_url: str | None = None,
     server_socket: str | None = None,
+    include: Sequence[contracts.PlaybillFloorExportPart] = (),
 ) -> Path:
-    """Record the fixed floor output while preserving safe existing coverage fields."""
+    """Record the fixed floor output and its opt-in parts, keeping safe coverage fields.
+
+    Refresh after an activation exports the parts recorded here. A profile an
+    earlier build wrote (the v2 or v3 format) is rewritten to the current one.
+    """
 
     root = _workspace_root(workspace)
     path = root / _CONFIG_PATH
+    desired_output = _floor_output(include)
     existing = _read_workspace_config(path)
     if existing is None:
-        return write_playbill_workspace_config(
+        written = write_playbill_workspace_config(
             root,
             instance_id=instance_id,
             server_url=server_url,
             server_socket=server_socket,
         )
+        current = _read_workspace_config(written)
+        if current is not None and current.get("floor_output") != desired_output:
+            _atomic_write_workspace_config(written, {**current, "floor_output": desired_output})
+        return written
     tag = existing.get("tag")
     if tag not in {
         "playbill-coverage-workspace-config-v1",
@@ -401,16 +448,13 @@ def record_playbill_floor_output(
         raise PlaybillWorkspaceError("coverage config has an unsupported tag")
     output = existing.get("floor_output")
     if output is not None:
-        if output not in (
-            _FLOOR_OUTPUT,
-            {"tag": "playbill-floor-output-v1", "format": "playbill-floor-export-v2"},
-        ):
+        if not isinstance(output, Mapping) or output.get("tag") != "playbill-floor-output-v1":
             raise PlaybillWorkspaceError("coverage floor_output has an unsupported profile")
-        if output == _FLOOR_OUTPUT:
+        if output == desired_output:
             return path
     desired = dict(existing)
     desired["tag"] = _WORKSPACE_CONFIG_TAG
-    desired["floor_output"] = dict(_FLOOR_OUTPUT)
+    desired["floor_output"] = desired_output
     _atomic_write_workspace_config(path, desired)
     return path
 
@@ -471,7 +515,17 @@ class _FloorClient(Protocol):
         instance_id: str,
         *,
         at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+        include: Sequence[contracts.PlaybillFloorExportPart] = (),
     ) -> contracts.PlaybillFloorExport: ...
+
+    def playbill_floor_delta(
+        self,
+        instance_id: str,
+        *,
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+        base_generation: int | None = None,
+        base_renderer: str | None = None,
+    ) -> PlaybillFloorDeltaV1: ...
 
     def check_playbill_projection_blocks(
         self,
@@ -492,13 +546,7 @@ class _CoverageClient(Protocol):
         scan_budget: Mapping[str, Any] | None = None,
     ) -> contracts.PlaybillCoverageResult: ...
 
-    def search_playbill(
-        self,
-        instance_id: str,
-        *,
-        mode: Literal["search", "list", "orient"],
-        kinds: Sequence[str] = ("claim", "demand", "procedure"),
-    ) -> contracts.PlaybillSearchResult: ...
+    def playbill_head(self, instance_id: str) -> contracts.PlaybillHeadV1: ...
 
 
 def _canonical_json(value: object) -> bytes:
@@ -555,7 +603,7 @@ def verified_floor_files(export: contracts.PlaybillFloorExport) -> dict[str, byt
     """Verify the v2 envelope, manifest, inventory, and bytes."""
 
     if export.tag not in _FLOOR_DOMAINS:
-        raise PlaybillWorkspaceError("configured floor refresh requires floor export v2 or v3")
+        raise PlaybillWorkspaceError("configured floor refresh requires floor export v2 or v5")
     manifest = export.manifest
     if manifest.get("tag") != export.tag.replace("export", "manifest"):
         raise PlaybillWorkspaceError("floor export manifest has an unsupported tag")
@@ -628,8 +676,10 @@ def _relative_destination(workspace: Path, relative_path: str) -> Path:
     return destination
 
 
-def configured_floor_path(workspace: str | Path) -> str | None:
-    """Return the declared v2 floor path, or ``None`` when absent/unconfigured."""
+def configured_floor_output(
+    workspace: str | Path,
+) -> tuple[str, tuple[contracts.PlaybillFloorExportPart, ...]] | None:
+    """The declared floor path and its opt-in export parts, or ``None`` when unconfigured."""
 
     root = _workspace_root(workspace)
     config_path = root / _CONFIG_PATH
@@ -648,17 +698,29 @@ def configured_floor_path(workspace: str | Path) -> str | None:
         return None
     if not isinstance(output, Mapping):
         raise PlaybillWorkspaceError("coverage floor_output is not an object")
-    if (
-        output.get("tag") != "playbill-floor-output-v1"
-        or output.get("format") not in _FLOOR_DOMAINS
-    ):
-        raise PlaybillWorkspaceError("coverage floor_output has an unsupported profile")
     if "path" in output:
         raise PlaybillWorkspaceError(
             f"coverage floor_output.path is obsolete; the path is fixed at {PLAYBILL_FLOOR_PATH}"
         )
+    if (
+        output.get("tag") != "playbill-floor-output-v1"
+        or output.get("format") not in _FLOOR_DOMAINS
+        or set(output) - {"tag", "format", "include"}
+    ):
+        raise PlaybillWorkspaceError(
+            "coverage floor_output has an unsupported profile; rewrite it with "
+            "`cruxible playbill floor export --force`"
+        )
+    include = _profile_include(output)
     _relative_destination(root, PLAYBILL_FLOOR_PATH)
-    return PLAYBILL_FLOOR_PATH
+    return PLAYBILL_FLOOR_PATH, include
+
+
+def configured_floor_path(workspace: str | Path) -> str | None:
+    """Return the declared floor path, or ``None`` when absent/unconfigured."""
+
+    configured = configured_floor_output(workspace)
+    return None if configured is None else configured[0]
 
 
 def _holds_exactly(destination: Path, files: Mapping[str, bytes]) -> bool:
@@ -673,6 +735,9 @@ def _holds_exactly(destination: Path, files: Mapping[str, bytes]) -> bool:
         for name in filenames:
             source = Path(parent) / name
             relative = source.relative_to(destination).as_posix()
+            if relative in PLAYBILL_FLOOR_LOCAL_PATHS:
+                # Client-written from workspace bindings; never daemon bytes.
+                continue
             observed.add(relative)
             if source.is_symlink() or relative not in files:
                 return False
@@ -746,6 +811,7 @@ def materialize_playbill_floor(
             raise PlaybillWorkspaceError(
                 f"refusing to write the floor into a non-empty directory: {destination}"
             )
+        write_projection_index(root)
         return contracts.PlaybillWorkspaceFloorWriteResult(
             status="unchanged",
             path=relative_path,
@@ -755,6 +821,7 @@ def materialize_playbill_floor(
             file_count=len(export.files),
         )
     _replace_exact(destination, files, root=root)
+    write_projection_index(root)
     return contracts.PlaybillWorkspaceFloorWriteResult(
         path=relative_path,
         destination=str(destination),
@@ -762,6 +829,248 @@ def materialize_playbill_floor(
         coordinate=export.coordinate,
         file_count=len(export.files),
     )
+
+
+PROJECTIONS_INDEX_PATH = "projections/INDEX"
+_SOURCES_INDEX_PATH = "sources/INDEX"
+
+
+def _sources_generations(floor: Path) -> dict[str, str] | None:
+    """The floor's sources/INDEX as source -> the generation it last changed."""
+
+    try:
+        text = (floor / _SOURCES_INDEX_PATH).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    generations: dict[str, str] = {}
+    for line in text.splitlines():
+        if line.startswith("#"):
+            continue
+        cells = line.split("\t")
+        if len(cells) != 5 or not cells[4].isdigit():
+            continue
+        known = generations.get(cells[0])
+        if known is None or int(cells[4]) > int(known):
+            generations[cells[0]] = cells[4]
+    return generations
+
+
+def _rendered_blocks(root: Path, content: bytes) -> list[tuple[str, str]]:
+    """Each compact projection block in ``content``: its ref and declared generation."""
+
+    directory = root / ".playbill/manifests"
+    blocks: list[tuple[str, str]] = []
+    try:
+        refs = projection_manifest_refs(content)
+    except (PlaybillError, ValueError):
+        return blocks
+    for ref in refs:
+        try:
+            digest = (
+                ref
+                if ref.startswith("sha256:")
+                else resolve_projection_manifest_digest(
+                    ref, ("sha256:" + path.stem for path in directory.glob(ref + "*.json"))
+                )
+            )
+            manifest = json.loads(
+                (directory / (digest.removeprefix("sha256:") + ".json")).read_text(encoding="utf-8")
+            )
+        except (PlaybillError, OSError, ValueError):
+            continue
+        if not isinstance(manifest, Mapping):
+            continue
+        source_id, block_id = manifest.get("source_id"), manifest.get("block_id")
+        generation = manifest.get("declared_generation")
+        if isinstance(source_id, str) and isinstance(block_id, str):
+            blocks.append(
+                (f"{source_id}#{block_id}", str(generation) if isinstance(generation, int) else "-")
+            )
+    return blocks
+
+
+def write_projection_index(workspace: str | Path) -> int | None:
+    """Join the floor's ledger-pure sources with this workspace's bindings.
+
+    Writes ``projections/INDEX`` into the workspace floor: one line per
+    workspace file bound to accepted state -- a Document body, an evidence
+    source, or a rendered projection block -- with its role, the ref it is
+    bound to, and the generation that ref last changed. The daemon never sees
+    these paths, so the file is outside the daemon-verified manifest. A bound
+    file that does not exist is left out; ``next`` reports it for repair.
+    Returns the number of lines, or ``None`` when there is no v5 floor.
+    """
+
+    root = _workspace_root(workspace)
+    floor = _relative_destination(root, PLAYBILL_FLOOR_PATH)
+    generations = _sources_generations(floor)
+    if generations is None:
+        return None
+    rows: list[tuple[str, str, str, str]] = []
+    try:
+        sources: WorkspaceSources | None = WorkspaceSources(root)
+    except (OSError, ValueError, PlaybillError):
+        sources = None
+    for entry in () if sources is None else sources.document_entries:
+        try:
+            path = sources.path_for_source(entry.name) if sources is not None else None
+        except (OSError, ValueError, PlaybillError):
+            continue
+        if path is None or not path.is_file() or not path.is_relative_to(root):
+            continue
+        relative = path.relative_to(root).as_posix()
+        document = f"Document:{entry.document_id}"
+        if document in generations:
+            rows.append((relative, "document-body", document, generations[document]))
+        if entry.name in generations:
+            rows.append((relative, "evidence-source", entry.name, generations[entry.name]))
+        try:
+            content = read_projection_source(path)
+        except (OSError, ValueError, PlaybillError):
+            continue
+        rows.extend(
+            (relative, "rendered-block", ref, generation)
+            for ref, generation in _rendered_blocks(root, content)
+        )
+    rows = sorted(set(rows), key=lambda row: tuple(cell.encode() for cell in row))
+    header = (
+        f"# projections INDEX  {len(rows)} bindings  columns: workspace path, role, "
+        "bound ref, changed gen  (written by the client from its workspace)"
+    )
+    text = "".join(f"{line}\n" for line in (header, *("\t".join(row) for row in rows)))
+    target = floor / PROJECTIONS_INDEX_PATH
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if not target.resolve().is_relative_to(floor.resolve()):
+        raise PlaybillWorkspaceError("projections INDEX escapes the floor")
+    with NamedTemporaryFile("wb", dir=target.parent, delete=False) as stream:
+        stream.write(text.encode("utf-8"))
+        staged = Path(stream.name)
+    os.replace(staged, target)
+    return len(rows)
+
+
+def floor_export_parts(
+    include: Sequence[contracts.PlaybillFloorExportPart],
+) -> dict[str, Any]:
+    """Keyword arguments naming opt-in parts, empty for the default floor.
+
+    A client that predates opt-in parts is only ever asked for the default.
+    """
+
+    return {"include": tuple(sorted(set(include)))} if include else {}
+
+
+FloorDeltaFetch = Callable[[int | None, str | None], PlaybillFloorDeltaV1]
+
+
+def sync_floor_directory(
+    fetch_delta: FloorDeltaFetch, floor_dir: Path
+) -> tuple[PlaybillFloorDeltaV1, PlaybillFloorApplyResultV1]:
+    """Bring ``floor_dir`` to the daemon's answer through the one shared apply.
+
+    Sends the generation and renderer of the floor the directory holds, so the
+    answer is a delta; a directory that turns out not to hold that base gets
+    the whole floor on a second ask.
+    """
+
+    local = read_floor_manifest(floor_dir)
+    delta = fetch_delta(
+        None if local is None else local.generation,
+        None if local is None else local.renderer,
+    )
+    result = apply_floor_delta(floor_dir, delta)
+    if result.status == "base_mismatch":
+        delta = fetch_delta(None, None)
+        result = apply_floor_delta(floor_dir, delta)
+    if result.status == "base_mismatch":  # pragma: no cover - a full floor names no base
+        raise PlaybillWorkspaceError("a full floor could not be applied")
+    return delta, result
+
+
+def write_workspace_floor_delta(
+    fetch_delta: FloorDeltaFetch,
+    *,
+    instance_id: str,
+    workspace: str | Path,
+    force: bool = True,
+    server_url: str | None = None,
+    server_socket: str | None = None,
+) -> tuple[PlaybillFloorDeltaV1, contracts.PlaybillWorkspaceFloorWriteResult]:
+    """Write the default floor through the shared apply and record its refresh profile.
+
+    The CLI and MCP write path for a floor without opt-in parts: it asks for a
+    delta from the floor already there, so an up-to-date floor costs nothing.
+    A non-empty directory that holds no floor is replaced only with ``force``.
+    """
+
+    root = _workspace_root(workspace)
+    destination = _relative_destination(root, PLAYBILL_FLOOR_PATH)
+    if (
+        not force
+        and destination.is_dir()
+        and any(destination.iterdir())
+        and read_floor_manifest(destination) is None
+    ):
+        raise PlaybillWorkspaceError(
+            f"refusing to write the floor into a non-empty directory: {destination}"
+        )
+    delta, applied = sync_floor_directory(fetch_delta, destination)
+    write_projection_index(root)
+    if (root / _CONFIG_PATH).exists() or server_url is not None or server_socket is not None:
+        record_playbill_floor_output(
+            workspace,
+            instance_id=instance_id,
+            server_url=server_url,
+            server_socket=server_socket,
+        )
+    assert applied.floor_digest is not None
+    return delta, contracts.PlaybillWorkspaceFloorWriteResult(
+        status="unchanged" if applied.status == "unchanged" else "written",
+        path=PLAYBILL_FLOOR_PATH,
+        destination=str(destination),
+        floor_digest=applied.floor_digest,
+        coordinate=contracts.PlaybillAcceptedCoordinate.model_validate(
+            delta.head.coordinate().model_dump(mode="json")
+        ),
+        file_count=applied.file_count + 1,
+    )
+
+
+def write_workspace_floor(
+    export_floor: Callable[[], contracts.PlaybillFloorExport],
+    *,
+    instance_id: str,
+    workspace: str | Path,
+    include: Sequence[contracts.PlaybillFloorExportPart] = (),
+    force: bool = True,
+    server_url: str | None = None,
+    server_socket: str | None = None,
+) -> tuple[contracts.PlaybillFloorExport, contracts.PlaybillWorkspaceFloorWriteResult]:
+    """Write an exported floor into the workspace and record its refresh profile.
+
+    The one write path every surface (CLI, MCP) takes, so a floor written with
+    opt-in parts is refreshed with the same parts after an activation.
+    ``export_floor`` exports exactly ``include`` (see ``floor_export_parts``).
+    The profile is recorded into an existing coverage config, or a new one
+    naming the given transport; with neither, there is no daemon to name and
+    nothing is recorded.
+    """
+
+    export = export_floor()
+    written = materialize_playbill_floor(workspace, export=export, force=force)
+    if (
+        (_workspace_root(workspace) / _CONFIG_PATH).exists()
+        or server_url is not None
+        or server_socket is not None
+    ):
+        record_playbill_floor_output(
+            workspace,
+            instance_id=instance_id,
+            server_url=server_url,
+            server_socket=server_socket,
+            include=include,
+        )
+    return export, written
 
 
 def inspect_workspace_floor(
@@ -814,6 +1123,42 @@ def inspect_workspace_floor(
     )
 
 
+def workspace_floor_freshness(
+    workspace: str | Path,
+    orientation: contracts.PlaybillOrientResultV1,
+) -> contracts.PlaybillOrientResultV1:
+    """``orientation`` with ``floor`` set when the workspace holds this instance's floor.
+
+    Cheap by construction: it reads the floor's manifest (its coordinate and
+    generation), never re-exports, and
+    leaves ``orientation`` as it is when there is no readable floor, or when the
+    workspace's coverage config names another instance.
+    """
+
+    root = _workspace_root(workspace)
+    floor = root / PLAYBILL_FLOOR_PATH
+    try:
+        manifest = json.loads((floor / "manifest.json").read_text(encoding="utf-8"))
+        at = manifest["coordinate"]["git_oid"]
+        if not isinstance(at, str):
+            return orientation
+        config = _read_workspace_config(root / _CONFIG_PATH)
+    except (OSError, KeyError, TypeError, ValueError):
+        return orientation
+    if config is not None and config.get("instance_id") not in (None, orientation.instance):
+        return orientation
+    behind: int | None = None
+    if at == orientation.coordinate.git_oid:
+        behind = 0
+    else:
+        generation = manifest.get("generation")
+        if isinstance(generation, int) and not isinstance(generation, bool):
+            behind = max(0, orientation.generation - generation)
+    return orientation.model_copy(
+        update={"floor": contracts.PlaybillOrientFloorV1(at=at, generations_behind=behind)}
+    )
+
+
 def observe_playbill_next_workspace(workspace: str | Path) -> dict[str, object]:
     """Observe the configured floor and every resolvable installed catalog source.
 
@@ -860,9 +1205,25 @@ def observe_playbill_next_workspace(workspace: str | Path) -> dict[str, object]:
         known_source_ids=tuple(entry.name for entry in sources.document_entries),
     )
     source_observations: list[dict[str, str]] = []
+    missing: list[dict[str, str | None]] = []
     for entry in sources.document_entries:
         try:
             path = sources.path_for_source(entry.name)
+        except (OSError, ValueError, PlaybillError):
+            continue
+        if not path.exists() and not path.is_symlink():
+            # A binding to a file that is not there is repair work, not an
+            # unobserved source: next names it with the catalog entry to fix.
+            missing.append(
+                {
+                    "tag": "playbill-next-missing-binding-v1",
+                    "source_id": entry.name,
+                    "document_id": entry.document_id,
+                    "locator": entry.locator,
+                }
+            )
+            continue
+        try:
             content = read_projection_source(path)
         except (OSError, ValueError, PlaybillError):
             continue
@@ -874,6 +1235,10 @@ def observe_playbill_next_workspace(workspace: str | Path) -> dict[str, object]:
             }
         )
     observation["source_observations"] = source_observations
+    if missing:
+        observation["missing_bindings"] = sorted(
+            missing, key=lambda item: str(item["source_id"]).encode("utf-8")
+        )
     return observation
 
 
@@ -1342,7 +1707,9 @@ def observe_playbill_next_workspace_with_coverage(
                 resolved_coordinate = (
                     resolve_coordinate()
                     if resolve_coordinate is not None
-                    else client.search_playbill(instance_id, mode="orient").coordinate
+                    else contracts.PlaybillAcceptedCoordinate.model_validate(
+                        client.playbill_head(instance_id).coordinate.model_dump(mode="json")
+                    )
                 )
         if resolved_coordinate is not None:
             projection = observe_playbill_projection_coverage(
@@ -1501,19 +1868,48 @@ def refresh_workspace_floor(
     """
 
     try:
-        relative_path = configured_floor_path(workspace)
-        if relative_path is None:
+        configured = configured_floor_output(workspace)
+        if configured is None:
             return contracts.PlaybillFloorRefreshResult(status="not_configured")
-        export = client.export_playbill_floor(instance_id, at=at)
-        if at is not None and export.coordinate != at:
-            raise PlaybillWorkspaceError("floor export differs from requested coordinate")
-        written = materialize_playbill_floor(workspace, export=export)
+        relative_path, include = configured
+        if include:
+            # Opt-in discovery cards are a full export's; they never travel in a delta.
+            export = client.export_playbill_floor(instance_id, at=at, **floor_export_parts(include))
+            if at is not None and export.coordinate != at:
+                raise PlaybillWorkspaceError("floor export differs from requested coordinate")
+            written = materialize_playbill_floor(workspace, export=export)
+            return contracts.PlaybillFloorRefreshResult(
+                status="refreshed",
+                path=relative_path,
+                destination=written.destination,
+                floor_digest=written.floor_digest,
+                coordinate=export.coordinate,
+            )
+        root = _workspace_root(workspace)
+        destination = _relative_destination(root, relative_path)
+
+        def fetch(generation: int | None, renderer: str | None) -> PlaybillFloorDeltaV1:
+            delta = client.playbill_floor_delta(
+                instance_id, at=at, base_generation=generation, base_renderer=renderer
+            )
+            # A pinned request refuses a mismatched answer before anything is written:
+            # the whole coordinate, not only its Git OID.
+            if at is not None and delta.head.coordinate().model_dump(mode="json") != at.model_dump(
+                mode="json"
+            ):
+                raise PlaybillWorkspaceError("floor delta differs from requested coordinate")
+            return delta
+
+        delta, applied = sync_floor_directory(fetch, destination)
+        write_projection_index(root)
         return contracts.PlaybillFloorRefreshResult(
             status="refreshed",
             path=relative_path,
-            destination=written.destination,
-            floor_digest=written.floor_digest,
-            coordinate=export.coordinate,
+            destination=str(destination),
+            floor_digest=applied.floor_digest,
+            coordinate=contracts.PlaybillAcceptedCoordinate.model_validate(
+                delta.head.coordinate().model_dump(mode="json")
+            ),
         )
     except Exception as exc:
         return contracts.PlaybillFloorRefreshResult(status="failed", message=str(exc))
@@ -1591,9 +1987,15 @@ __all__ = [
     "observe_playbill_next_workspace_with_coverage",
     "observe_playbill_projection_coverage",
     "materialize_playbill_floor",
+    "configured_floor_output",
+    "floor_export_parts",
     "record_playbill_floor_output",
+    "sync_floor_directory",
+    "write_workspace_floor",
+    "write_workspace_floor_delta",
     "refresh_workspace_floor",
     "validate_playbill_workspace_config_write",
     "verified_floor_files",
     "write_playbill_workspace_config",
+    "write_projection_index",
 ]

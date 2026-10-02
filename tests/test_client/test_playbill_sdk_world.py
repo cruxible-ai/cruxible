@@ -37,6 +37,7 @@ from cruxible_client.authoring.world import (
 )
 from cruxible_client.authoring.world_stub import STUB_HEADER_TAG
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from tests.test_client._read_fakes import ClaimTypeListing, ClaimTypeRead
 
 _DIGEST = "sha256:" + "1" * 64
 _COORDINATE = api.PlaybillAcceptedCoordinate(
@@ -57,7 +58,7 @@ AFFECTS = "sec.vuln.affects_package"
 LANDED_AT = "dev.batch.landed_at"
 
 
-def _claim_type(predicate: str, **overrides: object) -> api.PlaybillClaimTypeView:
+def _claim_type(predicate: str, **overrides: object) -> ClaimTypeRead:
     envelope: dict[str, Any] = {
         "artifact_format": "playbill-claim-type-v1",
         "identity": {"kind": "ClaimType", "name": predicate},
@@ -72,7 +73,7 @@ def _claim_type(predicate: str, **overrides: object) -> api.PlaybillClaimTypeVie
         "lifecycle": {"state": "live"},
     }
     envelope.update(overrides)
-    return api.PlaybillClaimTypeView(
+    return ClaimTypeRead(
         coordinate=_COORDINATE,
         path=f"claim-types/{predicate}.json",
         predicate=predicate,
@@ -82,19 +83,26 @@ def _claim_type(predicate: str, **overrides: object) -> api.PlaybillClaimTypeVie
     )
 
 
-def _subject_entry(
-    subject_kind: str,
-    subject_id: str,
-    *,
-    lifecycle: str = "live",
-) -> api.PlaybillSubjectIndexEntry:
-    """One Subject exactly as the served index renders it."""
+def _projection(coordinate: Any) -> AcceptedCoordinate:
+    return AcceptedCoordinate.model_validate(coordinate.model_dump(mode="json"))
 
-    return api.PlaybillSubjectIndexEntry(
-        identity=f"Subject:{subject_kind}/{subject_id}",
-        subject_kind=subject_kind,
-        subject_id=subject_id,
-        lifecycle=lifecycle,  # type: ignore[arg-type]
+
+def _proof_result(
+    ref: str, kind: str, proof: Any, coordinate: Any, *, why: str | None = None
+) -> Any:
+    from cruxible_client.contracts.get_reads import PlaybillGetCoordinateV1, PlaybillGetResultV1
+
+    return PlaybillGetResultV1(
+        ref=ref,
+        kind=kind,  # type: ignore[arg-type]
+        detail="why" if why is not None else "proof",
+        proof=proof,
+        why=None if why is None else {"explained": why},
+        coordinate=PlaybillGetCoordinateV1(git_oid=coordinate.git_oid[:12], generation=1),
+        accepted_coordinate=api.PlaybillAcceptedCoordinate.model_validate(
+            coordinate.model_dump(mode="json")
+        ),
+        evaluation_time=datetime(2026, 9, 7, tzinfo=UTC),
     )
 
 
@@ -106,60 +114,33 @@ class _WorldClient:
         self.subject_list_calls = 0
         self.claim_type_list_calls = 0
         self.claim_type_coordinates: list[Any] = []
-        self.searches: list[dict[str, Any]] = []
         self.claim_reads: list[str] = []
         self.claim_predicates: dict[str, str] = {}
         self.retired_severity = False
+        self.severity_overrides: dict[str, Any] = {}
         self.claim_type_reads: list[str] = []
+        self.subject_queries: list[str] = []
+        # Replaces the Subject listing's answer, to serve pages a real daemon could.
+        self.subject_pages: Any = None
+        self.head_reads: list[Any] = []
+        self.batch_requests: list[Any] = []
 
-    def get_playbill_claim_type(
+    def _claim_type_view(
         self, _instance_id: str, predicate: str, *, at: Any = None
-    ) -> api.PlaybillClaimTypeView:
+    ) -> ClaimTypeRead:
         self.claim_type_reads.append(predicate)
         return _claim_type(predicate)
 
-    def search_playbill(self, _instance_id: str, **values: Any) -> api.PlaybillSearchResult:
-        self.searches.append(dict(values))
-        rows = (
-            [
-                {
-                    "kind": "claim",
-                    "identity": "CLM-" + "9" * 32,
-                    "address": {
-                        "artifact_path": "claims/CLM-" + "9" * 32 + ".json",
-                        "selector": {"kind": "claim_statement"},
-                    },
-                    "status": "accepted",
-                    "subject": values["subject"],
-                    "predicate": self.claim_predicates.get("CLM-" + "9" * 32, SEVERITY),
-                    "title": self.claim_predicates.get("CLM-" + "9" * 32, SEVERITY),
-                }
-            ]
-            if values.get("subject") is not None
-            else []
-        )
-        return api.PlaybillSearchResult(
-            mode=values["mode"],
-            coordinate=values.get("at") or self.coordinate,
-            evaluation_time=str(values["evaluation_time"]),
-            rows=rows,
-            orientation={"state": "empty"} if values["mode"] == "orient" else None,
-            selection_basis_digest="sha256:" + "4" * 64,
-            truncated=False,
-            result_digest="sha256:" + "5" * 64,
-        )
-
-    def list_playbill_claim_types(
-        self, _instance_id: str, *, at: Any = None
-    ) -> api.PlaybillClaimTypeList:
+    def _claim_type_list(self, _instance_id: str, *, at: Any = None) -> ClaimTypeListing:
         self.claim_type_list_calls += 1
         self.claim_type_coordinates.append(at)
-        return api.PlaybillClaimTypeList(
+        return ClaimTypeListing(
             coordinate=at or self.coordinate,
             claim_types=[
                 _claim_type(
                     SEVERITY,
                     lifecycle={"state": "retired" if self.retired_severity else "live"},
+                    **self.severity_overrides,
                 ),
                 _claim_type(
                     AFFECTS,
@@ -175,21 +156,18 @@ class _WorldClient:
             ],
         )
 
-    def list_playbill_subject_index(
-        self, _instance_id: str, *, at: Any = None
-    ) -> api.PlaybillSubjectIndex:
-        self.subject_list_calls += 1
-        return api.PlaybillSubjectIndex(
-            coordinate=at or self.coordinate,
-            subjects=[
-                _subject_entry("sec.package", "cryptography"),
-                _subject_entry("sec.vulnerability", "cve-2026-69247"),
-                _subject_entry("dev.batch", "p2c"),
-                _subject_entry("dev.batch", "retired_batch", lifecycle="retired"),
-            ],
-        )
+    def _subject_index(self) -> list[tuple[str, str, str]]:
+        """Every Subject as (kind, id, lifecycle)."""
 
-    def get_playbill_claim(self, _instance_id: str, identity: str, **_values: Any) -> Any:
+        self.subject_list_calls += 1
+        return [
+            ("sec.package", "cryptography", "live"),
+            ("sec.vulnerability", "cve-2026-69247", "live"),
+            ("dev.batch", "p2c", "live"),
+            ("dev.batch", "retired_batch", "retired"),
+        ]
+
+    def _claim_view(self, _instance_id: str, identity: str, **_values: Any) -> Any:
         self.claim_reads.append(identity)
         predicate = self.claim_predicates.get(identity, SEVERITY)
         return api.PlaybillClaimViewV2(
@@ -234,8 +212,136 @@ class _WorldClient:
             admission_accounts=[],
         )
 
-    def explain_playbill_subject(self, _instance_id: str, **values: Any) -> dict[str, Any]:
-        return {"explained": values["subject"]}
+    # -- the read verbs the SDK calls, served from this fake's data ----------
+
+    def playbill_head(self, instance_id: str, *, at: Any = None) -> api.PlaybillHeadV1:
+        self.head_reads.append(at)
+        coordinate = self.coordinate if at is None else at
+        return api.PlaybillHeadV1(
+            instance=instance_id,
+            coordinate=_projection(coordinate),
+            generation=1,
+        )
+
+    def orient_playbill(
+        self, instance_id: str, *, section: Any = None, at: Any = None, **_values: Any
+    ) -> api.PlaybillOrientResultV1:
+        from cruxible_client.contracts.orient import PlaybillOrientPredicateV1
+
+        assert section == "claim_types"
+        listing = self._claim_type_list(instance_id, at=at)
+        self._listing = listing
+        return api.PlaybillOrientResultV1(
+            instance=instance_id,
+            coordinate=_projection(listing.coordinate),
+            generation=1,
+            accepted_at=datetime(2026, 9, 7, tzinfo=UTC),
+            evaluation_time=datetime(2026, 9, 7, tzinfo=UTC),
+            section="claim_types",
+            claim_types=tuple(
+                PlaybillOrientPredicateV1(
+                    name=view.predicate,
+                    predicate=view.predicate,
+                    cardinality="one",
+                    type="string",
+                )
+                for view in listing.claim_types
+                if view.envelope.get("lifecycle", {}).get("state", "live") == "live"
+            ),
+        )
+
+    def playbill_get_batch(self, instance_id: str, *, request: Any) -> Any:
+        from cruxible_client.contracts.get_reads import PlaybillGetBatchResultV1
+
+        by_ref = {f"ClaimType:{view.predicate}": view for view in self._listing.claim_types}
+        coordinate = self._listing.coordinate
+        return PlaybillGetBatchResultV1(
+            coordinate=coordinate,
+            results=tuple(
+                _proof_result(ref, "claim_type", by_ref[ref].model_dump(mode="json"), coordinate)
+                for ref in request.refs
+            ),
+        )
+
+    def playbill_get(self, instance_id: str, *, request: Any) -> Any:
+        coordinate = request.at or self.coordinate
+        if request.detail == "why":
+            return _proof_result(request.ref, "subject", None, coordinate, why=request.ref)
+        if request.ref.startswith("ClaimType:"):
+            view: Any = self._claim_type_view(
+                instance_id, request.ref.removeprefix("ClaimType:"), at=request.at
+            )
+            return _proof_result(
+                request.ref, "claim_type", view.model_dump(mode="json"), coordinate
+            )
+        view = self._claim_view(instance_id, request.ref, at=request.at)
+        return _proof_result(request.ref, "claim", view.model_dump(mode="json"), coordinate)
+
+    def query_playbill(self, instance_id: str, *, request: Any) -> api.PlaybillQueryResult:
+        assert request.kind is not None
+        self.subject_queries.append(request.kind)
+        if self.subject_pages is not None:
+            return self.subject_pages(request)
+        # As the served query does: the evaluator binds every Subject shell; a
+        # status naming "retired" lists retired ones too, each row stating its
+        # lifecycle, and otherwise only live ones are listed.
+        with_retired = "retired" in request.status
+        return api.PlaybillQueryResult(
+            kind=request.kind,
+            columns=(),
+            rows=tuple(
+                {
+                    "subject": f"{kind}/{subject_id}",
+                    "subject_id": subject_id,
+                    **({"lifecycle": lifecycle} if with_retired else {}),
+                }
+                for kind, subject_id, lifecycle in sorted(
+                    self._subject_index(), key=lambda row: row[1]
+                )
+                if kind == request.kind and (with_retired or lifecycle == "live")
+            ),
+            receipt=self._receipt(request),
+        )
+
+    def _receipt(self, request: Any) -> api.PlaybillQueryReceiptV1:
+        return api.PlaybillQueryReceiptV1(
+            mode="inline",
+            spec_digest=_DIGEST,
+            coordinate=request.at or _projection(self.coordinate),
+            evaluation_time=datetime(2026, 9, 7, tzinfo=UTC),
+        )
+
+    def _claims_of(self, subject_path: str) -> list[str]:
+        """The live Claims this fake holds about one Subject."""
+
+        if subject_path != "subjects/sec.vulnerability/cve-2026-69247.json":
+            return []
+        return ["CLM-" + "9" * 32]
+
+    def read_playbill_claim_batch(self, instance_id: str, *, request: Any) -> Any:
+        from cruxible_client.contracts.claim_reads import ClaimReadBatchResultV1
+
+        self.batch_requests.append(request)
+        identities = [
+            identity
+            for path in request.subject_paths
+            for identity in self._claims_of(path)
+            if not request.predicates
+            or self.claim_predicates.get(identity, SEVERITY) in request.predicates
+        ]
+        start = 0 if request.cursor is None else int(request.cursor)
+        page, truncated, cursor = self._page(identities, start)
+        return ClaimReadBatchResultV1(
+            coordinate=request.at,
+            claims=tuple(
+                self._claim_view(instance_id, identity, at=request.at) for identity in page
+            ),
+            truncated=truncated,
+            cursor=cursor,
+        )
+
+    def _page(self, identities: list[str], start: int) -> tuple[list[str], bool, str | None]:
+        return identities[start:], False, None
 
     def close(self) -> None:
         return None
@@ -385,21 +491,78 @@ def test_a_kind_loads_its_subjects_only_when_one_is_first_asked_for(
     world = playbill.world()
 
     assert client.claim_type_list_calls == 1
-    assert client.subject_list_calls == 0
+    assert client.subject_queries == []
 
+    # The first ask reads every kind's Subjects once: one value-free query each.
     assert world.sec.package.cryptography.address == "sec.package/cryptography"
-    assert client.subject_list_calls == 1
+    assert client.subject_queries == ["dev.batch", "sec.package", "sec.vulnerability"]
 
     # A second kind, and a second read of the first, are answered from what the
     # first ask already resolved.
     assert world.dev.batch["p2c"].address == "dev.batch/p2c"
     assert world.sec.package["cryptography"].address == "sec.package/cryptography"
-    assert client.subject_list_calls == 1
+    assert len(client.subject_queries) == 3
 
     # A retired Subject leaves the world it was retired out of.
     assert world.dev.batch.subject_ids == ("p2c",)
     with pytest.raises(AbsentSubject):
         world.dev.batch["retired_batch"]
+
+
+@pytest.mark.parametrize(
+    ("truncated", "capped", "cursor", "refusal"),
+    [
+        (True, (), None, "no cursor to continue it"),
+        (True, ("max_results=1",), None, "without advancing"),
+        (True, (), "same-cursor", "does not advance"),
+    ],
+)
+def test_an_incomplete_subject_listing_refuses_and_caches_nothing(
+    connection: tuple[Playbill, _WorldClient],
+    truncated: bool,
+    capped: tuple[str, ...],
+    cursor: str | None,
+    refusal: str,
+) -> None:
+    """A partial inventory would call an accepted Subject absent, so none is installed."""
+
+    playbill, client = connection
+
+    def stuck(request: Any) -> api.PlaybillQueryResult:
+        # The same short page every time: a cap that never advances, a
+        # truncated answer with nothing to continue it, or a cursor handed back.
+        return api.PlaybillQueryResult(
+            kind=request.kind,
+            columns=(),
+            rows=({"subject": f"{request.kind}/a", "subject_id": "a", "lifecycle": "live"},)
+            if capped or cursor
+            else (),
+            truncated=truncated,
+            capped=capped,
+            next_cursor=cursor,
+            receipt=client._receipt(request),
+        )
+
+    client.subject_pages = stuck
+    world = playbill.world()
+    with pytest.raises(WorldStructureError, match=refusal):
+        world.sec.package["a"]
+    assert world._subjects_loaded is False
+    assert world._subject_cache == {}
+
+
+def test_a_subject_listing_row_must_state_its_lifecycle(
+    connection: tuple[Playbill, _WorldClient],
+) -> None:
+    playbill, client = connection
+    client.subject_pages = lambda request: api.PlaybillQueryResult(
+        kind=request.kind,
+        columns=(),
+        rows=({"subject": f"{request.kind}/a", "subject_id": "a"},),
+        receipt=client._receipt(request),
+    )
+    with pytest.raises(WorldStructureError, match="lifecycle"):
+        playbill.world().sec.package["a"]
 
 
 def test_the_facade_remains_pinned_when_the_live_orientation_moves(
@@ -428,7 +591,7 @@ def test_the_facade_remains_pinned_when_the_live_orientation_moves(
 
     # An uncached read after head movement must still use the original snapshot.
     assert world.sec.vulnerability["cve-2026-69247"].severity
-    assert client.searches[-1]["at"] == _COORDINATE
+    assert client.batch_requests[-1].at == _COORDINATE
     assert repr(world).startswith(f"<World at {'a' * 40} ")
 
 
@@ -462,23 +625,14 @@ def test_a_subject_reads_its_live_claims_through_the_existing_verbs(
     assert claims[0].lifecycle_state == "live"
     assert vulnerability.severity == claims
 
-    subject_search = [row for row in client.searches if row.get("subject") is not None]
-    assert subject_search[-1]["kinds"] == ("claim",)
-    assert subject_search[-1]["subject"] == {
-        "tag": "playbill-semantic-address-v1",
-        "artifact_path": "subjects/sec.vulnerability/cve-2026-69247.json",
-        "selector": {"scheme": "artifact-v1", "value": ""},
-    }
-    # One list read plus one Claim read, then the Subject answers from cache.
-    assert client.claim_reads == ["CLM-" + "9" * 32]
+    # One coordinate-pinned batch read of the Subject's live Claims (and one
+    # of the predicate), then the Subject answers from cache.
+    assert [request.subject_paths for request in client.batch_requests] == [
+        ("subjects/sec.vulnerability/cve-2026-69247.json",)
+    ] * len(client.batch_requests)
+    assert client.claim_reads[-1] == "CLM-" + "9" * 32
 
-    assert vulnerability.explain() == {
-        "explained": {
-            "tag": "playbill-semantic-address-v1",
-            "artifact_path": "subjects/sec.vulnerability/cve-2026-69247.json",
-            "selector": {"scheme": "artifact-v1", "value": ""},
-        }
-    }
+    assert vulnerability.explain() == {"explained": "sec.vulnerability/cve-2026-69247"}
     with pytest.raises(AttributeError, match="it admits: affects_package, severity"):
         vulnerability.nonsense
 
@@ -737,6 +891,60 @@ def test_the_stub_is_byte_identical_for_the_same_coordinate_and_moves_with_it(
     assert f"#   git_oid          {'b' * 40}" in moved
 
 
+def test_a_v7_predicate_carries_its_meaning_into_the_world_and_the_stub(
+    connection: tuple[Playbill, _WorldClient],
+) -> None:
+    import ast
+
+    from cruxible_client.authoring.sdk_types import ClaimRole
+
+    playbill, client = connection
+    plain = playbill.world()
+    severity = plain.claim_type(SEVERITY)
+    assert (
+        severity.description,
+        severity.member_descriptions,
+        severity.default_role,
+        severity.evidence_requirement,
+        severity.revision_evidence,
+    ) == (None, (), None, "self", "accumulate")
+    assert "\u2014" not in plain.stub()
+
+    client.severity_overrides = {
+        "artifact_format": "playbill-claim-type-v7",
+        "description": "How bad the vulnerability is.\nRead it before patching.",
+        "member_descriptions": [
+            {"member": "high", "description": "Patch now."},
+            {"member": "low", "description": 'Patch "soon".'},
+        ],
+        "default_role": "observation",
+        "evidence_requirement": "captured",
+        "revision_evidence": "replace",
+    }
+    world = playbill.world()
+    severity = world.claim_type(SEVERITY)
+    assert severity.description == "How bad the vulnerability is.\nRead it before patching."
+    assert [(item.member, item.description) for item in severity.member_descriptions] == [
+        ("high", "Patch now."),
+        ("low", 'Patch "soon".'),
+    ]
+    assert severity.default_role == ClaimRole.OBSERVATION
+    assert (severity.evidence_requirement, severity.revision_evidence) == ("captured", "replace")
+    stub = world.stub()
+    assert stub == world.stub()
+    ast.parse(stub)
+    assert (
+        "    severity: tuple[ClaimView, ...]\n"
+        '    """How bad the vulnerability is.\n'
+        "    Read it before patching.\n"
+        "    \n"
+        "    'high' \u2014 Patch now.\n"
+        "    'low' \u2014 Patch \\\"soon\\\".\n"
+        '    """\n'
+    ) in stub
+    assert '    evidence_requirement: Literal["none", "self", "captured"]' in stub
+
+
 def test_a_type_checker_reads_the_generated_stub_as_exact_types(
     connection: tuple[Playbill, _WorldClient],
     tmp_path: Path,
@@ -773,15 +981,14 @@ def test_the_world_is_built_from_the_current_claim_type_list_only(
     connection: tuple[Playbill, _WorldClient],
 ) -> None:
     playbill, client = connection
-    before = len(client.searches)
 
     world = playbill.world()
 
     assert isinstance(world, World)
-    assert client.searches[before:] == []
+    assert client.batch_requests == []
     assert client.claim_type_list_calls == 1
     assert client.claim_type_coordinates == [None]
-    assert client.subject_list_calls == 0
+    assert client.subject_queries == []
     assert world.coordinate == AcceptedCoordinate.model_validate(
         _COORDINATE.model_dump(mode="json")
     )
@@ -795,7 +1002,7 @@ def test_the_world_is_built_from_the_current_claim_type_list_only(
 
 
 class _PagedClaimsClient(_WorldClient):
-    """A daemon whose subject-filtered list answers in pages, exactly as it does."""
+    """A daemon whose Claim batch read answers in pages, exactly as it does."""
 
     page_size = 20
 
@@ -810,49 +1017,27 @@ class _PagedClaimsClient(_WorldClient):
         self.total = total
         self.offer_cursor = offer_cursor
         self.stuck_cursor = stuck_cursor
-        self.subject_searches = 0
         for index in range(total):
             self.claim_predicates[_paged_identity(index)] = SEVERITY if index % 2 == 0 else AFFECTS
 
-    def search_playbill(self, instance_id: str, **values: Any) -> api.PlaybillSearchResult:
-        if values.get("subject") is None:
-            return super().search_playbill(instance_id, **values)
-        self.searches.append(dict(values))
-        self.subject_searches += 1
-        cursor = values.get("cursor")
-        start = 0 if cursor is None else int(cursor["offset"])
-        stop = min(start + self.page_size, self.total)
-        rows = [
-            {
-                "kind": "claim",
-                "identity": _paged_identity(index),
-                "address": {
-                    "artifact_path": f"claims/{_paged_identity(index)}.json",
-                    "selector": {"kind": "claim_statement"},
-                },
-                "status": "accepted",
-                "subject": values["subject"],
-                "predicate": self.claim_predicates[_paged_identity(index)],
-                "title": self.claim_predicates[_paged_identity(index)],
-            }
-            for index in range(start, stop)
-        ]
-        truncated = stop < self.total
-        return api.PlaybillSearchResult(
-            mode=values["mode"],
-            coordinate=self.coordinate,
-            evaluation_time=str(values["evaluation_time"]),
-            rows=rows,
-            orientation=None,
-            selection_basis_digest="sha256:" + "4" * 64,
-            truncated=truncated,
-            next_cursor=(
-                ({"offset": start} if self.stuck_cursor else {"offset": stop})
-                if truncated and self.offer_cursor
-                else None
-            ),
-            result_digest="sha256:" + "5" * 64,
+    def _claims_of(self, subject_path: str) -> list[str]:
+        if subject_path != "subjects/sec.vulnerability/cve-2026-69247.json":
+            return []
+        return [_paged_identity(index) for index in range(self.total)]
+
+    def _page(self, identities: list[str], start: int) -> tuple[list[str], bool, str | None]:
+        stop = min(start + self.page_size, len(identities))
+        truncated = stop < len(identities)
+        cursor = (
+            (str(start) if self.stuck_cursor else str(stop))
+            if truncated and self.offer_cursor
+            else None
         )
+        return identities[start:stop], truncated, cursor
+
+    @property
+    def subject_searches(self) -> int:
+        return len(self.batch_requests)
 
 
 def _paged_identity(index: int) -> str:
@@ -882,11 +1067,7 @@ def test_a_subject_reads_every_page_of_its_claims_not_only_the_first(
 
     assert len(claims) == 55
     assert client.subject_searches == 3
-    assert [row.get("cursor") for row in client.searches if row.get("subject") is not None] == [
-        None,
-        {"offset": 20},
-        {"offset": 40},
-    ]
+    assert [request.cursor for request in client.batch_requests] == [None, "20", "40"]
     assert len(vulnerability.severity) == 28
     assert len(vulnerability.affects_package) == 27
     # The pages were walked once and every Claim was read once; the predicate
@@ -906,7 +1087,8 @@ def test_a_predicate_view_reads_only_the_claims_that_can_survive_its_filter(
     under_severity = vulnerability.severity
 
     assert len(under_severity) == 28
-    assert client.subject_searches == 3
+    # Only the predicate's Claims are read: 28 of them, in two pages.
+    assert client.subject_searches == 2
     assert len(client.claim_reads) == 28
 
 
@@ -922,8 +1104,7 @@ def test_a_truncated_page_with_no_cursor_refuses_rather_than_under_report(
     with pytest.raises(WorldStructureError) as refused:
         vulnerability.claims
 
-    assert "truncated after 20 rows" in str(refused.value)
-    assert "sec.vulnerability/cve-2026-69247" in str(refused.value)
+    assert "pagination does not advance" in str(refused.value)
 
 
 def test_a_cursor_that_does_not_advance_refuses_rather_than_looping(
@@ -944,8 +1125,8 @@ def test_a_cursor_that_does_not_advance_refuses_rather_than_looping(
     with pytest.raises(WorldStructureError) as refused:
         vulnerability.claims
 
-    assert "the cursor it was given" in str(refused.value)
-    assert "sec.vulnerability/cve-2026-69247" in str(refused.value)
+    # The repeated page re-serves Claims already read: refused, never re-walked.
+    assert "invalid or duplicate selection" in str(refused.value)
     # Two calls: the first page, then the one that repeated its cursor.
     assert client.subject_searches == 2
 
@@ -1040,13 +1221,13 @@ def test_selecting_a_file_still_refuses_at_the_same_typed_point(
         workspace=tmp_path,
         clock=lambda: datetime(2026, 9, 7, 12, tzinfo=UTC),
     )
-    before = len(client.searches)
+    before = len(client.batch_requests)
 
     with pytest.raises(SourceSelectionError) as refused:
         playbill.file("notes.txt")
 
     assert "exactly one .playbill/sources.yaml or sources.yaml" in str(refused.value)
-    assert len(client.searches) == before
+    assert len(client.batch_requests) == before
 
 
 # ---------------------------------------------------------------------------
@@ -1057,11 +1238,9 @@ def test_selecting_a_file_still_refuses_at_the_same_typed_point(
 class _CollidingClient(_WorldClient):
     """A world whose accepted names collide with the facade's own."""
 
-    def list_playbill_claim_types(
-        self, _instance_id: str, *, at: Any = None
-    ) -> api.PlaybillClaimTypeList:
+    def _claim_type_list(self, _instance_id: str, *, at: Any = None) -> ClaimTypeListing:
         self.claim_type_list_calls += 1
-        return api.PlaybillClaimTypeList(
+        return ClaimTypeListing(
             coordinate=self.coordinate,
             claim_types=[
                 _claim_type(
@@ -1168,11 +1347,9 @@ def test_a_kind_a_predicate_shadows_stays_reachable_as_a_kind(
 class _KeywordSegmentClient(_WorldClient):
     """A world whose accepted grammar admits segments Python reserves."""
 
-    def list_playbill_claim_types(
-        self, _instance_id: str, *, at: Any = None
-    ) -> api.PlaybillClaimTypeList:
+    def _claim_type_list(self, _instance_id: str, *, at: Any = None) -> ClaimTypeListing:
         self.claim_type_list_calls += 1
-        return api.PlaybillClaimTypeList(
+        return ClaimTypeListing(
             coordinate=self.coordinate,
             claim_types=[
                 _claim_type("sec.vuln.import", allowed_subject_kinds=("dev.class",)),
@@ -1296,11 +1473,9 @@ def _mypy(project: Path, target: str) -> str:
 class _UnderscoreSegmentClient(_WorldClient):
     """A world naming both `sec.package` and the single segment `sec__package`."""
 
-    def list_playbill_claim_types(
-        self, _instance_id: str, *, at: Any = None
-    ) -> api.PlaybillClaimTypeList:
+    def _claim_type_list(self, _instance_id: str, *, at: Any = None) -> ClaimTypeListing:
         self.claim_type_list_calls += 1
-        return api.PlaybillClaimTypeList(
+        return ClaimTypeListing(
             coordinate=self.coordinate,
             claim_types=[
                 _claim_type(SEVERITY, allowed_subject_kinds=("sec.package", "sec__package")),
@@ -1331,3 +1506,72 @@ def test_a_segment_spelling_the_separator_does_not_claim_another_names_class(
     assert len(declared) == len(set(declared)), declared
     assert "class _W_sec__package:" in rendered
     assert "class _W_sec__package_" in rendered
+
+
+def test_workspace_less_connection_reads_but_refuses_block_file_operations() -> None:
+    from cruxible_client.authoring.sdk_types import SourceSelectionError
+
+    playbill = Playbill._from_client(  # type: ignore[arg-type]
+        _WorldClient(),
+        instance_id="inst_world",
+        workspace=None,
+        clock=lambda: datetime(2026, 9, 7, 12, tzinfo=UTC),
+    )
+    assert playbill.world().kinds == ("dev.batch", "sec.package", "sec.vulnerability")
+    with pytest.raises(SourceSelectionError, match="no workspace"):
+        playbill.block.repin(
+            "workspace.notes", "status", evaluation_time=datetime(2026, 9, 7, 12, tzinfo=UTC)
+        )
+    with pytest.raises(SourceSelectionError, match="no workspace"):
+        playbill.block.sync(all=True)
+
+
+def test_kinds_and_predicates_answer_as_attribute_and_as_call(
+    connection: tuple[Playbill, _WorldClient],
+) -> None:
+    """``w.kinds`` and ``w.kinds()`` are the same tuple, so neither spelling is wrong."""
+
+    playbill, _client = connection
+    world = playbill.world()
+
+    assert world.kinds == world.kinds() == ("dev.batch", "sec.package", "sec.vulnerability")
+    assert world.predicates == world.predicates() == (LANDED_AT, AFFECTS, SEVERITY)
+    assert isinstance(world.kinds(), tuple) and not callable(world.kinds())
+    assert "Next:" in (type(world.kinds).__doc__ or "")
+
+
+def test_describe_lists_the_verbs_and_every_kind_with_its_fields(
+    connection: tuple[Playbill, _WorldClient],
+) -> None:
+    playbill, _client = connection
+    world = playbill.world()
+
+    described = world.describe()
+
+    assert described.startswith(f"World at {'a' * 12}: 3 Subject kinds, 3 predicates.")
+    for verb in ("pb.orient()", 'pb.query("<kind>"', 'pb.get("<ref>")', ".playbill/floor/current/"):
+        assert verb in described
+    # Only the read verbs that survive the surface cut are named.
+    for cut in ("search(", "explain(", "run_query(", "claim_values"):
+        assert cut not in described
+    vocabulary = described.split("Vocabulary:\n", 1)[1].splitlines()
+    assert vocabulary == [
+        "  dev.batch",
+        "    landed_at: literal, one",
+        "  sec.package",
+        "  sec.vulnerability",
+        "    affects_package: -> sec.package, one",
+        "    severity: literal, one [high, low]",
+    ]
+
+
+def test_world_subjects_and_predicates_repr_short(
+    connection: tuple[Playbill, _WorldClient],
+) -> None:
+    playbill, _client = connection
+    world = playbill.world()
+
+    assert repr(world.sec.package.cryptography) == (
+        f"WorldSubject('sec.package/cryptography' @ {'a' * 12})"
+    )
+    assert repr(world.sec.vuln.severity) == f"WorldClaimType('sec.vuln.severity' @ {'a' * 12})"

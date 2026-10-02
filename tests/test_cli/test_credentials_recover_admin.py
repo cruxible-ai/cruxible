@@ -124,6 +124,8 @@ def test_recover_admin_mints_new_admin_and_records_audit(
     assert payload["credential"] == {
         "credential_id": payload["credential"]["credential_id"],
         "instance_id": instance_id,
+        # Local recovery restores operator authority; it never names a principal.
+        "principal_id": None,
         "label": "recovered-admin",
         "permission_mode": "admin",
         "created_at": payload["credential"]["created_at"],

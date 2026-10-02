@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import secrets
 import stat
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -18,6 +19,13 @@ from cruxible_client.contracts.attestations import (
     approval_statement_bytes,
 )
 from cruxible_client.contracts.errors import PlaybillKeyError
+from cruxible_client.contracts.runtime_credentials import (
+    RuntimeCredentialMintStatementV1,
+    RuntimeCredentialPermissionModeV1,
+    RuntimeCredentialPrincipalProofV1,
+    runtime_credential_mint_statement_bytes,
+)
+from cruxible_client.contracts.temporal import format_datetime, utc_now
 
 
 def _resolved(path: Path) -> Path:
@@ -94,6 +102,37 @@ class LocalEd25519ApprovalSigner:
             raise PlaybillKeyError("approval key changed after signer initialization")
         signature = private_key.sign(approval_statement_bytes(statement)).hex()
         return ApprovalAttestation(**statement.model_dump(mode="json"), sig=signature)
+
+
+def sign_runtime_credential_mint(
+    *,
+    instance_id: str,
+    principal_id: str,
+    permission_mode: RuntimeCredentialPermissionModeV1,
+    label: str,
+    private_key_path: Path,
+    forbidden_roots: Sequence[Path],
+) -> RuntimeCredentialPrincipalProofV1:
+    """Sign one single-use consent to a credential minted in this principal's name.
+
+    The daemon verifies the signature against the principal's registered key,
+    checks ``issued_at`` against its own clock, and refuses a replayed statement.
+    """
+
+    assert_outside_roots(private_key_path, forbidden_roots)
+    private_key = _load_private_key(private_key_path)
+    issued_at = format_datetime(utc_now())
+    assert issued_at is not None
+    statement = RuntimeCredentialMintStatementV1(
+        instance_id=instance_id,
+        principal_id=principal_id,
+        permission_mode=permission_mode,
+        label=label,
+        issued_at=issued_at,
+        nonce=secrets.token_hex(16),
+    )
+    signature = private_key.sign(runtime_credential_mint_statement_bytes(statement)).hex()
+    return RuntimeCredentialPrincipalProofV1(statement=statement, signature=signature)
 
 
 def _load_private_key(path: Path) -> Ed25519PrivateKey:

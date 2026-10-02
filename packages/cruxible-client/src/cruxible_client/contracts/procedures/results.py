@@ -411,6 +411,53 @@ class ProcedureRunAttributionV1(_StrictResultModel):
         return ensure_utc(value)
 
 
+class ProcedureRunAttributionWithheldV1(_StrictResultModel):
+    """A run's attribution with its actor withheld from this reader.
+
+    An armed run acts as its arming credential's principal. A reader who may
+    not see that credential -- not an admin, not the credential itself, and
+    not another credential bound to the same principal -- reads everything but
+    the actor, the same rule the Line and run cards apply to ``armed_by``.
+    """
+
+    tag: Literal["playbill-procedure-run-attribution-withheld-v1"] = (
+        "playbill-procedure-run-attribution-withheld-v1"
+    )
+    actor_type: str
+    org_id: str
+    operation_id: str
+    request_id: str | None = None
+    recorded_time: datetime
+    withheld: Literal["names_the_arming_credential"] = "names_the_arming_credential"
+
+    @field_validator("recorded_time")
+    @classmethod
+    def _recorded_time(cls, value: datetime) -> datetime:
+        return ensure_utc(value)
+
+    @classmethod
+    def of(cls, attribution: ProcedureRunAttributionV1) -> ProcedureRunAttributionWithheldV1:
+        return cls(
+            actor_type=attribution.actor_type,
+            org_id=attribution.org_id,
+            operation_id=attribution.operation_id,
+            request_id=attribution.request_id,
+            recorded_time=attribution.recorded_time,
+        )
+
+
+class ProcedureRunReceiptWithheldV1(_StrictResultModel):
+    """A run receipt withheld from this reader: it carries the arming credential's actor.
+
+    ``receipt_digest`` beside it still names the exact receipt.
+    """
+
+    tag: Literal["playbill-procedure-run-receipt-withheld-v1"] = (
+        "playbill-procedure-run-receipt-withheld-v1"
+    )
+    withheld: Literal["names_the_arming_credential"] = "names_the_arming_credential"
+
+
 class ProcedurePendingSuccessorV1(_StrictResultModel):
     tag: Literal["playbill-procedure-pending-successor-v1"] = (
         "playbill-procedure-pending-successor-v1"
@@ -1323,6 +1370,7 @@ __all__ = [
     "ProcedureProviderBindingV2",
     "ProcedureReplayInputProjectionV1",
     "ProcedureRunAttributionV1",
+    "ProcedureRunAttributionWithheldV1",
     "ProcedureRunBudgetDeclaredV1",
     "ProcedureRunBudgetDeclaredV2",
     "ProcedureRunBudgetObservedV1",
@@ -1334,6 +1382,7 @@ __all__ = [
     "ProcedureRunReceiptV4",
     "ProcedureRunReceiptV5",
     "ProcedureRunReceiptV6",
+    "ProcedureRunReceiptWithheldV1",
     "ProcedureSourceCaptureAssociationV1",
     "ProcedureSelectionDecisionV1",
     "ProcedureTerminalEgressChildV1",

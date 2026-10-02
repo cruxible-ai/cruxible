@@ -24,7 +24,6 @@ from cruxible_core.service.authoring.documents import (
 )
 from cruxible_core.service.claims.subjects import (
     service_get_playbill_subject,
-    service_list_playbill_subjects,
     service_playbill_subject_history,
 )
 from cruxible_core.storage.cas import BodyAccessContext
@@ -44,7 +43,6 @@ def test_empty_genesis_reads_need_no_history_inventory(tmp_path, monkeypatch):
     monkeypatch.setattr(instance, "accepted_history", no_history)
     access = BodyAccessContext(principal_id="reader")
     assert service_list_playbill_documents(instance, access=access).documents == ()
-    assert service_list_playbill_subjects(instance).subjects == ()
     with pytest.raises(DocumentNotFoundError):
         service_get_playbill_document(instance, identity="document:missing", access=access)
     with pytest.raises(SubjectNotFoundError):

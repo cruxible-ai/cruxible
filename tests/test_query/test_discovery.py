@@ -8,7 +8,6 @@ explicit coverage for unavailable or denied material.
 from __future__ import annotations
 
 import hashlib
-from pathlib import Path
 from typing import get_args
 
 import pytest
@@ -16,21 +15,15 @@ from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes
-from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
+from cruxible_client.contracts.claim_types import claim_type_path
 from cruxible_client.contracts.claims import LiteralClaimObject
 from cruxible_client.contracts.discovery import (
     DiscoveryBudgetV1,
-    DiscoveryHitV1,
     DiscoveryMatchBasis,
-    DiscoveryMatchBasisV1,
     DiscoveryRequestV1,
-    ExpandRequestV1,
-    ExpansionBudgetV1,
 )
-from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.query.definitions import (
     query_definition_path,
-    render_query_definition,
 )
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress
 from cruxible_client.contracts.source_references import (
@@ -55,12 +48,9 @@ from cruxible_core.query.semantic_discovery import (
     build_discovery_vocabulary,
     discover,
     discovery_vocabulary_digest,
-    resolved_equivalence_address,
 )
-from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
-from cruxible_core.service.claims.claims import service_expand_playbill_semantic
 from cruxible_core.storage.cas import BodyAccessContext
-from tests.core_support._support import client_material, initialize_local
+from tests.core_support._support import client_material
 from tests.test_claims.test_claim_query_engine import (
     claim_fact,
     coordinate,
@@ -243,29 +233,6 @@ def test_a_content_equivalent_match_never_resolves_equivalence() -> None:
         for basis, resolves in MATCH_BASIS_RESOLVES_EQUIVALENCE.items()
         if not resolves and basis != "content_equivalent"
     )
-
-    vocabulary = _vocabulary()
-    at = vocabulary.at
-    hits = tuple(
-        DiscoveryHitV1(
-            address=SemanticAddress.whole_artifact(path),
-            at=at,
-            kind="Subject",
-            label=path,
-            match_basis=(DiscoveryMatchBasisV1(basis="content_equivalent", matched_text=None),),
-            currency="not_applicable",
-        )
-        for path in (WI1_PATH, WI2_PATH)
-    )
-    single = discover(_request(query="wi-1"), vocabulary=vocabulary).model_copy(
-        update={"hits": hits[:1]}
-    )
-    both = single.model_copy(update={"hits": hits})
-
-    # Not even a lone content-equivalent hit resolves: an unambiguous page is
-    # exactly where a weaker basis would otherwise be promoted by accident.
-    assert resolved_equivalence_address(single) is None
-    assert resolved_equivalence_address(both) is None
 
     # The card projection refuses to render the grade any other way.
     with pytest.raises(ValidationError, match="equivalence grade differs"):
@@ -647,9 +614,6 @@ def test_attested_only_unavailable_and_denied_return_metadata_with_coverage() ->
     assert starved.coverage.reason_codes == ("resource_budget_exceeded",)
 
 
-# -- expand generalized to a discovery handle ------------------------------
-
-
 def _sign(material, candidate_digest: str, parent_root: str):
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -716,52 +680,6 @@ def _accept(instance, owner, tree: dict[str, bytes]) -> None:
     projection = publisher.prebuild(bundle, base=base)
     assert publisher.activate(bundle, projection, base=base).status == "accepted"
     instance.refresh()
-
-
-def test_expand_generalizes_to_a_named_query_definition_handle(tmp_path: Path) -> None:
-    instance, owner = initialize_local(tmp_path)
-    query = single_status_query()
-    path = query_definition_path(query.identity.name)
-    _accept(
-        instance,
-        owner,
-        {
-            **instance.tree_at(instance.accepted_coordinate().git_oid),
-            claim_type_path(STATUS_PREDICATE): render_claim_type(claim_type(STATUS_PREDICATE)),
-            path: render_query_definition(query),
-        },
-    )
-    accepted = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
-
-    capsule = service_expand_playbill_semantic(
-        instance,
-        request=ExpandRequestV1(
-            address=SemanticAddress.whole_artifact(path),
-            at=accepted,
-            evaluation_time=TIMESTAMP,
-            facets=("governance", "provenance", "summary"),
-            budget=ExpansionBudgetV1(max_bytes=8192),
-        ),
-    )
-    summary = capsule.canonical_summary
-    assert isinstance(summary, dict)
-    assert summary["entrypoint_name"] == "project.work_item_status"
-    assert summary["result_cardinality"] == "one"
-    assert summary["referenced_predicates"] == [STATUS_PREDICATE]
-    assert capsule.at == accepted
-    assert capsule.coverage.available_facets == ("governance", "provenance", "summary")
-
-    # PC-B's exact-identity law still holds for the generalized entry.
-    with pytest.raises(ProposalIntegrityError, match="whole-artifact identity"):
-        service_expand_playbill_semantic(
-            instance,
-            request=ExpandRequestV1(
-                address=SemanticAddress.claim_statement(path),
-                at=accepted,
-                evaluation_time=TIMESTAMP,
-                facets=("summary",),
-            ),
-        )
 
 
 def test_a_discovery_entry_kind_outside_the_closed_set_is_refused() -> None:

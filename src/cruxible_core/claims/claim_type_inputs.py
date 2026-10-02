@@ -3,9 +3,20 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Literal
+from typing import Any, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    GetJsonSchemaHandler,
+    ValidationError,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
+from pydantic.json_schema import JsonSchemaValue
+from pydantic_core import CoreSchema
 
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
@@ -19,13 +30,19 @@ from cruxible_client.contracts.captures import (
     foreign_source_capture_contract,
     parse_capture_contract,
 )
+from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import (
     ClaimAttestationConsequencePolicyV1,
     ClaimEvidenceFreshnessV1,
     ClaimFreshnessDurationV1,
     ClaimType,
+    EvidenceRequirement,
+    RevisionEvidence,
+    canonical_description_text,
     claim_type_digest,
     claim_type_path,
+    effective_evidence_requirement,
+    effective_revision_evidence,
     parse_claim_type,
 )
 from cruxible_client.contracts.errors import PlaybillFormatError
@@ -60,7 +77,55 @@ class ClaimTypeInputValidationError(PlaybillFormatError):
         super().__init__(f"{self.error_code}: {'; '.join(details)}")
 
 
+_V7_INPUT_FIELDS = (
+    "description",
+    "member_descriptions",
+    "default_role",
+    "evidence_requirement",
+    "revision_evidence",
+)
+
+
+class ClaimTypeMemberDescriptionInputV1(_StrictClaimTypeInputModel):
+    """What one literal enum member means; lowering normalizes and sorts these."""
+
+    member: str | int | bool | None
+    description: str
+
+
 class ClaimTypeInputV1(_StrictClaimTypeInputModel):
+    """One complete ClaimType, as authored.
+
+    The five ClaimType v7 fields follow JSON merge-patch (RFC 7396) against the
+    accepted predecessor: a field left out keeps the predecessor's value, so an
+    unrelated edit never drops what the type means or how it is backed. An
+    explicit ``null`` clears ``description``, ``member_descriptions`` (``[]``
+    too) or ``default_role``. ``evidence_requirement`` and ``revision_evidence``
+    always have a value, so they are named or left out, never ``null``. Over a
+    ClaimType before v7 (or none), omitted descriptions start empty, the default
+    role is none, and the requirement and revision evidence are the
+    predecessor's meaning: ``self`` and ``accumulate`` (a new ClaimType takes
+    ``self`` and ``replace``).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    @classmethod
+    def __get_pydantic_json_schema__(
+        cls, schema: CoreSchema, handler: GetJsonSchemaHandler
+    ) -> JsonSchemaValue:
+        # The merge-patch serializer only omits unstated fields; it does not turn
+        # the input into an arbitrary dictionary. Keep the declared grammar.
+        def declared(node: CoreSchema) -> CoreSchema:
+            result = dict(node)
+            if result.get("type") == "model":
+                result.pop("serialization", None)
+            elif isinstance(result.get("schema"), dict):
+                result["schema"] = declared(result["schema"])
+            return cast(CoreSchema, result)
+
+        return handler(declared(schema))
+
     predicate: str
     allowed_subject_kinds: tuple[str, ...]
     object_kind: Literal["literal", "subject", "exact_content"]
@@ -87,7 +152,44 @@ class ClaimTypeInputV1(_StrictClaimTypeInputModel):
         default=None,
         exclude_if=lambda value: value is None,
     )
+    #: What the predicate means (ClaimType v7), NFC-normalized and trimmed.
+    #: Omitted: kept from the predecessor. ``null``: cleared.
+    description: str | None = None
+    #: What each literal enum member means (ClaimType v7), in any order.
+    #: Omitted: kept from the predecessor. ``null`` or ``[]``: cleared.
+    member_descriptions: tuple[ClaimTypeMemberDescriptionInputV1, ...] | None = None
+    #: The role a write takes when it names none (ClaimType v7).
+    #: Omitted: kept from the predecessor. ``null``: cleared.
+    default_role: ClaimRole | None = None
+    #: Omitted: kept from the predecessor (``self`` before v7); a new ClaimType
+    #: takes ``self``. Never ``null``.
+    evidence_requirement: EvidenceRequirement | None = None
+    #: Omitted: kept from the predecessor (``accumulate`` before v7); a new
+    #: ClaimType takes ``replace``. Never ``null``.
+    revision_evidence: RevisionEvidence | None = None
     anticipated_source_ids: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def _stated_semantics(self) -> "ClaimTypeInputV1":
+        for field in ("evidence_requirement", "revision_evidence"):
+            if field in self.model_fields_set and getattr(self, field) is None:
+                raise ValueError(f"{field} cannot be null: name a value or leave it out")
+        return self
+
+    @model_serializer(mode="wrap")
+    def _merge_patch_wire(self, handler: Any) -> dict[str, object]:
+        # Absent and null mean different things for the v7 fields, so the wire
+        # keeps exactly the ones the author stated, null included.
+        payload = cast(dict[str, object], handler(self))
+        for field in _V7_INPUT_FIELDS:
+            if field not in self.model_fields_set:
+                payload.pop(field, None)
+        return payload
+
+    def states(self, field: str) -> bool:
+        """Whether the author stated this v7 field (a ``null`` counts)."""
+
+        return field in self.model_fields_set
 
     @field_validator("anticipated_source_ids")
     @classmethod
@@ -167,7 +269,7 @@ def claim_type_input_template() -> ClaimTypeInputV1:
 
 
 def identity_rules_supported(compiler: CompilerCoordinate) -> bool:
-    """Whether this compiler accepts ClaimType v6 identity evidence rules."""
+    """Whether this compiler accepts ClaimType v6/v7 identity evidence rules."""
 
     return compiler in (AUTHORITY_VERBS_COMPILER, GOVERNED_TRIGGERS_COMPILER)
 
@@ -274,6 +376,100 @@ class ClaimTypeInputReferenceError(PlaybillFormatError):
     error_code = "playbill.claim_type.input_invalid"
 
 
+class ClaimTypeMemberDescriptionsStale(PlaybillFormatError):
+    """Member descriptions name values the edited enum no longer admits."""
+
+    error_code = "playbill.claim_type.member_descriptions_stale"
+
+
+class ClaimTypeDefaultRoleNotPermitted(PlaybillFormatError):
+    """The default role is not one of the edited ClaimType's authorable roles."""
+
+    error_code = "playbill.claim_type.default_role_not_permitted"
+
+
+def _v7_fields(value: ClaimTypeInputV1, predecessor: ClaimType | None) -> dict[str, object]:
+    """The v7 fields a lowered ClaimType states: merge-patched onto its predecessor.
+
+    A field the input leaves out keeps the predecessor's value, so an unrelated
+    edit never changes what the type means, what a Claim needs or what a
+    revision keeps. A predecessor before v7 has no descriptions and no default
+    role, and means ``self`` and ``accumulate``; a new ClaimType takes ``self``
+    and ``replace``. Inherited descriptions and default role are checked against
+    the edited structure and refused, never silently dropped, when stale.
+    """
+
+    v7 = (
+        predecessor
+        if predecessor is not None and predecessor.artifact_format == "playbill-claim-type-v7"
+        else None
+    )
+    if value.states("description"):
+        description = (
+            None if value.description is None else canonical_description_text(value.description)
+        )
+    else:
+        description = None if v7 is None else v7.description
+    if value.states("member_descriptions"):
+        members: list[dict[str, object]] = [
+            {"member": item.member, "description": canonical_description_text(item.description)}
+            for item in value.member_descriptions or ()
+        ]
+    else:
+        members = (
+            [] if v7 is None else [item.model_dump(mode="json") for item in v7.member_descriptions]
+        )
+    members.sort(key=lambda item: canonical_bytes(item["member"]))
+    enum = None if value.literal_schema is None else value.literal_schema.get("enum")
+    admitted = {canonical_bytes(item) for item in enum} if isinstance(enum, list) else set()
+    stale = [item["member"] for item in members if canonical_bytes(item["member"]) not in admitted]
+    if stale:
+        raise ClaimTypeMemberDescriptionsStale(
+            f"{ClaimTypeMemberDescriptionsStale.error_code}: member_descriptions name "
+            f"{', '.join(repr(item) for item in stale)}, which the literal_schema enum no "
+            "longer admits; describe the current members, or pass member_descriptions: null "
+            "to clear them"
+        )
+    if value.states("default_role"):
+        default_role = value.default_role
+    else:
+        default_role = None if v7 is None else v7.default_role
+    if default_role is not None and (
+        default_role == "derivation" or default_role not in value.permitted_roles
+    ):
+        raise ClaimTypeDefaultRoleNotPermitted(
+            f"{ClaimTypeDefaultRoleNotPermitted.error_code}: default_role {default_role!r} "
+            f"must be one of the permitted roles ({', '.join(value.permitted_roles)}) and "
+            "cannot be derivation; name another, or pass default_role: null to clear it"
+        )
+    return {
+        "description": description,
+        "member_descriptions": members,
+        "default_role": default_role,
+        "evidence_requirement": value.evidence_requirement
+        or ("self" if predecessor is None else effective_evidence_requirement(predecessor)),
+        "revision_evidence": value.revision_evidence
+        or ("replace" if predecessor is None else effective_revision_evidence(predecessor)),
+    }
+
+
+def _refuse_v5_fallback(value: ClaimTypeInputV1, predecessor: ClaimType | None) -> None:
+    """A v5 ClaimType cannot say what v7 says, so lowering never silently drops it."""
+
+    if predecessor is not None and predecessor.artifact_format == "playbill-claim-type-v7":
+        raise ClaimTypeInputReferenceError(
+            f"{ClaimTypeInputReferenceError.error_code}: ClaimType:{value.predicate} is v7; "
+            "every evidence rule must name its contracts by identity (capture_contracts), "
+            "because a v5 successor would silently return it to accumulating evidence"
+        )
+    named = [field for field in _V7_INPUT_FIELDS if getattr(value, field) not in (None, ())]
+    if named:
+        raise ClaimTypeInputReferenceError(
+            f"{ClaimTypeInputReferenceError.error_code}: {', '.join(named)} need ClaimType v7, "
+            "whose evidence rules name contracts by identity (capture_contracts)"
+        )
+
+
 def lower_claim_type_input(
     value: ClaimTypeInputV1,
     *,
@@ -286,8 +482,10 @@ def lower_claim_type_input(
         predecessor = parse_claim_type(tree[path], path=path)
     payload = value.model_dump(mode="json")
     payload.pop("anticipated_source_ids", None)
+    for field in _V7_INPUT_FIELDS:
+        payload.pop(field, None)
     payload["artifact_format"] = (
-        "playbill-claim-type-v6" if identity_rules else "playbill-claim-type-v5"
+        "playbill-claim-type-v7" if identity_rules else "playbill-claim-type-v5"
     )
     identities = _contract_identities(tree, value.anticipated_source_ids)
     identity_policy = None
@@ -300,6 +498,10 @@ def lower_claim_type_input(
             # A rule names an exact version that is not accepted yet, so it has no
             # identity to follow; it keeps its exact meaning as a v5 rule.
             payload["artifact_format"] = "playbill-claim-type-v5"
+    if payload["artifact_format"] == "playbill-claim-type-v7":
+        payload.update(_v7_fields(value, predecessor))
+    else:
+        _refuse_v5_fallback(value, predecessor)
     try:
         if identity_policy is not None:
             payload["evidence_admission_policy"] = ClaimEvidenceAdmissionPolicyV3.model_validate(
@@ -457,7 +659,10 @@ def lint_claim_type_input(
 __all__ = [
     "ClaimTypeInputProposalResultV1",
     "ClaimTypeInputValidationError",
+    "ClaimTypeDefaultRoleNotPermitted",
     "ClaimTypeInputV1",
+    "ClaimTypeMemberDescriptionInputV1",
+    "ClaimTypeMemberDescriptionsStale",
     "ClaimTypeLintWarningV1",
     "ClaimTypeProposalLintV1",
     "claim_type_input_template",

@@ -57,7 +57,11 @@ class QueryNameError(PlaybillSdkError):
 
 
 class QueryResult:
-    """One page of a ``query`` answer, values first."""
+    """One page of a ``query`` answer, values first.
+
+    Iterate it for row dicts. Next: ``result.next_page()`` while ``truncated``; ``pb.get(ref)``
+    on a row's ref or Claim ID for evidence and history.
+    """
 
     def __init__(
         self,
@@ -70,37 +74,63 @@ class QueryResult:
 
     @property
     def rows(self) -> list[dict[str, Any]]:
+        """The page's rows as plain dicts, one per Subject or artifact. Next:
+        ``result.table()``.
+        """
+
         return [dict(row) for row in self.page.rows]
 
     @property
     def columns(self) -> tuple[PlaybillQueryColumnV1, ...]:
+        """What each column holds: field, predicate and value shape. Next: ``result.rows``."""
+
         return self.page.columns
 
     @property
     def truncated(self) -> bool:
+        """Whether more rows follow this page. Next: ``result.next_page()``."""
+
         return self.page.truncated
 
     @property
     def next_cursor(self) -> str | None:
+        """The cursor that continues this answer, when truncated. Next: ``result.next_page()``."""
+
         return self.page.next_cursor
 
     @property
     def notes(self) -> tuple[str, ...]:
+        """What the daemon noted about the answer: dropped fields, cuts, hints.
+
+        Next: act on a note, or ``result.rows``.
+        """
+
         return self.page.notes
 
     @property
     def receipt(self) -> Any:
+        """The replay receipt: the request, coordinate and result digest.
+
+        Next: ``pb.at(...)`` with its coordinate to read the same state again.
+        """
+
         return self.page.receipt
 
     def next_page(self) -> QueryResult | None:
-        """The page after this one, or None when this page is the last."""
+        """The page after this one, or None when this page is the last.
+
+        Next: ``page.rows``, or ``result.pages()`` to walk them all.
+        """
 
         if self.page.next_cursor is None or self._fetch is None:
             return None
         return self._fetch(self.page.next_cursor)
 
     def pages(self) -> Iterator[QueryResult]:
-        """This page and every page after it."""
+        """This page and every page after it.
+
+        Next: ``row`` dicts from each page's ``rows``.
+        """
 
         current: QueryResult | None = self
         while current is not None:
@@ -108,6 +138,11 @@ class QueryResult:
             current = current.next_page()
 
     def table(self) -> str:
+        """The page as an aligned text table of values and flags, then its notes.
+
+        Next: ``print(result.table())``.
+        """
+
         return render_query_table(self.page)
 
     def __iter__(self) -> Iterator[dict[str, Any]]:
@@ -354,6 +389,8 @@ class CompactQuery:
 
         A leaf that is ``self``, a Python keyword, contains ``__`` or ends in
         ``_`` is spelled with one trailing underscore (see ``keyword_name``).
+
+        Next: ``.select(...)``, then ``.run()`` or iterate it.
         """
 
         added: list[QueryFilterV1] = []
@@ -381,13 +418,19 @@ class CompactQuery:
         return self._predicate(name) or "subject_id"
 
     def select(self, *fields: str) -> CompactQuery:
-        """Choose the columns, by short or full predicate name."""
+        """Choose the columns, by short or full predicate name.
+
+        Next: ``.run()`` or iterate it.
+        """
 
         wired = tuple(self._wire_field(name) for name in fields)
         return self._with(select=(*self._select, *wired))
 
     def order_by(self, *fields: str) -> CompactQuery:
-        """Order rows by fields; prefix ``-`` for descending."""
+        """Order rows by fields; prefix ``-`` for descending.
+
+        Next: ``.run()``.
+        """
 
         wired = tuple(
             ("-" if name.startswith("-") else "") + self._wire_field(name.removeprefix("-"))
@@ -396,9 +439,16 @@ class CompactQuery:
         return self._with(order_by=(*self._order_by, *wired))
 
     def limit(self, count: int) -> CompactQuery:
+        """Cap the page at ``count`` rows. Next: ``.run()``, then ``result.next_page()``."""
+
         return self._with(limit=count)
 
     def request(self) -> PlaybillQueryRequestV1:
+        """The ``pb.query`` request this builds, checked against the World.
+
+        Next: ``.run()``, or pass it to ``pb.query(...)`` yourself.
+        """
+
         fields: dict[str, Any] = {
             "kind": self._kind,
             "where": self._where,
@@ -410,7 +460,10 @@ class CompactQuery:
         return PlaybillQueryRequestV1(**fields)
 
     def run(self) -> QueryResult:
-        """Answer one page at the World's coordinate."""
+        """Answer one page at the World's coordinate.
+
+        Next: ``result.rows`` or ``result.table()``; ``result.next_page()`` while truncated.
+        """
 
         self._world._assert_current()
         return self._world._playbill._run_query_request(self.request())

@@ -31,6 +31,11 @@ class RefKind(str, Enum):
     DOCUMENT = "document"
     CAPTURE_CONTRACT = "capture_contract"
     PROPOSAL = "proposal"
+    LINE = "line"
+    CAPTURE = "capture"
+    RESOLUTION_CONTRACT = "resolution_contract"
+    MANDATE = "mandate"
+    PROCEDURE_RUN = "procedure_run"
 
 
 @runtime_checkable
@@ -45,21 +50,47 @@ class TypedRef(Protocol):
     def coordinate(self) -> AcceptedCoordinate: ...
 
 
-@dataclass(frozen=True)
-class SubjectRef:
+class _ShortRefRepr:
+    """``SubjectRef('sec.package/click' @ 0123456789ab)``: the address, and where it was read.
+
+    A full coordinate is four digests; the git oid's first 12 hex name the
+    accepted generation as ``get`` and ``orient`` print it.
+    """
+
+    address: str
+    coordinate: AcceptedCoordinate
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}({self.address!r} @ {self.coordinate.git_oid[:12]})"
+
+
+@dataclass(frozen=True, repr=False)
+class SubjectRef(_ShortRefRepr):
+    """One accepted Subject at the coordinate it was read at.
+
+    Pass it as ``subject=``, as a Subject-valued ``value=``, or to
+    ``pb.get(ref)``. Next: ``pb.get(ref)`` for its fields and verdict flags.
+    """
+
     address: str
     coordinate: AcceptedCoordinate
     kind: ClassVar[RefKind] = RefKind.SUBJECT
 
 
-@dataclass(frozen=True)
-class ClaimTypeRef:
+@dataclass(frozen=True, repr=False)
+class ClaimTypeRef(_ShortRefRepr):
+    """One accepted predicate at the coordinate it was read at.
+
+    Pass it as ``predicate=`` or a write ``field``. Next: ``pb.get(ref)`` for
+    its structure and meaning, or ``pb.query(kind, select=[...])`` for its values.
+    """
+
     address: str
     coordinate: AcceptedCoordinate
     kind: ClassVar[RefKind] = RefKind.CLAIM_TYPE
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class PendingSubjectRef(SubjectRef):
     """A Subject the same changeset defines, referenced before acceptance.
 
@@ -71,14 +102,20 @@ class PendingSubjectRef(SubjectRef):
     """
 
 
-@dataclass(frozen=True)
-class ClaimRef:
+@dataclass(frozen=True, repr=False)
+class ClaimRef(_ShortRefRepr):
+    """One accepted Claim at the coordinate it was read at.
+
+    Next: ``pb.get(ref)`` for its value and verdict, ``pb.get(ref,
+    detail="evidence")`` for what backs it, or ``pb.retire(ref, ...)`` to end it.
+    """
+
     address: str
     coordinate: AcceptedCoordinate
     kind: ClassVar[RefKind] = RefKind.CLAIM
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class PendingClaimTypeRef(ClaimTypeRef):
     """A ClaimType the same changeset defines, referenced before acceptance.
 
@@ -89,22 +126,39 @@ class PendingClaimTypeRef(ClaimTypeRef):
     object_kind: str
 
 
-@dataclass(frozen=True)
-class ProcedureRef:
+@dataclass(frozen=True, repr=False)
+class ProcedureRef(_ShortRefRepr):
+    """One accepted Procedure at the coordinate it was read at.
+
+    Next: ``pb.get(ref)`` for its inputs, readiness and track record, or
+    ``pb.accepted_procedure(ref).run(...)`` to run it.
+    """
+
     address: str
     coordinate: AcceptedCoordinate
     kind: ClassVar[RefKind] = RefKind.PROCEDURE
 
 
-@dataclass(frozen=True)
-class QueryRef:
+@dataclass(frozen=True, repr=False)
+class QueryRef(_ShortRefRepr):
+    """One accepted named query at the coordinate it was read at.
+
+    Next: ``pb.query(name=ref, params={...})`` to run it, or ``pb.get(ref)``
+    for its parameters.
+    """
+
     address: str
     coordinate: AcceptedCoordinate
     kind: ClassVar[RefKind] = RefKind.QUERY
 
 
-@dataclass(frozen=True)
-class SourceRef:
+@dataclass(frozen=True, repr=False)
+class SourceRef(_ShortRefRepr):
+    """One catalogued workspace source at the coordinate it was read at.
+
+    Next: ``pb.get(ref)`` for its catalog entry.
+    """
+
     address: str
     coordinate: AcceptedCoordinate
     kind: ClassVar[RefKind] = RefKind.SOURCE
@@ -112,12 +166,28 @@ class SourceRef:
 
 @dataclass(frozen=True)
 class CaptureRef:
-    """Opaque accepted Capture plus its contract and citation-role provenance."""
+    """Opaque accepted Capture plus its contract and citation-role provenance.
+
+    Pass it as ``supported_by=`` to cite it. Next: ``pb.get(ref.handle)`` for
+    the Capture card, or ``pb.capture(ref.capture_digest)`` for its material.
+    """
 
     capture_digest: str
     contract_address: str
     coordinate: AcceptedCoordinate
     citation_role: Literal["evidence", "copy", "legacy"]
+
+    @property
+    def handle(self) -> str:
+        """The ``CAP-<12 hex>`` handle every verb accepts. Next: ``pb.get(ref.handle)``."""
+
+        return "CAP-" + self.capture_digest.partition(":")[2][:12]
+
+    def __repr__(self) -> str:
+        return (
+            f"CaptureRef({self.handle} {self.citation_role} of {self.contract_address!r}"
+            f" @ {self.coordinate.git_oid[:12]})"
+        )
 
 
 @dataclass(frozen=True)
@@ -160,8 +230,13 @@ class CaptureView:
         return json.loads(self.content)
 
 
-@dataclass(frozen=True)
-class SlotRef:
+@dataclass(frozen=True, repr=False)
+class ProcedureSlotRef(_ShortRefRepr):
+    """One input slot of a Procedure, as ``Procedure.bind`` names it.
+
+    Not a Claim slot: a Subject's field is ``cruxible_client.contracts.write.SlotRef``.
+    """
+
     address: str
     coordinate: AcceptedCoordinate
     kind: ClassVar[RefKind] = RefKind.SLOT
@@ -531,7 +606,7 @@ __all__ = [
     "CaptureView",
     "ReferenceKindError",
     "ReferentSensitivity",
-    "SlotRef",
+    "ProcedureSlotRef",
     "SourceMapEntry",
     "SourceRef",
     "SourceSelectionError",

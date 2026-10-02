@@ -25,7 +25,8 @@ def main() -> None:
     parser.add_argument("--copied-instance", required=True, type=Path)
     parser.add_argument("--trust-root", required=True, type=Path)
     parser.add_argument("--workspace", required=True, type=Path)
-    parser.add_argument("--format-version", type=int, choices=(2, 3), default=3)
+    parser.add_argument("--format-version", type=int, choices=(2, 5), default=5)
+    parser.add_argument("--with-discovery", action="store_true")
     args = parser.parse_args()
     start = time.perf_counter()
     instance = PlaybillInstance.open(
@@ -37,7 +38,11 @@ def main() -> None:
     samples = []
     for _ in range(3):
         start = time.perf_counter()
-        files = service_export_playbill_floor(instance, format_version=args.format_version)
+        files = service_export_playbill_floor(
+            instance,
+            format_version=args.format_version,
+            include=("discovery",) if args.with_discovery else (),
+        )
         service_seconds = time.perf_counter() - start
         manifest = json.loads(files["manifest.json"])
         export = contracts.PlaybillFloorExport(

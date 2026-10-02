@@ -1,0 +1,96 @@
+"""A copied template host is the host a fresh `playbill/init` leaves.
+
+`_playbill_http` serves most server tests from a copy of one template host per
+process. The copy must register the same instance at its own location, carry
+the same trust root, and reopen to the same replay-verified state.
+"""
+
+from __future__ import annotations
+
+import sqlite3
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from cruxible_client.contracts.types import PlaybillTrustRoot
+from cruxible_core.runtime import playbill_api
+from cruxible_core.runtime.instance import PlaybillInstance
+from tests.core_support._world_templates import FRESH_WORLDS_ENV, WorldTemplates, copy_template
+from tests.test_runtime.test_world_templates import _names_template, _observable
+from tests.test_server.conftest import _build_http_world
+
+
+def _registered(state: Path) -> list[tuple[str, str]]:
+    with sqlite3.connect(state / "daemon" / "registry.db") as connection:
+        return connection.execute("SELECT instance_id, location FROM instances").fetchall()
+
+
+def _opened(state: Path, instance_id: str) -> PlaybillInstance:
+    trust = PlaybillTrustRoot.model_validate_json(
+        (state / "trust" / f"{instance_id}.json").read_bytes()
+    )
+    return PlaybillInstance.open(state / "instances" / instance_id, trust_root=trust)
+
+
+def test_a_copied_host_registers_and_reopens_to_the_fresh_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(FRESH_WORLDS_ENV, raising=False)
+    templates = WorldTemplates()
+    templates.configure(tmp_path / "templates")
+    template = templates.template(("private-http",), lambda root: _build_http_world(root, False))
+    assert template is not None
+    destination = tmp_path / "copy"
+    destination.mkdir()
+    copied = copy_template(template, destination)
+    assert copied is not None
+    instance_id = template.value.instance_id
+    fresh_state = template.root / "server-state"
+    copy_state = copied / "server-state"
+
+    assert _registered(copy_state) == [(instance_id, str(copy_state / "instances" / instance_id))]
+    assert (copy_state / "trust" / f"{instance_id}.json").read_bytes() == (
+        fresh_state / "trust" / f"{instance_id}.json"
+    ).read_bytes()
+    assert _observable(_opened(copy_state, instance_id)._recovered) == _observable(
+        _opened(fresh_state, instance_id)._recovered
+    )
+    assert _names_template(copied, template.root) == []
+    assert (copied / template.value.reviewer_key).is_file()
+
+
+def test_a_host_built_under_a_patched_init_is_never_shared(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The HTTP build runs its init on the TestClient's thread, not the caller's.
+
+    A patch the build reaches only from that thread still shapes the world, so
+    it must still keep the build out of the cache, and keep a clean template
+    from being handed to a caller whose runtime is patched.
+    """
+
+    monkeypatch.delenv(FRESH_WORLDS_ENV, raising=False)
+    templates = WorldTemplates()
+    templates.configure(tmp_path / "templates")
+    real_init = playbill_api.playbill_init
+
+    def strict_init(*args: Any, **kwargs: Any) -> Any:
+        return real_init(*args, **{**kwargs, "require_independent_approval": True})
+
+    def build(root: Path) -> Any:
+        return _build_http_world(root, False)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(playbill_api, "playbill_init", strict_init)
+        assert templates.template(("private-http",), build) is None
+    assert not (tmp_path / "templates").exists()
+
+    clean = templates.template(("private-http",), build)
+    assert clean is not None
+    instance = _opened(clean.root / "server-state", clean.value.instance_id)
+    assert instance._verified_genesis.approval_policy.mode == "self_approval_allowed"
+
+    with monkeypatch.context() as patched:
+        patched.setattr(playbill_api, "playbill_init", strict_init)
+        assert templates.template(("private-http",), build) is None

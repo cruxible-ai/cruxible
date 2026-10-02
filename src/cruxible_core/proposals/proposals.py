@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -81,7 +81,6 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.claim_attestations import (
     accepted_referent_coordinates_from_tree,
 )
-from cruxible_client.contracts.claim_type_structure import claim_type_structural_signature
 from cruxible_client.contracts.claim_types import (
     AcceptedClaimType,
     ClaimType,
@@ -104,22 +103,11 @@ from cruxible_client.contracts.claims import (
     claim_artifact_digest,
     claim_preserves_derivation,
     claim_retirement_pin_digest_updates,
-    claim_statement_address,
     claim_statement_digest,
     evaluate_claim_law,
     parse_claim,
 )
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
-from cruxible_client.contracts.discovery import (
-    DiscoveryHintsV1,
-    DistinctRelationMemberV1,
-    ProposedSemanticInterfaceV1,
-    ReuseDispositionV1,
-    SemanticReuseInterfaceV1,
-    VocabularyReuseRequestV1,
-    evaluate_vocabulary_reuse,
-    normalize_discovery_term,
-)
 from cruxible_client.contracts.documents import (
     AcceptedDocument,
     BodyVerifierProtocol,
@@ -149,8 +137,10 @@ from cruxible_client.contracts.laws import (
     APPROVAL_POLICY_ACCEPTANCE_LAW,
     CAPTURE_CONTRACT_LAW_REVISION_4,
     CLAIM_LAW_V2_REVISION_7,
+    CLAIM_LAW_V2_REVISION_8,
     CLAIM_LAW_V3_REVISION_8,
     CLAIM_LAW_V3_REVISION_9,
+    CLAIM_LAW_V3_REVISION_10,
     PLAYBILL_ACCEPTANCE_LAWS,
     PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
     PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
@@ -215,6 +205,7 @@ from cruxible_client.contracts.proposal_models import (
     ProposalAdmissionRecord,
     ProposalAdmissionRequest,
     ProposalEvaluationRecord,
+    ProposalReadmissionLinkV1,
     ProposalReceiveLimits,
     ProposalResult,
     ProposalSettleSubmissionV1,
@@ -255,7 +246,6 @@ from cruxible_client.contracts.subjects import (
     evaluate_subject_law,
     parse_subject,
     subject_digest,
-    subject_reuse_signature,
 )
 from cruxible_client.contracts.triggers import (
     AcceptedTriggerV1,
@@ -319,6 +309,10 @@ from cruxible_core.proposals.candidate_cards import (
     CARD_RENDERER_DIGEST,
     derive_candidate_cards,
     is_candidate_card_path,
+)
+from cruxible_core.proposals.historical_reuse import (
+    HISTORICAL_REUSE_CLAIM_TYPE_LAWS,
+    historical_claim_type_reuse_evidence,
 )
 from cruxible_core.proposals.prepared_evaluation import (
     PreparedEvaluationAdapter,
@@ -805,195 +799,6 @@ def _canonical_model_digest(domain: str, model: BaseModel) -> str:
     payload = model.model_dump(mode="json")
     payload.pop("tag", None)
     return typed_digest(Sha256Value, domain, payload).tagged
-
-
-def _sorted_terms(values: Iterable[str]) -> tuple[str, ...]:
-    return tuple(sorted(values, key=lambda item: item.encode("utf-8")))
-
-
-def _reuse_interface(
-    path: str, content: bytes, descriptors: Mapping[str, set[str]]
-) -> SemanticReuseInterfaceV1 | None:
-    """One live ClaimType or Subject's whole-artifact reuse interface."""
-
-    if _CLAIM_TYPE_PATH_RE.fullmatch(path):
-        claim_type = parse_claim_type(content, path=path)
-        if claim_type.lifecycle.state != "live":
-            return None
-        identity: ArtifactIdentity = claim_type.identity
-        kind, label = "claim-type", claim_type.predicate
-        tokens = _sorted_terms({claim_type.predicate, claim_type.predicate.rpartition(".")[2]})
-        signature = claim_type_structural_signature(claim_type.structure)
-    elif _SUBJECT_PATH_RE.fullmatch(path):
-        subject = parse_subject(content, path=path)
-        if subject.lifecycle.state != "live":
-            return None
-        identity = subject.identity
-        kind, label = "subject", subject.identity.qualified
-        tokens = (subject.subject_id,)
-        signature = subject_reuse_signature(subject.identity)
-    else:
-        return None
-    return SemanticReuseInterfaceV1(
-        address=SemanticAddress.whole_artifact(path),
-        identity=identity,
-        kind=kind,
-        label=label,
-        canonical_tokens=tokens,
-        structural_signature_digest=signature,
-        aliases=_sorted_terms(descriptors["alias"]),
-        tags=_sorted_terms(descriptors["tag"]),
-        relation_labels=_sorted_terms(descriptors["relation"]),
-    )
-
-
-def _reuse_interfaces(tree: Mapping[str, bytes]) -> tuple[SemanticReuseInterfaceV1, ...]:
-    """Every accepted reuse interface, by reading the whole tree (the cold oracle)."""
-
-    descriptor_terms: dict[bytes, dict[str, set[str]]] = {}
-
-    def terms_for(address: SemanticAddress) -> dict[str, set[str]]:
-        key = canonical_bytes(address.model_dump(mode="json"))
-        return descriptor_terms.setdefault(key, {"alias": set(), "tag": set(), "relation": set()})
-
-    for descriptor_path in sorted(tree, key=lambda item: item.encode("utf-8")):
-        if not _CLAIM_PATH_RE.fullmatch(descriptor_path):
-            continue
-        descriptor = parse_claim(tree[descriptor_path], path=descriptor_path)
-        if descriptor.lifecycle.state != "live":
-            continue
-        predicate = descriptor.statement.predicate
-        if predicate in {"semantic.alias", "semantic.tag"} and isinstance(
-            descriptor.statement.object, LiteralClaimObject
-        ):
-            value = descriptor.statement.object.value
-            if not isinstance(value, str):
-                continue
-            field = "alias" if predicate == "semantic.alias" else "tag"
-            terms_for(descriptor.statement.subject)[field].add(value)
-        elif predicate in {"semantic.related_to", "semantic.distinct_from"} and isinstance(
-            descriptor.statement.object, SubjectClaimObject
-        ):
-            relation_label = descriptor.statement.object.address.artifact_path
-            terms_for(descriptor.statement.subject)["relation"].add(relation_label)
-            terms_for(descriptor.statement.object.address)["relation"].add(
-                descriptor.statement.subject.artifact_path
-            )
-
-    interfaces: list[SemanticReuseInterfaceV1] = []
-    for path in sorted(tree, key=lambda item: item.encode("utf-8")):
-        if not (_CLAIM_TYPE_PATH_RE.fullmatch(path) or _SUBJECT_PATH_RE.fullmatch(path)):
-            continue
-        interface = _reuse_interface(
-            path, tree[path], terms_for(SemanticAddress.whole_artifact(path))
-        )
-        if interface is not None:
-            interfaces.append(interface)
-    return tuple(interfaces)
-
-
-def _indexed_reuse_interfaces(
-    selection: Any, proposal: ProposedSemanticInterfaceV1, *, exclude_path: str
-) -> tuple[SemanticReuseInterfaceV1, ...]:
-    """Only the interfaces the vocabulary index says could match this proposal.
-
-    Matching is exact equality on normalized terms, identity, or a same-kind
-    structural signature, and every such key is indexed, so interfaces outside
-    this set cannot match; each candidate is then built in full, exactly as the
-    whole-tree oracle builds it, so the law's result digest is unchanged.
-    """
-
-    def build(rows: Any) -> tuple[SemanticReuseInterfaceV1, ...]:
-        paths = rows.vocabulary_matches(
-            terms=(normalize_discovery_term(item) for item in proposal.canonical_tokens),
-            identity=proposal.identity.qualified,
-            signature_term=f"{proposal.kind}:{proposal.structural_signature_digest}",
-        )
-        interfaces = []
-        for path in paths:
-            if path == exclude_path:
-                continue
-            try:
-                content = rows.source_bytes(path)
-            except KeyError:
-                continue
-            interface = _reuse_interface(path, content, rows.vocabulary_descriptors(path))
-            if interface is not None:
-                interfaces.append(interface)
-        return tuple(interfaces)
-
-    if hasattr(selection, "call"):
-        return cast(tuple[SemanticReuseInterfaceV1, ...], selection.call(build))
-    return build(selection)
-
-
-def _claim_type_reuse_evidence(
-    *,
-    claim_type: ClaimType,
-    path: str,
-    lookup_tree: Mapping[str, bytes],
-    candidate_scope: tuple[str, ...],
-    current: AcceptedProjectionCoordinate,
-    candidate_states: Mapping[str, ArtifactDependencyStateV1] | None = None,
-) -> dict[str, object]:
-    signature = claim_type_structural_signature(claim_type.structure)
-    predicate = claim_type.predicate
-    proposal = ProposedSemanticInterfaceV1(
-        address=SemanticAddress.whole_artifact(path),
-        identity=claim_type.identity,
-        kind="claim-type",
-        label=predicate,
-        canonical_tokens=tuple(
-            sorted(
-                {predicate, predicate.rpartition(".")[2]},
-                key=lambda item: item.encode("utf-8"),
-            )
-        ),
-        structural_signature_digest=signature,
-    )
-    relations: list[DistinctRelationMemberV1] = []
-    for relation_path in candidate_scope:
-        if not _CLAIM_PATH_RE.fullmatch(relation_path):
-            continue
-        relation = parse_claim(lookup_tree[relation_path], path=relation_path)
-        if relation.statement.predicate != "semantic.distinct_from" or not isinstance(
-            relation.statement.object, SubjectClaimObject
-        ):
-            continue
-        relations.append(
-            DistinctRelationMemberV1(
-                claim_address=claim_statement_address(relation_path),
-                claim_artifact_digest=claim_artifact_digest(relation).tagged,
-                subject=relation.statement.subject,
-                object=relation.statement.object.address,
-            )
-        )
-    from cruxible_core.indexes.evaluated_state import EvaluationRows, SelectionSpec
-
-    selection = getattr(candidate_states, "owner", None)
-    if isinstance(selection, (EvaluationRows, SelectionSpec)):
-        accepted_interfaces = _indexed_reuse_interfaces(selection, proposal, exclude_path=path)
-    else:
-        accepted_interfaces = tuple(
-            item for item in _reuse_interfaces(lookup_tree) if item.address.artifact_path != path
-        )
-    evidence = evaluate_vocabulary_reuse(
-        VocabularyReuseRequestV1(
-            proposal=proposal,
-            hints=DiscoveryHintsV1(),
-            disposition=ReuseDispositionV1(kind="new_distinct"),
-        ),
-        accepted_interfaces=accepted_interfaces,
-        coordinate=AcceptedCoordinate.from_internal(current),
-        implementation_digest=current.compiler.rule_digest,
-        distinct_relation_members=tuple(
-            sorted(
-                relations,
-                key=lambda item: canonical_bytes(item.model_dump(mode="json")),
-            )
-        ),
-    )
-    return evidence.model_dump(mode="json")
 
 
 def _member_disposition(
@@ -3090,14 +2895,24 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
         accepted_referent_coordinates=context.accepted_referent_coordinates,
         evaluation_time=datetime.fromisoformat(context.timestamp.replace("Z", "+00:00")),
         allow_claim_type_retirement_shape_exemption=(
-            installed.coordinate in {CLAIM_LAW_V3_REVISION_8, CLAIM_LAW_V3_REVISION_9}
+            installed.coordinate
+            in {CLAIM_LAW_V3_REVISION_8, CLAIM_LAW_V3_REVISION_9, CLAIM_LAW_V3_REVISION_10}
         ),
         historical_capture_contract=(
             historical_capture_contract_resolver(
                 context.historical_artifact_provider, context.accepted_coordinate()
             )
-            if installed.coordinate in {CLAIM_LAW_V2_REVISION_7, CLAIM_LAW_V3_REVISION_9}
+            if installed.coordinate
+            in {
+                CLAIM_LAW_V2_REVISION_7,
+                CLAIM_LAW_V2_REVISION_8,
+                CLAIM_LAW_V3_REVISION_9,
+                CLAIM_LAW_V3_REVISION_10,
+            }
             else None
+        ),
+        claim_type_v7_semantics=(
+            installed.coordinate in {CLAIM_LAW_V2_REVISION_8, CLAIM_LAW_V3_REVISION_10}
         ),
     )
     if law.verdict == "refused":
@@ -3210,9 +3025,10 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
     if law.artifact_digest is None or law.required_tier is None:
         raise ProposalIntegrityError("accepted ClaimType law result is incomplete")
-    if claim_type.artifact_format == "playbill-claim-type-v6" and claim_type.lifecycle.state == (
-        "live"
-    ):
+    if claim_type.artifact_format in {
+        "playbill-claim-type-v6",
+        "playbill-claim-type-v7",
+    } and claim_type.lifecycle.state == ("live"):
         unresolved = _claim_type_v6_unresolved(context, claim_type)
         if unresolved:
             return _MemberVerdict(
@@ -3225,9 +3041,17 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
                     ),
                 )
             )
+    installed = _installed(context, claim_type.artifact_format)
+    # Only the historical ClaimType law revisions ran the vocabulary reuse law;
+    # they are reachable solely by replaying or settling under their recorded
+    # coordinate, and they must reproduce their recorded evidence exactly.
+    reuse_law = (
+        installed.coordinate.identifier,
+        installed.coordinate.digest,
+    ) in HISTORICAL_REUSE_CLAIM_TYPE_LAWS
     reuse: dict[str, object] | None = None
-    if predecessor is None:
-        reuse = _claim_type_reuse_evidence(
+    if reuse_law and predecessor is None:
+        reuse = historical_claim_type_reuse_evidence(
             claim_type=claim_type,
             path=context.path,
             lookup_tree=context.candidate_tree,
@@ -3273,7 +3097,7 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
         context.used_expansions.add(expansion.expanded_artifact_digest)
     return _accepted(
         context,
-        _installed(context, claim_type.artifact_format),
+        installed,
         predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
         candidate_artifact_digest=law.artifact_digest,
         required_tier=law.required_tier,
@@ -3285,7 +3109,7 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
                 None if expansion is None else expansion.model_dump(mode="json")
             ),
             "expanded_claim_type": claim_type.model_dump(mode="json"),
-            "reuse": reuse,
+            **({"reuse": reuse} if reuse_law else {}),
             "verdict": "accepted",
         },
         policy_digests=tuple(
@@ -4831,6 +4655,15 @@ class ProposalHeadMovedError(ProposalAdmissionError):
     """
 
 
+class ProposalCandidateMismatchError(ProposalAdmissionError):
+    """The candidate a submission evaluated is not the one its caller bound it to.
+
+    Raised after evaluation and before publication, so nothing reaches the
+    ledger: a caller that preflighted a candidate at one coordinate never has
+    a different candidate published in its name.
+    """
+
+
 def _require_executed_derivations(
     outcome: CandidateEvaluation,
     *,
@@ -4945,6 +4778,8 @@ class ProposalService:
         | None = None,
         prepared: PreparedEvaluationScope | None = None,
         settle_submission: ProposalSettleSubmissionV1 | None = None,
+        expected_candidate: tuple[str, str] | None = None,
+        readmits: ProposalReadmissionLinkV1 | None = None,
     ) -> ProposalResult:
         """Admit one candidate tree under the actor's ref.
 
@@ -4966,11 +4801,22 @@ class ProposalService:
         `prepared` may reuse a same-call evaluation; it never replaces the
         fresh authorization callback or the publication head check.
 
+        `expected_candidate`, when given, is ``(base_oid, candidate_digest)``:
+        the candidate the caller already evaluated at that accepted base. When
+        this submission evaluates at that same base, any other outcome raises
+        `ProposalCandidateMismatchError` before publication; at a head that has
+        since moved, the fresh evaluation stands on its own.
+
         `settle_submission` is the settle terminal's alone, and is retained on
         the admission. A `delegated` submission is evaluated under the named
         mandate's delegated authority, so it carries no approval requirement and
         only activation under the same mandate can reproduce it; a `fallback`
         is evaluated as an ordinary proposal. No public door passes it.
+
+        `readmits` is the readmit service's alone, and is retained on the
+        admission: the stale proposal this one re-admits. The record refuses it
+        unless the request's `source_compilation_digest` is exactly its
+        operation digest. No public door passes it either.
         """
         self._require_writable()
         delegated_mandate_digest = (
@@ -4979,6 +4825,10 @@ class ProposalService:
             else None
         )
         validate_candidate_timestamp(timestamp)
+        if readmits is not None and request.source_compilation_digest != readmits.operation_digest:
+            raise ProposalAdmissionError(
+                "a readmission's source compilation digest must be its operation digest"
+            )
         if "propose" not in actor.capabilities:
             raise ProposalAdmissionError("authenticated actor lacks the propose capability")
         current = self._current_coordinate()
@@ -5079,6 +4929,17 @@ class ProposalService:
         _require_executed_derivations(
             outcome, current_tree=current_tree, authorized=authorized_derivations
         )
+        if (
+            expected_candidate is not None
+            and expected_candidate[0] == current.git_oid
+            and (
+                outcome.candidate is None
+                or outcome.candidate.candidate_digest != expected_candidate[1]
+            )
+        ):
+            raise ProposalCandidateMismatchError(
+                "the evaluated candidate differs from the one this submission was bound to"
+            )
         # A refused proposal has no members to summarize, so it keeps the bare
         # subject the ledger has always written for it -- unless the author said
         # why they proposed it, which is still true of a set that did not pass.
@@ -5157,6 +5018,7 @@ class ProposalService:
                 admitted_at=timestamp,
                 rationale=request.rationale,
                 settle_submission=settle_submission,
+                readmits=readmits,
             )
             candidate_value = outcome.candidate.candidate_digest if outcome.candidate else None
             try:
@@ -5251,6 +5113,7 @@ __all__ = [
     "ProposalAdmissionRequest",
     "ProposalEvaluationRecord",
     "ProposalEvidenceProtocol",
+    "ProposalCandidateMismatchError",
     "ProposalHeadMovedError",
     "ProposalReceiveLimits",
     "ProposalWithdrawalRecordV1",

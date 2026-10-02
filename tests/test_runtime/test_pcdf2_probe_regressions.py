@@ -77,6 +77,9 @@ def _genesis_replay_at_retained_compiler(
     instance: PlaybillInstance, tmp_path: Path, name: str
 ) -> None:
     clone = tmp_path / name
+    # Acceptance queues an advisory review-ref refresh that rewrites the proposal
+    # index checkpoint; let it finish so the copy is not torn mid-rename.
+    instance.settled_workspace_advertisement()
     shutil.copytree(instance.root, clone)
     checkpoint = PlaybillInstance._checkpoint_directory(clone)
     if checkpoint.exists():
@@ -270,6 +273,7 @@ def test_release_level_law_bump_replays_rev8_tombstone_from_fresh_clone(
     instance, claim_id, _owner = _accepted_affects_package_world(tmp_path)
     _accept(instance, _migration(instance, claim_id))
     clone = tmp_path / "fresh-rev9-clone"
+    instance.settled_workspace_advertisement()
     shutil.copytree(instance.root, clone)
     checkpoint = PlaybillInstance._checkpoint_directory(clone)
     if checkpoint.exists():
@@ -288,26 +292,30 @@ def test_release_level_law_bump_replays_rev8_tombstone_from_fresh_clone(
         from cruxible_client.contracts import laws
         from cruxible_client.contracts.laws import InstalledAcceptanceLaw
 
-        revision_9 = laws._artifact_law_coordinate(
+        # The next release bumps the current Claim v3 law; every installed
+        # revision, including today's current one, stays for replay.
+        next_revision = laws._artifact_law_coordinate(
             laws.CLAIM_LAW_V3_IDENTIFIER,
             "playbill-claim-v3",
-            semantic_revision=9,
+            semantic_revision=99,
         )
         installed = tuple(laws.PLAYBILL_ACCEPTANCE_LAWS._by_coordinate.values())
-        rev8 = next(item for item in installed if item.coordinate == laws.CLAIM_LAW_V3_REVISION_8)
-        rev7 = next(item for item in installed if item.coordinate == laws.CLAIM_LAW_V3_REVISION_7)
+        v3 = tuple(
+            replace(item, current=False)
+            for item in installed
+            if item.artifact_tag == "playbill-claim-v3"
+        )
         non_v3 = tuple(item for item in installed if item.artifact_tag != "playbill-claim-v3")
-        laws.CLAIM_LAW_V3 = revision_9
+        laws.CLAIM_LAW_V3 = next_revision
         laws.PLAYBILL_ACCEPTANCE_LAWS = laws.AcceptanceLawRegistry(
             (
                 *non_v3,
                 InstalledAcceptanceLaw(
-                    coordinate=revision_9,
+                    coordinate=next_revision,
                     artifact_kind="claim",
                     artifact_tag="playbill-claim-v3",
                 ),
-                replace(rev8, current=False),
-                rev7,
+                *v3,
             )
         )
 

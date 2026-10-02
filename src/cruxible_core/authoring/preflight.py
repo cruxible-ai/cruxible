@@ -23,6 +23,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringPayloadV1,
     AuthoringReferenceExpectationV1,
     AuthoringReferenceSuccessorV1,
+    AuthoringSlotExpectationV1,
     BlockedCheckV1,
     CandidateStatusV1,
     ChangeSetAuthoringPayloadV1,
@@ -76,7 +77,7 @@ from cruxible_core.authoring.lowering import (
     lower_authoring,
 )
 from cruxible_core.authoring.prepared_lowering import reuse_lowering
-from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.proposals.prepared_evaluation import PreparedEvaluationScope
 from cruxible_core.proposals.proposals import (
     AuthenticatedActor,
@@ -219,16 +220,94 @@ def _existing_capture_contract_matches_reference(
     return capture_contract_digest(contract).tagged == envelope.capture_contract_digest
 
 
+def _slot_diagnostics(
+    instance: PlaybillInstance,
+    *,
+    expectations: tuple[AuthoringSlotExpectationV1, ...],
+    evaluated_at: AcceptedProjectionCoordinate,
+) -> tuple[AuthoringDiagnosticV1, ...]:
+    """Refuse every pinned slot whose live membership differs at the evaluated head.
+
+    Checked at the head the candidate is evaluated at, not at the intent base:
+    admission binds the candidate to that head, and settlement refuses any
+    other, so membership that holds here is membership at activation.
+    """
+
+    if not expectations:
+        return ()
+    diagnostics: list[AuthoringDiagnosticV1] = []
+    with instance.bind_accepted_projection(evaluated_at) as projection:
+        connection = projection.typed.connection
+        for expectation in expectations:
+            rows = connection.execute(
+                "SELECT identity FROM claims WHERE subject_path=? AND predicate=? "
+                "AND qualifier IS ? AND lifecycle='live'",
+                (expectation.subject_path, expectation.predicate, expectation.qualifier),
+            ).fetchall()
+            live = tuple(
+                sorted(
+                    {str(row[0]).removeprefix("Claim:") for row in rows},
+                    key=lambda item: item.encode("ascii"),
+                )
+            )
+            if live == expectation.live_claims:
+                continue
+            joined = sorted(set(live) - set(expectation.live_claims))
+            left = sorted(set(expectation.live_claims) - set(live))
+            changes = "; ".join(
+                part
+                for part in (
+                    f"joined: {', '.join(joined)}" if joined else "",
+                    f"left: {', '.join(left)}" if left else "",
+                )
+                if part
+            )
+            diagnostics.append(
+                _diagnostic(
+                    code="playbill.authoring.slot_membership_changed",
+                    stage="reference_assertion",
+                    offending_element=expectation.payload_path,
+                    message=(
+                        f"The live Claims of {expectation.predicate} on "
+                        f"{expectation.subject_path} changed after this change set was "
+                        f"planned ({changes})."
+                    ),
+                    disposition="superseded",
+                    repairs=(
+                        _repair(
+                            "replan",
+                            "Plan the change again against the current accepted state.",
+                            {"live_claims": list(live)},
+                        ),
+                    ),
+                )
+            )
+    return tuple(diagnostics)
+
+
 def _reference_diagnostics(
     instance: PlaybillInstance,
     *,
     intent: AuthoringIntentV1,
     base_tree: Mapping[str, bytes],
+    evaluated_at: AcceptedProjectionCoordinate,
 ) -> tuple[AuthoringDiagnosticV1, ...]:
     if not isinstance(intent, AuthoringIntentV2):
         return ()
-    diagnostics: list[AuthoringDiagnosticV1] = []
+    diagnostics: list[AuthoringDiagnosticV1] = list(
+        _slot_diagnostics(
+            instance,
+            expectations=tuple(
+                item
+                for item in intent.reference_expectations
+                if isinstance(item, AuthoringSlotExpectationV1)
+            ),
+            evaluated_at=evaluated_at,
+        )
+    )
     for expectation in intent.reference_expectations:
+        if isinstance(expectation, AuthoringSlotExpectationV1):
+            continue
         try:
             path = _reference_artifact_path(expectation)
             value = _payload_path_value(intent.payload, expectation.payload_path)
@@ -315,8 +394,8 @@ def _reference_diagnostics(
                     offending_element=expectation.payload_path,
                     message=(
                         "The named artifact was absent where this ref claims it was "
-                        "minted. Re-resolve the target with playbill discover, then "
-                        "re-create the intent with the address it returns."
+                        "minted. Re-resolve the target with playbill orient or query, then "
+                        "re-create the intent with the address it names."
                     ),
                     owner="daemon",
                     disposition="terminal",
@@ -405,14 +484,14 @@ def _reference_diagnostics(
             message = (
                 "More than one accepted artifact claims to succeed this reference. "
                 "Name the intended successor explicitly: read the candidates with "
-                "playbill list, then re-create the intent against one of them."
+                "playbill get, then re-create the intent against one of them."
             )
         else:
             code = "playbill.authoring.reference_retired"
             message = (
                 "The typed reference has no live successor at the intent base. "
-                "Choose a live target with playbill discover, then re-create the "
-                "intent against it."
+                "Choose a live target with playbill orient or query, then re-create "
+                "the intent against it."
             )
         diagnostics.append(
             _diagnostic(
@@ -729,6 +808,21 @@ def _record_ceiling_diagnostic(
     )
 
 
+def authoring_proposal_ref(actor_id: str, intent_id: str) -> str:
+    """The proposal ref an authoring intent submits under."""
+
+    return f"refs/proposals/{actor_id}/intent-{intent_id.removeprefix('AIT-')}"
+
+
+def authoring_intent_id_for_proposal_ref(target_ref: str, *, actor_id: str) -> str | None:
+    """The intent a proposal ref was submitted for, when it is an authoring intent's ref."""
+
+    prefix = authoring_proposal_ref(actor_id, "")
+    if not target_ref.startswith(prefix) or target_ref == prefix:
+        return None
+    return f"AIT-{target_ref.removeprefix(prefix)}"
+
+
 def authoring_operation(instance: PlaybillInstance, intent: AuthoringIntentV1) -> bytes:
     """Exact authored revision/minted identities, excluding computed status only."""
     return canonical_bytes(
@@ -764,9 +858,11 @@ def compute_preflight(
         compiler_digest=intent.base_coordinate.compiler_digest,
     )
     base_tree = instance.immutable_tree_at(base.git_oid)
-    diagnostics.extend(_reference_diagnostics(instance, intent=intent, base_tree=base_tree))
+    diagnostics.extend(
+        _reference_diagnostics(instance, intent=intent, base_tree=base_tree, evaluated_at=current)
+    )
     service = instance.proposal_service()
-    proposal_ref = f"refs/proposals/{actor.actor_id}/intent-{intent.intent_id[4:]}"
+    proposal_ref = authoring_proposal_ref(actor.actor_id, intent.intent_id)
     proposal_ref_oid = service.transport.read_proposal_ref(proposal_ref)
     lowered: LoweredAuthoring | None = None
     evaluation: CandidateEvaluation | None = None

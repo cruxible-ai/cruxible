@@ -23,11 +23,20 @@ from tests.test_indexes.test_projection_next import (
 from tests.test_query.test_query_execution_service import _instance_with_query
 
 
+def _eager_law_evidence(instance: Any, *, at: Any) -> dict[str, Any]:
+    """The reference fold's law evidence: the whole map, materialized up front.
+
+    This is the eager index the read cut removed from the Claim services; the
+    reference fold keeps it here so next's lazy map is still compared with it.
+    """
+    from cruxible_core.service.evidence.evidence import _claim_read_history_index
+
+    return dict(_claim_read_history_index(instance, coordinate=at).law_evidence)
+
+
 def _uncached_folds(monkeypatch: pytest.MonkeyPatch) -> None:
     """Exercise the previous eager folds without their request-local inputs."""
-    from cruxible_core.service.claims.claims import _claim_law_evidence_index
-
-    monkeypatch.setattr(playbill_next, "_claim_threshold_evidence", _claim_law_evidence_index)
+    monkeypatch.setattr(playbill_next, "_claim_threshold_evidence", _eager_law_evidence)
     for name in (
         "_claim_items",
         "_citation_commitments",

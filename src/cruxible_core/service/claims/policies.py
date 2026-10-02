@@ -106,7 +106,7 @@ def _embedded(
     )
 
 
-def list_playbill_policies_in_force(
+def service_playbill_policies_in_force(
     instance: PlaybillInstance,
     *,
     at: contracts.PlaybillAcceptedCoordinate | None = None,
@@ -369,4 +369,4 @@ def list_playbill_policies_in_force(
 _POLICY_LIST = "policies-in-force"
 
 
-__all__ = ["list_playbill_policies_in_force"]
+__all__ = ["service_playbill_policies_in_force"]

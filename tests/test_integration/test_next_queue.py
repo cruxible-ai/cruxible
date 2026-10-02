@@ -183,7 +183,8 @@ def test_workspace_drift_is_verified_against_the_accepted_citation(
     assert result.status.floor.state in {"missing", "not_configured"}
     drift = next(item for item in result.items if item.reason == "citation_drifted")
     assert drift.related_identities == (citation.citation_id,)
-    assert drift.repair.operation == "playbill.authoring.bind"
+    # The drift repair restates the value through the typed write verb.
+    assert drift.repair.operation == "playbill.set"
 
     workspace = request.workspace_observation
     assert workspace is not None
@@ -554,7 +555,12 @@ def test_conflict_repair_names_qualifier_separation_not_dispositions(tmp_path: P
 
     conflict = next(item for item in result.items if item.reason == "claim_conflicted")
     assert conflict.repair.required_change == "revise_claims_into_distinct_qualifiers"
-    assert conflict.repair.arguments == {"claim_ids": list(conflict.related_identities)}
+    arguments = conflict.repair.arguments
+    assert arguments["claim_ids"] == list(conflict.related_identities)
+    # One keep option per contender, retiring the others; none is picked.
+    assert {option["keep"] for option in arguments["options"]} == {
+        identity.removeprefix("Claim:") for identity in conflict.related_identities
+    }
 
 
 def test_two_values_of_a_many_valued_predicate_are_not_a_conflict(tmp_path: Path) -> None:
