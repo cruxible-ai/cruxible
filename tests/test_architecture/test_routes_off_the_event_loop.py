@@ -7,23 +7,27 @@ call and every other request on the daemon waits behind it. `export_floor` did
 exactly that: a 3-15 s floor export stalled health checks, writes and reads alike.
 
 A route is a plain `def`, with one exception: an `async def` route whose only
-work on the loop is to await admission and then offload. `export_floor` is that
-shape, so exports queued behind an instance's running export wait on the loop
-without holding a threadpool worker. The check admits exactly that shape, by
-binding rather than by name:
+work on the loop is to await admission and then offload. `export_floor` and
+`floor_delta` are that shape, so floor renders queued behind an instance's
+running one wait on the loop without holding a threadpool worker. The check
+admits exactly that shape, by binding rather than by name:
 
 - an offload is `await run_in_threadpool(...)` with plain-name arguments, where
   `run_in_threadpool` is the module's one import from `starlette.concurrency`;
 - admission is `async with N.admit(...)` with plain-name arguments, where `N` is
-  bound once at module level to `KeyedAdmission()` imported from
-  `cruxible_core.server.admission`;
+  either bound once at module level to `KeyedAdmission()` imported from
+  `cruxible_core.runtime.admission`, or imported unaliased from that module,
+  which binds it once at module level to `KeyedAdmission()` (`FLOOR_ADMISSION`,
+  shared with in-process callers on worker threads);
 - nothing else in the route calls anything on the loop. A function defined in
   the route counts where it is called; its defaults and decorators count where
   it is defined.
 
-`KeyedAdmission.admit` is checked call by call too: it must be an
-`asynccontextmanager` whose every call is asyncio lock or dictionary
-bookkeeping on receivers bound to exactly those things.
+`KeyedAdmission.admit` is checked call by call too, through every method it
+reaches on the loop: it must be an `asynccontextmanager` whose every call is
+lock, dictionary, deque or future bookkeeping, or a thread-safe hand-off, on
+receivers bound to exactly those things; and the one lock it takes is a
+`threading.Lock` that only that bookkeeping holds.
 """
 
 from __future__ import annotations
@@ -33,10 +37,10 @@ import pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 ROUTES = ROOT / "src" / "cruxible_core" / "server" / "routes"
-ADMISSION = ROOT / "src" / "cruxible_core" / "server" / "admission.py"
+ADMISSION = ROOT / "src" / "cruxible_core" / "runtime" / "admission.py"
 _HTTP_METHODS = frozenset({"get", "post", "put", "patch", "delete"})
 _OFFLOAD = ("starlette.concurrency", "run_in_threadpool")
-_ADMISSION_CLASS = ("cruxible_core.server.admission", "KeyedAdmission")
+_ADMISSION_CLASS = ("cruxible_core.runtime.admission", "KeyedAdmission")
 
 
 def _is_route(node: ast.AsyncFunctionDef | ast.FunctionDef) -> bool:
@@ -148,10 +152,35 @@ def _imports_exactly(bindings: list[ast.AST], module: str, name: str) -> bool:
     )
 
 
+def _module_admissions(tree: ast.Module) -> set[str]:
+    """Names ``tree`` binds once, at module level, to ``KeyedAdmission()`` defined there."""
+
+    bindings = _bound_names(tree)
+    defined = bindings.get(_ADMISSION_CLASS[1], [])
+    if not (len(defined) == 1 and isinstance(defined[0], ast.ClassDef)):
+        return set()
+    return {
+        name
+        for name, bound in bindings.items()
+        if len(bound) == 1
+        and isinstance(bound[0], ast.Assign)
+        and bound[0] in tree.body
+        and len(bound[0].targets) == 1
+        and isinstance(bound[0].value, ast.Call)
+        and isinstance(bound[0].value.func, ast.Name)
+        and bound[0].value.func.id == _ADMISSION_CLASS[1]
+        and not _call_arguments(bound[0].value)
+    }
+
+
+_SHARED_ADMISSIONS = _module_admissions(ast.parse(ADMISSION.read_text(encoding="utf-8")))
+
+
 class _RouteModule:
     """What a route module binds to the offload and to admission."""
 
-    def __init__(self, tree: ast.Module) -> None:
+    def __init__(self, tree: ast.Module, shared: set[str] | None = None) -> None:
+        shared = _SHARED_ADMISSIONS if shared is None else shared
         self.bindings = _bound_names(tree)
         self.offload = _imports_exactly(self.bindings.get(_OFFLOAD[1], []), *_OFFLOAD)
         admission_class = _imports_exactly(
@@ -170,6 +199,10 @@ class _RouteModule:
                 and bound[0].value.func.id == _ADMISSION_CLASS[1]
                 and not _call_arguments(bound[0].value)
             ):
+                self.admissions.add(name)
+        # A shared admission the admission module itself binds, imported as is.
+        for name in shared:
+            if _imports_exactly(self.bindings.get(name, []), _ADMISSION_CLASS[0], name):
                 self.admissions.add(name)
 
 
@@ -215,26 +248,51 @@ def _loop_work(node: ast.AsyncFunctionDef, module: _RouteModule) -> list[str]:
     return work
 
 
-# Calls `KeyedAdmission.admit` may make, as (receiver, attribute): receivers
-# are checked against their bindings below, never trusted by spelling alone.
-_ADMIT_CALLS = frozenset(
-    {
-        ("asyncio", "get_running_loop"),
-        ("asyncio", "Lock"),
-        ("self._loops", "get"),
-        ("entries", "get"),
-        (None, "_Entry"),
-    }
-)
-
-
-def _receiver(call: ast.Call) -> tuple[str | None, str]:
-    function = call.func
-    if isinstance(function, ast.Name):
-        return None, function.id
-    if isinstance(function, ast.Attribute):
-        return ast.unparse(function.value), function.attr
-    return None, ast.unparse(function)
+# What each function on `admit`'s path may call, by spelling: `admit` itself,
+# the bookkeeping methods it reaches, the waiter hand-off (run by whichever
+# caller releases, the loop included) and `_grant` (scheduled onto the loop).
+# Receivers are pinned by their bindings below, never trusted by spelling alone.
+_ON_LOOP_CALLS: dict[str, frozenset[str]] = {
+    "KeyedAdmission.admit": frozenset(
+        {
+            "asyncio.get_running_loop",
+            "loop.create_future",
+            "self._enter",
+            "self._withdraw",
+            "self._leave",
+        }
+    ),
+    "KeyedAdmission._enter": frozenset(
+        {"self._entries.get", "_Entry", "_Waiter", "entry.waiters.append"}
+    ),
+    "KeyedAdmission._pass_on": frozenset({"entry.waiters.popleft", "waiter.wake"}),
+    "KeyedAdmission._leave": frozenset({"self._pass_on"}),
+    "KeyedAdmission._withdraw": frozenset({"self._pass_on", "entry.waiters.remove"}),
+    "_Waiter.__init__": frozenset(),
+    "_Waiter.wake": frozenset({"self.event.set", "self.loop.call_soon_threadsafe"}),
+    "_Entry.__init__": frozenset({"deque"}),
+    "_grant": frozenset({"future.done", "future.set_result"}),
+}
+# The only values a receiver name may be bound to inside those functions, besides
+# being a parameter.
+_RECEIVER_VALUES: dict[str, frozenset[str]] = {
+    "loop": frozenset({"asyncio.get_running_loop()"}),
+    "future": frozenset({"loop.create_future()"}),
+    "entry": frozenset({"self._entries.get(key)", "self._entries[key]"}),
+    "waiter": frozenset(
+        {
+            "self._enter(key, loop, future, None)",
+            "_Waiter(loop, future, event)",
+            "entry.waiters.popleft()",
+        }
+    ),
+}
+# Attributes written exactly once in the module, in the named method, to exactly this.
+_FIELDS: dict[str, tuple[str, str]] = {
+    "self._lock": ("KeyedAdmission.__init__", "threading.Lock()"),
+    "self._entries": ("KeyedAdmission.__init__", "{}"),
+    "self.waiters": ("_Entry.__init__", "deque()"),
+}
 
 
 def _admission_violations(tree: ast.Module) -> list[str]:
@@ -242,89 +300,106 @@ def _admission_violations(tree: ast.Module) -> list[str]:
 
     module = _bound_names(tree)
     problems: list[str] = []
-    asyncio_bindings = module.get("asyncio", [])
-    if not (
-        len(asyncio_bindings) == 1
-        and isinstance(asyncio_bindings[0], ast.Import)
-        and [(alias.name, alias.asname) for alias in asyncio_bindings[0].names]
-        == [("asyncio", None)]
-    ):
-        problems.append("asyncio is not the asyncio module")
-    if not _imports_exactly(
-        module.get("asynccontextmanager", []), "contextlib", "asynccontextmanager"
-    ):
-        problems.append("asynccontextmanager is not contextlib's")
-    classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
-    entry = classes.get("_Entry")
-    if (
-        entry is None
-        or len(module.get("_Entry", [])) != 1
-        or any(isinstance(inner, ast.Call) for inner in ast.walk(entry))
-    ):
-        problems.append("_Entry is missing, rebound or calls something")
-    admission = classes.get(_ADMISSION_CLASS[1])
-    methods = (
-        {}
-        if admission is None
-        else {
-            node.name: node
-            for node in admission.body
-            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
-        }
-    )
-    init = methods.get("__init__")
-    # Exactly one write to self._loops anywhere in the module -- __init__
-    # included -- and it is a WeakKeyDictionary from the real weakref module.
-    loops_writes = [
-        inner
-        for inner in ast.walk(tree)
-        if isinstance(inner, ast.Attribute)
-        and isinstance(inner.ctx, ast.Store | ast.Del)
-        and ast.unparse(inner) == "self._loops"
-    ]
-    loops_bound = (
-        init is not None
-        and len(loops_writes) == 1
-        and any(
-            isinstance(statement, ast.AnnAssign)
-            and statement.target is loops_writes[0]
-            and statement.value is not None
-            and ast.unparse(statement.value) == "weakref.WeakKeyDictionary()"
-            for statement in init.body
-        )
-    )
-    if not loops_bound:
-        problems.append("self._loops is not only a WeakKeyDictionary")
-    weakref_bindings = module.get("weakref", [])
-    if not (
-        len(weakref_bindings) == 1
-        and isinstance(weakref_bindings[0], ast.Import)
-        and [(alias.name, alias.asname) for alias in weakref_bindings[0].names]
-        == [("weakref", None)]
-    ):
-        problems.append("weakref is not the weakref module")
-    admit = methods.get("admit")
+    for name in ("asyncio", "threading"):
+        bound = module.get(name, [])
+        if not (
+            len(bound) == 1
+            and isinstance(bound[0], ast.Import)
+            and [(alias.name, alias.asname) for alias in bound[0].names] == [(name, None)]
+        ):
+            problems.append(f"{name} is not the {name} module")
+    for name, origin in (("asynccontextmanager", "contextlib"), ("deque", "collections")):
+        if not _imports_exactly(module.get(name, []), origin, name):
+            problems.append(f"{name} is not {origin}'s")
+    functions: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {}
+    defined: dict[str, int] = {}
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            functions[node.name] = node
+        if isinstance(node, ast.ClassDef):
+            for member in ast.walk(node):
+                if isinstance(member, ast.FunctionDef | ast.AsyncFunctionDef):
+                    qualified = f"{node.name}.{member.name}"
+                    defined[qualified] = defined.get(qualified, 0) + 1
+                    functions[qualified] = member
+    for name in ("KeyedAdmission", "_Entry", "_Waiter", "_grant"):
+        if len(module.get(name, [])) != 1:
+            problems.append(f"{name} is missing or rebound")
+    # A checked method is defined once in its class and never rebound on an instance.
+    for qualified in _ON_LOOP_CALLS:
+        if "." in qualified and defined.get(qualified) != 1:
+            problems.append(f"{qualified} is missing or defined twice")
+    for inner in ast.walk(tree):
+        if (
+            isinstance(inner, ast.Attribute)
+            and isinstance(inner.ctx, ast.Store | ast.Del)
+            and isinstance(inner.value, ast.Name)
+            and inner.value.id == "self"
+            and any(qualified.endswith("." + inner.attr) for qualified in _ON_LOOP_CALLS)
+        ):
+            problems.append(f"self.{inner.attr} is rebound")
+    for field_name, (where, value) in _FIELDS.items():
+        writes = [
+            inner
+            for inner in ast.walk(tree)
+            if isinstance(inner, ast.Attribute)
+            and isinstance(inner.ctx, ast.Store | ast.Del)
+            and ast.unparse(inner) == field_name
+        ]
+        method = functions.get(where)
+        if not (
+            method is not None
+            and len(writes) == 1
+            and any(
+                isinstance(statement, ast.AnnAssign)
+                and statement.target is writes[0]
+                and statement.value is not None
+                and ast.unparse(statement.value) == value
+                for statement in method.body
+            )
+        ):
+            problems.append(f"{field_name} is not only {value}")
+    admit = functions.get("KeyedAdmission.admit")
     if not isinstance(admit, ast.AsyncFunctionDef) or [
         ast.unparse(decorator) for decorator in admit.decorator_list
     ] != ["asynccontextmanager"]:
         problems.append("admit is not an asynccontextmanager")
         return problems
-    local = _bound_names(admit)
-    for name in ("asyncio", "_Entry"):
-        if name in local:
-            problems.append(f"admit rebinds {name}")
-    # `entries` may only ever hold the loop's own map or a fresh dict.
-    for binding in local.get("entries", []):
-        value = binding.value if isinstance(binding, ast.Assign) else None
-        if value is None or ast.unparse(value) not in {"self._loops.get(loop)", "{}"}:
-            problems.append(f"entries is bound by {ast.unparse(binding)!r}")
-    for inner in (item for statement in admit.body for item in _executed(statement)):
-        if not isinstance(inner, ast.Call):
+    for qualified, allowed in _ON_LOOP_CALLS.items():
+        function = functions.get(qualified)
+        if function is None:
+            problems.append(f"{qualified} is missing")
             continue
-        if _receiver(inner) not in _ADMIT_CALLS:
-            problems.append(f"admit calls {ast.unparse(inner.func)}")
-        elif not _plain(_call_arguments(inner)) and ast.unparse(inner) != "_Entry(asyncio.Lock())":
-            problems.append(f"admit nests calls in {ast.unparse(inner)}")
+        local = _bound_names(function)
+        parameters = {arg.arg for arg in ast.walk(function.args) if isinstance(arg, ast.arg)}
+        for name in ("asyncio", "threading", "deque", "_Entry", "_Waiter", "_grant", "self"):
+            bound = [
+                binding
+                for binding in local.get(name, [])
+                if binding is not function and not isinstance(binding, ast.arg)
+            ]
+            if bound or (name != "self" and name in parameters):
+                problems.append(f"{qualified} rebinds {name}")
+        for receiver, values in _RECEIVER_VALUES.items():
+            for binding in local.get(receiver, []):
+                if isinstance(binding, ast.arg) and receiver in parameters:
+                    continue
+                value = binding.value if isinstance(binding, ast.Assign | ast.AnnAssign) else None
+                if value is None or ast.unparse(value) not in values:
+                    problems.append(f"{qualified} binds {receiver} by {ast.unparse(binding)!r}")
+        executed = [item for statement in function.body for item in _executed(statement)]
+        for inner in executed:
+            if isinstance(inner, ast.With | ast.AsyncWith) and [
+                ast.unparse(item.context_expr) for item in inner.items
+            ] != ["self._lock"]:
+                problems.append(f"{qualified} enters {ast.unparse(inner.items[0].context_expr)}")
+            if not isinstance(inner, ast.Call):
+                continue
+            spelled = ast.unparse(inner.func)
+            if spelled not in allowed:
+                problems.append(f"{qualified} calls {spelled}")
+            elif not _plain(_call_arguments(inner)):
+                problems.append(f"{qualified} nests calls in {ast.unparse(inner)}")
     return problems
 
 
@@ -343,7 +418,7 @@ def _async_routes_doing_loop_work() -> dict[str, str]:
 
 _ROUTE_HEADER = (
     "from starlette.concurrency import run_in_threadpool\n"
-    "from cruxible_core.server.admission import KeyedAdmission\n"
+    "from cruxible_core.runtime.admission import KeyedAdmission\n"
     "exports = KeyedAdmission()\n"
 )
 
@@ -412,6 +487,19 @@ def test_the_route_check_resolves_bindings_not_names() -> None:
         "exports = KeyedAdmission()\n" + body.format(cm="exports.admit(a)")
     )
     assert _check(elsewhere) == ["exports.admit"]
+    # The shared admission the admission module binds, imported as is.
+    shared = (
+        "from starlette.concurrency import run_in_threadpool\n"
+        "from cruxible_core.runtime.admission import FLOOR_ADMISSION\n"
+        + body.format(cm="FLOOR_ADMISSION.admit(a)")
+    )
+    assert _check(shared) == []
+    aliased = shared.replace(
+        "import FLOOR_ADMISSION\n", "import KeyedAdmission as FLOOR_ADMISSION\n"
+    )
+    assert _check(aliased) == ["FLOOR_ADMISSION.admit"]
+    not_shared = shared.replace("FLOOR_ADMISSION", "KeyedAdmission")
+    assert _check(not_shared) == ["KeyedAdmission.admit"]
     # Admission rebound after it was made.
     rebound = _ROUTE_HEADER + "exports = Fake()\n" + body.format(cm="exports.admit(a)")
     assert _check(rebound) == ["exports.admit"]
@@ -458,25 +546,36 @@ def test_the_admission_check_resolves_receivers() -> None:
         assert old in _ADMISSION_SOURCE
         return _admission_violations(ast.parse(_ADMISSION_SOURCE.replace(old, new, 1)))
 
-    # A dict-looking receiver bound to something else.
-    assert spoofed("entries = {}", "entries = make_map()")
+    # A receiver bound to something other than the bookkeeping it names.
+    assert spoofed("entry = self._entries.get(key)", "entry = make_map(key)")
+    assert spoofed("waiter = entry.waiters.popleft()", "waiter = other.popleft()")
     # An allowed terminal name on another receiver.
-    assert spoofed("entry = entries.get(key)", "entry = other.get(key)")
-    # A module that is not asyncio behind the asyncio name.
+    assert spoofed("entry.waiters.append(waiter)", "other.waiters.append(waiter)")
+    # Modules that are not asyncio or threading behind their names.
     assert spoofed("import asyncio\n", "import trio as asyncio\n")
-    # A plain blocking call.
-    assert spoofed("entry.users += 1", "entry.users += 1\n        time.sleep(30)")
+    assert spoofed("import threading\n", "import fake_threading as threading\n")
+    # A plain blocking call, in admit or in a method it reaches.
+    assert spoofed("        loop = asyncio.get_running_loop()\n", "        time.sleep(30)\n")
+    assert spoofed("            entry.waiters.append(waiter)\n", "            time.sleep(30)\n")
     # A synchronous admit.
     assert spoofed("    @asynccontextmanager\n    async def admit", "    def admit")
-    # A second write to the loop map, in __init__ or anywhere else.
-    second_write = "weakref.WeakKeyDictionary()\n        )\n"
-    assert spoofed(second_write, second_write + "        self._loops = SlowMap()\n")
+    # The bookkeeping lock swapped for something else, or a second lock taken.
+    assert spoofed("threading.Lock()", "threading.RLock()")
     assert spoofed(
-        "    def active_loops(self) -> int:\n",
-        "    def active_loops(self) -> int:\n        del self._loops\n",
+        "        with self._lock:\n            entry = self._entries.get(key)",
+        "        with self._slow:\n            entry = self._entries.get(key)",
     )
-    # A module that is not weakref behind the weakref name.
-    assert spoofed("import weakref\n", "import fake_weakref as weakref\n")
+    # A field written twice, or a method rebound on the instance.
+    assert spoofed(
+        "        self._entries: dict[str, _Entry] = {}\n",
+        "        self._entries: dict[str, _Entry] = {}\n        self._lock = SlowLock()\n",
+    )
+    assert spoofed(
+        "    def active_keys(self) -> int:\n",
+        "    def active_keys(self) -> int:\n        self._leave = slow\n",
+    )
+    # The hand-off swapped for a blocking one.
+    assert spoofed("self.event.set()", "self.event.wait()")
 
 
 def test_no_route_holds_the_event_loop() -> None:
@@ -496,4 +595,6 @@ def test_the_scan_sees_routes() -> None:
         for node in tree.body
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and _is_route(node)
     }
-    assert "export_floor" in routes
+    assert {"export_floor", "floor_delta"} <= routes
+    assert "FLOOR_ADMISSION" in _SHARED_ADMISSIONS
+    assert "FLOOR_ADMISSION" in _RouteModule(tree).admissions
