@@ -10,6 +10,7 @@ import weakref
 
 import pytest
 
+from cruxible_core.errors import FloorAdmissionMisuse
 from cruxible_core.runtime.admission import KeyedAdmission
 
 
@@ -288,7 +289,7 @@ def test_hold_refuses_to_block_a_running_loop() -> None:
     admission = KeyedAdmission()
 
     async def run() -> None:
-        with pytest.raises(RuntimeError, match="event loop"):
+        with pytest.raises(FloorAdmissionMisuse, match="event loop"):
             with admission.hold("inst_a"):
                 pass  # pragma: no cover - refused before entry
 
@@ -324,7 +325,7 @@ def test_same_thread_reentry_refuses_before_queueing(monkeypatch, owner, nested)
 
         with monkeypatch.context() as patch:
             patch.setattr(admission, "_enter", must_not_enter)
-            with pytest.raises(RuntimeError, match="same key is not re-entrant"):
+            with pytest.raises(FloorAdmissionMisuse, match="same key is not re-entrant"):
                 if nested == "hold":
                     with admission.hold("inst_reentrant"):
                         pytest.fail("re-entry was admitted")

@@ -27,7 +27,9 @@ is the guarantee across all call indirections. Ticket workers keep the request
 context and run normally because they have already been admitted. Consumer
 threads have no request context. Blocking holders and ticket workers track
 ownership on their thread; entering either admission path again for the same
-key refuses immediately instead of waiting for oneself.
+key refuses immediately instead of waiting for oneself. Misuses raise the typed
+internal error ``FloorAdmissionMisuse``, so served and CLI boundaries report a
+code rather than a raw traceback.
 
 Both kinds queue on the same key in arrival order and exclude each other: an
 export, a delta and a consumer refresh of one instance never overlap, while
@@ -59,6 +61,8 @@ from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from typing import Literal, TypeVar
+
+from cruxible_core.errors import FloorAdmissionMisuse
 
 _T = TypeVar("_T")
 
@@ -136,7 +140,7 @@ class _Ticket:
         """
 
         if not self.admission._claim(self):
-            raise RuntimeError("the admitted caller left before its call started")
+            raise FloorAdmissionMisuse("the admitted caller left before its call started")
         try:
             with self.admission._mark_held(self.key):
                 return call()
@@ -219,7 +223,7 @@ class KeyedAdmission:
 
     def _check_reentrant(self, key: str) -> None:
         if key in getattr(self._owned, "keys", ()):
-            raise RuntimeError(
+            raise FloorAdmissionMisuse(
                 "floor admission for the same key is not re-entrant on its owning thread"
             )
 
@@ -267,7 +271,7 @@ class KeyedAdmission:
         """Hold ``key`` from a worker thread, blocking it until the key is its own."""
 
         if HTTP_REQUEST_CONTEXT.get():
-            raise RuntimeError(
+            raise FloorAdmissionMisuse(
                 "floor admission from an HTTP request must use async admit with the ticket"
             )
         try:
@@ -275,7 +279,9 @@ class KeyedAdmission:
         except RuntimeError:
             pass
         else:
-            raise RuntimeError("KeyedAdmission.hold would block a running event loop; use admit")
+            raise FloorAdmissionMisuse(
+                "KeyedAdmission.hold would block a running event loop; use admit"
+            )
         self._check_reentrant(key)
         event = threading.Event()
         waiter = self._enter(key, None, None, event)

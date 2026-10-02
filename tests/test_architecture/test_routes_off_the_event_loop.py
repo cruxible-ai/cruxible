@@ -289,7 +289,7 @@ _ON_LOOP_CALLS: dict[str, frozenset[str]] = {
             "self._close",
         }
     ),
-    "KeyedAdmission._check_reentrant": frozenset({"getattr", "RuntimeError"}),
+    "KeyedAdmission._check_reentrant": frozenset({"getattr", "FloorAdmissionMisuse"}),
     "KeyedAdmission._enter": frozenset(
         {"self._entries.get", "_Entry", "_Waiter", "entry.waiters.append"}
     ),

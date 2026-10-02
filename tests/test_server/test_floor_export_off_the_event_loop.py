@@ -27,6 +27,7 @@ from fastapi.testclient import TestClient
 
 from cruxible_client import contracts
 from cruxible_client.contracts.floor import PlaybillFloorDeltaV1
+from cruxible_core.errors import FloorAdmissionMisuse
 from cruxible_core.mcp.permissions import reset_permissions
 from cruxible_core.runtime import playbill_api
 from cruxible_core.runtime.admission import FLOOR_ADMISSION, HTTP_REQUEST_CONTEXT
@@ -520,7 +521,7 @@ def test_a_route_cancelled_before_its_worker_starts_releases_the_key() -> None:
         return ticket
 
     ticket = asyncio.run(scenario())
-    with pytest.raises(RuntimeError, match="left before its call started"):
+    with pytest.raises(FloorAdmissionMisuse, match="left before its call started"):
         ticket.run(lambda: ran.append("late"))
     assert ran == [] and admission.active_keys() == 0
 
@@ -678,8 +679,14 @@ def test_http_hold_fails_before_admission_for_every_call_form(client, monkeypatc
     client.app.get("/test-http-hold")(
         {"direct": direct, "helper": helper, "lambda_alias": lambda_alias}[form]
     )
-    with pytest.raises(RuntimeError, match=error):
-        client.get("/test-http-hold")
+    response = client.get("/test-http-hold")
+    assert response.status_code == 500
+    body = response.json()
+    assert body["error_type"] == "FloorAdmissionMisuse"
+    assert body["error_code"] == "internal.floor_admission_misuse"
+    assert error in body["message"]
+    assert body["repair"] is None
+    assert "Traceback" not in response.text and "RuntimeError" not in response.text
     assert FLOOR_ADMISSION.active_keys() == 0
     assert not HTTP_REQUEST_CONTEXT.get()
 
@@ -703,7 +710,7 @@ def test_http_ticket_workers_keep_request_context_and_consumers_can_hold(client)
         assert HTTP_REQUEST_CONTEXT.get()
         # A ticket is already admitted, but even its body must not acquire
         # another key through hold. The check belongs to hold, not ticket.run.
-        with pytest.raises(RuntimeError, match="HTTP request must use async admit"):
+        with pytest.raises(FloorAdmissionMisuse, match="HTTP request must use async admit"):
             with FLOOR_ADMISSION.hold("inst_illegal_nested_hold"):
                 pass
         worker_entered.set()
@@ -791,7 +798,7 @@ def test_framework_error_handlers_keep_http_context(client, monkeypatch):
 
     def handler(request, exc):
         observed.append(HTTP_REQUEST_CONTEXT.get())
-        with pytest.raises(RuntimeError, match="HTTP request must use async admit"):
+        with pytest.raises(FloorAdmissionMisuse, match="HTTP request must use async admit"):
             with FLOOR_ADMISSION.hold("inst_error_handler"):
                 pass
         return JSONResponse(status_code=500, content={"error": "failed"})
