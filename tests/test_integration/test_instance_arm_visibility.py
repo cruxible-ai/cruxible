@@ -222,6 +222,8 @@ def test_the_sdk_reads_the_arms_off_orient(stopped) -> None:  # type: ignore[no-
     playbill = Playbill.__new__(Playbill)
     playbill._client = _Stub(instance)  # type: ignore[assignment]
     playbill._instance_id = "inst"
+    # A connection without a workspace: orient then reports no floor.
+    playbill._workspace = None
     playbill._read_at = lambda coordinate=None: None  # type: ignore[method-assign,assignment]
     playbill._evaluation_time = lambda: when.isoformat()  # type: ignore[method-assign]
     playbill._observe_read = lambda *_a, **_k: None  # type: ignore[method-assign]

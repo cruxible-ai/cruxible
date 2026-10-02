@@ -17,7 +17,7 @@ everything before it writes anything:
    holds its head bytes, and nothing else is there. A delta that finds a
    corrupted, missing or stray file is ``base_mismatch`` too; a full floor
    repairs it, removing stale files but never the client's own
-   (``projections/INDEX``).
+   (``projections/INDEX`` and ``sources/INDEX``).
 
 Then each touched file is written atomically (a staged file renamed over it),
 the removed paths are unlinked, and ``manifest.json`` is written last: it is

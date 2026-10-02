@@ -33,6 +33,7 @@ from tests.core_support._knowledge_loop_support import (
     seed_claims,
     work_item_query,
 )
+from tests.support.oid_prefixes import too_short_prefix
 
 _WHEN = datetime.fromisoformat(EVALUATION_TIME)
 _ACCESS = BodyAccessContext(principal_id="reader", can_read_body=True)
@@ -788,12 +789,14 @@ def test_a_short_unknown_or_ambiguous_at_refuses_with_a_coded_read_refusal(
         assert refused.value.context["field_path"] == "at"
         return refused.value
 
-    short = refusal(head.oid[:11])
+    short = refusal(too_short_prefix(head.oid))
     assert short.error_code == "playbill.read.coordinate_prefix_too_short"
     assert short.http_status == 400 and "at least 12" in str(short)
 
     # One hex digit off: nothing starts with it, and a full accepted oid is named.
-    typo = head.oid[:11] + ("0" if head.oid[11] != "0" else "1")
+    # A letter makes the twelve characters a prefix even when the oid starts
+    # with eleven digits.
+    typo = head.oid[:11] + ("a" if head.oid[11] != "a" else "b")
     unknown = refusal(typo)
     assert unknown.error_code == "playbill.read.coordinate_not_accepted"
     assert unknown.http_status == 404
@@ -826,6 +829,47 @@ def test_a_short_unknown_or_ambiguous_at_refuses_with_a_coded_read_refusal(
     assert len(bounded.candidates) == 5
     assert bounded.context["matches"] == 9
     assert set(bounded.candidates) <= {item.oid for item in (*real, *twins)}
+
+
+def test_an_all_digit_at_of_eleven_or_fewer_characters_is_a_generation(
+    instance: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The rule is by shape: up to 11 digits is a generation number, even when it
+    is also the start of an accepted oid; 12 or more digits are an oid prefix."""
+
+    from types import SimpleNamespace
+
+    from cruxible_client.contracts.errors import ReadRefusalError
+    from cruxible_core.service.read_refusals import resolve_read_coordinate
+
+    history = instance.accepted_history()
+    first = history[0]
+    for spelled in (str(first.sequence), f"{first.sequence:011d}"):
+        resolved = resolve_read_coordinate(instance, spelled)
+        assert resolved.git_oid == first.oid, spelled
+    for spelled in ("9" * 8, "0" * 8 + "9", "9" * 11):
+        with pytest.raises(ReadRefusalError) as refused:
+            resolve_read_coordinate(instance, spelled)
+        assert refused.value.error_code == "playbill.read.coordinate_not_accepted"
+        assert "no generation" in str(refused.value), spelled
+        assert refused.value.http_status == 404
+    # Never "too short", and never an oid, even where an accepted oid starts
+    # with those digits (faked: a real oid is all digits by chance).
+    digit_oid = "12345678" + "a" * 32
+    monkeypatch.setattr(
+        instance,
+        "accepted_history",
+        lambda: (*history, SimpleNamespace(oid=digit_oid, sequence=history[-1].sequence + 1)),
+    )
+    with pytest.raises(ReadRefusalError) as refused:
+        resolve_read_coordinate(instance, "12345678")
+    assert refused.value.error_code == "playbill.read.coordinate_not_accepted"
+    assert "no generation 12345678" in str(refused.value)
+    # Twelve digits are an oid prefix, matched against accepted oids.
+    with pytest.raises(ReadRefusalError) as refused:
+        resolve_read_coordinate(instance, "9" * 12)
+    assert refused.value.error_code == "playbill.read.coordinate_not_accepted"
+    assert "no accepted git oid starts with" in str(refused.value)
 
 
 def test_overlong_oid_is_not_misreported_as_too_short(instance: Any) -> None:

@@ -1979,8 +1979,10 @@ summary's coordinate is the git oid's 12-hex prefix and the generation; the
 full accepted coordinate is under `--detail proof`. `--at` takes a git oid, a
 unique 12+ hex prefix of one, or a generation number, so either half of a
 printed coordinate reads back; each history row prints both (`seq N at
-<12 hex>`). Evidence names each Capture by its `CAP-<12 hex>` handle, which
-`get` and `capture read` both accept. A wrong or ambiguous REF
+<12 hex>`). An all-digit value of 11 or fewer characters is always a
+generation, never an oid prefix; twelve or more digits are a prefix. Evidence
+names each Capture by its `CAP-<12 hex>` handle, which `get` and `capture read`
+both accept. A wrong or ambiguous REF
 refuses with a code and the nearest names. `--json` prints the whole structured
 result.
 
@@ -2125,7 +2127,8 @@ audit path.
 | `current/<kind>/<id>.<field>.txt` | A text value too long to inline (over 2 KiB or 40 lines), whole; never truncated. |
 | `current/<kind>/INDEX` | One tab-separated line per Subject of the kind: ref, a title-like value, `field=value` for each state-like field. |
 | `changes/<seq>.json` | The accepted change that introduced a current Claim revision: time, actor, the rationale its proposal recorded, and the refs it changed. |
-| `sources/INDEX` | One tab-separated line per evidence source current Claims cite (self-source Captures excluded) and per accepted Document: source, CaptureContract, locator, citing-Claim count, the generation it last changed. |
+| `sources/INDEX` | Written by the client from `sources/LEDGER` and its own source catalog, outside the daemon manifest: one tab-separated line per evidence source (self-source Captures excluded; a Document is a source, cited or not, on the line of its name): source, CaptureContract(s), where it lives (the workspace path the catalog binds it to, `(missing)` when that file is gone; otherwise the ledger locator), citing-Claim count, the generation it last changed. |
+| `sources/LEDGER` | The same lines from accepted state alone, which holds no workspace paths: the locator is the Document of the source's name (`Document:<id>`); otherwise every distinct `coordinate/selector` type pair its Captures were taken at, sorted and comma-separated (a foreign source has none); or `-`. |
 | `projections/INDEX` | Written by the client from its own workspace bindings, outside the daemon manifest: one line per workspace file bound to accepted state (Document body, evidence source, rendered block), its role, bound ref and the generation that ref last changed. A bound file that does not exist is a `workspace_binding_missing` row in `next`, not a line here. |
 | `manifest.json` | The coordinate, its generation, the renderer, and every file's digest and `changed_at`, bound into the floor digest. |
 | `subjects/`, `claim-types/`, `procedures/`, `coverage-manifest.json` | Only with `--with-discovery`: the discovery cards other tools read (they carry digests and addresses) and the export's coverage boundary. They need the whole accepted facts read, so they cost most of an export. |
@@ -2161,7 +2164,7 @@ incoming:
   contradicted) is in the floor: verdicts move with time and evidence, which no
   coordinate fixes.
 - An exact-content value (a ruling) is its text, read by digest. Accepted
-  bodies (and the Capture envelopes `sources/INDEX` reads) are retained for as
+  bodies (and the Capture envelopes `sources/LEDGER` reads) are retained for as
   long as their Claim is in history, so the floor is fixed by the coordinate;
   one lost anyway refuses a fresh render as an integrity failure rather than
   publishing a different floor. Bytes that are not UTF-8 text show as

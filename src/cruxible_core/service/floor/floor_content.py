@@ -52,10 +52,13 @@ verbs. The floor does no matching of its own: grep is the search.
 - `changes/<seq>.json`: the accepted change that introduced a current Claim
   revision: its time, actor, the rationale its proposal recorded, and the refs
   it changed.
-- `sources/INDEX`: one tab-separated line per evidence source current Claims
-  cite: the source, its CaptureContract, a locator (a Document ref, or an
-  external source's selector type), how many current Claims cite it, and the
-  generation it last changed. Every accepted Document is listed, cited or not.
+- `sources/INDEX`: one tab-separated line per evidence source: the source, its
+  CaptureContract(s), where it lives (the workspace path the client's source
+  catalog binds it to, marked `(missing)` when no such file exists; else a
+  Document ref or the external `coordinate/selector` type pairs), how many
+  current Claims cite it, and the generation it last changed. Every accepted Document is a
+  source, cited or not. The client writes it from `sources/LEDGER` and its own
+  catalog after every refresh; the daemon never sees workspace paths.
 - `projections/INDEX`: written by the client from its own workspace, never by
   the daemon: one line per workspace file bound to accepted state (a Document
   body, an evidence source, a rendered block), its role, the ref it is bound
@@ -79,7 +82,7 @@ Document's body is read with `get Document:<name> --detail body`.
 ## Retention
 
 A ruling or other exact-content value shows its text, read by digest from the
-body store, and `sources/INDEX` reads each cited Capture's envelope the same
+body store, and `sources/LEDGER` reads each cited Capture's envelope the same
 way. Accepted bodies and Captures are retained for as long as their Claim is in
 accepted history, so what the floor shows is fixed by the coordinate. One that
 is nevertheless lost refuses a fresh render as an integrity failure; the floor
@@ -91,6 +94,10 @@ the floor whole.
 
 ## Not for grep
 
+- `sources/LEDGER`: `sources/INDEX` as accepted state alone gives it, with
+  only ledger-derived locators (a Document ref, else every external
+  `coordinate/selector` type pair, comma-separated, or `-`); the client joins
+  workspace paths into `sources/INDEX`.
 - `manifest.json` names the accepted coordinate and its generation, and binds
   every file by digest, and by the generation it last changed, into the floor
   digest. A refresh fetches only the files changed since the floor's own

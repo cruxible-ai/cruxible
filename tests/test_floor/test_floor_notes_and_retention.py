@@ -144,7 +144,7 @@ def test_a_lost_capture_envelope_refuses_a_fresh_render_never_drops_its_source(
         instance, _set(WI1, "measured", 3, evidence=report_evidence(tmp_path / "ws", "Count: 3"))
     )
     warm = advance_floor_index(instance)
-    assert b"repo.reports" in warm.files["sources/INDEX"][0]
+    assert b"repo.reports" in warm.files["sources/LEDGER"][0]
     with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
         claim = projection.typed.source(f"Claim:{written.changes[0].claim}")
     (capture,) = claim.backing.capture_digests

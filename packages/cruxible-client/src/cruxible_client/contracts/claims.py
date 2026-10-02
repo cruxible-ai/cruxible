@@ -979,64 +979,139 @@ def _diagnostic(code: str, message: str, *, path: str, field: str | None = None)
     )
 
 
-def _validate_literal_schema(value: object, schema: Mapping[str, object]) -> bool:
-    """Deterministic closed subset sufficient for frozen ClaimType v1 schemas."""
+_JSON_TYPES = {
+    "null": lambda value: value is None,
+    "boolean": lambda value: isinstance(value, bool),
+    "integer": lambda value: isinstance(value, int) and not isinstance(value, bool),
+    "number": lambda value: isinstance(value, (int, float)) and not isinstance(value, bool),
+    "string": lambda value: isinstance(value, str),
+    "array": lambda value: isinstance(value, list),
+    "object": lambda value: isinstance(value, dict),
+}
+_NUMERIC_BOUNDS: tuple[tuple[str, Callable[[float, float], bool]], ...] = (
+    ("minimum", lambda value, bound: value >= bound),
+    ("maximum", lambda value, bound: value <= bound),
+    ("exclusiveMinimum", lambda value, bound: value > bound),
+    ("exclusiveMaximum", lambda value, bound: value < bound),
+)
+_SHOWN_MAX = 60
 
+
+def _shown(value: object) -> str:
+    """A value as a refusal quotes it: JSON, cut to a readable length."""
+
+    try:
+        text = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    except (TypeError, ValueError):
+        text = repr(value)
+    return text if len(text) <= _SHOWN_MAX else text[: _SHOWN_MAX - 1] + "\u2026"
+
+
+def _json_type(value: object) -> str:
+    return next(
+        (
+            name
+            for name in ("null", "boolean", "integer", "number", "string", "array", "object")
+            if _JSON_TYPES[name](value)
+        ),
+        type(value).__name__,
+    )
+
+
+def _literal_violation(
+    value: object, schema: Mapping[str, object], *, at: str, numeric_bounds: bool
+) -> str | None:
+    """The first constraint of ``schema`` that ``value`` violates, or ``None``."""
+
+    where = f"at {at}: " if at else ""
     if "const" in schema and canonical_bytes(value) != canonical_bytes(schema["const"]):
-        return False
+        return f"{where}const {_shown(schema['const'])}, got {_shown(value)}"
     if "enum" in schema:
         enum = schema["enum"]
         if not isinstance(enum, list) or canonical_bytes(value) not in {
             canonical_bytes(item) for item in enum
         }:
-            return False
+            members = ", ".join(_shown(item) for item in enum) if isinstance(enum, list) else "?"
+            return f"{where}enum [{members}], got {_shown(value)}"
     kind = schema.get("type")
-    matches = {
-        "null": value is None,
-        "boolean": isinstance(value, bool),
-        "integer": isinstance(value, int) and not isinstance(value, bool),
-        "number": isinstance(value, (int, float)) and not isinstance(value, bool),
-        "string": isinstance(value, str),
-        "array": isinstance(value, list),
-        "object": isinstance(value, dict),
-    }
-    if kind is not None and not matches.get(str(kind), False):
-        return False
+    if kind is not None:
+        check = _JSON_TYPES.get(str(kind))
+        if check is None or not check(value):
+            return f"{where}type {kind}, got {_json_type(value)} {_shown(value)}"
     if isinstance(value, str):
         minimum_length = schema.get("minLength")
         maximum_length = schema.get("maxLength")
         pattern = schema.get("pattern")
         if isinstance(minimum_length, int) and len(value) < minimum_length:
-            return False
+            return f"{where}minLength {minimum_length}, got {len(value)}"
         if isinstance(maximum_length, int) and len(value) > maximum_length:
-            return False
+            return f"{where}maxLength {maximum_length}, got {len(value)}"
         if isinstance(pattern, str) and re.search(pattern, value) is None:
-            return False
+            return f"{where}pattern {_shown(pattern)}, got {_shown(value)}"
+    if numeric_bounds and isinstance(value, (int, float)) and not isinstance(value, bool):
+        for keyword, within in _NUMERIC_BOUNDS:
+            bound = schema.get(keyword)
+            if (
+                isinstance(bound, (int, float))
+                and not isinstance(bound, bool)
+                and not within(value, bound)
+            ):
+                return f"{where}{keyword} {_shown(bound)}, got {_shown(value)}"
     if isinstance(value, dict):
         required = schema.get("required", [])
         if isinstance(required, list) and not set(required).issubset(value):
-            return False
+            missing = sorted(str(name) for name in set(required) - set(value))
+            return f"{where}required {_shown(missing)}, missing {_shown(missing[0])}"
         properties = schema.get("properties", {})
         if isinstance(properties, dict):
             for name, member in value.items():
                 member_schema = properties.get(name)
-                if isinstance(member_schema, dict) and not _validate_literal_schema(
-                    member, member_schema
-                ):
-                    return False
+                if isinstance(member_schema, dict):
+                    found = _literal_violation(
+                        member,
+                        member_schema,
+                        at=f"{at}.{name}" if at else str(name),
+                        numeric_bounds=numeric_bounds,
+                    )
+                    if found is not None:
+                        return found
                 if member_schema is None and schema.get("additionalProperties") is False:
-                    return False
+                    return f"{where}additionalProperties false, got {_shown(name)}"
     item_schema = schema.get("items")
     if isinstance(value, list) and isinstance(item_schema, dict):
-        if any(not _validate_literal_schema(item, item_schema) for item in value):
-            return False
-    return True
+        for index, item in enumerate(value):
+            found = _literal_violation(
+                item, item_schema, at=f"{at}[{index}]", numeric_bounds=numeric_bounds
+            )
+            if found is not None:
+                return found
+    return None
+
+
+def _validate_literal_schema(value: object, schema: Mapping[str, object]) -> bool:
+    """Deterministic closed subset sufficient for frozen ClaimType v1 schemas."""
+
+    return _literal_violation(value, schema, at="", numeric_bounds=False) is None
 
 
 def literal_satisfies_schema(value: object, schema: Mapping[str, object]) -> bool:
     """Whether one literal satisfies a ClaimType's literal schema, as the Claim law reads it."""
 
     return _validate_literal_schema(value, schema)
+
+
+def literal_schema_violation(value: object, schema: Mapping[str, object]) -> str | None:
+    """Name the literal-schema constraint ``value`` violates, with what it got, or ``None``.
+
+    For example ``maxLength 200, got 230`` or ``enum ["a", "b"], got "c"``; a
+    nested member is named by its path (``at items[2]: ...``). It reads every
+    keyword the Claim law reads (``literal_satisfies_schema``) and, as the
+    write verbs and the SDK's pre-wire admission do, the declared numeric bounds
+    (``minimum``, ``maximum``, ``exclusiveMinimum``, ``exclusiveMaximum``),
+    which the law itself does not.
+    """
+
+    return _literal_violation(value, schema, at="", numeric_bounds=True)
 
 
 @dataclass(frozen=True)
@@ -2598,6 +2673,7 @@ __all__ = [
     "claim_path",
     "claim_referent_context_digest",
     "literal_satisfies_schema",
+    "literal_schema_violation",
     "claim_statement_address",
     "claim_statement_digest",
     "claim_statement_card",
