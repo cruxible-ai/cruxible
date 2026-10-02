@@ -117,12 +117,16 @@ def _progress(instance: Any) -> tuple[int, str, str | None, str | None] | None:
 
 
 def floor_outcomes(instance: Any) -> tuple[contracts.PlaybillFloorConsumerOutcomeV1, ...]:
+    """The latest refresh outcome; health needs no per-generation history."""
+
     with _STATE.open(instance, create=False) as connection:
         if connection is None:
             return ()
         return tuple(
             contracts.PlaybillFloorConsumerOutcomeV1.model_validate_json(payload)
-            for (payload,) in connection.execute("SELECT payload FROM outcomes ORDER BY sequence")
+            for (payload,) in connection.execute(
+                "SELECT payload FROM outcomes ORDER BY sequence DESC LIMIT 1"
+            )
         )
 
 
@@ -264,6 +268,9 @@ def refresh_floor(
             )
             connection.execute(
                 "INSERT INTO outcomes(payload) VALUES (?)", (outcome.model_dump_json(),)
+            )
+            connection.execute(
+                "DELETE FROM outcomes WHERE sequence < (SELECT max(sequence) FROM outcomes)"
             )
         if error is not None:
             raise error

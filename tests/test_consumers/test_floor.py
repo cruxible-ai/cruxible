@@ -63,11 +63,25 @@ def test_off_renders_without_writing_and_on_delivers_the_head(world):
     manifest = read_floor_manifest(workspace / ".playbill" / "floor")
     assert manifest.generation == result.delta.head.generation
     assert refresh_floor(instance, instance.descriptor.instance_id).written.status == "unchanged"
-    assert [outcome.status for outcome in floor_outcomes(instance)] == [
-        "unchanged",
-        "written",
-        "unchanged",
-    ]
+    assert [outcome.status for outcome in floor_outcomes(instance)] == ["unchanged"]
+
+
+def test_outcomes_keep_only_the_latest_even_after_an_existing_history(world):
+    instance, _, _ = world
+    refresh_floor(instance, instance.descriptor.instance_id)
+    (outcome,) = floor_outcomes(instance)
+    with floor._STATE.open(instance) as connection:
+        connection.executemany(
+            "INSERT INTO outcomes(payload) VALUES (?)", [(outcome.model_dump_json(),)] * 40
+        )
+    # Readers are bounded even before the next run prunes an older database.
+    assert floor_outcomes(instance) == (outcome,)
+    for _ in range(40):
+        refresh_floor(instance, instance.descriptor.instance_id)
+    with floor._STATE.open(instance, create=False) as connection:
+        assert connection.execute("SELECT count(*) FROM outcomes").fetchone() == (1,)
+    assert floor_outcomes(instance) == (outcome,)
+    assert FLOOR.health(instance, now=NOW)[0].detail["outcome"] == outcome.model_dump(mode="json")
 
 
 def test_three_pending_accepts_coalesce_at_the_current_head(world):
