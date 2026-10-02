@@ -297,8 +297,13 @@ def test_hold_refuses_to_block_a_running_loop() -> None:
 
 
 def test_the_floor_admission_is_one_shared_object() -> None:
+    from cruxible_core.consumers import floor
     from cruxible_core.runtime import admission as module
+    from cruxible_core.runtime import host_api
     from cruxible_core.server.routes import playbill as routes
 
     assert isinstance(module.FLOOR_ADMISSION, KeyedAdmission)
     assert routes.FLOOR_ADMISSION is module.FLOOR_ADMISSION
+    # Daemon floor delivery and attachment changes take the same object.
+    assert floor.FLOOR_ADMISSION is module.FLOOR_ADMISSION
+    assert host_api.FLOOR_ADMISSION is module.FLOOR_ADMISSION

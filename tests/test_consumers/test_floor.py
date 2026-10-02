@@ -11,6 +11,7 @@ from cruxible_client.authoring.floor_apply import read_floor_manifest
 from cruxible_client.authoring.workspace import PlaybillWorkspaceError
 from cruxible_core.consumers import floor
 from cruxible_core.consumers.floor import FLOOR, floor_outcomes, refresh_floor
+from cruxible_core.runtime.admission import FLOOR_ADMISSION
 from cruxible_core.server.registry import InstanceRegistry
 from cruxible_core.triggers.journal import evaluate_triggers, schedule_deadline
 from tests.core_support._write_support import seed_write_surface
@@ -97,7 +98,7 @@ def test_three_pending_accepts_coalesce_at_the_current_head(world):
         FLOOR.run(manager, instance.descriptor.instance_id, work, now=NOW)
 
     with ThreadPoolExecutor(max_workers=1) as pool:
-        with floor.floor_admission(instance.descriptor.instance_id):
+        with FLOOR_ADMISSION.hold(instance.descriptor.instance_id):
             pending = pool.submit(run)
             assert busy.wait(10)
             for value in ("ready", "blocked", "done"):
@@ -229,7 +230,11 @@ def test_registry_migration_is_idempotent_and_detach_clears_delivery(tmp_path):
 def test_delivery_and_deliver_now_share_admission_but_instances_proceed(
     world, monkeypatch, tmp_path
 ):
+    import asyncio
+
     from cruxible_core.runtime import host_api
+    from cruxible_core.server.playbill_request_models import PlaybillFloorDeltaRequest
+    from cruxible_core.server.routes import playbill as routes
 
     instance, _, registry = world
     registry.set_floor_delivery(instance.descriptor.instance_id, True)
@@ -258,7 +263,22 @@ def test_delivery_and_deliver_now_share_admission_but_instances_proceed(
     monkeypatch.setattr(
         host_api, "get_playbill_manager", lambda: SimpleNamespace(get=lambda _: instance)
     )
-    with ThreadPoolExecutor(max_workers=3) as pool:
+    # The HTTP delta route is the third writer of the same admission.
+    delta_rendered = Event()
+
+    def delta(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        delta_rendered.set()
+        return "delta"
+
+    monkeypatch.setattr(routes, "resolve_server_instance_id", lambda instance_id: instance_id)
+    monkeypatch.setattr(routes.playbill_api, "playbill_floor_delta", delta)
+
+    def delta_route():  # type: ignore[no-untyped-def]
+        return asyncio.run(
+            routes.floor_delta(instance.descriptor.instance_id, PlaybillFloorDeltaRequest())
+        )
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
         first = pool.submit(refresh_floor, instance, instance.descriptor.instance_id)
         assert entered.wait(10)
         queued = pool.submit(
@@ -266,14 +286,19 @@ def test_delivery_and_deliver_now_share_admission_but_instances_proceed(
             instance.descriptor.instance_id,
             workspace_attachment_authorized=True,
         )
+        routed = pool.submit(delta_route)
         other = pool.submit(refresh_floor, other_instance, "inst_other")
         assert other.result(timeout=10).written.status == "written"
         assert read_floor_manifest(other_workspace / ".playbill" / "floor") is not None
         assert not second.is_set()
+        # The route is admitted only once the consumer's render lets go.
+        assert not delta_rendered.wait(0.2)
         release.set()
         assert first.result(timeout=10).written.status == "written"
         assert queued.result(timeout=10).written.status == "unchanged"
-        assert second.is_set()
+        assert routed.result(timeout=10) == "delta"
+        assert second.is_set() and delta_rendered.is_set()
+    assert FLOOR_ADMISSION.active_keys() == 0
 
 
 def test_persistent_base_mismatch_retries_once_and_stalls(world, monkeypatch):

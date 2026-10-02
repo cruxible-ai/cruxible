@@ -2,7 +2,9 @@
 
 The journal supplies every refresh signal; this kind owns no clock. One flight
 per instance folds all pending fires into the current head. Delivery is confined
-to the registered workspace's floor, under the same admission as deliver-now.
+to the registered workspace's floor and holds ``FLOOR_ADMISSION``, the one floor
+admission per instance that deliver-now, the export and delta routes and
+attachment changes share, so no two floor writers of an instance overlap.
 The retained outcomes and cursor are derived bookkeeping, never floor authority.
 """
 
@@ -10,9 +12,7 @@ from __future__ import annotations
 
 import base64
 import json
-import threading
-from collections.abc import Iterable, Iterator
-from contextlib import contextmanager
+from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
@@ -41,30 +41,19 @@ from cruxible_core.consumers.protocol import (
 from cruxible_core.consumers.state import DisposableState
 from cruxible_core.errors import RequestRefusedError
 from cruxible_core.indexes.projection import AcceptedCoordinate
+from cruxible_core.runtime.admission import FLOOR_ADMISSION
 from cruxible_core.server.registry import InstanceRecord, get_registry
 from cruxible_core.service.floor.floor import service_export_playbill_floor
 from cruxible_core.service.floor.floor_delta import service_playbill_floor_delta
 from cruxible_core.service.floor.floor_index import advance_floor_index
 from cruxible_core.triggers.journal import internal_triggers, latest_sequence
 
-_LOCKS: dict[str, threading.Lock] = {}
-_LOCKS_GUARD = threading.Lock()
 _STATE = DisposableState(
     "floor",
     "CREATE TABLE progress (id INTEGER PRIMARY KEY CHECK(id=1), covered INTEGER NOT NULL, "
     "target TEXT NOT NULL, completed TEXT, failed TEXT) STRICT;"
     "CREATE TABLE outcomes (sequence INTEGER PRIMARY KEY, payload TEXT NOT NULL) STRICT;",
 )
-
-
-@contextmanager
-def floor_admission(instance_id: str) -> Iterator[None]:
-    """The one swappable seam for floor writers and attachment changes."""
-
-    with _LOCKS_GUARD:
-        lock = _LOCKS.setdefault(instance_id, threading.Lock())
-    with lock:
-        yield
 
 
 def _target(instance: Any, record: InstanceRecord | None, head: Any = None) -> str:
@@ -189,7 +178,7 @@ def refresh_floor(
 ) -> contracts.PlaybillFloorDeliveryResultV1 | None:
     """Render at the current head and, when opted in, apply through the shared writer."""
 
-    with floor_admission(instance_id):
+    with FLOOR_ADMISSION.hold(instance_id):
         record = get_registry().get(instance_id)
         if require_delivery and (
             record is None or not record.floor_delivery or record.workspace_root is None

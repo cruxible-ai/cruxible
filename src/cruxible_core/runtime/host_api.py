@@ -24,6 +24,7 @@ from cruxible_core.compiler.compiler import (
 )
 from cruxible_core.errors import ConfigError
 from cruxible_core.floor.workspace_advertisement import workspace_git_object_format
+from cruxible_core.runtime.admission import FLOOR_ADMISSION
 from cruxible_core.runtime.execution_policy import registered_isolated_executors
 from cruxible_core.runtime.permissions import (
     check_permission,
@@ -279,9 +280,7 @@ def set_playbill_floor_delivery(
     check_permission("cruxible_playbill_workspace_floor_delivery", instance_id=instance_id)
     if not workspace_attachment_authorized:
         raise ConfigError("Floor delivery changes require the local Unix socket")
-    from cruxible_core.consumers.floor import floor_admission
-
-    with floor_admission(instance_id):
+    with FLOOR_ADMISSION.hold(instance_id):
         get_registry().set_floor_delivery(instance_id, enabled)
     return playbill_host_workspace_registration(instance_id, expose_workspace_path=True)
 
@@ -358,9 +357,7 @@ def playbill_host_workspace_detach(
             status="not_registered",
         )
     _refuse_detach_with_registered_blocks(instance_id)
-    from cruxible_core.consumers.floor import floor_admission
-
-    with floor_admission(instance_id):
+    with FLOOR_ADMISSION.hold(instance_id):
         detached = registry.detach_governed_workspace(
             instance_id, expected_workspace_root=record.workspace_root
         )
