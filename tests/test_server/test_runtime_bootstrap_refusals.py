@@ -182,3 +182,110 @@ def test_a_per_secret_claim_table_migrates_to_one_claim_per_host(
         expected_bootstrap_secret=EXPECTED_SECRET,
     )
     assert claimed.record.instance_id == "inst_b"
+
+
+def _per_secret_layout(db_path: Path) -> None:
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE runtime_bootstrap_claims (
+                bootstrap_secret_hash TEXT PRIMARY KEY,
+                instance_id TEXT NOT NULL,
+                credential_id TEXT NOT NULL UNIQUE,
+                claimed_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO runtime_bootstrap_claims VALUES (?, ?, ?, ?)",
+            (_hash_token(EXPECTED_SECRET), "inst_a", "rcred_old", "2026-09-30T00:00:00Z"),
+        )
+    conn.close()
+
+
+def _claims(db_path: Path) -> tuple[set[str], list[tuple[str, str]]]:
+    with sqlite3.connect(db_path) as conn:
+        tables = {
+            str(row[0])
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+        rows = [
+            (str(row[0]), str(row[1]))
+            for row in conn.execute(
+                "SELECT instance_id, credential_id FROM runtime_bootstrap_claims"
+            )
+        ]
+    conn.close()
+    return tables, rows
+
+
+def test_an_interrupted_claim_migration_leaves_the_old_layout_and_reruns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fault mid-rebuild strands nothing: the rebuild is one transaction."""
+
+    monkeypatch.setattr(credentials_module, "_validate_governed_instance_id", lambda _id: None)
+    db_path = tmp_path / "daemon" / "runtime_credentials.db"
+    _per_secret_layout(db_path)
+
+    def refuse_the_copy(action: int, table: str | None, *_rest: object) -> int:
+        # Fault at the copy into the rebuilt per-host table.
+        if action == sqlite3.SQLITE_INSERT and table == "runtime_bootstrap_claims":
+            return sqlite3.SQLITE_DENY
+        return sqlite3.SQLITE_OK
+
+    conn = sqlite3.connect(db_path)
+    conn.set_authorizer(refuse_the_copy)
+    with pytest.raises(sqlite3.DatabaseError):
+        RuntimeCredentialStore._ensure_bootstrap_claims_per_host_conn(conn)
+    conn.close()
+
+    tables, rows = _claims(db_path)
+    assert "runtime_bootstrap_claims_per_secret" not in tables
+    assert rows == [("inst_a", "rcred_old")]
+
+    reopened = RuntimeCredentialStore(db_path)
+    tables, rows = _claims(db_path)
+    assert "runtime_bootstrap_claims_per_secret" not in tables
+    assert rows == [("inst_a", "rcred_old")]
+    assert _refusal(reopened, instance_id="inst_a").error_code == (
+        "runtime_bootstrap.secret_already_claimed"
+    )
+    RuntimeCredentialStore(db_path)  # idempotent across another reopen
+    assert _claims(db_path)[1] == [("inst_a", "rcred_old")]
+
+
+def test_claims_a_non_atomic_rebuild_stranded_are_recovered_on_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(credentials_module, "_validate_governed_instance_id", lambda _id: None)
+    db_path = tmp_path / "daemon" / "runtime_credentials.db"
+    _per_secret_layout(db_path)
+    with sqlite3.connect(db_path) as conn:
+        # What an interrupted non-atomic rebuild left: the claims renamed away
+        # and an empty per-host table that reads as already migrated.
+        conn.execute(
+            "ALTER TABLE runtime_bootstrap_claims RENAME TO runtime_bootstrap_claims_per_secret"
+        )
+        conn.execute(
+            """
+            CREATE TABLE runtime_bootstrap_claims (
+                bootstrap_secret_hash TEXT NOT NULL,
+                instance_id TEXT NOT NULL,
+                credential_id TEXT NOT NULL UNIQUE,
+                claimed_at TEXT NOT NULL,
+                PRIMARY KEY (bootstrap_secret_hash, instance_id)
+            )
+            """
+        )
+    conn.close()
+
+    store = RuntimeCredentialStore(db_path)
+
+    tables, rows = _claims(db_path)
+    assert "runtime_bootstrap_claims_per_secret" not in tables
+    assert rows == [("inst_a", "rcred_old")]
+    assert _refusal(store, instance_id="inst_a").error_code == (
+        "runtime_bootstrap.secret_already_claimed"
+    )

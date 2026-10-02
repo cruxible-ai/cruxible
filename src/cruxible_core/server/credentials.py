@@ -31,6 +31,10 @@ _TOKEN_PREFIX = "crt"
 _TOKEN_SECRET_BYTES = 32
 
 
+#: Where the per-secret claim table is renamed while it is rebuilt per host.
+_STRANDED_CLAIMS_TABLE = "runtime_bootstrap_claims_per_secret"
+
+
 @dataclass(frozen=True)
 class RuntimeCredentialRecord:
     """Stored runtime credential metadata without plaintext token material."""
@@ -893,36 +897,79 @@ class RuntimeCredentialStore:
         on the same daemon claims its own first ADMIN credential with the same
         secret, with no restart. The old table keyed claims by the secret alone,
         so one claim on any host used it up for every other one.
+
+        The rebuild is one transaction: an interruption anywhere leaves the old
+        layout, which the next open migrates again. A layout an earlier,
+        non-atomic rebuild stranded (claims left in the renamed
+        ``runtime_bootstrap_claims_per_secret``) is recovered the same way: its
+        rows move into the per-host table and the stranded table is dropped.
         """
 
-        keys = [
-            str(row[1])
-            for row in sorted(
-                (row for row in conn.execute("PRAGMA table_info(runtime_bootstrap_claims)")),
-                key=lambda row: int(row[5]),
-            )
-            if int(row[5]) > 0
-        ]
-        if keys != ["bootstrap_secret_hash"]:
-            return
-        conn.executescript(
-            """
-            ALTER TABLE runtime_bootstrap_claims RENAME TO runtime_bootstrap_claims_per_secret;
-            CREATE TABLE runtime_bootstrap_claims (
-                bootstrap_secret_hash TEXT NOT NULL,
-                instance_id TEXT NOT NULL,
-                credential_id TEXT NOT NULL UNIQUE,
-                claimed_at TEXT NOT NULL,
-                PRIMARY KEY (bootstrap_secret_hash, instance_id)
-            );
-            INSERT INTO runtime_bootstrap_claims
-                SELECT bootstrap_secret_hash, instance_id, credential_id, claimed_at
-                FROM runtime_bootstrap_claims_per_secret;
-            DROP TABLE runtime_bootstrap_claims_per_secret;
-            CREATE INDEX IF NOT EXISTS idx_runtime_bootstrap_claims_instance
-                ON runtime_bootstrap_claims(instance_id);
-            """
+        def primary_key(table: str) -> list[str]:
+            return [
+                str(row[1])
+                for row in sorted(
+                    (row for row in conn.execute(f"PRAGMA table_info({table})")),
+                    key=lambda row: int(row[5]),
+                )
+                if int(row[5]) > 0
+            ]
+
+        stranded = (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                (_STRANDED_CLAIMS_TABLE,),
+            ).fetchone()
+            is not None
         )
+        old_layout = primary_key("runtime_bootstrap_claims") == ["bootstrap_secret_hash"]
+        if not old_layout and not stranded:
+            return
+        if conn.in_transaction:
+            conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            if old_layout:
+                if stranded:
+                    raise sqlite3.DatabaseError(
+                        "runtime_bootstrap_claims has both the per-secret layout and a "
+                        f"stranded {_STRANDED_CLAIMS_TABLE}; resolve by hand"
+                    )
+                conn.execute(
+                    f"ALTER TABLE runtime_bootstrap_claims RENAME TO {_STRANDED_CLAIMS_TABLE}"
+                )
+                conn.execute(
+                    """
+                    CREATE TABLE runtime_bootstrap_claims (
+                        bootstrap_secret_hash TEXT NOT NULL,
+                        instance_id TEXT NOT NULL,
+                        credential_id TEXT NOT NULL UNIQUE,
+                        claimed_at TEXT NOT NULL,
+                        PRIMARY KEY (bootstrap_secret_hash, instance_id)
+                    )
+                    """
+                )
+            # INSERT OR IGNORE: a stranded copy may already be partly present
+            # in the per-host table, and a row in both is the same claim.
+            conn.execute(
+                f"""
+                INSERT OR IGNORE INTO runtime_bootstrap_claims
+                    (bootstrap_secret_hash, instance_id, credential_id, claimed_at)
+                SELECT bootstrap_secret_hash, instance_id, credential_id, claimed_at
+                FROM {_STRANDED_CLAIMS_TABLE}
+                """
+            )
+            conn.execute(f"DROP TABLE {_STRANDED_CLAIMS_TABLE}")
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_runtime_bootstrap_claims_instance
+                ON runtime_bootstrap_claims(instance_id)
+                """
+            )
+        except BaseException:
+            conn.rollback()
+            raise
+        conn.commit()
 
     @staticmethod
     def _ensure_recovery_events_table_conn(conn: sqlite3.Connection) -> None:
