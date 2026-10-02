@@ -9,7 +9,6 @@ from fastapi import APIRouter
 from cruxible_client import contracts
 from cruxible_client.contracts.change_control import ChangeControlRequestV1
 from cruxible_core.runtime.permissions import PermissionMode, check_permission
-from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.auth import get_current_auth_context
 from cruxible_core.server.credential_minting import (
     mint_principal_credential,
@@ -25,7 +24,7 @@ from cruxible_core.server.request_models import (
     RuntimeCredentialRotateRequest,
 )
 from cruxible_core.server.routes import resolve_server_instance_id
-from cruxible_core.service.change_preview import change_scope, full_coordinate
+from cruxible_core.service.change_preview import state_change_scope
 
 router = APIRouter(prefix="/api/v1", tags=["runtime-credentials"])
 
@@ -57,11 +56,6 @@ def _record_to_contract(
     )
 
 
-def _coordinate(instance_id: str) -> contracts.PlaybillAcceptedCoordinate | None:
-    instance = get_playbill_manager().initialized(instance_id)
-    return None if instance is None else full_coordinate(instance)
-
-
 @router.post(
     "/{instance_id}/runtime/credentials",
     response_model=contracts.RuntimeCredentialResult,
@@ -71,14 +65,13 @@ def create_runtime_credential(
     req: RuntimeCredentialCreateRequest,
 ) -> contracts.RuntimeCredentialResult:
     resolved_instance_id = _authorize_runtime_credentials(instance_id)
-    with change_scope(
-        get_playbill_manager().initialized(resolved_instance_id),
+    with state_change_scope(
         dry_run=req.dry_run,
         at=req.at,
         kind="direct",
         operation="credential.mint",
         describe=f"minting a credential for {req.principal_id}",
-    ) as mode:
+    ) as change:
         created = mint_principal_credential(
             instance_id=resolved_instance_id,
             principal_id=req.principal_id,
@@ -86,12 +79,13 @@ def create_runtime_credential(
             label=req.label,
             principal_proof=req.principal_proof,
             auth_context=get_current_auth_context(),
+            observe=change.observe,
         )
     return contracts.RuntimeCredentialResult(
-        status="would_mint" if mode.previewing else "minted",
+        status="would_mint" if change.previewing else "minted",
         credential=_record_to_contract(created.record),
-        token=None if mode.previewing else created.token,
-        coordinate=_coordinate(resolved_instance_id),
+        token=None if change.previewing else created.token,
+        coordinate=change.coordinate,
     )
 
 
@@ -118,25 +112,30 @@ def revoke_runtime_credential_route(
     credential_id: str,
     req: ChangeControlRequestV1 | None = None,
 ) -> contracts.RuntimeCredentialResult:
-    """Revoke one credential. It cannot be undone: previews unless committed with ``at``."""
+    """Revoke one credential. It cannot be undone: previews unless committed with ``at``.
+
+    Pinned to the credential's own state, so a host with no Playbill yet (its
+    bootstrap or recovery credential) previews and commits like any other.
+    """
 
     resolved_instance_id = _authorize_runtime_credentials(instance_id)
     control = req or ChangeControlRequestV1()
-    with change_scope(
-        get_playbill_manager().initialized(resolved_instance_id),
+    with state_change_scope(
         dry_run=control.dry_run,
         at=control.at,
         kind="irreversible",
         operation="credential.revoke",
         describe=f"revoking credential {credential_id}",
-    ) as mode:
+    ) as change:
         record = revoke_runtime_credential(
-            instance_id=resolved_instance_id, credential_id=credential_id
+            instance_id=resolved_instance_id,
+            credential_id=credential_id,
+            observe=change.observe,
         )
     return contracts.RuntimeCredentialResult(
-        status="would_revoke" if mode.previewing else "revoked",
+        status="would_revoke" if change.previewing else "revoked",
         credential=_record_to_contract(record),
-        coordinate=_coordinate(resolved_instance_id),
+        coordinate=change.coordinate,
     )
 
 
@@ -153,23 +152,23 @@ def rotate_runtime_credential(
 
     resolved_instance_id = _authorize_runtime_credentials(instance_id)
     request = req or RuntimeCredentialRotateRequest()
-    with change_scope(
-        get_playbill_manager().initialized(resolved_instance_id),
+    with state_change_scope(
         dry_run=request.dry_run,
         at=request.at,
         kind="irreversible",
         operation="credential.rotate",
         describe=f"rotating credential {credential_id}",
-    ) as mode:
+    ) as change:
         created = rotate_principal_credential(
             instance_id=resolved_instance_id,
             credential_id=credential_id,
             principal_proof=request.principal_proof,
             auth_context=get_current_auth_context(),
+            observe=change.observe,
         )
     return contracts.RuntimeCredentialResult(
-        status="would_rotate" if mode.previewing else "rotated",
+        status="would_rotate" if change.previewing else "rotated",
         credential=_record_to_contract(created.record),
-        token=None if mode.previewing else created.token,
-        coordinate=_coordinate(resolved_instance_id),
+        token=None if change.previewing else created.token,
+        coordinate=change.coordinate,
     )

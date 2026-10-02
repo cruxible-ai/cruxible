@@ -344,22 +344,27 @@ class CruxibleClient:
         return self._parse_model(response, contracts.PlaybillBlockDepublishResultV1)
 
     def playbill_host_workspace_detach(
-        self, instance_id: str, *, dry_run: bool | None = None
+        self, instance_id: str, *, dry_run: bool | None = None, at: str | None = None
     ) -> contracts.PlaybillWorkspaceDetachResultV1:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/workspace-detach",
-            json=_change_control(dry_run, None),
+            json=_change_control(dry_run, at),
         )
         return self._parse_model(response, contracts.PlaybillWorkspaceDetachResultV1)
 
     def playbill_host_workspace_attach(
-        self, instance_id: str, *, workspace_root: str, dry_run: bool | None = None
+        self,
+        instance_id: str,
+        *,
+        workspace_root: str,
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> contracts.PlaybillHostWorkspaceAttachResultV1:
         """Attach the host to a Git worktree, initialized or not (local socket only)."""
 
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/workspace-attach",
-            json={"workspace_root": workspace_root, **_change_control(dry_run, None)},
+            json={"workspace_root": workspace_root, **_change_control(dry_run, at)},
         )
         return self._parse_model(response, contracts.PlaybillHostWorkspaceAttachResultV1)
 

@@ -378,6 +378,7 @@ def test_credential_claim_mint_and_list_emit_json(
         "instance_id": "inst_123",
         "permission_mode": "admin",
         "token": "crt_bootstrap",
+        "coordinate": None,
     }
     assert json.loads(minted.stdout)["token"] == "crt_reader"
     assert json.loads(minted.stdout)["credential"]["credential_id"] == "rcred_reader"

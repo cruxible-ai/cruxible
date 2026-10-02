@@ -6,11 +6,13 @@ import hashlib
 import hmac
 import secrets
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 from typing import cast
 
+from cruxible_client.contracts.change_control import PlaybillStateCoordinateV1
 from cruxible_client.contracts.primitives import new_id
 from cruxible_client.contracts.repairs import RepairOperationV1
 from cruxible_client.contracts.runtime_credentials import (
@@ -33,6 +35,50 @@ _TOKEN_SECRET_BYTES = 32
 
 #: Where the per-secret claim table is renamed while it is rebuilt per host.
 _STRANDED_CLAIMS_TABLE = "runtime_bootstrap_claims_per_secret"
+
+#: The columns a credential's state coordinate covers: everything that names,
+#: authorizes or ends it.
+_CREDENTIAL_STATE_COLUMNS = (
+    "credential_id",
+    "instance_id",
+    "principal_id",
+    "label",
+    "permission_mode",
+    "token_hash",
+    "created_at",
+    "created_by",
+    "revoked_at",
+)
+
+#: Called with the state a change is about to write over, inside the write's
+#: own transaction: R12's pin check (`StateChange.observe`).
+StateObserver = Callable[[PlaybillStateCoordinateV1], None]
+
+
+def credential_state(credential_id: str, row: sqlite3.Row | None) -> PlaybillStateCoordinateV1:
+    """The state coordinate of one credential (its whole stored row)."""
+
+    state = None if row is None else {name: row[name] for name in _CREDENTIAL_STATE_COLUMNS}
+    return PlaybillStateCoordinateV1.of(f"runtime_credential:{credential_id}", state)
+
+
+def _credential_set_state(
+    conn: sqlite3.Connection, instance_id: str, *, principal_id: str | None, scope: str
+) -> PlaybillStateCoordinateV1:
+    """The state coordinate of the credentials a mint or recovery adds to."""
+
+    rows = conn.execute(
+        """
+        SELECT credential_id, permission_mode, principal_id, revoked_at
+        FROM runtime_credentials
+        WHERE instance_id = ? AND (? IS NULL OR principal_id IS ?)
+        ORDER BY credential_id
+        """,
+        (instance_id, principal_id, principal_id),
+    ).fetchall()
+    return PlaybillStateCoordinateV1.of(
+        f"runtime_credentials:{instance_id}/{scope}", [list(row) for row in rows]
+    )
 
 
 @dataclass(frozen=True)
@@ -205,17 +251,22 @@ class RuntimeCredentialStore:
         *,
         reason: str = "runtime_credential_created",
         proof_digest: str | None = None,
+        observe: StateObserver | None = None,
     ) -> CreatedRuntimeCredential:
         """Commit a prepared credential after caller-side materialization succeeds.
 
         ``proof_digest`` names the principal's signed consent this credential
         consumed; recording it in the same transaction makes that consent
-        single-use.
+        single-use. ``observe`` sees the state the mint adds to
+        (`mint_state`), inside that transaction.
         """
         refuse_write_while_previewing("runtime credential store")
         _validate_governed_instance_id(created.record.instance_id)
         try:
             with self._connect() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                if observe is not None:
+                    observe(self.mint_state_conn(conn, created.record))
                 if proof_digest is not None:
                     self._spend_proof_conn(conn, proof_digest, created.record)
                 self._mark_auth_required_conn(
@@ -250,6 +301,34 @@ class RuntimeCredentialStore:
         )
         return self.commit_prepared_credential(created, proof_digest=proof_digest)
 
+    def mint_state(self, record: RuntimeCredentialRecord) -> PlaybillStateCoordinateV1:
+        """The state a mint of ``record`` adds to: its principal's credentials."""
+
+        with self._connect() as conn:
+            return self.mint_state_conn(conn, record)
+
+    @staticmethod
+    def mint_state_conn(
+        conn: sqlite3.Connection, record: RuntimeCredentialRecord
+    ) -> PlaybillStateCoordinateV1:
+        return _credential_set_state(
+            conn,
+            record.instance_id,
+            principal_id=record.principal_id,
+            scope=f"principal:{record.principal_id or '-'}",
+        )
+
+    def credential_state(self, credential_id: str) -> PlaybillStateCoordinateV1:
+        """One credential's state coordinate, as a revoke or rotate would see it."""
+
+        with self._connect() as conn:
+            row = conn.execute(
+                f"SELECT {', '.join(_CREDENTIAL_STATE_COLUMNS)} FROM runtime_credentials "
+                "WHERE credential_id = ?",
+                (credential_id,),
+            ).fetchone()
+        return credential_state(credential_id, row)
+
     def proof_spent(self, proof_digest: str) -> bool:
         """Whether this signed consent already minted a credential (a read)."""
         with self._connect() as conn:
@@ -280,6 +359,8 @@ class RuntimeCredentialStore:
         label: str,
         uid: int,
         hostname: str,
+        dry_run: bool = False,
+        observe: StateObserver | None = None,
     ) -> CreatedRuntimeCredential:
         """Create a local offline ADMIN recovery credential plus audit row.
 
@@ -289,8 +370,14 @@ class RuntimeCredentialStore:
         itself is the targeting source of truth. Token generation, hashing, auth
         state, and credential insertion still use the same store helpers as the
         normal mint path.
+
+        ``dry_run`` runs this same transaction -- the write lock, the schema
+        and target checks, every insert -- and rolls it back instead of
+        committing (R12), so a preview refuses exactly where the recovery
+        would. ``observe`` sees the instance's credentials inside it.
         """
-        refuse_write_while_previewing("runtime credential store")
+        if not dry_run:
+            refuse_write_while_previewing("runtime credential store")
         created = self._new_created_credential(
             instance_id=instance_id,
             label=label,
@@ -313,6 +400,8 @@ class RuntimeCredentialStore:
 
             self._ensure_principal_column_conn(conn)
             self._validate_recovery_target_conn(conn, instance_id)
+            if observe is not None:
+                observe(_credential_set_state(conn, instance_id, principal_id=None, scope="all"))
             self._ensure_recovery_events_table_conn(conn)
             self._mark_auth_required_conn(
                 conn,
@@ -344,7 +433,10 @@ class RuntimeCredentialStore:
                 created.record.instance_id,
                 created.record.credential_id,
             )
-            conn.commit()
+            if dry_run:
+                conn.rollback()
+            else:
+                conn.commit()
         except Exception:
             if conn.in_transaction:
                 conn.rollback()
@@ -364,6 +456,7 @@ class RuntimeCredentialStore:
         instance_id: str,
         bootstrap_secret: str,
         expected_bootstrap_secret: str | None,
+        observe: StateObserver | None = None,
     ) -> CreatedRuntimeCredential:
         """Prepare the initial ADMIN credential without committing it."""
         _validate_governed_instance_id(instance_id)
@@ -378,6 +471,8 @@ class RuntimeCredentialStore:
         bootstrap_secret_hash = _hash_token(bootstrap_secret)
         with self._connect() as conn:
             self._validate_bootstrap_claim_conn(conn, instance_id, bootstrap_secret_hash)
+            if observe is not None:
+                observe(_credential_set_state(conn, instance_id, principal_id=None, scope="all"))
 
         return self._new_created_credential(
             instance_id=instance_id,
@@ -391,6 +486,7 @@ class RuntimeCredentialStore:
         created: CreatedRuntimeCredential,
         *,
         bootstrap_secret: str,
+        observe: StateObserver | None = None,
     ) -> CreatedRuntimeCredential:
         """Commit a prepared bootstrap credential after materialization succeeds."""
         refuse_write_while_previewing("runtime credential store")
@@ -398,11 +494,18 @@ class RuntimeCredentialStore:
         bootstrap_secret_hash = _hash_token(bootstrap_secret)
         try:
             with self._connect() as conn:
+                conn.execute("BEGIN IMMEDIATE")
                 self._validate_bootstrap_claim_conn(
                     conn,
                     created.record.instance_id,
                     bootstrap_secret_hash,
                 )
+                if observe is not None:
+                    observe(
+                        _credential_set_state(
+                            conn, created.record.instance_id, principal_id=None, scope="all"
+                        )
+                    )
                 self._mark_auth_required_conn(
                     conn,
                     updated_at=created.record.created_at,
@@ -531,16 +634,24 @@ class RuntimeCredentialStore:
         *,
         instance_id: str,
         credential_id: str,
+        observe: StateObserver | None = None,
     ) -> RuntimeCredentialRecord:
-        """Revoke one instance-scoped credential and return its metadata."""
+        """Revoke one instance-scoped credential and return its metadata.
+
+        ``observe`` sees the credential's state inside the revoking
+        transaction, before it is changed.
+        """
         refuse_write_while_previewing("runtime credential store")
         _validate_governed_instance_id(instance_id)
         revoked_at = format_datetime(utc_now())
         assert revoked_at is not None
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             existing = self._fetch_record_row(conn, instance_id, credential_id)
             if existing is None:
                 raise RuntimeCredentialNotFoundError(credential_id)
+            if observe is not None:
+                observe(credential_state(credential_id, existing))
             if existing["revoked_at"] is None:
                 conn.execute(
                     """
@@ -587,11 +698,13 @@ class RuntimeCredentialStore:
         instance_id: str,
         credential_id: str,
         proof_digest: str | None = None,
+        observe: StateObserver | None = None,
     ) -> CreatedRuntimeCredential:
         """Revoke an active credential and commit a prepared replacement.
 
         ``proof_digest`` names the principal's signed consent the replacement
         consumed, spent in the same transaction exactly as a mint spends one.
+        ``observe`` sees the replaced credential's state in that transaction.
         """
         refuse_write_while_previewing("runtime credential store")
         _validate_governed_instance_id(instance_id)
@@ -601,6 +714,7 @@ class RuntimeCredentialStore:
                 instance_id=instance_id,
                 credential_id=credential_id,
                 proof_digest=proof_digest,
+                observe=observe,
             )
         except sqlite3.IntegrityError as exc:
             if proof_digest is None:
@@ -614,11 +728,15 @@ class RuntimeCredentialStore:
         instance_id: str,
         credential_id: str,
         proof_digest: str | None,
+        observe: StateObserver | None,
     ) -> CreatedRuntimeCredential:
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             existing = self._fetch_record_row(conn, instance_id, credential_id)
             if existing is None or existing["revoked_at"] is not None:
                 raise RuntimeCredentialNotFoundError(credential_id)
+            if observe is not None:
+                observe(credential_state(credential_id, existing))
             if proof_digest is not None:
                 self._spend_proof_conn(conn, proof_digest, created.record)
 

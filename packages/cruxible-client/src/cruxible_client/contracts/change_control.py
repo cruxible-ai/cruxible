@@ -7,7 +7,11 @@ the change's own outcome shape with a ``would_*`` status, pinned to the
 accepted ``coordinate`` it was evaluated at.
 
 ``at`` carries that coordinate back. A commit carrying it refuses
-``playbill.preview.state_moved`` when accepted state moved since the preview.
+``playbill.preview.state_moved`` when accepted state moved since the preview;
+the check runs again where the change commits, under the lock its write holds.
+A change to state outside the accepted ledger (a runtime credential, a host's
+worktree binding, a page's projection markers) answers instead with a
+``PlaybillStateCoordinateV1``: a digest of exactly the records it changes.
 
 Defaults, per operation:
 
@@ -22,6 +26,8 @@ Defaults, per operation:
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -32,9 +38,10 @@ DRY_RUN_DESCRIPTION = (
     "derived across several artifacts, or one that cannot be undone, previews)."
 )
 AT_DESCRIPTION = (
-    "The coordinate a preview answered with (its git oid, or a unique prefix of 12+ "
-    "hex characters). A commit carrying it refuses playbill.preview.state_moved if "
-    "accepted state moved since. Required to commit a change that cannot be undone."
+    "The coordinate a preview answered with: its git oid, or for a change to operational "
+    "state its state digest (either may be shortened to a unique prefix of 12+ hex "
+    "characters). A commit carrying it refuses playbill.preview.state_moved if that state "
+    "moved since. Required to commit a change that cannot be undone."
 )
 
 DryRun = Annotated[bool | None, Field(default=None, description=DRY_RUN_DESCRIPTION)]
@@ -54,6 +61,34 @@ ChangeRefusalCode = Literal[
 ]
 
 
+class PlaybillStateCoordinateV1(BaseModel):
+    """The operational state one change was evaluated against.
+
+    ``subject`` names the records (``runtime_credential:<id>``,
+    ``host_workspace:<instance>``, ...) and ``digest`` is the sha256 of their
+    canonical JSON. A commit carrying ``at`` recomputes it where it writes and
+    refuses ``playbill.preview.state_moved`` when it differs.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-state-coordinate-v1"] = "playbill-state-coordinate-v1"
+    subject: str = Field(min_length=1, max_length=512)
+    digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @classmethod
+    def of(cls, subject: str, state: object) -> PlaybillStateCoordinateV1:
+        """The coordinate of ``state`` (JSON-serializable; None for an absent subject)."""
+
+        encoded = json.dumps(
+            {"subject": subject, "state": state},
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        ).encode("ascii")
+        return cls(subject=subject, digest=hashlib.sha256(encoded).hexdigest())
+
+
 class ChangeControlRequestV1(BaseModel):
     """The whole request body of a change that takes nothing else."""
 
@@ -71,5 +106,6 @@ __all__ = [
     "ChangeKind",
     "ChangeRefusalCode",
     "DryRun",
+    "PlaybillStateCoordinateV1",
     "PreviewAt",
 ]

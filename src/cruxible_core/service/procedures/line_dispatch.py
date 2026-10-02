@@ -328,6 +328,7 @@ def _arm_view(
     data: dict[str, Any],
     *,
     outcome: LineArmOutcomeV1 | None = None,
+    coordinate: AcceptedCoordinate | None = None,
 ) -> LineArmV1:
     active = data["stops_at"] is None
     automatic = (
@@ -343,7 +344,9 @@ def _arm_view(
         (data["line_id"],),
     ).fetchone()[0]
     view = store.arm_view(data, pending_automatic=automatic, pending_explicit=total - automatic)
-    return view if outcome is None else view.model_copy(update={"outcome": outcome})
+    if outcome is None:
+        return view
+    return view.model_copy(update={"outcome": outcome, "coordinate": coordinate})
 
 
 def service_arm_line(
@@ -383,7 +386,12 @@ def service_arm_line(
         return _previewed(
             mode.previewing,
             _arm_line(
-                instance, line, principal=principal, actor=actor, now=now, daemon_id=daemon_id
+                instance,
+                line,
+                principal=principal,
+                actor=actor,
+                now=now,
+                daemon_id=daemon_id,
             ),
         )
 
@@ -414,6 +422,7 @@ def _arm_line(
 ) -> LineArmV1:
     coordinate = instance.accepted_coordinate()
     accepted = _accepted_line_by_reference(instance, coordinate=coordinate, reference=line)
+    evaluated = AcceptedCoordinate.from_internal(coordinate)
     # An arm admits on its own; one whose every admission would refuse for want
     # of a mandate is a silent stall, so it refuses here instead.
     require_line_mandate(instance, accepted, coordinate=coordinate, now=now)
@@ -427,7 +436,7 @@ def _arm_line(
             and current["occurrence_epoch"] == accepted.line.occurrence_epoch
             and current["daemon_id"] == daemon_id
         ):
-            return _arm_view(store, conn, current, outcome="already_armed")
+            return _arm_view(store, conn, current, outcome="already_armed", coordinate=evaluated)
         if current is not None:
             _stop(
                 store,
@@ -451,7 +460,13 @@ def _arm_line(
         data = _open_segment(
             store, conn, arm, instance=instance, actor=actor, now=now, daemon_id=daemon_id
         )
-        return _arm_view(store, conn, data, outcome="armed" if current is None else "rearmed")
+        return _arm_view(
+            store,
+            conn,
+            data,
+            outcome="armed" if current is None else "rearmed",
+            coordinate=evaluated,
+        )
 
 
 def service_disarm_line(
@@ -479,15 +494,22 @@ def service_disarm_line(
         operation="playbill.line.disarm",
         describe=f"disarming Line {line}",
     ) as mode:
-        return _previewed(mode.previewing, _disarm_line(instance, line, actor=actor, now=now))
+        return _previewed(
+            mode.previewing,
+            _disarm_line(instance, line, actor=actor, now=now),
+        )
 
 
 def _disarm_line(
-    instance: PlaybillInstance, line: str, *, actor: GovernedActorContext, now: datetime
+    instance: PlaybillInstance,
+    line: str,
+    *,
+    actor: GovernedActorContext,
+    now: datetime,
 ) -> LineArmV1:
-    accepted = _accepted_line_by_reference(
-        instance, coordinate=instance.accepted_coordinate(), reference=line
-    )
+    coordinate = instance.accepted_coordinate()
+    accepted = _accepted_line_by_reference(instance, coordinate=coordinate, reference=line)
+    evaluated = AcceptedCoordinate.from_internal(coordinate)
     identity = line_identity_digest(accepted.line.identity)
     store = LineDispatchStore(instance)
     with line_arm_boundary(instance.root, identity), store.locked() as conn:
@@ -499,11 +521,17 @@ def _disarm_line(
             ).fetchone()
             if last is None:
                 raise LineNeverArmed(accepted.line.identity.name)
-            return _arm_view(store, conn, json.loads(last[0]), outcome="already_disarmed")
+            return _arm_view(
+                store,
+                conn,
+                json.loads(last[0]),
+                outcome="already_disarmed",
+                coordinate=evaluated,
+            )
         data = _stop(
             store, conn, current, reason="disarmed", detail="Disarmed.", actor=actor, now=now
         )
-        return _arm_view(store, conn, data, outcome="disarmed")
+        return _arm_view(store, conn, data, outcome="disarmed", coordinate=evaluated)
 
 
 def service_line_status(instance: PlaybillInstance, line: str) -> LineArmV1:

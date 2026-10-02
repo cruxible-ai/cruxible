@@ -865,7 +865,10 @@ def test_arm_and_disarm_are_idempotent_and_a_changed_arm_rebinds(tmp_path):
     assert armed.outcome == "armed"
     again = arm(LOCAL, start + timedelta(seconds=5))
     assert again.outcome == "already_armed"
-    assert again.model_copy(update={"outcome": None}) == service_line_status(instance, name)
+    # A status read carries no outcome and no evaluation coordinate.
+    assert again.model_copy(update={"outcome": None, "coordinate": None}) == (
+        service_line_status(instance, name)
+    )
     assert (again.arm_id, again.armed_at) == (armed.arm_id, armed.armed_at)
 
     # A different credential is a different setting: the arm rebinds from now.
@@ -887,7 +890,7 @@ def test_arm_and_disarm_are_idempotent_and_a_changed_arm_rebinds(tmp_path):
     assert repeat.outcome == "already_disarmed"
     stopped = disarmed.model_copy(update={"outcome": None})
     assert repeat.model_copy(update={"outcome": None}) == stopped
-    assert service_line_status(instance, name) == stopped
+    assert service_line_status(instance, name) == stopped.model_copy(update={"coordinate": None})
 
 
 def test_an_unbound_arming_credential_stops_the_arm(tmp_path, monkeypatch):
@@ -1135,4 +1138,55 @@ def test_arming_and_disarming_preview_on_their_own_path_and_write_nothing(tmp_pa
         ),
     )
     assert (disarm_preview.outcome, disarm_preview.state) == ("would_disarm", "stopped")
+    assert service_line_status(instance, line.identity.name).state == "armed"
+
+
+def test_an_arm_preview_answers_with_its_coordinate_and_a_stale_one_refuses(tmp_path):
+    """F-012: arm and disarm outcomes carry the coordinate they were evaluated at."""
+
+    from cruxible_core.errors import ChangeRefusedError
+
+    instance, line, _procedure = line_world(tmp_path, CaptureLandingTriggerPolicyV2(event=SELECTOR))
+    start = READ_TIME + timedelta(seconds=10)
+
+    def arm(**control):  # type: ignore[no-untyped-def]
+        return service_arm_line(
+            instance,
+            line.identity.name,
+            principal=LOCAL,
+            actor=_actor(instance),
+            now=start,
+            daemon_id="daemon",
+            **control,
+        )
+
+    preview = arm(dry_run=True)
+    head = instance.accepted_coordinate().git_oid
+    assert preview.outcome == "would_arm"
+    assert preview.coordinate is not None and preview.coordinate.git_oid == head
+    stale = ("0" if head[0] != "0" else "1") * len(head)
+    with pytest.raises(ChangeRefusedError) as moved:
+        arm(dry_run=False, at=stale)
+    assert moved.value.error_code == "playbill.preview.state_moved"
+    armed = arm(dry_run=False, at=preview.coordinate.git_oid)
+    assert (armed.outcome, armed.coordinate) == ("armed", preview.coordinate)
+    assert service_line_status(instance, line.identity.name).coordinate is None
+
+    disarm = service_disarm_line(
+        instance,
+        line.identity.name,
+        actor=_actor(instance),
+        now=start + timedelta(seconds=1),
+        dry_run=True,
+    )
+    assert (disarm.outcome, disarm.coordinate) == ("would_disarm", preview.coordinate)
+    with pytest.raises(ChangeRefusedError):
+        service_disarm_line(
+            instance,
+            line.identity.name,
+            actor=_actor(instance),
+            now=start + timedelta(seconds=1),
+            dry_run=False,
+            at=stale,
+        )
     assert service_line_status(instance, line.identity.name).state == "armed"

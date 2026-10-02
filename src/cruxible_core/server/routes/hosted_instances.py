@@ -70,6 +70,7 @@ def playbill_host_workspace_attach(
         workspace_root=req.workspace_root,
         workspace_attachment_authorized=_local_socket(request),
         dry_run=req.dry_run,
+        at=req.at,
     )
 
 
@@ -88,6 +89,7 @@ def playbill_host_workspace_detach(
         resolve_server_instance_id(instance_id),
         workspace_attachment_authorized=_local_socket(request),
         dry_run=None if req is None else req.dry_run,
+        at=None if req is None else req.at,
     )
 
 

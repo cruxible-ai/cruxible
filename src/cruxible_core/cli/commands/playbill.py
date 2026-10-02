@@ -729,18 +729,14 @@ def workspace_group() -> None:
 @workspace_group.command("attach")
 @click.option("--instance-id", default=None, help="Existing registered daemon host ID.")
 @click.option("--replace", is_flag=True, help="Replace a differing workspace config.")
-@click.option(
-    "--dry-run/--commit",
-    "dry_run",
-    default=None,
-    help="--dry-run: check the attachment and register and write nothing.",
-)
+@change_control_options
 @json_option
 @handle_errors
 def attach_workspace(
     instance_id: str | None,
     replace: bool,
     dry_run: bool | None,
+    at: str | None,
     output_json: bool,
 ) -> None:
     """Attach this Git worktree to a daemon host, initialized or not.
@@ -772,7 +768,7 @@ def attach_workspace(
     if registration.status != "registered":
         attached = _dispatch_cli(
             lambda client: client.playbill_host_workspace_attach(
-                selected, workspace_root=str(workspace), dry_run=dry_run
+                selected, workspace_root=str(workspace), dry_run=dry_run, at=at
             ),
             lambda: None,
             allow_local=False,
@@ -787,6 +783,7 @@ def attach_workspace(
                     f"Would attach {workspace} to Playbill host {selected}; nothing was "
                     "registered or written"
                 )
+                echo_preview_next(attached.status, attached.coordinate)
             return
         registered = attached.workspace_root
     if registered is None or Path(registered).resolve(strict=False) != workspace:
@@ -826,15 +823,12 @@ def attach_workspace(
 
 @workspace_group.command("detach")
 @click.option("--instance-id", default=None, help="Existing registered daemon host ID.")
-@click.option(
-    "--dry-run/--commit",
-    "dry_run",
-    default=None,
-    help="--dry-run: check the release and release nothing.",
-)
+@change_control_options
 @json_option
 @handle_errors
-def detach_workspace(instance_id: str | None, dry_run: bool | None, output_json: bool) -> None:
+def detach_workspace(
+    instance_id: str | None, dry_run: bool | None, at: str | None, output_json: bool
+) -> None:
     """Release a daemon host from the Git worktree it is registered against.
 
     The registry allows one host per worktree, so re-binding a worktree to a
@@ -849,7 +843,7 @@ def detach_workspace(instance_id: str | None, dry_run: bool | None, output_json:
         instance_source="explicit" if instance_id is not None else None,
     )
     result = _dispatch_cli(
-        lambda client: client.playbill_host_workspace_detach(selected, dry_run=dry_run),
+        lambda client: client.playbill_host_workspace_detach(selected, dry_run=dry_run, at=at),
         lambda: None,
         allow_local=False,
         command_name="playbill workspace detach",
@@ -863,6 +857,7 @@ def detach_workspace(instance_id: str | None, dry_run: bool | None, output_json:
         return
     if result.status == "would_detach":
         click.echo(f"Would detach {result.workspace_root} from Playbill host {selected}")
+        echo_preview_next(result.status, result.coordinate)
         return
     click.echo(f"Detached {result.workspace_root} from Playbill host {selected}")
 
@@ -5180,6 +5175,7 @@ def _echo_line_arm(result: Any) -> None:
     )
     if result.detail:
         click.echo(result.detail)
+    echo_preview_next(result.outcome or "", result.coordinate)
 
 
 @line_group.command("arm")

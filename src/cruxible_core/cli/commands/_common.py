@@ -55,8 +55,9 @@ def change_control_options(fn: Callable[..., Any]) -> Callable[..., Any]:
         default=None,
         metavar="OID",
         help=(
-            "The coordinate a preview answered with; the commit refuses if accepted "
-            "state moved since. Required to commit a change that cannot be undone."
+            "The coordinate a preview answered with (a git oid, or for operational state "
+            "its digest); the commit refuses if that state moved since. Required to commit "
+            "a change that cannot be undone."
         ),
     )(fn)
     return click.option(
@@ -76,12 +77,13 @@ def echo_preview_next(status: str, coordinate: Any) -> None:
 
     if not status.startswith("would_") or coordinate is None:
         return
-    git_oid = getattr(coordinate, "git_oid", None)
-    if git_oid is None:
+    # An accepted coordinate pins by its git oid; operational state by its digest.
+    pin = getattr(coordinate, "git_oid", None) or getattr(coordinate, "digest", None)
+    if pin is None:
         return
-    click.echo(f"Preview at {git_oid}; nothing was written.")
+    click.echo(f"Preview at {pin}; nothing was written.")
     if status != "would_block" and status != "would_refuse":
-        click.echo(f"Commit it: rerun the same command with --commit --at {git_oid}")
+        click.echo(f"Commit it: rerun the same command with --commit --at {pin}")
 
 
 brief_option = click.option(

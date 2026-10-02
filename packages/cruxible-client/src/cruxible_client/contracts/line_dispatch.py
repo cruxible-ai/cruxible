@@ -198,6 +198,13 @@ class LineArmV1(BaseModel):
             "`already_armed` and `already_disarmed` changed nothing."
         ),
     )
+    coordinate: AcceptedCoordinate | None = Field(
+        default=None,
+        description=(
+            "The accepted coordinate this arm or disarm call evaluated the Line at; "
+            "absent on a status read. Commit a preview with at=<its git_oid>."
+        ),
+    )
 
     @model_validator(mode="after")
     def _state(self) -> LineArmV1:

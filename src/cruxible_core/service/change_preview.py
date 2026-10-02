@@ -13,6 +13,12 @@ previews or commits, and pins the call to the accepted coordinate it runs at:
   accepted head is no longer the one the preview saw, and a change that cannot
   be undone refuses ``playbill.preview.confirmation_required`` without ``at``.
 
+A change to state outside the accepted ledger -- a runtime credential, a host's
+worktree binding -- is pinned instead to a ``PlaybillStateCoordinateV1``: a
+digest of exactly the records it changes, read where it writes
+(``state_change_scope`` and ``StateChange.observe``). The ledger can move
+without changing them, and a host before genesis has no head at all.
+
 Changes that become a proposal go through ``admit_change_set``: a preview
 evaluates the candidate on the proposal service's own admission path
 (``ProposalService.preview``) and a commit submits it, so both reach the same
@@ -29,7 +35,7 @@ from typing import Literal
 from cruxible_client import contracts
 from cruxible_client.contracts.actor_types import TransportCapability
 from cruxible_client.contracts.candidates import CandidateRecordAnyVersion
-from cruxible_client.contracts.change_control import ChangeKind
+from cruxible_client.contracts.change_control import ChangeKind, PlaybillStateCoordinateV1
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.get_reads import PlaybillGetCoordinateV1
 from cruxible_core.errors import ChangeRefusedError
@@ -72,6 +78,35 @@ class ChangeMode:
         if self._coordinate is None and self._instance is not None and head is not None:
             self._coordinate = compact_coordinate(self._instance, head)
         return self._coordinate
+
+
+class StateChange:
+    """A change to operational state, pinned to the state it changes (R12).
+
+    The write path calls ``observe`` with the subject's state, read inside the
+    write's own transaction or lock: a preview records it as its coordinate, and
+    a commit carrying ``at`` refuses ``playbill.preview.state_moved`` when it
+    differs.
+    """
+
+    def __init__(self, *, previewing: bool, at: str | None, operation: str, describe: str) -> None:
+        self.previewing = previewing
+        self.at = at
+        self._operation = operation
+        self._describe = describe
+        self.coordinate: PlaybillStateCoordinateV1 | None = None
+
+    def observe(self, coordinate: PlaybillStateCoordinateV1) -> None:
+        self.coordinate = coordinate
+        if self.previewing or self.at is None:
+            return
+        if not coordinate.digest.startswith(self.at):
+            raise ChangeRefusedError(
+                "playbill.preview.state_moved",
+                f"{self._describe} was previewed at {self.at}, but {coordinate.subject} is "
+                f"now at {coordinate.digest[:12]}; preview it again",
+                operation=self._operation,
+            )
 
 
 def previews_by_default(kind: ChangeKind) -> bool:
@@ -170,6 +205,30 @@ def change_scope(
         yield mode
 
 
+@contextmanager
+def state_change_scope(
+    *,
+    dry_run: bool | None,
+    at: str | None,
+    kind: ChangeKind,
+    operation: str,
+    describe: str,
+) -> Iterator[StateChange]:
+    """Run one operational change as a preview or a pinned commit.
+
+    Like ``change_scope``, but pinned to the state the change writes
+    (``StateChange.observe``), which exists before genesis too. A change that
+    cannot be undone refuses ``playbill.preview.confirmation_required`` on
+    entry when it would commit without ``at``.
+    """
+
+    active = previews_by_default(kind) if dry_run is None else dry_run
+    if not active and at is None and kind == "irreversible":
+        _pin(head_oid=None, at=None, kind=kind, operation=operation, describe=describe)
+    with preview_guards(active):
+        yield StateChange(previewing=active, at=at, operation=operation, describe=describe)
+
+
 @dataclass(frozen=True)
 class AdmittedChangeSet:
     """A change set admitted as a proposal, or evaluated as one by a preview."""
@@ -244,10 +303,12 @@ def admit_change_set(
 __all__ = [
     "AdmittedChangeSet",
     "ChangeMode",
+    "StateChange",
     "admit_change_set",
     "change_scope",
     "compact_coordinate",
     "full_coordinate",
     "preview_guards",
     "previews_by_default",
+    "state_change_scope",
 ]

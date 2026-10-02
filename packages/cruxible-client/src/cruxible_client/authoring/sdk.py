@@ -3970,26 +3970,33 @@ class Playbill:
             request=LineTriggerCheckRequestV1(since=since, until=until, limit=limit, cursor=cursor),
         )
 
-    def arm_line(self, line: str) -> api.LineArmV1:
+    def arm_line(
+        self, line: str, *, dry_run: bool | None = None, at: str | None = None
+    ) -> api.LineArmV1:
         """Arm a Line forward-only: the daemon admits what it matches from now on.
 
         Runs use this connection's credential, rechecked before each admission,
         and the Line version current now. Work already pending stays for
         `dispatch_line`. Arming it again unchanged returns `outcome="already_armed"`.
+        `dry_run=True` previews it (`would_arm`) and records nothing; commit
+        exactly that with `at=` the preview's `coordinate.git_oid`.
 
         Next: ``pb.line_status(line)``, or ``pb.get(f"Line:{line}")`` for its occurrences
         and runs.
         """
-        return self._client.arm_playbill_line(self._instance_id, line)
+        return self._client.arm_playbill_line(self._instance_id, line, dry_run=dry_run, at=at)
 
-    def disarm_line(self, line: str) -> api.LineArmV1:
+    def disarm_line(
+        self, line: str, *, dry_run: bool | None = None, at: str | None = None
+    ) -> api.LineArmV1:
         """Stop a Line admitting work on its own; admitted runs are not cancelled.
 
         A Line whose arm already stopped returns `outcome="already_disarmed"`.
+        `dry_run=True` previews it (`would_disarm`); `at` pins the commit.
 
         Next: ``pb.arm_line(line)`` to resume it.
         """
-        return self._client.disarm_playbill_line(self._instance_id, line)
+        return self._client.disarm_playbill_line(self._instance_id, line, dry_run=dry_run, at=at)
 
     def line_status(self, line: str) -> api.LineArmV1:
         """The Line's current arm, or its last one and why it stopped.

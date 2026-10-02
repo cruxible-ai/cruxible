@@ -8,10 +8,12 @@ a caller may reach; Playbill bootstrap establishes governed state separately.
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import TypedDict
 
 from cruxible_client import contracts
+from cruxible_client.contracts.change_control import PlaybillStateCoordinateV1
 from cruxible_client.contracts.errors import (
     PlaybillObjectFormatConflict,
     PlaybillReseedRequired,
@@ -38,7 +40,7 @@ from cruxible_core.server.config import (
 )
 from cruxible_core.server.credentials import get_runtime_credential_store
 from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
-from cruxible_core.service.change_preview import change_scope, preview_guards
+from cruxible_core.service.change_preview import preview_guards, state_change_scope
 from cruxible_core.storage.preview_fence import is_previewing
 
 
@@ -283,14 +285,20 @@ def playbill_host_workspace_registration(
     )
 
 
-def attach_workspace(instance_id: str, workspace_root: str) -> bool:
+def attach_workspace(
+    instance_id: str,
+    workspace_root: str,
+    *,
+    observe: Callable[[PlaybillStateCoordinateV1], None] | None = None,
+) -> bool:
     """Attach one host to a Git worktree, before or after its init; True when newly.
 
     The one attach path. An initialized host attaches when the worktree is in
     its ledger's Git object format (the advisory remote refuses across formats)
     and holds no part of its managed root; nothing is rebuilt, and the open
     instance starts advertising to the worktree at once. Inside a preview it
-    checks everything and registers nothing.
+    checks everything and registers nothing. ``observe`` sees the host's
+    binding where the attach writes it (or, previewing, as it reads it).
     """
 
     registry = get_registry()
@@ -311,6 +319,8 @@ def attach_workspace(instance_id: str, workspace_root: str) -> bool:
         )
     if record.workspace_root is not None:
         if Path(record.workspace_root) == resolved:
+            if observe is not None:
+                observe(registry.workspace_state(instance_id))
             return False
         raise ConfigError(
             f"Playbill host {instance_id!r} is attached to {record.workspace_root}; release "
@@ -333,8 +343,10 @@ def attach_workspace(instance_id: str, workspace_root: str) -> bool:
                 workspace_format=workspace_format,
             )
     if is_previewing():
+        if observe is not None:
+            observe(registry.workspace_state(instance_id))
         return True
-    registry.attach_governed_workspace(instance_id, resolved)
+    registry.attach_governed_workspace(instance_id, resolved, observe=observe)
     get_playbill_manager().rebind_workspace(instance_id)
     return True
 
@@ -345,11 +357,13 @@ def playbill_host_workspace_attach(
     workspace_root: str,
     workspace_attachment_authorized: bool = False,
     dry_run: bool | None = None,
+    at: str | None = None,
 ) -> contracts.PlaybillHostWorkspaceAttachResultV1:
     """Attach a host to a Git worktree, including a host already initialized (Q16).
 
     Local-socket callers only, as for detaching: the daemon must be able to see
-    the path it is asked to attach. ``dry_run`` registers nothing (R12).
+    the path it is asked to attach. ``dry_run`` registers nothing (R12); the
+    outcome is pinned to the host's binding, which ``at`` carries back.
     """
 
     check_permission("cruxible_playbill_host_workspace_attach", instance_id=instance_id)
@@ -358,27 +372,28 @@ def playbill_host_workspace_attach(
             "Workspace attachment requires a caller connected directly through the local "
             "Unix socket"
         )
-    instance = get_playbill_manager().initialized(instance_id)
-    with change_scope(
-        instance,
+    with state_change_scope(
         dry_run=dry_run,
-        at=None,
+        at=at,
         kind="direct",
         operation="playbill.workspace.attach",
         describe=f"attaching host {instance_id}",
-    ) as mode:
-        attached = attach_workspace(instance_id, workspace_root)
+    ) as change:
+        # Opened behind the preview's guards: a cold open may not repair on disk.
+        instance = get_playbill_manager().initialized(instance_id)
+        attached = attach_workspace(instance_id, workspace_root, observe=change.observe)
     return contracts.PlaybillHostWorkspaceAttachResultV1(
         instance_id=instance_id,
         status=(
             "already_attached"
             if not attached
             else "would_attach"
-            if mode.previewing
+            if change.previewing
             else "attached"
         ),
         workspace_root=str(Path(workspace_root).expanduser().resolve()),
         initialized=instance is not None,
+        coordinate=change.coordinate,
     )
 
 
@@ -387,6 +402,7 @@ def playbill_host_workspace_detach(
     *,
     workspace_attachment_authorized: bool = False,
     dry_run: bool | None = None,
+    at: str | None = None,
 ) -> contracts.PlaybillWorkspaceDetachResultV1:
     """Release one governed host from the Git worktree it is attached to.
 
@@ -429,22 +445,33 @@ def playbill_host_workspace_detach(
             instance_id=instance_id,
             status="not_registered",
         )
-    _refuse_detach_with_registered_blocks(instance_id)
-    if dry_run:
-        return contracts.PlaybillWorkspaceDetachResultV1(
-            instance_id=instance_id,
-            status="would_detach",
-            workspace_root=record.workspace_root,
+    with state_change_scope(
+        dry_run=dry_run,
+        at=at,
+        kind="direct",
+        operation="playbill.workspace.detach",
+        describe=f"detaching host {instance_id}",
+    ) as change:
+        _refuse_detach_with_registered_blocks(instance_id)
+        if change.previewing:
+            change.observe(registry.workspace_state(instance_id))
+            return contracts.PlaybillWorkspaceDetachResultV1(
+                instance_id=instance_id,
+                status="would_detach",
+                workspace_root=record.workspace_root,
+                coordinate=change.coordinate,
+            )
+        detached = registry.detach_governed_workspace(
+            instance_id,
+            expected_workspace_root=record.workspace_root,
+            observe=change.observe,
         )
-    detached = registry.detach_governed_workspace(
-        instance_id,
-        expected_workspace_root=record.workspace_root,
-    )
     assert detached.workspace_root is None
     return contracts.PlaybillWorkspaceDetachResultV1(
         instance_id=instance_id,
         status="detached",
         workspace_root=record.workspace_root,
+        coordinate=change.coordinate,
     )
 
 

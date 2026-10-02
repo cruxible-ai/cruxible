@@ -1414,6 +1414,26 @@
             "$ref": "#/$defs/LineArmPrincipalV1"
           }
         },
+        "coordinate": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The accepted coordinate this arm or disarm call evaluated the Line at; absent on a status read. Commit a preview with at=<its git_oid>."
+          }
+        },
         "detail": {
           "default": null,
           "default_json_serializable": true,
@@ -1606,6 +1626,42 @@
       },
       "json_schema": {
         "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          },
           "LineArmPrincipalV1": {
             "additionalProperties": false,
             "description": "Who armed a Line: the authority rechecked before every automatic admission.\n\n``runtime_credential`` retains only the credential's identifier, never a\ntoken. On an auth-off daemon, ``principal_claim`` is an arm made under a\nconfigured principal ID (``label``), whose accepted standing is rechecked\nbefore every admission; ``local_operator`` is the implicit local operator\nthat claimed no principal, and never resolves to a registered principal.",
@@ -1665,6 +1721,18 @@
           },
           "armed_by": {
             "$ref": "#/$defs/LineArmPrincipalV1"
+          },
+          "coordinate": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The accepted coordinate this arm or disarm call evaluated the Line at; absent on a status read. Commit a preview with at=<its git_oid>."
           },
           "detail": {
             "anyOf": [
@@ -20320,6 +20388,25 @@
     },
     "PlaybillHostWorkspaceAttachResultV1": {
       "fields": {
+        "coordinate": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillStateCoordinateV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "initialized": {
           "has_default": false,
           "has_default_factory": false,
@@ -20381,9 +20468,51 @@
         }
       },
       "json_schema": {
+        "$defs": {
+          "PlaybillStateCoordinateV1": {
+            "additionalProperties": false,
+            "description": "The operational state one change was evaluated against.\n\n``subject`` names the records (``runtime_credential:<id>``,\n``host_workspace:<instance>``, ...) and ``digest`` is the sha256 of their\ncanonical JSON. A commit carrying ``at`` recomputes it where it writes and\nrefuses ``playbill.preview.state_moved`` when it differs.",
+            "properties": {
+              "digest": {
+                "pattern": "^[0-9a-f]{64}$",
+                "title": "Digest",
+                "type": "string"
+              },
+              "subject": {
+                "maxLength": 512,
+                "minLength": 1,
+                "title": "Subject",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-state-coordinate-v1",
+                "default": "playbill-state-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject",
+              "digest"
+            ],
+            "title": "PlaybillStateCoordinateV1",
+            "type": "object"
+          }
+        },
         "additionalProperties": false,
         "description": "One daemon host attached to a Git worktree, before or after its init.\n\nAn initialized host attaches when the worktree is in the ledger's own Git\nobject format and holds no part of the host's managed root; nothing is\nrebuilt. ``would_attach`` answers a preview, which registered nothing.",
         "properties": {
+          "coordinate": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillStateCoordinateV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "initialized": {
             "title": "Initialized",
             "type": "boolean"
@@ -51557,7 +51686,7 @@
               }
             ],
             "default": null,
-            "description": "The coordinate a preview answered with (its git oid, or a unique prefix of 12+ hex characters). A commit carrying it refuses playbill.preview.state_moved if accepted state moved since. Required to commit a change that cannot be undone.",
+            "description": "The coordinate a preview answered with: its git oid, or for a change to operational state its state digest (either may be shortened to a unique prefix of 12+ hex characters). A commit carrying it refuses playbill.preview.state_moved if that state moved since. Required to commit a change that cannot be undone.",
             "title": "At"
           }
         },
@@ -51755,7 +51884,7 @@
               }
             ],
             "default": null,
-            "description": "The coordinate a preview answered with (its git oid, or a unique prefix of 12+ hex characters). A commit carrying it refuses playbill.preview.state_moved if accepted state moved since. Required to commit a change that cannot be undone.",
+            "description": "The coordinate a preview answered with: its git oid, or for a change to operational state its state digest (either may be shortened to a unique prefix of 12+ hex characters). A commit carrying it refuses playbill.preview.state_moved if that state moved since. Required to commit a change that cannot be undone.",
             "title": "At"
           },
           "control_domain": {
@@ -82587,6 +82716,80 @@
         "documents"
       ]
     },
+    "PlaybillStateCoordinateV1": {
+      "fields": {
+        "digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "digest",
+          "required": true,
+          "schema": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Digest",
+            "type": "string"
+          }
+        },
+        "subject": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "subject",
+          "required": true,
+          "schema": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-state-coordinate-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-state-coordinate-v1",
+            "default": "playbill-state-coordinate-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "The operational state one change was evaluated against.\n\n``subject`` names the records (``runtime_credential:<id>``,\n``host_workspace:<instance>``, ...) and ``digest`` is the sha256 of their\ncanonical JSON. A commit carrying ``at`` recomputes it where it writes and\nrefuses ``playbill.preview.state_moved`` when it differs.",
+        "properties": {
+          "digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Digest",
+            "type": "string"
+          },
+          "subject": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Subject",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-state-coordinate-v1",
+            "default": "playbill-state-coordinate-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject",
+          "digest"
+        ],
+        "title": "PlaybillStateCoordinateV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "digest",
+        "subject"
+      ]
+    },
     "PlaybillWhoAmI": {
       "fields": {
         "active_principal_ids": {
@@ -83950,6 +84153,25 @@
     },
     "PlaybillWorkspaceDetachResultV1": {
       "fields": {
+        "coordinate": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillStateCoordinateV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "instance_id": {
           "has_default": false,
           "has_default_factory": false,
@@ -84011,9 +84233,51 @@
         }
       },
       "json_schema": {
+        "$defs": {
+          "PlaybillStateCoordinateV1": {
+            "additionalProperties": false,
+            "description": "The operational state one change was evaluated against.\n\n``subject`` names the records (``runtime_credential:<id>``,\n``host_workspace:<instance>``, ...) and ``digest`` is the sha256 of their\ncanonical JSON. A commit carrying ``at`` recomputes it where it writes and\nrefuses ``playbill.preview.state_moved`` when it differs.",
+            "properties": {
+              "digest": {
+                "pattern": "^[0-9a-f]{64}$",
+                "title": "Digest",
+                "type": "string"
+              },
+              "subject": {
+                "maxLength": 512,
+                "minLength": 1,
+                "title": "Subject",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-state-coordinate-v1",
+                "default": "playbill-state-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject",
+              "digest"
+            ],
+            "title": "PlaybillStateCoordinateV1",
+            "type": "object"
+          }
+        },
         "additionalProperties": false,
         "description": "One daemon host released from the Git worktree it was attached to.\n\nThe registry exclusivity is a UNIQUE index on (backend, workspace_root), so\na worktree can only ever be one host's. Moving one between hosts had no\nverb: the refusal named \"archive/rebuild that host\", which is not a verb\neither, and the rollback that does exactly this was reachable only from an\ninitialization failure.",
         "properties": {
+          "coordinate": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillStateCoordinateV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "instance_id": {
             "title": "Instance Id",
             "type": "string"
@@ -101777,6 +102041,25 @@
     },
     "RuntimeCredentialBootstrapResult": {
       "fields": {
+        "coordinate": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillStateCoordinateV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "credential_id": {
           "has_default": false,
           "has_default_factory": false,
@@ -101844,7 +102127,49 @@
         }
       },
       "json_schema": {
+        "$defs": {
+          "PlaybillStateCoordinateV1": {
+            "additionalProperties": false,
+            "description": "The operational state one change was evaluated against.\n\n``subject`` names the records (``runtime_credential:<id>``,\n``host_workspace:<instance>``, ...) and ``digest`` is the sha256 of their\ncanonical JSON. A commit carrying ``at`` recomputes it where it writes and\nrefuses ``playbill.preview.state_moved`` when it differs.",
+            "properties": {
+              "digest": {
+                "pattern": "^[0-9a-f]{64}$",
+                "title": "Digest",
+                "type": "string"
+              },
+              "subject": {
+                "maxLength": 512,
+                "minLength": 1,
+                "title": "Subject",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-state-coordinate-v1",
+                "default": "playbill-state-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject",
+              "digest"
+            ],
+            "title": "PlaybillStateCoordinateV1",
+            "type": "object"
+          }
+        },
         "properties": {
+          "coordinate": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillStateCoordinateV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "credential_id": {
             "title": "Credential Id",
             "type": "string"
@@ -102217,7 +102542,7 @@
           "schema": {
             "anyOf": [
               {
-                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+                "$ref": "#/$defs/PlaybillStateCoordinateV1"
               },
               {
                 "type": "null"
@@ -102245,9 +102570,11 @@
               "minted",
               "revoked",
               "rotated",
+              "recovered",
               "would_mint",
               "would_revoke",
-              "would_rotate"
+              "would_rotate",
+              "would_recover"
             ],
             "title": "Status",
             "type": "string"
@@ -102276,43 +102603,33 @@
       },
       "json_schema": {
         "$defs": {
-          "PlaybillAcceptedCoordinate": {
+          "PlaybillStateCoordinateV1": {
             "additionalProperties": false,
+            "description": "The operational state one change was evaluated against.\n\n``subject`` names the records (``runtime_credential:<id>``,\n``host_workspace:<instance>``, ...) and ``digest`` is the sha256 of their\ncanonical JSON. A commit carrying ``at`` recomputes it where it writes and\nrefuses ``playbill.preview.state_moved`` when it differs.",
             "properties": {
-              "compiler_digest": {
-                "pattern": "^sha256:[0-9a-f]{64}$",
-                "title": "Compiler Digest",
+              "digest": {
+                "pattern": "^[0-9a-f]{64}$",
+                "title": "Digest",
                 "type": "string"
               },
-              "generation_root": {
-                "pattern": "^sha256:[0-9a-f]{64}$",
-                "title": "Generation Root",
-                "type": "string"
-              },
-              "git_oid": {
-                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
-                "title": "Git Oid",
-                "type": "string"
-              },
-              "semantic_root": {
-                "pattern": "^sha256:[0-9a-f]{64}$",
-                "title": "Semantic Root",
+              "subject": {
+                "maxLength": 512,
+                "minLength": 1,
+                "title": "Subject",
                 "type": "string"
               },
               "tag": {
-                "const": "playbill-accepted-coordinate-v1",
-                "default": "playbill-accepted-coordinate-v1",
+                "const": "playbill-state-coordinate-v1",
+                "default": "playbill-state-coordinate-v1",
                 "title": "Tag",
                 "type": "string"
               }
             },
             "required": [
-              "git_oid",
-              "semantic_root",
-              "generation_root",
-              "compiler_digest"
+              "subject",
+              "digest"
             ],
-            "title": "PlaybillAcceptedCoordinate",
+            "title": "PlaybillStateCoordinateV1",
             "type": "object"
           },
           "RuntimeCredentialMetadata": {
@@ -102395,7 +102712,7 @@
           "coordinate": {
             "anyOf": [
               {
-                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+                "$ref": "#/$defs/PlaybillStateCoordinateV1"
               },
               {
                 "type": "null"
@@ -102411,9 +102728,11 @@
               "minted",
               "revoked",
               "rotated",
+              "recovered",
               "would_mint",
               "would_revoke",
-              "would_rotate"
+              "would_rotate",
+              "would_recover"
             ],
             "title": "Status",
             "type": "string"

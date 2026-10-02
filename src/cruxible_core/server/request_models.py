@@ -35,6 +35,7 @@ class PlaybillHostCreateRequest(_StrictHostRequest):
 class PlaybillHostWorkspaceAttachRequest(_StrictHostRequest):
     workspace_root: str = Field(min_length=1)
     dry_run: DryRun = None
+    at: PreviewAt = None
 
 
 class BootstrapClaimRequest(_StrictHostRequest):

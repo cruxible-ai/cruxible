@@ -37,6 +37,7 @@ from cruxible_core.server.config import is_server_auth_enabled
 from cruxible_core.server.credentials import (
     CreatedRuntimeCredential,
     RuntimeCredentialRecord,
+    StateObserver,
     _proof_replayed,
     get_runtime_credential_store,
 )
@@ -183,8 +184,13 @@ def mint_principal_credential(
     label: str | None,
     principal_proof: RuntimeCredentialPrincipalProofV1 | None,
     auth_context: ResolvedAuthContext | None,
+    observe: StateObserver | None = None,
 ) -> CreatedRuntimeCredential:
-    """Mint one credential acting as ``principal_id``, or refuse with the repair."""
+    """Mint one credential acting as ``principal_id``, or refuse with the repair.
+
+    ``observe`` sees the credentials the mint adds to (R12's state pin), in
+    the minting transaction or, for a preview, as it reads them.
+    """
 
     _require_auth_on()
     description = label or principal_id
@@ -209,8 +215,10 @@ def mint_principal_credential(
         # prepared token is discarded by the caller.
         if proof_digest is not None and store.proof_spent(proof_digest):
             raise _proof_replayed()
+        if observe is not None:
+            observe(store.mint_state(prepared.record))
         return prepared
-    return store.commit_prepared_credential(prepared, proof_digest=proof_digest)
+    return store.commit_prepared_credential(prepared, proof_digest=proof_digest, observe=observe)
 
 
 def rotate_principal_credential(
@@ -219,6 +227,7 @@ def rotate_principal_credential(
     credential_id: str,
     principal_proof: RuntimeCredentialPrincipalProofV1 | None,
     auth_context: ResolvedAuthContext | None,
+    observe: StateObserver | None = None,
 ) -> CreatedRuntimeCredential:
     """Replace one credential's token, never handing another principal's to the caller.
 
@@ -253,16 +262,21 @@ def rotate_principal_credential(
     if is_previewing():
         if proof_digest is not None and store.proof_spent(proof_digest):
             raise _proof_replayed()
+        if observe is not None:
+            observe(store.credential_state(credential_id))
         return created
     return store.commit_prepared_rotation(
         created,
         instance_id=instance_id,
         credential_id=credential_id,
         proof_digest=proof_digest,
+        observe=observe,
     )
 
 
-def revoke_runtime_credential(*, instance_id: str, credential_id: str) -> RuntimeCredentialRecord:
+def revoke_runtime_credential(
+    *, instance_id: str, credential_id: str, observe: StateObserver | None = None
+) -> RuntimeCredentialRecord:
     """Revoke one credential; a preview returns it unrevoked and changes nothing."""
 
     store = get_runtime_credential_store()
@@ -270,8 +284,12 @@ def revoke_runtime_credential(*, instance_id: str, credential_id: str) -> Runtim
         existing = store.get(credential_id)
         if existing is None or existing.instance_id != instance_id:
             raise RuntimeCredentialNotFoundError(credential_id)
+        if observe is not None:
+            observe(store.credential_state(credential_id))
         return existing
-    return store.revoke_credential(instance_id=instance_id, credential_id=credential_id)
+    return store.revoke_credential(
+        instance_id=instance_id, credential_id=credential_id, observe=observe
+    )
 
 
 __all__ = [

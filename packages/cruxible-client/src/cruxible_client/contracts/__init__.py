@@ -32,6 +32,7 @@ from cruxible_client.contracts.authoring.models import (
     PlaybillProjectionCheckResultV1 as PlaybillProjectionCheckResultV1,
 )
 from cruxible_client.contracts.canonical import Sha256Value
+from cruxible_client.contracts.change_control import PlaybillStateCoordinateV1
 from cruxible_client.contracts.claims import ClaimStatementCardV1 as ClaimStatementCardV1
 from cruxible_client.contracts.compact_query import (
     PLAYBILL_QUERY_DEFAULT_LIMIT as PLAYBILL_QUERY_DEFAULT_LIMIT,
@@ -445,6 +446,9 @@ class RuntimeCredentialBootstrapResult(BaseModel):
     instance_id: str
     permission_mode: Literal["admin"]
     token: str | None = None
+    #: The host's credentials the claim was checked against (none, for a
+    #: claimable host), read where the claim is written.
+    coordinate: PlaybillStateCoordinateV1 | None = None
 
 
 class RuntimeCredentialMetadata(BaseModel):
@@ -464,14 +468,25 @@ class RuntimeCredentialMetadata(BaseModel):
 
 
 class RuntimeCredentialResult(BaseModel):
-    #: ``would_*`` answers a preview: nothing was minted, revoked or rotated, and
-    #: no token is issued.
-    status: Literal["minted", "revoked", "rotated", "would_mint", "would_revoke", "would_rotate"]
+    #: ``would_*`` answers a preview: nothing was minted, revoked, rotated or
+    #: recovered, and no token is issued.
+    status: Literal[
+        "minted",
+        "revoked",
+        "rotated",
+        "recovered",
+        "would_mint",
+        "would_revoke",
+        "would_rotate",
+        "would_recover",
+    ]
     credential: RuntimeCredentialMetadata
     token: str | None = None
-    #: The accepted coordinate the change was checked at; a commit of a revoke or
-    #: rotate (which cannot be undone) passes its git oid as ``at``.
-    coordinate: PlaybillAcceptedCoordinate | None = None
+    #: The credential state the change was checked against (the credential
+    #: itself, or for a mint or recovery the credentials it adds to), read where
+    #: it writes. A commit of a revoke or rotate (which cannot be undone)
+    #: passes its digest as ``at``; it exists before Playbill is initialized.
+    coordinate: PlaybillStateCoordinateV1 | None = None
 
 
 class RuntimeCredentialListResult(BaseModel):
@@ -1960,6 +1975,9 @@ class PlaybillWorkspaceDetachResultV1(BaseModel):
     #: ``would_detach`` answers a preview, which released nothing.
     status: Literal["detached", "not_registered", "would_detach"]
     workspace_root: str | None = None
+    #: The host's worktree binding this was checked against; commit a preview
+    #: with ``at`` set to its digest.
+    coordinate: PlaybillStateCoordinateV1 | None = None
 
 
 class PlaybillHostWorkspaceAttachResultV1(BaseModel):
@@ -1980,6 +1998,9 @@ class PlaybillHostWorkspaceAttachResultV1(BaseModel):
     workspace_root: str
     #: Whether Playbill is already initialized under the host.
     initialized: bool
+    #: The host's worktree binding this was checked against, read where the
+    #: attach writes it; commit a preview with ``at`` set to its digest.
+    coordinate: PlaybillStateCoordinateV1 | None = None
 
 
 class PlaybillWorkspaceFloorStatus(BaseModel):

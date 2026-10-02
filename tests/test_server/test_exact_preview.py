@@ -27,6 +27,7 @@ from cruxible_client.contracts.documents import (
     DocumentLifecycle,
     DocumentShell,
 )
+from cruxible_core.errors import ChangeRefusedError
 from cruxible_core.governance.keys import generate_client_principal_key
 from cruxible_core.ledger.signing import LocalEd25519ApprovalSigner
 from cruxible_core.runtime import host_api
@@ -317,6 +318,50 @@ def test_a_host_attaches_to_a_worktree_after_init_and_previews_first(
     assert get_registry().get(instance_id).workspace_root == str(worktree)  # type: ignore[union-attr]
 
 
+def test_attach_and_detach_are_pinned_to_the_hosts_binding(
+    playbill_http: tuple[TestClient, str, Path], tmp_path: Path
+) -> None:
+    """F-012: a binding preview answers with its coordinate; a stale one refuses."""
+
+    client, instance_id, _reviewer_key = playbill_http
+    first = _git_worktree(tmp_path / "first")
+    second = _git_worktree(tmp_path / "second")
+
+    def attach(root: Path, **control: Any) -> Any:
+        return host_api.playbill_host_workspace_attach(
+            instance_id,
+            workspace_root=str(root),
+            workspace_attachment_authorized=True,
+            **control,
+        )
+
+    def detach(**control: Any) -> Any:
+        return host_api.playbill_host_workspace_detach(
+            instance_id, workspace_attachment_authorized=True, **control
+        )
+
+    preview = attach(first, dry_run=True)
+    assert preview.status == "would_attach"
+    assert preview.coordinate.subject == f"host_workspace:{instance_id}"
+    attached = attach(first, dry_run=False, at=preview.coordinate.digest)
+    assert (attached.status, attached.coordinate) == ("attached", preview.coordinate)
+    get_playbill_manager().get(instance_id).settled_workspace_advertisement()
+
+    detach_preview = detach(dry_run=True)
+    assert detach_preview.status == "would_detach"
+    # The binding moves under the preview: released, then bound elsewhere.
+    detach(dry_run=False)
+    attach(second)
+    get_playbill_manager().get(instance_id).settled_workspace_advertisement()
+    with pytest.raises(ChangeRefusedError) as moved:
+        detach(dry_run=False, at=detach_preview.coordinate.digest)
+    assert moved.value.error_code == "playbill.preview.state_moved"
+    assert get_registry().get(instance_id).workspace_root == str(second)  # type: ignore[union-attr]
+    with pytest.raises(ChangeRefusedError) as stale_attach:
+        attach(second, dry_run=False, at=preview.coordinate.digest)
+    assert stale_attach.value.error_code == "playbill.preview.state_moved"
+
+
 def test_a_worktree_in_another_object_format_is_refused_by_name(
     playbill_http: tuple[TestClient, str, Path], tmp_path: Path
 ) -> None:
@@ -546,7 +591,7 @@ def test_credential_changes_preview_and_irreversible_ones_need_the_coordinate(
     revoked = _ok(
         client.post(
             revoke_url,
-            json={"dry_run": False, "at": revoke_preview["coordinate"]["git_oid"]},
+            json={"dry_run": False, "at": revoke_preview["coordinate"]["digest"]},
             headers=_bearer(admin),
         )
     )
@@ -554,6 +599,108 @@ def test_credential_changes_preview_and_irreversible_ones_need_the_coordinate(
     stored = get_runtime_credential_store().get(credential_id)
     assert stored is not None and stored.revoked_at is not None
     assert stored.permission_mode == PermissionMode.READ_ONLY
+
+
+def _claimed_host(client: TestClient, instance_id: str) -> str:
+    _ok(
+        client.post(
+            "/api/v1/runtime/instances",
+            json={"instance_id": instance_id},
+            headers=_bearer(_SECRET),
+        )
+    )
+    return str(
+        _ok(
+            client.post(
+                _api(instance_id, "/runtime/bootstrap/claim"),
+                json={"bootstrap_secret": _SECRET},
+                headers=_bearer(_SECRET),
+            )
+        )["token"]
+    )
+
+
+def test_bootstrap_and_recovery_credentials_revoke_and_rotate_before_init(
+    auth_daemon: TestClient, tmp_path: Path
+) -> None:
+    """F-003: a host with no Playbill yet still confirms an irreversible credential change.
+
+    The pin is the credential's own state, which exists before genesis.
+    """
+
+    client = auth_daemon
+    instance_id = "inst_uninitialized"
+    admin = _claimed_host(client, instance_id)
+    store = get_runtime_credential_store()
+    recovered = store.recover_admin_credential(
+        instance_id=instance_id, label="recovered", uid=0, hostname="test"
+    )
+    (bootstrap,) = (
+        record.credential_id
+        for record in store.list_for_instance(instance_id)
+        if record.credential_id != recovered.record.credential_id
+    )
+
+    rotate_url = _api(instance_id, f"/runtime/credentials/{recovered.record.credential_id}/rotate")
+    rotate_preview = _ok(
+        assert_writes_nothing(
+            [tmp_path], lambda: client.post(rotate_url, json={}, headers=_bearer(admin))
+        )
+    )
+    assert rotate_preview["status"] == "would_rotate"
+    assert rotate_preview["coordinate"]["subject"] == (
+        f"runtime_credential:{recovered.record.credential_id}"
+    )
+    rotated = _ok(
+        client.post(
+            rotate_url,
+            json={"dry_run": False, "at": rotate_preview["coordinate"]["digest"]},
+            headers=_bearer(admin),
+        )
+    )
+    assert rotated["status"] == "rotated" and rotated["token"]
+    replacement = rotated["credential"]["credential_id"]
+
+    revoke_url = _api(instance_id, f"/runtime/credentials/{bootstrap}/revoke")
+    revoke_preview = _ok(
+        assert_writes_nothing(
+            [tmp_path], lambda: client.post(revoke_url, json={}, headers=_bearer(admin))
+        )
+    )
+    assert revoke_preview["status"] == "would_revoke"
+    # The bootstrap credential is rotated under the preview: its state moved,
+    # so the preview's coordinate no longer confirms the revocation.
+    bootstrap_rotate = _api(instance_id, f"/runtime/credentials/{bootstrap}/rotate")
+    bootstrap_preview = _ok(client.post(bootstrap_rotate, json={}, headers=_bearer(admin)))
+    _ok(
+        client.post(
+            bootstrap_rotate,
+            json={"dry_run": False, "at": bootstrap_preview["coordinate"]["digest"]},
+            headers=_bearer(rotated["token"]),
+        )
+    )
+    _refused(
+        client.post(
+            revoke_url,
+            json={"dry_run": False, "at": revoke_preview["coordinate"]["digest"]},
+            headers=_bearer(rotated["token"]),
+        ),
+        409,
+        "playbill.preview.state_moved",
+    )
+
+    replacement_url = _api(instance_id, f"/runtime/credentials/{replacement}/revoke")
+    fresh = _ok(client.post(replacement_url, json={}, headers=_bearer(rotated["token"])))
+    _ok(
+        client.post(
+            replacement_url,
+            json={"dry_run": False, "at": fresh["coordinate"]["digest"]},
+            headers=_bearer(rotated["token"]),
+        )
+    )
+    assert store.get(replacement).revoked_at is not None  # type: ignore[union-attr]
+    stored = store.get(bootstrap)
+    assert stored is not None and stored.revoked_at is not None
 
 
 def test_a_claim_type_proposal_previews_and_writes_nothing(

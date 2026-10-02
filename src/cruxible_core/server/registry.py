@@ -19,6 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePath
 
+from cruxible_client.contracts.change_control import PlaybillStateCoordinateV1
 from cruxible_client.contracts.primitives import new_id
 from cruxible_client.contracts.temporal import format_datetime, utc_now
 from cruxible_core.errors import ConfigError, InstanceLocationRefusedError
@@ -319,12 +320,24 @@ class InstanceRegistry:
             preferred_instance_id=prepared.instance_id,
         )
 
+    def workspace_state(self, instance_id: str) -> PlaybillStateCoordinateV1:
+        """The state coordinate of one host's worktree binding (R12)."""
+
+        record = self.get(instance_id)
+        return _workspace_state(instance_id, None if record is None else record.workspace_root)
+
     def attach_governed_workspace(
         self,
         instance_id: str,
         workspace_root: str | Path,
+        *,
+        observe: Callable[[PlaybillStateCoordinateV1], None] | None = None,
     ) -> InstanceRecord:
-        """Attach one exact local workspace without replacing an existing attachment."""
+        """Attach one exact local workspace without replacing an existing attachment.
+
+        ``observe`` sees the host's binding inside the attaching transaction,
+        before it changes (R12's pin check).
+        """
 
         refuse_write_while_previewing("instance registry")
         _validate_instance_id(instance_id)
@@ -332,19 +345,25 @@ class InstanceRegistry:
             resolved = str(Path(workspace_root).expanduser().resolve(strict=True))
         except OSError as exc:
             raise ConfigError("Attached workspace path does not exist") from exc
-        current = self.get(instance_id)
-        if current is None or current.backend != GOVERNED_DAEMON_BACKEND:
-            raise ConfigError(f"Instance '{instance_id}' is not a governed daemon host")
-        if current.workspace_root is not None:
-            if current.workspace_root != resolved:
-                raise ConfigError("Playbill host is already attached to another workspace")
-            return current
         try:
             with self._connect() as conn:
-                conn.execute(
-                    "UPDATE instances SET workspace_root = ? WHERE instance_id = ?",
-                    (resolved, instance_id),
-                )
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute(
+                    "SELECT backend, workspace_root FROM instances WHERE instance_id = ?",
+                    (instance_id,),
+                ).fetchone()
+                if row is None or row["backend"] != GOVERNED_DAEMON_BACKEND:
+                    raise ConfigError(f"Instance '{instance_id}' is not a governed daemon host")
+                if observe is not None:
+                    observe(_workspace_state(instance_id, row["workspace_root"]))
+                if row["workspace_root"] is not None:
+                    if row["workspace_root"] != resolved:
+                        raise ConfigError("Playbill host is already attached to another workspace")
+                else:
+                    conn.execute(
+                        "UPDATE instances SET workspace_root = ? WHERE instance_id = ?",
+                        (resolved, instance_id),
+                    )
         except sqlite3.IntegrityError as exc:
             raise ConfigError("Workspace is already attached to another Playbill host") from exc
         record = self.get(instance_id)
@@ -356,13 +375,24 @@ class InstanceRegistry:
         instance_id: str,
         *,
         expected_workspace_root: str | Path,
+        observe: Callable[[PlaybillStateCoordinateV1], None] | None = None,
     ) -> InstanceRecord:
-        """Roll back only the exact attachment made by a failed initialization."""
+        """Release exactly this attachment (the expected worktree, nothing else).
+
+        ``observe`` sees the binding inside the releasing transaction.
+        """
 
         refuse_write_while_previewing("instance registry")
         _validate_instance_id(instance_id)
         expected = str(Path(expected_workspace_root).expanduser().resolve(strict=False))
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if observe is not None:
+                row = conn.execute(
+                    "SELECT workspace_root FROM instances WHERE instance_id = ?",
+                    (instance_id,),
+                ).fetchone()
+                observe(_workspace_state(instance_id, None if row is None else row[0]))
             cursor = conn.execute(
                 """
                 UPDATE instances
@@ -465,6 +495,12 @@ class InstanceRegistry:
             created_at=row["created_at"],
             within_state_root=self.relative_location(location) is not None,
         )
+
+
+def _workspace_state(instance_id: str, workspace_root: str | None) -> PlaybillStateCoordinateV1:
+    return PlaybillStateCoordinateV1.of(
+        f"host_workspace:{instance_id}", {"workspace_root": workspace_root}
+    )
 
 
 def _validate_instance_id(instance_id: str) -> None:
