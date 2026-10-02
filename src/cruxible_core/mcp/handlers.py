@@ -23,8 +23,10 @@ from cruxible_client.authoring.attestations import (
     local_attestation_signer_from_environment,
 )
 from cruxible_client.authoring.bind import bind_working_selection_input
+from cruxible_client.authoring.blocks import repin_projection_block, sync_projection_blocks
 from cruxible_client.authoring.examples import authoring_example
 from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
+from cruxible_client.authoring.selectors import WorkspaceSources
 from cruxible_client.authoring.signing import LocalEd25519ApprovalSigner
 from cruxible_client.authoring.sources import (
     compile_client_source_context,
@@ -39,6 +41,7 @@ from cruxible_client.authoring.workspace import (
     write_workspace_floor_delta,
 )
 from cruxible_client.authoring.write_evidence import observe_changes, observe_evidence
+from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.attestations import ApprovalAttestation, ApprovalStatement
 from cruxible_client.contracts.capture_reads import CaptureReadRequestV1, CaptureReadV1
 from cruxible_client.contracts.change_control import ChangeControlRequestV1
@@ -53,7 +56,10 @@ from cruxible_client.contracts.claim_type_upgrade import (
     ClaimTypeUpgradeRequestV1,
     ClaimTypeUpgradeResultV1,
 )
-from cruxible_client.contracts.declared_blocks import PROJECTION_STAMP_ADAPTER
+from cruxible_client.contracts.declared_blocks import (
+    PROJECTION_STAMP_ADAPTER,
+    PlaybillBlockRepinResultV1,
+)
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.evidence_rule_upgrade import (
     EvidenceRuleUpgradeRequestV1,
@@ -127,7 +133,6 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillAuthoringPreflightRequest,
     PlaybillAuthoringRebaseRequest,
     PlaybillAuthoringSubmitRequest,
-    PlaybillBlockDeclareRequest,
     PlaybillBlockDepublishRequest,
     PlaybillCompilerUpgradeRequest,
     PlaybillCurationAcceptFixedRequest,
@@ -354,7 +359,6 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_playbill_authoring_preflight": TypeAdapter(PlaybillAuthoringPreflightRequest),
     "cruxible_playbill_authoring_rebase": TypeAdapter(PlaybillAuthoringRebaseRequest),
     "cruxible_playbill_authoring_submit": TypeAdapter(PlaybillAuthoringSubmitRequest),
-    "cruxible_playbill_block_declare": TypeAdapter(PlaybillBlockDeclareRequest),
     "cruxible_playbill_block_depublish": TypeAdapter(PlaybillBlockDepublishRequest),
     "cruxible_playbill_claim_attest": None,  # shared preparation helper builds the body
     "cruxible_playbill_set": TypeAdapter(PlaybillSetRequestV1),
@@ -1399,16 +1403,124 @@ def handle_playbill_authoring_abandon_insertion(
     )
 
 
-def handle_playbill_block_declare(
+class _LocalBlockClient(_LocalFloorClient):
+    """The reads and the declaration block repin makes, served in library mode."""
+
+    def playbill_head(
+        self,
+        instance_id: str,
+        *,
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | str | None = None,
+    ) -> contracts.PlaybillHeadV1:
+        return playbill_api.playbill_head(
+            instance_id,
+            at=at
+            if at is None or isinstance(at, str)
+            else AcceptedCoordinate.model_validate(_json(at)),
+        )
+
+    def playbill_get(
+        self, instance_id: str, *, request: PlaybillGetRequestV1
+    ) -> PlaybillGetResultV1:
+        return playbill_api.playbill_get(instance_id, request=request)
+
+    def query_playbill(
+        self, instance_id: str, *, request: contracts.PlaybillQueryRequestV1
+    ) -> contracts.PlaybillQueryResult:
+        return playbill_api.playbill_query(instance_id, request=request)
+
+    def declare_playbill_block(
+        self, instance_id: str, stamp: Mapping[str, Any]
+    ) -> contracts.PlaybillBlockDeclareResultV1:
+        return playbill_api.playbill_block_declare(
+            instance_id, PROJECTION_STAMP_ADAPTER.validate_python(dict(stamp))
+        )
+
+
+def _block_client() -> CruxibleClient:
+    """The daemon client, or the in-process one: the SDK adapter runs on either."""
+
+    return _get_client() or cast(CruxibleClient, _LocalBlockClient())
+
+
+def handle_playbill_block_repin(
     instance_id: str,
-    stamp: Mapping[str, Any],
-) -> contracts.PlaybillBlockDeclareResultV1:
-    parsed = PROJECTION_STAMP_ADAPTER.validate_python(dict(stamp))
-    return _dispatch_remote_or_local(
-        lambda client: client.declare_playbill_block(instance_id, parsed.model_dump(mode="json")),
-        lambda: playbill_api.playbill_block_declare(instance_id, parsed),
-        operation_name="cruxible_playbill_block_declare",
-        local_payload={"stamp": parsed.model_dump(mode="json")},
+    *,
+    block: str,
+    file: str | None = None,
+    source: str | None = None,
+    claims: Sequence[str] | None = None,
+    queries: Sequence[tuple[str, Mapping[str, object]]] | None = None,
+    artifacts: Sequence[str] | None = None,
+    currency_policy: Literal["warn", "require_current"] | None = None,
+    backing_digest: str | None = None,
+    dry_run: bool | None = None,
+) -> PlaybillBlockRepinResultV1:
+    """Repin one projection block adapter-side: this process computes the stamp (Q17).
+
+    The block is named by its page (``file``, workspace-relative) or its
+    catalog source (``source``). The SDK reads the page, reads the backings from
+    the instance, rewrites the opening marker and declares the block; a dry run
+    stops before the first write.
+    """
+
+    if (file is None) == (source is None):
+        raise DataValidationError("name the block's page with exactly one of file or source")
+    root = mcp_workspace_root()
+    sources = WorkspaceSources(root)
+    source_id = (
+        source
+        if source is not None
+        else sources.select(
+            resolve_workspace_path(cast(str, file), root=root, kind="file")
+        ).source_id
+    )
+    path = sources.path_for_source(source_id)
+    stamp = repin_projection_block(
+        _block_client(),
+        instance_id,
+        workspace=root,
+        source_id=source_id,
+        block_id=block,
+        claims=claims,
+        queries=queries,
+        artifacts=None
+        if artifacts is None
+        else tuple(parse_artifact_identity(item) for item in artifacts),
+        currency_policy=currency_policy,
+        backing_digest=backing_digest,
+        evaluation_time=datetime.now(UTC),
+        dry_run=bool(dry_run),
+    )
+    return PlaybillBlockRepinResultV1(
+        status="would_repin" if dry_run else "repinned",
+        source_id=source_id,
+        block_id=block,
+        path=path.relative_to(root).as_posix(),
+        declared_generation=stamp.declared_generation,
+        stamp=stamp,
+    )
+
+
+def handle_playbill_block_sync(
+    instance_id: str,
+    *,
+    files: Sequence[str] = (),
+    all_sources: bool = False,
+    detach: Sequence[str] = (),
+    check: bool = False,
+) -> contracts.PlaybillBlockSyncResultV1:
+    """Check every block's backings adapter-side; only ``detach`` edits a page."""
+
+    root = mcp_workspace_root()
+    return sync_projection_blocks(
+        _block_client(),
+        instance_id,
+        workspace=root,
+        paths=tuple(resolve_workspace_path(item, root=root, kind="file") for item in files),
+        all_sources=all_sources,
+        check=check,
+        detach_paths=tuple(resolve_workspace_path(item, root=root, kind="file") for item in detach),
     )
 
 

@@ -1596,8 +1596,9 @@ concrete. Prose outside every window is the author's own and stays citable.
 ### Declaring a projection block
 
 `block repin --claim ID --claim ID ...` is how a projection block is created.
-Write the marker pair by hand around the prose you want governed, then repin it
-naming every backing: the daemon re-reads and re-proves each Claim at the
+Write the marker pair by hand around the prose you want governed (see
+[Projection block markers](#projection-block-markers)), then repin it naming
+every backing: the daemon re-reads and re-proves each Claim at the
 accepted coordinate, stamps the marker, and registers the block with the
 instance. Up to 512 backings fit in one block
 (`MAX_PROJECTION_BACKINGS_PER_BLOCK`, inside a 128 KiB stamp), and a block that
@@ -1637,6 +1638,39 @@ projection -- the overlap the two-block-kinds law refuses. An intent carrying
 `insertion_target` refuses typed as
 `playbill.authoring.insertion_target_removed`, naming both roads above as the
 repair.
+
+On MCP the same adapter runs in the MCP server process:
+`cruxible_playbill_block_repin` takes the block and its page (`file`,
+workspace-relative, or `source`, its catalog id) and computes the stamp there,
+so an agent never builds one; `cruxible_playbill_block_sync` is `block sync`.
+`--dry-run` (MCP `dry_run`) computes and checks the stamp and writes nothing:
+no manifest, no page edit, no declaration.
+
+### Projection block markers
+
+A projection block is the byte range between one opening and one closing
+marker, each on its own line:
+
+~~~text
+<!-- playbill:block:BLOCK_ID -->
+...the governed prose...
+<!-- /playbill:block:BLOCK_ID -->
+~~~
+
+- `BLOCK_ID` matches `[a-z][a-z0-9_.-]{0,63}` and is unique within its page.
+- The opening above is the **bootstrap** form you write by hand. `repin`
+  replaces it with a stamped opening, by default the compact form
+  `<!-- playbill:block:BLOCK_ID:ref:HEX12 -->`, where `HEX12` is the first 12 hex
+  of the stamp's digest and the stamp itself is kept in
+  `.playbill/manifests/`; a block repinned without compaction carries the stamp
+  inline as `<!-- playbill:block:BLOCK_ID:STAMP -->` (unpadded base64url of the
+  canonical stamp JSON). Never edit a stamped opening by hand; repin it.
+- Each marker starts at column 0 and ends with a line feed (LF, not CRLF), and
+  the body ends with a line feed.
+- Markers inside a fenced code block (``` or ~~~) are text, not markers.
+- Blocks never nest or overlap, and every opening has its closing marker.
+- The page must be a source in `.playbill/sources.yaml` (or `sources.yaml`);
+  that catalog names the block's `source_id`, which a bootstrap marker cannot.
 
 ### Checking and detaching
 

@@ -29,7 +29,7 @@ from cruxible_client.contracts.compact_query import (
     QueryFollowV1,
     QueryReceiptDetail,
 )
-from cruxible_client.contracts.declared_blocks import ProjectionBlockStamp
+from cruxible_client.contracts.declared_blocks import PlaybillBlockRepinResultV1
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.evidence_rule_upgrade import (
     EvidenceRuleUpgradeRequestV1,
@@ -93,6 +93,14 @@ from cruxible_core.mcp.target import MCP_INSTANCE_ENV, require_instance_id
 from cruxible_core.mcp.tool_prompts import tool_description
 from cruxible_core.service.discovery.next import PlaybillNextWorkspaceObservationV1
 from cruxible_core.service.procedures.procedure_runs import ProcedureSlotBindingRequestV1
+
+
+class McpBlockQuery(BaseModel):
+    """One QueryDefinition backing of a block, with its parameter bindings."""
+
+    model_config = ConfigDict(extra="forbid")
+    query: str = Field(min_length=1)
+    params: dict[str, JsonValue] = Field(default_factory=dict)
 
 
 class McpRootAlias(BaseModel):
@@ -818,14 +826,77 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_block_declare(
+    def cruxible_playbill_block_repin(
         instance_id: InstanceId = None,
         *,
-        stamp: ProjectionBlockStamp,
-    ) -> contracts.PlaybillBlockDeclareResultV1:
-        """Register one projection block a workspace just stamped into its page."""
-        return handlers.handle_playbill_block_declare(
-            require_instance_id(instance_id), stamp.model_dump(mode="json")
+        block: Annotated[str, Field(description="The block id in its marker.")],
+        file: Annotated[
+            str | None, Field(description="The page, workspace-relative; or give `source`.")
+        ] = None,
+        source: Annotated[
+            str | None, Field(description="The page's catalog source id; or give `file`.")
+        ] = None,
+        claims: Annotated[
+            list[str] | None, Field(description="Claim backings; omitted keeps the block's.")
+        ] = None,
+        queries: Annotated[
+            list[McpBlockQuery] | None,
+            Field(description="QueryDefinition backings; omitted keeps the block's."),
+        ] = None,
+        artifacts: Annotated[
+            list[str] | None,
+            Field(description="Subject or ClaimType identities; omitted keeps the block's."),
+        ] = None,
+        currency_policy: Literal["warn", "require_current"] | None = None,
+        backing_digest: Annotated[
+            str | None,
+            Field(description="The successor digest an ambiguity refusal named, alone."),
+        ] = None,
+        dry_run: Annotated[
+            bool | None, Field(description="true: compute the stamp and write nothing.")
+        ] = None,
+    ) -> PlaybillBlockRepinResultV1:
+        """Stamp (or restamp) one projection block; this adapter computes the stamp."""
+        return handlers.handle_playbill_block_repin(
+            require_instance_id(instance_id),
+            block=block,
+            file=file,
+            source=source,
+            claims=claims,
+            queries=None
+            if queries is None
+            else [(item.query, dict(item.params)) for item in queries],
+            artifacts=artifacts,
+            currency_policy=currency_policy,
+            backing_digest=backing_digest,
+            dry_run=dry_run,
+        )
+
+    @_tool
+    def cruxible_playbill_block_sync(
+        instance_id: InstanceId = None,
+        *,
+        files: Annotated[
+            list[str] | None, Field(description="Pages to check, workspace-relative.")
+        ] = None,
+        all_sources: Annotated[
+            bool, Field(description="Check every page the source catalog names.")
+        ] = False,
+        detach: Annotated[
+            list[str] | None,
+            Field(description="Pages whose retired blocks lose their markers, body kept."),
+        ] = None,
+        check: Annotated[
+            bool, Field(description="true: report what detach would change; edit nothing.")
+        ] = False,
+    ) -> contracts.PlaybillBlockSyncResultV1:
+        """Check each block's backings against the instance; repairs name the next call."""
+        return handlers.handle_playbill_block_sync(
+            require_instance_id(instance_id),
+            files=files or (),
+            all_sources=all_sources,
+            detach=detach or (),
+            check=check,
         )
 
     @_tool

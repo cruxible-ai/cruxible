@@ -409,6 +409,7 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("PlaybillProjectionCheckRequestV1", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillProjectionCheckResultV1", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillBlockDeclareResultV1", "declared_generation"): "SETTLEMENT ORDER",
+    ("PlaybillBlockRepinResultV1", "declared_generation"): "SETTLEMENT ORDER",
     ("DeclaredBlockRegistration", "declared_generation"): "SETTLEMENT ORDER",
     # The instant the daemon recorded a workspace's declaration. It is
     # protocol state -- nothing orders, expires or evaluates by it -- but it IS

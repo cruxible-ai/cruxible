@@ -41,7 +41,7 @@ def test_protocol_list_hides_tools_outside_playbill_profile(
     assert "cruxible_playbill_authoring_compile" not in names
     assert "cruxible_playbill_activate" in names
     assert "cruxible_playbill_propose_document" not in names
-    assert "cruxible_playbill_block_declare" not in names
+    assert "cruxible_playbill_block_repin" not in names
     assert "cruxible_playbill_curation_list" not in names
 
 
@@ -55,15 +55,15 @@ def test_protocol_call_refuses_hidden_playbill_tool(
         async with _protocol_session(server) as session:
             await session.initialize()
             result = await session.call_tool(
-                "cruxible_playbill_block_declare",
-                {"instance_id": "inst_missing", "stamp": {}},
+                "cruxible_playbill_block_repin",
+                {"instance_id": "inst_missing", "block": "status", "source": "runbook"},
             )
             text = " ".join(block.text for block in result.content if hasattr(block, "text"))
             return bool(result.isError), text
 
     is_error, message = _run(exercise())
     assert is_error
-    assert "cruxible_playbill_block_declare" in message
+    assert "cruxible_playbill_block_repin" in message
     assert "profile 'default'" in message
 
 

@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-10-01:operator-batch",
-    "surface_digest": "sha256:ffd5a9afe7a379bc172cdf8ddb58b4e51610591827f08c1f217a742118b1e9ea"
+    "surface_digest": "sha256:b35af1648975c3af7b1a69b13d938c67f3971dac7ef42e49c3ca2157b869b675"
   },
   "surface": {
     "cli_leaves": [
@@ -2145,16 +2145,6 @@
         "permission": "GOVERNED_WRITE"
       },
       {
-        "delegate": "cruxible_core.mcp.handlers.handle_playbill_block_declare",
-        "facade_operations": [
-          "playbill_block_declare"
-        ],
-        "input_schema_digest": "sha256:824052edf580787300a9cffd4e61360653a3f53ef5a935a11e8e1db2f1d68d32",
-        "name": "cruxible_playbill_block_declare",
-        "output_schema_digest": "sha256:f0316e11279c00c5517ec13255bdf27b204d51e1dce565b1e4fc2d9b77313513",
-        "permission": "GOVERNED_WRITE"
-      },
-      {
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_block_depublish",
         "facade_operations": [
           "playbill_block_depublish"
@@ -2163,6 +2153,32 @@
         "name": "cruxible_playbill_block_depublish",
         "output_schema_digest": "sha256:346c9a1a107e06bd30316e2b24f1fb7fda0654ae67bc18057c09dd084ed93f0b",
         "permission": "GOVERNED_WRITE"
+      },
+      {
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_block_repin",
+        "facade_operations": [
+          "playbill_block_declare",
+          "playbill_get",
+          "playbill_head",
+          "playbill_query"
+        ],
+        "input_schema_digest": "sha256:6d13f57f3c416b119b6a55d48f7cc52d670e26752d2bca85f15a1c8d039acd94",
+        "name": "cruxible_playbill_block_repin",
+        "output_schema_digest": "sha256:8fa5d0f99f2fb9cd0db7c2463a4babcd37deab671d9a515a131fb9a95505dabd",
+        "permission": "GOVERNED_WRITE"
+      },
+      {
+        "delegate": "cruxible_core.mcp.handlers.handle_playbill_block_sync",
+        "facade_operations": [
+          "playbill_block_declare",
+          "playbill_get",
+          "playbill_head",
+          "playbill_query"
+        ],
+        "input_schema_digest": "sha256:271f92771986083290dba7a6253de54dfcc8a8867413355cb44fc8689c4f89de",
+        "name": "cruxible_playbill_block_sync",
+        "output_schema_digest": "sha256:fe77ad8c7ce282322df8515c849b4bc0a9c9dac174ab335d05a14bf0e7a391e4",
+        "permission": "READ_ONLY"
       },
       {
         "delegate": "cruxible_core.mcp.handlers.handle_playbill_claim_attest",

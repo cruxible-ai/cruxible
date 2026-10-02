@@ -224,7 +224,8 @@ from accepted law evidence, never carried forward from acceptance.
 | `cruxible_playbill_authoring_submit` | Idempotently submit a passing intent | `GOVERNED_WRITE` |
 | `cruxible_playbill_authoring_status` | Read the causal path to acceptance | `READ_ONLY` |
 | `cruxible_playbill_authoring_abandon_insertion` | Release a publication expectation an instance already holds | `GOVERNED_WRITE` |
-| `cruxible_playbill_block_declare` | Register one projection block a workspace just stamped into its page | `GOVERNED_WRITE` |
+| `cruxible_playbill_block_repin` | Stamp or refresh one projection block; the adapter computes the stamp and registers the block | `GOVERNED_WRITE` |
+| `cruxible_playbill_block_sync` | Check each projection block's backings; only `detach` edits a page | `READ_ONLY` |
 | `cruxible_playbill_block_depublish` | Release the registration that demands one page block, whichever road declared it | `GOVERNED_WRITE` |
 
 The coordinator mints every identity, digest, base, timestamp, and proposal reference.
