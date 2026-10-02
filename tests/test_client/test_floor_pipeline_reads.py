@@ -174,3 +174,54 @@ def test_regular_catalog_overlay_and_bound_source_keep_their_results(tmp_path):
     sources = WorkspaceSources(workspace)
     assert sources.select("page.md").content == b"page\n"
     assert authoring.write_projection_index(workspace) == 0
+
+
+@pytest.mark.parametrize("boundary", ["open", "stage"])
+def test_git_info_fifo_swap_refuses_or_persists_through_the_held_descriptor(
+    tmp_path, monkeypatch, boundary
+):
+    workspace = tmp_path / "workspace"
+    subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+    info = workspace / ".git/info"
+    held = info.with_name("info-held")
+    identity = info.stat().st_ino
+    exclude = info / "exclude"
+    exclude.chmod(0o640)
+    old_bytes = exclude.read_bytes()
+    original = os.open
+    swapped = []
+
+    def open_file(name, flags, mode=0o777, *, dir_fd=None):
+        at_open = dir_fd is None and Path(name) == info
+        at_stage = dir_fd is not None and os.fstat(dir_fd).st_ino == identity and flags & os.O_CREAT
+        if not swapped and ((boundary == "open" and at_open) or (boundary == "stage" and at_stage)):
+            info.rename(held)
+            os.mkfifo(info)
+            swapped.append(True)
+        return original(name, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(authoring.os, "open", open_file)
+
+    def write():
+        return authoring.write_workspace_floor_delta(
+            lambda *_: _delta(),
+            instance_id="inst_fifo",
+            workspace=workspace,
+            server_socket=str(tmp_path / "socket"),
+        )
+
+    previous_umask = os.umask(0o077)
+    try:
+        if boundary == "open":
+            with pytest.raises(PlaybillWorkspaceError, match="Git info/exclude cannot be read"):
+                call_with_fifo_timeout(info, write)
+            assert (held / "exclude").read_bytes() == old_bytes
+        else:
+            assert call_with_fifo_timeout(info, write)[1].status == "written"
+            assert (held / "exclude").read_bytes() == old_bytes + b"/.playbill/coverage.json\n"
+            assert (held / "exclude").stat().st_mode & 0o777 == 0o640
+            assert sorted(path.name for path in held.iterdir()) == ["exclude"]
+    finally:
+        os.umask(previous_umask)
+    assert swapped and info.is_fifo()
+    assert (workspace / ".playbill/floor/manifest.json").is_file()

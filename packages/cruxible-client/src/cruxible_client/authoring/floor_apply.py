@@ -140,6 +140,7 @@ def _write_file(
     *,
     mode: int = 0o644,
     durable: bool = False,
+    preserve_mode: bool = False,
 ) -> None:
     """Write ``path`` atomically: a staged file in its own directory, renamed over it."""
 
@@ -150,6 +151,8 @@ def _write_file(
         handle = os.open(staged, _CREATE, mode, dir_fd=directory)
         try:
             with os.fdopen(handle, "wb") as stream:
+                if preserve_mode:
+                    os.fchmod(stream.fileno(), mode)
                 stream.write(content)
                 if durable:
                     stream.flush()

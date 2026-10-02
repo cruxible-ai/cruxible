@@ -18,7 +18,6 @@ import tempfile
 import unicodedata
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path, PurePosixPath
-from tempfile import NamedTemporaryFile
 from typing import Any, Literal, Protocol, cast
 from urllib.parse import urlsplit
 
@@ -211,44 +210,36 @@ def _ensure_workspace_config_ignored(workspace: Path) -> None:
         raise PlaybillWorkspaceError("Git info/exclude path must not be a symbolic link")
     try:
         info_dir.mkdir(parents=True, exist_ok=True)
-        existing = read_regular_file(exclude_path) if exclude_path.exists() else b""
+        descriptor = os.open(info_dir, _DIRECTORY)
     except OSError as exc:
         raise PlaybillWorkspaceError(f"Git info/exclude cannot be read: {exc}") from exc
-    if _CONFIG_EXCLUDE_RULE.rstrip(b"\n") in existing.splitlines():
-        return
-    content = existing
-    if content and not content.endswith(b"\n"):
-        content += b"\n"
-    content += _CONFIG_EXCLUDE_RULE
-    temporary: Path | None = None
     try:
-        with NamedTemporaryFile(
-            mode="wb",
-            prefix=".exclude.",
-            dir=info_dir,
-            delete=False,
-        ) as output:
-            temporary = Path(output.name)
-            output.write(content)
-            output.flush()
-            os.fsync(output.fileno())
-        assert temporary is not None
-        mode = exclude_path.stat().st_mode & 0o777 if exclude_path.exists() else 0o644
-        os.chmod(temporary, mode)
-        os.replace(temporary, exclude_path)
-        temporary = None
-        descriptor = os.open(info_dir, os.O_RDONLY)
         try:
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-    except OSError as exc:
-        raise PlaybillWorkspaceError(
-            f"Git info/exclude could not be written atomically: {exc}"
-        ) from exc
+            existing = read_regular_file("exclude", dir_fd=descriptor)
+        except FileNotFoundError:
+            existing = b""
+        except OSError as exc:
+            raise PlaybillWorkspaceError(f"Git info/exclude cannot be read: {exc}") from exc
+        if _CONFIG_EXCLUDE_RULE.rstrip(b"\n") in existing.splitlines():
+            return
+        content = existing
+        if content and not content.endswith(b"\n"):
+            content += b"\n"
+        content += _CONFIG_EXCLUDE_RULE
+        try:
+            try:
+                mode = os.stat("exclude", dir_fd=descriptor, follow_symlinks=False).st_mode & 0o777
+            except FileNotFoundError:
+                mode = 0o644
+            # Keep reads, exclusive staging, replacement and directory fsync on
+            # this descriptor even if the workspace swaps .git/info meanwhile.
+            _write_file(descriptor, "exclude", content, mode=mode, durable=True, preserve_mode=True)
+        except (OSError, PlaybillFloorApplyError) as exc:
+            raise PlaybillWorkspaceError(
+                f"Git info/exclude could not be written atomically: {exc}"
+            ) from exc
     finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
+        os.close(descriptor)
 
 
 def _read_workspace_config(path: Path) -> dict[str, Any] | None:
