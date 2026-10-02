@@ -65,7 +65,8 @@
         "host_state_incomplete",
         "host_state_malformed",
         "compiler_lineage_not_writable",
-        "instance_decommissioned"
+        "instance_decommissioned",
+        "location_outside_state_root"
       ]
     },
     "PlaybillHostCompatibilityV1": {
@@ -73,7 +74,8 @@
         "uninitialized",
         "writable",
         "reseed_required",
-        "decommissioned"
+        "decommissioned",
+        "refused"
       ]
     },
     "PlaybillHostStatus": {
@@ -19788,7 +19790,8 @@
               "host_state_incomplete",
               "host_state_malformed",
               "compiler_lineage_not_writable",
-              "instance_decommissioned"
+              "instance_decommissioned",
+              "location_outside_state_root"
             ],
             "title": "Code",
             "type": "string"
@@ -19827,7 +19830,8 @@
               "host_state_incomplete",
               "host_state_malformed",
               "compiler_lineage_not_writable",
-              "instance_decommissioned"
+              "instance_decommissioned",
+              "location_outside_state_root"
             ],
             "title": "Code",
             "type": "string"
@@ -19870,7 +19874,8 @@
               "uninitialized",
               "writable",
               "reseed_required",
-              "decommissioned"
+              "decommissioned",
+              "refused"
             ],
             "title": "Compatibility",
             "type": "string"
@@ -20016,7 +20021,8 @@
                   "host_state_incomplete",
                   "host_state_malformed",
                   "compiler_lineage_not_writable",
-                  "instance_decommissioned"
+                  "instance_decommissioned",
+                  "location_outside_state_root"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -20050,7 +20056,8 @@
               "uninitialized",
               "writable",
               "reseed_required",
-              "decommissioned"
+              "decommissioned",
+              "refused"
             ],
             "title": "Compatibility",
             "type": "string"
@@ -102128,7 +102135,8 @@
                   "host_state_incomplete",
                   "host_state_malformed",
                   "compiler_lineage_not_writable",
-                  "instance_decommissioned"
+                  "instance_decommissioned",
+                  "location_outside_state_root"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -102162,7 +102170,8 @@
                   "uninitialized",
                   "writable",
                   "reseed_required",
-                  "decommissioned"
+                  "decommissioned",
+                  "refused"
                 ],
                 "title": "Compatibility",
                 "type": "string"

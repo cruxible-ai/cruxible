@@ -97,15 +97,51 @@ def get_server_state_root(environ: Mapping[str, str] | None = None) -> Path:
     else:
         state_root = (Path.home() / ".cruxible").resolve()
     legacy = state_root / "server"
-    legacy_files = (
+    for path in (
         legacy / "registry.db",
         legacy / "runtime_credentials.db",
         state_root / "registry.db",
         state_root / "runtime_credentials.db",
-    )
-    if any(path.exists() for path in legacy_files):
-        raise PlaybillReseedRequired()
+    ):
+        _refuse_legacy_state_file(path)
     return state_root
+
+
+_SQLITE_HEADER = b"SQLite format 3\x00"
+
+
+def _refuse_legacy_state_file(path: Path) -> None:
+    """Refuse a pre-PC-HR database at ``path``, naming it; ignore an empty file.
+
+    Only a SQLite database there is the old layout. An empty file is not a
+    layout at all: a read-looking probe such as ``sqlite3 <path>`` creates one,
+    and treating it as the old layout took a daemon down. Anything else sitting
+    at a legacy path is refused by name, as neither.
+    """
+
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(len(_SQLITE_HEADER))
+    except FileNotFoundError:
+        return
+    except IsADirectoryError as exc:
+        raise ServerStateConfigurationError(
+            f"{path} is a directory where the layout from before PC-HR kept a database; "
+            "repair: move it out of the state root"
+        ) from exc
+    except OSError as exc:
+        raise ServerStateConfigurationError(
+            f"{path} sits where the layout from before PC-HR kept a database and cannot be "
+            f"read ({exc.strerror}); repair: move it out of the state root"
+        ) from exc
+    if not head:
+        return
+    if head == _SQLITE_HEADER:
+        raise PlaybillReseedRequired(found=str(path))
+    raise ServerStateConfigurationError(
+        f"{path} sits where the layout from before PC-HR kept a database, but it is "
+        "neither empty nor a SQLite database; repair: move it out of the state root"
+    )
 
 
 def get_server_log_path(environ: Mapping[str, str] | None = None) -> Path:

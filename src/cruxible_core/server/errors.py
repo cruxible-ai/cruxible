@@ -49,6 +49,7 @@ from cruxible_core.errors import (
     DaemonOperationScopeError,
     DataValidationError,
     HostedProfileUnknownError,
+    InstanceLocationRefusedError,
     InstanceNotFoundError,
     InstanceScopeError,
     PermissionDeniedError,
@@ -229,6 +230,7 @@ def _status_for_error(exc: CoreError) -> int:
         exc,
         (
             ApprovalIntegrityError,
+            InstanceLocationRefusedError,
             PlaybillBootstrapError,
             PrincipalIntegrityError,
             ProjectionCoordinateError,
@@ -273,6 +275,10 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         context["decommissioned_at"] = exc.decommissioned_at
     if isinstance(exc, InstanceNotFoundError):
         context["instance_id"] = exc.instance_id
+    if isinstance(exc, InstanceLocationRefusedError):
+        context["instance_id"] = exc.instance_id
+        context["location"] = exc.location
+        context["state_root"] = exc.state_root
     if isinstance(exc, DaemonOperationScopeError):
         context["operation"] = exc.operation
         context["credential_scope"] = exc.credential_scope

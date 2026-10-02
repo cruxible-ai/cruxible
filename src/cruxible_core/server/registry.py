@@ -1,15 +1,26 @@
-"""Persistent registry mapping opaque server IDs to backend locations."""
+"""Persistent registry mapping opaque server IDs to backend locations.
+
+Locations are stored relative to the state root that holds the registry, so a
+copied state root names its own copies, never the original's instances. A row
+whose location resolves outside the state root (an absolute row from before
+relative storage, copied from elsewhere, or a relative row escaping through
+``..`` or a symlink) is never served: `instance_root` refuses it. Containment
+compares resolved real paths component by component, case-insensitively, so a
+differently-cased spelling of the same directory on a case-insensitive volume
+cannot pass as another one, and an alias cannot pass as the root.
+"""
 
 from __future__ import annotations
 
+import os
 import re
 import sqlite3
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePath
 
 from cruxible_client.contracts.primitives import new_id
 from cruxible_client.contracts.temporal import format_datetime, utc_now
-from cruxible_core.errors import ConfigError
+from cruxible_core.errors import ConfigError, InstanceLocationRefusedError
 from cruxible_core.server.config import get_server_state_root
 
 LOCAL_FILESYSTEM_BACKEND = "local_filesystem"
@@ -19,13 +30,20 @@ _INSTANCE_ID_RE = re.compile(r"^inst_[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 @dataclass(frozen=True)
 class InstanceRecord:
-    """Persistent mapping from opaque instance ID to backend metadata."""
+    """Persistent mapping from opaque instance ID to backend metadata.
+
+    ``location`` is absolute: the stored state-root-relative path joined to
+    the registry's state root (or, for a row outside it, the stored absolute
+    path). ``within_state_root`` says whether it resolves under that root;
+    only such a row is ever served (`InstanceRegistry.instance_root`).
+    """
 
     instance_id: str
     backend: str
     location: str
     workspace_root: str | None
     created_at: str
+    within_state_root: bool = True
 
 
 @dataclass(frozen=True)
@@ -44,6 +62,50 @@ class InstanceRegistry:
         self.state_root = self.db_path.parent.parent
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
+        self._relativize_locations()
+
+    def relative_location(self, path: str | Path) -> PurePath | None:
+        """``path`` relative to the state root when it resolves under it, else None."""
+
+        return _contained_relative(Path(path), self.state_root)
+
+    def instance_root(self, record: InstanceRecord) -> Path:
+        """The instance directory a daemon may serve for ``record``, or a typed refusal."""
+
+        relative = self.relative_location(record.location)
+        if relative is None:
+            raise InstanceLocationRefusedError(
+                instance_id=record.instance_id,
+                location=record.location,
+                state_root=str(self.state_root),
+            )
+        # Rebuilt under this root rather than taken from the row: on a
+        # case-sensitive volume a differently-cased spelling compares equal
+        # here, and the directory served must be this root's own.
+        return (self.state_root / relative).resolve(strict=False)
+
+    def _relativize_locations(self) -> None:
+        """Rewrite absolute rows under this state root as state-root-relative.
+
+        The migration for rows written before relative storage. A row whose
+        absolute location lies outside this state root is left exactly as it
+        is, and refused when served: it names another state root's instance
+        (typically the original of a copied state root).
+        """
+
+        with self._connect() as conn:
+            rows = conn.execute("SELECT instance_id, location FROM instances").fetchall()
+            for row in rows:
+                stored = row["location"]
+                if not Path(stored).is_absolute():
+                    continue
+                relative = self.relative_location(stored)
+                if relative is None:
+                    continue
+                conn.execute(
+                    "UPDATE instances SET location = ? WHERE instance_id = ?",
+                    (relative.as_posix(), row["instance_id"]),
+                )
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
@@ -220,6 +282,10 @@ class InstanceRegistry:
         workspace_root: str | None,
         preferred_instance_id: str | None = None,
     ) -> RegisteredInstance:
+        if Path(location).is_absolute():
+            relative = self.relative_location(location)
+            if relative is not None:
+                location = relative.as_posix()
         created_at = format_datetime(utc_now())
         instance_id = preferred_instance_id or new_id("inst", length=16, separator="_")
         with self._connect() as conn:
@@ -252,6 +318,7 @@ class InstanceRegistry:
         return RegisteredInstance(record=record, created=cursor.rowcount == 1)
 
     def _get_by_backend_location(self, backend: str, location: str) -> InstanceRecord | None:
+        """Look a row up by its STORED location (state-root-relative when inside)."""
         with self._connect() as conn:
             row = conn.execute(
                 """
@@ -283,15 +350,40 @@ class InstanceRegistry:
             return None
         return self._row_to_record(row)
 
-    @staticmethod
-    def _row_to_record(row: sqlite3.Row) -> InstanceRecord:
+    def _row_to_record(self, row: sqlite3.Row) -> InstanceRecord:
+        stored = Path(row["location"])
+        location = stored if stored.is_absolute() else self.state_root / stored
         return InstanceRecord(
             instance_id=row["instance_id"],
             backend=row["backend"],
-            location=row["location"],
+            location=str(location),
             workspace_root=row["workspace_root"],
             created_at=row["created_at"],
+            within_state_root=self.relative_location(location) is not None,
         )
+
+
+def _real_parts(path: Path) -> tuple[str, ...]:
+    return Path(os.path.realpath(path)).parts
+
+
+def _contained_relative(path: Path, root: Path) -> PurePath | None:
+    """``path`` relative to ``root`` when its real path lies strictly under root's.
+
+    Both sides are resolved through every symlink first, then compared one
+    component at a time with ``casefold``: a case-insensitive volume names one
+    directory by many spellings, and a byte comparison would let a spelling
+    other than the root's read as outside it (or, the other way round, an
+    alias of the original read as inside a copy).
+    """
+
+    parts = _real_parts(path)
+    root_parts = _real_parts(root)
+    if len(parts) <= len(root_parts):
+        return None
+    if any(a.casefold() != b.casefold() for a, b in zip(root_parts, parts, strict=False)):
+        return None
+    return PurePath(*parts[len(root_parts) :])
 
 
 def _validate_instance_id(instance_id: str) -> None:

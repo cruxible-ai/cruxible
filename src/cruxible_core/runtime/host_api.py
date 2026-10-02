@@ -22,7 +22,7 @@ from cruxible_core.compiler.compiler import (
     PC_HR_ARTIFACT_CODEC_COMPILERS,
     current_compiler_coordinate,
 )
-from cruxible_core.errors import ConfigError
+from cruxible_core.errors import ConfigError, InstanceLocationRefusedError
 from cruxible_core.floor.workspace_advertisement import workspace_git_object_format
 from cruxible_core.runtime.execution_policy import registered_isolated_executors
 from cruxible_core.runtime.permissions import (
@@ -64,7 +64,21 @@ def _inspect_registered_host(instance_id: str) -> contracts.PlaybillHostInspecti
             f"Instance {instance_id!r} is not a governed daemon host; run "
             "`cruxible playbill host create` first"
         )
-    managed_root = Path(record.location).resolve(strict=False)
+    try:
+        managed_root = get_registry().instance_root(record)
+    except InstanceLocationRefusedError as exc:
+        return contracts.PlaybillHostInspectionV1(
+            instance_id=instance_id,
+            managed_root=record.location,
+            workspace_root=record.workspace_root,
+            compatibility="refused",
+            writable=False,
+            reason=contracts.PlaybillHostCompatibilityReasonV1(
+                code="location_outside_state_root",
+                detail=str(exc),
+                repair_commands=("cruxible server start --state-root <the root that holds it>",),
+            ),
+        )
     trust_root = get_registry().state_root / "trust" / f"{instance_id}.json"
     legacy_root = managed_root / ".cruxible"
     common: _HostCommon = {

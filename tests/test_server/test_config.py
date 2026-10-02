@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import faulthandler
+import sqlite3
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,6 +16,7 @@ from cruxible_core.mcp.permissions import reset_permissions
 from cruxible_core.server import app as server_app
 from cruxible_core.server.config import (
     ServerAuthRequired,
+    ServerStateConfigurationError,
     auth_off_startup_notice,
     get_runtime_bootstrap_secret,
     get_server_fatal_log_path,
@@ -200,16 +202,48 @@ def test_pre_pc_hr_state_tree_preserves_the_auth_latch_by_refusing_reseed(
 
 
 @pytest.mark.parametrize("filename", ["registry.db", "runtime_credentials.db"])
-def test_flat_pre_pc_hr_state_tree_requires_reseed(
+def test_flat_pre_pc_hr_state_tree_requires_reseed_naming_the_file(
     tmp_path: Path,
     filename: str,
 ) -> None:
     state_root = tmp_path / "former-server-state-dir"
     state_root.mkdir()
-    (state_root / filename).touch()
+    legacy = state_root / filename
+    connection = sqlite3.connect(legacy)
+    connection.execute("CREATE TABLE instances (instance_id TEXT)")
+    connection.close()
 
-    with pytest.raises(PlaybillReseedRequired):
+    with pytest.raises(PlaybillReseedRequired) as refused:
         get_server_state_root({"CRUXIBLE_STATE_ROOT": str(state_root)})
+    assert refused.value.found == str(legacy.resolve())
+    assert str(legacy.resolve()) in str(refused.value)
+    assert "codec" not in str(refused.value)
+
+
+@pytest.mark.parametrize(
+    "relative", ["registry.db", "runtime_credentials.db", "server/runtime_credentials.db"]
+)
+def test_an_empty_file_at_a_legacy_path_is_not_a_legacy_layout(
+    tmp_path: Path,
+    relative: str,
+) -> None:
+    # What `sqlite3 <path>` leaves behind when the path did not exist: an empty
+    # file. It took a daemon down once; it is not the old layout.
+    state_root = tmp_path / "state"
+    (state_root / relative).parent.mkdir(parents=True)
+    (state_root / relative).touch()
+
+    assert get_server_state_root({"CRUXIBLE_STATE_ROOT": str(state_root)}) == state_root.resolve()
+
+
+def test_a_non_database_file_at_a_legacy_path_is_refused_by_name(tmp_path: Path) -> None:
+    state_root = tmp_path / "state"
+    state_root.mkdir()
+    (state_root / "registry.db").write_text("notes\n", encoding="utf-8")
+
+    with pytest.raises(ServerStateConfigurationError, match="neither empty nor a SQLite") as raised:
+        get_server_state_root({"CRUXIBLE_STATE_ROOT": str(state_root)})
+    assert str((state_root / "registry.db").resolve()) in str(raised.value)
 
 
 def test_server_log_path_defaults_under_state_root(tmp_path: Path) -> None:

@@ -24,7 +24,7 @@ from cruxible_client.contracts.types import (
     PrincipalRecord,
 )
 from cruxible_core.documents.workspace_file import WorkspaceFileReader
-from cruxible_core.errors import InstanceNotFoundError
+from cruxible_core.errors import InstanceLocationRefusedError, InstanceNotFoundError
 from cruxible_core.floor.workspace_advertisement import (
     advertise_workspace_refs,
     workspace_git_object_format,
@@ -73,12 +73,13 @@ class PlaybillInstanceManager:
         record = registry.get(instance_id)
         if record is None or record.backend != GOVERNED_DAEMON_BACKEND:
             raise InstanceNotFoundError(instance_id)
-        managed_root = Path(record.location).resolve(strict=False)
+        # A row outside this state root names another root's instance (a copied
+        # state root still carries the original's registry): refused, never served.
+        managed_root = registry.instance_root(record)
         legacy_root = managed_root / ".cruxible"
-        if (legacy_root / "playbill-v1").exists() or (
-            legacy_root / "playbill-trust-root-v1.json"
-        ).exists():
-            raise PlaybillReseedRequired()
+        for legacy in (legacy_root / "playbill-v1", legacy_root / "playbill-trust-root-v1.json"):
+            if legacy.exists():
+                raise PlaybillReseedRequired(found=str(legacy))
         trust_root = registry.state_root / "trust" / f"{instance_id}.json"
         if managed_root.exists() != trust_root.exists():
             raise PlaybillReseedRequired()
@@ -389,7 +390,12 @@ class PlaybillInstanceManager:
                 continue
             try:
                 instance = self.get(record.instance_id)
-            except (PlaybillBootstrapError, PlaybillReseedRequired, InstanceNotFoundError) as exc:
+            except (
+                PlaybillBootstrapError,
+                PlaybillReseedRequired,
+                InstanceNotFoundError,
+                InstanceLocationRefusedError,
+            ) as exc:
                 _log.warning(
                     "proposal_egress_recovery_instance_skipped",
                     instance_id=record.instance_id,
@@ -453,7 +459,12 @@ class PlaybillInstanceManager:
                 continue
             try:
                 instance = self.get(record.instance_id)
-            except (PlaybillBootstrapError, PlaybillReseedRequired, InstanceNotFoundError) as exc:
+            except (
+                PlaybillBootstrapError,
+                PlaybillReseedRequired,
+                InstanceNotFoundError,
+                InstanceLocationRefusedError,
+            ) as exc:
                 _log.warning(
                     "provider_recovery_instance_skipped",
                     instance_id=record.instance_id,

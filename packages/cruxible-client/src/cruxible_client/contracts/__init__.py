@@ -385,7 +385,7 @@ class PlaybillHostWorkspaceRegistrationV1(BaseModel):
 
 
 PlaybillHostCompatibilityV1: TypeAlias = Literal[
-    "uninitialized", "writable", "reseed_required", "decommissioned"
+    "uninitialized", "writable", "reseed_required", "decommissioned", "refused"
 ]
 PlaybillHostCompatibilityReasonCodeV1: TypeAlias = Literal[
     "legacy_layout_requires_reseed",
@@ -393,6 +393,7 @@ PlaybillHostCompatibilityReasonCodeV1: TypeAlias = Literal[
     "host_state_malformed",
     "compiler_lineage_not_writable",
     "instance_decommissioned",
+    "location_outside_state_root",
 ]
 
 
@@ -429,7 +430,9 @@ class PlaybillHostInspectionV1(BaseModel):
             or self.reason is not None
         ):
             raise ValueError("uninitialized host cannot carry compiler or reason")
-        if self.compatibility in {"reseed_required", "decommissioned"} and self.reason is None:
+        if self.compatibility in {"reseed_required", "decommissioned", "refused"} and (
+            self.reason is None
+        ):
             raise ValueError(f"{self.compatibility} host must carry a typed reason")
         return self
 

@@ -12,6 +12,7 @@ credential errors shared by the daemon, CLI and MCP boundaries.
     ├── HostedProfileUnknownError (unknown hosted server profile)
     ├── IsolatedExecutorDiscoveryError (advertised isolated executor failed to load)
     ├── InstanceNotFoundError (instance registry lookup)
+    ├── InstanceLocationRefusedError (registry row outside the daemon's state root)
     ├── RuntimeCredentialNotFoundError (server credential store lookup)
     ├── AuthenticationError (HTTP/API credential failure)
     │   └── BootstrapClaimRefusedError (one refused runtime bootstrap claim)
@@ -175,6 +176,30 @@ class InstanceNotFoundError(CoreError):
     def __init__(self, instance_id: str):
         self.instance_id = instance_id
         super().__init__(f"Instance '{instance_id}' not found")
+
+
+class InstanceLocationRefusedError(CoreError):
+    """A registry row places an instance outside the daemon's own state root.
+
+    A state root copied for a dry run still carries the original's registry. A
+    daemon serving such a row would write the original instance, so it refuses
+    the instance instead: only an instance under this state root is served.
+    """
+
+    error_code = "playbill.host.location_outside_state_root"
+
+    def __init__(self, *, instance_id: str, location: str, state_root: str) -> None:
+        self.instance_id = instance_id
+        self.location = location
+        self.state_root = state_root
+        super().__init__(
+            f"{self.error_code}: instance {instance_id!r} is registered at {location}, "
+            f"outside this daemon's state root {state_root}; a daemon serves only "
+            "instances under its own state root, so it will not write there. Repair: if "
+            "this state root is a copy, copy the instance into "
+            f"{state_root}/instances/{instance_id} and register it from that state root's "
+            "own daemon; otherwise start the daemon on the state root that holds it"
+        )
 
 
 class RuntimeCredentialNotFoundError(CoreError):

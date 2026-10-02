@@ -2,8 +2,8 @@
   "format": "playbill-served-surface-v1",
   "succession": {
     "ratified_by": "maintainer",
-    "register_entry": "2026-10-01:floor-delta",
-    "surface_digest": "sha256:6c85846279f69a8676577af0a534f7b6816f7d213385ade7a541f14ba30ae3ca"
+    "register_entry": "2026-10-01:operator-batch",
+    "surface_digest": "sha256:ad34c78c5652b2c095334c4414333773cd4f8e31e3a9d11778930c327b176bc2"
   },
   "surface": {
     "cli_leaves": [
@@ -2794,7 +2794,7 @@
         ],
         "input_schema_digest": "sha256:99d0490133578d67317d5885bb4e59121f2c6efce091358dfcb03d3542792925",
         "name": "cruxible_server_info",
-        "output_schema_digest": "sha256:64799794b0a7fe516bfe882b78a6f104a338ad8a8ea5149bf0bd5b4aa14828f0",
+        "output_schema_digest": "sha256:602abffebc2d5fa9cf70f80f40da883c697b1aa45e5531a316b81be634e41c65",
         "permission": "READ_ONLY"
       }
     ]
