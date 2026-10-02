@@ -33,7 +33,11 @@ is determined by its input and that writes nothing when refused is exempt:
 - body store: an inert content-addressed put;
 - proposal approve: signs an evaluation ``proposal inspect`` already shows;
 - proposal activate: its preview is the proposal's evaluation, already shown,
-  and the commit-time ``at`` check covers head movement.
+  and the commit-time ``at`` check covers head movement;
+- workspace floor-delivery (on/off): its effect is its input;
+- floor deliver-now: its result is fully determined by the accepted head (the
+  floor is a pure function of the accepted coordinate), it is idempotent, and
+  it writes only the derived, regenerable ``.playbill/floor``.
 
 Exempt in v1 as well (the maintainer's scope ruling, r12-scope-1001), and so
 taking no ``dry_run``:

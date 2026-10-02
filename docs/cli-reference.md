@@ -116,7 +116,11 @@ exempt. By that principle these are exempt:
 - `proposal approve`: records the caller's signed approval of an evaluation
   already shown by `proposal inspect`;
 - `proposal activate`: its preview is the proposal's evaluation, already
-  shown; the commit-time `at` check covers the head moving under it.
+  shown; the commit-time `at` check covers the head moving under it;
+- `workspace floor-delivery on|off`: its effect is its input;
+- floor deliver-now: its result is fully determined by the accepted head (the
+  floor is a pure function of the accepted coordinate), it is idempotent, and
+  it writes only the derived, regenerable `.playbill/floor`.
 
 Exempt in v1 as well, by the maintainer's earlier scope ruling:
 
