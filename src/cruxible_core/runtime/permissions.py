@@ -163,6 +163,7 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
 RUNTIME_OPERATION_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_playbill_host_create": PermissionMode.ADMIN,
     "cruxible_playbill_host_workspace_detach": PermissionMode.ADMIN,
+    "cruxible_playbill_host_workspace_attach": PermissionMode.ADMIN,
     "cruxible_playbill_instance_decommission": PermissionMode.ADMIN,
     "cruxible_playbill_claim_attestation_recover": PermissionMode.ADMIN,
     "cruxible_playbill_host_workspace_registration": PermissionMode.READ_ONLY,

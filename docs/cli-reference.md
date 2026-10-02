@@ -107,8 +107,10 @@ cruxible credential revoke CREDENTIAL_ID [--dry-run|--commit] [--at OID] [--json
 cruxible credential recover-admin [--state-root DIR] [--instance-id ID] [--dry-run] [--json]
 ~~~
 
-Revoking or rotating a credential cannot be undone, so both preview first; see
-[Previews](#previews).
+The bootstrap secret is claimable once per host: each host on a daemon claims
+its own first ADMIN credential with it, and no host claims twice
+(`runtime_bootstrap.secret_already_claimed`). Revoking or rotating a credential
+cannot be undone, so both preview first; see [Previews](#previews).
 
 `recover-admin` is local-only: it opens the state root's credentials DB
 directly with the daemon stopped. It ignores a remembered CLI context and
@@ -414,7 +416,7 @@ it.
 ~~~text
 cruxible playbill host create [--instance-id ID] [--workspace DIR] [--replace] [--dry-run]
 cruxible playbill host show INSTANCE [--json]
-cruxible playbill workspace attach [--instance-id ID] [--replace]
+cruxible playbill workspace attach [--instance-id ID] [--replace] [--dry-run]
 cruxible playbill workspace detach [--instance-id ID] [--dry-run] [--json]
 ~~~
 
@@ -437,18 +439,26 @@ With auth on, `host create` is authorized by the daemon's runtime bootstrap
 secret, which is its unscoped operator credential. That authorization is
 repeatable, exactly as it is for `server status`, `server restart` and
 `server stop`: a daemon hosting several instances allocates each of them with
-the same secret, and `credential claim-bootstrap` -- which stays one-shot --
-does not revoke it. An instance-scoped credential cannot allocate a host on the
+the same secret, and `credential claim-bootstrap` -- claimable once per host,
+so each host claims its own first ADMIN credential with the same secret and no
+restart -- does not revoke it. An instance-scoped credential cannot allocate a host on the
 daemon that hosts it, and the refusal names the bootstrap secret as the
 credential to present.
 
 `host show` is a zero-authority inspection of workspace registration, exact
 compiler coordinate/revision, and write compatibility; the CLI adds the selected
 transport. The daemon-local managed root is visible only to an unscoped operator,
-not an instance-scoped credential. `workspace attach` is client-local and requires a Unix
-socket: it writes `.playbill/coverage.json` for an existing host only after the
-daemon proves that it registered the exact current Git worktree. A missing or
-different registration is a typed refusal and no config is written.
+not an instance-scoped credential. `workspace attach` requires a Unix socket, so
+the daemon can see the path it is asked to register. A host with no worktree
+registers this one, whether or not Playbill is already initialized under it: an
+initialized host attaches in place (nothing is rebuilt) when the worktree is in
+its ledger's Git object format and holds no part of its managed root, and it
+advertises the accepted ref into the worktree at once. A host already
+registered to this worktree just gets the client config. Either way
+`.playbill/coverage.json` is written only once the daemon holds the exact
+current worktree. A host registered to a different worktree is a typed refusal
+naming `workspace detach` as the repair, and no config is written. `host create
+--workspace` and `init --workspace` take the same attach path.
 
 `workspace detach` releases a host from the worktree it registers. The registry
 holds one host per worktree, so moving a worktree to a second host needs the

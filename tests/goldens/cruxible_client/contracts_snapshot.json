@@ -20318,6 +20318,116 @@
         "status"
       ]
     },
+    "PlaybillHostWorkspaceAttachResultV1": {
+      "fields": {
+        "initialized": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "initialized",
+          "required": true,
+          "schema": {
+            "title": "Initialized",
+            "type": "boolean"
+          }
+        },
+        "instance_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "instance_id",
+          "required": true,
+          "schema": {
+            "title": "Instance Id",
+            "type": "string"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "attached",
+              "already_attached",
+              "would_attach"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-host-workspace-attach-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-host-workspace-attach-result-v1",
+            "default": "playbill-host-workspace-attach-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "workspace_root": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "workspace_root",
+          "required": true,
+          "schema": {
+            "title": "Workspace Root",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "One daemon host attached to a Git worktree, before or after its init.\n\nAn initialized host attaches when the worktree is in the ledger's own Git\nobject format and holds no part of the host's managed root; nothing is\nrebuilt. ``would_attach`` answers a preview, which registered nothing.",
+        "properties": {
+          "initialized": {
+            "title": "Initialized",
+            "type": "boolean"
+          },
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "attached",
+              "already_attached",
+              "would_attach"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-host-workspace-attach-result-v1",
+            "default": "playbill-host-workspace-attach-result-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "workspace_root": {
+            "title": "Workspace Root",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instance_id",
+          "status",
+          "workspace_root",
+          "initialized"
+        ],
+        "title": "PlaybillHostWorkspaceAttachResultV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "initialized",
+        "instance_id",
+        "status",
+        "workspace_root"
+      ]
+    },
     "PlaybillHostWorkspaceRegistrationV1": {
       "fields": {
         "instance_id": {

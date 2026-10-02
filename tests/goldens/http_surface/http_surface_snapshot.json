@@ -270,6 +270,9 @@
   "/api/v1/{instance_id}/playbill/whoami": {
     "GET": "PlaybillWhoAmI"
   },
+  "/api/v1/{instance_id}/playbill/workspace-attach": {
+    "POST": "PlaybillHostWorkspaceAttachResultV1"
+  },
   "/api/v1/{instance_id}/playbill/workspace-detach": {
     "POST": "PlaybillWorkspaceDetachResultV1"
   },

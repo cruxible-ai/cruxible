@@ -164,6 +164,7 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "PlaybillHostCompatibilityReasonV1",
         "PlaybillHostInspectionV1",
         "PlaybillHostResult",
+        "PlaybillHostWorkspaceAttachResultV1",
         "PlaybillHostWorkspaceRegistrationV1",
         "PlaybillInitResult",
         "PlaybillInsertionAbandonResult",

@@ -10,6 +10,7 @@ RUNTIME_BOOTSTRAP_CLAIM_PATH = "/{instance_id}/runtime/bootstrap/claim"
 PLAYBILL_HOST_CREATE_PATH = "/runtime/instances"
 PLAYBILL_HOST_SHOW_PATH = "/{instance_id}/playbill/host"
 PLAYBILL_WORKSPACE_DETACH_PATH = "/{instance_id}/playbill/workspace-detach"
+PLAYBILL_WORKSPACE_ATTACH_PATH = "/{instance_id}/playbill/workspace-attach"
 
 # Daemon-wide server-operation routes. These act on the whole shared daemon
 # (global metadata and in-place re-exec) rather than a single instance, so they

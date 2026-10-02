@@ -36,6 +36,7 @@ EXEMPT: dict[str, str] = {
     # or independently of, any principal; none changes governed state.
     "create_playbill_host": "allocates an empty host before any principal exists",
     "playbill_host_workspace_detach": "releases a worktree registration; the operator lever",
+    "playbill_host_workspace_attach": "registers a worktree to a host; the operator lever",
     "server_restart": "daemon lifecycle",
     "server_stop": "daemon lifecycle",
 }

@@ -653,7 +653,7 @@ def test_workspace_attach_refuses_a_different_registration_without_writing(
 
     assert result.exit_code == 1
     assert "playbill.workspace.registration_disagrees" in result.output
-    assert "cruxible playbill host create --instance-id inst_other" in result.output
+    assert "cruxible playbill workspace detach --instance-id inst_other" in result.output
     assert not (workspace / ".playbill" / "coverage.json").exists()
 
 

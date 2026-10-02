@@ -729,14 +729,26 @@ def workspace_group() -> None:
 @workspace_group.command("attach")
 @click.option("--instance-id", default=None, help="Existing registered daemon host ID.")
 @click.option("--replace", is_flag=True, help="Replace a differing workspace config.")
+@click.option(
+    "--dry-run/--commit",
+    "dry_run",
+    default=None,
+    help="--dry-run: check the attachment and register and write nothing.",
+)
 @json_option
 @handle_errors
 def attach_workspace(
     instance_id: str | None,
     replace: bool,
+    dry_run: bool | None,
     output_json: bool,
 ) -> None:
-    """Attach this Git worktree to an existing matching daemon registration."""
+    """Attach this Git worktree to a daemon host, initialized or not.
+
+    A host with no worktree registers this one (an initialized host included,
+    as long as the worktree is in its ledger's Git object format); a host
+    registered to this worktree just gets the client config.
+    """
 
     resolution = _local_git_workspace_root()
     _emit_git_workspace_note(resolution)
@@ -757,16 +769,35 @@ def attach_workspace(
     )
     assert isinstance(registration, contracts.PlaybillHostWorkspaceRegistrationV1)
     registered = registration.workspace_path
-    if (
-        registration.status != "registered"
-        or registered is None
-        or Path(registered).resolve(strict=False) != workspace
-    ):
+    if registration.status != "registered":
+        attached = _dispatch_cli(
+            lambda client: client.playbill_host_workspace_attach(
+                selected, workspace_root=str(workspace), dry_run=dry_run
+            ),
+            lambda: None,
+            allow_local=False,
+            command_name="playbill workspace attach",
+        )
+        assert isinstance(attached, contracts.PlaybillHostWorkspaceAttachResultV1)
+        if attached.status == "would_attach":
+            if output_json:
+                _emit_json(attached.model_dump(mode="json"))
+            else:
+                click.echo(
+                    f"Would attach {workspace} to Playbill host {selected}; nothing was "
+                    "registered or written"
+                )
+            return
+        registered = attached.workspace_root
+    if registered is None or Path(registered).resolve(strict=False) != workspace:
         raise PlaybillWorkspaceAttachmentError(
             instance_id=selected,
             requested_workspace=str(workspace),
             registered_workspace=registered,
         )
+    if dry_run:
+        click.echo(f"{workspace} is already attached to Playbill host {selected}; nothing changes")
+        return
     transport_values = _workspace_config_transport()
     transport = str(next(iter(transport_values.values())))
     _echo_active_write_target(

@@ -259,7 +259,8 @@ _BOOTSTRAP_CLAIM_REFUSALS: dict[str, tuple[str, str]] = {
         "(--secret-file or the env var).",
     ),
     "runtime_bootstrap.secret_already_claimed": (
-        "This bootstrap secret has already been claimed; it mints one ADMIN credential once.",
+        "This bootstrap secret has already been claimed for instance {instance_id}; it "
+        "mints one ADMIN credential once per host.",
         "use the ADMIN token that claim printed, or run `cruxible credential recover-admin` "
         "with the daemon stopped.",
     ),

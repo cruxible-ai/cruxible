@@ -28,6 +28,7 @@ from cruxible_client.contracts.documents import (
 )
 from cruxible_core.governance.keys import generate_client_principal_key
 from cruxible_core.ledger.signing import LocalEd25519ApprovalSigner
+from cruxible_core.runtime import host_api
 from cruxible_core.runtime.permissions import PermissionMode, reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
@@ -266,6 +267,72 @@ def test_binding_and_publishing_a_ledger_mirror_preview_and_write_nothing(
     assert previewed["status"] == "would_publish"
 
 
+def _git_worktree(path: Path) -> Path:
+    path.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    return path.resolve()
+
+
+def test_a_host_attaches_to_a_worktree_after_init_and_previews_first(
+    playbill_http: tuple[TestClient, str, Path], tmp_path: Path
+) -> None:
+    """Q16: an initialized host takes a worktree in place; nothing is rebuilt."""
+
+    client, instance_id, _reviewer_key = playbill_http
+    worktree = _git_worktree(tmp_path / "worktree")
+
+    preview = assert_writes_nothing(
+        [tmp_path],
+        lambda: host_api.playbill_host_workspace_attach(
+            instance_id,
+            workspace_root=str(worktree),
+            workspace_attachment_authorized=True,
+            dry_run=True,
+        ),
+        warm=_warm(client, instance_id),
+    )
+    assert (preview.status, preview.initialized) == ("would_attach", True)
+    assert get_registry().get(instance_id).workspace_root is None  # type: ignore[union-attr]
+
+    attached = host_api.playbill_host_workspace_attach(
+        instance_id, workspace_root=str(worktree), workspace_attachment_authorized=True
+    )
+    assert attached.status == "attached"
+    assert get_registry().get(instance_id).workspace_root == str(worktree)  # type: ignore[union-attr]
+    again = host_api.playbill_host_workspace_attach(
+        instance_id, workspace_root=str(worktree), workspace_attachment_authorized=True
+    )
+    assert again.status == "already_attached"
+    # Let the advisory ref refresh the attach queued finish before comparing.
+    get_playbill_manager().get(instance_id).settled_workspace_advertisement()
+
+    detach_preview = assert_writes_nothing(
+        [tmp_path],
+        lambda: host_api.playbill_host_workspace_detach(
+            instance_id, workspace_attachment_authorized=True, dry_run=True
+        ),
+    )
+    assert detach_preview.status == "would_detach"
+    assert get_registry().get(instance_id).workspace_root == str(worktree)  # type: ignore[union-attr]
+
+
+def test_a_worktree_in_another_object_format_is_refused_by_name(
+    playbill_http: tuple[TestClient, str, Path], tmp_path: Path
+) -> None:
+    client, instance_id, _reviewer_key = playbill_http
+    worktree = tmp_path / "sha256-worktree"
+    worktree.mkdir()
+    subprocess.run(["git", "init", "-q", "--object-format=sha256", str(worktree)], check=True)
+
+    with pytest.raises(Exception) as refused:
+        host_api.playbill_host_workspace_attach(
+            instance_id, workspace_root=str(worktree), workspace_attachment_authorized=True
+        )
+    assert "object_format" in str(refused.value) or "sha256" in str(refused.value)
+    assert get_registry().get(instance_id).workspace_root is None  # type: ignore[union-attr]
+    del client
+
+
 def test_allocating_a_host_previews(
     playbill_http: tuple[TestClient, str, Path], tmp_path: Path
 ) -> None:
@@ -316,17 +383,18 @@ def _bearer(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def test_a_bootstrap_claim_previews_and_claims_nothing(
+def test_bootstrap_claims_once_per_host_and_previews_claim_nothing(
     auth_daemon: TestClient, tmp_path: Path
 ) -> None:
     client = auth_daemon
-    _ok(
-        client.post(
-            "/api/v1/runtime/instances",
-            json={"instance_id": "inst_host_one"},
-            headers=_bearer(_SECRET),
+    for instance_id in ("inst_host_one", "inst_host_two"):
+        _ok(
+            client.post(
+                "/api/v1/runtime/instances",
+                json={"instance_id": instance_id},
+                headers=_bearer(_SECRET),
+            )
         )
-    )
     claim = "/api/v1/inst_host_one/runtime/bootstrap/claim"
 
     preview = _ok(
@@ -339,7 +407,14 @@ def test_a_bootstrap_claim_previews_and_claims_nothing(
     )
     assert (preview["status"], preview["token"]) == ("would_claim", None)
     one = _ok(client.post(claim, json={"bootstrap_secret": _SECRET}, headers=_bearer(_SECRET)))
-    assert one["status"] == "claimed" and one["token"]
+    two = _ok(
+        client.post(
+            "/api/v1/inst_host_two/runtime/bootstrap/claim",
+            json={"bootstrap_secret": _SECRET},
+            headers=_bearer(_SECRET),
+        )
+    )
+    assert one["token"] and two["token"] and one["token"] != two["token"]
 
 
 def test_credential_changes_preview_and_irreversible_ones_need_the_coordinate(

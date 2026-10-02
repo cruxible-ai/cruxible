@@ -247,6 +247,18 @@ class PlaybillInstanceManager:
         except (PlaybillBootstrapError, InstanceNotFoundError):
             return None
 
+    def rebind_workspace(self, instance_id: str) -> None:
+        """Bind an open instance's workspace advertiser to its current registration."""
+
+        with self._lock:
+            known = self._instances.get(instance_id)
+            if known is None:
+                return
+            _managed_root, _trust_path, workspaces = self._paths(instance_id)
+            self._bind_workspace(known, workspaces)
+        # The worktree learns the accepted ref now, not at the next write.
+        known.advertise_workspace()
+
     def open_instances(self) -> tuple[tuple[str, PlaybillInstance], ...]:
         """The instances this daemon already holds open, without opening any more."""
         with self._lock:

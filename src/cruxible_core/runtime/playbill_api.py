@@ -153,6 +153,7 @@ from cruxible_core.providers.provider_classifiers import PROVIDER_BUCKET_CLASSIF
 from cruxible_core.runtime.execution_policy import (
     enforce_customer_code_execution_supported,
 )
+from cruxible_core.runtime.host_api import attach_workspace
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.runtime.permissions import (
     PERMISSION_REQUIREMENTS,
@@ -535,14 +536,11 @@ def playbill_init(
         record = registry.get(instance_id)
         if record is None:
             raise ConfigError(f"Instance '{instance_id}' is not a governed daemon host")
-        if Path(record.location).exists() and record.workspace_root is None:
-            raise ConfigError(
-                f"Playbill host {instance_id!r} is already initialized without workspace "
-                "attachment; archive/rebuild an attached host, record attachment before init, "
-                "then install the provider"
-            )
-        attached_for_init = record.workspace_root is None
-        registry.attach_governed_workspace(instance_id, workspace_root)
+        # One attach path for a host before or after its init (Q16): an already
+        # initialized host is attached in place, never rebuilt.
+        attached_for_init = attach_workspace(instance_id, workspace_root) and not (
+            Path(record.location).exists()
+        )
     try:
         instance = get_playbill_manager().initialize(
             instance_id,

@@ -8,10 +8,14 @@ from cruxible_client import contracts
 from cruxible_client.contracts.change_control import ChangeControlRequestV1
 from cruxible_core.runtime import host_api
 from cruxible_core.server.config import resolve_server_settings
-from cruxible_core.server.request_models import PlaybillHostCreateRequest
+from cruxible_core.server.request_models import (
+    PlaybillHostCreateRequest,
+    PlaybillHostWorkspaceAttachRequest,
+)
 from cruxible_core.server.route_paths import (
     PLAYBILL_HOST_CREATE_PATH,
     PLAYBILL_HOST_SHOW_PATH,
+    PLAYBILL_WORKSPACE_ATTACH_PATH,
     PLAYBILL_WORKSPACE_DETACH_PATH,
 )
 from cruxible_core.server.routes import resolve_server_instance_id
@@ -47,6 +51,25 @@ def create_playbill_host(
 def _local_socket(request: Request) -> bool:
     return request.scope.get("client") is None and (
         resolve_server_settings().server_socket is not None
+    )
+
+
+@router.post(
+    PLAYBILL_WORKSPACE_ATTACH_PATH,
+    response_model=contracts.PlaybillHostWorkspaceAttachResultV1,
+)
+def playbill_host_workspace_attach(
+    instance_id: str,
+    req: PlaybillHostWorkspaceAttachRequest,
+    request: Request,
+) -> contracts.PlaybillHostWorkspaceAttachResultV1:
+    """Attach a host to a Git worktree, initialized or not; local-socket callers only."""
+
+    return host_api.playbill_host_workspace_attach(
+        resolve_server_instance_id(instance_id),
+        workspace_root=req.workspace_root,
+        workspace_attachment_authorized=_local_socket(request),
+        dry_run=req.dry_run,
     )
 
 

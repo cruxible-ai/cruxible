@@ -1962,6 +1962,26 @@ class PlaybillWorkspaceDetachResultV1(BaseModel):
     workspace_root: str | None = None
 
 
+class PlaybillHostWorkspaceAttachResultV1(BaseModel):
+    """One daemon host attached to a Git worktree, before or after its init.
+
+    An initialized host attaches when the worktree is in the ledger's own Git
+    object format and holds no part of the host's managed root; nothing is
+    rebuilt. ``would_attach`` answers a preview, which registered nothing.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-host-workspace-attach-result-v1"] = (
+        "playbill-host-workspace-attach-result-v1"
+    )
+    instance_id: str
+    status: Literal["attached", "already_attached", "would_attach"]
+    workspace_root: str
+    #: Whether Playbill is already initialized under the host.
+    initialized: bool
+
+
 class PlaybillWorkspaceFloorStatus(BaseModel):
     """Freshness of the configured local floor against a daemon coordinate."""
 

@@ -149,13 +149,15 @@ class RuntimeCredentialStore:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS runtime_bootstrap_claims (
-                    bootstrap_secret_hash TEXT PRIMARY KEY,
+                    bootstrap_secret_hash TEXT NOT NULL,
                     instance_id TEXT NOT NULL,
                     credential_id TEXT NOT NULL UNIQUE,
-                    claimed_at TEXT NOT NULL
+                    claimed_at TEXT NOT NULL,
+                    PRIMARY KEY (bootstrap_secret_hash, instance_id)
                 )
                 """
             )
+            self._ensure_bootstrap_claims_per_host_conn(conn)
             conn.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_runtime_bootstrap_claims_instance
@@ -775,10 +777,10 @@ class RuntimeCredentialStore:
             """
             SELECT 1
             FROM runtime_bootstrap_claims
-            WHERE bootstrap_secret_hash = ?
+            WHERE bootstrap_secret_hash = ? AND instance_id = ?
             LIMIT 1
             """,
-            (bootstrap_secret_hash,),
+            (bootstrap_secret_hash, instance_id),
         ).fetchone()
         if prior_claim is not None:
             raise BootstrapClaimRefusedError(
@@ -882,6 +884,45 @@ class RuntimeCredentialStore:
             # transport authority and can no longer author; the repair is to
             # mint a principal-bound credential and revoke the unbound one.
             conn.execute("ALTER TABLE runtime_credentials ADD COLUMN principal_id TEXT")
+
+    @staticmethod
+    def _ensure_bootstrap_claims_per_host_conn(conn: sqlite3.Connection) -> None:
+        """Migrate the claim table from one claim per secret to one per host.
+
+        The daemon's bootstrap secret is claimable once per host: a second host
+        on the same daemon claims its own first ADMIN credential with the same
+        secret, with no restart. The old table keyed claims by the secret alone,
+        so one claim on any host used it up for every other one.
+        """
+
+        keys = [
+            str(row[1])
+            for row in sorted(
+                (row for row in conn.execute("PRAGMA table_info(runtime_bootstrap_claims)")),
+                key=lambda row: int(row[5]),
+            )
+            if int(row[5]) > 0
+        ]
+        if keys != ["bootstrap_secret_hash"]:
+            return
+        conn.executescript(
+            """
+            ALTER TABLE runtime_bootstrap_claims RENAME TO runtime_bootstrap_claims_per_secret;
+            CREATE TABLE runtime_bootstrap_claims (
+                bootstrap_secret_hash TEXT NOT NULL,
+                instance_id TEXT NOT NULL,
+                credential_id TEXT NOT NULL UNIQUE,
+                claimed_at TEXT NOT NULL,
+                PRIMARY KEY (bootstrap_secret_hash, instance_id)
+            );
+            INSERT INTO runtime_bootstrap_claims
+                SELECT bootstrap_secret_hash, instance_id, credential_id, claimed_at
+                FROM runtime_bootstrap_claims_per_secret;
+            DROP TABLE runtime_bootstrap_claims_per_secret;
+            CREATE INDEX IF NOT EXISTS idx_runtime_bootstrap_claims_instance
+                ON runtime_bootstrap_claims(instance_id);
+            """
+        )
 
     @staticmethod
     def _ensure_recovery_events_table_conn(conn: sqlite3.Connection) -> None:

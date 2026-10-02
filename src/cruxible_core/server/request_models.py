@@ -32,6 +32,11 @@ class PlaybillHostCreateRequest(_StrictHostRequest):
     dry_run: DryRun = None
 
 
+class PlaybillHostWorkspaceAttachRequest(_StrictHostRequest):
+    workspace_root: str = Field(min_length=1)
+    dry_run: DryRun = None
+
+
 class BootstrapClaimRequest(_StrictHostRequest):
     bootstrap_secret: str = Field(min_length=1)
     dry_run: DryRun = None

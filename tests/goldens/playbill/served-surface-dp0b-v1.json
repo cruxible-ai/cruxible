@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-10-01:operator-batch",
-    "surface_digest": "sha256:c052d3ed5f5c1183996a10cd1661d5271adf61b838ee95a31eda7e5556fcb8eb"
+    "surface_digest": "sha256:ffd5a9afe7a379bc172cdf8ddb58b4e51610591827f08c1f217a742118b1e9ea"
   },
   "surface": {
     "cli_leaves": [
@@ -686,6 +686,7 @@
       },
       {
         "client_operations": [
+          "playbill_host_workspace_attach",
           "playbill_host_workspace_registration"
         ],
         "command": "playbill workspace attach",
