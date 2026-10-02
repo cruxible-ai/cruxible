@@ -75,8 +75,11 @@ the change's own checks and evaluation up to the commit and writes nothing
 anywhere: no proposal, ref, record, body, credential, registry row, journal
 entry or workspace file. It answers in the change's own result shape with a
 `would_*` status (`would_propose`, `would_block`, `would_decommission`,
-`would_revoke`, `would_publish`, ...), pinned to the accepted coordinate it was
-evaluated at.
+`would_revoke`, `would_publish`, ...), pinned to the coordinate it was
+evaluated at: the accepted head for a change to governed state, or, for a
+change to operational state (a runtime credential, a host's worktree binding,
+a page's block markers), a state digest of exactly the records it changes,
+which exists before `init` too.
 
 - A change the server derives across several artifacts previews unless asked
   to commit: `kit add`, `kit remove`, `claim-type upgrade` and
@@ -88,10 +91,17 @@ evaluated at.
   `playbill.preview.confirmation_required`.
 - Everything else commits unless `--dry-run` is given.
 
-`--at OID` pins any commit to a preview: if accepted state moved since, the
+`--at OID` pins any commit to a preview: if that state moved since, the
 commit refuses `playbill.preview.state_moved` and changes nothing; preview
-again. The write verbs (`set`, `retire`, `write`) take `--dry-run` and `--at` the
-same way, where `--at` pins each changed slot.
+again. The pin is checked where the change commits, under the lock its write
+holds, so state that moves after the first check is still refused. The write
+verbs (`set`, `retire`, `write`) take `--dry-run` and `--at` the same way,
+where `--at` pins each changed slot.
+
+A preview opens its instance behind the same guards. If opening it would first
+repair derived files a crash left behind, the preview refuses
+`playbill.preview.recovery_pending` instead of writing them; an ordinary read
+(`cruxible playbill orient`) reopens it, and the preview then runs.
 
 ## credential
 

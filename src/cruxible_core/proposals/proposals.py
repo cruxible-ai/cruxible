@@ -4801,6 +4801,7 @@ class ProposalService:
         settle_submission: ProposalSettleSubmissionV1 | None = None,
         expected_candidate: tuple[str, str] | None = None,
         readmits: ProposalReadmissionLinkV1 | None = None,
+        confirm_head: Callable[[str], None] | None = None,
     ) -> ProposalResult:
         """Admit one candidate tree under the actor's ref.
 
@@ -4838,6 +4839,12 @@ class ProposalService:
         admission: the stale proposal this one re-admits. The record refuses it
         unless the request's `source_compilation_digest` is exactly its
         operation digest. No public door passes it either.
+
+        `confirm_head`, when given, is called with the accepted head this
+        submission evaluated at, under the activation lock and after that head
+        is verified to still be main, before the first ref moves: a caller
+        pinned to the head its preview saw (R12 ``at``) refuses there, so a
+        head accepted after the caller's own check is never admitted against.
         """
         self._require_writable()
         evaluated = self._evaluate_admission(
@@ -4877,6 +4884,8 @@ class ProposalService:
                     "accepted main moved between evaluation and publication; evaluate again "
                     "at the current head"
                 )
+            if confirm_head is not None:
+                confirm_head(current.git_oid)
             existing = self.transport.read_proposal_ref(request.target_ref)
             # Finish retaining any complete prior active admission before reusing
             # its author slot, including a crash after admission but before pinning.

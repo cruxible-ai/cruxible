@@ -392,6 +392,7 @@ def service_arm_line(
                 actor=actor,
                 now=now,
                 daemon_id=daemon_id,
+                confirm_head=mode.confirm_head,
             ),
         )
 
@@ -419,6 +420,7 @@ def _arm_line(
     actor: GovernedActorContext,
     now: datetime,
     daemon_id: str,
+    confirm_head: Callable[[str], None],
 ) -> LineArmV1:
     coordinate = instance.accepted_coordinate()
     accepted = _accepted_line_by_reference(instance, coordinate=coordinate, reference=line)
@@ -429,6 +431,9 @@ def _arm_line(
     identity = line_identity_digest(accepted.line.identity)
     store = LineDispatchStore(instance)
     with line_arm_boundary(instance.root, identity), store.locked() as conn:
+        # The Line was read at `coordinate`; a commit pinned to a preview's
+        # coordinate arms only that version, checked under the dispatch lock.
+        confirm_head(coordinate.git_oid)
         current = _active_session(conn, identity)
         if current is not None and (
             current["armed_by"] == principal.model_dump(mode="json")
@@ -496,7 +501,7 @@ def service_disarm_line(
     ) as mode:
         return _previewed(
             mode.previewing,
-            _disarm_line(instance, line, actor=actor, now=now),
+            _disarm_line(instance, line, actor=actor, now=now, confirm_head=mode.confirm_head),
         )
 
 
@@ -506,6 +511,7 @@ def _disarm_line(
     *,
     actor: GovernedActorContext,
     now: datetime,
+    confirm_head: Callable[[str], None],
 ) -> LineArmV1:
     coordinate = instance.accepted_coordinate()
     accepted = _accepted_line_by_reference(instance, coordinate=coordinate, reference=line)
@@ -513,6 +519,7 @@ def _disarm_line(
     identity = line_identity_digest(accepted.line.identity)
     store = LineDispatchStore(instance)
     with line_arm_boundary(instance.root, identity), store.locked() as conn:
+        confirm_head(coordinate.git_oid)
         current = _active_session(conn, identity)
         if current is None:
             last = conn.execute(

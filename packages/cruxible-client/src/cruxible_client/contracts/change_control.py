@@ -58,6 +58,7 @@ ChangeKind = Literal["direct", "derived", "irreversible"]
 ChangeRefusalCode = Literal[
     "playbill.preview.state_moved",
     "playbill.preview.confirmation_required",
+    "playbill.preview.recovery_pending",
 ]
 
 

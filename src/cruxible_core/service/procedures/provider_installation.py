@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import tempfile
 import tomllib
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -440,6 +440,7 @@ def service_install_provider(
                 timestamp,
                 source,
                 release,
+                confirm_head=mode.confirm_head,
             )
         finally:
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
@@ -536,6 +537,8 @@ def _install_locked(
     timestamp: str,
     source: str | dict[str, str] | None,
     release: IndexRelease | None,
+    *,
+    confirm_head: Callable[[str], None],
 ) -> PlaybillProviderInstallResultV1:
     prepared_path = directory / "prepared.json"
     rewrite_prepared = False
@@ -687,6 +690,7 @@ def _install_locked(
                 request=ProposalAdmissionRequest(target_ref=target, proposed_base_oid=base.git_oid),
                 candidate_tree=candidate_tree,
                 timestamp=timestamp,
+                confirm_head=confirm_head,
             )
             if (
                 submitted.evaluation.verdict != "candidate"

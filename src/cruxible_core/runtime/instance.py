@@ -629,7 +629,11 @@ class PlaybillInstance:
             recovered,
             promotion_verifier,
         )
-        if descriptor.mirror_url is not None and descriptor.decommissioned is None:
+        if (
+            descriptor.mirror_url is not None
+            and descriptor.decommissioned is None
+            and not is_previewing()
+        ):
             instance.request_ledger_mirror()
         return instance
 
@@ -859,7 +863,13 @@ class PlaybillInstance:
 
         return self._persisted_descriptor().decommissioned
 
-    def decommission(self, *, reason: str, decommissioned_by: str) -> PlaybillDecommissionV1:
+    def decommission(
+        self,
+        *,
+        reason: str,
+        decommissioned_by: str,
+        confirm_head: Callable[[str], None] | None = None,
+    ) -> PlaybillDecommissionV1:
         """Stamp the terminal lifecycle state on the descriptor, deleting nothing.
 
         The record lands in the descriptor, which every reopen replays and
@@ -867,6 +877,10 @@ class PlaybillInstance:
         separate operational store that could disagree with it. Repeating the
         call is refused rather than silently restamping: a second reason would
         overwrite the first without a record.
+
+        ``confirm_head`` is called with the accepted head under the activation
+        lock, immediately before the stamp, so a head pinned by a preview
+        cannot move between the check and the write (R12).
         """
 
         self.require_writable()
@@ -885,7 +899,10 @@ class PlaybillInstance:
         if is_previewing():
             # R12: the record the commit would stamp, and nothing stamped.
             return record
-        self._rewrite_descriptor(decommissioned=record)
+        with self._ledger.activation_lock():
+            if confirm_head is not None:
+                confirm_head(self._ledger.read_main())
+            self._rewrite_descriptor(decommissioned=record)
         return record
 
     def ledger_mirror_url(self) -> str | None:
@@ -893,7 +910,9 @@ class PlaybillInstance:
 
         return self.descriptor.mirror_url
 
-    def set_ledger_mirror(self, url: str) -> LedgerMirrorStateV1 | None:
+    def set_ledger_mirror(
+        self, url: str, *, confirm_head: Callable[[str], None] | None = None
+    ) -> LedgerMirrorStateV1 | None:
         """Bind a remote and publish to it at once, so a bad one is found now.
 
         Setting a mirror without pushing to it would leave the operator holding
@@ -909,7 +928,12 @@ class PlaybillInstance:
         if is_previewing():
             # R12: the URL is checked and nothing is bound or sent.
             return None
-        self._rewrite_descriptor(mirror_url=validated)
+        # A pinned binding is confirmed against the accepted head under the
+        # activation lock, so the head the preview saw is the head bound at.
+        with self._ledger.activation_lock():
+            if confirm_head is not None:
+                confirm_head(self._ledger.read_main())
+            self._rewrite_descriptor(mirror_url=validated)
         return self.publish_ledger_mirror()
 
     def ledger_mirror_state(self) -> LedgerMirrorStateV1 | None:

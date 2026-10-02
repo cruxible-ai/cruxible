@@ -32,6 +32,7 @@ from cruxible_core.indexes.sqlite import (
     retain_serving_head_stamp_locked,
     stamp_ring_guard,
 )
+from cruxible_core.storage.preview_fence import refuse_write_while_previewing
 
 SERVING_MANIFEST_FILE = "serving.json"
 _MANIFEST_RE = re.compile(r"^projection-[0-9a-f]{64}\.json$")
@@ -150,6 +151,7 @@ def publish_serving_manifest(
 ) -> ServingManifest:
     """Atomically make one prebuilt projection visible to future admissions."""
 
+    refuse_write_while_previewing("projection serving manifest")
     directory = publication_directory.resolve(strict=True)
     manifest = serving_manifest_for(result)
     content = render_serving_manifest(manifest)
@@ -235,6 +237,7 @@ def remove_exact_projection_build(
 ) -> None:
     """Remove one proven losing build without scanning or pruning unrelated state."""
 
+    refuse_write_while_previewing("projection serving manifest")
     if result.manifest != expected:
         raise ProjectionPublicationError("loser cleanup target differs from verified manifest")
     manifest_path = Path(result.manifest_path)

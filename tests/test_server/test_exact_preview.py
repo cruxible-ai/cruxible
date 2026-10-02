@@ -30,7 +30,9 @@ from cruxible_client.contracts.documents import (
 from cruxible_core.errors import ChangeRefusedError
 from cruxible_core.governance.keys import generate_client_principal_key
 from cruxible_core.ledger.signing import LocalEd25519ApprovalSigner
+from cruxible_core.proposals.proposals import ProposalService
 from cruxible_core.runtime import host_api
+from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.runtime.permissions import PermissionMode, reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
@@ -69,6 +71,9 @@ def _warm(client: TestClient, instance_id: str) -> Any:
     def warm() -> None:
         _quiet()
         client.get(_api(instance_id, "/playbill/head"))
+        # A change accepted just before leaves its review refs reconciling in
+        # the background; let that writer finish before comparing.
+        get_playbill_manager().get(instance_id).settled_workspace_advertisement()
 
     return warm
 
@@ -175,6 +180,125 @@ def test_a_principal_change_previews_writes_nothing_and_commits_pinned(
         },
     )
     _refused(stale, 409, "playbill.preview.state_moved")
+
+
+def test_a_head_accepted_after_the_pin_check_refuses_at_publication(
+    playbill_http: tuple[TestClient, str, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F-002: ``at`` is verified where the proposal publishes, under the activation lock.
+
+    A head accepted between the entry check and the evaluation would otherwise
+    be admitted against, rebased, as if the caller had previewed it.
+    """
+
+    client, instance_id, reviewer_key = playbill_http
+    body = {"principal": _principal(tmp_path, "pinned"), "proposal_name": "add-pinned"}
+    url = _api(instance_id, "/playbill/principals/proposals")
+    at = _ok(client.post(url, json={**body, "dry_run": True}))["accepted_coordinate"]["git_oid"]
+    original = ProposalService._evaluate_admission
+    moved: list[bool] = []
+
+    def move_then_evaluate(self: ProposalService, **kwargs: Any) -> Any:
+        if not moved and kwargs["request"].target_ref.endswith("add-pinned"):
+            moved.append(True)
+            _move_head(client, instance_id, reviewer_key)
+        return original(self, **kwargs)
+
+    monkeypatch.setattr(ProposalService, "_evaluate_admission", move_then_evaluate)
+    refused = client.post(url, json={**body, "dry_run": False, "at": at})
+
+    assert moved == [True]
+    _refused(refused, 409, "playbill.preview.state_moved")
+    assert not [
+        entry
+        for entry in _ok(client.get(_api(instance_id, "/playbill/proposals")))["entries"]
+        if entry["target_ref"].endswith("add-pinned")
+    ]
+
+
+def test_a_head_accepted_before_the_stamp_refuses_a_pinned_decommission(
+    playbill_http: tuple[TestClient, str, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F-002: an irreversible operational commit checks its pin under the activation lock."""
+
+    client, instance_id, reviewer_key = playbill_http
+    url = _api(instance_id, "/playbill/instance/decommission")
+    at = _ok(client.post(url, json={"reason": "end"}))["coordinate"]["git_oid"]
+    original = PlaybillInstance._persisted_decommission
+
+    def move_then_read(self: PlaybillInstance) -> Any:
+        monkeypatch.setattr(PlaybillInstance, "_persisted_decommission", original)
+        _move_head(client, instance_id, reviewer_key)
+        return original(self)
+
+    monkeypatch.setattr(PlaybillInstance, "_persisted_decommission", move_then_read)
+    _refused(
+        client.post(url, json={"reason": "end", "dry_run": False, "at": at}),
+        409,
+        "playbill.preview.state_moved",
+    )
+    assert get_playbill_manager().get(instance_id).descriptor.decommissioned is None
+
+
+def test_a_cold_preview_opens_without_writing_or_refuses_a_repair_by_name(
+    playbill_http: tuple[TestClient, str, Path], tmp_path: Path
+) -> None:
+    """F-005: a preview's guards are up before its instance is opened.
+
+    Opening an instance cold replays history and repairs derived files a crash
+    left behind. A preview of a clean instance opens it and writes nothing; one
+    that would first have to repair it refuses by name and writes nothing.
+    """
+
+    client, instance_id, _reviewer_key = playbill_http
+    _quiet()
+    root = get_playbill_manager().get(instance_id).root
+    url = _api(instance_id, "/playbill/instance/decommission")
+    proposals = _api(instance_id, "/playbill/principals/proposals")
+    body = {"principal": _principal(tmp_path, "coldcomer"), "proposal_name": "add-coldcomer"}
+
+    get_playbill_manager().clear()
+    clean = _ok(
+        assert_writes_nothing([tmp_path], lambda: client.post(url, json={"reason": "cold"}))
+    )
+    assert clean["status"] == "would_decommission"
+    get_playbill_manager().clear()
+    assert (
+        _ok(
+            assert_writes_nothing(
+                [tmp_path], lambda: client.post(proposals, json={**body, "dry_run": True})
+            )
+        )["status"]
+        == "would_propose"
+    )
+
+    serving = root / "projections" / "serving.json"
+    serving.unlink()
+    get_playbill_manager().clear()
+    for attempt in (
+        lambda: client.post(url, json={"reason": "cold"}),
+        lambda: client.post(proposals, json={**body, "dry_run": True}),
+    ):
+        refused = assert_writes_nothing([tmp_path], attempt)
+        assert refused.status_code == 409, refused.text
+        assert refused.json()["error_code"] == "playbill.preview.recovery_pending"
+        assert refused.json()["repair"]["operation"] == "playbill.orient"
+    assert not serving.exists()
+
+    # An ordinary read reopens (and repairs) it; the preview then runs.
+    _ok(client.get(_api(instance_id, "/playbill/head")))
+    assert serving.exists()
+    _quiet()
+    assert (
+        _ok(assert_writes_nothing([tmp_path], lambda: client.post(url, json={"reason": "cold"})))[
+            "status"
+        ]
+        == "would_decommission"
+    )
 
 
 def test_a_document_proposal_previews_and_writes_nothing(

@@ -13,6 +13,13 @@ previews or commits, and pins the call to the accepted coordinate it runs at:
   accepted head is no longer the one the preview saw, and a change that cannot
   be undone refuses ``playbill.preview.confirmation_required`` without ``at``.
 
+The pin is checked twice: once on entry, to refuse early, and again where the
+change commits, under that commit's own lock, so state that moves in between is
+refused rather than committed. A proposal checks it at publication under the
+activation lock (``admit_change_set`` hands ``ChangeMode.confirm_head`` to the
+proposal service); an operation on an instance checks it under the lock its
+write holds.
+
 A change to state outside the accepted ledger -- a runtime credential, a host's
 worktree binding -- is pinned instead to a ``PlaybillStateCoordinateV1``: a
 digest of exactly the records it changes, read where it writes
@@ -23,6 +30,11 @@ Changes that become a proposal go through ``admit_change_set``: a preview
 evaluates the candidate on the proposal service's own admission path
 (``ProposalService.preview``) and a commit submits it, so both reach the same
 verdict on the same tree.
+
+A preview starts its guards before anything is opened: ``change_entry`` wraps
+the instance load at the call's door, so a cold open runs behind the fence and
+the recovery repairs an open would write are refused
+(``playbill.preview.recovery_pending``) instead of written.
 """
 
 from __future__ import annotations
@@ -49,7 +61,7 @@ from cruxible_core.proposals.proposals import (
 )
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.storage.cas import dry_run_bodies
-from cruxible_core.storage.preview_fence import previewing
+from cruxible_core.storage.preview_fence import is_previewing, previewing
 
 
 class ChangeMode:
@@ -60,8 +72,21 @@ class ChangeMode:
     that reports no coordinate reads nothing extra.
     """
 
-    def __init__(self, instance: PlaybillInstance | None, *, previewing: bool) -> None:
+    def __init__(
+        self,
+        instance: PlaybillInstance | None,
+        *,
+        previewing: bool,
+        at: str | None = None,
+        kind: ChangeKind = "direct",
+        operation: str = "",
+        describe: str = "",
+    ) -> None:
         self.previewing = previewing
+        self.at = at
+        self._kind = kind
+        self._operation = operation
+        self._describe = describe
         self._instance = instance
         self._head: AcceptedProjectionCoordinate | None = None
         self._coordinate: PlaybillGetCoordinateV1 | None = None
@@ -78,6 +103,24 @@ class ChangeMode:
         if self._coordinate is None and self._instance is not None and head is not None:
             self._coordinate = compact_coordinate(self._instance, head)
         return self._coordinate
+
+    def confirm_head(self, head_oid: str | None) -> None:
+        """Refuse a pinned commit whose accepted head is not the one previewed.
+
+        Called where the change commits, under the lock that keeps the head
+        from moving until the commit is written; a preview, or a commit that
+        carries no ``at``, passes.
+        """
+
+        if self.previewing or self.at is None:
+            return
+        _pin(
+            head_oid=head_oid,
+            at=self.at,
+            kind=self._kind,
+            operation=self._operation,
+            describe=self._describe,
+        )
 
 
 class StateChange:
@@ -134,14 +177,38 @@ def full_coordinate(instance: PlaybillInstance) -> contracts.PlaybillAcceptedCoo
 
 @contextmanager
 def preview_guards(active: bool) -> Iterator[None]:
-    """Every guard a preview runs behind, or nothing for a commit."""
+    """Every guard a preview runs behind, or nothing for a commit.
+
+    Re-entrant: a preview already behind the guards (``change_entry`` at the
+    call's door, then the change's own ``change_scope``) keeps the outer ones,
+    so bodies stored on the way in stay readable inside.
+    """
 
     with ExitStack() as stack:
-        if active:
+        if active and not is_previewing():
             stack.enter_context(dry_run_bodies())
             stack.enter_context(detached_history_reads())
             stack.enter_context(previewing())
         yield
+
+
+def previews(dry_run: bool | None, kind: ChangeKind) -> bool:
+    """Whether a call with this ``dry_run`` previews, for an operation of ``kind``."""
+
+    return previews_by_default(kind) if dry_run is None else dry_run
+
+
+@contextmanager
+def change_entry(dry_run: bool | None, kind: ChangeKind) -> Iterator[bool]:
+    """Raise a preview's guards at the call's door, before its instance is opened.
+
+    Wrap the instance load and the change together: opening an instance cold
+    can run recovery, and a preview must not let that write either.
+    """
+
+    active = previews(dry_run, kind)
+    with preview_guards(active):
+        yield active
 
 
 def _pin(
@@ -188,9 +255,16 @@ def change_scope(
     the change in refusal prose.
     """
 
-    active = previews_by_default(kind) if dry_run is None else dry_run
+    active = previews(dry_run, kind)
     with preview_guards(active):
-        mode = ChangeMode(instance, previewing=active)
+        mode = ChangeMode(
+            instance,
+            previewing=active,
+            at=at,
+            kind=kind,
+            operation=operation,
+            describe=describe,
+        )
         if active:
             mode.coordinate  # noqa: B018 - the preview pins to the head it starts at
         elif at is not None or kind == "irreversible":
@@ -222,7 +296,7 @@ def state_change_scope(
     entry when it would commit without ``at``.
     """
 
-    active = previews_by_default(kind) if dry_run is None else dry_run
+    active = previews(dry_run, kind)
     if not active and at is None and kind == "irreversible":
         _pin(head_oid=None, at=None, kind=kind, operation=operation, describe=describe)
     with preview_guards(active):
@@ -289,7 +363,11 @@ def admit_change_set(
             preview=preview,
         )
     submitted = service.submit(
-        actor=actor, request=request, candidate_tree=candidate_tree, timestamp=timestamp
+        actor=actor,
+        request=request,
+        candidate_tree=candidate_tree,
+        timestamp=timestamp,
+        confirm_head=mode.confirm_head,
     )
     return AdmittedChangeSet(
         previewed=False,
@@ -305,10 +383,12 @@ __all__ = [
     "ChangeMode",
     "StateChange",
     "admit_change_set",
+    "change_entry",
     "change_scope",
     "compact_coordinate",
     "full_coordinate",
     "preview_guards",
+    "previews",
     "previews_by_default",
     "state_change_scope",
 ]

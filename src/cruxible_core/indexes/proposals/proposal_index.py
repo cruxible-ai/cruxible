@@ -13,7 +13,9 @@ import fcntl
 import hashlib
 import json
 import os
+import shutil
 import sqlite3
+import tempfile
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -29,7 +31,10 @@ from cruxible_client.contracts.proposal_models import (
     ProposalWithdrawalRecordV1,
 )
 from cruxible_core.indexes.acquisition import WorkingDatabaseChangedError, open_working_snapshot
-from cruxible_core.indexes.history.history_index import commit_working_write
+from cruxible_core.indexes.history.history_index import (
+    commit_working_write,
+    history_reads_detached,
+)
 from cruxible_core.proposals.proposal_notes import admission_bytes
 
 if TYPE_CHECKING:
@@ -268,6 +273,11 @@ class ProposalIndex:
             evidence.candidates,
             evidence.withdrawals,
         ):
+            if history_reads_detached() and not os.path.lexists(path):
+                # A preview never makes an evidence directory; one never
+                # written holds nothing.
+                result.append([0, 0, 0, 0])
+                continue
             if path.is_symlink() or not path.is_dir():
                 raise ProposalIntegrityError("proposal source directory is not trustworthy")
             stat = path.stat()
@@ -600,6 +610,10 @@ class ProposalIndex:
             finally:
                 reader.close()
             return
+        if history_reads_detached():
+            with self._detached_snapshot(evidence) as detached:
+                yield detached
+            return
         reader = None
         try:
             with self._source_lock(evidence):
@@ -642,6 +656,46 @@ class ProposalIndex:
                     self._connection.rollback()
             if reader is not None:
                 reader.close()
+
+    @contextmanager
+    def _detached_snapshot(self, evidence: ProposalEvidenceStore) -> Iterator[sqlite3.Connection]:
+        """Catch a private in-memory copy up from the evidence, writing nothing (R12).
+
+        A preview may not write the index or its source checkpoint, so a read
+        the clean snapshot cannot serve rebuilds the proposal rows in a copy of
+        the working database (its accepted-history rows come with it) and
+        discards it afterwards.
+        """
+
+        memory = sqlite3.connect(":memory:", check_same_thread=False)
+        try:
+            stamp = self._file_stamp()
+            if stamp is not None:
+                with tempfile.TemporaryDirectory(prefix="cruxible-proposals-") as scratch:
+                    copy = Path(scratch) / self.path.name
+                    shutil.copyfile(self.path, copy)
+                    wal = self.path.with_name(self.path.name + "-wal")
+                    if wal.is_file():
+                        shutil.copyfile(wal, copy.with_name(copy.name + "-wal"))
+                    source = sqlite3.connect(copy)
+                    try:
+                        source.backup(memory)
+                    finally:
+                        source.close()
+            if _schema_rows(memory) != _EXPECTED_SCHEMA:
+                raise ProposalIntegrityError("proposal index schema differs; rebuild required")
+            marker = self._marker(evidence.root)
+            context = marker.get("review_context") if marker is not None else None
+            if evidence.transport is not None:
+                context = file_digest(evidence.transport.review_commit_context())
+            self._rebuild(evidence, memory, context)
+            memory.row_factory = sqlite3.Row
+            memory.execute("PRAGMA foreign_keys=ON")
+            yield memory
+        except sqlite3.DatabaseError as exc:
+            raise ProposalIntegrityError("proposal index requires reconstruction") from exc
+        finally:
+            memory.close()
 
     @contextmanager
     def publication(self, evidence: ProposalEvidenceStore) -> Iterator[None]:

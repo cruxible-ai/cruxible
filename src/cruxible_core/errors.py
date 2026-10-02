@@ -103,25 +103,31 @@ class ChangeRefusedError(RequestRefusedError):
     """A change refused by its preview pin (rule R12), with the preview as repair.
 
     ``playbill.preview.state_moved`` (409): the commit carried the coordinate of
-    a preview and accepted state has moved since. ``playbill.preview.
+    a preview and that state has moved since. ``playbill.preview.
     confirmation_required`` (400): a change that cannot be undone commits only
-    with the coordinate of its preview.
+    with the coordinate of its preview. ``playbill.preview.recovery_pending``
+    (409): previewing would first have to open the instance and repair derived
+    files on disk, which a preview may not write; an ordinary read repairs them,
+    and the preview then runs.
     """
 
     def __init__(
         self,
         error_code: Literal[
-            "playbill.preview.state_moved", "playbill.preview.confirmation_required"
+            "playbill.preview.state_moved",
+            "playbill.preview.confirmation_required",
+            "playbill.preview.recovery_pending",
         ],
         message: str,
         *,
         operation: str,
+        repair: RepairOperationV1 | None = None,
     ) -> None:
-        self.http_status = 409 if error_code == "playbill.preview.state_moved" else 400
+        self.http_status = 400 if error_code == "playbill.preview.confirmation_required" else 409
         super().__init__(
             error_code,
             message,
-            repair=RepairOperationV1(operation=operation, arguments={"dry_run": True}),
+            repair=repair or RepairOperationV1(operation=operation, arguments={"dry_run": True}),
         )
 
 

@@ -16,6 +16,7 @@ from cruxible_client.contracts.errors import (
     PlaybillObjectFormatConflict,
     PlaybillReseedRequired,
 )
+from cruxible_client.contracts.repairs import RepairOperationV1
 from cruxible_client.contracts.temporal import utc_now
 from cruxible_client.contracts.types import (
     GitObjectFormat,
@@ -24,7 +25,11 @@ from cruxible_client.contracts.types import (
     PrincipalRecord,
 )
 from cruxible_core.documents.workspace_file import WorkspaceFileReader
-from cruxible_core.errors import InstanceLocationRefusedError, InstanceNotFoundError
+from cruxible_core.errors import (
+    ChangeRefusedError,
+    InstanceLocationRefusedError,
+    InstanceNotFoundError,
+)
 from cruxible_core.floor.workspace_advertisement import (
     advertise_workspace_refs,
     workspace_git_object_format,
@@ -42,6 +47,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     load_procedure_run_config,
 )
 from cruxible_core.service.proposals.proposal_receive import load_proposal_receive_config
+from cruxible_core.storage.preview_fence import PreviewWriteRefused
 
 _log = structlog.get_logger("cruxible.provider_runtime")
 
@@ -231,13 +237,38 @@ class PlaybillInstanceManager:
                 raise PlaybillFormatError("persisted Playbill trust root is malformed") from exc
             if canonical_bytes(trust.model_dump(mode="json")) + b"\n" != raw:
                 raise PlaybillFormatError("persisted Playbill trust root is not canonical")
-            instance = PlaybillInstance.open(managed_root, trust_root=trust)
+            instance = self._open(instance_id, managed_root, trust)
             instance.bind_receive_limits(
                 load_proposal_receive_config(get_server_state_root()).limits()
             )
             self._bind_workspace(instance, _workspaces)
             self._keep(instance_id, instance)
             return instance
+
+    @staticmethod
+    def _open(instance_id: str, managed_root: Path, trust: PlaybillTrustRoot) -> PlaybillInstance:
+        """Open one instance; inside a preview, refuse rather than repair on disk.
+
+        Reopening replays accepted history and repairs derived files a crash
+        or an operator left behind (a projection, the serving pointer, replay
+        checkpoints, generation notes). An open that needs none of that writes
+        nothing and a preview may use it; one that does would write, so inside
+        a preview it is refused by name. An ordinary read repairs it, and the
+        preview then runs.
+        """
+
+        try:
+            return PlaybillInstance.open(managed_root, trust_root=trust)
+        except PreviewWriteRefused as exc:
+            raise ChangeRefusedError(
+                "playbill.preview.recovery_pending",
+                f"previewing first needs instance {instance_id} reopened, and reopening it "
+                f"would repair derived files on disk ({exc.door}), which a preview may not "
+                "write; run an ordinary read (`cruxible playbill orient`) to reopen it, then "
+                "preview again",
+                operation="playbill.orient",
+                repair=RepairOperationV1(operation="playbill.orient", arguments={}),
+            ) from exc
 
     def initialized(self, instance_id: str) -> PlaybillInstance | None:
         """The instance, or None while Playbill is not initialized under the host."""
