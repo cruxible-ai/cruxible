@@ -17,7 +17,7 @@ everything before it writes anything:
    holds its head bytes, and nothing else is there. A delta that finds a
    corrupted, missing or stray file is ``base_mismatch`` too; a full floor
    repairs it, removing stale files but never the client's own
-   (``projections/INDEX``).
+   (``projections/INDEX`` and ``sources/INDEX``).
 
 Then each touched file is written atomically (a staged file renamed over it),
 the removed paths are unlinked, and ``manifest.json`` is written last: it is
@@ -44,6 +44,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+from cruxible_client._safe_files import SafeFileReadError, read_regular_file
 from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.floor import (
     FLOOR_STAGING_NAME,
@@ -60,7 +61,6 @@ from cruxible_client.contracts.floor import (
 
 _CLOEXEC = getattr(os, "O_CLOEXEC", 0)
 _DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | _CLOEXEC
-_READ = os.O_RDONLY | os.O_NOFOLLOW | _CLOEXEC
 _CREATE = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | _CLOEXEC
 _LOCAL_KEYS = frozenset(floor_path_key(path) for path in PLAYBILL_FLOOR_LOCAL_PATHS)
 _MANIFEST_KEY = floor_path_key(PLAYBILL_FLOOR_MANIFEST_PATH)
@@ -124,29 +124,42 @@ def _directory(root: int, parts: tuple[str, ...], *, create: bool) -> Iterator[i
         os.close(current)
 
 
-def _read_at(directory: int, name: str) -> bytes:
-    handle = os.open(name, _READ, dir_fd=directory)
+def _read_at(directory: int, name: str, *, max_bytes: int | None = None) -> bytes:
+    """Translate the shared reader's special-file refusal into a floor refusal."""
+
     try:
-        chunks = []
-        while chunk := os.read(handle, 1 << 20):
-            chunks.append(chunk)
-        return b"".join(chunks)
-    finally:
-        os.close(handle)
+        return read_regular_file(name, dir_fd=directory, max_bytes=max_bytes)
+    except SafeFileReadError as exc:
+        raise PlaybillFloorApplyError(str(exc)) from exc
 
 
-def _write_file(root: int, path: str, content: bytes) -> None:
+def _write_file(
+    root: int,
+    path: str,
+    content: bytes,
+    *,
+    mode: int = 0o644,
+    durable: bool = False,
+    preserve_mode: bool = False,
+) -> None:
     """Write ``path`` atomically: a staged file in its own directory, renamed over it."""
 
     parts, name = _split(path)
     with _directory(root, parts, create=True) as directory:
         assert directory is not None
         staged = f".floor-{secrets.token_hex(8)}.tmp"
-        handle = os.open(staged, _CREATE, 0o644, dir_fd=directory)
+        handle = os.open(staged, _CREATE, mode, dir_fd=directory)
         try:
             with os.fdopen(handle, "wb") as stream:
+                if preserve_mode:
+                    os.fchmod(stream.fileno(), mode)
                 stream.write(content)
+                if durable:
+                    stream.flush()
+                    os.fsync(stream.fileno())
             os.replace(staged, name, src_dir_fd=directory, dst_dir_fd=directory)
+            if durable:
+                os.fsync(directory)
         except BaseException:
             try:
                 os.unlink(staged, dir_fd=directory)
@@ -277,7 +290,7 @@ def read_floor_manifest(floor_dir: Path) -> PlaybillFloorManifestV5 | None:
         return None
     try:
         return _manifest(_read_at(root, PLAYBILL_FLOOR_MANIFEST_PATH))
-    except OSError:
+    except (OSError, PlaybillFloorApplyError):
         return None
     finally:
         os.close(root)

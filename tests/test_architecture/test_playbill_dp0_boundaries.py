@@ -350,6 +350,8 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "playbill_host_workspace_registration",
         "playbill_host_workspace_detach",
         "playbill_host_workspace_attach",
+        "set_playbill_floor_delivery",
+        "deliver_playbill_floor_now",
         "declare_playbill_block",
         "depublish_playbill_block",
         "measure_playbill_procedure",

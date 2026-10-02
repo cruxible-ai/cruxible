@@ -395,22 +395,116 @@ def test_line_refuses_noncanonical_epsilon_and_rung_above_procedure_cap() -> Non
     assert result.diagnostics[0].code == "playbill.line.rung_exceeds_procedure_cap"
 
 
-def test_line_result_budget_is_interpreted_only_with_resource_semantics() -> None:
-    from cruxible_client.contracts.procedures.line_specs import LineSpecV2
+def test_a_served_line_interprets_its_result_budget() -> None:
+    from cruxible_client.contracts.procedures.line_specs import LineSpecV6
     from cruxible_core.service.procedures.procedure_runs import _line_budget
 
     line, procedure, _ = _line()
     value = line.model_dump(mode="json")
-    value["artifact_format"] = "playbill-line-v2"
-    value["provider_implementation_closures"] = []
+    for field in ("artifact_format", "trigger_policy", "requested_terminal_rung"):
+        value.pop(field)
     value["budgets"]["max_result_bytes"] = 2 * 1024 * 1024
-    successor = LineSpecV2.model_validate(value)
-    accepted = AcceptedLineSpecV1(
-        path=line_spec_path(successor.identity.name),
-        line=successor,
-        artifact_digest=line_spec_digest(successor).tagged,
+    served = LineSpecV6.model_validate(
+        {**value, "max_authority": "propose", "provider_implementation_closures": []}
     )
-    assert _line_budget(accepted, procedure).max_result_bytes is None
+    accepted = AcceptedLineSpecV1(
+        path=line_spec_path(served.identity.name),
+        line=served,
+        artifact_digest=line_spec_digest(served).tagged,
+    )
+    assert _line_budget(accepted, procedure).max_result_bytes == 2 * 1024 * 1024
+
+
+def test_a_v6_line_advances_its_epoch_exactly_when_its_accepted_event_changes() -> None:
+    from cruxible_client.contracts.procedures.line_specs import LineSpecV6
+    from cruxible_client.contracts.procedures.windows import CaptureEventSelectorV1
+    from tests.support.lines import graph_v4
+    from tests.test_procedures.test_procedure_run_surface import _slotless_procedure
+    from tests.test_server.test_playbill_line_run_refusals import (
+        _acquisition_policy,
+        _served_line,
+    )
+
+    accepted = graph_v4(_slotless_procedure("epoch-method"))
+    interfaces: dict[str, str] = {}
+    first = _served_line("epoch-line", accepted=accepted, policy=_acquisition_policy("epoch"))
+    prior = AcceptedLineSpecV1(
+        path=line_spec_path(first.identity.name),
+        line=first,
+        artifact_digest=line_spec_digest(first).tagged,
+    )
+    rebound = first.model_copy(
+        update={
+            "parameters": {"status": "closed"},
+            "lifecycle": ArtifactLifecycle(predecessor_digest=prior.artifact_digest),
+        }
+    )
+
+    def verdict(candidate):  # type: ignore[no-untyped-def]
+        return evaluate_line_spec_law(
+            candidate,
+            path=line_spec_path(candidate.identity.name),
+            procedure=accepted,
+            interface_digests=dict(interfaces),
+            predecessor=prior,
+        )
+
+    assert verdict(rebound).verdict == "accepted"
     assert (
-        _line_budget(accepted, procedure, resource_budgets=True).max_result_bytes == 2 * 1024 * 1024
+        verdict(rebound.model_copy(update={"occurrence_epoch": 2})).diagnostics[0].code
+        == "playbill.line.occurrence_epoch_mismatch"
+    )
+    # A v6 lineage is never succeeded by a Line that embeds its trigger.
+    from cruxible_client.contracts.procedures.line_specs import LineSpecV5
+
+    embedded = first.model_dump(mode="python")
+    for field in ("artifact_format", "trigger_input", "trigger_event"):
+        embedded.pop(field)
+    downgraded = LineSpecV5.model_validate(
+        {
+            **embedded,
+            "trigger_policy": ManualTriggerPolicyV1(),
+            "lifecycle": ArtifactLifecycle(predecessor_digest=prior.artifact_digest),
+        }
+    )
+    assert verdict(downgraded).diagnostics[0].code == "playbill.line.wire_downgrade"
+    selector = CaptureEventSelectorV1(
+        capture_contract_identity=ArtifactIdentity(kind="CaptureContract", name="anchor"),
+        capture_contract_digest=_digest("anchor"),
+    )
+    with pytest.raises(ValidationError, match="come together"):
+        LineSpecV6.model_validate({**first.model_dump(mode="python"), "trigger_event": selector})
+    with pytest.raises(ValidationError, match="pins exactly the CaptureContract"):
+        LineSpecV6.model_validate(
+            {**first.model_dump(mode="python"), "trigger_event": selector, "trigger_input": "feed"}
+        )
+
+
+def test_a_v6_line_instantiates_an_earlier_graph_without_provider_closures() -> None:
+    from tests.test_integration.test_graph_v4_provider_closure import _line as graph_line
+    from tests.test_procedures.test_procedure_run_surface import _slotless_procedure
+    from tests.test_server.test_playbill_line_run_refusals import (
+        _acquisition_policy,
+        _served_line,
+    )
+
+    accepted = _slotless_procedure("graph-v3-method")
+    line = _served_line("graph-v3-line", accepted=accepted, policy=_acquisition_policy("g3"))
+
+    def verdict(candidate):  # type: ignore[no-untyped-def]
+        return evaluate_line_spec_law(
+            candidate,
+            path=line_spec_path(candidate.identity.name),
+            procedure=accepted,
+            interface_digests={},
+            predecessor=None,
+        )
+
+    assert verdict(line).verdict == "accepted"
+    closures = graph_line().provider_implementation_closures
+    assert (
+        verdict(line.model_copy(update={"provider_implementation_closures": closures}))
+        .diagnostics[0]
+        .code
+        == "playbill.line.graph_v4_required"
     )

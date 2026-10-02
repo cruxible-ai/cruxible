@@ -48,6 +48,7 @@ from cruxible_client.authoring.examples import (
     AUTHORING_EXAMPLE_NAMES,
     AuthoringExampleName,
     authoring_example,
+    authoring_example_note,
     document_example,
 )
 from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
@@ -59,6 +60,7 @@ from cruxible_client.authoring.sources import (
 )
 from cruxible_client.authoring.workspace import (
     PlaybillWorkspaceAttachmentError,
+    daemon_floor_delivery,
     floor_export_parts,
     observe_playbill_next_workspace_with_coverage,
     observe_playbill_projection_coverage,
@@ -730,10 +732,12 @@ def workspace_group() -> None:
 @click.option("--instance-id", default=None, help="Existing registered daemon host ID.")
 @click.option("--replace", is_flag=True, help="Replace a differing workspace config.")
 @change_control_options
+@click.option("--no-floor-delivery", is_flag=True, help="Opt out of daemon floor delivery.")
 @json_option
 @handle_errors
 def attach_workspace(
     instance_id: str | None,
+    no_floor_delivery: bool,
     replace: bool,
     dry_run: bool | None,
     at: str | None,
@@ -807,6 +811,12 @@ def attach_workspace(
         replace=replace,
         **transport_values,
     )
+    _dispatch_cli(
+        lambda client: client.set_playbill_floor_delivery(selected, enabled=not no_floor_delivery),
+        lambda: None,
+        allow_local=False,
+        command_name="playbill workspace attach",
+    )
     result = contracts.PlaybillWorkspaceAttachResultV1(
         instance_id=selected,
         workspace_root=str(workspace),
@@ -819,6 +829,30 @@ def attach_workspace(
         return
     click.echo(f"Attached workspace {workspace} to Playbill host {selected}")
     click.echo(f"Config: {config_path}")
+
+
+@workspace_group.command("floor-delivery")
+@click.argument("state", type=click.Choice(["on", "off"]))
+@click.option("--instance-id", default=None, help="Existing registered daemon host ID.")
+@json_option
+@handle_errors
+def workspace_floor_delivery(state: str, instance_id: str | None, output_json: bool) -> None:
+    """Choose whether the local daemon is the workspace floor's writer."""
+
+    if not _root_ctx_obj().get("server_socket"):
+        raise click.UsageError("workspace floor-delivery requires a local --server-socket")
+    selected = instance_id or _require_instance_id()
+    result = _dispatch_cli(
+        lambda client: client.set_playbill_floor_delivery(selected, enabled=state == "on"),
+        lambda: None,
+        allow_local=False,
+        command_name="playbill workspace floor-delivery",
+    )
+    assert result is not None
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+    else:
+        click.echo(f"Floor delivery {state} for {selected}")
 
 
 @workspace_group.command("detach")
@@ -895,6 +929,7 @@ def show_host(instance_id: str, output_json: bool) -> None:
     click.echo(f"Transport: {transport}")
     click.echo(f"Managed root: {result.managed_root or '-'}")
     click.echo(f"Workspace root: {result.workspace_root or '-'}")
+    click.echo(f"Floor delivery: {'on (default)' if result.floor_delivery else 'off (opted out)'}")
     click.echo(f"Compiler coordinate: {result.compiler_coordinate or '-'}")
     click.echo(f"Compiler revision: {result.compiler_revision or '-'}")
     click.echo(f"Compatibility: {result.compatibility}")
@@ -3169,12 +3204,12 @@ def create_authoring_intent(
     \b
     Input kind family: claim | procedure | subject | query_definition |
     approval_policy | procedure_runtime_policy | procedure_mandate |
-    acquisition_policy | line | change_set (tagless).
+    acquisition_policy | line | trigger | change_set (tagless).
 
     \b
     Change-set member kind family: claim | claim_type | claim_type_succession |
     claim_retirement | subject | query_definition | procedure_mandate |
-    acquisition_policy | line | procedure. claim_type, claim_type_succession and
+    acquisition_policy | line | trigger | procedure. claim_type, claim_type_succession and
     claim_retirement are member kinds only -- none is a top-level input.
     approval_policy and procedure_runtime_policy are the reverse: the member
     union parses either, but a change set refuses either, so author each as its
@@ -3189,7 +3224,7 @@ def create_authoring_intent(
 
     Use --example for a model-generated starting point; --example change-set
     prints a mixed set and --example claim-type-succession a vocabulary
-    evolution. --example procedure, line, acquisition-policy and
+    evolution. --example procedure, line, trigger, acquisition-policy and
     procedure-mandate are accepted together as members of one change set.
     """
 
@@ -3214,6 +3249,10 @@ def create_authoring_intent(
                 sort_keys=True,
             )
         )
+        note = authoring_example_note(cast(AuthoringExampleName, example_name))
+        if note is not None:
+            # Beside the payload, never in it: stdout stays one JSON document.
+            click.echo(f"# {note}", err=True)
         return
     assert payload is not None
     parsed_input = _read_authoring_input(payload)
@@ -4026,7 +4065,10 @@ def write_changes(
     "--at",
     "at_oid",
     default=None,
-    help="Accepted git oid, a unique 12+ hex prefix, or a generation number; default head.",
+    help=(
+        "Accepted git oid, a unique 12+ hex prefix, or a generation number (all digits, "
+        "11 or fewer, is always a generation); default head."
+    ),
 )
 @click.option("--evaluation-time", default=None, help="Explicit ISO-8601 evaluation time.")
 @click.option(
@@ -4686,7 +4728,10 @@ def _follow_entry(spec: str, option: str) -> dict[str, str]:
     "--at",
     "at_oid",
     default=None,
-    help="Read at this accepted git oid (or a unique 12+ hex prefix), or a generation number.",
+    help=(
+        "Read at this accepted git oid (or a unique 12+ hex prefix), or a generation "
+        "number (all digits, 11 or fewer, is always a generation)."
+    ),
 )
 @click.option("--evaluation-time", default=None, help="ISO-8601 instant; default now.")
 @json_option
@@ -5343,6 +5388,11 @@ def dispatch_line(
 
 @line_group.command("run")
 @click.argument("line")
+@click.option(
+    "--trigger",
+    default=None,
+    help="The Trigger this occurrence fires on; omit for a Line no Trigger aims at.",
+)
 @click.option("--occurrence-id", default=None, help="Assert the daemon-derived occurrence id.")
 @click.option("--evaluation-time", required=True, help="Explicit ISO-8601 evaluation time.")
 @click.option(
@@ -5361,6 +5411,7 @@ def dispatch_line(
 @handle_errors
 def run_line(
     line: str,
+    trigger: str | None,
     occurrence_id: str | None,
     evaluation_time: str | None,
     output_json: bool,
@@ -5374,6 +5425,7 @@ def run_line(
     request = LineRunRequestV1.model_validate(
         {
             "line": line,
+            "trigger": trigger,
             "occurrence_id": occurrence_id,
             "evaluation_time": evaluation_time,
             "resolution_contract": resolution_contract,
@@ -5384,6 +5436,7 @@ def run_line(
         lambda client, instance_id: client.run_playbill_line(
             instance_id,
             line,
+            trigger=request.trigger,
             occurrence_id=request.occurrence_id,
             resolution_contract=resolution_contract,
             trigger_event=trigger_event,
@@ -5577,6 +5630,7 @@ _NEXT_STATUS_ATTENTION = {
     "compiler": {"upgrade_available"},
     "line_dispatch": {"due"},
     "consumers": {"lagging"},
+    "triggers": {"unscheduled"},
 }
 
 
@@ -6093,7 +6147,10 @@ def _render_orient(result: Mapping[str, Any]) -> str:
     "--at",
     "at_oid",
     default=None,
-    help="An accepted generation's Git OID, a unique 12+ hex prefix, or its number.",
+    help=(
+        "An accepted generation's Git OID, a unique 12+ hex prefix, or its number "
+        "(all digits, 11 or fewer, is always a generation number)."
+    ),
 )
 @click.option("--evaluation-time", default=None, help="Explicit ISO-8601 evaluation time.")
 @json_option
@@ -6210,6 +6267,9 @@ def export_floor(
         result, written = _server_call(
             lambda client, instance_id: write_workspace_floor(
                 lambda: client.export_playbill_floor(instance_id, **floor_export_parts(include)),
+                delivery=lambda: daemon_floor_delivery(
+                    client, instance_id, workspace_root, include=include
+                ),
                 instance_id=instance_id,
                 workspace=workspace_root,
                 include=include,
@@ -6228,6 +6288,7 @@ def export_floor(
                 lambda generation, renderer: client.playbill_floor_delta(
                     instance_id, base_generation=generation, base_renderer=renderer
                 ),
+                delivery=lambda: daemon_floor_delivery(client, instance_id, workspace_root),
                 instance_id=instance_id,
                 workspace=workspace_root,
                 force=force,

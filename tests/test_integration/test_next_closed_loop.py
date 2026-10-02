@@ -1574,14 +1574,18 @@ def _prediction_settleable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None
     instance, owner, capture, contract = worker.fixed_world(root)
     worker.drain(instance, now=worker.FIXED_CLOSES)
 
-    row = _row(instance, "prediction_settleable", _request(instance))
+    row = _row(
+        instance,
+        "prediction_settleable",
+        _request(instance).model_copy(update={"evaluation_time": worker.FIXED_CLOSES}),
+    )
     assert row.subject_identity == contract.identity.qualified
     assert row.related_identities and row.related_identities[0].startswith("Claim:")
     assert row.detail["anchor_event"] is None and row.detail["bound_contract_id"]
     assert row.repair.operation == EXPECTED_OPERATIONS["prediction_settleable"]
     hidden = PlaybillNextRequestV1(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
-        evaluation_time=EVALUATION_TIME,
+        evaluation_time=worker.FIXED_CLOSES,
         access_profile=CoverageAccessProfileV1(
             profile_id="next-closed-loop-public", permitted_access_classes=("public",)
         ),
@@ -1616,7 +1620,11 @@ def _prediction_settleable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None
         recorded_at=worker.FIXED_CLOSES + timedelta(minutes=1),
     )
     worker.drain(instance, now=worker.FIXED_CLOSES + timedelta(minutes=1))
-    _assert_gone(instance, "prediction_settleable", _request(instance))
+    _assert_gone(
+        instance,
+        "prediction_settleable",
+        _request(instance).model_copy(update={"evaluation_time": worker.FIXED_CLOSES}),
+    )
 
 
 def _prediction_window_unbindable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1647,7 +1655,11 @@ def _prediction_window_unbindable(root: Path, _monkeypatch: pytest.MonkeyPatch) 
 
     # The named repair: restore the anchor's material; the worker's retry binds it.
     restore()
-    worker.drain(instance, now=now + worker.UNBINDABLE_RETRY)
+    from tests.support.internal_triggers import fire_internal_triggers
+
+    retry_at = now + timedelta(hours=1)
+    fire_internal_triggers(instance, now=retry_at)
+    worker.drain(instance, now=retry_at)
     _assert_gone(instance, "prediction_window_unbindable", _request(instance))
 
 
@@ -1736,7 +1748,7 @@ def test_next_withholds_the_settle_repair_from_a_caller_who_cannot_settle(tmp_pa
 
     instance, _owner, _capture, _contract = worker.fixed_world(tmp_path)
     worker.drain(instance, now=worker.FIXED_CLOSES)
-    request = _request(instance)
+    request = _request(instance).model_copy(update={"evaluation_time": worker.FIXED_CLOSES})
 
     def settle_rows(result):  # type: ignore[no-untyped-def]
         return [item for item in result.items if item.reason == "prediction_settleable"]
@@ -1768,3 +1780,67 @@ def test_next_withholds_the_settle_repair_from_a_caller_who_cannot_settle(tmp_pa
     assert kept.repair is None and kept.repair_requires.because == ("profile",)
     assert kept.repair_requires.profile == "full"
     assert profiled.total_items == governed.total_items
+
+
+def test_next_applies_prediction_window_time_at_read_without_a_worker_tick(tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    from tests.test_consumers import test_prediction_settlement as worker
+
+    instance, _owner, _capture, _contract = worker.fixed_world(tmp_path)
+    worker.drain(instance, now=worker.served.PREDICTED_AT)
+    request = _request(instance)
+    before = request.model_copy(
+        update={"evaluation_time": worker.FIXED_CLOSES - timedelta(microseconds=1)}
+    )
+    after = request.model_copy(update={"evaluation_time": worker.FIXED_CLOSES})
+    assert all(
+        item.reason != "prediction_settleable"
+        for item in service_playbill_next(instance, request=before).items
+    )
+    rows = [
+        item
+        for item in service_playbill_next(instance, request=after).items
+        if item.reason == "prediction_settleable"
+    ]
+    assert len(rows) == 1
+    assert "evaluated_at" not in rows[0].detail
+    assert tuple(worker.WORKER.due(instance, now=worker.FIXED_CLOSES)) == ()
+
+
+def test_prediction_row_identity_stays_stable_after_the_window_closes(tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    from tests.test_consumers import test_prediction_settlement as worker
+
+    instance, _owner, _capture, _contract = worker.fixed_world(tmp_path)
+    worker.drain(instance, now=worker.served.PREDICTED_AT)
+    request = _request(instance)
+    items = []
+    for instant in (worker.FIXED_CLOSES, worker.FIXED_CLOSES + timedelta(hours=1)):
+        result = service_playbill_next(
+            instance, request=request.model_copy(update={"evaluation_time": instant})
+        )
+        (row,) = [item for item in result.items if item.reason == "prediction_settleable"]
+        items.append(row)
+    assert items[0] == items[1]
+    assert items[0].item_id == items[1].item_id
+    assert "evaluated_at" not in items[0].detail
+
+
+def test_unbindable_prediction_row_identity_survives_an_unchanged_retry(tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    from tests.support.internal_triggers import fire_internal_triggers
+    from tests.test_consumers import test_prediction_settlement as worker
+
+    instance, _event, _restore = worker.unbindable_world(tmp_path)
+    worker.drain(instance, now=worker.served.PREDICTED_AT)
+    request = _request(instance)
+    first = _row(instance, "prediction_window_unbindable", request)
+    later = worker.served.PREDICTED_AT + timedelta(hours=1)
+    fire_internal_triggers(instance, now=later)
+    worker.drain(instance, now=later)
+    second = _row(instance, "prediction_window_unbindable", request)
+    assert first == second and first.item_id == second.item_id
+    assert "evaluated_at" not in second.detail

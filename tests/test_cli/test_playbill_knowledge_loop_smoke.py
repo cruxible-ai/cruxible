@@ -739,11 +739,12 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
     assert manifest["coordinate"] == coordinate
     assert manifest["floor_digest"].startswith("sha256:")
 
-    # projections/INDEX is the client's join of its own workspace bindings,
-    # outside the daemon-verified manifest.
+    # projections/INDEX and sources/INDEX are the client's joins of its own
+    # workspace bindings, outside the daemon-verified manifest.
     written = {str(path.relative_to(floor)) for path in floor.rglob("*") if path.is_file()} - {
         "manifest.json",
         "projections/INDEX",
+        "sources/INDEX",
     }
     assert written == {item["path"] for item in manifest["files"]}
     # The grep-first floor: values, their provenance, no discovery cards.

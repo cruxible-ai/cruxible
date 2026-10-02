@@ -39,6 +39,7 @@ PlaybillGetRefKind = Literal[
     "procedure",
     "query",
     "capture_contract",
+    "trigger",
     "proposal",
     "line",
     "capture",
@@ -77,6 +78,7 @@ GET_DETAILS_BY_KIND: dict[str, tuple[str, ...]] = {
     "procedure": ("summary", "history", "proof"),
     "query": ("summary", "history", "proof"),
     "capture_contract": ("summary", "history", "proof"),
+    "trigger": ("summary", "history", "proof"),
     "proposal": ("summary", "proof"),
     "line": ("summary", "history", "proof"),
     "capture": ("summary", "proof"),
@@ -148,7 +150,8 @@ class PlaybillGetRequestV1(_StrictGetModel):
         if isinstance(value, str) and not re.fullmatch(_GIT_OID, value):
             raise ValueError(
                 "at must be an accepted coordinate, a lowercase hex git oid (a unique "
-                "prefix of at least 12 characters), or a generation number (for example 42)"
+                "prefix of at least 12 characters), or a generation number (for example 42; "
+                "an all-digit value of 11 or fewer characters is always a generation)"
             )
         return value
 
@@ -359,6 +362,17 @@ class PlaybillGetCaptureContractCardV1(_StrictGetModel):
     next: tuple[str, ...] = ()
 
 
+class PlaybillGetTriggerCardV1(_StrictGetModel):
+    """One Trigger: when it fires and what it sets off."""
+
+    trigger: str
+    lifecycle: str
+    schedule: dict[str, Any]
+    #: ``Line:<name>`` or the internal action it fires.
+    target: str
+    next: tuple[str, ...] = ()
+
+
 class PlaybillGetProposalChangeV1(_StrictGetModel):
     path: str
     change: str
@@ -428,6 +442,7 @@ PlaybillGetCardV1 = (
     | PlaybillGetProcedureCardV1
     | PlaybillGetQueryCardV1
     | PlaybillGetCaptureContractCardV1
+    | PlaybillGetTriggerCardV1
     | PlaybillGetProposalCardV1
     | PlaybillGetLineCardV1
     | PlaybillGetCaptureCardV1
@@ -578,6 +593,7 @@ __all__ = [
     "PlaybillGetBatchResultV1",
     "PlaybillGetBodyV1",
     "PlaybillGetCaptureContractCardV1",
+    "PlaybillGetTriggerCardV1",
     "PlaybillGetCaptureEvidenceV1",
     "PlaybillGetCardV1",
     "PlaybillGetClaimCardV1",

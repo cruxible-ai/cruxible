@@ -1,0 +1,20 @@
+{
+  "artifact_format": "playbill-trigger-v1",
+  "identity": {
+    "kind": "Trigger",
+    "name": "prediction-anchor-retry"
+  },
+  "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+  },
+  "pins": [],
+  "schedule": {
+    "interval_seconds": 3600,
+    "kind": "cadence"
+  },
+  "target": {
+    "action": "prediction.anchor_retry",
+    "kind": "action"
+  }
+}

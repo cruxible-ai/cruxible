@@ -39,7 +39,8 @@ from cruxible_client.contracts.procedures.artifacts import (
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v4
 from cruxible_client.contracts.procedures.line_specs import (
-    LineSpecV2,
+    RUNG_AUTHORITY,
+    LineSpecV6,
     line_identity_digest,
     line_spec_path,
     render_line_spec,
@@ -157,9 +158,9 @@ def terminal_procedure(
     )
 
 
-def _line(procedure: ProcedureArtifactV2, policy: Any) -> LineSpecV2:
+def _line(procedure: ProcedureArtifactV2, policy: Any) -> LineSpecV6:
     return fixtures._served_line(procedure, policy).model_copy(
-        update={"requested_terminal_rung": 2}
+        update={"max_authority": RUNG_AUTHORITY[2]}
     )
 
 
@@ -176,7 +177,7 @@ def proposal_world(  # type: ignore[no-untyped-def]
     instance, owner, procedure, root, policy = fixtures._world(tmp_path, accept_procedure=False)
     with_terminal = terminal_procedure(procedure, templates=templates)
     line = _line(with_terminal, policy).model_copy(
-        update={"requested_terminal_rung": requested_terminal_rung}
+        update={"max_authority": RUNG_AUTHORITY[requested_terminal_rung]}
     )
     contract = capture_contract()
     accepted_claim_type = claim_type or _claim_type(capture_contract_digest(contract).tagged)

@@ -73,6 +73,10 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
     "trigger_capture_not_yet_observed": (
         "Wait until the recorded observation time, then retry the occurrence."
     ),
+    "trigger_event_precedes_acceptance": (
+        "A Trigger never fires retroactively: use an event that lands, or a window "
+        "that closes, after the Trigger version was accepted."
+    ),
     "line_binding_superseded": (
         "Explicitly retry this occurrence to bind the current Line in "
         "the same epoch, or evaluate the new trigger epoch."

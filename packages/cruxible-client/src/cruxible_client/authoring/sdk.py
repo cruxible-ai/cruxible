@@ -137,6 +137,7 @@ from cruxible_client.contracts.authoring.models import (
     SelfSourceBodyV1,
     SourceAcquisitionPolicyAuthoringPayloadV1,
     SubjectAuthoringPayloadV1,
+    TriggerAuthoringPayloadV1,
     authoring_member_identity,
     authoring_program_digest,
 )
@@ -221,10 +222,6 @@ from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifactAny,
     procedure_artifact_digest,
 )
-from cruxible_client.contracts.procedures.line_specs import (
-    ManualTriggerPolicyV1,
-    TriggerPolicyV2,
-)
 from cruxible_client.contracts.procedures.results import ProcedureTerminalEgressV1
 from cruxible_client.contracts.procedures.windows import (
     TriggerEventReferenceV1,
@@ -241,6 +238,7 @@ from cruxible_client.contracts.resolution_contracts import (
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import format_datetime
+from cruxible_client.contracts.triggers import InternalActionName, TriggerScheduleV1
 from cruxible_client.contracts.write import (
     AddChange,
     Change,
@@ -1088,7 +1086,6 @@ class ChangeSetDraft:
         name: str,
         procedure: str,
         acquisition_policy: str | None = None,
-        trigger_policy: TriggerPolicyV2 | None = None,
         max_authority: Literal["observe", "propose", "settle"] | None = None,
         trigger_input: str | None = None,
         parameters: CanonicalValue | None = None,
@@ -1099,11 +1096,12 @@ class ChangeSetDraft:
         """Define one Line inside this changeset, naming its Procedure and policy.
 
         Lowering resolves both names -- accepted at the base or defined earlier
-        in this same set -- into the exact pins the LineSpec carries. A Line is
-        manual unless another trigger policy is given, and inherits the
-        Procedure's hard caps as its budget unless one is given.
-        ``trigger_input`` binds the triggering Capture to a named Source alias;
-        the trigger selector must match that Source's exact CaptureContract.
+        in this same set -- into the exact pins the LineSpec carries. A Line
+        runs when run explicitly, or when a Trigger aimed at it fires
+        (:meth:`trigger`), and inherits the Procedure's hard caps as its budget
+        unless one is given. ``trigger_input`` binds the triggering Capture to a
+        named Source alias; the Line then accepts only that Source's exact
+        CaptureContract event, and every Trigger aimed at it must fire on it.
         Missing or ineligible trigger material refuses admission, without a re-fetch.
 
         Lowering refuses a Procedure that is not graph-v4/v5/v6 and one whose
@@ -1127,7 +1125,6 @@ class ChangeSetDraft:
                     procedure_name=procedure,
                     acquisition_policy_name=acquisition_policy,
                     max_authority=max_authority,
-                    trigger_policy=trigger_policy or ManualTriggerPolicyV1(),
                     trigger_input=trigger_input,
                     parameters={} if parameters is None else parameters,
                     budgets=None if budgets is None else dict(budgets),
@@ -1137,6 +1134,39 @@ class ChangeSetDraft:
                 expectations=(),
                 source_map=DiagnosticSourceMap(()),
                 decisions={"kind": "line", "name": name, "procedure": procedure},
+            )
+        )
+        return self
+
+    def trigger(
+        self,
+        *,
+        name: str,
+        schedule: TriggerScheduleV1,
+        line: str | None = None,
+        action: InternalActionName | None = None,
+        retire: bool = False,
+    ) -> ChangeSetDraft:
+        """Define one Trigger inside this changeset: a schedule aimed at one target.
+
+        Name exactly one of ``line`` (an accepted Line, or one defined in this
+        same set) or ``action`` (a registered internal action such as
+        ``floor.refresh``), which takes cadence, cron or generation_accepted;
+        a Line takes any schedule that supplies its input. A
+        Line can have several
+        Triggers; retiring a Line needs its live Triggers retired or retargeted
+        in the same set.
+        """
+
+        payload = TriggerAuthoringPayloadV1(
+            name=name, schedule=schedule, line_name=line, action=action, retire=retire
+        )
+        self._members.append(
+            _ChangeSetMember(
+                payload=payload,
+                expectations=(),
+                source_map=DiagnosticSourceMap(()),
+                decisions={"kind": "trigger", "name": name},
             )
         )
         return self
@@ -4044,11 +4074,15 @@ class Playbill:
         self,
         line: str,
         *,
+        trigger: str | None = None,
         occurrence_id: str | None = None,
         resolution_contract: ResolutionContractReferenceV1 | None = None,
         trigger_event: TriggerEventReferenceV1 | None = None,
     ) -> ProcedureRun:
         """Trigger a named accepted Line; the daemon resolves its exact identity.
+
+        ``trigger`` names the Trigger this occurrence fires on; omit it only for
+        a Line no live Trigger aims at, which runs when run explicitly.
 
         Next: ``run.succeeded`` and ``run.result``, or
         ``pb.get(f"ProcedureRun:{run.run_id}")``.
@@ -4057,6 +4091,7 @@ class Playbill:
         result = self._client.run_playbill_line(
             self._instance_id,
             line,
+            trigger=trigger,
             occurrence_id=occurrence_id,
             resolution_contract=resolution_contract,
             trigger_event=trigger_event,

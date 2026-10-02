@@ -196,6 +196,7 @@ class CruxibleClient:
         if principal_id is not None:
             headers[PRINCIPAL_ID_HEADER] = validate_principal_id(principal_id)
         self.principal_id = principal_id
+        self.socket_path = socket_path
         if socket_path is not None:
             target = f"unix:{socket_path}"
             raw_client = httpx.Client(
@@ -380,6 +381,31 @@ class CruxibleClient:
     ) -> contracts.PlaybillHostWorkspaceRegistrationV1:
         response = self._client.get(f"/api/v1/{instance_id}/playbill/workspace-registration")
         return self._parse_model(response, contracts.PlaybillHostWorkspaceRegistrationV1)
+
+    def set_playbill_floor_delivery(
+        self,
+        instance_id: str,
+        *,
+        enabled: bool,
+    ) -> contracts.PlaybillHostWorkspaceRegistrationV1:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/workspace/floor-delivery", json={"enabled": enabled}
+        )
+        return self._parse_model(response, contracts.PlaybillHostWorkspaceRegistrationV1)
+
+    def deliver_playbill_floor_now(
+        self,
+        instance_id: str,
+        *,
+        include: tuple[contracts.PlaybillFloorExportPart, ...] = (),
+        at: contracts.PlaybillAcceptedCoordinate | None = None,
+    ) -> contracts.PlaybillFloorDeliveryResultV1:
+        request = contracts.PlaybillFloorDeliverNowRequestV1(include=include, at=at)
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/floor/deliver-now",
+            json=request.model_dump(mode="json"),
+        )
+        return self._parse_model(response, contracts.PlaybillFloorDeliveryResultV1)
 
     def show_playbill_host(self, instance_id: str) -> contracts.PlaybillHostInspectionV1:
         response = self._client.get(f"/api/v1/{instance_id}/playbill/host")
@@ -1582,10 +1608,12 @@ class CruxibleClient:
         evaluation_time: str | None = None,
         resolution_contract: contracts.ResolutionContractReferenceV1 | None = None,
         trigger_event: contracts.TriggerEventReferenceV1 | None = None,
+        trigger: str | None = None,
     ) -> contracts.PlaybillProcedureRunState:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/lines/{line}/runs",
             json={
+                **({"trigger": trigger} if trigger is not None else {}),
                 **(
                     {"resolution_contract": resolution_contract.model_dump(mode="json")}
                     if resolution_contract is not None

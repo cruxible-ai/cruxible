@@ -201,13 +201,19 @@ def test_resume_restores_server_revision_without_repeating_work(pb, monkeypatch,
     assert calls == [("inst_test", "saved-intent")]
 
 
-def test_line_trigger_input_is_an_explicit_authoring_decision(pb):
-    from cruxible_client.contracts.artifacts import ArtifactIdentity
-    from cruxible_client.contracts.authoring.models import LineAuthoringPayloadV1
-    from cruxible_client.contracts.procedures.line_specs import CaptureLandingTriggerPolicyV2
-    from cruxible_client.contracts.procedures.windows import CaptureEventSelectorV1
+def test_a_line_and_the_triggers_aimed_at_it_are_separate_authoring_decisions(pb):
+    import pytest
+    from pydantic import ValidationError
 
-    trigger = CaptureLandingTriggerPolicyV2(
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
+    from cruxible_client.contracts.authoring.models import (
+        LineAuthoringPayloadV1,
+        TriggerAuthoringPayloadV1,
+    )
+    from cruxible_client.contracts.procedures.windows import CaptureEventSelectorV1
+    from cruxible_client.contracts.triggers import CadenceScheduleV1, CaptureLandingScheduleV1
+
+    landing = CaptureLandingScheduleV1(
         event=CaptureEventSelectorV1(
             capture_contract_identity=ArtifactIdentity(kind="CaptureContract", name="feed"),
             capture_contract_digest="sha256:" + "a" * 64,
@@ -219,10 +225,27 @@ def test_line_trigger_input_is_an_explicit_authoring_decision(pb):
         procedure="consume",
         acquisition_policy="feed-policy",
         max_authority="observe",
-        trigger_policy=trigger,
         trigger_input="feed",
     )
-    line = next(
-        m for m in draft._compiled().payload.members if isinstance(m, LineAuthoringPayloadV1)
+    draft.trigger(name="on-feed", schedule=landing, line="consume-feed")
+    draft.trigger(
+        name="sweep-often",
+        schedule=CadenceScheduleV1(interval_seconds=600),
+        action="evidence.sweep",
     )
-    assert line.trigger_input == "feed" and line.trigger_policy == trigger
+    members = draft._compiled().payload.members
+    line = next(m for m in members if isinstance(m, LineAuthoringPayloadV1))
+    assert line.trigger_input == "feed" and "trigger_policy" not in line.model_dump()
+    triggers = {m.name: m for m in members if isinstance(m, TriggerAuthoringPayloadV1)}
+    assert (triggers["on-feed"].line_name, triggers["on-feed"].schedule) == (
+        "consume-feed",
+        landing,
+    )
+    assert (triggers["sweep-often"].action, triggers["sweep-often"].line_name) == (
+        "evidence.sweep",
+        None,
+    )
+    with pytest.raises(ValidationError, match="exactly one target"):
+        TriggerAuthoringPayloadV1(
+            name="both", schedule=landing, line_name="consume-feed", action="evidence.sweep"
+        )

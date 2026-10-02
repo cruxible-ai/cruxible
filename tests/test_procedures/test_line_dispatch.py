@@ -14,7 +14,12 @@ from cruxible_client.contracts.line_dispatch import (
     LineEvaluateRequestV1,
     LineTriggerCheckRequestV1,
 )
-from cruxible_client.contracts.procedures.line_specs import CaptureLandingTriggerPolicyV2
+from cruxible_client.contracts.triggers import (
+    CadenceScheduleV1,
+    CaptureLandingScheduleV1,
+    CronScheduleV1,
+    WindowCloseScheduleV1,
+)
 from cruxible_core.exhaust.line_dispatch import LineDispatchStore
 from cruxible_core.service.procedures.line_dispatch import (
     service_arm_line,
@@ -29,7 +34,8 @@ from cruxible_core.service.procedures.procedure_runs import (
     _stream,
     service_run_playbill_line,
 )
-from tests.test_procedures.test_line_triggers import SELECTOR, capture, line_world
+from tests.support.lines import line_trigger, successor, trigger_members
+from tests.test_procedures.test_line_triggers import SELECTOR, TRIGGER, capture, line_world
 from tests.test_procedures.test_procedure_run_surface import READ_TIME, _actor
 
 LOCAL_OPERATOR = LineArmPrincipalV1(kind="local_operator", label="local-operator")
@@ -44,7 +50,7 @@ def _active_segment(instance) -> str:  # type: ignore[no-untyped-def]
 
 
 def queued_world(tmp_path):
-    instance, line, procedure = line_world(tmp_path, CaptureLandingTriggerPolicyV2(event=SELECTOR))
+    instance, line, procedure = line_world(tmp_path, CaptureLandingScheduleV1(event=SELECTOR))
     capture(instance, procedure)
     now = READ_TIME + timedelta(seconds=2)
     result = service_evaluate_line(
@@ -85,7 +91,7 @@ def test_explicit_evaluation_and_pending_rebuild_do_not_execute(tmp_path):
 
 
 def test_listener_restart_keeps_pending_and_leaves_downtime_for_explicit_evaluation(tmp_path):
-    instance, line, procedure = line_world(tmp_path, CaptureLandingTriggerPolicyV2(event=SELECTOR))
+    instance, line, procedure = line_world(tmp_path, CaptureLandingScheduleV1(event=SELECTOR))
     capture(instance, procedure)  # before subscribing: never auto-consumed
     actor = _actor(instance)
     start = READ_TIME + timedelta(seconds=10)
@@ -153,7 +159,9 @@ def test_dispatch_races_explicit_line_run_admits_exactly_once(tmp_path):
             instance,
             path_identity_digest=line.identity.name,
             request=LineRunRequestV1(
-                line=line.identity.name, trigger_event=occurrence.binding.event
+                line=line.identity.name,
+                trigger=TRIGGER,
+                trigger_event=occurrence.binding.event,
             ),
             actor_context=actor,
             caller_rung=3,
@@ -238,7 +246,6 @@ def test_dispatch_refusal_leaves_exact_pending_binding(tmp_path):
 def test_listener_retains_window_boundaries_and_dispatches_only_when_closed(
     tmp_path, event_relative
 ):
-    from cruxible_client.contracts.procedures.line_specs import WindowCloseTriggerPolicyV2
     from cruxible_client.contracts.procedures.windows import CaptureEventWindowV1, FixedWindowV1
 
     window = (
@@ -246,7 +253,7 @@ def test_listener_retains_window_boundaries_and_dispatches_only_when_closed(
         if event_relative
         else FixedWindowV1(starts_at=READ_TIME, duration_seconds=60)
     )
-    instance, line, procedure = line_world(tmp_path, WindowCloseTriggerPolicyV2(window=window))
+    instance, line, procedure = line_world(tmp_path, WindowCloseScheduleV1(window=window))
     actor = _actor(instance)
     service_arm_line(
         instance,
@@ -293,12 +300,7 @@ def test_listener_retains_window_boundaries_and_dispatches_only_when_closed(
 
 
 def test_cadence_has_one_pending_occurrence_and_retains_its_first_due_instant(tmp_path):
-    from cruxible_client.contracts.procedures.line_specs import CadenceTriggerPolicyV1
-
-    instance, line, _ = line_world(
-        tmp_path,
-        CadenceTriggerPolicyV1(interval_seconds=60, cadence_policy_digest="sha256:" + "d" * 64),
-    )
+    instance, line, _ = line_world(tmp_path, CadenceScheduleV1(interval_seconds=60))
     actor = _actor(instance)
     service_arm_line(
         instance,
@@ -322,7 +324,8 @@ def test_cadence_has_one_pending_occurrence_and_retains_its_first_due_instant(tm
         now=READ_TIME + timedelta(seconds=30),
     )
     assert checked.occurrences[0].pending
-    assert checked.occurrences[0].eligible_at == READ_TIME
+    # The Trigger was accepted long before: the arm ticks first at its own start.
+    assert checked.occurrences[0].eligible_at == READ_TIME - timedelta(seconds=1)
     result = service_dispatch_line(
         instance,
         line.identity.name,
@@ -335,7 +338,7 @@ def test_cadence_has_one_pending_occurrence_and_retains_its_first_due_instant(tm
 
 
 def test_event_index_rebuild_never_replays_history_or_loses_pending(tmp_path):
-    instance, line, procedure = line_world(tmp_path, CaptureLandingTriggerPolicyV2(event=SELECTOR))
+    instance, line, procedure = line_world(tmp_path, CaptureLandingScheduleV1(event=SELECTOR))
     actor = _actor(instance)
     service_arm_line(
         instance,
@@ -367,7 +370,7 @@ def test_daemon_listener_matches_without_execution(tmp_path, monkeypatch):
 
     from cruxible_core.consumers.runner import ConsumerRunner
 
-    instance, line, procedure = line_world(tmp_path, CaptureLandingTriggerPolicyV2(event=SELECTOR))
+    instance, line, procedure = line_world(tmp_path, CaptureLandingScheduleV1(event=SELECTOR))
     monkeypatch.setattr(
         "cruxible_core.consumers.runner.get_registry",
         lambda: SimpleNamespace(
@@ -409,11 +412,13 @@ def test_daemon_listener_matches_without_execution(tmp_path, monkeypatch):
     assert journal.select_records(_stream(instance), event_kind="admission_bound") == ()
 
 
-@pytest.mark.parametrize("change", ["rebind", "epoch", "concurrent_epoch"])
-def test_any_line_change_stops_the_arm_until_it_is_rearmed(tmp_path, change, monkeypatch):
-    """An arm is pinned to the Line version it was armed under, epoch or not."""
+@pytest.mark.parametrize("change", ["rebind", "trigger", "concurrent_trigger"])
+def test_any_line_or_trigger_change_stops_the_arm_until_it_is_rearmed(
+    tmp_path, change, monkeypatch
+):
+    """An arm is pinned to the Line and Trigger versions it was armed under."""
 
-    new_epoch = change != "rebind"
+    new_trigger = change != "rebind"
     from cruxible_client.contracts.artifacts import ArtifactLifecycle
     from cruxible_client.contracts.procedures.line_specs import (
         line_spec_digest,
@@ -423,7 +428,7 @@ def test_any_line_change_stops_the_arm_until_it_is_rearmed(tmp_path, change, mon
     from tests.test_indexes.test_resolution_contracts import _accept_tree
 
     instance, line, procedure, owner = line_world(
-        tmp_path, CaptureLandingTriggerPolicyV2(event=SELECTOR), with_owner=True
+        tmp_path, CaptureLandingScheduleV1(event=SELECTOR), with_owner=True
     )
     actor = _actor(instance)
     service_arm_line(
@@ -435,23 +440,32 @@ def test_any_line_change_stops_the_arm_until_it_is_rearmed(tmp_path, change, mon
         daemon_id="daemon",
     )
     segment = _active_segment(instance)
-    from cruxible_client.contracts.procedures.line_specs import WindowCloseTriggerPolicyV2
     from cruxible_client.contracts.procedures.windows import CaptureEventWindowV1
 
-    successor = line.model_copy(
-        update={
-            "trigger_policy": WindowCloseTriggerPolicyV2(
-                window=CaptureEventWindowV1(event=SELECTOR, duration_seconds=1)
-            )
-            if new_epoch
-            else line.trigger_policy,
-            "parameters": {"status": "closed"},
-            "occurrence_epoch": line.occurrence_epoch + int(new_epoch),
-            "lifecycle": ArtifactLifecycle(predecessor_digest=line_spec_digest(line).tagged),
-        }
-    )
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    tree[line_spec_path(line.identity.name)] = render_line_spec(successor)
+    if new_trigger:
+        tree.update(
+            trigger_members(
+                successor(
+                    line_trigger(
+                        TRIGGER,
+                        line=line.identity.name,
+                        schedule=CaptureLandingScheduleV1(event=SELECTOR),
+                    ),
+                    schedule=WindowCloseScheduleV1(
+                        window=CaptureEventWindowV1(event=SELECTOR, duration_seconds=1)
+                    ),
+                )
+            )
+        )
+    else:
+        revised = line.model_copy(
+            update={
+                "parameters": {"status": "closed"},
+                "lifecycle": ArtifactLifecycle(predecessor_digest=line_spec_digest(line).tagged),
+            }
+        )
+        tree[line_spec_path(line.identity.name)] = render_line_spec(revised)
 
     def accept_successor():
         _accept_tree(
@@ -462,7 +476,7 @@ def test_any_line_change_stops_the_arm_until_it_is_rearmed(tmp_path, change, mon
             proposal_name="rebind-line",
         )
 
-    if change == "concurrent_epoch":
+    if change == "concurrent_trigger":
         import cruxible_core.service.procedures.line_dispatch as dispatch_service
 
         original = dispatch_service.service_check_line_trigger
@@ -483,7 +497,7 @@ def test_any_line_change_stops_the_arm_until_it_is_rearmed(tmp_path, change, mon
             "SELECT active,payload FROM sessions WHERE session_id=?", (segment,)
         ).fetchone()
         assert not row[0]
-        expected = "epoch_changed" if new_epoch else "line_changed"
+        expected = "trigger_changed" if new_trigger else "line_changed"
         assert json.loads(row[1])["stop_reason"] == expected
         # Nothing was matched under a version the arm was not bound to.
         assert conn.execute("SELECT count(*) FROM pending").fetchone()[0] == 0
@@ -496,13 +510,22 @@ def test_one_capture_can_leave_independent_pending_work_for_two_lines(tmp_path):
     from tests.test_indexes.test_resolution_contracts import _accept_tree
 
     instance, first, procedure, owner = line_world(
-        tmp_path, CaptureLandingTriggerPolicyV2(event=SELECTOR), with_owner=True
+        tmp_path, CaptureLandingScheduleV1(event=SELECTOR), with_owner=True
     )
     second = first.model_copy(update={"identity": ArtifactIdentity(kind="Line", name="other-line")})
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree[line_spec_path(second.identity.name)] = render_line_spec(second)
+    tree.update(
+        trigger_members(
+            line_trigger(
+                "other-line-trigger",
+                line=second.identity.name,
+                schedule=CaptureLandingScheduleV1(event=SELECTOR),
+            )
+        )
+    )
     _accept_tree(
-        instance, owner, tree, timestamp="2026-08-28T15:02:00.000000Z", proposal_name="second-line"
+        instance, owner, tree, timestamp="2026-08-24T15:30:00.000000Z", proposal_name="second-line"
     )
     actor = _actor(instance)
     for line in (first, second):
@@ -535,7 +558,7 @@ def test_one_capture_can_leave_independent_pending_work_for_two_lines(tmp_path):
 
 
 def test_idle_coverage_is_checkpointed_and_restart_claims_only_durable_range(tmp_path):
-    instance, line, procedure = line_world(tmp_path, CaptureLandingTriggerPolicyV2(event=SELECTOR))
+    instance, line, procedure = line_world(tmp_path, CaptureLandingScheduleV1(event=SELECTOR))
     actor = _actor(instance)
     service_arm_line(
         instance,
@@ -583,11 +606,11 @@ def test_idle_coverage_is_checkpointed_and_restart_claims_only_durable_range(tmp
         assert conn.execute("SELECT count(*) FROM pending").fetchone()[0] == 1
 
 
-@pytest.mark.parametrize("change", ["rebind", "epoch", "race"])
+@pytest.mark.parametrize("change", ["rebind", "trigger", "race"])
 def test_superseded_pending_requires_explicit_reconciliation_and_survives_rebuild(
     tmp_path, change, monkeypatch
 ):
-    new_epoch = change == "epoch"
+    new_trigger = change == "trigger"
     from cruxible_client.contracts.artifacts import ArtifactLifecycle
     from cruxible_client.contracts.procedures.line_specs import (
         line_spec_digest,
@@ -597,7 +620,7 @@ def test_superseded_pending_requires_explicit_reconciliation_and_survives_rebuil
     from tests.test_indexes.test_resolution_contracts import _accept_tree
 
     instance, line, procedure, owner = line_world(
-        tmp_path, CaptureLandingTriggerPolicyV2(event=SELECTOR), with_owner=True
+        tmp_path, CaptureLandingScheduleV1(event=SELECTOR), with_owner=True
     )
     capture(instance, procedure)
     now = READ_TIME + timedelta(seconds=2)
@@ -610,33 +633,42 @@ def test_superseded_pending_requires_explicit_reconciliation_and_survives_rebuil
         now=now,
     )
     occurrence = evaluated.occurrences[0]
-    successor = line.model_copy(
+    revised = line.model_copy(
         update={
             "parameters": {"status": "closed"},
             "lifecycle": ArtifactLifecycle(predecessor_digest=line_spec_digest(line).tagged),
         }
     )
-    if new_epoch:
-        from cruxible_client.contracts.procedures.line_specs import WindowCloseTriggerPolicyV2
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    if new_trigger:
         from cruxible_client.contracts.procedures.windows import CaptureEventWindowV1
 
-        successor = successor.model_copy(
-            update={
-                "occurrence_epoch": line.occurrence_epoch + 1,
-                "trigger_policy": WindowCloseTriggerPolicyV2(
-                    window=CaptureEventWindowV1(event=SELECTOR, duration_seconds=1)
-                ),
-            }
+        # A changed schedule is new trigger semantics: what the old one matched
+        # is superseded, never adopted.
+        revised = line
+        tree.update(
+            trigger_members(
+                successor(
+                    line_trigger(
+                        TRIGGER,
+                        line=line.identity.name,
+                        schedule=CaptureLandingScheduleV1(event=SELECTOR),
+                    ),
+                    schedule=WindowCloseScheduleV1(
+                        window=CaptureEventWindowV1(event=SELECTOR, duration_seconds=1)
+                    ),
+                )
+            )
         )
-    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    tree[line_spec_path(line.identity.name)] = render_line_spec(successor)
+    else:
+        tree[line_spec_path(line.identity.name)] = render_line_spec(revised)
 
     def accept_successor():
         _accept_tree(
             instance,
             owner,
             tree,
-            timestamp="2026-08-28T15:02:00.000000Z",
+            timestamp="2026-08-24T15:30:00.000000Z",
             proposal_name="rebind-pending",
         )
 
@@ -679,14 +711,14 @@ def test_superseded_pending_requires_explicit_reconciliation_and_survives_rebuil
     retry = service_dispatch_line(
         instance, line.identity.name, request, actor=actor, now=now, caller_rung=3
     )
-    if new_epoch:
+    if new_trigger:
         assert retry.items[0].status == "superseded"
         evaluated_new = service_evaluate_line(
             instance,
             line.identity.name,
-            LineEvaluateRequestV1(since=READ_TIME, until=now),
+            LineEvaluateRequestV1(since=READ_TIME, until=now + timedelta(seconds=2)),
             actor=actor,
-            now=now,
+            now=now + timedelta(seconds=2),
         )
         assert evaluated_new.occurrences[0].occurrence_id != occurrence.occurrence_id
         fresh = service_dispatch_line(
@@ -694,7 +726,7 @@ def test_superseded_pending_requires_explicit_reconciliation_and_survives_rebuil
             line.identity.name,
             LineDispatchRequestV1(),
             actor=actor,
-            now=now,
+            now=now + timedelta(seconds=2),
             caller_rung=3,
         )
         assert fresh.items[0].status == "admitted", fresh
@@ -707,8 +739,75 @@ def test_superseded_pending_requires_explicit_reconciliation_and_survives_rebuil
     assert again.items[0].run_id == retry.items[0].run_id
     with store.locked() as conn:
         row = json.loads(conn.execute("SELECT payload FROM pending").fetchone()[0])
-        assert row["line_artifact_digest"] == line_spec_digest(successor).tagged
+        assert row["line_artifact_digest"] == line_spec_digest(revised).tagged
         assert row["occurrence"]["binding"] == occurrence.binding.model_dump(mode="json")
+
+
+def test_restoring_a_schedule_rebinds_an_occurrence_its_change_superseded(tmp_path):
+    from cruxible_client.contracts.procedures.windows import CaptureEventWindowV1
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
+
+    instance, line, procedure, owner = line_world(
+        tmp_path, CaptureLandingScheduleV1(event=SELECTOR), with_owner=True
+    )
+    capture(instance, procedure)
+    now = READ_TIME + timedelta(seconds=2)
+    actor = _actor(instance)
+
+    def evaluate(at):  # type: ignore[no-untyped-def]
+        return service_evaluate_line(
+            instance,
+            line.identity.name,
+            LineEvaluateRequestV1(since=READ_TIME, until=at),
+            actor=actor,
+            now=at,
+        )
+
+    def dispatch(at):  # type: ignore[no-untyped-def]
+        return service_dispatch_line(
+            instance,
+            line.identity.name,
+            LineDispatchRequestV1(),
+            actor=actor,
+            now=at,
+            caller_rung=3,
+        )
+
+    def accept(trigger, name, at):  # type: ignore[no-untyped-def]
+        tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+        tree.update(trigger_members(trigger))
+        _accept_tree(instance, owner, tree, timestamp=at, proposal_name=name)
+
+    (occurrence,) = evaluate(now).occurrences
+    landing = line_trigger(
+        TRIGGER, line=line.identity.name, schedule=CaptureLandingScheduleV1(event=SELECTOR)
+    )
+    windowed = successor(
+        landing,
+        schedule=WindowCloseScheduleV1(
+            window=CaptureEventWindowV1(event=SELECTOR, duration_seconds=1)
+        ),
+    )
+    accept(windowed, "to-window", "2026-08-24T15:30:00.000000Z")
+    superseded = dispatch(now)
+    assert [item.status for item in superseded.items] == ["superseded"]
+
+    # The schedule comes back through another accepted successor: the same event
+    # derives the same occurrence, which was closed but never admitted.
+    accept(successor(windowed, schedule=landing.schedule), "back", "2026-08-24T15:40:00.000000Z")
+    later = now + timedelta(seconds=2)
+    (again,) = evaluate(later).occurrences
+    assert again.occurrence_id == occurrence.occurrence_id
+    assert (again.pending, again.dispatch_status) == (True, "pending")
+    admitted = dispatch(later)
+    assert [item.status for item in admitted.items] == ["admitted"], admitted
+
+    # Once admitted it is final: re-evaluating never queues it a second time.
+    (final,) = evaluate(later + timedelta(seconds=1)).occurrences
+    assert final.admitted_run_id == admitted.items[0].run_id and not final.pending
+    assert dispatch(later + timedelta(seconds=1)).items == ()
+    journal, _ = _journal(instance)
+    assert len(journal.select_records(_stream(instance), event_kind="admission_bound")) == 1
 
 
 def test_retry_requires_one_explicit_occurrence():
@@ -733,9 +832,10 @@ def test_event_refusals_close_only_unusable_occurrences(tmp_path, monkeypatch, f
     from cruxible_core.service.procedures.procedure_runs import (
         _accepted_line_by_reference,
         _line_occurrence,
+        line_triggers,
     )
 
-    instance, line, procedure = line_world(tmp_path, CaptureLandingTriggerPolicyV2(event=SELECTOR))
+    instance, line, procedure = line_world(tmp_path, CaptureLandingScheduleV1(event=SELECTOR))
     actor = _actor(instance)
     first = capture(
         instance,
@@ -770,9 +870,12 @@ def test_event_refusals_close_only_unusable_occurrences(tmp_path, monkeypatch, f
                 "absent": {"sequence": 999},
             }.get(failure, {})
             event = event.model_copy(update=updates)
-        binding = LineTriggerBindingV1(kind="capture_landing", event=event)
+        (trigger,) = line_triggers(instance, accepted, coordinate=instance.accepted_coordinate())
+        binding = LineTriggerBindingV1(
+            kind="capture_landing", trigger=trigger.trigger.identity, event=event
+        )
         occurrence_id, _ = _line_occurrence(
-            accepted, evaluation_time=READ_TIME, prior=(), binding=binding
+            accepted, evaluation_time=READ_TIME, prior=(), trigger=trigger, binding=binding
         )
         occurrence_ids.append(occurrence_id)
         # Seed retained pending work with a bad reference, modeling a damaged or
@@ -786,6 +889,8 @@ def test_event_refusals_close_only_unusable_occurrences(tmp_path, monkeypatch, f
                     "line_identity_digest": line_identity_digest(line.identity),
                     "line_artifact_digest": accepted.artifact_digest,
                     "occurrence_epoch": line.occurrence_epoch,
+                    "trigger": trigger.trigger.identity.qualified,
+                    "trigger_artifact_digest": trigger.artifact_digest,
                     "coordinate": stored.record.accepted_coordinate.model_dump(mode="json"),
                     "occurrence": LineTriggerOccurrenceV1(
                         occurrence_id=occurrence_id,
@@ -857,11 +962,10 @@ def test_event_refusals_close_only_unusable_occurrences(tmp_path, monkeypatch, f
 
 
 def test_arming_a_line_that_can_propose_refuses_up_front_without_a_mandate(tmp_path, monkeypatch):
-    from cruxible_client.contracts.procedures.line_specs import ManualTriggerPolicyV1
     from cruxible_core.service.procedures import procedure_runs
     from cruxible_core.service.procedures.procedure_runs import LineMandateRequired
 
-    instance, line, _ = line_world(tmp_path, ManualTriggerPolicyV1())
+    instance, line, _ = line_world(tmp_path, None, triggers=())
     monkeypatch.setattr(procedure_runs, "_accepted_line_mandates", lambda *_a, **_k: ())
     with pytest.raises(LineMandateRequired) as refused:
         service_arm_line(
@@ -876,3 +980,153 @@ def test_arming_a_line_that_can_propose_refuses_up_front_without_a_mandate(tmp_p
     assert refused.value.repair.arguments == {"example": "procedure-mandate"}
     with LineDispatchStore(instance).locked() as conn:
         assert conn.execute("SELECT count(*) FROM sessions").fetchone()[0] == 0
+
+
+def test_a_timer_trigger_never_ticks_before_its_acceptance_and_a_successor_restarts_it(tmp_path):
+    from datetime import UTC, datetime
+
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
+
+    instance, line, _procedure, owner = line_world(
+        tmp_path, CadenceScheduleV1(interval_seconds=3600), with_owner=True
+    )
+    accepted = datetime(2026, 8, 24, 15, tzinfo=UTC)  # line_world's acceptance
+
+    def due(at):  # type: ignore[no-untyped-def]
+        checked = service_check_line_trigger(
+            instance, line.identity.name, LineTriggerCheckRequestV1(), now=at
+        )
+        return [item.eligible_at for item in checked.occurrences]
+
+    # A new cadence first ticks one interval after its acceptance, never on sight.
+    assert due(accepted + timedelta(minutes=30)) == []
+    assert due(accepted + timedelta(hours=1, seconds=1)) == [accepted + timedelta(hours=1)]
+
+    hourly = line_trigger(
+        TRIGGER, line=line.identity.name, schedule=CadenceScheduleV1(interval_seconds=3600)
+    )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree.update(trigger_members(successor(hourly, schedule=CronScheduleV1(expression="0 * * * 1"))))
+    _accept_tree(
+        instance, owner, tree, timestamp="2026-08-28T15:30:00.000000Z", proposal_name="weekly"
+    )
+    # The replacement starts from its own acceptance: Friday 15:30 runs nothing
+    # until Monday's first hour, never an instant before it was accepted.
+    friday = datetime(2026, 8, 28, 15, 30, tzinfo=UTC)
+    assert due(friday + timedelta(hours=2)) == []
+    monday = datetime(2026, 8, 31, tzinfo=UTC)
+    assert due(monday + timedelta(seconds=1)) == [monday]
+
+
+#: When line_world accepts its Line and the Trigger aimed at it.
+TRIGGER_ACCEPTED = READ_TIME - timedelta(hours=1)
+
+
+def _event(stored):  # type: ignore[no-untyped-def]
+    from cruxible_client.contracts.procedures.windows import TriggerEventReferenceV1
+
+    return TriggerEventReferenceV1(
+        run_id=stored.record.run_id,
+        partition_id=stored.record.partition_id,
+        sequence=stored.record.sequence,
+        record_digest=stored.record_digest,
+    )
+
+
+@pytest.mark.parametrize("windowed", [False, True])
+def test_a_capture_at_or_before_the_triggers_acceptance_never_fires_it(tmp_path, windowed):
+    from cruxible_client.contracts.procedures.windows import CaptureEventWindowV1
+
+    schedule = (
+        WindowCloseScheduleV1(window=CaptureEventWindowV1(event=SELECTOR, duration_seconds=60))
+        if windowed
+        else CaptureLandingScheduleV1(event=SELECTOR)
+    )
+    instance, line, procedure = line_world(tmp_path, schedule)
+    stored = {
+        name: capture(instance, procedure, at=at, partition=f"run:{name}")
+        for name, at in (
+            ("before", TRIGGER_ACCEPTED - timedelta(minutes=1)),
+            ("at", TRIGGER_ACCEPTED),
+            ("after", TRIGGER_ACCEPTED + timedelta(seconds=1)),
+        )
+    }
+    checked = service_check_line_trigger(
+        instance, line.identity.name, LineTriggerCheckRequestV1(), now=READ_TIME
+    )
+    # Strictly after acceptance only: the equal instant is not after it.
+    assert [item.binding.event for item in checked.occurrences] == [_event(stored["after"])]
+
+    # Admission refuses the same events supplied explicitly, never running them.
+    for name in ("before", "at"):
+        run = service_run_playbill_line(
+            instance,
+            path_identity_digest=line.identity.name,
+            request=LineRunRequestV1(
+                line=line.identity.name, trigger=TRIGGER, trigger_event=_event(stored[name])
+            ),
+            actor_context=_actor(instance),
+            caller_rung=3,
+            daemon_clock=SimpleNamespace(now=lambda: READ_TIME),
+        )
+        assert run.status == "admission_refused", run
+        assert run.terminal.code == "trigger_event_precedes_acceptance"
+    journal, _ = _journal(instance)
+    assert journal.select_records(_stream(instance), event_kind="admission_bound") == ()
+
+
+@pytest.mark.parametrize(("closes_after", "fires"), [(0, False), (1, True)])
+def test_a_fixed_window_fires_only_when_it_closes_after_the_triggers_acceptance(
+    tmp_path, closes_after, fires
+):
+    from cruxible_client.contracts.procedures.windows import FixedWindowV1
+
+    window = FixedWindowV1(
+        starts_at=TRIGGER_ACCEPTED - timedelta(hours=1), duration_seconds=3600 + closes_after
+    )
+    instance, line, _procedure = line_world(tmp_path, WindowCloseScheduleV1(window=window))
+    checked = service_check_line_trigger(
+        instance, line.identity.name, LineTriggerCheckRequestV1(), now=READ_TIME
+    )
+    assert len(checked.occurrences) == (1 if fires else 0)
+    run = service_run_playbill_line(
+        instance,
+        path_identity_digest=line.identity.name,
+        request=LineRunRequestV1(line=line.identity.name, trigger=TRIGGER),
+        actor_context=_actor(instance),
+        caller_rung=3,
+        daemon_clock=SimpleNamespace(now=lambda: READ_TIME),
+    )
+    if not fires:
+        assert run.terminal.code == "trigger_event_precedes_acceptance"
+
+
+def test_an_armed_line_never_admits_a_later_append_stamped_before_acceptance(tmp_path):
+    instance, line, procedure = line_world(tmp_path, CaptureLandingScheduleV1(event=SELECTOR))
+    actor = _actor(instance)
+    service_arm_line(
+        instance,
+        line.identity.name,
+        principal=LOCAL_OPERATOR,
+        actor=actor,
+        now=READ_TIME,
+        daemon_id="daemon",
+    )
+    # Appended while the arm listens, but stamped before the Trigger's acceptance:
+    # the arm's position scan ignores time bounds, the acceptance floor does not.
+    capture(instance, procedure, at=TRIGGER_ACCEPTED - timedelta(minutes=5), partition="run:late")
+    capture(instance, procedure, at=TRIGGER_ACCEPTED, partition="run:boundary")
+    service_match_listening_lines(
+        instance, actor=actor, now=READ_TIME + timedelta(seconds=1), daemon_id="daemon"
+    )
+    dispatched = service_dispatch_line(
+        instance,
+        line.identity.name,
+        LineDispatchRequestV1(),
+        actor=actor,
+        now=READ_TIME + timedelta(seconds=2),
+        caller_rung=3,
+    )
+    assert dispatched.items == ()
+    journal, _ = _journal(instance)
+    assert journal.select_records(_stream(instance), event_kind="admission_bound") == ()

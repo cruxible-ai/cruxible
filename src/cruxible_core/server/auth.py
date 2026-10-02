@@ -48,6 +48,7 @@ from cruxible_core.server.errors import ErrorResponse, error_to_response
 from cruxible_core.server.request_logging import log_runtime_request, mark_request_received
 from cruxible_core.server.route_paths import (
     HEALTH_PATH,
+    PLAYBILL_FLOOR_DELIVERY_PATH,
     PLAYBILL_HOST_CREATE_PATH,
     PLAYBILL_HOST_SHOW_PATH,
     PLAYBILL_WORKSPACE_ATTACH_PATH,
@@ -331,6 +332,7 @@ _SERVER_OPERATION_ROUTES: tuple[tuple[str, str], ...] = (
     ("GET", _PLAYBILL_HOST_SHOW_ROUTE),
     ("POST", api_v1_path(PLAYBILL_WORKSPACE_DETACH_PATH)),
     ("POST", api_v1_path(PLAYBILL_WORKSPACE_ATTACH_PATH)),
+    ("POST", api_v1_path(PLAYBILL_FLOOR_DELIVERY_PATH)),
 )
 
 

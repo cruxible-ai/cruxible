@@ -45,7 +45,7 @@ from cruxible_client.contracts.procedures.graph import compute_procedure_definit
 from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpecV1,
     LineSpecV2,
-    ManualTriggerPolicyV1,
+    LineSpecV6,
     evaluate_line_spec_law,
     line_identity_digest,
     line_spec_digest,
@@ -967,15 +967,14 @@ def test_the_live_line_route_runs_a_real_daemon_owned_provider_subprocess(
         artifact_digest=acquisition_policy_digest(policy).tagged,
     )
     definition = accepted.procedure.definition
-    line = LineSpecV2(
+    line = LineSpecV6(
         identity=ArtifactIdentity(kind="Line", name="served-provider-hourly"),
         occurrence_epoch=1,
         procedure=procedure_pin,
         parameters={"status": "open"},
         slot_bindings=(),
-        trigger_policy=ManualTriggerPolicyV1(),
         acquisition_policy=policy_pin,
-        requested_terminal_rung=1,
+        max_authority="observe",
         budgets={
             "max_capture_bytes": definition.budget.max_capture_bytes,
             "max_items": definition.budget.max_items,

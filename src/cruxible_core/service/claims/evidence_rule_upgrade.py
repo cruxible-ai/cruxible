@@ -46,13 +46,13 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionRuleV2,
     ClaimEvidenceAdmissionRuleV3,
 )
+from cruxible_core.claims.claim_type_inputs import identity_rules_supported
 from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeDependentDispositionV3,
     ClaimTypeMigrationError,
     build_dependent_closure_candidate,
     dependent_closure_inventory,
 )
-from cruxible_core.compiler.compiler import AUTHORITY_VERBS_COMPILER
 from cruxible_core.errors import DataValidationError
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.proposals.proposals import ProposalAdmissionRequest
@@ -235,9 +235,9 @@ def _upgrade(
 ) -> EvidenceRuleUpgradeResultV1:
     assert mode.head is not None
     base = mode.head
-    if base.compiler != AUTHORITY_VERBS_COMPILER:
+    if not identity_rules_supported(base.compiler):
         raise DataValidationError(
-            "identity evidence rules need compiler revision 31; upgrade the compiler first"
+            "identity evidence rules need compiler revision 31 or later; upgrade the compiler first"
         )
     tree = instance.immutable_tree_at(base.git_oid)
     lineages = _Lineages(instance, AcceptedCoordinate.from_internal(base))

@@ -65,8 +65,8 @@ from cruxible_core.service.floor.floor_current import (
 )
 from cruxible_core.service.floor.floor_sources import (
     DOCUMENTS_PREFIX,
-    SOURCES_INDEX_PATH,
-    render_sources_index,
+    SOURCES_LEDGER_PATH,
+    render_sources_ledger,
 )
 from cruxible_core.service.floor.renderer import floor_renderer
 
@@ -82,7 +82,7 @@ _INPUT_PREFIXES = (
     DOCUMENTS_PREFIX,
     CAPTURE_CONTRACTS_PREFIX,
 )
-# What sources/INDEX reads: every Claim's backing, the Documents and the contracts.
+# What sources/LEDGER reads: every Claim's backing, the Documents and the contracts.
 _SOURCE_PREFIXES = (CLAIMS_PREFIX, DOCUMENTS_PREFIX, CAPTURE_CONTRACTS_PREFIX)
 _INDEX_KEY = ("floor-index",)
 
@@ -588,7 +588,7 @@ def render_floor(
         if kept_sources is not None and kept_sources[0] == sources_changed
         else (
             sources_changed,
-            render_sources_index(
+            render_sources_ledger(
                 instance,
                 claims=inputs.claims.values(),
                 claim_latest={
@@ -606,7 +606,7 @@ def render_floor(
     )
     files: dict[str, tuple[bytes, int]] = {
         README_PATH: (FLOOR_README.encode(), 0),
-        SOURCES_INDEX_PATH: (sources[1], sources[0]),
+        SOURCES_LEDGER_PATH: (sources[1], sources[0]),
     }
     for render in subjects.values():
         for path, content in render.files.items():

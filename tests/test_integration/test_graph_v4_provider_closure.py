@@ -59,6 +59,7 @@ from tests.core_support._p2b1_support import (
     pin,
 )
 from tests.core_support._support import initialize_local
+from tests.support.lines import as_v6
 
 
 def _definition() -> tuple[ProcedureDefinitionV4, ArtifactPin, ArtifactPin]:
@@ -424,7 +425,7 @@ def test_real_proposal_path_closes_interface_provider_procedure_and_line(
     interface = accepted_interface()
     provider = accepted_provider()
     procedure = _accepted_procedure()
-    line = _line()
+    line = as_v6(_line())
     fixture = interface_fixture()
     monkeypatch.setattr(
         proposal_module,

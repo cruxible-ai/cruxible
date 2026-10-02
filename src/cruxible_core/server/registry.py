@@ -34,6 +34,24 @@ from cruxible_core.storage.preview_fence import refuse_write_while_previewing
 LOCAL_FILESYSTEM_BACKEND = "local_filesystem"
 GOVERNED_DAEMON_BACKEND = "governed_daemon"
 _INSTANCE_ID_RE = re.compile(r"^inst_[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+FLOOR_DELIVERY_MIGRATION_STEP = "2026-10-01-floor-delivery-column"
+
+
+def _migrate_floor_delivery_column(conn: sqlite3.Connection) -> None:
+    """2026-10-01-floor-delivery-column: safe in either registry migration order.
+
+    Keyed by the column's existence, so a registry where an earlier build ran
+    this step outside the recorded chain is left exactly as it is.
+    """
+
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(instances)")}
+    if "floor_delivery" not in columns:
+        conn.execute(
+            "ALTER TABLE instances ADD COLUMN floor_delivery INTEGER NOT NULL DEFAULT 0 "
+            "CHECK (floor_delivery IN (0,1) AND "
+            "(floor_delivery=0 OR workspace_root IS NOT NULL))"
+        )
+        conn.execute("UPDATE instances SET floor_delivery=1 WHERE workspace_root IS NOT NULL")
 
 
 @dataclass(frozen=True)
@@ -52,6 +70,9 @@ class InstanceRecord:
     workspace_root: str | None
     created_at: str
     within_state_root: bool = True
+    #: Whether this host delivers floor exports to its bound workspace (G4c);
+    #: only a host with a workspace may deliver.
+    floor_delivery: bool = False
 
 
 @dataclass(frozen=True)
@@ -159,9 +180,21 @@ class InstanceRegistry:
                     (relative.as_posix(), row["instance_id"]),
                 )
 
+    def _add_floor_delivery_column(self) -> None:
+        """Add G4c's ``floor_delivery`` column, default on for attached hosts.
+
+        One transaction (SQLite DDL is transactional), so an interruption
+        leaves the registry without the column and the step reruns whole.
+        """
+
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            _migrate_floor_delivery_column(conn)
+
     #: (step id, step): the append-only migration chain `_migrate` runs.
     _MIGRATIONS: tuple[tuple[str, Callable[[InstanceRegistry], None]], ...] = (
         ("2026-10-01-relative-locations", _relativize_locations),
+        (FLOOR_DELIVERY_MIGRATION_STEP, _add_floor_delivery_column),
     )
 
     def _connect(self) -> sqlite3.Connection:
@@ -191,11 +224,26 @@ class InstanceRegistry:
                 """
             )
 
+    def set_floor_delivery(self, instance_id: str, enabled: bool) -> InstanceRecord:
+        """Set delivery only for a registered governed host with a local workspace."""
+
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "UPDATE instances SET floor_delivery=? WHERE instance_id=? AND backend=? "
+                "AND workspace_root IS NOT NULL",
+                (int(enabled), instance_id, GOVERNED_DAEMON_BACKEND),
+            )
+        if cursor.rowcount != 1:
+            raise ConfigError("Floor delivery requires a bound local workspace")
+        record = self.get(instance_id)
+        assert record is not None
+        return record
+
     def get(self, instance_id: str) -> InstanceRecord | None:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT instance_id, backend, location, workspace_root, created_at
+                SELECT instance_id, backend, location, workspace_root, created_at, floor_delivery
                 FROM instances
                 WHERE instance_id = ?
                 """,
@@ -210,7 +258,7 @@ class InstanceRegistry:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT instance_id, backend, location, workspace_root, created_at
+                SELECT instance_id, backend, location, workspace_root, created_at, floor_delivery
                 FROM instances
                 ORDER BY instance_id
                 """
@@ -233,7 +281,7 @@ class InstanceRegistry:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT instance_id, backend, location, workspace_root, created_at
+                SELECT instance_id, backend, location, workspace_root, created_at, floor_delivery
                 FROM instances
                 WHERE backend = ?
                 ORDER BY instance_id
@@ -339,11 +387,12 @@ class InstanceRegistry:
     @staticmethod
     def _host_state_conn(conn: sqlite3.Connection, instance_id: str) -> PlaybillStateCoordinateV1:
         row = conn.execute(
-            "SELECT backend, location, workspace_root FROM instances WHERE instance_id = ?",
+            "SELECT backend, location, workspace_root, floor_delivery FROM instances "
+            "WHERE instance_id = ?",
             (instance_id,),
         ).fetchone()
         return PlaybillStateCoordinateV1.of(
-            f"host:{instance_id}", None if row is None else [row[0], row[1], row[2]]
+            f"host:{instance_id}", None if row is None else [row[0], row[1], row[2], row[3]]
         )
 
     def workspace_state(self, instance_id: str) -> PlaybillStateCoordinateV1:
@@ -391,8 +440,10 @@ class InstanceRegistry:
                     if row["workspace_root"] != resolved:
                         raise ConfigError("Playbill host is already attached to another workspace")
                 else:
+                    # Attaching turns floor delivery on (G4c).
                     conn.execute(
-                        "UPDATE instances SET workspace_root = ? WHERE instance_id = ?",
+                        "UPDATE instances SET workspace_root = ?, floor_delivery = 1 "
+                        "WHERE instance_id = ?",
                         (resolved, instance_id),
                     )
         except sqlite3.IntegrityError as exc:
@@ -427,7 +478,7 @@ class InstanceRegistry:
             cursor = conn.execute(
                 """
                 UPDATE instances
-                SET workspace_root = NULL
+                SET workspace_root = NULL, floor_delivery = 0
                 WHERE instance_id = ? AND workspace_root = ?
                 """,
                 (instance_id, expected),
@@ -465,9 +516,10 @@ class InstanceRegistry:
                     backend,
                     location,
                     workspace_root,
-                    created_at
+                    created_at,
+                    floor_delivery
                 )
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     instance_id,
@@ -475,6 +527,7 @@ class InstanceRegistry:
                     location,
                     workspace_root,
                     created_at,
+                    int(backend == GOVERNED_DAEMON_BACKEND and workspace_root is not None),
                 ),
             )
 
@@ -491,7 +544,7 @@ class InstanceRegistry:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT instance_id, backend, location, workspace_root, created_at
+                SELECT instance_id, backend, location, workspace_root, created_at, floor_delivery
                 FROM instances
                 WHERE backend = ? AND location = ?
                 """,
@@ -509,7 +562,7 @@ class InstanceRegistry:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT instance_id, backend, location, workspace_root, created_at
+                SELECT instance_id, backend, location, workspace_root, created_at, floor_delivery
                 FROM instances
                 WHERE backend = ? AND workspace_root = ?
                 """,
@@ -529,6 +582,7 @@ class InstanceRegistry:
             workspace_root=row["workspace_root"],
             created_at=row["created_at"],
             within_state_root=self.relative_location(location) is not None,
+            floor_delivery=bool(row["floor_delivery"]),
         )
 
 

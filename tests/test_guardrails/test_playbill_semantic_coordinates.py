@@ -48,11 +48,13 @@ from cruxible_client.contracts.laws import (
     COMPILER_UPGRADE_ACCEPTANCE_LAW,
     DOCUMENT_ACCEPTANCE_LAW,
     EXHAUST_PROMOTION_ACCEPTANCE_LAW,
+    GOVERNED_TRIGGERS_UPGRADE_LAW,
     LINE_ACCEPTANCE_LAW,
     LINE_V2_ACCEPTANCE_LAW,
     LINE_V3_ACCEPTANCE_LAW,
     LINE_V4_ACCEPTANCE_LAW,
     LINE_V5_ACCEPTANCE_LAW,
+    LINE_V6_ACCEPTANCE_LAW,
     PLAYBILL_ACCEPTANCE_LAWS,
     PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
     PROCEDURE_ACCEPTANCE_LAW,
@@ -81,6 +83,7 @@ from cruxible_client.contracts.laws import (
     SOURCE_CHECKED_PROCEDURE_LAW,
     SOURCE_CHECKED_UPGRADE_LAW,
     SUBJECT_ACCEPTANCE_LAW,
+    TRIGGER_ACCEPTANCE_LAW,
     TRIGGER_CAPTURE_UPGRADE_LAW,
     InstalledAcceptanceLaw,
 )
@@ -88,6 +91,7 @@ from cruxible_core.compiler.compiler import (
     ATTESTATION_COMPILER,
     AUTHORITY_VERBS_COMPILER,
     CLAIM_EVIDENCE_COMPILER,
+    GOVERNED_TRIGGERS_COMPILER,
     ONTOLOGY_COMPILER,
     P2_B0_COMPILER,
     P2_B1_COMPILER,
@@ -117,6 +121,20 @@ LAW_COORDINATES: tuple[
     tuple[InstalledAcceptanceLaw, str, str, int, str],
     ...,
 ] = (
+    (
+        LINE_V6_ACCEPTANCE_LAW,
+        "playbill.line.v6",
+        "playbill-line-v6",
+        1,
+        "sha256:4e145cfe2c8250d7851d9383137686cc6591d2b5219cd12b18e271db555b3b97",
+    ),
+    (
+        TRIGGER_ACCEPTANCE_LAW,
+        "playbill.trigger.v1",
+        "playbill-trigger-v1",
+        1,
+        "sha256:7fc3d357dbd23307f849c5750181a21035d7d9866e07db022fb3722e59fe2bce",
+    ),
     (
         LINE_V5_ACCEPTANCE_LAW,
         "playbill.line.v5",
@@ -368,6 +386,13 @@ HISTORICAL_LAW_COORDINATES: tuple[
     tuple[InstalledAcceptanceLaw, str, str, int, str],
     ...,
 ] = (
+    (
+        GOVERNED_TRIGGERS_UPGRADE_LAW,
+        "playbill.compiler-upgrade.v1",
+        "playbill-compiler-upgrade-v1",
+        10,
+        "sha256:f94df9eceb5575387c39fadf954bd7cadc9e1d7fb930cc960793972cca8abefe",
+    ),
     (
         CLAIM_TYPE_REVISION_4_ACCEPTANCE_LAW,
         "playbill.claim-type.v1",
@@ -766,7 +791,11 @@ def test_playbill_compiler_coordinate_is_exact() -> None:
         AUTHORITY_VERBS_COMPILER.rule_digest
         == "sha256:644ac81170dd005ab18b2d882dd9f6525cbb41264be27aa69bee4c9b1a4acebf"
     )
-    assert current_compiler_coordinate() == AUTHORITY_VERBS_COMPILER
+    assert (
+        GOVERNED_TRIGGERS_COMPILER.rule_digest
+        == "sha256:8bacc463a71bc42019d973362174e6eae9b3d3c5e97fd86429a889f18e36f9e7"
+    )
+    assert current_compiler_coordinate() == GOVERNED_TRIGGERS_COMPILER
     assert P2_B4_COMPILER in SUPPORTED_COMPILERS
     assert P2_B4_UNIT2_COMPILER in SUPPORTED_COMPILERS
     # The renderer resolves from the current coordinate itself, so cards derive
@@ -774,6 +803,27 @@ def test_playbill_compiler_coordinate_is_exact() -> None:
     assert candidate_card_renderer_digest_for_compiler(current_compiler_coordinate()) == (
         CARD_RENDERER_DIGEST
     )
+
+
+def test_revision_32_never_shares_the_reverted_identity_refs_coordinate() -> None:
+    """A reverted change minted revision 32 from the bare preimage; this one is distinct."""
+
+    reverted_identity_refs = "sha256:" + canonical_digest(
+        "playbill-compiler-v1",
+        {
+            "implementation": "python-reference",
+            "schema_version": 1,
+            "projection_content": "claims-procedures-runtime-v1",
+            "semantic_revision": 32,
+            "candidate_card_renderer_digest": CARD_RENDERER_DIGEST,
+        },
+    )
+    assert reverted_identity_refs == (
+        "sha256:2f7406d706d3e7c086bdb038ec2861329243e9f93f10791f02c11ce65d4031cc"
+    )
+    assert GOVERNED_TRIGGERS_COMPILER.rule_digest != reverted_identity_refs
+    assert reverted_identity_refs not in {item.rule_digest for item in SUPPORTED_COMPILERS}
+    assert len({item.rule_digest for item in SUPPORTED_COMPILERS}) == len(SUPPORTED_COMPILERS)
 
 
 def test_succeeding_the_semantic_revision_keeps_candidate_cards_deriving(
@@ -788,7 +838,7 @@ def test_succeeding_the_semantic_revision_keeps_candidate_cards_deriving(
     """
 
     source = Path(compiler_module.__file__).read_text(encoding="utf-8")
-    current_revision = 31
+    current_revision = 32
     anchor = "\n    candidate_card_renderer_digest=CARD_RENDERER_DIGEST,\n"
     bumped = source.replace(
         f"    semantic_revision={current_revision},{anchor}",
@@ -884,16 +934,16 @@ def test_installed_compiler_revision_labels_are_exact_and_complete() -> None:
         "checked-procedure-source-v2",
         "line-trigger-capture-input-v1",
         "authority-verbs-settle-mandates-v1",
+        "governed-triggers-v1",
     )
-    assert (
-        COMPILER_REVISION_LABELS[current_compiler_coordinate()]
-        == "authority-verbs-settle-mandates-v1"
-    )
+    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "governed-triggers-v1"
 
 
 def test_the_feature_freeze_admits_no_new_compiler_revision() -> None:
     """The September 23 rung-3 ruling (R5) authorizes settle mandates and verbs in revision 31.
 
+    The September 30 ruling (one-trigger-home-0930) authorizes revision 32 alone:
+    every trigger is a governed Trigger artifact and a Line no longer embeds one.
     Historical admission bytes and compiler rules remain unchanged.
     """
 
@@ -902,8 +952,5 @@ def test_the_feature_freeze_admits_no_new_compiler_revision() -> None:
         current_compiler_coordinate,
     )
 
-    assert len(COMPILER_REVISION_LABELS) == 30
-    assert (
-        COMPILER_REVISION_LABELS[current_compiler_coordinate()]
-        == "authority-verbs-settle-mandates-v1"
-    )
+    assert len(COMPILER_REVISION_LABELS) == 31
+    assert COMPILER_REVISION_LABELS[current_compiler_coordinate()] == "governed-triggers-v1"

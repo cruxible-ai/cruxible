@@ -59,8 +59,7 @@ from cruxible_client.contracts.procedures.artifacts import (
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v4
 from cruxible_client.contracts.procedures.line_specs import (
-    LineSpecV2,
-    ManualTriggerPolicyV1,
+    LineSpecV6,
     line_identity_digest,
     line_spec_path,
     render_line_spec,
@@ -727,11 +726,11 @@ LINE_NAME = "advisory-hourly"
 def _served_line(
     procedure: ProcedureArtifactV2,
     policy: SourceAcquisitionPolicyV1,
-) -> LineSpecV2:
+) -> LineSpecV6:
     """A Line over the same graph-v4 Source Procedure the direct lane runs.
 
-    Graph-v4 requires the v2 Line wire; this Procedure pins its Provider
-    exactly, so it fills no slot and its closure list is empty.
+    This Procedure pins its Provider exactly, so it fills no slot and its
+    closure list is empty.
     """
 
     procedure_pin = ArtifactPin(
@@ -741,15 +740,14 @@ def _served_line(
     )
     policy_pin = _policy_pin(policy)
     caps = procedure.definition.hard_caps
-    return LineSpecV2(
+    return LineSpecV6(
         identity=ArtifactIdentity(kind="Line", name=LINE_NAME),
         occurrence_epoch=1,
         procedure=procedure_pin,
         parameters={},
         slot_bindings=(),
-        trigger_policy=ManualTriggerPolicyV1(),
         acquisition_policy=policy_pin,
-        requested_terminal_rung=1,
+        max_authority="observe",
         budgets={
             "max_capture_bytes": caps.max_capture_bytes,
             "max_items": caps.max_items,
@@ -1771,7 +1769,6 @@ def test_a_line_over_a_source_procedure_must_name_an_acquisition_policy(
         payload=LineAuthoringPayloadV1(
             name="source-line",
             procedure_name=PROCEDURE_NAME,
-            trigger_policy=ManualTriggerPolicyV1(),
         ),
         canonical_timestamp="2026-08-21T12:02:00.000000Z",
     ).intent

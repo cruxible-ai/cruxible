@@ -193,6 +193,11 @@ def test_default_input_schema_catalog_stays_within_agent_budget(
     plus its description, estimated as JSON text length over four. Output
     schemas are not call grammar and are not counted; their size is a
     separately measured follow-up.
+
+    Any change to MCP parameter text -- a shared ``Annotated`` description
+    (``ReadAt``, ``InstanceId``, ``DryRun``...) or a contract field or model
+    docstring a default-profile tool exposes -- must run this test: one shared
+    description is repeated in every tool that takes it.
     """
     from tests.core_support._mcp_budget import (
         DEFAULT_PROFILE_MODEL_VISIBLE_TOKENS,

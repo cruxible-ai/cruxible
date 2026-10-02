@@ -18,6 +18,7 @@ import structlog
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.types import ASGIApp
 
 from cruxible_client.contracts.authoring.models import (
     AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST,
@@ -52,6 +53,7 @@ from cruxible_core.server.errors import (
     error_to_response,
 )
 from cruxible_core.server.registry import get_registry
+from cruxible_core.server.request_context import HTTPRequestContextMiddleware
 from cruxible_core.server.request_logging import configure_request_logging
 from cruxible_core.server.restart import PROCESS_BOOT_ID
 from cruxible_core.server.routes.hosted_instances import router as hosted_instances_router
@@ -93,6 +95,13 @@ def _format_request_validation_error(error: Mapping[str, Any]) -> str:
     return f"{location}: {message}"
 
 
+class _HTTPRequestContextApp(FastAPI):
+    """Mark requests outside framework error handlers as well as user middleware."""
+
+    def build_middleware_stack(self) -> ASGIApp:
+        return HTTPRequestContextMiddleware(super().build_middleware_stack())
+
+
 def create_app() -> FastAPI:
     """Create and configure the Cruxible server app."""
     get_registry()
@@ -132,7 +141,9 @@ def create_app() -> FastAPI:
             manager.consumer_runner.close()
             manager.flush_replay_checkpoints()
 
-    app = FastAPI(title="cruxible", responses=STANDARD_ERROR_RESPONSES, lifespan=lifespan)
+    app = _HTTPRequestContextApp(
+        title="cruxible", responses=STANDARD_ERROR_RESPONSES, lifespan=lifespan
+    )
     app.middleware("http")(token_auth_middleware)
 
     @app.exception_handler(CoreError)

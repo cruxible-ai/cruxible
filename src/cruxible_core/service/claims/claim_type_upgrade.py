@@ -45,7 +45,7 @@ from cruxible_core.claims.claim_type_migrations import (
     build_dependent_closure_candidate,
     dependent_closure_inventory,
 )
-from cruxible_core.compiler.compiler import AUTHORITY_VERBS_COMPILER
+from cruxible_core.compiler.compiler import AUTHORITY_VERBS_COMPILER, GOVERNED_TRIGGERS_COMPILER
 from cruxible_core.errors import DataValidationError
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.proposals.proposals import ProposalAdmissionRequest
@@ -123,8 +123,10 @@ def _upgrade(
 ) -> ClaimTypeUpgradeResultV1:
     assert mode.head is not None
     base = mode.head
-    if base.compiler != AUTHORITY_VERBS_COMPILER:
-        raise DataValidationError("ClaimType v7 needs compiler revision 31; upgrade it first")
+    if base.compiler not in (AUTHORITY_VERBS_COMPILER, GOVERNED_TRIGGERS_COMPILER):
+        raise DataValidationError(
+            "ClaimType v7 needs compiler revision 31 or later; upgrade it first"
+        )
     tree = instance.immutable_tree_at(base.git_oid)
     lineages = _Lineages(instance, AcceptedCoordinate.from_internal(base))
     wanted = set(request.claim_types)

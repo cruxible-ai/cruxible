@@ -25,7 +25,7 @@ from cruxible_client.authoring.attestations import (
 )
 from cruxible_client.authoring.bind import bind_working_selection_input
 from cruxible_client.authoring.blocks import repin_projection_block, sync_projection_blocks
-from cruxible_client.authoring.examples import authoring_example
+from cruxible_client.authoring.examples import authoring_example, authoring_example_note
 from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
 from cruxible_client.authoring.selectors import WorkspaceSources
 from cruxible_client.authoring.signing import LocalEd25519ApprovalSigner
@@ -35,6 +35,7 @@ from cruxible_client.authoring.sources import (
     mapped_root_aliases,
 )
 from cruxible_client.authoring.workspace import (
+    daemon_floor_delivery,
     floor_export_parts,
     observe_playbill_next_workspace_with_coverage,
     workspace_floor_freshness,
@@ -1266,7 +1267,9 @@ def handle_playbill_authoring_example(
         claim_id=claim_id,
         capture_digest=capture_digest,
     )
-    return contracts.PlaybillAuthoringExampleResult(name=name, payload=payload)
+    return contracts.PlaybillAuthoringExampleResult(
+        name=name, payload=payload, note=authoring_example_note(name)
+    )
 
 
 def handle_playbill_authoring_get(
@@ -2008,10 +2011,12 @@ def handle_playbill_line_run(
     evaluation_time: str | None = None,
     resolution_contract: contracts.ResolutionContractReferenceV1 | None = None,
     trigger_event: contracts.TriggerEventReferenceV1 | None = None,
+    trigger: str | None = None,
 ) -> contracts.PlaybillProcedureRunState:
     request = LineRunRequestV1.model_validate(
         {
             "line": line,
+            "trigger": trigger,
             "resolution_contract": resolution_contract,
             "trigger_event": trigger_event,
             "occurrence_id": occurrence_id,
@@ -2025,6 +2030,7 @@ def handle_playbill_line_run(
             instance_id,
             resolution_contract=resolution_contract,
             trigger_event=trigger_event,
+            trigger=trigger,
             line=line,
             occurrence_id=request.occurrence_id,
             evaluation_time=(
@@ -2633,9 +2639,11 @@ def handle_playbill_floor_export(
 
     def write(
         export_floor: Callable[[], contracts.PlaybillFloorExport],
+        delivery: Callable[[], contracts.PlaybillFloorDeliveryResultV1 | None] | None = None,
     ) -> contracts.PlaybillWorkspaceFloorWriteResult:
         return write_workspace_floor(
             export_floor,
+            delivery=delivery,
             instance_id=instance_id,
             workspace=workspace,
             include=include,
@@ -2650,6 +2658,9 @@ def handle_playbill_floor_export(
             lambda generation, renderer: client.playbill_floor_delta(
                 instance_id, base_generation=generation, base_renderer=renderer
             ),
+            delivery=(lambda: daemon_floor_delivery(client, instance_id, workspace))
+            if transport.get("server_socket")
+            else None,
             instance_id=instance_id,
             workspace=workspace,
             force=force,
@@ -2663,7 +2674,12 @@ def handle_playbill_floor_export(
             operation_name="cruxible_playbill_floor_export",
         )
     return _dispatch_remote_or_local(
-        lambda client: write(lambda: client.export_playbill_floor(instance_id, **parts)),
+        lambda client: write(
+            lambda: client.export_playbill_floor(instance_id, **parts),
+            (lambda: daemon_floor_delivery(client, instance_id, workspace, include=tuple(include)))
+            if transport.get("server_socket")
+            else None,
+        ),
         lambda: write(lambda: playbill_api.playbill_export_floor(instance_id, **parts)),
         operation_name="cruxible_playbill_floor_export",
     )

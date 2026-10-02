@@ -384,7 +384,7 @@ def _settlement_route(
     if request.contract is not None:
         return request.contract, request.trigger_event
     if prediction_id.startswith("RSC-"):
-        from cruxible_core.consumers.predictions import bound_window
+        from cruxible_core.consumers.next.predictions import bound_window
 
         held = bound_window(instance, prediction_id)
         if held is None:

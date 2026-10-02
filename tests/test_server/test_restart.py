@@ -52,3 +52,48 @@ def test_the_version_probe_and_restart_ack_carry_the_process_boot_id(tmp_path, m
         assert ack.json()["boot_id"] == restart_module.PROCESS_BOOT_ID
     finally:
         restart_module.reset_exec_self()
+
+
+@pytest.mark.parametrize("operation", ["restart", "stop"])
+def test_detached_server_timer_drops_the_launching_request_context(monkeypatch, operation):
+    from contextvars import copy_context
+
+    from cruxible_core.runtime.admission import FLOOR_ADMISSION, HTTP_REQUEST_CONTEXT
+    from cruxible_core.server import shutdown
+
+    original_timer = threading.Timer
+    fired = threading.Event()
+    observed = []
+
+    def inheriting_timer(interval, function, args=(), kwargs=None):
+        return original_timer(interval, copy_context().run, args=(function, *args), kwargs=kwargs)
+
+    def callback():
+        try:
+            observed.append(HTTP_REQUEST_CONTEXT.get())
+            with FLOOR_ADMISSION.hold("inst_detached_timer"):
+                observed.append("held")
+        finally:
+            fired.set()
+
+    monkeypatch.setattr(threading, "Timer", inheriting_timer)
+    module = restart_module if operation == "restart" else shutdown
+    monkeypatch.setattr(
+        module, "_exec_self" if operation == "restart" else "_signal_self", callback
+    )
+    monkeypatch.setattr(
+        module, "_RESTART_DELAY_SECONDS" if operation == "restart" else "_STOP_DELAY_SECONDS", 0
+    )
+    token = HTTP_REQUEST_CONTEXT.set(True)
+    try:
+        (
+            module.schedule_server_restart
+            if operation == "restart"
+            else module.schedule_server_stop
+        )()
+        assert fired.wait(5)
+        assert HTTP_REQUEST_CONTEXT.get()
+    finally:
+        HTTP_REQUEST_CONTEXT.reset(token)
+    assert observed == [False, "held"]
+    assert FLOOR_ADMISSION.active_keys() == 0

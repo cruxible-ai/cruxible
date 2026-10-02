@@ -55,6 +55,95 @@ def _file_identity(metadata: os.stat_result) -> tuple[int, int, int, int, int]:
     )
 
 
+# -- body observation -------------------------------------------------------------
+
+FileIdentity = tuple[int, int, int, int, int]
+
+
+@dataclass
+class BodyObservation:
+    """The file identity of every CAS object read or checked inside one ``observe_bodies``.
+
+    A derived answer kept beyond the fold that computed it (the stored ``next``
+    queue) is valid only while every object the fold consulted keeps the identity
+    it had, so the observation is taken here, at the one layer every body read,
+    existence check and identity reuse passes through, rather than by each
+    caller. ``None`` records an absent object. An object seen with two identities
+    moved during the fold (``consistent`` is False); an answer that rests on
+    something no identity stands for, such as an external reader, clears
+    ``complete``.
+    """
+
+    identities: dict[str, FileIdentity | None]
+    consistent: bool = True
+    complete: bool = True
+
+    def note(self, digest: str, identity: FileIdentity | None) -> None:
+        if self.identities.setdefault(digest, identity) != identity:
+            self.consistent = False
+
+    def fingerprints(self) -> tuple[tuple[str, FileIdentity | None], ...]:
+        return tuple(sorted(self.identities.items()))
+
+
+_BODY_OBSERVATION: ContextVar[BodyObservation | None] = ContextVar(
+    "cruxible_cas_body_observation", default=None
+)
+
+
+@contextmanager
+def observe_bodies() -> Iterator[BodyObservation]:
+    """Record every CAS object identity this context consults; outside one, nothing is kept."""
+
+    observation = BodyObservation(identities={})
+    token = _BODY_OBSERVATION.set(observation)
+    try:
+        yield observation
+    finally:
+        _BODY_OBSERVATION.reset(token)
+
+
+# Every hook starts with one context lookup and does nothing else outside an
+# observation: no identity is built and no extra stat is taken for a caller that
+# is not observing.
+
+
+def _observe(digest: str, status: os.stat_result | None) -> None:
+    """Record one object as stat showed it; ``None`` is a confirmed absence."""
+
+    observation = _BODY_OBSERVATION.get()
+    if observation is not None:
+        observation.note(digest, None if status is None else _file_identity(status))
+
+
+def _observe_read(digest: str, before: os.stat_result, after: os.stat_result) -> None:
+    """Record one read bracketed by two stats of its descriptor."""
+
+    observation = _BODY_OBSERVATION.get()
+    if observation is None:
+        return
+    if _file_identity(before) == _file_identity(after):
+        observation.note(digest, _file_identity(after))
+    else:
+        # Written while it was read: no one identity stands for these bytes.
+        observation.consistent = False
+
+
+def _observe_descriptor_read(digest: str, before: os.stat_result, descriptor: int) -> None:
+    """Record a read whose closing stat is taken only when someone is observing."""
+
+    if _BODY_OBSERVATION.get() is not None:
+        _observe_read(digest, before, os.fstat(descriptor))
+
+
+def note_unobservable_body() -> None:
+    """Mark the current observation incomplete: an answer rests on a read no identity covers."""
+
+    observation = _BODY_OBSERVATION.get()
+    if observation is not None:
+        observation.complete = False
+
+
 def _read_descriptor(
     name: str, *, dir_fd: int
 ) -> tuple[os.stat_result, bytes, os.stat_result] | None:
@@ -183,13 +272,16 @@ class ContentAddressedBodyStore:
         shard, name = self._names(digest)
         descriptor = self._shard(shard)
         if descriptor is None:
+            _observe(digest, None)
             return None
         try:
-            return os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+            status = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
         except FileNotFoundError:
-            return None
+            status = None
         finally:
             os.close(descriptor)
+        _observe(digest, status)
+        return status
 
     def peek(self, digest: str, length: int) -> bytes:
         """The first ``length`` bytes of one object, UNVERIFIED: for classifying only.
@@ -201,21 +293,31 @@ class ContentAddressedBodyStore:
         shard, name = self._names(digest)
         directory = self._shard(shard)
         if directory is None:
+            _observe(digest, None)
             return b""
         try:
             try:
                 descriptor = os.open(
                     name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory
                 )
+            except FileNotFoundError:
+                _observe(digest, None)
+                return b""
             except OSError:
+                note_unobservable_body()
                 return b""
         finally:
             os.close(directory)
         try:
-            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            before = os.fstat(descriptor)
+            if not stat.S_ISREG(before.st_mode):
+                _observe(digest, before)
                 return b""
-            return os.read(descriptor, length)
+            head = os.read(descriptor, length)
+            _observe_descriptor_read(digest, before, descriptor)
+            return head
         except OSError:
+            note_unobservable_body()
             return b""
         finally:
             os.close(descriptor)
@@ -356,6 +458,7 @@ class ContentAddressedBodyStore:
         shard, name = self._names(digest)
         directory = self._shard(shard)
         if directory is None:
+            _observe(digest, None)
             raise PlaybillCasError("CAS object is missing")
         try:
             key = self._memo_key(digest)
@@ -366,13 +469,18 @@ class ContentAddressedBodyStore:
                 try:
                     status = os.stat(name, dir_fd=directory, follow_symlinks=False)
                 except FileNotFoundError as exc:
+                    _observe(digest, None)
                     raise PlaybillCasError("CAS object is missing") from exc
+                _observe(digest, status)
                 if not stat.S_ISREG(status.st_mode):
                     raise PlaybillCasError("CAS object must be a regular file")
                 raise PlaybillCasError("CAS object cannot be read")
             before, content, after = read
         finally:
             os.close(directory)
+        # Observed before the address is checked: an answer that a corrupt
+        # object refused rests on that object just as much as one it served.
+        _observe_read(digest, before, after)
         if known is not None and _file_identity(before) == known == _file_identity(after):
             return content
         if self.digest_bytes(content).tagged != digest:
@@ -406,6 +514,7 @@ class ContentAddressedBodyStore:
         shard, name = self._names(digest)
         directory = self._shard(shard)
         if directory is None:
+            _observe(digest, None)
             return "missing"
         try:
             try:
@@ -415,18 +524,24 @@ class ContentAddressedBodyStore:
                     name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory
                 )
             except FileNotFoundError:
+                _observe(digest, None)
                 return "missing"
             except OSError:
+                note_unobservable_body()
                 return "corrupt"
         finally:
             os.close(directory)
         try:
-            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            before = os.fstat(descriptor)
+            if not stat.S_ISREG(before.st_mode):
+                _observe(digest, before)
                 return "corrupt"
             hasher = hashlib.sha256()
             while chunk := os.read(descriptor, 1 << 20):
                 hasher.update(chunk)
+            _observe_descriptor_read(digest, before, descriptor)
         except OSError:
+            note_unobservable_body()
             return "corrupt"
         finally:
             os.close(descriptor)
@@ -575,6 +690,7 @@ class DryRunBodyStore:
 
 __all__ = [
     "BodyAccessContext",
+    "BodyObservation",
     "CasScan",
     "BodyProjectionProtocol",
     "CasObjectMetadata",
@@ -582,4 +698,6 @@ __all__ = [
     "DryRunBodyStore",
     "dry_run_bodies",
     "dry_run_held_bodies",
+    "note_unobservable_body",
+    "observe_bodies",
 ]

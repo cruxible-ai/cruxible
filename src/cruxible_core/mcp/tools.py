@@ -174,7 +174,7 @@ McpChange = Annotated[McpSetChange | McpAddChange | RetireChange, Field(discrimi
 
 InstanceId = Annotated[
     str | None,
-    Field(description=f"Instance to act on; defaults to the server's {MCP_INSTANCE_ENV}."),
+    Field(description=f"Instance; default ${MCP_INSTANCE_ENV}."),
 ]
 
 
@@ -182,8 +182,8 @@ ReadAt = Annotated[
     str | int | None,
     Field(
         description=(
-            "Read at an accepted generation: its git oid (a unique prefix of 12+ hex "
-            "characters is enough) or its generation number; default the current head."
+            "Accepted generation to read: git oid (12+ hex prefix) or generation number "
+            "(all digits, at most 11, is always a number); default: head."
         )
     ),
 ]
@@ -1384,15 +1384,20 @@ def register_tools(
         instance_id: InstanceId = None,
         *,
         line: str,
+        trigger: str | None = None,
         evaluation_time: str | None = None,
         occurrence_id: str | None = None,
         resolution_contract: contracts.ResolutionContractReferenceV1 | None = None,
         trigger_event: contracts.TriggerEventReferenceV1 | None = None,
     ) -> contracts.PlaybillProcedureRunState:
-        """Trigger one due occurrence of an accepted Line."""
+        """Trigger one due occurrence of an accepted Line.
+
+        Name the Trigger it fires on; omit it for a Line no Trigger aims at.
+        """
         return handlers.handle_playbill_line_run(
             require_instance_id(instance_id),
             line,
+            trigger=trigger,
             occurrence_id=occurrence_id,
             evaluation_time=evaluation_time,
             resolution_contract=resolution_contract,

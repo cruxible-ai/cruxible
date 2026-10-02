@@ -29,14 +29,14 @@ from cruxible_client.contracts.resolution_contracts import (
     resolution_contract_digest,
     resolution_contract_path,
 )
-from cruxible_core.consumers import predictions
-from cruxible_core.consumers.predictions import PREDICTION_SETTLEMENT as WORKER
-from cruxible_core.consumers.predictions import (
-    UNBINDABLE_RETRY,
+from cruxible_core.consumers.next import NEXT_QUEUE, predictions
+from cruxible_core.consumers.next.predictions import _PART as WORKER
+from cruxible_core.consumers.next.predictions import (
     settleable_windows,
     unbindable_anchors,
 )
 from tests.core_support._knowledge_loop_support import subject_address
+from tests.support.internal_triggers import fire_internal_triggers
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_procedures.p2b5 import test_served_predictions as served
 
@@ -53,12 +53,12 @@ def drain(instance, *, now: datetime) -> None:  # type: ignore[no-untyped-def]
 
     manager = SimpleNamespace(get=lambda _id: instance)
     for _pass in range(16):
-        WORKER.match(instance, now=now, daemon_id="daemon")
-        work = tuple(WORKER.due(instance, now=now))
+        NEXT_QUEUE.match(instance, now=now, daemon_id="daemon")
+        work = tuple(NEXT_QUEUE.due(instance, now=now))
         if not work:
             return
         for item in work:
-            WORKER.run(manager, "instance", item, now=now)
+            NEXT_QUEUE.run(manager, "instance", item, now=now)
     raise AssertionError("the worker never ran out of due work")
 
 
@@ -215,10 +215,14 @@ def test_a_fixed_window_is_owed_once_closed_until_settled_and_again_once_overtur
     instance, owner, capture, contract = fixed_world(tmp_path)
     drain(instance, now=FIXED_CLOSES - timedelta(minutes=30))
     (status,) = _windows(instance).values()
-    assert status == "open" and settleable_windows(instance) == ()
+    assert (
+        status == "open"
+        and settleable_windows(instance, evaluation_time=FIXED_CLOSES - timedelta(microseconds=1))
+        == ()
+    )
 
-    drain(instance, now=FIXED_CLOSES)
-    (owed,) = settleable_windows(instance)
+    assert tuple(WORKER.due(instance, now=FIXED_CLOSES)) == ()
+    (owed,) = settleable_windows(instance, evaluation_time=FIXED_CLOSES)
     assert owed.contract == contract.model_copy(update={"coordinate": owed.contract.coordinate})
     assert owed.hypothesis.startswith("Claim:")
     assert owed.window.ends_at == FIXED_CLOSES and owed.window.event is None
@@ -227,12 +231,12 @@ def test_a_fixed_window_is_owed_once_closed_until_settled_and_again_once_overtur
     result = settle(instance, contract, observation)
     assert result.activation["contract_id"] == owed.bound_contract_id
     drain(instance, now=FIXED_CLOSES + timedelta(minutes=1))
-    assert settleable_windows(instance) == ()
+    assert settleable_windows(instance, evaluation_time=FIXED_CLOSES + timedelta(days=1)) == ()
     assert set(_windows(instance).values()) == {"resolved"}
 
     overturn(instance, result)
     drain(instance, now=FIXED_CLOSES + timedelta(minutes=2))
-    (again,) = settleable_windows(instance)
+    (again,) = settleable_windows(instance, evaluation_time=FIXED_CLOSES + timedelta(days=1))
     assert again.bound_contract_id == owed.bound_contract_id
 
 
@@ -250,11 +254,13 @@ def test_each_matching_landing_binds_its_own_window_and_contract_instance(
     assert list(_windows(instance).values()) == ["open", "open"]
 
     drain(instance, now=served.PREDICTED_AT + timedelta(minutes=61, seconds=1))
-    (early,) = settleable_windows(instance)
+    (early,) = settleable_windows(
+        instance, evaluation_time=served.PREDICTED_AT + timedelta(minutes=61, seconds=1)
+    )
     assert early.window.event == first
     assert early.window.ends_at == served.PREDICTED_AT + timedelta(minutes=61)
     drain(instance, now=served.PREDICTED_AT + timedelta(minutes=91))
-    owed = settleable_windows(instance)
+    owed = settleable_windows(instance, evaluation_time=FIXED_CLOSES + timedelta(days=1))
     assert [item.window.event for item in owed] == [first, second]
     assert len({item.bound_contract_id for item in owed}) == 2
 
@@ -262,7 +268,7 @@ def test_each_matching_landing_binds_its_own_window_and_contract_instance(
     result = settle(instance, reference, observation, event=second)
     assert result.activation["contract_id"] == owed[1].bound_contract_id
     drain(instance, now=served.PREDICTED_AT + timedelta(minutes=92))
-    (remaining,) = settleable_windows(instance)
+    (remaining,) = settleable_windows(instance, evaluation_time=FIXED_CLOSES + timedelta(days=1))
     assert remaining.window.event == first
 
 
@@ -276,7 +282,10 @@ def test_a_new_worker_catches_up_on_contracts_and_landings_it_never_saw(
 
     drain(instance, now=served.PREDICTED_AT + timedelta(hours=2))
 
-    assert [item.window.event for item in settleable_windows(instance)] == [first, second]
+    assert [
+        item.window.event
+        for item in settleable_windows(instance, evaluation_time=FIXED_CLOSES + timedelta(days=1))
+    ] == [first, second]
 
 
 def unbindable_world(tmp_path: Path):  # type: ignore[no-untyped-def]
@@ -340,7 +349,10 @@ def test_a_scan_page_read_before_an_index_rebuild_cannot_undo_its_reset(
         ((scanned_in,),) = connection.execute("SELECT capture_generation FROM contracts").fetchall()
     assert scanned_in == current
     drain(instance, now=now + timedelta(hours=1))
-    assert [item.window.event for item in settleable_windows(instance)] == [first, second]
+    assert [
+        item.window.event
+        for item in settleable_windows(instance, evaluation_time=FIXED_CLOSES + timedelta(days=1))
+    ] == [first, second]
 
 
 def test_an_anchor_whose_material_is_gone_is_a_finding_until_restored(tmp_path: Path) -> None:
@@ -352,7 +364,10 @@ def test_an_anchor_whose_material_is_gone_is_a_finding_until_restored(tmp_path: 
     assert _windows(instance) == {}
 
     restore()
-    drain(instance, now=now + UNBINDABLE_RETRY)
+    drain(instance, now=now + timedelta(days=100))
+    assert unbindable_anchors(instance) == (anchor,)
+    fire_internal_triggers(instance, now=now + timedelta(hours=1))
+    drain(instance, now=now + timedelta(hours=1))
     assert unbindable_anchors(instance) == ()
     assert len(_windows(instance)) == 1
 
@@ -377,12 +392,15 @@ def retire(instance, owner, contract, *, at: str) -> None:  # type: ignore[no-un
 def test_retiring_a_contract_withdraws_what_it_owed(tmp_path: Path) -> None:
     instance, owner, _capture, contract = fixed_world(tmp_path)
     drain(instance, now=FIXED_CLOSES)
-    assert len(settleable_windows(instance)) == 1
+    assert len(settleable_windows(instance, evaluation_time=FIXED_CLOSES + timedelta(days=1))) == 1
     retire(instance, owner, contract, at="2026-09-02T13:30:00.000000Z")
 
     drain(instance, now=FIXED_CLOSES + timedelta(hours=1))
 
-    assert settleable_windows(instance) == () and _windows(instance) == {}
+    assert (
+        settleable_windows(instance, evaluation_time=FIXED_CLOSES + timedelta(days=1)) == ()
+        and _windows(instance) == {}
+    )
 
 
 def test_settling_by_window_id_refuses_a_window_retired_before_the_worker_saw_it(
@@ -393,13 +411,15 @@ def test_settling_by_window_id_refuses_a_window_retired_before_the_worker_saw_it
 
     instance, owner, capture, contract = fixed_world(tmp_path)
     drain(instance, now=FIXED_CLOSES)
-    (window,) = settleable_windows(instance)
+    (window,) = settleable_windows(instance, evaluation_time=FIXED_CLOSES + timedelta(days=1))
     assert window.contract.artifact_digest == contract.artifact_digest
     observation = observe(instance, owner, capture, at="2026-09-02T12:02:00.000000Z")
 
     # The worker has not seen the retirement yet and still holds the window.
     retire(instance, owner, contract, at="2026-09-02T13:30:00.000000Z")
-    assert settleable_windows(instance) == (window,)
+    assert settleable_windows(instance, evaluation_time=FIXED_CLOSES + timedelta(days=1)) == (
+        window,
+    )
 
     with pytest.raises(PredictionRefused, match="no longer live") as refused:
         served.service_settle_playbill_prediction(
@@ -431,14 +451,18 @@ def test_a_retirement_landing_while_its_old_version_loads_is_not_lost(
     monkeypatch.setattr(WORKER, "_load", load_while_retired)
     drain(instance, now=FIXED_CLOSES)
 
-    assert raced and settleable_windows(instance) == () and _windows(instance) == {}
+    assert (
+        raced
+        and settleable_windows(instance, evaluation_time=FIXED_CLOSES + timedelta(days=1)) == ()
+        and _windows(instance) == {}
+    )
 
 
 def test_the_operator_can_turn_the_worker_off(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CRUXIBLE_DISABLED_CONSUMERS", "prediction")
-    assert not WORKER.active(SimpleNamespace())
-    monkeypatch.setenv("CRUXIBLE_DISABLED_CONSUMERS", "evidence")
-    assert WORKER.active(SimpleNamespace())
+    monkeypatch.setenv("CRUXIBLE_DISABLED_CONSUMERS", "next")
+    assert not NEXT_QUEUE.active(SimpleNamespace())
+    monkeypatch.setenv("CRUXIBLE_DISABLED_CONSUMERS", "")
+    assert NEXT_QUEUE.active(SimpleNamespace())
 
 
 def test_a_failing_worker_is_stalled_with_a_repair_and_recovers_on_success(
@@ -454,19 +478,27 @@ def test_a_failing_worker_is_stalled_with_a_repair_and_recovers_on_success(
         raise OSError("journal unreadable")
 
     monkeypatch.setattr(WORKER, "_windows", broken)
+    with sqlite3.connect(predictions._STATE.path(instance)) as connection:
+        connection.execute("UPDATE windows SET dirty='journal-event'")
     with pytest.raises(OSError):
         drain(instance, now=FIXED_CLOSES)
     (health,) = [
-        item for item in consumer_health(instance, now=FIXED_CLOSES) if item.kind == "prediction"
+        item for item in consumer_health(instance, now=FIXED_CLOSES) if item.kind == "next"
     ]
-    assert health.state == "stalled" and "journal unreadable" in health.detail["last_error"]
+    assert (
+        health.state == "stalled"
+        and "journal unreadable" in health.detail["prediction"]["last_error"]
+    )
     assert health.repair is not None and health.repair.operation == "hand_edit"
-    assert health.detail["contracts"] == 1 and health.detail["open_windows"] == 1
+    assert (
+        health.detail["prediction"]["contracts"] == 1
+        and health.detail["prediction"]["open_windows"] == 1
+    )
 
     monkeypatch.setattr(WORKER, "_windows", original)
     drain(instance, now=FIXED_CLOSES)
     (health,) = WORKER.health(instance, now=FIXED_CLOSES)
-    assert health.state == "running" and health.detail["settleable_windows"] == 1
+    assert health.state == "running" and health.detail["open_windows"] == 1
 
 
 def _windows_table(count: int) -> sqlite3.Connection:
@@ -500,10 +532,8 @@ def test_a_pass_costs_the_windows_it_touches_not_every_window_ever_bound() -> No
         connection.execute("SELECT 1 FROM windows WHERE dirty IS NOT NULL LIMIT 1").fetchall()
         connection.execute(
             "SELECT contract_id FROM windows INDEXED BY windows_by_status "
-            "WHERE status='settleable' ORDER BY ends_at_us,contract_id"
-        ).fetchall()
-        connection.execute(
-            "SELECT count(*) FROM windows WHERE status=?", ("settleable",)
+            "WHERE status='open' AND ends_at_us<=? ORDER BY ends_at_us,contract_id",
+            (predictions._microseconds(now),),
         ).fetchall()
         return counter[0]
 
@@ -582,13 +612,13 @@ def test_health_costs_the_same_whatever_the_window_population(
                 "INSERT INTO windows(contract_id,identity,window,ends_at_us,status) "
                 "VALUES (?,'ResolutionContract:x','{}',?,?)",
                 (
-                    (f"RSC-{index:032d}", index, ("open", "settleable", "resolved")[index % 3])
+                    (f"RSC-{index:032d}", index, ("open", "resolved")[index % 2])
                     for index in range(count)
                 ),
             )
         (health,) = WORKER.health(instance, now=now)
-        assert health.detail["open_windows"] == len(range(0, count, 3))
-        assert health.detail["settleable_windows"] == len(range(1, count, 3))
+        assert health.detail["open_windows"] == len(range(0, count, 2))
+        assert health.detail["resolved_windows"] == len(range(1, count, 2))
         return _steps(monkeypatch, lambda: WORKER.health(instance, now=now))
 
     small, large = steps(1_000), steps(10_000)
@@ -609,9 +639,156 @@ def test_state_an_earlier_version_wrote_is_rebuilt_with_exact_counts(tmp_path: P
 
     drain(instance, now=FIXED_CLOSES)
 
-    (owed,) = settleable_windows(instance)
+    (owed,) = settleable_windows(instance, evaluation_time=FIXED_CLOSES + timedelta(days=1))
     (health,) = WORKER.health(instance, now=FIXED_CLOSES)
-    assert (health.detail["contracts"], health.detail["settleable_windows"]) == (1, 1)
-    assert (health.detail["open_windows"], health.detail["pending_contracts"]) == (0, 0)
+    assert (health.detail["contracts"], health.detail["open_windows"]) == (1, 1)
+    assert (health.detail["resolved_windows"], health.detail["pending_contracts"]) == (0, 0)
     with sqlite3.connect(predictions._STATE.path(instance)) as connection:
         assert connection.execute("SELECT count(*) FROM windows").fetchone() == (1,)
+
+
+def test_new_capture_landings_retry_unbindable_anchors_without_a_clock(tmp_path: Path) -> None:
+    instance, event, restore = unbindable_world(tmp_path)
+    drain(instance, now=served.PREDICTED_AT)
+    assert len(unbindable_anchors(instance)) == 1
+    restore()
+    land(instance, at=served.PREDICTED_AT + timedelta(minutes=2), run="new")
+    # The matching pass sees log positions, even with an earlier worker timestamp.
+    drain(instance, now=served.PREDICTED_AT - timedelta(days=1))
+    assert unbindable_anchors(instance) == ()
+    assert event in [
+        item.window.event
+        for item in settleable_windows(instance, evaluation_time=FIXED_CLOSES + timedelta(days=1))
+    ]
+
+
+def test_retry_health_reports_unprocessed_events_and_backlog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instance, _event, _restore = unbindable_world(tmp_path)
+    drain(instance, now=served.PREDICTED_AT)
+    (health,) = WORKER.health(instance, now=FIXED_CLOSES + timedelta(days=100))
+    assert health.state == "running"
+    fire_internal_triggers(instance, now=FIXED_CLOSES)
+    (health,) = WORKER.health(instance, now=FIXED_CLOSES)
+    assert health.state == "running"
+    WORKER.match(instance, now=FIXED_CLOSES, daemon_id="restart")
+    (health,) = WORKER.health(instance, now=FIXED_CLOSES)
+    assert health.state == "running" and health.detail["pending_anchor_retries"] == 1
+    fire_internal_triggers(instance, now=FIXED_CLOSES + timedelta(hours=1))
+    (health,) = WORKER.health(instance, now=FIXED_CLOSES)
+    assert health.state == "lagging"
+    WORKER.match(instance, now=FIXED_CLOSES, daemon_id="restart")
+    (health,) = WORKER.health(instance, now=FIXED_CLOSES)
+    assert health.state == "lagging" and health.detail["pending_anchor_retries"] == 1
+    drain(instance, now=served.PREDICTED_AT)
+    (health,) = WORKER.health(instance, now=served.PREDICTED_AT)
+    assert health.state == "running" and health.detail["pending_anchor_retries"] == 0
+    assert tuple(WORKER.due(instance, now=FIXED_CLOSES + timedelta(days=100))) == ()
+
+
+def test_a_retryable_anchor_is_attempted_once_per_trigger_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instance, _event, _restore = unbindable_world(tmp_path)
+    drain(instance, now=served.PREDICTED_AT)
+    (anchor,) = unbindable_anchors(instance)
+    attempts = []
+
+    def unavailable(*args, **kwargs):  # type: ignore[no-untyped-def]
+        attempts.append(args[2])
+        return None
+
+    monkeypatch.setattr(predictions, "_bind", unavailable)
+    for hour in (1, 2):
+        fired_at = served.PREDICTED_AT + timedelta(hours=hour)
+        fire_internal_triggers(instance, now=fired_at)
+        drain(instance, now=fired_at)
+        assert len(attempts) == hour
+        assert unbindable_anchors(instance) == (anchor,)
+        for tick in range(3):
+            drain(instance, now=fired_at + timedelta(seconds=tick))
+        assert len(attempts) == hour
+        assert tuple(WORKER.due(instance, now=fired_at + timedelta(days=100))) == ()
+
+
+def test_a_new_retry_event_during_an_attempt_remains_queued(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instance, _event, _restore = unbindable_world(tmp_path)
+    drain(instance, now=served.PREDICTED_AT)
+    fired_at = served.PREDICTED_AT + timedelta(hours=1)
+    fire_internal_triggers(instance, now=fired_at)
+    WORKER.match(instance, now=fired_at, daemon_id="daemon")
+    attempts = []
+
+    def unavailable(*args, **kwargs):  # type: ignore[no-untyped-def]
+        attempts.append(args[2])
+        if len(attempts) == 1:
+            next_fire = fired_at + timedelta(hours=1)
+            fire_internal_triggers(instance, now=next_fire)
+            WORKER.match(instance, now=next_fire, daemon_id="daemon")
+        return None
+
+    monkeypatch.setattr(predictions, "_bind", unavailable)
+    manager = SimpleNamespace(get=lambda _: instance)
+    (work,) = WORKER.due(instance, now=fired_at)
+    WORKER.run(manager, "instance", work, now=fired_at)
+    assert len(attempts) == 1
+    assert tuple(WORKER.due(instance, now=fired_at))
+    drain(instance, now=fired_at)
+    assert len(attempts) == 2 and not tuple(WORKER.due(instance, now=fired_at))
+
+
+def test_retry_events_with_no_anchors_complete_without_worker_backlog(tmp_path: Path) -> None:
+    instance, _owner, _capture, _contract = fixed_world(tmp_path)
+    drain(instance, now=served.PREDICTED_AT)
+    for hour in (1, 2):
+        at = served.PREDICTED_AT + timedelta(hours=hour)
+        fire_internal_triggers(instance, now=at)
+        WORKER.match(instance, now=at, daemon_id="daemon")
+        (health,) = WORKER.health(instance, now=at)
+        assert health.state == "running"
+        assert (
+            health.detail["completed_anchor_retry_position"]
+            == health.detail["anchor_retry_position"]
+        )
+
+
+def test_an_index_rebuild_does_not_queue_a_global_anchor_retry(tmp_path: Path) -> None:
+    from cruxible_core.service.procedures.procedure_runs import _journal
+
+    instance, _event, _restore = unbindable_world(tmp_path)
+    drain(instance, now=served.PREDICTED_AT)
+    journal, _ = _journal(instance)
+    journal.index.path.unlink()
+    WORKER.match(instance, now=served.PREDICTED_AT, daemon_id="daemon")
+    with predictions._STATE.open(instance) as connection:
+        assert connection is not None
+        assert connection.execute("SELECT count(*) FROM retries").fetchone() == (0,)
+    # Existing contracts rescan the rebuilt capture index through their own cursors.
+    assert [work.key for work in WORKER.due(instance, now=served.PREDICTED_AT)] == ["captures"]
+
+
+def test_an_accepted_generation_does_not_queue_an_anchor_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from contextlib import nullcontext
+
+    instance, _event, _restore = unbindable_world(tmp_path)
+    drain(instance, now=served.PREDICTED_AT)
+    with instance.accepted_history_reader() as history:
+        next_generation = history.sequence + 1
+    monkeypatch.setattr(
+        instance,
+        "accepted_history_reader",
+        lambda: nullcontext(SimpleNamespace(sequence=next_generation, versions_at=lambda _: ())),
+    )
+    WORKER.match(instance, now=served.PREDICTED_AT, daemon_id="daemon")
+    with predictions._STATE.open(instance) as connection:
+        assert connection is not None
+        assert connection.execute("SELECT generation FROM progress").fetchone() == (
+            next_generation,
+        )
+        assert connection.execute("SELECT count(*) FROM retries").fetchone() == (0,)
+    assert not tuple(WORKER.due(instance, now=served.PREDICTED_AT))

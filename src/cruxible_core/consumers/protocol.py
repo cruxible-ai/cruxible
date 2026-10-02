@@ -1,6 +1,6 @@
 """What a consumer kind is, to the daemon loop that runs every kind.
 
-A kind follows the instance's logs or a clock (its subscription), keeps its own
+A kind follows the instance's logs (its subscription), keeps its own
 place in them (its cursor), and acts on what it matched. Matching never acts:
 it only records due work, which the runner hands to the kind's bounded workers,
 one flight per work key at a time.
@@ -10,7 +10,9 @@ policy says what a restart does: a forward-only kind starts again from now and
 leaves what it missed to explicit action; a resuming kind continues from where
 it stopped. The effect class says what acting may change: a governed kind
 admits work under authority it rechecks each time; a findings kind writes only
-state it could rebuild from the logs.
+state it could rebuild from the logs. A workspace-output kind may write only
+an allowlisted subtree of a registered local workspace, and could rebuild
+everything it writes from the logs.
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ from datetime import datetime
 from typing import Any, Literal, Protocol
 
 CursorPolicy = Literal["forward_only", "resume"]
-EffectClass = Literal["governed", "findings"]
+EffectClass = Literal["governed", "findings", "workspace_output"]
 ConsumerState = Literal["running", "lagging", "stopped", "stalled", "disabled"]
 
 

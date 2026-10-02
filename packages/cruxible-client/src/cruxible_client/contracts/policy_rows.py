@@ -27,7 +27,7 @@ PlaybillPolicyKind: TypeAlias = Literal[
     "query_evaluation_policy",
     "document_activation_policy",
     "procedure_activation_policy",
-    "line_trigger_policy",
+    "trigger_schedule",
 ]
 
 

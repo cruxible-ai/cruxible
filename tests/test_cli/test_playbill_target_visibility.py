@@ -32,6 +32,7 @@ def _isolate_target_environment(monkeypatch: pytest.MonkeyPatch) -> None:
 EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("playbill", "host", "create"): "create",
     ("playbill", "workspace", "attach"): "manual",
+    ("playbill", "workspace", "floor-delivery"): "manual",
     ("playbill", "workspace", "detach"): "manual",
     ("playbill", "init"): "active",
     ("playbill", "instance", "decommission"): "active",
@@ -553,6 +554,10 @@ def test_workspace_attach_writes_config_only_after_exact_daemon_registration(
                 workspace_path=str(workspace.resolve()),
             )
 
+        def set_playbill_floor_delivery(self, instance_id: str, *, enabled: bool):
+            assert enabled
+            return self.playbill_host_workspace_registration(instance_id)
+
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
     result = CliRunner().invoke(
         cli,
@@ -610,6 +615,10 @@ def test_workspace_attach_marks_a_remembered_target_as_remembered(
                 status="registered",
                 workspace_path=str(workspace.resolve()),
             )
+
+        def set_playbill_floor_delivery(self, instance_id: str, *, enabled: bool):
+            assert enabled
+            return self.playbill_host_workspace_registration(instance_id)
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
     result = CliRunner().invoke(cli, ["playbill", "workspace", "attach", "--json"])

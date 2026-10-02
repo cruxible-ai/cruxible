@@ -4,7 +4,8 @@ Each tick matches every active kind on every governed instance, then hands the
 due work to that kind's bounded pool. Matching runs on the loop thread and never
 acts. A work key is in flight at most once at a time, so one slow unit never
 delays matching or another key's work, and each kind has its own pool, so one
-kind's backlog never starves another's.
+kind's backlog never starves another's. Detached loop and pool work start in
+fresh contexts so they cannot retain a launching request's marker or identity.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import Context
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -21,16 +23,17 @@ import structlog
 
 from cruxible_core.consumers.protocol import ConsumerHealth, ConsumerKind, ConsumerWork
 from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
+from cruxible_core.triggers.journal import evaluate_triggers
 
 _log = structlog.get_logger(__name__)
 
 
 def consumer_kinds() -> tuple[ConsumerKind, ...]:
-    from cruxible_core.consumers.evidence import EVIDENCE_AVAILABILITY
+    from cruxible_core.consumers.floor import FLOOR
     from cruxible_core.consumers.lines import LINE_ARMS
-    from cruxible_core.consumers.predictions import PREDICTION_SETTLEMENT
+    from cruxible_core.consumers.next import NEXT_QUEUE
 
-    return (LINE_ARMS, EVIDENCE_AVAILABILITY, PREDICTION_SETTLEMENT)
+    return (LINE_ARMS, NEXT_QUEUE, FLOOR)
 
 
 def consumer_health(instance: Any, *, now: datetime) -> tuple[ConsumerHealth, ...]:
@@ -96,10 +99,20 @@ class ConsumerRunner:
         self._executors: dict[str, ThreadPoolExecutor] = {}
         self._in_flight: set[tuple[str, str, str]] = set()
         self._in_flight_lock = threading.Lock()
+        #: Per instance, when this runner began firing its internal Triggers.
+        self._listening_since: dict[str, datetime] = {}
+        self._listening_generation: dict[str, int] = {}
 
     def start(self) -> None:
         if self.thread is None or not self.thread.is_alive():
+            from cruxible_core.server.config import get_disabled_consumers
+
+            get_disabled_consumers()
             self.daemon_id = uuid4().hex
+            # Every start listens afresh: timer instants that passed while this
+            # runner was stopped are skipped, never caught up.
+            self._listening_since = {}
+            self._listening_generation = {}
             self.stop_event.clear()
             self._executors = {
                 kind.name: ThreadPoolExecutor(
@@ -108,7 +121,10 @@ class ConsumerRunner:
                 for kind in self.kinds
             }
             self.thread = threading.Thread(
-                target=self._run, name="cruxible-consumer-runner", daemon=True
+                target=Context().run,
+                args=(self._run,),
+                name="cruxible-consumer-runner",
+                daemon=True,
             )
             self.thread.start()
 
@@ -130,6 +146,20 @@ class ConsumerRunner:
     def match_once(self, instance_id: str, instance: Any, *, now: datetime) -> None:
         """Match every active kind on one instance and schedule its due work."""
 
+        # The live internal Triggers at the instance's accepted head fire here,
+        # from when this runner began listening: what passed before is skipped.
+        listening_since = self._listening_since.setdefault(instance_id, now)
+        if instance_id not in self._listening_generation and hasattr(
+            instance, "accepted_history_reader"
+        ):
+            with instance.accepted_history_reader() as history:
+                self._listening_generation[instance_id] = history.sequence
+        evaluate_triggers(
+            instance,
+            now=now,
+            listening_since=listening_since,
+            listening_generation=self._listening_generation.get(instance_id),
+        )
         for kind in self.kinds:
             if not kind.active(instance):
                 continue
@@ -148,7 +178,7 @@ class ConsumerRunner:
                 return
             self._in_flight.add(key)
         try:
-            executor.submit(self._run_work, key, instance_id, kind, work)
+            executor.submit(Context().run, self._run_work, key, instance_id, kind, work)
         except RuntimeError:
             # The pool is shutting down; the work stays due for the next start.
             with self._in_flight_lock:
@@ -160,7 +190,7 @@ class ConsumerRunner:
         try:
             kind.run(self.manager, instance_id, work, now=datetime.now(UTC))
         except Exception:
-            # The work stays due; the next tick schedules it again.
+            # The kind retains retry or failed-target state for the next matching pass.
             _log.exception("consumer_work_incomplete", instance_id=instance_id, kind=kind.name)
         finally:
             with self._in_flight_lock:

@@ -100,3 +100,30 @@ def test_socket_target_is_labelled(monkeypatch: pytest.MonkeyPatch) -> None:
         client.server_info()
 
     assert excinfo.value.target == "unix:/" + "tmp/missing.sock"
+
+
+def test_admission_misuse_is_a_coded_internal_error_without_a_traceback(runner):
+    import click
+
+    from cruxible_core.cli.main import handle_errors
+    from cruxible_core.errors import FloorAdmissionMisuse
+    from cruxible_core.runtime.admission import FLOOR_ADMISSION, HTTP_REQUEST_CONTEXT
+
+    @click.command()
+    @handle_errors
+    def misuse():
+        token = HTTP_REQUEST_CONTEXT.set(True)
+        try:
+            with FLOOR_ADMISSION.hold("inst_cli_misuse"):
+                pytest.fail("request hold was admitted")
+        finally:
+            HTTP_REQUEST_CONTEXT.reset(token)
+
+    result = runner.invoke(misuse)
+    assert result.exit_code == 1
+    assert "FloorAdmissionMisuse" in result.output
+    assert FloorAdmissionMisuse.error_code in result.output
+    assert "HTTP request must use async admit with the ticket" in result.output
+    assert "Traceback" not in result.output and "RuntimeError" not in result.output
+    assert isinstance(result.exception, SystemExit)
+    assert FLOOR_ADMISSION.active_keys() == 0

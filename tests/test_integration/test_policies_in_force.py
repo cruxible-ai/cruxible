@@ -36,10 +36,6 @@ from cruxible_client.contracts.procedures.artifacts import (
     render_procedure,
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
-from cruxible_client.contracts.procedures.line_specs import (
-    line_spec_path,
-    render_line_spec,
-)
 from cruxible_client.contracts.query.definitions import (
     query_definition_path,
     render_query_definition,
@@ -47,9 +43,9 @@ from cruxible_client.contracts.query.definitions import (
 from cruxible_core.service.claims.policies import service_playbill_policies_in_force
 from tests.core_support._adoption_fixture import _claim_type, _claim_type_path, _query_definition
 from tests.core_support._support import initialize_local
+from tests.support.lines import action_trigger, trigger_members
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_integration.test_acquisition_policies import _policy, _rule
-from tests.test_procedures.test_line_specs import _line
 from tests.test_procedures.test_procedure_artifacts import _artifact, _definition
 from tests.test_service.test_typed_source_catalogs import _published_sources
 
@@ -83,6 +79,9 @@ def test_policies_in_force_lists_live_standalone_and_embedded_rows(tmp_path) -> 
         "claim_resolution_policy",
         "procedure_runtime_policy",
         "query_evaluation_policy",
+        # The two Triggers every new instance is seeded with.
+        "trigger_schedule",
+        "trigger_schedule",
     ]
     assert result.policies[0].placement == "standalone"
     assert result.policies[0].field_path == "/"
@@ -113,6 +112,8 @@ def test_policies_in_force_lists_live_standalone_and_embedded_rows(tmp_path) -> 
     assert [row.policy_kind for row in historical.policies] == [
         "approval_policy",
         "procedure_runtime_policy",
+        "trigger_schedule",
+        "trigger_schedule",
     ]
 
 
@@ -237,15 +238,17 @@ def complete_policy_inventory(
     for procedure in (live_procedure, retired_procedure):
         tree[procedure_path(procedure.identity.name)] = render_procedure(procedure)
 
-    live_line, _accepted, _interfaces = _line()
-    retired_line = live_line.model_copy(
-        update={
-            "identity": ArtifactIdentity(kind="Line", name="retired-policy-line"),
-            "lifecycle": ArtifactLifecycle(state="retired"),
-        }
+    # The seeded default Triggers are two live carriers; this inventory keeps one.
+    for path in [path for path in tree if path.startswith("triggers/")]:
+        del tree[path]
+    live_trigger = action_trigger("policy-sweep", action="evidence.sweep", interval_seconds=60)
+    retired_trigger = action_trigger(
+        "retired-policy-sweep",
+        action="evidence.sweep",
+        interval_seconds=60,
+        lifecycle=ArtifactLifecycle(state="retired"),
     )
-    for line in (live_line, retired_line):
-        tree[line_spec_path(line.identity.name)] = render_line_spec(line)
+    tree.update(trigger_members(live_trigger, retired_trigger))
 
     (root / "indexed").mkdir()
     with pytest.MonkeyPatch.context() as patch:
@@ -294,9 +297,9 @@ def complete_policy_inventory(
             live_procedure.identity.qualified,
             retired_procedure.identity.qualified,
         ),
-        "line_trigger_policy": (
-            live_line.identity.qualified,
-            retired_line.identity.qualified,
+        "trigger_schedule": (
+            live_trigger.identity.qualified,
+            retired_trigger.identity.qualified,
         ),
     }
     assert procedure_artifact_digest(live_procedure).tagged.startswith("sha256:")

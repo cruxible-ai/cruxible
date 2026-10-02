@@ -15,7 +15,11 @@ from pydantic import TypeAdapter, ValidationError
 
 from cruxible_client import CruxibleClient, contracts
 from cruxible_client.authoring.blocks import render_projection_opening
-from cruxible_client.authoring.examples import claim_flow_a_example, claim_self_source_example
+from cruxible_client.authoring.examples import (
+    authoring_example_note,
+    claim_flow_a_example,
+    claim_self_source_example,
+)
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.inputs import (
     AuthoringChangeSetMemberInputV1,
@@ -63,8 +67,9 @@ def test_cli_line_run_forwards_only_the_occurrence_assertion(monkeypatch) -> Non
             evaluation_time: str,
             resolution_contract=None,
             trigger_event=None,
+            trigger=None,
         ) -> contracts.PlaybillProcedureRunState:
-            assert resolution_contract is None and trigger_event is None
+            assert resolution_contract is None and trigger_event is None and trigger is None
             calls.append((instance_id, line_identity_digest, occurrence_id, evaluation_time))
             return contracts.PlaybillProcedureRunState(
                 run_id=None,
@@ -628,6 +633,7 @@ def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
         "procedure_mandate",
         "acquisition_policy",
         "line",
+        "trigger",
         "procedure",
     ]
     assert (
@@ -645,6 +651,7 @@ def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
         "procedure-runtime-policy",
         "procedure-mandate",
         "line",
+        "trigger",
         "acquisition-policy",
         "query-claims-by-type",
         "change-set",
@@ -652,7 +659,8 @@ def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
     ):
         result = runner.invoke(cli, ["playbill", "authoring", "create", "--example", name])
         assert result.exit_code == 0, result.output
-        payload = json.loads(result.output)
+        # A note (cron's UTC reading) goes to stderr: stdout is one JSON document.
+        payload = json.loads(result.stdout)
         assert payload["kind"] in {
             "claim",
             "change_set",
@@ -663,6 +671,7 @@ def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
             "procedure_mandate",
             "query_definition",
             "line",
+            "trigger",
             "acquisition_policy",
         }
         if name == "procedure-mandate":
@@ -678,7 +687,8 @@ def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
                 "playbill-transform-join-items-spec-v1",
                 "playbill-transform-aggregate-items-spec-v1",
             ]
-        assert result.stderr == ""
+        note = authoring_example_note(name)
+        assert result.stderr == ("" if note is None else f"# {note}\n")
 
 
 def _input_kinds(union: object) -> set[str]:

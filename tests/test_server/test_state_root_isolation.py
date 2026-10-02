@@ -97,7 +97,10 @@ def _store_absolute(state_root: Path, instance_id: str, location: Path) -> None:
 def _migration_steps(state_root: Path) -> list[str]:
     connection = sqlite3.connect(f"file:{state_root / 'daemon' / 'registry.db'}?mode=ro", uri=True)
     try:
-        return [row[0] for row in connection.execute("SELECT step FROM registry_migrations")]
+        return [
+            row[0]
+            for row in connection.execute("SELECT step FROM registry_migrations ORDER BY rowid")
+        ]
     finally:
         connection.close()
 
@@ -132,9 +135,10 @@ def test_absolute_rows_under_the_root_migrate_to_relative(
 
     assert _stored_locations(state_root) == {_INSTANCE: f"instances/{_INSTANCE}"}
     # The step is recorded once, by its own id, and an open runs it no more.
-    assert _migration_steps(state_root) == ["2026-10-01-relative-locations"]
+    steps = ["2026-10-01-relative-locations", "2026-10-01-floor-delivery-column"]
+    assert _migration_steps(state_root) == steps
     InstanceRegistry(state_root)
-    assert _migration_steps(state_root) == ["2026-10-01-relative-locations"]
+    assert _migration_steps(state_root) == steps
     record = registry.get(_INSTANCE)
     assert record is not None
     assert registry.instance_root(record) == state_root / "instances" / _INSTANCE
@@ -285,3 +289,47 @@ def test_a_symlink_alias_of_the_whole_state_root_serves_the_real_root(
     assert get_registry().state_root == state_root
     instance = get_playbill_manager().get(_INSTANCE)
     assert instance.root.resolve() == state_root / "instances" / _INSTANCE
+
+
+def test_a_registry_that_already_added_floor_delivery_is_recorded_not_rerun(
+    tmp_path: Path,
+) -> None:
+    """A daemon that ran G4c's floor-delivery step outside the chain keeps its rows.
+
+    That build added the column at schema init and recorded nothing. Opening
+    the registry records the step by its id without re-running it, so a host
+    whose operator opted out of floor delivery stays opted out.
+    """
+
+    state_root = (tmp_path / "state").resolve()
+    database = state_root / "daemon" / "registry.db"
+    database.parent.mkdir(parents=True)
+    connection = sqlite3.connect(database)
+    with connection:
+        connection.execute(
+            "CREATE TABLE instances (instance_id TEXT PRIMARY KEY, backend TEXT NOT NULL, "
+            "location TEXT NOT NULL, workspace_root TEXT, created_at TEXT NOT NULL, "
+            "floor_delivery INTEGER NOT NULL DEFAULT 0 CHECK (floor_delivery IN (0,1) AND "
+            "(floor_delivery=0 OR workspace_root IS NOT NULL)), UNIQUE(backend, location))"
+        )
+        connection.execute(
+            "INSERT INTO instances VALUES ('inst_opted_out','governed_daemon',?,'/w','x',0)",
+            (str(state_root / "instances" / "inst_opted_out"),),
+        )
+        connection.execute(
+            "INSERT INTO instances VALUES ('inst_delivering','governed_daemon',"
+            "'instances/inst_delivering','/v','x',1)"
+        )
+    connection.close()
+
+    registry = InstanceRegistry(state_root)
+
+    assert registry.get("inst_opted_out").floor_delivery is False  # type: ignore[union-attr]
+    assert registry.get("inst_delivering").floor_delivery is True  # type: ignore[union-attr]
+    assert _migration_steps(state_root) == [
+        "2026-10-01-relative-locations",
+        "2026-10-01-floor-delivery-column",
+    ]
+    assert _stored_locations(state_root)["inst_opted_out"] == "instances/inst_opted_out"
+    InstanceRegistry(state_root)
+    assert registry.get("inst_opted_out").floor_delivery is False  # type: ignore[union-attr]

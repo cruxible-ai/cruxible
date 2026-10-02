@@ -16,6 +16,11 @@ CORE_ROOT = ROOT / "src" / "cruxible_core"
 # the daemon half of D2; the closed list prevents that exception from spreading.
 CLIENT_ADAPTER_PREFIXES = ("cli/", "client/", "mcp/")
 LEGACY_CLIENT_SIGNING_BRIDGES = {"ledger/signing.py"}
+# This workspace-output consumer reuses the floor writer; it imports neither
+# transport nor signing. Keep the exception to this one module and import.
+WORKSPACE_OUTPUT_ADAPTER_IMPORTS = {
+    ("consumers/floor.py", "cruxible_client.authoring.workspace"),
+}
 LEGACY_ERROR_BRIDGES = {"errors.py", "server/errors.py"}
 
 
@@ -57,6 +62,8 @@ def test_d2_daemon_domain_imports_only_client_contracts() -> None:
         ):
             continue
         for module in _absolute_imports(path):
+            if (relative, module) in WORKSPACE_OUTPUT_ADAPTER_IMPORTS:
+                continue
             if module == "cruxible_client":
                 # ``from cruxible_client import contracts`` is the package form
                 # used by generated HTTP request/response models.
@@ -82,6 +89,7 @@ def test_d2_authoring_and_transport_exceptions_are_client_adapters_only() -> Non
         if module.startswith(("cruxible_client.authoring", "cruxible_client.transport"))
         and not path.relative_to(CORE_ROOT).as_posix().startswith(CLIENT_ADAPTER_PREFIXES)
         and path.relative_to(CORE_ROOT).as_posix() not in LEGACY_CLIENT_SIGNING_BRIDGES
+        and (path.relative_to(CORE_ROOT).as_posix(), module) not in WORKSPACE_OUTPUT_ADAPTER_IMPORTS
     ]
     assert violations == []
 

@@ -83,6 +83,7 @@ from cruxible_client.contracts.get_reads import (
     PlaybillGetRevisionV1,
     PlaybillGetSubjectCardV1,
     PlaybillGetSubjectClaimV1,
+    PlaybillGetTriggerCardV1,
     PlaybillGetTruncatedTextV1,
     PlaybillReadFlag,
     PlaybillReadSurface,
@@ -96,6 +97,7 @@ from cruxible_client.contracts.repairs import RepairOperationV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import utc_now
+from cruxible_client.contracts.triggers import TriggerV1
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -166,6 +168,7 @@ _TYPED_PREFIXES: Mapping[str, PlaybillGetRefKind] = {
     "QueryDefinition": "query",
     "query": "query",
     "CaptureContract": "capture_contract",
+    "Trigger": "trigger",
     "Proposal": "proposal",
     "Line": "line",
     "Capture": "capture",
@@ -186,6 +189,7 @@ _PROJECTION_KIND: Mapping[PlaybillGetRefKind, str] = {
     "procedure": "procedure",
     "query": "query-definition",
     "capture_contract": "capture-contract",
+    "trigger": "trigger",
     "line": "line",
     "resolution_contract": "resolution-contract",
     "mandate": "procedure-mandate",
@@ -201,6 +205,7 @@ _QUALIFIER: Mapping[PlaybillGetRefKind, str] = {
     "procedure": "Procedure",
     "query": "QueryDefinition",
     "capture_contract": "CaptureContract",
+    "trigger": "Trigger",
     "line": "Line",
     "resolution_contract": "ResolutionContract",
     "mandate": "ProcedureMandate",
@@ -212,6 +217,7 @@ _NAMED_KINDS: tuple[PlaybillGetRefKind, ...] = (
     "procedure",
     "query",
     "capture_contract",
+    "trigger",
     "line",
     "resolution_contract",
     "mandate",
@@ -222,6 +228,7 @@ _DISPLAY_PREFIX: Mapping[PlaybillGetRefKind, str] = {
     "procedure": "Procedure",
     "query": "query",
     "capture_contract": "CaptureContract",
+    "trigger": "Trigger",
     "proposal": "Proposal",
     "line": "Line",
     "resolution_contract": "ResolutionContract",
@@ -596,6 +603,7 @@ def _resolve_typed(
         "procedure": "Procedure",
         "query": "QueryDefinition",
         "capture_contract": "CaptureContract",
+        "trigger": "Trigger",
         "line": "Line",
         "resolution_contract": "ResolutionContract",
         "mandate": "ProcedureMandate",
@@ -1327,6 +1335,25 @@ def _query_card(
     )
 
 
+def _trigger_card(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+    resolved: ResolvedRef,
+    *,
+    surface: PlaybillReadSurface,
+) -> PlaybillGetTriggerCardV1:
+    with instance.bind_accepted_projection(coordinate) as projection:
+        trigger = cast(TriggerV1, projection.typed.source(resolved.identity))
+    target = trigger.line.qualified if trigger.line is not None else str(trigger.action)
+    return PlaybillGetTriggerCardV1(
+        trigger=resolved.identity,
+        lifecycle=trigger.lifecycle.state,
+        schedule=trigger.schedule.model_dump(mode="json"),
+        target=target,
+        next=(_render_get(surface, resolved.display, "history"),),
+    )
+
+
 def _capture_contract_card(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
@@ -1921,6 +1948,7 @@ def _proof(
         }
     if resolved.kind in {
         "capture_contract",
+        "trigger",
         "line",
         "resolution_contract",
         "mandate",
@@ -1929,6 +1957,7 @@ def _proof(
         with instance.bind_accepted_projection(coordinate) as projection:
             source = projection.typed.source(resolved.identity)
             row = projection.typed.envelope(resolved.identity)
+        assert source is not None
         return {
             "coordinate": at.model_dump(mode="json"),
             "path": row.path if row else None,
@@ -2061,6 +2090,8 @@ def service_playbill_get(
             card = _query_card(instance, coordinate, resolved, surface=surface)
         elif resolved.kind == "capture_contract":
             card = _capture_contract_card(instance, coordinate, resolved, surface=surface)
+        elif resolved.kind == "trigger":
+            card = _trigger_card(instance, coordinate, resolved, surface=surface)
         elif resolved.kind == "line":
             card = line_card(
                 instance,
@@ -2079,7 +2110,13 @@ def service_playbill_get(
                 read_capture=functools.partial(_render_read_capture, surface),
             )
         elif resolved.kind == "resolution_contract":
-            card = resolution_contract_card(instance, coordinate, resolved.identity, render=render)
+            card = resolution_contract_card(
+                instance,
+                coordinate,
+                resolved.identity,
+                evaluation_time=evaluation_time,
+                render=render,
+            )
         elif resolved.kind == "procedure_run":
             card = procedure_run_card(
                 instance,

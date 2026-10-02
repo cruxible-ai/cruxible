@@ -236,7 +236,7 @@ def test_a_capture_card_names_the_evidence_workers_finding(
 ) -> None:
     from datetime import UTC, datetime
 
-    from cruxible_core.consumers import evidence
+    from cruxible_core.consumers.next import evidence
 
     instance, capture_digest, _contract, _when = prediction_world
     finding = evidence.EvidenceFinding(

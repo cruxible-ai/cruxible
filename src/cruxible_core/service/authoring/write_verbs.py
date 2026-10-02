@@ -73,7 +73,7 @@ from cruxible_client.contracts.claims import (
     LiteralClaimObject,
     SubjectClaimObject,
     claim_path,
-    literal_satisfies_schema,
+    literal_schema_violation,
     new_claim_id,
     parse_claim,
 )
@@ -342,6 +342,16 @@ def _distinct_handles(digests: Sequence[str], *, at_least: int) -> tuple[str, ..
     ):
         length += 1
     return tuple(capture_handle(item, length=length) for item in digests)
+
+
+_BRIEF_MAX = 80
+
+
+def _brief(value: object) -> str:
+    """A value as a refusal quotes it: its repr, cut to a readable length."""
+
+    text = repr(value)
+    return text if len(text) <= _BRIEF_MAX else f"{text[: _BRIEF_MAX - 1]}\u2026"
 
 
 def _value_key(value: object) -> str:
@@ -745,13 +755,18 @@ class _Planner:
                     field_path=path,
                 )
         schema = info.claim_type.literal_schema
-        if schema is None or not literal_satisfies_schema(value, schema):
+        violated = (
+            "the field declares no literal schema"
+            if schema is None
+            else literal_schema_violation(value, schema)
+        )
+        if violated is not None:
             expected = info.value_type if info.value_type != "json" else "value"
             raise _refuse(
                 "playbill.write.value_type_mismatch",
-                f"{value!r} is not a valid {expected} for {field_name}",
+                f"{_brief(value)} is not a valid {expected} for {field_name}: {violated}",
                 change=index,
-                repair=f"Pass a {expected} that the field's schema admits",
+                repair=f"Pass a {expected} that the field's schema admits ({violated})",
                 field_path=path,
             )
         try:

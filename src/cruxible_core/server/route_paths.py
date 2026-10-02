@@ -9,6 +9,8 @@ VERSION_PATH = "/version"
 RUNTIME_BOOTSTRAP_CLAIM_PATH = "/{instance_id}/runtime/bootstrap/claim"
 PLAYBILL_HOST_CREATE_PATH = "/runtime/instances"
 PLAYBILL_HOST_SHOW_PATH = "/{instance_id}/playbill/host"
+PLAYBILL_FLOOR_DELIVERY_PATH = "/{instance_id}/playbill/workspace/floor-delivery"
+PLAYBILL_FLOOR_DELIVER_NOW_PATH = "/{instance_id}/playbill/floor/deliver-now"
 PLAYBILL_WORKSPACE_DETACH_PATH = "/{instance_id}/playbill/workspace-detach"
 PLAYBILL_WORKSPACE_ATTACH_PATH = "/{instance_id}/playbill/workspace-attach"
 

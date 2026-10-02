@@ -10,6 +10,7 @@ from pathlib import Path
 import yaml
 from pydantic import ValidationError
 
+from cruxible_client._safe_files import read_regular_file
 from cruxible_client.authoring.sdk_types import SourceSelectionError
 from cruxible_client.contracts.authoring.models import (
     WorkingAnchorWindowV1,
@@ -148,12 +149,14 @@ class WorkspaceSources:
                 "workspace must contain exactly one .playbill/sources.yaml or sources.yaml"
             )
         try:
-            portable = SourceCatalog.model_validate(yaml.safe_load(portable_paths[0].read_bytes()))
+            portable = SourceCatalog.model_validate(
+                yaml.safe_load(read_regular_file(portable_paths[0]))
+            )
             local_path = self.workspace / ".playbill" / "sources.local.yaml"
             local = (
                 None
                 if not local_path.is_file()
-                else SourceCatalog.model_validate(yaml.safe_load(local_path.read_bytes()))
+                else SourceCatalog.model_validate(yaml.safe_load(read_regular_file(local_path)))
             )
             self.catalog = merge_source_catalogs(portable, local)
         except ValidationError as exc:
@@ -205,7 +208,7 @@ class WorkspaceSources:
                 f"path {requested!s} maps to {len(matches)} logical sources; exactly one required"
             )
         try:
-            content = resolved.read_bytes()
+            content = read_regular_file(resolved)
         except OSError as exc:
             raise SourceSelectionError(f"could not read {requested!s}: {exc}") from exc
         return FileSelector(path=resolved, source_id=matches[0].name, content=content)

@@ -5,6 +5,7 @@ typed errors in ``cruxible_client.contracts.errors``; these are the runtime and
 credential errors shared by the daemon, CLI and MCP boundaries.
 
     CoreError
+    ├── FloorAdmissionMisuse (internal floor admission programming error)
     ├── ConfigError (invalid configuration or request shape)
     ├── DataValidationError (payload does not match its declared contract)
     │   └── RequestRefusedError (a coded refusal of caller input, with its repair)
@@ -39,6 +40,15 @@ def _format_capped_errors(errors: list[str]) -> str:
     if len(errors) > _MAX_DISPLAY_ERRORS:
         detail += f" ... and {len(errors) - _MAX_DISPLAY_ERRORS} more error(s)"
     return detail
+
+
+class FloorAdmissionMisuse(CoreError):
+    """An internal admission misuse, surfaced through the typed error boundaries."""
+
+    error_code = "internal.floor_admission_misuse"
+
+    def __init__(self, message: str) -> None:
+        super().__init__(f"{self.error_code}: {message}")
 
 
 class ConfigError(CoreError):
