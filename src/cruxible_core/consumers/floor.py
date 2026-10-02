@@ -30,6 +30,7 @@ from cruxible_client.contracts.floor import (
     floor_manifest_digest,
     seal_floor_delta,
 )
+from cruxible_client.contracts.repairs import RepairOperationV1
 from cruxible_core.consumers.protocol import (
     ConsumerHealth,
     ConsumerRepair,
@@ -38,6 +39,7 @@ from cruxible_core.consumers.protocol import (
     EffectClass,
 )
 from cruxible_core.consumers.state import DisposableState
+from cruxible_core.errors import RequestRefusedError
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.server.registry import InstanceRecord, get_registry
 from cruxible_core.service.floor.floor import service_export_playbill_floor
@@ -198,7 +200,18 @@ def refresh_floor(
         if at is not None and at != contracts.PlaybillAcceptedCoordinate.model_validate(
             AcceptedCoordinate.from_internal(head).model_dump(mode="json")
         ):
-            raise PlaybillWorkspaceError("floor delivery differs from requested coordinate")
+            raise RequestRefusedError(
+                "playbill.floor.delivery_head_only",
+                "Daemon floor delivery owns this workspace's floor and writes only the "
+                "current accepted head; at names a different coordinate. To read an older "
+                "coordinate, use get or query with at. To write a pinned floor, turn daemon "
+                "delivery off: cruxible playbill workspace floor-delivery off "
+                f"--instance-id {instance_id}.",
+                repair=RepairOperationV1(
+                    operation="playbill.workspace.floor-delivery",
+                    arguments={"state": "off", "instance_id": instance_id},
+                ),
+            )
         target = _target(instance, record, head)
         progress = _progress(instance)
         if (
@@ -287,9 +300,7 @@ class FloorConsumers:
         if any(item.action == "floor.refresh" for item in internal_triggers(instance)):
             return True
         progress = _progress(instance)
-        return (
-            progress is not None and progress[1] != progress[2] and progress[1] != progress[3]
-        )
+        return progress is not None and progress[1] != progress[2] and progress[1] != progress[3]
 
     def match(self, instance: Any, *, now: datetime, daemon_id: str) -> None:
         target = _target(instance, get_registry().get(instance.descriptor.instance_id))

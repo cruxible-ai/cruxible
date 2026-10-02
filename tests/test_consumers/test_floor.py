@@ -412,3 +412,39 @@ def test_retired_floor_trigger_is_active_only_until_outstanding_work_finishes(wo
     live.append(SimpleNamespace(action="floor.refresh"))
     assert FLOOR.active(instance)
     assert FLOOR.health(instance, now=NOW)[0].state == "stalled"
+
+
+def test_deliver_now_refuses_a_pinned_coordinate_with_a_runnable_repair(world, monkeypatch):
+    from cruxible_client import contracts
+    from cruxible_client.errors import response_to_error
+    from cruxible_core.errors import RequestRefusedError
+    from cruxible_core.indexes.projection import AcceptedCoordinate
+    from cruxible_core.runtime import host_api
+    from cruxible_core.server.errors import error_to_response
+
+    instance, workspace, registry = world
+    instance_id = instance.descriptor.instance_id
+    pinned = contracts.PlaybillAcceptedCoordinate.model_validate(
+        AcceptedCoordinate.from_internal(instance.accepted_coordinate()).model_dump(mode="json")
+    )
+    registry.set_floor_delivery(instance_id, True)
+    _write(instance, _set(WI1, "status", "ready"))
+    monkeypatch.setattr(
+        host_api, "get_playbill_manager", lambda: SimpleNamespace(get=lambda _: instance)
+    )
+    with pytest.raises(RequestRefusedError, match="current accepted head") as refused:
+        host_api.deliver_playbill_floor_now(
+            instance_id, at=pinned, workspace_attachment_authorized=True
+        )
+    assert "use get or query with at" in str(refused.value)
+    assert "floor-delivery off" in str(refused.value)
+    status, envelope = error_to_response(refused.value)
+    assert status == 400
+    assert envelope.error_code == "playbill.floor.delivery_head_only"
+    assert envelope.repair.operation == "playbill.workspace.floor-delivery"
+    assert envelope.repair.arguments == {"state": "off", "instance_id": instance_id}
+    client_error = response_to_error(status, envelope)
+    assert client_error.error_code == envelope.error_code
+    assert client_error.repair == envelope.repair
+    assert floor_outcomes(instance) == ()
+    assert not (workspace / ".playbill").exists()
