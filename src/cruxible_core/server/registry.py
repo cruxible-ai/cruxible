@@ -15,6 +15,7 @@ from cruxible_core.server.config import get_server_state_root
 LOCAL_FILESYSTEM_BACKEND = "local_filesystem"
 GOVERNED_DAEMON_BACKEND = "governed_daemon"
 _INSTANCE_ID_RE = re.compile(r"^inst_[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+FLOOR_DELIVERY_MIGRATION_STEP = "2026-10-01-floor-delivery-column"
 
 
 def _migrate_floor_delivery_column(conn: sqlite3.Connection) -> None:
@@ -85,18 +86,7 @@ class InstanceRegistry:
                 """
             )
 
-            conn.execute("CREATE TABLE IF NOT EXISTS registry_migrations (name TEXT PRIMARY KEY)")
-            if (
-                conn.execute(
-                    "SELECT 1 FROM registry_migrations "
-                    "WHERE name='2026-10-01-floor-delivery-column'"
-                ).fetchone()
-                is None
-            ):
-                _migrate_floor_delivery_column(conn)
-                conn.execute(
-                    "INSERT INTO registry_migrations VALUES ('2026-10-01-floor-delivery-column')"
-                )
+            _migrate_floor_delivery_column(conn)
 
     def set_floor_delivery(self, instance_id: str, enabled: bool) -> InstanceRecord:
         """Set delivery only for a registered governed host with a local workspace."""

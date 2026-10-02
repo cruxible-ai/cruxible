@@ -182,6 +182,10 @@ def test_registry_migration_is_idempotent_and_detach_clears_delivery(tmp_path):
         connection.execute(
             "INSERT INTO instances VALUES ('inst_old','governed_daemon','old',NULL,'old','kept')"
         )
+        connection.execute(
+            "CREATE TABLE registry_migrations (step TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
+        )
+        connection.execute("INSERT INTO registry_migrations VALUES ('operator-step','kept')")
     registry = InstanceRegistry(database)
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -194,8 +198,11 @@ def test_registry_migration_is_idempotent_and_detach_clears_delivery(tmp_path):
         assert connection.execute(
             "SELECT operator_column,floor_delivery FROM instances WHERE instance_id='inst_old'"
         ).fetchone() == ("kept", 0)
-        # A pre-existing column without our marker is harmless too.
-        connection.execute("DELETE FROM registry_migrations")
+        assert connection.execute("SELECT * FROM registry_migrations").fetchall() == [
+            ("operator-step", "kept")
+        ]
+        columns = [row[1] for row in connection.execute("PRAGMA table_info(instances)")]
+        assert columns.count("floor_delivery") == 1
     registry = InstanceRegistry(database)
     assert registry.get("inst_floor").floor_delivery
     assert not registry.detach_governed_workspace(
