@@ -1348,8 +1348,10 @@ async def export_floor(
     # instance overlap. Admission waits on the event loop, not in a worker
     # thread, so queued exports never hold threadpool capacity that cheap
     # reads, lifecycle routes and other instances need; the export itself runs
-    # in the threadpool. This is the one shape of async route the event-loop
-    # guardrail allows: await admission, then offload.
+    # in the threadpool through the admission ticket, which keeps the instance
+    # held until the export ends even if this route is cancelled mid-call. This
+    # is the one shape of async route the event-loop guardrail allows: await
+    # admission, then offload through its ticket.
     resolved = await run_in_threadpool(resolve_server_instance_id, instance_id)
 
     def export() -> contracts.PlaybillFloorExport:
@@ -1361,8 +1363,8 @@ async def export_floor(
             review_notes_oid=req.review_notes_oid,
         )
 
-    async with FLOOR_ADMISSION.admit(resolved):
-        return await run_in_threadpool(export)
+    async with FLOOR_ADMISSION.admit(resolved) as admitted:
+        return await run_in_threadpool(admitted.run, export)
 
 
 @router.post(
@@ -1391,8 +1393,8 @@ async def floor_delta(
             base_renderer=req.base_renderer,
         )
 
-    async with FLOOR_ADMISSION.admit(resolved):
-        return await run_in_threadpool(delta)
+    async with FLOOR_ADMISSION.admit(resolved) as admitted:
+        return await run_in_threadpool(admitted.run, delta)
 
 
 __all__ = ["router"]

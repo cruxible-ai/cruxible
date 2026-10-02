@@ -4,9 +4,14 @@ A heavy call that must run one at a time per key (one floor render per
 instance) takes the key first. Two kinds of caller take it:
 
 - an ``async def`` HTTP route awaits ``admit(key)`` on the event loop, then
-  offloads the call to the threadpool. A route that has to wait parks on a
-  future of its own loop, so a queue behind one slow call holds no worker
-  thread and cannot exhaust the pool cheap requests need;
+  offloads the call to the threadpool through the ticket admission yields:
+  ``await run_in_threadpool(ticket.run, call)``. A route that has to wait parks
+  on a future of its own loop, so a queue behind one slow call holds no worker
+  thread and cannot exhaust the pool cheap requests need. Once the worker has
+  started the call, the key is the worker's: it is released when the call
+  ends, not when the route leaves ``admit``, so a route cancelled mid-call
+  (a client gone, a task cancelled) never lets the next holder in beside a
+  render still running;
 - a worker thread (a daemon consumer refreshing a floor in-process) enters
   ``hold(key)``, which blocks that thread until the key is its own. It refuses
   to run on a thread with a running event loop, which it would stall.
@@ -35,8 +40,11 @@ from __future__ import annotations
 import asyncio
 import threading
 from collections import deque
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
+from typing import Literal, TypeVar
+
+_T = TypeVar("_T")
 
 
 def _grant(future: asyncio.Future[None]) -> None:
@@ -85,6 +93,37 @@ class _Entry:
         self.waiters: deque[_Waiter] = deque()
 
 
+class _Ticket:
+    """A key admitted on the loop, which the worker running the call takes over.
+
+    ``held``: the route holds it. ``worker``: a worker started the call and
+    releases the key when the call ends. ``closed``: the route left before any
+    worker started, and released it.
+    """
+
+    __slots__ = ("admission", "key", "state")
+
+    def __init__(self, admission: KeyedAdmission, key: str) -> None:
+        self.admission = admission
+        self.key = key
+        self.state: Literal["held", "worker", "closed"] = "held"
+
+    def run(self, call: Callable[[], _T]) -> _T:
+        """Run ``call`` holding the key; the key is released when it ends.
+
+        Runs in the worker thread. A route that already left admission (it was
+        cancelled before the worker got here) has released the key, and the
+        call is not made.
+        """
+
+        if not self.admission._claim(self):
+            raise RuntimeError("the admitted caller left before its call started")
+        try:
+            return call()
+        finally:
+            self.admission._leave(self.key)
+
+
 class KeyedAdmission:
     """One holder per key at a time, across the event loop and worker threads."""
 
@@ -130,6 +169,23 @@ class KeyedAdmission:
         with self._lock:
             self._pass_on(key)
 
+    def _claim(self, ticket: _Ticket) -> bool:
+        """A worker takes over an admitted key, unless its route already let it go."""
+
+        with self._lock:
+            if ticket.state != "held":
+                return False
+            ticket.state = "worker"
+            return True
+
+    def _close(self, ticket: _Ticket) -> None:
+        """A route leaves admission: release the key unless a worker has it."""
+
+        with self._lock:
+            if ticket.state == "held":
+                ticket.state = "closed"
+                self._pass_on(ticket.key)
+
     def _withdraw(self, key: str, waiter: _Waiter) -> None:
         """A waiter gives up: leave the queue, or pass on a key it was just handed."""
 
@@ -143,8 +199,12 @@ class KeyedAdmission:
     # -- the two ways in -----------------------------------------------------------
 
     @asynccontextmanager
-    async def admit(self, key: str) -> AsyncIterator[None]:
-        """Hold ``key`` for an async route; waiting parks on the loop, not a worker."""
+    async def admit(self, key: str) -> AsyncIterator[_Ticket]:
+        """Hold ``key`` for an async route; waiting parks on the loop, not a worker.
+
+        Offload the call with ``run_in_threadpool(ticket.run, call)``: the key
+        then stays held until the call ends, even if the route is cancelled.
+        """
 
         loop = asyncio.get_running_loop()
         future: asyncio.Future[None] = loop.create_future()
@@ -155,10 +215,11 @@ class KeyedAdmission:
             except BaseException:
                 self._withdraw(key, waiter)
                 raise
+        ticket = _Ticket(self, key)
         try:
-            yield
+            yield ticket
         finally:
-            self._leave(key)
+            self._close(ticket)
 
     @contextmanager
     def hold(self, key: str) -> Iterator[None]:

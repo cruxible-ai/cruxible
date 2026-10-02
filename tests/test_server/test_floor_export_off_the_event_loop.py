@@ -410,3 +410,115 @@ def test_an_in_process_floor_holder_on_a_thread_excludes_that_instances_routes(
     assert statuses == {"delta a": 200, "delta b": 200}
     assert order.index("consumer out") < order.index("delta inst_a")
     assert FLOOR_ADMISSION.active_keys() == 0
+
+
+def test_a_route_cancelled_mid_render_keeps_its_instance_until_the_render_ends(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancelling an admitted export while its worker renders must not let a queued
+    delta route or consumer thread of that instance in beside the running render."""
+
+    import asyncio
+
+    from cruxible_core.server.playbill_request_models import (
+        PlaybillFloorDeltaRequest,
+        PlaybillFloorExportRequest,
+    )
+
+    export_entered = threading.Event()
+    release = threading.Event()
+    running = 0
+    overlapped: list[str] = []
+    order: list[str] = []
+    lock = threading.Lock()
+
+    def enter(name: str) -> None:
+        nonlocal running
+        with lock:
+            running += 1
+            if running > 1:
+                overlapped.append(name)
+            order.append(f"{name} in")
+
+    def leave(name: str) -> None:
+        nonlocal running
+        with lock:
+            running -= 1
+            order.append(f"{name} out")
+
+    def blocking_export(instance_id: str, **_: object) -> contracts.PlaybillFloorExport:
+        enter("export")
+        export_entered.set()
+        release.wait(_FAILURE_BOUND_SECONDS)
+        leave("export")
+        return contracts.PlaybillFloorExport(
+            tag="playbill-floor-export-v5", coordinate=_COORDINATE, manifest={}, files=[]
+        )
+
+    def delta(instance_id: str, **_: object) -> PlaybillFloorDeltaV1:
+        enter("delta")
+        leave("delta")
+        return floor_v5_delta({}, coordinate=_COORDINATE, generation=1)
+
+    monkeypatch.setattr(playbill_routes, "resolve_server_instance_id", lambda value: value)
+    monkeypatch.setattr(playbill_api, "playbill_export_floor", blocking_export)
+    monkeypatch.setattr(playbill_api, "playbill_floor_delta", delta)
+
+    def consumer() -> None:
+        with FLOOR_ADMISSION.hold("inst_cancel"):
+            enter("consumer")
+            leave("consumer")
+
+    async def scenario() -> None:
+        export = asyncio.create_task(
+            playbill_routes.export_floor("inst_cancel", PlaybillFloorExportRequest())
+        )
+        while not export_entered.is_set():
+            await asyncio.sleep(0.005)
+        queued = asyncio.create_task(
+            playbill_routes.floor_delta("inst_cancel", PlaybillFloorDeltaRequest())
+        )
+        thread = threading.Thread(target=consumer)
+        thread.start()
+        await asyncio.sleep(0.05)
+        export.cancel()
+        # Give a wrongly released key every chance to be taken.
+        await asyncio.sleep(0.1)
+        with lock:
+            assert order == ["export in"], order
+        release.set()
+        await queued
+        await asyncio.to_thread(thread.join, _FAILURE_BOUND_SECONDS)
+        try:
+            await export
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(scenario())
+    assert overlapped == []
+    assert order[:2] == ["export in", "export out"]
+    assert sorted(order[2:]) == ["consumer in", "consumer out", "delta in", "delta out"]
+    assert FLOOR_ADMISSION.active_keys() == 0
+
+
+def test_a_route_cancelled_before_its_worker_starts_releases_the_key() -> None:
+    """The ticket's other side: a route that leaves before any worker took the
+    key releases it, and a late worker never runs the call."""
+
+    import asyncio
+
+    from cruxible_core.runtime.admission import KeyedAdmission
+
+    admission = KeyedAdmission()
+    ran: list[str] = []
+
+    async def scenario() -> Any:
+        async with admission.admit("inst_x") as ticket:
+            pass
+        assert admission.active_keys() == 0
+        return ticket
+
+    ticket = asyncio.run(scenario())
+    with pytest.raises(RuntimeError, match="left before its call started"):
+        ticket.run(lambda: ran.append("late"))
+    assert ran == [] and admission.active_keys() == 0

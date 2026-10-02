@@ -14,6 +14,9 @@ admits exactly that shape, by binding rather than by name:
 
 - an offload is `await run_in_threadpool(...)` with plain-name arguments, where
   `run_in_threadpool` is the module's one import from `starlette.concurrency`;
+- an offload inside admission goes through its ticket,
+  `async with N.admit(...) as t: ... await run_in_threadpool(t.run, f)`, so the
+  key stays held until the offloaded call ends even if the route is cancelled;
 - admission is `async with N.admit(...)` with plain-name arguments, where `N` is
   either bound once at module level to `KeyedAdmission()` imported from
   `cruxible_core.runtime.admission`, or imported unaliased from that module,
@@ -213,18 +216,10 @@ def _loop_work(node: ast.AsyncFunctionDef, module: _RouteModule) -> list[str]:
     body = [inner for statement in node.body for inner in _executed(statement)]
     allowed: set[int] = set()
     offloads = 0
+    problems: list[str] = []
+    # Offloads inside an admission must go through its ticket.
+    admitted: dict[int, str | None] = {}
     for inner in body:
-        if (
-            isinstance(inner, ast.Await)
-            and isinstance(inner.value, ast.Call)
-            and isinstance(inner.value.func, ast.Name)
-            and inner.value.func.id == _OFFLOAD[1]
-            and module.offload
-            and _OFFLOAD[1] not in local
-            and _plain(_call_arguments(inner.value))
-        ):
-            allowed.add(id(inner.value))
-            offloads += 1
         if isinstance(inner, ast.AsyncWith):
             for item in inner.items:
                 expression = item.context_expr
@@ -238,6 +233,36 @@ def _loop_work(node: ast.AsyncFunctionDef, module: _RouteModule) -> list[str]:
                     and _plain(_call_arguments(expression))
                 ):
                     allowed.add(id(expression))
+                    ticket = item.optional_vars
+                    name = ticket.id if isinstance(ticket, ast.Name) else None
+                    if name is not None and len(local.get(name, [])) != 1:
+                        name = None  # rebound: not the ticket any more
+                    for statement in inner.body:
+                        for nested in _executed(statement):
+                            admitted.setdefault(id(nested), name)
+    for inner in body:
+        if (
+            isinstance(inner, ast.Await)
+            and isinstance(inner.value, ast.Call)
+            and isinstance(inner.value.func, ast.Name)
+            and inner.value.func.id == _OFFLOAD[1]
+            and module.offload
+            and _OFFLOAD[1] not in local
+            and _plain(_call_arguments(inner.value))
+        ):
+            allowed.add(id(inner.value))
+            offloads += 1
+            if id(inner) in admitted:
+                ticket = admitted[id(inner)]
+                first = inner.value.args[0] if inner.value.args else None
+                if not (
+                    ticket is not None
+                    and isinstance(first, ast.Attribute)
+                    and first.attr == "run"
+                    and isinstance(first.value, ast.Name)
+                    and first.value.id == ticket
+                ):
+                    problems.append("<offload not through the admission ticket>")
     work = [
         ast.unparse(inner.func)
         for inner in body
@@ -245,7 +270,7 @@ def _loop_work(node: ast.AsyncFunctionDef, module: _RouteModule) -> list[str]:
     ]
     if offloads == 0:
         work.append("<no offload>")
-    return work
+    return work + problems
 
 
 # What each function on `admit`'s path may call, by spelling: `admit` itself,
@@ -259,7 +284,8 @@ _ON_LOOP_CALLS: dict[str, frozenset[str]] = {
             "loop.create_future",
             "self._enter",
             "self._withdraw",
-            "self._leave",
+            "_Ticket",
+            "self._close",
         }
     ),
     "KeyedAdmission._enter": frozenset(
@@ -267,6 +293,8 @@ _ON_LOOP_CALLS: dict[str, frozenset[str]] = {
     ),
     "KeyedAdmission._pass_on": frozenset({"entry.waiters.popleft", "waiter.wake"}),
     "KeyedAdmission._leave": frozenset({"self._pass_on"}),
+    "KeyedAdmission._close": frozenset({"self._pass_on"}),
+    "_Ticket.__init__": frozenset(),
     "KeyedAdmission._withdraw": frozenset({"self._pass_on", "entry.waiters.remove"}),
     "_Waiter.__init__": frozenset(),
     "_Waiter.wake": frozenset({"self.event.set", "self.loop.call_soon_threadsafe"}),
@@ -279,6 +307,7 @@ _RECEIVER_VALUES: dict[str, frozenset[str]] = {
     "loop": frozenset({"asyncio.get_running_loop()"}),
     "future": frozenset({"loop.create_future()"}),
     "entry": frozenset({"self._entries.get(key)", "self._entries[key]"}),
+    "ticket": frozenset({"_Ticket(self, key)"}),
     "waiter": frozenset(
         {
             "self._enter(key, loop, future, None)",
@@ -322,7 +351,7 @@ def _admission_violations(tree: ast.Module) -> list[str]:
                     qualified = f"{node.name}.{member.name}"
                     defined[qualified] = defined.get(qualified, 0) + 1
                     functions[qualified] = member
-    for name in ("KeyedAdmission", "_Entry", "_Waiter", "_grant"):
+    for name in ("KeyedAdmission", "_Entry", "_Waiter", "_Ticket", "_grant"):
         if len(module.get(name, [])) != 1:
             problems.append(f"{name} is missing or rebound")
     # A checked method is defined once in its class and never rebound on an instance.
@@ -372,7 +401,16 @@ def _admission_violations(tree: ast.Module) -> list[str]:
             continue
         local = _bound_names(function)
         parameters = {arg.arg for arg in ast.walk(function.args) if isinstance(arg, ast.arg)}
-        for name in ("asyncio", "threading", "deque", "_Entry", "_Waiter", "_grant", "self"):
+        for name in (
+            "asyncio",
+            "threading",
+            "deque",
+            "_Entry",
+            "_Waiter",
+            "_Ticket",
+            "_grant",
+            "self",
+        ):
             bound = [
                 binding
                 for binding in local.get(name, [])
@@ -437,10 +475,20 @@ def test_the_route_check_tells_the_shapes_apart() -> None:
         "    b = await run_in_threadpool(resolve, a)\n"
         "    def go():\n"
         "        return work(b)\n"
-        "    async with exports.admit(b):\n"
-        "        return await run_in_threadpool(go)\n"
+        "    async with exports.admit(b) as ticket:\n"
+        "        return await run_in_threadpool(ticket.run, go)\n"
     )
     assert _check(_ROUTE_HEADER + admitted) == []
+    # Inside admission, an offload that bypasses the ticket would let the key go
+    # while a cancelled route's call still runs.
+    unticketed = admitted.replace("run_in_threadpool(ticket.run, go)", "run_in_threadpool(go)")
+    assert _check(_ROUTE_HEADER + unticketed) == ["<offload not through the admission ticket>"]
+    untaken = admitted.replace(" as ticket:", ":").replace("ticket.run, go", "go")
+    assert _check(_ROUTE_HEADER + untaken) == ["<offload not through the admission ticket>"]
+    rebound_ticket = admitted.replace(
+        "        return await", "        ticket = other\n        return await"
+    )
+    assert _check(_ROUTE_HEADER + rebound_ticket) == ["<offload not through the admission ticket>"]
     assert _check(_ROUTE_HEADER + "async def r(a):\n    return work(a)\n") == [
         "work",
         "<no offload>",
@@ -466,7 +514,9 @@ def test_the_route_check_tells_the_shapes_apart() -> None:
 
 def test_the_route_check_resolves_bindings_not_names() -> None:
     body = (
-        "async def r(a):\n    async with {cm}:\n        return await run_in_threadpool(work, a)\n"
+        "async def r(a):\n"
+        "    async with {cm} as t:\n"
+        "        return await run_in_threadpool(t.run, work)\n"
     )
     # A synchronous factory that blocks, then hands back a real async lock.
     blocking_factory = (
