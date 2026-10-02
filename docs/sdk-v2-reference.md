@@ -1500,13 +1500,14 @@ Line v6 under compiler revision 32, and declares the exact event that input
 accepts: the Source's CaptureContract. A Line runs on the Triggers aimed at it;
 `ChangeSetDraft.trigger(name=..., schedule=..., line=...)` defines one; its
 `schedule` is a `CadenceScheduleV1`, `CronScheduleV1(expression=...)`,
-`CaptureLandingScheduleV1` or `WindowCloseScheduleV1`. A cron expression is
+`GenerationAcceptedScheduleV1`, `CaptureLandingScheduleV1` or
+`WindowCloseScheduleV1`. A cron expression is
 evaluated in UTC, always; convert local times first (09:00 New York in winter
-is 14:00 UTC). `action=` aims it at a registered internal action (cadence or cron schedules
-only) instead of a Line. Every
+is 14:00 UTC). `action=` aims it at a registered internal action (cadence, cron
+or generation_accepted schedules only) instead of a Line. Every
 Trigger aimed at a `trigger_input` Line must fire on that event, as a
-capture-arrival schedule or an event-relative window. Cadence, cron and
-fixed-window Triggers cannot provide this input.
+capture-arrival schedule or an event-relative window. Cadence, cron,
+generation-accepted and fixed-window Triggers cannot provide this input.
 
 Use `pb.check_line(name)` to inspect trigger matches and their `dispatch_status`.
 `pb.dispatch_line(name)` processes pending work; unusable exact Captures close as
@@ -1747,3 +1748,21 @@ It rejects out-of-enum comparison literals and straight-line reassignment with
 localized diagnostics. Invoke outputs retain authored names; `return_paths` describes
 branch-specific results, and the legacy global `returns` alias is null. Retained
 source-v1 records continue to reproduce under their original compilation rules.
+
+### Generation acceptance and workspace floor delivery
+
+`GenerationAcceptedScheduleV1()` from `cruxible_client.contracts.triggers`
+coalesces accepts into one fire at latest head. It fires only after the Trigger
+version was accepted and the daemon began listening. Use it with
+`draft.trigger(name="floor-refresh", schedule=GenerationAcceptedScheduleV1(),
+action="floor.refresh")`; Capture-input Lines refuse it through their usual law.
+
+Floor refresh warms the index regardless of workspace delivery. A bound local
+workspace defaults to client delivery. Over a Unix-socket `CruxibleClient`, call
+`set_playbill_floor_delivery(instance_id, enabled=True)` to make its daemon the
+sole floor writer; `enabled=False` restores client delivery. Detaching clears
+the flag. `playbill_host_workspace_registration` reports `floor_delivery` and
+the local path, which the workspace adapter checks before delegating to
+`deliver_playbill_floor_now`. The latter returns a `PlaybillFloorDeliveryResultV1`
+with the delta and the ordinary `PlaybillWorkspaceFloorWriteResult` receipt.
+Host inspection and server status also show `floor_delivery`.

@@ -338,15 +338,16 @@ identity and is unsafe; prefer repairing the typed cause and allowing re-arm.
 The daemon's internal schedules are governed Trigger artifacts
 (`triggers/<name>.json`) aimed at an internal action, not daemon-local
 configuration. Internal actions are registered in code (`evidence.sweep`,
-`prediction.anchor_retry`); a Trigger aimed at one takes a `cadence` or `cron`
-schedule. Capture-landing and window-close schedules for internal actions are
+`prediction.anchor_retry`, `floor.refresh`); a Trigger aimed at one takes a
+`cadence`, `cron`, or `generation_accepted` schedule. Capture-landing and
+window-close schedules for internal actions are
 not supported yet (`playbill.trigger.schedule_unsupported_for_action`), and an
 action name that is not registered is refused at acceptance
 (`playbill.trigger.action_unknown`). A new
 instance is initialized with `evidence-sweep` (daily) and
 `prediction-anchor-retry` (hourly); change a schedule, add a Trigger, or retire
-one through an ordinary proposal. `playbill next` reports any internal action
-no live Trigger schedules.
+one through an ordinary proposal. `playbill next` reports unscheduled findings
+actions, and an unscheduled floor action when workspace delivery is enabled.
 
 No Trigger fires retroactively. A timer fires each of its instants once, all of
 them after the acceptance of its Trigger version: a new cadence first fires one
@@ -358,6 +359,22 @@ stops. Fires, which record the Trigger and the action, and pending one-shot
 deadlines are retained under each instance's `exhaust/triggers.sqlite3`; this
 append-only event log is not disposable worker state. Workers follow fires by
 action and resume from its sequences. Library mode fires no triggers.
+
+A `generation_accepted` schedule has no fields or predicate. It fires once at
+latest head when accepted generations advance; a burst coalesces. It skips
+accepts before the Trigger version's acceptance and before listening starts,
+including accepts made while the daemon was stopped. Lines use the same target
+input law, so a Line needing a Capture event refuses this schedule.
+
+`floor.refresh` warms the floor index on every daemon. Workspace delivery is
+optional and defaults off. Use `workspace attach --floor-delivery` or
+`cruxible playbill workspace floor-delivery` with `on` through the local Unix
+socket to opt a bound workspace in; `off` disables delivery and detaching clears it. With delivery
+on, the daemon writes only `.playbill/floor`, and local client floor writes ask
+it to deliver immediately. Remote clients and workspaces with delivery off keep
+applying deltas locally. Host inspection and daemon status show the flag.
+A failed apply stalls the floor consumer with `playbill floor export` as its
+repair; automatic retries wait for a changed head or workspace registration.
 
 ### Proposal receive operational configuration
 
@@ -419,7 +436,8 @@ it.
 ~~~text
 cruxible playbill host create [--instance-id ID] [--workspace DIR] [--replace]
 cruxible playbill host show INSTANCE [--json]
-cruxible playbill workspace attach [--instance-id ID] [--replace]
+cruxible playbill workspace attach [--instance-id ID] [--replace] [--floor-delivery]
+cruxible playbill workspace floor-delivery on|off [--instance-id ID] [--json]
 cruxible playbill workspace detach [--instance-id ID] [--json]
 ~~~
 
@@ -1331,10 +1349,11 @@ Line over the `--example procedure` Procedure, and `--example
 acquisition-policy` a policy for a Source Procedure's Line.
 
 When a Line runs is not the Line's own: a `trigger` input authors a Trigger
-(`triggers/<name>.json`) whose `schedule` is a `cadence`, a `cron`, a
-`capture_landing` on one exact CaptureContract, or a `window_close`, and whose
+(`triggers/<name>.json`) whose `schedule` is a `cadence`, a `cron`,
+`generation_accepted`, `capture_landing` on one exact CaptureContract, or a
+`window_close`, and whose
 target is one Line (`line_name`) or one registered internal action (`action`,
-which takes a `cadence` or `cron` schedule).
+which takes a `cadence`, `cron`, or `generation_accepted` schedule).
 A `cron` schedule is a standard five-field expression (`minute hour
 day-of-month month day-of-week`; numbers, `*`, ranges, steps and lists, with
 day-of-week 0-7 and Sunday both 0 and 7; no names or `@` macros) evaluated in

@@ -1151,8 +1151,8 @@ class ChangeSetDraft:
 
         Name exactly one of ``line`` (an accepted Line, or one defined in this
         same set) or ``action`` (a registered internal action such as
-        ``evidence.sweep`` or ``prediction.anchor_retry``), which takes a cadence
-        or cron schedule; a Line takes any schedule that supplies its input. A
+        ``floor.refresh``), which takes cadence, cron or generation_accepted;
+        a Line takes any schedule that supplies its input. A
         Line can have several
         Triggers; retiring a Line needs its live Triggers retired or retargeted
         in the same set.

@@ -280,9 +280,9 @@ def trigger_example() -> TriggerInput:
 
     Name `line_name` or `action` (a registered internal action such as
     `evidence.sweep`), never both. A schedule is `cadence` (`interval_seconds`),
-    `cron` (a five-field UTC `expression`),
+    `cron` (a five-field UTC `expression`), `generation_accepted` (no fields),
     `capture_landing` (an exact CaptureContract `event`), or `window_close` (a
-    `window`). An internal action takes `cadence` or `cron`; a Line that binds
+    `window`). Actions admit timed or generation-accepted schedules; a Line that binds
     its triggering Capture needs a schedule that fires on that exact event. Nothing
     fires before the Trigger is accepted: this one first runs at the top of the
     hour after its acceptance.
@@ -736,7 +736,11 @@ AUTHORING_EXAMPLE_FACTORIES: Final[dict[AuthoringExampleName, Callable[[], Autho
 
 #: One line shown beside an example's payload, where the payload alone could mislead.
 AUTHORING_EXAMPLE_NOTES: Final[dict[AuthoringExampleName, str]] = {
-    "trigger": CRON_UTC_HINT,
+    "trigger": (
+        CRON_UTC_HINT + ' Generation floor refresh: {"kind":"trigger",'
+        '"name":"floor-refresh","schedule":{"kind":"generation_accepted"},'
+        '"action":"floor.refresh"}.'
+    ),
 }
 
 

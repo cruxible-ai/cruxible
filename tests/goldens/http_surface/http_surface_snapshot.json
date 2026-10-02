@@ -102,6 +102,9 @@
   "/api/v1/{instance_id}/playbill/documents/proposals": {
     "POST": "PlaybillProposalInspection"
   },
+  "/api/v1/{instance_id}/playbill/floor/deliver-now": {
+    "POST": "PlaybillFloorDeliveryResultV1"
+  },
   "/api/v1/{instance_id}/playbill/floor/delta": {
     "POST": "PlaybillFloorDeltaV1"
   },
@@ -275,6 +278,9 @@
   },
   "/api/v1/{instance_id}/playbill/workspace-registration": {
     "GET": "PlaybillHostWorkspaceRegistrationV1"
+  },
+  "/api/v1/{instance_id}/playbill/workspace/floor-delivery": {
+    "POST": "PlaybillHostWorkspaceRegistrationV1"
   },
   "/api/v1/{instance_id}/playbill/write": {
     "POST": "WriteOutcome"

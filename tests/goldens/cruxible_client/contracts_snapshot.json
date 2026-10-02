@@ -3358,6 +3358,27 @@
             "default": null
           }
         },
+        "generation": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "generation",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Generation"
+          }
+        },
         "kind": {
           "has_default": false,
           "has_default_factory": false,
@@ -3368,7 +3389,8 @@
               "cadence",
               "cron",
               "capture_landing",
-              "window_close"
+              "window_close",
+              "generation_accepted"
             ],
             "title": "Kind",
             "type": "string"
@@ -3508,12 +3530,26 @@
             ],
             "default": null
           },
+          "generation": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Generation"
+          },
           "kind": {
             "enum": [
               "cadence",
               "cron",
               "capture_landing",
-              "window_close"
+              "window_close",
+              "generation_accepted"
             ],
             "title": "Kind",
             "type": "string"
@@ -3964,12 +4000,26 @@
                 ],
                 "default": null
               },
+              "generation": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Generation"
+              },
               "kind": {
                 "enum": [
                   "cadence",
                   "cron",
                   "capture_landing",
-                  "window_close"
+                  "window_close",
+                  "generation_accepted"
                 ],
                 "title": "Kind",
                 "type": "string"
@@ -4404,12 +4454,26 @@
                 ],
                 "default": null
               },
+              "generation": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Generation"
+              },
               "kind": {
                 "enum": [
                   "cadence",
                   "cron",
                   "capture_landing",
-                  "window_close"
+                  "window_close",
+                  "generation_accepted"
                 ],
                 "title": "Kind",
                 "type": "string"
@@ -9708,6 +9772,20 @@
             "title": "FreezeRequirementV1",
             "type": "object"
           },
+          "GenerationAcceptedScheduleV1": {
+            "additionalProperties": false,
+            "description": "Fire once at the latest accepted head after it moves, coalescing a burst.",
+            "properties": {
+              "kind": {
+                "const": "generation_accepted",
+                "default": "generation_accepted",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "title": "GenerationAcceptedScheduleV1",
+            "type": "object"
+          },
           "IndependentCoherenceV1": {
             "additionalProperties": false,
             "properties": {
@@ -12296,13 +12374,14 @@
           },
           "TriggerInput": {
             "additionalProperties": false,
-            "description": "One Trigger: a schedule aimed at exactly one Line or internal action.\n\nA Line target names an accepted or same-set Line; an internal action names a\nregistered action (`evidence.sweep`, `prediction.anchor_retry`), which takes\na cadence or cron schedule. A Line takes any schedule that supplies its\ninput. A Trigger is changed or retired (`retire`) through a successor, like\nany definition.",
+            "description": "One schedule aimed at an accepted or same-set Line, or a registered action.\n\nActions admit cadence, cron and generation_accepted. Every target's declared\ninput must be supplied by its schedule. Change or retire through a successor.",
             "properties": {
               "action": {
                 "anyOf": [
                   {
-                    "description": "A registered internal action: evidence.sweep, prediction.anchor_retry.",
+                    "description": "A registered internal action: floor.refresh, evidence.sweep, prediction.anchor_retry.",
                     "examples": [
+                      "floor.refresh",
                       "evidence.sweep",
                       "prediction.anchor_retry"
                     ],
@@ -12351,6 +12430,7 @@
                     "cadence": "#/$defs/CadenceScheduleV1",
                     "capture_landing": "#/$defs/CaptureLandingScheduleV1",
                     "cron": "#/$defs/CronScheduleV1",
+                    "generation_accepted": "#/$defs/GenerationAcceptedScheduleV1",
                     "window_close": "#/$defs/WindowCloseScheduleV1"
                   },
                   "propertyName": "kind"
@@ -12367,6 +12447,9 @@
                   },
                   {
                     "$ref": "#/$defs/WindowCloseScheduleV1"
+                  },
+                  {
+                    "$ref": "#/$defs/GenerationAcceptedScheduleV1"
                   }
                 ],
                 "title": "Schedule"
@@ -19722,6 +19805,1046 @@
         "result_digest"
       ]
     },
+    "PlaybillFloorConsumerOutcomeV1": {
+      "fields": {
+        "error": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "error",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Error"
+          }
+        },
+        "file_count": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "file_count",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "minimum": 0,
+            "title": "File Count",
+            "type": "integer"
+          }
+        },
+        "generation": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "generation",
+          "required": true,
+          "schema": {
+            "minimum": 0,
+            "title": "Generation",
+            "type": "integer"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "written",
+              "unchanged",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-floor-consumer-outcome-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-floor-consumer-outcome-v1",
+            "default": "playbill-floor-consumer-outcome-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "One floor refresh at an accepted head, including a typed stalled outcome.",
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Error"
+          },
+          "file_count": {
+            "default": 0,
+            "minimum": 0,
+            "title": "File Count",
+            "type": "integer"
+          },
+          "generation": {
+            "minimum": 0,
+            "title": "Generation",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "written",
+              "unchanged",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-floor-consumer-outcome-v1",
+            "default": "playbill-floor-consumer-outcome-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "generation",
+          "status"
+        ],
+        "title": "PlaybillFloorConsumerOutcomeV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "generation",
+        "status"
+      ]
+    },
+    "PlaybillFloorDeliverNowRequestV1": {
+      "fields": {
+        "at": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "at",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "include": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "include",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "const": "discovery",
+              "type": "string"
+            },
+            "title": "Include",
+            "type": "array"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "include": {
+            "default": [],
+            "items": {
+              "const": "discovery",
+              "type": "string"
+            },
+            "title": "Include",
+            "type": "array"
+          }
+        },
+        "title": "PlaybillFloorDeliverNowRequestV1",
+        "type": "object"
+      },
+      "required_fields": []
+    },
+    "PlaybillFloorDeliveryRequestV1": {
+      "fields": {
+        "enabled": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "enabled",
+          "required": true,
+          "schema": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "PlaybillFloorDeliveryRequestV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "enabled"
+      ]
+    },
+    "PlaybillFloorDeliveryResultV1": {
+      "fields": {
+        "delta": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "delta",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillFloorDeltaV1"
+          }
+        },
+        "export": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "export",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillFloorExport"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "tag": {
+          "default": "playbill-floor-delivery-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-floor-delivery-result-v1",
+            "default": "playbill-floor-delivery-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "written": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "written",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillWorkspaceFloorWriteResult"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "GitWorkspaceNoteV1": {
+            "additionalProperties": false,
+            "description": "Client-side advisory when CWD wins over inherited Git selectors.",
+            "properties": {
+              "code": {
+                "const": "inherited_git_workspace_ignored",
+                "title": "Code",
+                "type": "string"
+              },
+              "cwd_workspace_root": {
+                "title": "Cwd Workspace Root",
+                "type": "string"
+              },
+              "inherited_workspace_root": {
+                "title": "Inherited Workspace Root",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "cwd_workspace_root",
+              "inherited_workspace_root"
+            ],
+            "title": "GitWorkspaceNoteV1",
+            "type": "object"
+          },
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          },
+          "PlaybillFloorDeltaFileV1": {
+            "additionalProperties": false,
+            "description": "One file the base lacks or holds at different bytes.",
+            "properties": {
+              "changed_at": {
+                "minimum": 0,
+                "title": "Changed At",
+                "type": "integer"
+              },
+              "content_b64": {
+                "title": "Content B64",
+                "type": "string"
+              },
+              "path": {
+                "title": "Path",
+                "type": "string"
+              },
+              "sha256": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Sha256",
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "content_b64",
+              "sha256",
+              "changed_at"
+            ],
+            "title": "PlaybillFloorDeltaFileV1",
+            "type": "object"
+          },
+          "PlaybillFloorDeltaV1": {
+            "additionalProperties": false,
+            "description": "What brings a floor at ``base_generation`` to ``head``.\n\n``kind=\"full\"`` carries every file and no base; a receiver replaces its\nfloor. ``kind=\"delta\"`` carries the files whose ``changed_at`` is after the\nbase, and ``tombstones``, the base's paths the head no longer has. Both are\na deterministic function of (head, base) for one renderer.",
+            "properties": {
+              "base_generation": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Base Generation"
+              },
+              "base_manifest_digest": {
+                "anyOf": [
+                  {
+                    "pattern": "^sha256:[0-9a-f]{64}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Base Manifest Digest"
+              },
+              "delta_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Delta Digest",
+                "type": "string"
+              },
+              "files": {
+                "items": {
+                  "$ref": "#/$defs/PlaybillFloorDeltaFileV1"
+                },
+                "title": "Files",
+                "type": "array"
+              },
+              "head": {
+                "$ref": "#/$defs/PlaybillFloorHeadV1"
+              },
+              "head_manifest_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Head Manifest Digest",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "delta",
+                  "full"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "renderer": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Renderer",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-floor-delta-v1",
+                "default": "playbill-floor-delta-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "tombstones": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Tombstones",
+                "type": "array"
+              }
+            },
+            "required": [
+              "kind",
+              "renderer",
+              "head",
+              "head_manifest_digest",
+              "files",
+              "delta_digest"
+            ],
+            "title": "PlaybillFloorDeltaV1",
+            "type": "object"
+          },
+          "PlaybillFloorExport": {
+            "additionalProperties": false,
+            "description": "The deterministic greppable floor as base64 bytes keyed by floor path.\n\n``manifest`` is the decoded root ``manifest.json``: it binds every file to\nthe accepted coordinate it was projected from. The service is\nfilesystem-free, so materializing the directory is the client's act.",
+            "properties": {
+              "coordinate": {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              "files": {
+                "items": {
+                  "$ref": "#/$defs/PlaybillFloorFile"
+                },
+                "title": "Files",
+                "type": "array"
+              },
+              "manifest": {
+                "additionalProperties": true,
+                "title": "Manifest",
+                "type": "object"
+              },
+              "tag": {
+                "default": "playbill-floor-export-v2",
+                "enum": [
+                  "playbill-floor-export-v1",
+                  "playbill-floor-export-v2",
+                  "playbill-floor-export-v5"
+                ],
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "coordinate",
+              "manifest",
+              "files"
+            ],
+            "title": "PlaybillFloorExport",
+            "type": "object"
+          },
+          "PlaybillFloorFile": {
+            "additionalProperties": false,
+            "properties": {
+              "content_base64": {
+                "title": "Content Base64",
+                "type": "string"
+              },
+              "path": {
+                "title": "Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "content_base64"
+            ],
+            "title": "PlaybillFloorFile",
+            "type": "object"
+          },
+          "PlaybillFloorHeadV1": {
+            "additionalProperties": false,
+            "description": "The accepted coordinate a delta brings a floor to, and its generation.",
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation": {
+                "minimum": 0,
+                "title": "Generation",
+                "type": "integer"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "notes_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Notes Digest",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "generation",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest",
+              "notes_digest"
+            ],
+            "title": "PlaybillFloorHeadV1",
+            "type": "object"
+          },
+          "PlaybillWorkspaceFloorWriteResult": {
+            "additionalProperties": false,
+            "description": "A verified floor export materialized by the workspace writer.",
+            "properties": {
+              "coordinate": {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              "destination": {
+                "title": "Destination",
+                "type": "string"
+              },
+              "file_count": {
+                "minimum": 1,
+                "title": "File Count",
+                "type": "integer"
+              },
+              "floor_digest": {
+                "title": "Floor Digest",
+                "type": "string"
+              },
+              "git_workspace_note": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/GitWorkspaceNoteV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "path": {
+                "title": "Path",
+                "type": "string"
+              },
+              "status": {
+                "default": "written",
+                "enum": [
+                  "written",
+                  "unchanged"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-workspace-floor-write-result-v1",
+                "default": "playbill-workspace-floor-write-result-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "destination",
+              "floor_digest",
+              "coordinate",
+              "file_count"
+            ],
+            "title": "PlaybillWorkspaceFloorWriteResult",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "The same floor delta and write receipt returned by a daemon delivery.",
+        "properties": {
+          "delta": {
+            "$ref": "#/$defs/PlaybillFloorDeltaV1"
+          },
+          "export": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillFloorExport"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "tag": {
+            "const": "playbill-floor-delivery-result-v1",
+            "default": "playbill-floor-delivery-result-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "written": {
+            "$ref": "#/$defs/PlaybillWorkspaceFloorWriteResult"
+          }
+        },
+        "required": [
+          "delta",
+          "written"
+        ],
+        "title": "PlaybillFloorDeliveryResultV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "delta",
+        "written"
+      ]
+    },
+    "PlaybillFloorDeltaV1": {
+      "fields": {
+        "base_generation": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "base_generation",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Base Generation"
+          }
+        },
+        "base_manifest_digest": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "base_manifest_digest",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Base Manifest Digest"
+          }
+        },
+        "delta_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "delta_digest",
+          "required": true,
+          "schema": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Delta Digest",
+            "type": "string"
+          }
+        },
+        "files": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "files",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/PlaybillFloorDeltaFileV1"
+            },
+            "title": "Files",
+            "type": "array"
+          }
+        },
+        "head": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "head",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillFloorHeadV1"
+          }
+        },
+        "head_manifest_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "head_manifest_digest",
+          "required": true,
+          "schema": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Head Manifest Digest",
+            "type": "string"
+          }
+        },
+        "kind": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "kind",
+          "required": true,
+          "schema": {
+            "enum": [
+              "delta",
+              "full"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "renderer": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "renderer",
+          "required": true,
+          "schema": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Renderer",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-floor-delta-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-floor-delta-v1",
+            "default": "playbill-floor-delta-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "tombstones": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tombstones",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Tombstones",
+            "type": "array"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillFloorDeltaFileV1": {
+            "additionalProperties": false,
+            "description": "One file the base lacks or holds at different bytes.",
+            "properties": {
+              "changed_at": {
+                "minimum": 0,
+                "title": "Changed At",
+                "type": "integer"
+              },
+              "content_b64": {
+                "title": "Content B64",
+                "type": "string"
+              },
+              "path": {
+                "title": "Path",
+                "type": "string"
+              },
+              "sha256": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Sha256",
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "content_b64",
+              "sha256",
+              "changed_at"
+            ],
+            "title": "PlaybillFloorDeltaFileV1",
+            "type": "object"
+          },
+          "PlaybillFloorHeadV1": {
+            "additionalProperties": false,
+            "description": "The accepted coordinate a delta brings a floor to, and its generation.",
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation": {
+                "minimum": 0,
+                "title": "Generation",
+                "type": "integer"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "notes_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Notes Digest",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "generation",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest",
+              "notes_digest"
+            ],
+            "title": "PlaybillFloorHeadV1",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "What brings a floor at ``base_generation`` to ``head``.\n\n``kind=\"full\"`` carries every file and no base; a receiver replaces its\nfloor. ``kind=\"delta\"`` carries the files whose ``changed_at`` is after the\nbase, and ``tombstones``, the base's paths the head no longer has. Both are\na deterministic function of (head, base) for one renderer.",
+        "properties": {
+          "base_generation": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Base Generation"
+          },
+          "base_manifest_digest": {
+            "anyOf": [
+              {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Base Manifest Digest"
+          },
+          "delta_digest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Delta Digest",
+            "type": "string"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/$defs/PlaybillFloorDeltaFileV1"
+            },
+            "title": "Files",
+            "type": "array"
+          },
+          "head": {
+            "$ref": "#/$defs/PlaybillFloorHeadV1"
+          },
+          "head_manifest_digest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Head Manifest Digest",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "delta",
+              "full"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "renderer": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Renderer",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-floor-delta-v1",
+            "default": "playbill-floor-delta-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "tombstones": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Tombstones",
+            "type": "array"
+          }
+        },
+        "required": [
+          "kind",
+          "renderer",
+          "head",
+          "head_manifest_digest",
+          "files",
+          "delta_digest"
+        ],
+        "title": "PlaybillFloorDeltaV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "delta_digest",
+        "files",
+        "head",
+        "head_manifest_digest",
+        "kind",
+        "renderer"
+      ]
+    },
     "PlaybillFloorExport": {
       "fields": {
         "coordinate": {
@@ -20452,6 +21575,19 @@
             "title": "Compiler Revision"
           }
         },
+        "floor_delivery": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "floor_delivery",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Floor Delivery",
+            "type": "boolean"
+          }
+        },
         "instance_id": {
           "has_default": false,
           "has_default_factory": false,
@@ -20614,6 +21750,11 @@
             ],
             "default": null,
             "title": "Compiler Revision"
+          },
+          "floor_delivery": {
+            "default": false,
+            "title": "Floor Delivery",
+            "type": "boolean"
           },
           "instance_id": {
             "title": "Instance Id",
@@ -20796,6 +21937,19 @@
     },
     "PlaybillHostWorkspaceRegistrationV1": {
       "fields": {
+        "floor_delivery": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "floor_delivery",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Floor Delivery",
+            "type": "boolean"
+          }
+        },
         "instance_id": {
           "has_default": false,
           "has_default_factory": false,
@@ -20859,6 +22013,11 @@
         "additionalProperties": false,
         "description": "Whether one daemon host has a daemon-local workspace registration.",
         "properties": {
+          "floor_delivery": {
+            "default": false,
+            "title": "Floor Delivery",
+            "type": "boolean"
+          },
           "instance_id": {
             "title": "Instance Id",
             "type": "string"
@@ -44494,12 +45653,26 @@
                 ],
                 "default": null
               },
+              "generation": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Generation"
+              },
               "kind": {
                 "enum": [
                   "cadence",
                   "cron",
                   "capture_landing",
-                  "window_close"
+                  "window_close",
+                  "generation_accepted"
                 ],
                 "title": "Kind",
                 "type": "string"
@@ -84675,7 +85848,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "A verified floor export materialized by a client-side adapter.",
+        "description": "A verified floor export materialized by the workspace writer.",
         "properties": {
           "coordinate": {
             "$ref": "#/$defs/PlaybillAcceptedCoordinate"
@@ -102756,6 +103929,11 @@
                 "default": null,
                 "title": "Compiler Revision"
               },
+              "floor_delivery": {
+                "default": false,
+                "title": "Floor Delivery",
+                "type": "boolean"
+              },
               "instance_id": {
                 "title": "Instance Id",
                 "type": "string"
@@ -103806,6 +104984,7 @@
                 "cadence": "#/$defs/CadenceScheduleV1",
                 "capture_landing": "#/$defs/CaptureLandingScheduleV1",
                 "cron": "#/$defs/CronScheduleV1",
+                "generation_accepted": "#/$defs/GenerationAcceptedScheduleV1",
                 "window_close": "#/$defs/WindowCloseScheduleV1"
               },
               "propertyName": "kind"
@@ -103822,6 +105001,9 @@
               },
               {
                 "$ref": "#/$defs/WindowCloseScheduleV1"
+              },
+              {
+                "$ref": "#/$defs/GenerationAcceptedScheduleV1"
               }
             ],
             "title": "Schedule"
@@ -103859,8 +105041,9 @@
             "description": "Fire one internal action; the worker that owns it follows its fires.",
             "properties": {
               "action": {
-                "description": "A registered internal action: evidence.sweep, prediction.anchor_retry.",
+                "description": "A registered internal action: floor.refresh, evidence.sweep, prediction.anchor_retry.",
                 "examples": [
+                  "floor.refresh",
                   "evidence.sweep",
                   "prediction.anchor_retry"
                 ],
@@ -104116,6 +105299,20 @@
             "title": "FixedWindowV1",
             "type": "object"
           },
+          "GenerationAcceptedScheduleV1": {
+            "additionalProperties": false,
+            "description": "Fire once at the latest accepted head after it moves, coalescing a burst.",
+            "properties": {
+              "kind": {
+                "const": "generation_accepted",
+                "default": "generation_accepted",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "title": "GenerationAcceptedScheduleV1",
+            "type": "object"
+          },
           "LineTargetV1": {
             "additionalProperties": false,
             "description": "Run one Line, whatever version of it is accepted when the Trigger fires.",
@@ -104205,6 +105402,7 @@
                 "cadence": "#/$defs/CadenceScheduleV1",
                 "capture_landing": "#/$defs/CaptureLandingScheduleV1",
                 "cron": "#/$defs/CronScheduleV1",
+                "generation_accepted": "#/$defs/GenerationAcceptedScheduleV1",
                 "window_close": "#/$defs/WindowCloseScheduleV1"
               },
               "propertyName": "kind"
@@ -104221,6 +105419,9 @@
               },
               {
                 "$ref": "#/$defs/WindowCloseScheduleV1"
+              },
+              {
+                "$ref": "#/$defs/GenerationAcceptedScheduleV1"
               }
             ],
             "title": "Schedule"
