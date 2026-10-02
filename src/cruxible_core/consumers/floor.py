@@ -284,8 +284,11 @@ class FloorConsumers:
     workers = 2
 
     def active(self, instance: Any) -> bool:
-        return _STATE.path(instance).exists() or any(
-            item.action == "floor.refresh" for item in internal_triggers(instance)
+        if any(item.action == "floor.refresh" for item in internal_triggers(instance)):
+            return True
+        progress = _progress(instance)
+        return (
+            progress is not None and progress[1] != progress[2] and progress[1] != progress[3]
         )
 
     def match(self, instance: Any, *, now: datetime, daemon_id: str) -> None:

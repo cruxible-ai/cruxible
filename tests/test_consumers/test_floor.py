@@ -385,3 +385,30 @@ def test_floor_schedule_advisory_is_opt_in(world, monkeypatch):
     registry.set_floor_delivery(instance.descriptor.instance_id, True)
     assert health().state == "unscheduled"
     assert health().detail["unscheduled"] == ["floor.refresh"]
+
+
+def test_retired_floor_trigger_is_active_only_until_outstanding_work_finishes(world, monkeypatch):
+    instance, _, _ = world
+    live = [SimpleNamespace(action="floor.refresh")]
+    monkeypatch.setattr(floor, "internal_triggers", lambda _: tuple(live))
+    assert FLOOR.active(instance)
+    refresh_floor(instance, instance.descriptor.instance_id)
+    live.clear()  # The accepted Trigger set after the last floor Trigger retires.
+    assert floor._STATE.path(instance).exists()
+    assert not FLOOR.active(instance)
+    _write(instance, _set(WI1, "status", "ready"))
+    signal(instance)
+    assert FLOOR.active(instance)
+    refresh_floor(instance, instance.descriptor.instance_id)
+    assert not FLOOR.active(instance)
+
+    def fail(*_):
+        raise PlaybillWorkspaceError("render failed")
+
+    monkeypatch.setattr(floor, "advance_floor_index", fail)
+    with pytest.raises(PlaybillWorkspaceError, match="render failed"):
+        refresh_floor(instance, instance.descriptor.instance_id)
+    assert not FLOOR.active(instance)  # No runnable work remains for a retired Trigger.
+    live.append(SimpleNamespace(action="floor.refresh"))
+    assert FLOOR.active(instance)
+    assert FLOOR.health(instance, now=NOW)[0].state == "stalled"
