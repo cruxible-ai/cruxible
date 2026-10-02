@@ -74,6 +74,7 @@ import secrets
 import threading
 import time
 from collections.abc import Callable, Mapping
+from contextvars import Context
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal
@@ -307,7 +308,9 @@ class QuietCheckpointWriter:
             self._pending = write
             self._deferred_at = time.monotonic()
             if self._thread is None:
-                thread = threading.Thread(target=self._run, name=self.name, daemon=True)
+                thread = threading.Thread(
+                    target=Context().run, args=(self._run,), name=self.name, daemon=True
+                )
                 try:
                     thread.start()
                 except RuntimeError:

@@ -4,7 +4,8 @@ Each tick matches every active kind on every governed instance, then hands the
 due work to that kind's bounded pool. Matching runs on the loop thread and never
 acts. A work key is in flight at most once at a time, so one slow unit never
 delays matching or another key's work, and each kind has its own pool, so one
-kind's backlog never starves another's.
+kind's backlog never starves another's. Detached loop and pool work start in
+fresh contexts so they cannot retain a launching request's marker or identity.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import Context
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -119,7 +121,10 @@ class ConsumerRunner:
                 for kind in self.kinds
             }
             self.thread = threading.Thread(
-                target=self._run, name="cruxible-consumer-runner", daemon=True
+                target=Context().run,
+                args=(self._run,),
+                name="cruxible-consumer-runner",
+                daemon=True,
             )
             self.thread.start()
 
@@ -173,7 +178,7 @@ class ConsumerRunner:
                 return
             self._in_flight.add(key)
         try:
-            executor.submit(self._run_work, key, instance_id, kind, work)
+            executor.submit(Context().run, self._run_work, key, instance_id, kind, work)
         except RuntimeError:
             # The pool is shutting down; the work stays due for the next start.
             with self._in_flight_lock:

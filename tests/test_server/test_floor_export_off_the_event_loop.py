@@ -805,3 +805,85 @@ def test_framework_error_handlers_keep_http_context(client, monkeypatch):
         client.get("/test-error-context")
     assert observed == [True]
     assert FLOOR_ADMISSION.active_keys() == 0
+
+
+def test_request_launched_detached_work_uses_fresh_contexts(client, monkeypatch):
+    """Emulate inheriting threads even on Python builds that start them empty."""
+    from contextvars import ContextVar, copy_context
+    from types import SimpleNamespace
+
+    from cruxible_core.consumers.protocol import ConsumerWork
+    from cruxible_core.consumers.runner import ConsumerRunner
+    from cruxible_core.ledger.checkpoints import QuietCheckpointWriter
+
+    original_thread = threading.Thread
+
+    class InheritingThread(original_thread):
+        def __init__(self, *, target, args=(), **kwargs):
+            super().__init__(target=copy_context().run, args=(target, *args), **kwargs)
+
+    monkeypatch.setattr(threading, "Thread", InheritingThread)
+    owner: ContextVar[str | None] = ContextVar("detached_test_owner", default=None)
+    release = threading.Event()
+    loop_entered = threading.Event()
+    work_finished = threading.Event()
+    checkpoint_finished = threading.Event()
+    observed = {}
+    held = []
+
+    def run_work(*args, **kwargs):
+        try:
+            assert release.wait(5)
+            observed["pool"] = (HTTP_REQUEST_CONTEXT.get(), owner.get())
+            with FLOOR_ADMISSION.hold("inst_detached_pool"):
+                held.append("pool")
+        finally:
+            work_finished.set()
+
+    kind = SimpleNamespace(name="detached-test", workers=1, run=run_work)
+    runner = ConsumerRunner(SimpleNamespace(), kinds=(kind,))
+
+    def loop():
+        observed["runner"] = (HTTP_REQUEST_CONTEXT.get(), owner.get())
+        loop_entered.set()
+        runner.stop_event.wait(5)
+
+    monkeypatch.setattr(runner, "_run", loop)
+    writer = QuietCheckpointWriter(quiet_seconds=0, name="detached-checkpoint-test")
+
+    def checkpoint():
+        try:
+            assert release.wait(5)
+            observed["checkpoint"] = (HTTP_REQUEST_CONTEXT.get(), owner.get())
+            with FLOOR_ADMISSION.hold("inst_detached_checkpoint"):
+                held.append("checkpoint")
+        finally:
+            checkpoint_finished.set()
+
+    def launch():
+        assert HTTP_REQUEST_CONTEXT.get()
+        token = owner.set("request-owner")
+        try:
+            runner.start()
+            assert loop_entered.wait(5)
+            # Submit directly from the request, not just from the fresh loop.
+            runner._schedule("inst_detached", kind, ConsumerWork(key="unit", item=None))
+            writer.defer(checkpoint)
+            assert HTTP_REQUEST_CONTEXT.get() and owner.get() == "request-owner"
+            return {"launched": True}
+        finally:
+            owner.reset(token)
+
+    client.app.get("/test-detached-launch")(launch)
+    try:
+        response = client.get("/test-detached-launch")
+        assert response.status_code == 200
+        release.set()
+        assert work_finished.wait(5) and checkpoint_finished.wait(5)
+    finally:
+        release.set()
+        runner.close()
+        writer.flush(timeout=5)
+    assert observed == {"runner": (False, None), "pool": (False, None), "checkpoint": (False, None)}
+    assert sorted(held) == ["checkpoint", "pool"]
+    assert FLOOR_ADMISSION.active_keys() == 0

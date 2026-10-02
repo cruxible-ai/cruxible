@@ -13,6 +13,7 @@ import time
 from collections import OrderedDict
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
+from contextvars import Context
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -974,7 +975,8 @@ class PlaybillInstance:
             with self._mirror_condition:
                 if self._mirror_thread is None or not self._mirror_thread.is_alive():
                     self._mirror_thread = threading.Thread(
-                        target=self._run_ledger_publisher,
+                        target=Context().run,
+                        args=(self._run_ledger_publisher,),
                         name=f"ledger-publisher-{self.descriptor.instance_id}",
                         daemon=True,
                     )
@@ -1087,7 +1089,8 @@ class PlaybillInstance:
                     or current.requested_sequence > observed[1]
                 ):
                     self._mirror_thread = threading.Thread(
-                        target=self._run_ledger_publisher,
+                        target=Context().run,
+                        args=(self._run_ledger_publisher,),
                         name=f"ledger-publisher-{self.descriptor.instance_id}",
                         daemon=True,
                     )
@@ -1416,7 +1419,8 @@ class PlaybillInstance:
         # Not a daemon thread: a short-lived process finishes the refresh it
         # queued before the interpreter exits.
         thread = threading.Thread(
-            target=self._run_workspace_advertiser,
+            target=Context().run,
+            args=(self._run_workspace_advertiser,),
             name=f"workspace-advertiser-{self.descriptor.instance_id}",
         )
         try:
