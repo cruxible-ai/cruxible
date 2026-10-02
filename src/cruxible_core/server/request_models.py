@@ -30,6 +30,7 @@ class PlaybillHostCreateRequest(_StrictHostRequest):
     instance_id: str | None = None
     workspace_root: str | None = None
     dry_run: DryRun = None
+    at: PreviewAt = None
 
 
 class PlaybillHostWorkspaceAttachRequest(_StrictHostRequest):
@@ -41,6 +42,7 @@ class PlaybillHostWorkspaceAttachRequest(_StrictHostRequest):
 class BootstrapClaimRequest(_StrictHostRequest):
     bootstrap_secret: str = Field(min_length=1)
     dry_run: DryRun = None
+    at: PreviewAt = None
 
 
 class RuntimeCredentialCreateRequest(_StrictHostRequest):

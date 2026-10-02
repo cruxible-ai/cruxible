@@ -45,6 +45,7 @@ def create_playbill_host(
         workspace_root=req.workspace_root,
         workspace_attachment_authorized=_local_socket(request),
         dry_run=req.dry_run,
+        at=req.at,
     )
 
 

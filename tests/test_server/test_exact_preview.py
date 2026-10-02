@@ -732,7 +732,37 @@ def test_bootstrap_claims_once_per_host_and_previews_claim_nothing(
         )
     )
     assert (preview["status"], preview["token"]) == ("would_claim", None)
-    one = _ok(client.post(claim, json={"bootstrap_secret": _SECRET}, headers=_bearer(_SECRET)))
+    at = preview["coordinate"]["digest"]
+    # A credential lands on the host under the preview: its coordinate no
+    # longer confirms the claim.
+    get_runtime_credential_store().create_credential(
+        instance_id="inst_host_one", label="reader", permission_mode=PermissionMode.READ_ONLY
+    )
+    _refused(
+        client.post(
+            claim,
+            json={"bootstrap_secret": _SECRET, "dry_run": False, "at": at},
+            headers=_bearer(_SECRET),
+        ),
+        409,
+        "playbill.preview.state_moved",
+    )
+    fresh = _ok(
+        client.post(
+            claim, json={"bootstrap_secret": _SECRET, "dry_run": True}, headers=_bearer(_SECRET)
+        )
+    )
+    one = _ok(
+        client.post(
+            claim,
+            json={
+                "bootstrap_secret": _SECRET,
+                "dry_run": False,
+                "at": fresh["coordinate"]["digest"],
+            },
+            headers=_bearer(_SECRET),
+        )
+    )
     two = _ok(
         client.post(
             "/api/v1/inst_host_two/runtime/bootstrap/claim",

@@ -315,8 +315,9 @@ class CruxibleClient:
         instance_id: str | None = None,
         workspace_root: str | None = None,
         dry_run: bool | None = None,
+        at: str | None = None,
     ) -> contracts.PlaybillHostResult:
-        payload: dict[str, Any] = {"instance_id": instance_id, **_change_control(dry_run, None)}
+        payload: dict[str, Any] = {"instance_id": instance_id, **_change_control(dry_run, at)}
         if workspace_root is not None:
             payload["workspace_root"] = workspace_root
         response = self._client.post(
@@ -385,11 +386,16 @@ class CruxibleClient:
         return self._parse_model(response, contracts.PlaybillHostInspectionV1)
 
     def claim_runtime_bootstrap(
-        self, instance_id: str, bootstrap_secret: str, *, dry_run: bool | None = None
+        self,
+        instance_id: str,
+        bootstrap_secret: str,
+        *,
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> contracts.RuntimeCredentialBootstrapResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/runtime/bootstrap/claim",
-            json={"bootstrap_secret": bootstrap_secret, **_change_control(dry_run, None)},
+            json={"bootstrap_secret": bootstrap_secret, **_change_control(dry_run, at)},
         )
         return self._parse_model(response, contracts.RuntimeCredentialBootstrapResult)
 

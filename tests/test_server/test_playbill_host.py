@@ -109,7 +109,10 @@ def test_host_allocation_is_idempotent_and_creates_no_semantic_state(
     assert created.json() == {
         "instance_id": "inst_dp0b_host",
         "status": "created",
+        # Pinned to the row it allocated against: there was none.
+        "coordinate": created.json()["coordinate"],
     }
+    assert created.json()["coordinate"]["subject"] == "host:inst_dp0b_host"
 
     record = get_registry().get("inst_dp0b_host")
     assert record is not None

@@ -310,14 +310,40 @@ class InstanceRegistry:
             self.prepare_governed_instance(instance_id, workspace_root=workspace_root)
         )
 
-    def create_governed_instance(self, prepared: PreparedInstance) -> RegisteredInstance:
-        """Register the governed host `prepare_governed_instance` validated."""
+    def create_governed_instance(
+        self,
+        prepared: PreparedInstance,
+        *,
+        observe: Callable[[PlaybillStateCoordinateV1], None] | None = None,
+    ) -> RegisteredInstance:
+        """Register the governed host `prepare_governed_instance` validated.
+
+        ``observe`` sees the host's row (absent, for a new host) inside the
+        inserting transaction (R12's pin check).
+        """
 
         return self._insert_instance(
             backend=GOVERNED_DAEMON_BACKEND,
             location=prepared.location,
             workspace_root=prepared.workspace_root,
             preferred_instance_id=prepared.instance_id,
+            observe=observe,
+        )
+
+    def host_state(self, instance_id: str) -> PlaybillStateCoordinateV1:
+        """The state coordinate of one host's registry row (R12); absent rows digest too."""
+
+        with self._connect() as conn:
+            return self._host_state_conn(conn, instance_id)
+
+    @staticmethod
+    def _host_state_conn(conn: sqlite3.Connection, instance_id: str) -> PlaybillStateCoordinateV1:
+        row = conn.execute(
+            "SELECT backend, location, workspace_root FROM instances WHERE instance_id = ?",
+            (instance_id,),
+        ).fetchone()
+        return PlaybillStateCoordinateV1.of(
+            f"host:{instance_id}", None if row is None else [row[0], row[1], row[2]]
         )
 
     def workspace_state(self, instance_id: str) -> PlaybillStateCoordinateV1:
@@ -414,6 +440,7 @@ class InstanceRegistry:
         location: str,
         workspace_root: str | None,
         preferred_instance_id: str | None = None,
+        observe: Callable[[PlaybillStateCoordinateV1], None] | None = None,
     ) -> RegisteredInstance:
         refuse_write_while_previewing("instance registry")
         if Path(location).is_absolute():
@@ -423,6 +450,9 @@ class InstanceRegistry:
         created_at = format_datetime(utc_now())
         instance_id = preferred_instance_id or new_id("inst", length=16, separator="_")
         with self._connect() as conn:
+            if observe is not None:
+                conn.execute("BEGIN IMMEDIATE")
+                observe(self._host_state_conn(conn, instance_id))
             cursor = conn.execute(
                 """
                 INSERT OR IGNORE INTO instances(

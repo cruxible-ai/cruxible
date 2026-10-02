@@ -914,14 +914,15 @@ def show_host(instance_id: str, output_json: bool) -> None:
     help="Explicit Git workspace to configure; remote paths stay client-local.",
 )
 @click.option("--replace", is_flag=True, help="Replace a differing workspace config.")
-@click.option("--dry-run", is_flag=True, help="Check the allocation; register and write nothing.")
+@change_control_options
 @json_option
 @handle_errors
 def create_host(
     instance_id: str | None,
     workspace_path: str | None,
     replace: bool,
-    dry_run: bool,
+    dry_run: bool | None,
+    at: str | None,
     output_json: bool,
 ) -> None:
     """Allocate an empty host and remember it as the active instance."""
@@ -949,7 +950,7 @@ def create_host(
         )
     result = _dispatch_cli(
         lambda client: client.create_playbill_host(
-            instance_id=instance_id, workspace_root=workspace_root, dry_run=dry_run or None
+            instance_id=instance_id, workspace_root=workspace_root, dry_run=dry_run, at=at
         ),
         lambda: None,
         allow_local=False,
@@ -962,6 +963,7 @@ def create_host(
             _emit_json(_json_receipt(result))
         else:
             click.echo(f"Playbill host: {result.instance_id} ({result.status}); nothing written")
+            echo_preview_next(result.status, result.coordinate)
         return
     if git_workspace is not None:
         write_playbill_workspace_config(

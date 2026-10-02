@@ -30,6 +30,7 @@ def test_cli_allocates_and_remembers_a_playbill_host(monkeypatch, tmp_path) -> N
             instance_id: str | None = None,
             workspace_root: str | None = None,
             dry_run: bool | None = None,
+            at: str | None = None,
         ) -> contracts.PlaybillHostResult:
             assert instance_id == "inst_cli_host"
             return contracts.PlaybillHostResult(instance_id=instance_id, status="created")
@@ -232,6 +233,7 @@ def test_unix_socket_host_attach_uses_the_containing_git_worktree(
             instance_id: str | None = None,
             workspace_root: str | None = None,
             dry_run: bool | None = None,
+            at: str | None = None,
         ) -> contracts.PlaybillHostResult:
             calls.append(workspace_root)
             return contracts.PlaybillHostResult(instance_id=instance_id or "inst", status="created")
@@ -283,6 +285,7 @@ def test_explicit_remote_workspace_config_never_sends_the_client_path(
             instance_id: str | None = None,
             workspace_root: str | None = None,
             dry_run: bool | None = None,
+            at: str | None = None,
         ) -> contracts.PlaybillHostResult:
             assert workspace_root is None
             return contracts.PlaybillHostResult(instance_id=instance_id or "inst", status="created")

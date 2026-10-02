@@ -40,7 +40,7 @@ from cruxible_core.server.config import (
 )
 from cruxible_core.server.credentials import get_runtime_credential_store
 from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
-from cruxible_core.service.change_preview import preview_guards, state_change_scope
+from cruxible_core.service.change_preview import state_change_scope
 from cruxible_core.storage.preview_fence import is_previewing
 
 
@@ -197,56 +197,69 @@ def create_playbill_host(
     workspace_root: str | None = None,
     workspace_attachment_authorized: bool = False,
     dry_run: bool | None = None,
+    at: str | None = None,
 ) -> contracts.PlaybillHostResult:
     """Allocate one empty daemon-owned host record for later Playbill bootstrap.
 
     An existing host named again with a workspace is attached to it, initialized
-    or not (`attach_workspace`). ``dry_run`` registers nothing (R12).
+    or not (`attach_workspace`). ``dry_run`` registers nothing (R12); the
+    outcome is pinned to the host's registry row, which ``at`` carries back.
     """
 
-    registry = get_registry()
-    selected = (instance_id or "").strip() or registry.generate_governed_instance_id()
-    # The daemon-wide scope gate runs FIRST. Allocating a host is not an access
-    # to the instance it allocates -- that instance does not exist yet -- so an
-    # instance-scoped credential reaching this route must be told the real
-    # boundary it crossed and the credential that clears it, rather than the
-    # cross-instance message it happened to trip on the way past.
-    require_unscoped_operator("cruxible_playbill_host_create")
-    check_permission("cruxible_playbill_host_create", instance_id=selected)
-    if workspace_root is not None and not workspace_attachment_authorized:
-        raise ConfigError(
-            "Workspace attachment requires a caller connected directly through the local "
-            "Unix socket"
-        )
-    if workspace_root is not None:
-        try:
-            workspace_git_object_format(Path(workspace_root))
-        except ValueError as exc:
-            raise ConfigError("Workspace attachment requires one local Git worktree") from exc
-        attached = registry.get_governed_instance_by_workspace_root(workspace_root)
-        if attached is not None and attached.instance_id != selected:
+    with state_change_scope(
+        dry_run=dry_run,
+        at=at,
+        kind="direct",
+        operation="playbill.host.create",
+        describe="allocating a Playbill host",
+    ) as change:
+        registry = get_registry()
+        selected = (instance_id or "").strip() or registry.generate_governed_instance_id()
+        # The daemon-wide scope gate runs FIRST. Allocating a host is not an
+        # access to the instance it allocates -- that instance does not exist
+        # yet -- so an instance-scoped credential reaching this route must be
+        # told the real boundary it crossed and the credential that clears it,
+        # rather than the cross-instance message it happened to trip on the way.
+        require_unscoped_operator("cruxible_playbill_host_create")
+        check_permission("cruxible_playbill_host_create", instance_id=selected)
+        if workspace_root is not None and not workspace_attachment_authorized:
             raise ConfigError(
-                f"Workspace {str(Path(workspace_root).expanduser().resolve())!r} is already "
-                f"attached to Playbill host {attached.instance_id!r}; release it with "
-                f"`cruxible playbill workspace detach --instance-id {attached.instance_id}` "
-                f"or choose another Git worktree before creating {selected!r}"
+                "Workspace attachment requires a caller connected directly through the local "
+                "Unix socket"
             )
-
-    existing = registry.get(selected)
-    if existing is not None:
-        if existing.backend != GOVERNED_DAEMON_BACKEND:
-            raise ConfigError(f"Instance '{selected}' is not a governed daemon host")
         if workspace_root is not None:
-            with preview_guards(bool(dry_run)):
-                attach_workspace(selected, workspace_root)
-        return contracts.PlaybillHostResult(instance_id=selected, status="already_exists")
-    # Validation is shared: the preview answers from the same prepared row the
-    # commit inserts, so both refuse the same IDs and conflicts.
-    prepared = registry.prepare_governed_instance(selected, workspace_root=workspace_root)
-    if dry_run:
-        return contracts.PlaybillHostResult(instance_id=selected, status="would_create")
+            try:
+                workspace_git_object_format(Path(workspace_root))
+            except ValueError as exc:
+                raise ConfigError("Workspace attachment requires one local Git worktree") from exc
+            attached = registry.get_governed_instance_by_workspace_root(workspace_root)
+            if attached is not None and attached.instance_id != selected:
+                raise ConfigError(
+                    f"Workspace {str(Path(workspace_root).expanduser().resolve())!r} is already "
+                    f"attached to Playbill host {attached.instance_id!r}; release it with "
+                    f"`cruxible playbill workspace detach --instance-id {attached.instance_id}` "
+                    f"or choose another Git worktree before creating {selected!r}"
+                )
 
-    registered = registry.create_governed_instance(prepared)
+        existing = registry.get(selected)
+        if existing is not None:
+            if existing.backend != GOVERNED_DAEMON_BACKEND:
+                raise ConfigError(f"Instance '{selected}' is not a governed daemon host")
+            change.observe(registry.host_state(selected))
+            if workspace_root is not None:
+                attach_workspace(selected, workspace_root)
+            return contracts.PlaybillHostResult(
+                instance_id=selected, status="already_exists", coordinate=change.coordinate
+            )
+        # Validation is shared: the preview answers from the same prepared row
+        # the commit inserts, so both refuse the same IDs and conflicts.
+        prepared = registry.prepare_governed_instance(selected, workspace_root=workspace_root)
+        if change.previewing:
+            change.observe(registry.host_state(selected))
+            return contracts.PlaybillHostResult(
+                instance_id=selected, status="would_create", coordinate=change.coordinate
+            )
+        registered = registry.create_governed_instance(prepared, observe=change.observe)
     if registered.record.instance_id != selected:
         raise ConfigError(
             f"Workspace {registered.record.workspace_root!r} is already attached to Playbill "
@@ -257,6 +270,7 @@ def create_playbill_host(
     return contracts.PlaybillHostResult(
         instance_id=selected,
         status="created" if registered.created else "already_exists",
+        coordinate=change.coordinate,
     )
 
 

@@ -20301,6 +20301,25 @@
     },
     "PlaybillHostResult": {
       "fields": {
+        "coordinate": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillStateCoordinateV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "git_workspace_note": {
           "default": null,
           "default_json_serializable": true,
@@ -20373,10 +20392,50 @@
             ],
             "title": "GitWorkspaceNoteV1",
             "type": "object"
+          },
+          "PlaybillStateCoordinateV1": {
+            "additionalProperties": false,
+            "description": "The operational state one change was evaluated against.\n\n``subject`` names the records (``runtime_credential:<id>``,\n``host_workspace:<instance>``, ...) and ``digest`` is the sha256 of their\ncanonical JSON. A commit carrying ``at`` recomputes it where it writes and\nrefuses ``playbill.preview.state_moved`` when it differs.",
+            "properties": {
+              "digest": {
+                "pattern": "^[0-9a-f]{64}$",
+                "title": "Digest",
+                "type": "string"
+              },
+              "subject": {
+                "maxLength": 512,
+                "minLength": 1,
+                "title": "Subject",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-state-coordinate-v1",
+                "default": "playbill-state-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject",
+              "digest"
+            ],
+            "title": "PlaybillStateCoordinateV1",
+            "type": "object"
           }
         },
         "additionalProperties": false,
         "properties": {
+          "coordinate": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillStateCoordinateV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "git_workspace_note": {
             "anyOf": [
               {

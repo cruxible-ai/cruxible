@@ -370,6 +370,9 @@ class PlaybillHostResult(BaseModel):
     instance_id: str
     status: PlaybillHostStatus
     git_workspace_note: GitWorkspaceNoteV1 | None = None
+    #: The host's registry row the allocation was checked against (absent, for
+    #: a new host), read where it is written; commit a preview with ``at``.
+    coordinate: PlaybillStateCoordinateV1 | None = None
 
 
 class PlaybillHostWorkspaceRegistrationV1(BaseModel):

@@ -37,7 +37,7 @@ def claim_runtime_bootstrap(
     store = get_runtime_credential_store()
     with state_change_scope(
         dry_run=req.dry_run,
-        at=None,
+        at=req.at,
         kind="direct",
         operation="credential.claim-bootstrap",
         describe=f"claiming the bootstrap credential of {resolved_instance_id}",

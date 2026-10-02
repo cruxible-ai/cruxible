@@ -144,15 +144,12 @@ def _echo_token_once(token: str, *, label: str) -> None:
         "CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET."
     ),
 )
-@click.option(
-    "--dry-run/--commit",
-    "dry_run",
-    default=None,
-    help="--dry-run: check the claim and claim nothing. Default: claim.",
-)
+@_common.change_control_options
 @click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON.")
 @handle_errors
-def claim_bootstrap_cmd(secret_file: str | None, dry_run: bool | None, output_json: bool) -> None:
+def claim_bootstrap_cmd(
+    secret_file: str | None, dry_run: bool | None, at: str | None, output_json: bool
+) -> None:
     """Exchange the bootstrap secret for this host's first ADMIN runtime token.
 
     The secret is claimable once per host: each host on the daemon claims its
@@ -160,7 +157,7 @@ def claim_bootstrap_cmd(secret_file: str | None, dry_run: bool | None, output_js
     """
     client, instance_id = _require_server_client("credential claim-bootstrap")
     result = client.claim_runtime_bootstrap(
-        instance_id, _read_bootstrap_secret(secret_file), dry_run=dry_run
+        instance_id, _read_bootstrap_secret(secret_file), dry_run=dry_run, at=at
     )
     if output_json:
         _common._emit_json(result.model_dump(mode="json"))
@@ -169,6 +166,7 @@ def claim_bootstrap_cmd(secret_file: str | None, dry_run: bool | None, output_js
         click.echo(
             f"Would claim the bootstrap credential of {result.instance_id}; nothing claimed."
         )
+        _common.echo_preview_next(result.status, result.coordinate)
         return
 
     click.echo("Bootstrap claimed.")

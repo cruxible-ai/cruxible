@@ -270,6 +270,7 @@ def test_host_creation_names_explicit_requested_id(
             instance_id: str | None = None,
             workspace_root: str | None = None,
             dry_run: bool | None = None,
+            at: str | None = None,
         ) -> contracts.PlaybillHostResult:
             assert instance_id == "inst_requested"
             return contracts.PlaybillHostResult(instance_id=instance_id, status="created")
