@@ -35,6 +35,7 @@ EXEMPT: dict[str, str] = {
     # Daemon-wide operator levers the runtime bootstrap secret drives before,
     # or independently of, any principal; none changes governed state.
     "create_playbill_host": "allocates an empty host before any principal exists",
+    "set_playbill_floor_delivery": "chooses a workspace writer under local attachment authority",
     "playbill_host_workspace_detach": "releases a worktree registration; the operator lever",
     "server_restart": "daemon lifecycle",
     "server_stop": "daemon lifecycle",

@@ -60,6 +60,7 @@ from cruxible_client.authoring.sources import (
 )
 from cruxible_client.authoring.workspace import (
     PlaybillWorkspaceAttachmentError,
+    daemon_floor_delivery,
     floor_export_parts,
     observe_playbill_next_workspace_with_coverage,
     observe_playbill_projection_coverage,
@@ -724,10 +725,12 @@ def workspace_group() -> None:
 @workspace_group.command("attach")
 @click.option("--instance-id", default=None, help="Existing registered daemon host ID.")
 @click.option("--replace", is_flag=True, help="Replace a differing workspace config.")
+@click.option("--floor-delivery", is_flag=True, help="Let the local daemon deliver the floor.")
 @json_option
 @handle_errors
 def attach_workspace(
     instance_id: str | None,
+    floor_delivery: bool,
     replace: bool,
     output_json: bool,
 ) -> None:
@@ -774,6 +777,13 @@ def attach_workspace(
         replace=replace,
         **transport_values,
     )
+    if floor_delivery:
+        _dispatch_cli(
+            lambda client: client.set_playbill_floor_delivery(selected, enabled=True),
+            lambda: None,
+            allow_local=False,
+            command_name="playbill workspace attach",
+        )
     result = contracts.PlaybillWorkspaceAttachResultV1(
         instance_id=selected,
         workspace_root=str(workspace),
@@ -786,6 +796,30 @@ def attach_workspace(
         return
     click.echo(f"Attached workspace {workspace} to Playbill host {selected}")
     click.echo(f"Config: {config_path}")
+
+
+@workspace_group.command("floor-delivery")
+@click.argument("state", type=click.Choice(["on", "off"]))
+@click.option("--instance-id", default=None, help="Existing registered daemon host ID.")
+@json_option
+@handle_errors
+def workspace_floor_delivery(state: str, instance_id: str | None, output_json: bool) -> None:
+    """Choose whether the local daemon is the workspace floor's writer."""
+
+    if not _root_ctx_obj().get("server_socket"):
+        raise click.UsageError("workspace floor-delivery requires a local --server-socket")
+    selected = instance_id or _require_instance_id()
+    result = _dispatch_cli(
+        lambda client: client.set_playbill_floor_delivery(selected, enabled=state == "on"),
+        lambda: None,
+        allow_local=False,
+        command_name="playbill workspace floor-delivery",
+    )
+    assert result is not None
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+    else:
+        click.echo(f"Floor delivery {state} for {selected}")
 
 
 @workspace_group.command("detach")
@@ -855,6 +889,7 @@ def show_host(instance_id: str, output_json: bool) -> None:
     click.echo(f"Transport: {transport}")
     click.echo(f"Managed root: {result.managed_root or '-'}")
     click.echo(f"Workspace root: {result.workspace_root or '-'}")
+    click.echo(f"Floor delivery: {'on' if result.floor_delivery else 'off'}")
     click.echo(f"Compiler coordinate: {result.compiler_coordinate or '-'}")
     click.echo(f"Compiler revision: {result.compiler_revision or '-'}")
     click.echo(f"Compatibility: {result.compatibility}")
@@ -5903,6 +5938,9 @@ def export_floor(
         result, written = _server_call(
             lambda client, instance_id: write_workspace_floor(
                 lambda: client.export_playbill_floor(instance_id, **floor_export_parts(include)),
+                delivery=lambda: daemon_floor_delivery(
+                    client, instance_id, workspace_root, include=include
+                ),
                 instance_id=instance_id,
                 workspace=workspace_root,
                 include=include,
@@ -5921,6 +5959,7 @@ def export_floor(
                 lambda generation, renderer: client.playbill_floor_delta(
                     instance_id, base_generation=generation, base_renderer=renderer
                 ),
+                delivery=lambda: daemon_floor_delivery(client, instance_id, workspace_root),
                 instance_id=instance_id,
                 workspace=workspace_root,
                 force=force,

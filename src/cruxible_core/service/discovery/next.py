@@ -4102,7 +4102,17 @@ def _triggers_health(
     scheduled: dict[str, list[str]] = {}
     for action, identity in rows:
         scheduled.setdefault(action, []).append(identity)
-    unscheduled = [action for action in INTERNAL_ACTIONS if action not in scheduled]
+    from cruxible_core.server.registry import get_registry
+
+    record = get_registry().get(instance.descriptor.instance_id)
+    delivery_enabled = record is not None and record.floor_delivery
+    # Workspace delivery is opt-in: an instance that has not requested it
+    # needs no floor schedule. Findings actions retain their existing advisory.
+    unscheduled = [
+        action
+        for action, spec in INTERNAL_ACTIONS.items()
+        if action not in scheduled and (spec.effect == "findings" or delivery_enabled)
+    ]
     detail: dict[str, object] = {"scheduled": scheduled}
     if not unscheduled:
         return PlaybillNextHealthV1(state="scheduled", detail=detail)
@@ -4154,10 +4164,11 @@ def _consumers_health(
 
     workers: list[dict[str, object]] = []
     for kind in consumer_kinds():
-        if kind.effect_class != "findings":
+        if kind.effect_class not in {"findings", "workspace_output"}:
             continue
         if not kind.active(instance):
-            workers.append({"kind": kind.name, "state": "disabled"})
+            if kind.effect_class == "findings":
+                workers.append({"kind": kind.name, "state": "disabled"})
             continue
         workers.extend(
             {"kind": health.kind, "state": health.state, **health.detail}

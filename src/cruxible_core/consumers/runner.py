@@ -27,10 +27,11 @@ _log = structlog.get_logger(__name__)
 
 
 def consumer_kinds() -> tuple[ConsumerKind, ...]:
+    from cruxible_core.consumers.floor import FLOOR
     from cruxible_core.consumers.lines import LINE_ARMS
     from cruxible_core.consumers.next import NEXT_QUEUE
 
-    return (LINE_ARMS, NEXT_QUEUE)
+    return (LINE_ARMS, NEXT_QUEUE, FLOOR)
 
 
 def consumer_health(instance: Any, *, now: datetime) -> tuple[ConsumerHealth, ...]:
@@ -98,6 +99,7 @@ class ConsumerRunner:
         self._in_flight_lock = threading.Lock()
         #: Per instance, when this runner began firing its internal Triggers.
         self._listening_since: dict[str, datetime] = {}
+        self._listening_generation: dict[str, int] = {}
 
     def start(self) -> None:
         if self.thread is None or not self.thread.is_alive():
@@ -108,6 +110,7 @@ class ConsumerRunner:
             # Every start listens afresh: timer instants that passed while this
             # runner was stopped are skipped, never caught up.
             self._listening_since = {}
+            self._listening_generation = {}
             self.stop_event.clear()
             self._executors = {
                 kind.name: ThreadPoolExecutor(
@@ -141,7 +144,17 @@ class ConsumerRunner:
         # The live internal Triggers at the instance's accepted head fire here,
         # from when this runner began listening: what passed before is skipped.
         listening_since = self._listening_since.setdefault(instance_id, now)
-        evaluate_triggers(instance, now=now, listening_since=listening_since)
+        if instance_id not in self._listening_generation and hasattr(
+            instance, "accepted_history_reader"
+        ):
+            with instance.accepted_history_reader() as history:
+                self._listening_generation[instance_id] = history.sequence
+        evaluate_triggers(
+            instance,
+            now=now,
+            listening_since=listening_since,
+            listening_generation=self._listening_generation.get(instance_id),
+        )
         for kind in self.kinds:
             if not kind.active(instance):
                 continue

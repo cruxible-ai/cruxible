@@ -37,6 +37,7 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("playbill", "host", "create"): "create",
     ("playbill", "workspace", "attach"): "manual",
     ("playbill", "workspace", "detach"): "manual",
+    ("playbill", "workspace", "floor-delivery"): "manual",
     ("playbill", "init"): "active",
     ("playbill", "instance", "decommission"): "active",
     ("playbill", "body", "store"): "active",
@@ -368,6 +369,11 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                         "playbill",
                         "attach_workspace",
                         "Attach this Git worktree to an existing host.",
+                    ),
+                    "floor-delivery": _command(
+                        "playbill",
+                        "workspace_floor_delivery",
+                        "Choose the local daemon workspace floor writer.",
                     ),
                     "detach": _command(
                         "playbill",

@@ -150,6 +150,7 @@ def test_host_show_and_server_status_inspect_uninitialized_hosts_without_writing
         "instance_id": "inst_show_empty",
         "managed_root": str(Path(record.location).resolve()),
         "workspace_root": None,
+        "floor_delivery": False,
         "compiler_coordinate": None,
         "compiler_revision": None,
         "compatibility": "uninitialized",

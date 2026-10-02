@@ -53,6 +53,7 @@ from cruxible_client.contracts.compact_query import QueryFilterLteV1 as QueryFil
 from cruxible_client.contracts.compact_query import QueryFilterLtV1 as QueryFilterLtV1
 from cruxible_client.contracts.compact_query import QueryFilterNeV1 as QueryFilterNeV1
 from cruxible_client.contracts.compact_query import QueryFollowV1 as QueryFollowV1
+from cruxible_client.contracts.floor import PlaybillFloorDeltaV1
 from cruxible_client.contracts.line_dispatch import (
     LineArmOutcomeV1 as LineArmOutcomeV1,
 )
@@ -401,6 +402,7 @@ class PlaybillHostWorkspaceRegistrationV1(BaseModel):
     instance_id: str
     status: PlaybillHostWorkspaceRegistrationStatus
     workspace_path: str | None = None
+    floor_delivery: bool = False
 
 
 PlaybillHostCompatibilityV1: TypeAlias = Literal[
@@ -432,6 +434,7 @@ class PlaybillHostInspectionV1(BaseModel):
     instance_id: str
     managed_root: str | None
     workspace_root: str | None
+    floor_delivery: bool = False
     compiler_coordinate: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
     compiler_revision: str | None = None
     compatibility: PlaybillHostCompatibilityV1
@@ -1911,7 +1914,7 @@ class PlaybillFloorExport(BaseModel):
 
 
 class PlaybillWorkspaceFloorWriteResult(BaseModel):
-    """A verified floor export materialized by a client-side adapter."""
+    """A verified floor export materialized by the workspace writer."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -1926,6 +1929,38 @@ class PlaybillWorkspaceFloorWriteResult(BaseModel):
     coordinate: PlaybillAcceptedCoordinate
     file_count: int = Field(ge=1)
     git_workspace_note: GitWorkspaceNoteV1 | None = None
+
+
+class PlaybillFloorDeliveryResultV1(BaseModel):
+    """The same floor delta and write receipt returned by a daemon delivery."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    tag: Literal["playbill-floor-delivery-result-v1"] = "playbill-floor-delivery-result-v1"
+    delta: PlaybillFloorDeltaV1
+    written: PlaybillWorkspaceFloorWriteResult
+    export: PlaybillFloorExport | None = None
+
+
+class PlaybillFloorConsumerOutcomeV1(BaseModel):
+    """One floor refresh at an accepted head, including a typed stalled outcome."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    tag: Literal["playbill-floor-consumer-outcome-v1"] = "playbill-floor-consumer-outcome-v1"
+    generation: int = Field(ge=0)
+    status: Literal["written", "unchanged", "failed"]
+    file_count: int = Field(default=0, ge=0)
+    error: str | None = None
+
+
+class PlaybillFloorDeliverNowRequestV1(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    include: tuple[PlaybillFloorExportPart, ...] = ()
+    at: PlaybillAcceptedCoordinate | None = None
+
+
+class PlaybillFloorDeliveryRequestV1(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    enabled: bool
 
 
 class PlaybillWorkspaceAttachResultV1(BaseModel):

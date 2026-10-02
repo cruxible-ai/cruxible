@@ -32,6 +32,7 @@ from cruxible_client.authoring.sources import (
     mapped_root_aliases,
 )
 from cruxible_client.authoring.workspace import (
+    daemon_floor_delivery,
     floor_export_parts,
     observe_playbill_next_workspace_with_coverage,
     workspace_floor_freshness,
@@ -2346,9 +2347,11 @@ def handle_playbill_floor_export(
 
     def write(
         export_floor: Callable[[], contracts.PlaybillFloorExport],
+        delivery: Callable[[], contracts.PlaybillFloorDeliveryResultV1 | None] | None = None,
     ) -> contracts.PlaybillWorkspaceFloorWriteResult:
         return write_workspace_floor(
             export_floor,
+            delivery=delivery,
             instance_id=instance_id,
             workspace=workspace,
             include=include,
@@ -2363,6 +2366,9 @@ def handle_playbill_floor_export(
             lambda generation, renderer: client.playbill_floor_delta(
                 instance_id, base_generation=generation, base_renderer=renderer
             ),
+            delivery=(lambda: daemon_floor_delivery(client, instance_id, workspace))
+            if transport.get("server_socket")
+            else None,
             instance_id=instance_id,
             workspace=workspace,
             force=force,
@@ -2376,7 +2382,12 @@ def handle_playbill_floor_export(
             operation_name="cruxible_playbill_floor_export",
         )
     return _dispatch_remote_or_local(
-        lambda client: write(lambda: client.export_playbill_floor(instance_id, **parts)),
+        lambda client: write(
+            lambda: client.export_playbill_floor(instance_id, **parts),
+            (lambda: daemon_floor_delivery(client, instance_id, workspace, include=tuple(include)))
+            if transport.get("server_socket")
+            else None,
+        ),
         lambda: write(lambda: playbill_api.playbill_export_floor(instance_id, **parts)),
         operation_name="cruxible_playbill_floor_export",
     )

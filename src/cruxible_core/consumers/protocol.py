@@ -10,7 +10,9 @@ policy says what a restart does: a forward-only kind starts again from now and
 leaves what it missed to explicit action; a resuming kind continues from where
 it stopped. The effect class says what acting may change: a governed kind
 admits work under authority it rechecks each time; a findings kind writes only
-state it could rebuild from the logs.
+state it could rebuild from the logs. A workspace-output kind may write only
+an allowlisted subtree of a registered local workspace, and could rebuild
+everything it writes from the logs.
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ from datetime import datetime
 from typing import Any, Literal, Protocol
 
 CursorPolicy = Literal["forward_only", "resume"]
-EffectClass = Literal["governed", "findings"]
+EffectClass = Literal["governed", "findings", "workspace_output"]
 ConsumerState = Literal["running", "lagging", "stopped", "stalled", "disabled"]
 
 

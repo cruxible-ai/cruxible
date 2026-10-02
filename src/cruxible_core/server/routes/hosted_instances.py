@@ -9,6 +9,8 @@ from cruxible_core.runtime import host_api
 from cruxible_core.server.config import resolve_server_settings
 from cruxible_core.server.request_models import PlaybillHostCreateRequest
 from cruxible_core.server.route_paths import (
+    PLAYBILL_FLOOR_DELIVER_NOW_PATH,
+    PLAYBILL_FLOOR_DELIVERY_PATH,
     PLAYBILL_HOST_CREATE_PATH,
     PLAYBILL_HOST_SHOW_PATH,
     PLAYBILL_WORKSPACE_DETACH_PATH,
@@ -77,6 +79,45 @@ def playbill_host_workspace_registration(
     return host_api.playbill_host_workspace_registration(
         resolve_server_instance_id(instance_id),
         expose_workspace_path=(
+            request.scope.get("client") is None
+            and resolve_server_settings().server_socket is not None
+        ),
+    )
+
+
+@router.post(
+    PLAYBILL_FLOOR_DELIVERY_PATH, response_model=contracts.PlaybillHostWorkspaceRegistrationV1
+)
+def set_playbill_floor_delivery(
+    instance_id: str,
+    req: contracts.PlaybillFloorDeliveryRequestV1,
+    request: Request,
+) -> contracts.PlaybillHostWorkspaceRegistrationV1:
+    """Set the local workspace's floor writer through attachment authority."""
+
+    return host_api.set_playbill_floor_delivery(
+        resolve_server_instance_id(instance_id),
+        enabled=req.enabled,
+        workspace_attachment_authorized=(
+            request.scope.get("client") is None
+            and resolve_server_settings().server_socket is not None
+        ),
+    )
+
+
+@router.post(
+    PLAYBILL_FLOOR_DELIVER_NOW_PATH, response_model=contracts.PlaybillFloorDeliveryResultV1
+)
+def deliver_playbill_floor_now(
+    instance_id: str, request: Request, req: contracts.PlaybillFloorDeliverNowRequestV1
+) -> contracts.PlaybillFloorDeliveryResultV1:
+    """Deliver under the floor consumer's admission and return its write receipt."""
+
+    return host_api.deliver_playbill_floor_now(
+        resolve_server_instance_id(instance_id),
+        include=req.include,
+        at=req.at,
+        workspace_attachment_authorized=(
             request.scope.get("client") is None
             and resolve_server_settings().server_socket is not None
         ),

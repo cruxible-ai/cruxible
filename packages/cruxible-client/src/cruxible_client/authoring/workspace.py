@@ -895,8 +895,8 @@ def write_projection_index(workspace: str | Path) -> int | None:
     Writes ``projections/INDEX`` into the workspace floor: one line per
     workspace file bound to accepted state -- a Document body, an evidence
     source, or a rendered projection block -- with its role, the ref it is
-    bound to, and the generation that ref last changed. The daemon never sees
-    these paths, so the file is outside the daemon-verified manifest. A bound
+    bound to, and the generation that ref last changed. These local paths stay
+    outside the coordinate-pure manifest, whichever workspace writer applies it. A bound
     file that does not exist is left out; ``next`` reports it for repair.
     Returns the number of lines, or ``None`` when there is no v5 floor.
     """
@@ -935,7 +935,7 @@ def write_projection_index(workspace: str | Path) -> int | None:
     rows = sorted(set(rows), key=lambda row: tuple(cell.encode() for cell in row))
     header = (
         f"# projections INDEX  {len(rows)} bindings  columns: workspace path, role, "
-        "bound ref, changed gen  (written by the client from its workspace)"
+        "bound ref, changed gen  (written from the local workspace)"
     )
     text = "".join(f"{line}\n" for line in (header, *("\t".join(row) for row in rows)))
     target = floor / PROJECTIONS_INDEX_PATH
@@ -987,6 +987,46 @@ def sync_floor_directory(
     return delta, result
 
 
+class _FloorDeliveryClient(Protocol):
+    socket_path: str | None
+
+    def playbill_host_workspace_registration(
+        self, instance_id: str
+    ) -> contracts.PlaybillHostWorkspaceRegistrationV1: ...
+
+    def deliver_playbill_floor_now(
+        self,
+        instance_id: str,
+        *,
+        include: tuple[contracts.PlaybillFloorExportPart, ...] = (),
+        at: contracts.PlaybillAcceptedCoordinate | None = None,
+    ) -> contracts.PlaybillFloorDeliveryResultV1: ...
+
+
+def daemon_floor_delivery(
+    client: _FloorDeliveryClient,
+    instance_id: str,
+    workspace: str | Path,
+    *,
+    include: tuple[contracts.PlaybillFloorExportPart, ...] = (),
+    at: contracts.PlaybillAcceptedCoordinate | None = None,
+) -> contracts.PlaybillFloorDeliveryResultV1 | None:
+    """A local daemon opted into this exact workspace is its floor's only writer."""
+
+    if getattr(client, "socket_path", None) is None:
+        return None
+    registration = client.playbill_host_workspace_registration(instance_id)
+    if not registration.floor_delivery:
+        return None
+    if registration.workspace_path is None or Path(
+        registration.workspace_path
+    ).resolve() != _workspace_root(workspace):
+        raise PlaybillWorkspaceError("Daemon delivery is bound to another workspace")
+    if include or at is not None:
+        return client.deliver_playbill_floor_now(instance_id, include=include, at=at)
+    return client.deliver_playbill_floor_now(instance_id)
+
+
 def write_workspace_floor_delta(
     fetch_delta: FloorDeltaFetch,
     *,
@@ -995,6 +1035,7 @@ def write_workspace_floor_delta(
     force: bool = True,
     server_url: str | None = None,
     server_socket: str | None = None,
+    delivery: Callable[[], contracts.PlaybillFloorDeliveryResultV1 | None] | None = None,
 ) -> tuple[PlaybillFloorDeltaV1, contracts.PlaybillWorkspaceFloorWriteResult]:
     """Write the default floor through the shared apply and record its refresh profile.
 
@@ -1014,8 +1055,23 @@ def write_workspace_floor_delta(
         raise PlaybillWorkspaceError(
             f"refusing to write the floor into a non-empty directory: {destination}"
         )
-    delta, applied = sync_floor_directory(fetch_delta, destination)
-    write_projection_index(root)
+    delivered = None if delivery is None else delivery()
+    if delivered is None:
+        delta, applied = sync_floor_directory(fetch_delta, destination)
+        write_projection_index(root)
+        assert applied.floor_digest is not None
+        written = contracts.PlaybillWorkspaceFloorWriteResult(
+            status="unchanged" if applied.status == "unchanged" else "written",
+            path=PLAYBILL_FLOOR_PATH,
+            destination=str(destination),
+            floor_digest=applied.floor_digest,
+            coordinate=contracts.PlaybillAcceptedCoordinate.model_validate(
+                delta.head.coordinate().model_dump(mode="json")
+            ),
+            file_count=applied.file_count + 1,
+        )
+    else:
+        delta, written = delivered.delta, delivered.written
     if (root / _CONFIG_PATH).exists() or server_url is not None or server_socket is not None:
         record_playbill_floor_output(
             workspace,
@@ -1023,17 +1079,7 @@ def write_workspace_floor_delta(
             server_url=server_url,
             server_socket=server_socket,
         )
-    assert applied.floor_digest is not None
-    return delta, contracts.PlaybillWorkspaceFloorWriteResult(
-        status="unchanged" if applied.status == "unchanged" else "written",
-        path=PLAYBILL_FLOOR_PATH,
-        destination=str(destination),
-        floor_digest=applied.floor_digest,
-        coordinate=contracts.PlaybillAcceptedCoordinate.model_validate(
-            delta.head.coordinate().model_dump(mode="json")
-        ),
-        file_count=applied.file_count + 1,
-    )
+    return delta, written
 
 
 def write_workspace_floor(
@@ -1045,6 +1091,7 @@ def write_workspace_floor(
     force: bool = True,
     server_url: str | None = None,
     server_socket: str | None = None,
+    delivery: Callable[[], contracts.PlaybillFloorDeliveryResultV1 | None] | None = None,
 ) -> tuple[contracts.PlaybillFloorExport, contracts.PlaybillWorkspaceFloorWriteResult]:
     """Write an exported floor into the workspace and record its refresh profile.
 
@@ -1056,8 +1103,14 @@ def write_workspace_floor(
     nothing is recorded.
     """
 
-    export = export_floor()
-    written = materialize_playbill_floor(workspace, export=export, force=force)
+    delivered = None if delivery is None else delivery()
+    if delivered is None:
+        export = export_floor()
+        written = materialize_playbill_floor(workspace, export=export, force=force)
+    else:
+        if delivered.export is None:
+            raise PlaybillWorkspaceError("daemon delivery omitted the requested full export")
+        export, written = delivered.export, delivered.written
     if (
         (_workspace_root(workspace) / _CONFIG_PATH).exists()
         or server_url is not None
@@ -1872,6 +1925,23 @@ def refresh_workspace_floor(
         if configured is None:
             return contracts.PlaybillFloorRefreshResult(status="not_configured")
         relative_path, include = configured
+        if getattr(client, "socket_path", None) is not None:
+            delivered = daemon_floor_delivery(
+                cast(_FloorDeliveryClient, client),
+                instance_id,
+                workspace,
+                include=tuple(include),
+                at=at,
+            )
+            if delivered is not None:
+                written = delivered.written
+                return contracts.PlaybillFloorRefreshResult(
+                    status="refreshed",
+                    path=relative_path,
+                    destination=written.destination,
+                    floor_digest=written.floor_digest,
+                    coordinate=written.coordinate,
+                )
         if include:
             # Opt-in discovery cards are a full export's; they never travel in a delta.
             export = client.export_playbill_floor(instance_id, at=at, **floor_export_parts(include))
@@ -1991,6 +2061,7 @@ __all__ = [
     "floor_export_parts",
     "record_playbill_floor_output",
     "sync_floor_directory",
+    "daemon_floor_delivery",
     "write_workspace_floor",
     "write_workspace_floor_delta",
     "refresh_workspace_floor",

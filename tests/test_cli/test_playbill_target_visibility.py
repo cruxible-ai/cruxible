@@ -32,6 +32,7 @@ def _isolate_target_environment(monkeypatch: pytest.MonkeyPatch) -> None:
 EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("playbill", "host", "create"): "create",
     ("playbill", "workspace", "attach"): "manual",
+    ("playbill", "workspace", "floor-delivery"): "manual",
     ("playbill", "workspace", "detach"): "manual",
     ("playbill", "init"): "active",
     ("playbill", "instance", "decommission"): "active",

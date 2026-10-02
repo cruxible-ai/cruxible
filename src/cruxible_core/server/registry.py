@@ -17,6 +17,18 @@ GOVERNED_DAEMON_BACKEND = "governed_daemon"
 _INSTANCE_ID_RE = re.compile(r"^inst_[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
+def _migrate_floor_delivery_column(conn: sqlite3.Connection) -> None:
+    """2026-10-01-floor-delivery-column: safe in either registry migration order."""
+
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(instances)")}
+    if "floor_delivery" not in columns:
+        conn.execute(
+            "ALTER TABLE instances ADD COLUMN floor_delivery INTEGER NOT NULL DEFAULT 0 "
+            "CHECK (floor_delivery IN (0,1) AND "
+            "(floor_delivery=0 OR workspace_root IS NOT NULL))"
+        )
+
+
 @dataclass(frozen=True)
 class InstanceRecord:
     """Persistent mapping from opaque instance ID to backend metadata."""
@@ -26,6 +38,7 @@ class InstanceRecord:
     location: str
     workspace_root: str | None
     created_at: str
+    floor_delivery: bool = False
 
 
 @dataclass(frozen=True)
@@ -72,11 +85,39 @@ class InstanceRegistry:
                 """
             )
 
+            conn.execute("CREATE TABLE IF NOT EXISTS registry_migrations (name TEXT PRIMARY KEY)")
+            if (
+                conn.execute(
+                    "SELECT 1 FROM registry_migrations "
+                    "WHERE name='2026-10-01-floor-delivery-column'"
+                ).fetchone()
+                is None
+            ):
+                _migrate_floor_delivery_column(conn)
+                conn.execute(
+                    "INSERT INTO registry_migrations VALUES ('2026-10-01-floor-delivery-column')"
+                )
+
+    def set_floor_delivery(self, instance_id: str, enabled: bool) -> InstanceRecord:
+        """Set delivery only for a registered governed host with a local workspace."""
+
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "UPDATE instances SET floor_delivery=? WHERE instance_id=? AND backend=? "
+                "AND workspace_root IS NOT NULL",
+                (int(enabled), instance_id, GOVERNED_DAEMON_BACKEND),
+            )
+        if cursor.rowcount != 1:
+            raise ConfigError("Floor delivery requires a bound local workspace")
+        record = self.get(instance_id)
+        assert record is not None
+        return record
+
     def get(self, instance_id: str) -> InstanceRecord | None:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT instance_id, backend, location, workspace_root, created_at
+                SELECT instance_id, backend, location, workspace_root, created_at, floor_delivery
                 FROM instances
                 WHERE instance_id = ?
                 """,
@@ -91,7 +132,7 @@ class InstanceRegistry:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT instance_id, backend, location, workspace_root, created_at
+                SELECT instance_id, backend, location, workspace_root, created_at, floor_delivery
                 FROM instances
                 ORDER BY instance_id
                 """
@@ -114,7 +155,7 @@ class InstanceRegistry:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT instance_id, backend, location, workspace_root, created_at
+                SELECT instance_id, backend, location, workspace_root, created_at, floor_delivery
                 FROM instances
                 WHERE backend = ?
                 ORDER BY instance_id
@@ -201,7 +242,7 @@ class InstanceRegistry:
             cursor = conn.execute(
                 """
                 UPDATE instances
-                SET workspace_root = NULL
+                SET workspace_root = NULL, floor_delivery = 0
                 WHERE instance_id = ? AND workspace_root = ?
                 """,
                 (instance_id, expected),
@@ -255,7 +296,7 @@ class InstanceRegistry:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT instance_id, backend, location, workspace_root, created_at
+                SELECT instance_id, backend, location, workspace_root, created_at, floor_delivery
                 FROM instances
                 WHERE backend = ? AND location = ?
                 """,
@@ -273,7 +314,7 @@ class InstanceRegistry:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT instance_id, backend, location, workspace_root, created_at
+                SELECT instance_id, backend, location, workspace_root, created_at, floor_delivery
                 FROM instances
                 WHERE backend = ? AND workspace_root = ?
                 """,
@@ -291,6 +332,7 @@ class InstanceRegistry:
             location=row["location"],
             workspace_root=row["workspace_root"],
             created_at=row["created_at"],
+            floor_delivery=bool(row["floor_delivery"]),
         )
 
 
