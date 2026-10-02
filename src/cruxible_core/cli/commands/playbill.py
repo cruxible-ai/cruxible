@@ -1458,6 +1458,12 @@ def install_provider(
         click.echo(f"{result.provider_id}: {result.status}")
         if result.detail:
             click.echo(result.detail)
+        if result.preview_scope == "validation_only":
+            click.echo(
+                "Validation-only preview; it did not run: "
+                + ", ".join(step.replace("_", " ") for step in result.not_run)
+            )
+            echo_preview_next(result.status, result.coordinate)
         if result.proposal_id:
             click.echo(f"Proposal: {result.proposal_id}")
         for operation in result.operations:

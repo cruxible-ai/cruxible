@@ -52001,6 +52001,25 @@
             "title": "Candidate Digest"
           }
         },
+        "coordinate": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "detail": {
           "default": null,
           "default_json_serializable": true,
@@ -52041,6 +52060,27 @@
             "type": "boolean"
           }
         },
+        "not_run": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "not_run",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "enum": [
+                "package_preparation",
+                "deployment_readiness",
+                "registration"
+              ],
+              "type": "string"
+            },
+            "title": "Not Run",
+            "type": "array"
+          }
+        },
         "operations": {
           "default": [],
           "default_json_serializable": true,
@@ -52055,6 +52095,27 @@
             },
             "title": "Operations",
             "type": "array"
+          }
+        },
+        "preview_scope": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "preview_scope",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "const": "validation_only",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Preview Scope"
           }
         },
         "proposal_id": {
@@ -52130,6 +52191,42 @@
       },
       "json_schema": {
         "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          },
           "ProviderOperationReadinessV1": {
             "additionalProperties": false,
             "properties": {
@@ -52172,6 +52269,17 @@
             "default": null,
             "title": "Candidate Digest"
           },
+          "coordinate": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "detail": {
             "anyOf": [
               {
@@ -52192,6 +52300,19 @@
             "title": "Installed",
             "type": "boolean"
           },
+          "not_run": {
+            "default": [],
+            "items": {
+              "enum": [
+                "package_preparation",
+                "deployment_readiness",
+                "registration"
+              ],
+              "type": "string"
+            },
+            "title": "Not Run",
+            "type": "array"
+          },
           "operations": {
             "default": [],
             "items": {
@@ -52199,6 +52320,19 @@
             },
             "title": "Operations",
             "type": "array"
+          },
+          "preview_scope": {
+            "anyOf": [
+              {
+                "const": "validation_only",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Preview Scope"
           },
           "proposal_id": {
             "anyOf": [

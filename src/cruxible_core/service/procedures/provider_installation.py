@@ -13,12 +13,14 @@ import tomllib
 from collections.abc import Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 from urllib.parse import unquote, urlsplit
 
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
 from cruxible_client.contracts.canonical import canonical_bytes, canonical_digest
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.errors import ProposalIntegrityError
+from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.provider_installation import (
     PlaybillProviderCatalogV1,
     PlaybillProviderInstallRequestV1,
@@ -466,6 +468,12 @@ def _preview_installation(
 
     prepared_path = directory / "prepared.json"
     name = request.package or "transferred wheel"
+    assert mode.head is not None
+    # The v1 exception (r12-scope-1001): validation only, labelled as such.
+    label: dict[str, Any] = {
+        "preview_scope": "validation_only",
+        "coordinate": AcceptedCoordinate.from_internal(mode.head),
+    }
     if not prepared_path.is_file():
         return PlaybillProviderInstallResultV1(
             installation_id=identifier,
@@ -473,6 +481,8 @@ def _preview_installation(
             status="would_install",
             installed=False,
             registered=False,
+            not_run=("package_preparation", "deployment_readiness", "registration"),
+            **label,
             detail=(
                 f"would fetch and build {name} and then propose its definitions; the "
                 "registration is evaluated once the package is prepared, so preview it again "
@@ -482,7 +492,6 @@ def _preview_installation(
     saved = json.loads(prepared_path.read_bytes())
     document = PackageRegistrationDocumentV1.model_validate(saved["document"])
     provider = ProviderV3.model_validate(saved["provider"])
-    assert mode.head is not None
     candidate_tree, changed = _definition_changes(instance, document, provider, mode.head.git_oid)
     if not changed:
         return PlaybillProviderInstallResultV1(
@@ -491,6 +500,8 @@ def _preview_installation(
             status="would_install",
             installed=True,
             registered=True,
+            not_run=("package_preparation", "deployment_readiness"),
+            **label,
             detail="prepared and registered already; an install changes no definition",
         )
     suffix = canonical_digest(
@@ -518,6 +529,8 @@ def _preview_installation(
         installed=True,
         registered=False,
         candidate_digest=admitted.candidate_digest,
+        not_run=("package_preparation", "deployment_readiness"),
+        **label,
         detail=(
             admitted.refusal_detail()
             if not admitted.admitted

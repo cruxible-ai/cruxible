@@ -3,7 +3,7 @@
   "succession": {
     "ratified_by": "maintainer",
     "register_entry": "2026-10-01:operator-batch",
-    "surface_digest": "sha256:8d1b89c854dc8a65d911ae83405198ecf887594f3c095e96e6983a4c912df13e"
+    "surface_digest": "sha256:c395667998b64d1c130b54839c34bd993384c50f984c45e1a175dabd55958bfe"
   },
   "surface": {
     "cli_leaves": [
@@ -1787,7 +1787,7 @@
         "request_model": "cruxible_client.contracts.provider_installation.PlaybillProviderInstallRequestV1",
         "request_schema_digest": "sha256:8e99c73037a2f080ad1de9ee42def32d2cd70a6cc25f4acb8ae2d50c182e3c4e",
         "response_model": "cruxible_client.contracts.provider_installation.PlaybillProviderInstallResultV1",
-        "response_schema_digest": "sha256:99a8f8caee556881aa0266ddc579d8bf8b6683aeda414c7826ef98978fadca52"
+        "response_schema_digest": "sha256:eddc6de977ac8aa4ffd6bc4851345f6f80fe1c128c1674c4773953a309bb07f6"
       },
       {
         "delegate": "cruxible_core.server.routes.playbill.query_playbill",
@@ -2651,7 +2651,7 @@
         ],
         "input_schema_digest": "sha256:dc22cbc46a5ec862bef96da99fcab9699df2ab0c82b1f2aa77cd3dc906bd2a19",
         "name": "cruxible_playbill_provider_install",
-        "output_schema_digest": "sha256:3d4ae6ada6501ca3996d56b39bebc25f4f2c249da4d3446155349492bcac9673",
+        "output_schema_digest": "sha256:9938b9bb2808c6d4c92c636f99e4f5a805be22739c1f3b66feb4b8faa40ee784",
         "permission": "ADMIN"
       },
       {

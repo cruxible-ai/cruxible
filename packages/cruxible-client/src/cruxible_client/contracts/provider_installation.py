@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from .canonical import Sha256Value
 from .change_control import DryRun, PreviewAt
+from .projection import AcceptedCoordinate
 from .providers import ProviderLocalDistributionPinV1
 
 
@@ -90,6 +91,15 @@ class ProviderOperationReadinessV1(_Strict):
     missing_requirements: tuple[str, ...] = ()
 
 
+#: The steps of an install a v1 preview does NOT run (the maintainer's v1
+#: exception to R12, r12-scope-1001): preparing the package (fetching its
+#: wheels, building its environment), checking deployment readiness, and --
+#: for a package not yet prepared -- evaluating its registration.
+ProviderInstallPreviewStepV1 = Literal[
+    "package_preparation", "deployment_readiness", "registration"
+]
+
+
 class PlaybillProviderInstallResultV1(_Strict):
     tag: Literal["playbill-provider-install-result-v1"] = "playbill-provider-install-result-v1"
     installation_id: str
@@ -102,6 +112,24 @@ class PlaybillProviderInstallResultV1(_Strict):
     proposal_id: str | None = None
     candidate_digest: str | None = None
     detail: str | None = None
+    #: A v1 install preview validates and writes nothing, but is not the whole
+    #: install: ``validation_only`` says so, and ``not_run`` names the steps it
+    #: did not run. Present exactly on a preview.
+    preview_scope: Literal["validation_only"] | None = None
+    not_run: tuple[ProviderInstallPreviewStepV1, ...] = ()
+    #: The accepted coordinate a preview evaluated at; commit it with ``at``.
+    coordinate: AcceptedCoordinate | None = None
+
+    @model_validator(mode="after")
+    def _preview_label(self) -> "PlaybillProviderInstallResultV1":
+        previewed = self.status == "would_install"
+        if previewed != (self.preview_scope == "validation_only"):
+            raise ValueError("exactly an install preview is labelled validation_only")
+        if previewed and (self.coordinate is None or not self.not_run):
+            raise ValueError("an install preview names its coordinate and the steps not run")
+        if not previewed and (self.not_run or self.coordinate is not None):
+            raise ValueError("only an install preview names steps not run and a coordinate")
+        return self
 
 
 class ProviderPackageSummaryV1(_Strict):

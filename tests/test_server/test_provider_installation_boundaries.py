@@ -93,3 +93,9 @@ def test_an_install_preview_resolves_the_package_and_writes_nothing(
         False,
     )
     assert "would fetch and build example-provider" in body["detail"]
+    # F-007, the v1 exception (r12-scope-1001): the preview is labelled as
+    # validation only, names what it did not run, and carries its coordinate.
+    assert body["preview_scope"] == "validation_only"
+    assert body["not_run"] == ["package_preparation", "deployment_readiness", "registration"]
+    head = http.get(f"/api/v1/{instance_id}/playbill/head").json()
+    assert body["coordinate"]["git_oid"] == head["coordinate"]["git_oid"]
