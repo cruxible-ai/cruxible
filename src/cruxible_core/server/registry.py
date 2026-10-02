@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePath
 
@@ -62,7 +63,35 @@ class InstanceRegistry:
         self.state_root = self.db_path.parent.parent
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
-        self._relativize_locations()
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Run each registry migration step not yet recorded, in declaration order.
+
+        The chain is append-only. Every step is idempotent and keyed by its own
+        id in ``registry_migrations``, never by a schema version or a column
+        position, so steps added on separate branches compose in either order.
+        """
+
+        with self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS registry_migrations (
+                    step TEXT PRIMARY KEY,
+                    applied_at TEXT NOT NULL
+                )
+                """
+            )
+            applied = {row[0] for row in conn.execute("SELECT step FROM registry_migrations")}
+        for step, run in self._MIGRATIONS:
+            if step in applied:
+                continue
+            run(self)
+            with self._connect() as conn:
+                conn.execute(
+                    "INSERT OR IGNORE INTO registry_migrations(step, applied_at) VALUES (?, ?)",
+                    (step, format_datetime(utc_now())),
+                )
 
     def relative_location(self, path: str | Path) -> PurePath | None:
         """``path`` relative to the state root when it resolves under it, else None."""
@@ -106,6 +135,11 @@ class InstanceRegistry:
                     "UPDATE instances SET location = ? WHERE instance_id = ?",
                     (relative.as_posix(), row["instance_id"]),
                 )
+
+    #: (step id, step): the append-only migration chain `_migrate` runs.
+    _MIGRATIONS: tuple[tuple[str, Callable[[InstanceRegistry], None]], ...] = (
+        ("2026-10-01-relative-locations", _relativize_locations),
+    )
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)

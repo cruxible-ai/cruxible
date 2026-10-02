@@ -79,7 +79,7 @@ def _stored_locations(state_root: Path) -> dict[str, str]:
 
 
 def _store_absolute(state_root: Path, instance_id: str, location: Path) -> None:
-    """Write a row the way the registry did before relative storage."""
+    """Make the registry what it was before relative storage: an absolute row, no step."""
 
     connection = sqlite3.connect(state_root / "daemon" / "registry.db")
     try:
@@ -88,6 +88,15 @@ def _store_absolute(state_root: Path, instance_id: str, location: Path) -> None:
                 "UPDATE instances SET location = ? WHERE instance_id = ?",
                 (str(location), instance_id),
             )
+            connection.execute("DROP TABLE registry_migrations")
+    finally:
+        connection.close()
+
+
+def _migration_steps(state_root: Path) -> list[str]:
+    connection = sqlite3.connect(f"file:{state_root / 'daemon' / 'registry.db'}?mode=ro", uri=True)
+    try:
+        return [row[0] for row in connection.execute("SELECT step FROM registry_migrations")]
     finally:
         connection.close()
 
@@ -121,6 +130,10 @@ def test_absolute_rows_under_the_root_migrate_to_relative(
     registry = InstanceRegistry(state_root / "daemon" / "registry.db")
 
     assert _stored_locations(state_root) == {_INSTANCE: f"instances/{_INSTANCE}"}
+    # The step is recorded once, by its own id, and an open runs it no more.
+    assert _migration_steps(state_root) == ["2026-10-01-relative-locations"]
+    InstanceRegistry(state_root / "daemon" / "registry.db")
+    assert _migration_steps(state_root) == ["2026-10-01-relative-locations"]
     record = registry.get(_INSTANCE)
     assert record is not None
     assert registry.instance_root(record) == state_root / "instances" / _INSTANCE
