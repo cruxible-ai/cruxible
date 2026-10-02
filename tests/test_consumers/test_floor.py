@@ -521,11 +521,23 @@ def test_daemon_delivery_writes_the_local_indexes_the_client_writes(tmp_path, mo
     )
     registry.set_floor_delivery(instance.descriptor.instance_id, True)
     monkeypatch.setattr(floor, "get_registry", lambda: registry)
-    local = ("sources/INDEX", "projections/INDEX")
+    local = ("sources/INDEX", "projections/INDEX", ".gitignore")
 
     assert refresh_floor(instance, instance.descriptor.instance_id).written.status == "written"
     delivered = {path: (workspace / ".playbill/floor" / path).read_bytes() for path in local}
     assert b"reports.md" in delivered["sources/INDEX"]
+    assert delivered[".gitignore"] == b"*\n"
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=all", "--", ".playbill/floor"],
+        cwd=workspace,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert status.stdout == ""
 
     client = tmp_path / "client"
     report_evidence(client, "Count: 3")

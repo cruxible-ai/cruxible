@@ -32,6 +32,7 @@ from cruxible_client.authoring.floor_apply import (
     _DIRECTORY,
     PlaybillFloorApplyError,
     _directory,
+    _read_at,
     _write_file,
     apply_floor_delta,
     read_floor_manifest,
@@ -871,7 +872,12 @@ def _workspace_locators(root: Path, sources: WorkspaceSources | None) -> dict[st
 
 
 def _write_workspace_local(
-    workspace: Path, relative: str, content: bytes, *, durable: bool = False
+    workspace: Path,
+    relative: str,
+    content: bytes,
+    *,
+    durable: bool = False,
+    only_if_changed: bool = False,
 ) -> None:
     """Anchor the workspace and every output component without following links.
 
@@ -884,7 +890,18 @@ def _write_workspace_local(
     try:
         with _directory(anchor, workspace.parts[1:], create=True) as directory:
             assert directory is not None
-            _write_file(directory, relative, content, mode=0o600, durable=durable)
+            if only_if_changed:
+                parts = PurePosixPath(relative).parts
+                with _directory(directory, parts[:-1], create=True) as parent:
+                    assert parent is not None
+                    try:
+                        if _read_at(parent, parts[-1]) == content:
+                            return
+                    except FileNotFoundError:
+                        pass
+                    _write_file(parent, parts[-1], content, mode=0o600, durable=durable)
+            else:
+                _write_file(directory, relative, content, mode=0o600, durable=durable)
     except (OSError, PlaybillFloorApplyError) as exc:
         raise PlaybillWorkspaceError(f"{relative} could not be written atomically: {exc}") from exc
     finally:
@@ -932,8 +949,10 @@ def _rendered_blocks(root: Path, content: bytes) -> list[tuple[str, str]]:
 def write_projection_index(workspace: str | Path) -> int | None:
     """Join the floor's ledger-pure sources with this workspace's bindings.
 
-    Writes two files into the workspace floor, both outside the coordinate-pure
-    manifest whichever workspace writer applies it:
+    Writes local files outside the coordinate-pure manifest whichever workspace
+    writer applies it:
+
+    - ``.gitignore``: ``*`` to ignore every floor file, including itself;
 
     - ``sources/INDEX``: ``sources/LEDGER`` with each source's locator replaced
       by the workspace path its catalog entry (by source name, or by the
@@ -954,6 +973,11 @@ def write_projection_index(workspace: str | Path) -> int | None:
     output_root = Path(workspace).expanduser().absolute()
     root = _workspace_root(workspace)
     floor = _relative_destination(root, PLAYBILL_FLOOR_PATH)
+    if not floor.is_dir():
+        return None
+    _write_workspace_local(
+        output_root, f"{PLAYBILL_FLOOR_PATH}/.gitignore", b"*\n", only_if_changed=True
+    )
     ledger = _sources_ledger(floor)
     if ledger is None:
         return None

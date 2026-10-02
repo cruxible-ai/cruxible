@@ -378,7 +378,9 @@ defaults on again. Host inspection and daemon status label it "on (default)" or
 "off (opted out)". With delivery
 on, the daemon writes only `.playbill/floor`, and local client floor writes ask
 it to deliver immediately. Remote clients and workspaces with delivery off keep
-applying deltas locally. Host inspection and daemon status show the flag.
+applying deltas locally. Both writers create `.playbill/floor/.gitignore` containing
+`*`, which ignores the entire floor, including itself, in Git. It is local metadata
+outside the accepted floor manifest and survives delta applies and full repairs.
 A failed apply stalls the floor consumer with `playbill floor export` as its
 repair; automatic retries wait for a changed head or workspace registration.
 
@@ -456,6 +458,10 @@ and secrets are never inputs to that writer. A differing config is refused
 unless `--replace` is explicit. Because the binding may carry a local socket,
 the writer adds `.playbill/coverage.json` to this repository's machine-local
 `.git/info/exclude` rather than changing a shared ignore file.
+
+Daemon floor delivery is on by default when a local workspace is registered.
+`workspace attach` enables it unless `--no-floor-delivery` is supplied;
+`workspace floor-delivery off` opts out after attachment, and `on` restores it.
 
 A TCP client never sends its local path to the daemon. Implicit attachment from
 inside a TCP worktree remains refused; explicit `--workspace DIR` instead writes

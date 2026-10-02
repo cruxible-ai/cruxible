@@ -14,7 +14,9 @@ from tests.support.floor_exports import floor_v5_delta
 from tests.test_client.test_floor_apply import COORDINATE
 
 
-@pytest.mark.parametrize("relative", ["sources/INDEX", "projections/INDEX", "coverage.json"])
+@pytest.mark.parametrize(
+    "relative", ["sources/INDEX", "projections/INDEX", ".gitignore", "coverage.json"]
+)
 @pytest.mark.parametrize("boundary", ["stage", "replace"])
 def test_local_writes_do_not_follow_a_directory_swapped_after_open(
     tmp_path, monkeypatch, relative, boundary
@@ -76,6 +78,10 @@ def test_local_writes_do_not_follow_a_directory_swapped_after_open(
     if profile:
         authoring._atomic_write_workspace_config(
             workspace / ".playbill/coverage.json", {"instance_id": "inst_local"}
+        )
+    elif relative == ".gitignore":
+        authoring._write_workspace_local(
+            workspace, ".playbill/floor/.gitignore", b"*\n", only_if_changed=True
         )
     else:
         assert authoring.write_projection_index(workspace) == 0
@@ -152,3 +158,31 @@ def test_join_does_not_bless_a_workspace_swap_by_resolving_it_again(tmp_path, mo
         authoring.write_projection_index(workspace)
     for relative in ("sources/INDEX", "projections/INDEX"):
         assert (outside / ".playbill/floor" / relative).read_bytes() == b"outside sentinel\n"
+
+
+def test_gitignore_is_created_and_only_replaced_when_bytes_differ(tmp_path):
+    workspace = tmp_path / "workspace"
+    floor = workspace / ".playbill/floor"
+    floor.mkdir(parents=True)
+    assert authoring.write_projection_index(workspace) is None
+    ignore = floor / ".gitignore"
+    assert ignore.read_bytes() == b"*\n"
+    identity = (ignore.stat().st_ino, ignore.stat().st_mtime_ns)
+    authoring.write_projection_index(workspace)
+    assert (ignore.stat().st_ino, ignore.stat().st_mtime_ns) == identity
+    ignore.write_bytes(b"wrong\n")
+    authoring.write_projection_index(workspace)
+    assert ignore.read_bytes() == b"*\n"
+    assert ignore.stat().st_ino != identity[0]
+
+
+def test_gitignore_comparison_refuses_a_symlink(tmp_path):
+    workspace = tmp_path / "workspace"
+    floor = workspace / ".playbill/floor"
+    floor.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.write_bytes(b"outside sentinel\n")
+    (floor / ".gitignore").symlink_to(outside)
+    with pytest.raises(PlaybillWorkspaceError, match="could not be written atomically"):
+        authoring.write_projection_index(workspace)
+    assert outside.read_bytes() == b"outside sentinel\n"
