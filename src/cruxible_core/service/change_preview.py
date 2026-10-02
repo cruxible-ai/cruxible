@@ -104,6 +104,23 @@ class ChangeMode:
             self._coordinate = compact_coordinate(self._instance, head)
         return self._coordinate
 
+    @contextmanager
+    def committing(self) -> Iterator[None]:
+        """Hold accepted state still across a pinned commit's write.
+
+        For a commit carrying ``at``: takes the activation lock, confirms the
+        live accepted head is the previewed one, and keeps the lock until the
+        enclosed write is done, so an acceptance cannot land between the check
+        and the write. A preview, or a commit with no ``at``, holds nothing.
+        """
+
+        if self.previewing or self.at is None or self._instance is None:
+            yield
+            return
+        with self._instance.accepted_head_held() as head_oid:
+            self.confirm_head(head_oid)
+            yield
+
     def confirm_head(self, head_oid: str | None) -> None:
         """Refuse a pinned commit whose accepted head is not the one previewed.
 

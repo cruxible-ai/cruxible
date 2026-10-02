@@ -1190,3 +1190,96 @@ def test_an_arm_preview_answers_with_its_coordinate_and_a_stale_one_refuses(tmp_
             at=stale,
         )
     assert service_line_status(instance, line.identity.name).state == "armed"
+
+
+def test_a_revision_accepted_mid_arm_refuses_a_pinned_arm_and_disarm(tmp_path, monkeypatch):
+    """F-002: ``at`` is confirmed against the live head under the activation lock.
+
+    An acceptance that lands after the Line was read but before the arm is
+    written must refuse the pinned commit, not arm the version it replaced.
+    """
+
+    from cruxible_client.contracts.acquisition_policies import (
+        acquisition_policy_path,
+        render_acquisition_policy,
+    )
+    from cruxible_core.errors import ChangeRefusedError
+    from cruxible_core.exhaust.line_dispatch import dispatch_root
+    from cruxible_core.service.procedures import line_dispatch
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
+    from tests.test_server.test_playbill_line_run_refusals import _acquisition_policy
+
+    instance, line, _procedure, owner = line_world(
+        tmp_path, CaptureLandingTriggerPolicyV2(event=SELECTOR), with_owner=True
+    )
+    start = READ_TIME + timedelta(seconds=10)
+    original = line_dispatch._accepted_line_by_reference
+    moves = (f"revision-{index}" for index in range(100))
+
+    def read_then_accept(current, **kwargs):  # type: ignore[no-untyped-def]
+        found = original(current, **kwargs)
+        name = next(moves)
+        tree = current.tree_at(current.accepted_coordinate().git_oid)
+        policy = _acquisition_policy(name)
+        tree[acquisition_policy_path(policy.identity.name)] = render_acquisition_policy(policy)
+        _accept_tree(
+            current, owner, tree, timestamp="2026-08-28T15:02:00.000000Z", proposal_name=name
+        )
+        return found
+
+    at = service_arm_line(
+        instance,
+        line.identity.name,
+        principal=LOCAL,
+        actor=_actor(instance),
+        now=start,
+        daemon_id="daemon",
+        dry_run=True,
+    ).coordinate.git_oid
+    monkeypatch.setattr(line_dispatch, "_accepted_line_by_reference", read_then_accept)
+    with pytest.raises(ChangeRefusedError) as moved:
+        service_arm_line(
+            instance,
+            line.identity.name,
+            principal=LOCAL,
+            actor=_actor(instance),
+            now=start,
+            daemon_id="daemon",
+            dry_run=False,
+            at=at,
+        )
+    assert moved.value.error_code == "playbill.preview.state_moved"
+    assert not dispatch_root(instance).exists() or (
+        service_line_status_or_none(instance, line.identity.name) is None
+    )
+
+    monkeypatch.setattr(line_dispatch, "_accepted_line_by_reference", original)
+    armed = service_arm_line(
+        instance,
+        line.identity.name,
+        principal=LOCAL,
+        actor=_actor(instance),
+        now=start,
+        daemon_id="daemon",
+    )
+    monkeypatch.setattr(line_dispatch, "_accepted_line_by_reference", read_then_accept)
+    with pytest.raises(ChangeRefusedError):
+        service_disarm_line(
+            instance,
+            line.identity.name,
+            actor=_actor(instance),
+            now=start + timedelta(seconds=1),
+            dry_run=False,
+            at=armed.coordinate.git_oid,
+        )
+    monkeypatch.setattr(line_dispatch, "_accepted_line_by_reference", original)
+    assert service_line_status(instance, line.identity.name).state == "armed"
+
+
+def service_line_status_or_none(instance, name):  # type: ignore[no-untyped-def]
+    from cruxible_client.contracts.errors import PlaybillError
+
+    try:
+        return service_line_status(instance, name)
+    except PlaybillError:
+        return None

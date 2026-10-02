@@ -987,7 +987,10 @@ def _withdraw(
             withdrawn_at=record.withdrawn_at,
             coordinate=coordinate,
         )
-    instance.proposal_evidence().write_withdrawal(record)
+    # A pinned withdrawal confirms the live accepted head and records while
+    # holding it still (R12).
+    with mode.committing():
+        instance.proposal_evidence().write_withdrawal(record)
     # Release local closed-candidate roots even without a configured mirror.
     instance.advertise_workspace()
     instance.request_ledger_mirror()

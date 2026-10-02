@@ -925,17 +925,20 @@ def _record_ruling(
                 expected_latest_event_digest=request.expected_latest_event_digest,
             )
             return _action_result(instance, item_id).model_copy(update={"status": "would_record"})
-        store.append(
-            family="curation",
-            partition_id=item_id,
-            event_id=event_id,
-            payload=payload,
-            coordinate=coordinate,
-            generation=generation,
-            actor_context=actor_context,
-            recorded_at=actor_context.timestamp,
-            expected_latest_event_digest=request.expected_latest_event_digest,
-        )
+        # A pinned ruling confirms the live accepted head and appends while
+        # holding it still (R12).
+        with mode.committing():
+            store.append(
+                family="curation",
+                partition_id=item_id,
+                event_id=event_id,
+                payload=payload,
+                coordinate=coordinate,
+                generation=generation,
+                actor_context=actor_context,
+                recorded_at=actor_context.timestamp,
+                expected_latest_event_digest=request.expected_latest_event_digest,
+            )
         return _action_result(instance, item_id)
 
 

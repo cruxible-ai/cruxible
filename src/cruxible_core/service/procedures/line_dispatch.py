@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from datetime import datetime, timedelta
 from functools import partial
 from types import SimpleNamespace
@@ -392,7 +392,7 @@ def service_arm_line(
                 actor=actor,
                 now=now,
                 daemon_id=daemon_id,
-                confirm_head=mode.confirm_head,
+                committing=mode.committing,
             ),
         )
 
@@ -420,7 +420,7 @@ def _arm_line(
     actor: GovernedActorContext,
     now: datetime,
     daemon_id: str,
-    confirm_head: Callable[[str], None],
+    committing: Callable[[], AbstractContextManager[None]],
 ) -> LineArmV1:
     coordinate = instance.accepted_coordinate()
     accepted = _accepted_line_by_reference(instance, coordinate=coordinate, reference=line)
@@ -430,10 +430,12 @@ def _arm_line(
     require_line_mandate(instance, accepted, coordinate=coordinate, now=now)
     identity = line_identity_digest(accepted.line.identity)
     store = LineDispatchStore(instance)
-    with line_arm_boundary(instance.root, identity), store.locked() as conn:
-        # The Line was read at `coordinate`; a commit pinned to a preview's
-        # coordinate arms only that version, checked under the dispatch lock.
-        confirm_head(coordinate.git_oid)
+    # The Line was read at `coordinate`. A commit pinned to a preview's
+    # coordinate confirms the LIVE accepted head under the activation lock and
+    # arms while holding it, so no Line revision can be accepted in between.
+    # Lock order: the Line's arm boundary, then the activation lock, then the
+    # dispatch store -- the order an automatic admission nests them in.
+    with line_arm_boundary(instance.root, identity), committing(), store.locked() as conn:
         current = _active_session(conn, identity)
         if current is not None and (
             current["armed_by"] == principal.model_dump(mode="json")
@@ -501,7 +503,7 @@ def service_disarm_line(
     ) as mode:
         return _previewed(
             mode.previewing,
-            _disarm_line(instance, line, actor=actor, now=now, confirm_head=mode.confirm_head),
+            _disarm_line(instance, line, actor=actor, now=now, committing=mode.committing),
         )
 
 
@@ -511,15 +513,14 @@ def _disarm_line(
     *,
     actor: GovernedActorContext,
     now: datetime,
-    confirm_head: Callable[[str], None],
+    committing: Callable[[], AbstractContextManager[None]],
 ) -> LineArmV1:
     coordinate = instance.accepted_coordinate()
     accepted = _accepted_line_by_reference(instance, coordinate=coordinate, reference=line)
     evaluated = AcceptedCoordinate.from_internal(coordinate)
     identity = line_identity_digest(accepted.line.identity)
     store = LineDispatchStore(instance)
-    with line_arm_boundary(instance.root, identity), store.locked() as conn:
-        confirm_head(coordinate.git_oid)
+    with line_arm_boundary(instance.root, identity), committing(), store.locked() as conn:
         current = _active_session(conn, identity)
         if current is None:
             last = conn.execute(

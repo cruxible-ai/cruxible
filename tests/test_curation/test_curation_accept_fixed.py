@@ -404,3 +404,66 @@ def test_dead_vocabulary_retirement_reads_changed_members_once_per_generation(
 
     assert set(resolutions) == {item.item_id, second_item.item_id}
     assert len(loaded_oids) == 2
+
+
+def test_a_head_accepted_before_the_append_refuses_a_pinned_ruling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F-002: a pinned ruling confirms the live head where it appends."""
+
+    from cruxible_core.errors import ChangeRefusedError
+    from cruxible_core.service.discovery.curation import (
+        PlaybillCurationOverruleRequestV1,
+        service_overrule_playbill_curation,
+    )
+    from tests.core_support._head_mover import move_head
+
+    instance, owner = initialize_local(tmp_path)
+    body = instance.store_document_body(b"status: ready\n")
+    accept_proposal(
+        instance,
+        owner,
+        service_propose_playbill_document(
+            instance,
+            shell=_document_shell(body.digest),
+            actor_id="owner",
+            proposal_name="runbook-initial",
+            timestamp="2026-08-26T18:00:00.000000Z",
+        ),
+    )
+    observation, event = _append_document_item(instance)
+    request = PlaybillCurationOverruleRequestV1(
+        item_id=observation.item_id,
+        expected_latest_event_digest=event.event_digest,
+        reason="inapplicable",
+        dry_run=True,
+    )
+    at = service_overrule_playbill_curation(
+        instance, request=request, actor_context=_actor()
+    ).coordinate.git_oid
+    from contextlib import contextmanager
+
+    from cruxible_core.service.discovery import curation
+
+    original = curation.change_scope
+    moved: list[str] = []
+
+    @contextmanager
+    def enter_then_move(*args, **kwargs):  # type: ignore[no-untyped-def]
+        # The acceptance lands after the entry check passed, before the append.
+        with original(*args, **kwargs) as mode:
+            if not moved:
+                moved.append(move_head(instance, owner, "moved-under-ruling"))
+            yield mode
+
+    monkeypatch.setattr(curation, "change_scope", enter_then_move)
+    with pytest.raises(ChangeRefusedError) as refused:
+        service_overrule_playbill_curation(
+            instance,
+            request=request.model_copy(update={"dry_run": False, "at": at}),
+            actor_context=_actor(),
+        )
+    assert moved and refused.value.error_code == "playbill.preview.state_moved"
+    monkeypatch.setattr(curation, "change_scope", original)
+    events = instance.review_operational_store().events(family="curation")
+    assert len(events) == 1

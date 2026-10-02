@@ -186,11 +186,12 @@ def _depublish(
     )
     if declared:
         if not mode.previewing:
-            release_projection_block_declaration(
-                instance,
-                source_id=source_id,
-                block_id=block_id,
-            )
+            with mode.committing():
+                release_projection_block_declaration(
+                    instance,
+                    source_id=source_id,
+                    block_id=block_id,
+                )
         return PlaybillBlockDepublishResultV1(
             source_id=source_id,
             block_id=block_id,
@@ -254,11 +255,12 @@ def _depublish(
             claim_identity=registration.claim_identity,
             coordinate=coordinate,
         )
-    result = coordinator.abandon_insertion(
-        registration.intent_id,
-        actor=actor,
-        expectation_id=registration.preparation.expectation_id,
-    )
+    with mode.committing():
+        result = coordinator.abandon_insertion(
+            registration.intent_id,
+            actor=actor,
+            expectation_id=registration.preparation.expectation_id,
+        )
     return PlaybillBlockDepublishResultV1(
         source_id=source_id,
         block_id=block_id,

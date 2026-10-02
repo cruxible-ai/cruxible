@@ -394,6 +394,49 @@ def test_withdrawing_and_readmitting_a_proposal_preview_and_write_nothing(
     assert (withdrawn["status"], withdrawn["already_withdrawn"]) == ("withdrawn", False)
 
 
+def test_a_head_accepted_before_the_record_refuses_a_pinned_withdrawal(
+    playbill_http: tuple[TestClient, str, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F-002: a pinned withdrawal confirms the live head where it records."""
+
+    from cruxible_core.proposals.proposal_evidence import ProposalEvidenceStore
+
+    client, instance_id, reviewer_key = playbill_http
+    proposed = _ok(
+        client.post(
+            _api(instance_id, "/playbill/documents/proposals"),
+            json={"shell": _document(client, instance_id, "gamma"), "proposal_name": "gamma"},
+        )
+    )
+    base = _api(
+        instance_id, f"/playbill/proposals/{proposed['proposal']['admission']['proposal_id']}"
+    )
+    withdraw = {"tag": "playbill-proposal-withdraw-request-v1", "reason": "superseded"}
+    at = _ok(client.post(f"{base}/withdraw", json={**withdraw, "dry_run": True}))["coordinate"][
+        "git_oid"
+    ]
+    original = ProposalEvidenceStore.read_withdrawal
+    moved: list[bool] = []
+
+    def read_then_move(self: ProposalEvidenceStore, proposal_id: str) -> Any:
+        found = original(self, proposal_id)
+        if not moved:
+            moved.append(True)
+            _move_head(client, instance_id, reviewer_key)
+        return found
+
+    monkeypatch.setattr(ProposalEvidenceStore, "read_withdrawal", read_then_move)
+    refused = client.post(f"{base}/withdraw", json={**withdraw, "dry_run": False, "at": at})
+    monkeypatch.setattr(ProposalEvidenceStore, "read_withdrawal", original)
+
+    assert moved == [True]
+    _refused(refused, 409, "playbill.preview.state_moved")
+    status = _ok(client.get(f"{base}"))
+    assert status.get("withdrawal") is None, status
+
+
 def test_decommissioning_previews_by_default_and_commits_only_with_its_coordinate(
     playbill_http: tuple[TestClient, str, Path], tmp_path: Path
 ) -> None:

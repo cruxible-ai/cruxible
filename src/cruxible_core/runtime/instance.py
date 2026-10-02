@@ -738,6 +738,19 @@ class PlaybillInstance:
             daemon_private_key_present=(paths["credentials"] / DAEMON_PRIVATE_KEY_FILE).is_file(),
         )
 
+    @contextmanager
+    def accepted_head_held(self) -> Iterator[str]:
+        """Hold accepted main where it is (the activation lock) and yield its oid.
+
+        A change pinned to a preview's coordinate (R12 ``at``) confirms the
+        head inside this and writes before leaving it, so no acceptance can
+        land between the check and the write. Nothing inside may take the
+        activation lock again.
+        """
+
+        with self._ledger.activation_lock():
+            yield self._ledger.read_main()
+
     def accepted_coordinate(self) -> AcceptedProjectionCoordinate:
         """Return the verified accepted coordinate without consulting proposal refs."""
 

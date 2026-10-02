@@ -915,3 +915,50 @@ def test_two_accepted_coordinates_do_not_share_a_resolution_entry(
     # And the earlier coordinate keeps its own entry rather than being displaced.
     _orient(instance, at=earlier)
     assert counted[0] == latest_evaluated
+
+
+def test_a_head_accepted_before_the_release_refuses_a_pinned_depublish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F-002: a pinned depublish confirms the live head where it releases."""
+
+    from cruxible_core.errors import ChangeRefusedError
+    from cruxible_core.service.proposals import publications
+    from tests.core_support._head_mover import move_head
+
+    instance, owner = initialize_local(tmp_path)
+    stamp = ProjectionBlockStampV1(
+        source_id="corpus.runbook",
+        block_id="held-rows",
+        declared_generation=0,
+        declared_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        backing=_synthetic_claim_backings(2),
+        body_digest="sha256:" + "b" * 64,
+    )
+    _declare(instance, stamp)
+    at = _depublish(
+        instance, source_id="corpus.runbook", block_id="held-rows", dry_run=True
+    ).coordinate.git_oid
+    original = publications.projection_block_declarations
+    moved: list[str] = []
+
+    def read_then_move(current):  # type: ignore[no-untyped-def]
+        found = original(current)
+        if not moved:
+            moved.append(move_head(current, owner, "moved-under-depublish"))
+        return found
+
+    monkeypatch.setattr(publications, "projection_block_declarations", read_then_move)
+    with pytest.raises(ChangeRefusedError) as refused:
+        publications.service_depublish_playbill_block(
+            instance,
+            coordinator=AuthoringIntentCoordinator.for_instance(instance),
+            actor=AuthenticatedActor(actor_id="owner"),
+            source_id="corpus.runbook",
+            block_id="held-rows",
+            dry_run=False,
+            at=at,
+        )
+    assert moved and refused.value.error_code == "playbill.preview.state_moved"
+    monkeypatch.setattr(publications, "projection_block_declarations", original)
+    assert ("corpus.runbook", "held-rows") in (registered_projection_blocks(instance) or {})
