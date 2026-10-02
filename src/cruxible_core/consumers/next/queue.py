@@ -9,12 +9,13 @@ changes or the operator rebuilds this disposable state, avoiding endless folds
 of the same broken inputs.
 
 The CAS shard fingerprint sees bodies arrive and go, not a body rewritten in
-place. Each published queue therefore keeps the file identity of every body
-its Claim verdicts rest on, the same identities the live resolver's memo is
-checked against, and is served only while one stat of each still matches.
-A changed identity is a miss (the read computes live, and fails exactly as live
-does) and a rebuild request; a fold whose bodies have no identity to stand for
-them publishes nothing a read will serve.
+place. Each fold therefore runs inside one CAS body observation, which records
+the file identity of every object any row family reads or checks, and a
+published queue is served only while one stat of each still matches. A changed
+identity is a miss (the read computes live, and fails exactly as live does)
+and a rebuild request; a fold whose answer rests on something no identity
+stands for publishes nothing a read will serve. A failed fold keeps what it
+observed too, so repairing a body in place releases the failure once.
 """
 
 from __future__ import annotations
@@ -53,6 +54,7 @@ CREATE TABLE progress (
  coordinate TEXT, door TEXT, generation INTEGER NOT NULL DEFAULT 0,
  checked_at TEXT, input_fingerprint TEXT, bodies TEXT, v1 TEXT, v2 TEXT,
  failed_coordinate TEXT, failed_door TEXT, failed_fingerprint TEXT, failed_expire INTEGER,
+ failed_bodies TEXT,
  last_error TEXT, last_error_at TEXT
 ) STRICT;
 """
@@ -127,13 +129,26 @@ class ClaimQueuePart:
             assert connection is not None
             row = connection.execute(
                 "SELECT target_coordinate,target_door,target_fingerprint,target_expire,"
-                "coordinate,bodies FROM progress"
+                "coordinate,bodies,failed_coordinate,failed_door,failed_fingerprint,"
+                "failed_expire,failed_bodies FROM progress"
             ).fetchone()
-            if row is not None and row[:4] == (coordinate, door, fingerprint, expiry):
+            target = (coordinate, door, fingerprint, expiry)
+            if row is not None and row[:4] == target:
                 if row[4] is not None and row[5] is not None and not _bodies_hold(instance, row[5]):
                     # A body was rewritten in place: withdraw the published queue,
                     # which also requests one rebuild of the unchanged target.
                     connection.execute("UPDATE progress SET coordinate=NULL")
+                elif (
+                    row[6:10] == target
+                    and row[10] is not None
+                    and not _bodies_hold(instance, row[10])
+                ):
+                    # A body the failed fold read has changed since (repaired in
+                    # place, say): one new attempt. Unchanged bodies stay suppressed.
+                    connection.execute(
+                        "UPDATE progress SET failed_coordinate=NULL,failed_door=NULL,"
+                        "failed_fingerprint=NULL,failed_expire=NULL,failed_bodies=NULL"
+                    )
                 return
             connection.execute(
                 "INSERT INTO progress(singleton,target_coordinate,target_door,"
@@ -162,9 +177,10 @@ class ClaimQueuePart:
 
     def run(self, manager: Any, instance_id: str, work: ConsumerWork, *, now: datetime) -> None:
         from cruxible_core.service.discovery.next import build_stored_claim_queue
-        from cruxible_core.service.evidence.evidence import VerdictReads
+        from cruxible_core.storage.cas import observe_bodies
 
         instance = manager.get(instance_id)
+        observed: str | None = None
         try:
             public = AcceptedCoordinate.model_validate_json(work.item[0])
             coordinate = instance.resolve_accepted_coordinate(
@@ -189,32 +205,34 @@ class ClaimQueuePart:
             # Both wire versions are served. V1 ignores door observations, so
             # keeping both ready avoids read-triggered work or a full live fold.
             # Their resolution derivation shares the existing verdict memo.
-            reads = VerdictReads()
-            v1 = build_stored_claim_queue(
-                instance,
-                coordinate=coordinate,
-                attestation_head=None,
-                evaluation_time=evaluated_at,
-                body_reads=reads,
-            )
-            v2 = build_stored_claim_queue(
-                instance,
-                coordinate=coordinate,
-                attestation_head=work.item[1],
-                evaluation_time=evaluated_at,
-                body_reads=reads,
-            )
+            # Every CAS object either fold reads or checks is observed, whichever
+            # row family reads it.
+            with observe_bodies() as observation:
+                try:
+                    v1 = build_stored_claim_queue(
+                        instance,
+                        coordinate=coordinate,
+                        attestation_head=None,
+                        evaluation_time=evaluated_at,
+                    )
+                    v2 = build_stored_claim_queue(
+                        instance,
+                        coordinate=coordinate,
+                        attestation_head=work.item[1],
+                        evaluation_time=evaluated_at,
+                    )
+                finally:
+                    observed = json.dumps(observation.fingerprints())
             if fingerprint != verdict_input_fingerprint(instance):
                 # Inputs moved during the fold. Matching will record their new target.
                 return
-            # NULL when some body had no identity to stand for it: published so
-            # the target is not folded again, never served (reads compute live).
-            bodies = (
-                json.dumps(sorted(reads.body_identities.items())) if reads.bodies_complete else None
-            )
-            if bodies is not None and not _bodies_hold(instance, bodies):
+            if not observation.consistent or not _bodies_hold(instance, observed):
                 # A body was rewritten during the fold; the next pass folds again.
                 return
+            # NULL when the answer rests on something no identity stands for:
+            # published so the target is not folded again, never served (reads
+            # compute live).
+            bodies = observed if observation.complete else None
             with instance.accepted_history_reader(at=public) as history:
                 generation = history.sequence
             boundaries = [bound for bound in (v1.valid_until, v2.valid_until) if bound is not None]
@@ -229,7 +247,7 @@ class ClaimQueuePart:
                 connection.execute(
                     "UPDATE progress SET coordinate=?,door=?,generation=?,checked_at=?,"
                     "input_fingerprint=?,bodies=?,v1=?,v2=?,expire=?,"
-                    "failed_coordinate=NULL,failed_door=NULL,"
+                    "failed_coordinate=NULL,failed_door=NULL,failed_bodies=NULL,"
                     "failed_fingerprint=NULL,failed_expire=NULL,last_error=NULL,last_error_at=NULL",
                     (
                         work.item[0],
@@ -248,9 +266,9 @@ class ClaimQueuePart:
                 assert connection is not None
                 connection.execute(
                     "UPDATE progress SET failed_coordinate=?,failed_door=?,"
-                    "failed_fingerprint=?,failed_expire=?,"
+                    "failed_fingerprint=?,failed_expire=?,failed_bodies=?,"
                     "last_error=?,last_error_at=?",
-                    (*work.item, f"{type(exc).__name__}: {exc}", format_datetime(now)),
+                    (*work.item, observed, f"{type(exc).__name__}: {exc}", format_datetime(now)),
                 )
             raise
 
