@@ -281,6 +281,9 @@ _ON_LOOP_CALLS: dict[str, frozenset[str]] = {
     "KeyedAdmission.admit": frozenset(
         {
             "self._check_reentrant",
+            "asyncio.current_task",
+            "self._enter_task",
+            "self._leave_task",
             "asyncio.get_running_loop",
             "loop.create_future",
             "self._enter",
@@ -290,6 +293,11 @@ _ON_LOOP_CALLS: dict[str, frozenset[str]] = {
         }
     ),
     "KeyedAdmission._check_reentrant": frozenset({"getattr", "FloorAdmissionMisuse"}),
+    # Per-task re-entry bookkeeping: a set of the tasks inside `admit` per key.
+    "KeyedAdmission._enter_task": frozenset(
+        {"self._admitting.get", "set", "tasks.add", "FloorAdmissionMisuse"}
+    ),
+    "KeyedAdmission._leave_task": frozenset({"self._admitting.get", "tasks.discard"}),
     "KeyedAdmission._enter": frozenset(
         {"self._entries.get", "_Entry", "_Waiter", "entry.waiters.append"}
     ),
@@ -310,6 +318,7 @@ _RECEIVER_VALUES: dict[str, frozenset[str]] = {
     "future": frozenset({"loop.create_future()"}),
     "entry": frozenset({"self._entries.get(key)", "self._entries[key]"}),
     "ticket": frozenset({"_Ticket(self, key)"}),
+    "tasks": frozenset({"self._admitting.get(key)", "set()"}),
     "waiter": frozenset(
         {
             "self._enter(key, loop, future, None)",
@@ -323,6 +332,7 @@ _FIELDS: dict[str, tuple[str, str]] = {
     "self._lock": ("KeyedAdmission.__init__", "threading.Lock()"),
     "self._entries": ("KeyedAdmission.__init__", "{}"),
     "self._owned": ("KeyedAdmission.__init__", "threading.local()"),
+    "self._admitting": ("KeyedAdmission.__init__", "{}"),
     "self.waiters": ("_Entry.__init__", "deque()"),
 }
 

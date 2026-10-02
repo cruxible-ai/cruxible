@@ -382,3 +382,38 @@ def test_thread_ownership_allows_other_keys_and_cleans_up_after_failure():
         asyncio.run(route(pool))
     assert len(threads) == 2 and threads[0] == threads[1]
     assert admission.active_keys() == 0
+
+
+def test_same_task_admit_reentry_refuses_instead_of_waiting_on_itself() -> None:
+    """``admit`` nested in ``admit`` for one key in one task would never return.
+
+    Like ``hold`` on its owning thread, it refuses at once, typed; another task
+    still queues, other keys proceed, and nothing is left behind.
+    """
+
+    admission = KeyedAdmission()
+
+    async def main() -> None:
+        async with admission.admit("inst_nested"):
+            with pytest.raises(FloorAdmissionMisuse, match="re-entrant in its owning task"):
+                async with asyncio.timeout(1):
+                    async with admission.admit("inst_nested"):
+                        pytest.fail("re-entry was admitted")
+            async with admission.admit("inst_other"):
+                pass
+
+            entered: list[str] = []
+
+            async def other_task() -> None:
+                async with admission.admit("inst_nested"):
+                    entered.append("other")
+
+            waiting = asyncio.create_task(other_task())
+            await asyncio.sleep(0)
+            assert entered == []
+        await waiting
+        assert entered == ["other"]
+
+    asyncio.run(main())
+    assert admission.active_keys() == 0
+    assert admission._admitting == {}  # noqa: SLF001 - the bookkeeping this guard adds
