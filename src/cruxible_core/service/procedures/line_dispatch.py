@@ -648,7 +648,9 @@ def _segment_request(
             )
         ),
         until=parse_datetime(scan["until"]),
-        cursor=scan["cursors"].get(name),
+        cursor=None
+        if isinstance(trigger.trigger.schedule, GenerationAcceptedScheduleV1)
+        else scan["cursors"].get(name),
         limit=256,
     )
 
@@ -751,13 +753,20 @@ def service_match_listening_lines(
             assert evaluated_until is not None
             if now <= evaluated_until:
                 continue
-            scan = session.get("scan") or {
-                "until": format_datetime(now + timedelta(microseconds=1)),
-                "through": _positions(instance),
-                "cursors": {},
-                "done": [],
-                "timed": [],
-            }
+            previous_scan = session.get("scan")
+            previous_cursors = {} if previous_scan is None else previous_scan["cursors"]
+            continuing_scan = previous_scan is not None and "until" in previous_scan
+            scan = (
+                previous_scan
+                if continuing_scan
+                else {
+                    "until": format_datetime(now + timedelta(microseconds=1)),
+                    "through": _positions(instance),
+                    "cursors": dict(previous_cursors),
+                    "done": [],
+                    "timed": [],
+                }
+            )
             details: list[str] = []
             stopped = False
             for trigger in triggers:
@@ -789,6 +798,7 @@ def service_match_listening_lines(
                     pending_scope=session["session_id"],
                     only_trigger=name,
                     generation_after=session.get("generation_start"),
+                    generation_cursors=scan["cursors"],
                 )
                 stop = _arm_stop(
                     session,
@@ -814,9 +824,11 @@ def service_match_listening_lines(
                 if result.detail is not None:
                     details.append(result.detail)
                 if result.status == "incomplete":
-                    scan["cursors"][name] = result.cursor
+                    if not isinstance(trigger.trigger.schedule, GenerationAcceptedScheduleV1):
+                        scan["cursors"][name] = result.cursor
                 else:
-                    scan["cursors"].pop(name, None)
+                    if not isinstance(trigger.trigger.schedule, GenerationAcceptedScheduleV1):
+                        scan["cursors"].pop(name, None)
                     scan["done"].append(name)
                     if _timed(trigger):
                         scan["timed"].append(name)
@@ -828,7 +840,8 @@ def service_match_listening_lines(
             detail = details[0] if details else None
             if (
                 complete
-                and session.get("scan") is None
+                and not continuing_scan
+                and scan["cursors"] == previous_cursors
                 and scan["through"] == session["positions"]
                 and detail == session.get("detail")
                 and now - evaluated_until < _IDLE_COVERAGE_INTERVAL
@@ -845,7 +858,9 @@ def service_match_listening_lines(
                         **session.get("trigger_until", {}),
                         **{name: scan["until"] for name in scan["timed"]},
                     },
-                    scan=None,
+                    # Completed scans keep generation coverage across ticks;
+                    # pagination cursors have already been cleared above.
+                    scan={"cursors": scan["cursors"]} if scan["cursors"] else None,
                 )
             else:
                 session["scan"] = scan

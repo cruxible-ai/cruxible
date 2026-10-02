@@ -64,6 +64,7 @@ def service_check_line_trigger(
     pending_scope: str | None = None,
     only_trigger: str | None = None,
     generation_after: int | None = None,
+    generation_cursors: dict[str, Any] | None = None,
 ) -> LineTriggerCheckResultV1:
     """Every occurrence the Line's live Triggers make eligible in one range.
 
@@ -146,6 +147,7 @@ def service_check_line_trigger(
     occurrences = []
     next_cursor = None
     complete = True
+    generation_updates: dict[str, int] = {}
     try:
         bindings: list[tuple[AcceptedTriggerV1, LineTriggerBindingV1, datetime]] = []
         for trigger in triggers:
@@ -222,18 +224,25 @@ def service_check_line_trigger(
                 with instance.accepted_history_reader() as history:
                     head = history.sequence
                 covered = trigger_generation(instance, trigger.trigger)
+                recorded = None if generation_cursors is None else generation_cursors.get(name)
                 if generation_after is not None:
                     covered = max(covered, generation_after)
-                elif request.since is not None:
+                elif request.since is not None and recorded is None:
                     # A listening segment starts afresh; accepts made while it
                     # was stopped are never replayed.
                     covered = max(covered, generation_at(instance, request.since))
-                for prior_admission in _trigger_admissions(
-                    instance, accepted, trigger.trigger.identity
-                ):
-                    cause = getattr(prior_admission, "trigger_binding", None)
-                    if cause is not None and cause.generation is not None:
-                        covered = max(covered, cause.generation)
+                if recorded is not None:
+                    covered = max(covered, recorded)
+                else:
+                    # Only a cold check recovers coverage from admissions. An
+                    # armed session retains it in its scan cursors thereafter.
+                    for prior_admission in _trigger_admissions(
+                        instance, accepted, trigger.trigger.identity
+                    ):
+                        cause = getattr(prior_admission, "trigger_binding", None)
+                        if cause is not None and cause.generation is not None:
+                            covered = max(covered, cause.generation)
+                generation_updates[name] = head
                 if head > covered:
                     bindings.append((trigger, trigger_binding_for(trigger, generation=head), now))
             elif schedule_is_timed(schedule):
@@ -307,6 +316,8 @@ def service_check_line_trigger(
             )
             for item in occurrences
         ]
+    if generation_cursors is not None:
+        generation_cursors.update(generation_updates)
     return LineTriggerCheckResultV1(
         **context,
         status="incomplete"

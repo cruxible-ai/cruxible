@@ -1512,3 +1512,56 @@ def test_generation_line_accepts_once_then_reaches_a_fixed_point(tmp_path, monke
     assert len(runs) == 2
     assert _admissions(instance) == 2
     assert service_line_status(instance, line.identity.name).pending_automatic == 0
+
+
+def test_generation_line_retains_its_cursor_without_reading_prior_admissions(tmp_path, monkeypatch):
+    import json
+
+    from cruxible_client.contracts.triggers import GenerationAcceptedScheduleV1
+    from cruxible_core.exhaust.line_dispatch import LineDispatchStore
+    from cruxible_core.service.procedures import line_triggers
+
+    instance, line, _, owner = line_world(tmp_path, GenerationAcceptedScheduleV1(), with_owner=True)
+    start = READ_TIME + timedelta(seconds=10)
+    service_arm_line(
+        instance,
+        line.identity.name,
+        principal=LOCAL,
+        actor=_actor(instance),
+        now=start,
+        daemon_id="daemon",
+    )
+    store = LineDispatchStore(instance)
+    with store.locked() as connection:
+        (payload,) = connection.execute("SELECT payload FROM sessions WHERE active=1").fetchone()
+        session = json.loads(payload)
+        session.pop("generation_start")  # A listening segment recorded before G4c.
+        store.append(connection, "coverage", session, actor=_actor(instance), now=start)
+    calls = []
+    admissions = line_triggers._trigger_admissions
+
+    def observed(*args):
+        calls.append(True)
+        return admissions(*args)
+
+    monkeypatch.setattr(line_triggers, "_trigger_admissions", observed)
+    _match(instance, start + timedelta(seconds=1))
+    assert len(calls) == 1  # Only the cold check consults the retained journal.
+    with store.locked() as connection:
+        (payload,) = connection.execute("SELECT payload FROM sessions WHERE active=1").fetchone()
+    session = json.loads(payload)
+    with instance.accepted_history_reader() as history:
+        assert list(session["scan"]["cursors"].values()) == [history.sequence]
+    _match(instance, start + timedelta(seconds=2))
+    with store.locked() as connection:
+        assert connection.execute("SELECT payload FROM sessions WHERE active=1").fetchone()[0] == (
+            payload
+        )  # An idle check neither rescans admissions nor journals coverage.
+    _accept_generation(instance, owner, "cursor-advance", start + timedelta(seconds=3))
+    _match(instance, start + timedelta(seconds=4))
+    assert len(calls) == 1
+    assert service_line_status(instance, line.identity.name).pending_automatic == 1
+    # A fresh reader after a process restart of the service uses persisted
+    # cursors; a new daemon listening segment deliberately starts over.
+    _match(instance, start + timedelta(seconds=5))
+    assert len(calls) == 1

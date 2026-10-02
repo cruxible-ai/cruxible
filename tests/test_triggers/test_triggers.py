@@ -345,3 +345,30 @@ def test_version_two_journal_migrates_in_place_without_losing_fires(tmp_path: Pa
         assert connection.execute("PRAGMA user_version").fetchone() == (3,)
         assert connection.execute("SELECT * FROM timers").fetchall() == timers
     assert trigger_events(world) == events
+
+
+@pytest.mark.parametrize("second,expected", [(-1, 0), (0, 1), (12345, 24691), (2**18, 2**18)])
+def test_generation_time_lookup_bisects_and_keeps_the_last_equal_instant(
+    tmp_path, second, expected
+):
+    from contextlib import contextmanager
+
+    from cruxible_core.triggers.journal import generation_at
+
+    world = instance(tmp_path)
+    calls = []
+
+    @contextmanager
+    def history():
+        yield SimpleNamespace(
+            sequence=2**18, generation=lambda sequence: SimpleNamespace(git_oid=str(sequence))
+        )
+
+    def evaluation_time(oid):
+        calls.append(oid)
+        return NOW + timedelta(seconds=int(oid) // 2)
+
+    world.accepted_history_reader = history
+    world.accepted_evaluation_time = evaluation_time
+    assert generation_at(world, NOW + timedelta(seconds=second)) == expected
+    assert len(calls) <= 20

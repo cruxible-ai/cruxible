@@ -367,13 +367,33 @@ def trigger_generation(instance: Any, trigger: TriggerV1) -> int:
 
 
 def generation_at(instance: Any, instant: datetime) -> int:
-    """Latest accepted sequence at an instant, for an explicit matching range."""
+    """Bisect non-decreasing accepted evaluation times for a matching range.
+
+    The fallback requires sequence-ordered instants; assert the search bracket
+    stays ordered rather than silently using a reversed clock. Daemon listeners
+    normally supply their exact starting sequence without this time lookup.
+    """
 
     with instance.accepted_history_reader() as history:
-        for sequence in range(history.sequence, -1, -1):
-            if instance.accepted_evaluation_time(history.generation(sequence).git_oid) <= instant:
-                return sequence
-    return 0
+        lower, upper = 0, int(history.sequence)
+        lower_time = instance.accepted_evaluation_time(history.generation(lower).git_oid)
+        upper_time = instance.accepted_evaluation_time(history.generation(upper).git_oid)
+        assert lower_time <= upper_time, "accepted evaluation times must be non-decreasing"
+        if instant < lower_time:
+            return 0
+        if instant >= upper_time:
+            return upper
+        while lower + 1 < upper:
+            middle = (lower + upper) // 2
+            middle_time = instance.accepted_evaluation_time(history.generation(middle).git_oid)
+            assert lower_time <= middle_time <= upper_time, (
+                "accepted evaluation times must be non-decreasing"
+            )
+            if middle_time <= instant:
+                lower, lower_time = middle, middle_time
+            else:
+                upper, upper_time = middle, middle_time
+        return lower
 
 
 def _generation_work(
@@ -403,17 +423,17 @@ def _generation_work(
     for item in items:
         version = item.version or format_datetime(item.accepted_at)
         previous = rows.get(item.trigger)
-        baseline = max(
-            item.accepted_generation
-            if item.accepted_generation is not None
-            else generation_at(instance, item.accepted_at),
-            listening_generation
-            if listening_generation is not None
-            else generation_at(instance, listening_since),
-        )
-        covered = (
-            baseline if previous is None or previous[:2] != (version, listener) else previous[2]
-        )
+        if previous is None or previous[:2] != (version, listener):
+            covered = max(
+                item.accepted_generation
+                if item.accepted_generation is not None
+                else generation_at(instance, item.accepted_at),
+                listening_generation
+                if listening_generation is not None
+                else generation_at(instance, listening_since),
+            )
+        else:
+            covered = previous[2]
         if head > covered:
             fires.append(
                 _Fire(item.action, item.trigger, head_time, f"generation:{version}:{head}")
