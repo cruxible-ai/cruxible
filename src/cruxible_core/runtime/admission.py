@@ -20,7 +20,12 @@ HTTP request paths must never reach ``hold``, even from a synchronous route
 or an offloaded helper: waiting there consumes worker capacity before admission
 and can deadlock against an admitted route waiting for that capacity. Only
 non-request threads use ``hold``; HTTP paths admit before offloading and call
-bodies that do not acquire the key again.
+bodies that do not acquire the key again. The server marks every HTTP request
+with ``HTTP_REQUEST_CONTEXT``, which propagates into offloaded workers. ``hold``
+refuses that context before acquiring or waiting for any key; this runtime check
+is the guarantee across all call indirections. Ticket workers keep the request
+context and run normally because they have already been admitted. Consumer
+threads have no request context.
 
 Both kinds queue on the same key in arrival order and exclude each other: an
 export, a delta and a consumer refresh of one instance never overlap, while
@@ -38,7 +43,9 @@ skipped. So nothing here keeps a finished loop alive.
 
 The event-loop guardrail (``tests/test_architecture/test_routes_off_the_event_loop.py``)
 checks every call ``admit`` makes on the loop, through each method it reaches;
-keep that path to this bookkeeping.
+keep that path to this bookkeeping. Its transitive hold scan is a cheap early
+warning smoke check; the request-context check in ``hold`` guarantees the HTTP
+prohibition at runtime.
 """
 
 from __future__ import annotations
@@ -48,9 +55,13 @@ import threading
 from collections import deque
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
+from contextvars import ContextVar
 from typing import Literal, TypeVar
 
 _T = TypeVar("_T")
+
+#: Set by the server for HTTP requests, including their offloaded worker calls.
+HTTP_REQUEST_CONTEXT: ContextVar[bool] = ContextVar("cruxible_http_request", default=False)
 
 
 def _grant(future: asyncio.Future[None]) -> None:
@@ -231,6 +242,10 @@ class KeyedAdmission:
     def hold(self, key: str) -> Iterator[None]:
         """Hold ``key`` from a worker thread, blocking it until the key is its own."""
 
+        if HTTP_REQUEST_CONTEXT.get():
+            raise RuntimeError(
+                "floor admission from an HTTP request must use async admit with the ticket"
+            )
         try:
             asyncio.get_running_loop()
         except RuntimeError:
@@ -279,4 +294,4 @@ class KeyedAdmission:
 FLOOR_ADMISSION = KeyedAdmission()
 
 
-__all__ = ["FLOOR_ADMISSION", "KeyedAdmission"]
+__all__ = ["FLOOR_ADMISSION", "HTTP_REQUEST_CONTEXT", "KeyedAdmission"]

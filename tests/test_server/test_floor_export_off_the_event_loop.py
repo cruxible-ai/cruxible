@@ -29,11 +29,12 @@ from cruxible_client import contracts
 from cruxible_client.contracts.floor import PlaybillFloorDeltaV1
 from cruxible_core.mcp.permissions import reset_permissions
 from cruxible_core.runtime import playbill_api
-from cruxible_core.runtime.admission import FLOOR_ADMISSION
+from cruxible_core.runtime.admission import FLOOR_ADMISSION, HTTP_REQUEST_CONTEXT
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import reset_registry
+from cruxible_core.server.request_context import HTTPRequestContextMiddleware
 from cruxible_core.server.routes import playbill as playbill_routes
 from tests.support.floor_exports import floor_v5_delta
 
@@ -586,6 +587,7 @@ def test_attachment_and_delivery_requests_wait_without_worker_tokens(monkeypatch
         ),
     )
     app = FastAPI()
+    app.add_middleware(HTTPRequestContextMiddleware)
     app.include_router(playbill_routes.router)
     app.include_router(hosted_instances.router)
     offload = playbill_routes.run_in_threadpool
@@ -646,4 +648,160 @@ def test_attachment_and_delivery_requests_wait_without_worker_tokens(monkeypatch
             limiter.total_tokens = previous
 
     asyncio.run(scenario())
+    assert FLOOR_ADMISSION.active_keys() == 0
+
+
+@pytest.mark.parametrize("form", ["direct", "helper", "lambda_alias"])
+def test_http_hold_fails_before_admission_for_every_call_form(client, monkeypatch, form):
+    """Worker context survives indirection; a forbidden hold never starts a wait."""
+    error = "floor admission from an HTTP request must use async admit with the ticket"
+
+    def blocking():
+        with FLOOR_ADMISSION.hold("inst_http_hold"):
+            return {"entered": True}
+
+    def direct():
+        with FLOOR_ADMISSION.hold("inst_http_hold"):
+            return {"entered": True}
+
+    def helper():
+        return blocking()
+
+    def lambda_alias():
+        invoke = lambda: blocking()  # noqa: E731 - regression for the review's lambda alias
+        return invoke()
+
+    def must_not_enter(*args, **kwargs):
+        pytest.fail("an HTTP hold reached admission bookkeeping instead of failing fast")
+
+    monkeypatch.setattr(FLOOR_ADMISSION, "_enter", must_not_enter)
+    client.app.get("/test-http-hold")(
+        {"direct": direct, "helper": helper, "lambda_alias": lambda_alias}[form]
+    )
+    with pytest.raises(RuntimeError, match=error):
+        client.get("/test-http-hold")
+    assert FLOOR_ADMISSION.active_keys() == 0
+    assert not HTTP_REQUEST_CONTEXT.get()
+
+
+def test_http_ticket_workers_keep_request_context_and_consumers_can_hold(client):
+
+    from starlette.concurrency import run_in_threadpool
+
+    worker_entered = threading.Event()
+    consumer_finished = threading.Event()
+    observed = []
+
+    def consumer():
+        if not worker_entered.wait(_FAILURE_BOUND_SECONDS):
+            return
+        with FLOOR_ADMISSION.hold("inst_consumer"):
+            observed.append((HTTP_REQUEST_CONTEXT.get(), FLOOR_ADMISSION.active_keys()))
+        consumer_finished.set()
+
+    def worker():
+        assert HTTP_REQUEST_CONTEXT.get()
+        # A ticket is already admitted, but even its body must not acquire
+        # another key through hold. The check belongs to hold, not ticket.run.
+        with pytest.raises(RuntimeError, match="HTTP request must use async admit"):
+            with FLOOR_ADMISSION.hold("inst_illegal_nested_hold"):
+                pass
+        worker_entered.set()
+        assert consumer_finished.wait(_FAILURE_BOUND_SECONDS)
+        return {"admitted": True}
+
+    async def route():
+        async with FLOOR_ADMISSION.admit("inst_http_ticket") as ticket:
+            return await run_in_threadpool(ticket.run, worker)
+
+    client.app.get("/test-http-ticket")(route)
+    # Created outside the request, as the daemon's consumer runner is.
+    thread = threading.Thread(target=consumer)
+    thread.start()
+    try:
+        response = client.get("/test-http-ticket")
+    finally:
+        worker_entered.set()
+        thread.join(_FAILURE_BOUND_SECONDS)
+    assert not thread.is_alive()
+    assert response.status_code == 200 and response.json() == {"admitted": True}
+    assert observed == [(False, 2)]
+    assert FLOOR_ADMISSION.active_keys() == 0
+    assert not HTTP_REQUEST_CONTEXT.get()
+
+
+@pytest.mark.parametrize("ending", ["success", "exception", "cancellation"])
+def test_http_context_lasts_through_response_and_resets_on_every_exit(ending):
+    import asyncio
+
+    seen = []
+
+    async def send(message):
+        seen.append((message["type"], HTTP_REQUEST_CONTEXT.get()))
+
+    async def receive():
+        return {"type": "http.disconnect"}
+
+    async def downstream(scope, receive, send):
+        assert HTTP_REQUEST_CONTEXT.get()
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await asyncio.sleep(0)
+        await send({"type": "http.response.body", "body": b"ok"})
+        if ending == "exception":
+            raise RuntimeError("request failed")
+        if ending == "cancellation":
+            raise asyncio.CancelledError
+
+    async def scenario():
+        assert not HTTP_REQUEST_CONTEXT.get()
+        middleware = HTTPRequestContextMiddleware(downstream)
+        if ending == "success":
+            await middleware({"type": "http"}, receive, send)
+        else:
+            error = RuntimeError if ending == "exception" else asyncio.CancelledError
+            with pytest.raises(error):
+                await middleware({"type": "http"}, receive, send)
+        assert not HTTP_REQUEST_CONTEXT.get()
+
+    asyncio.run(scenario())
+    assert seen == [("http.response.start", True), ("http.response.body", True)]
+
+
+@pytest.mark.parametrize("scope_type", ["lifespan", "websocket"])
+def test_non_http_scopes_have_no_http_admission_context(scope_type):
+    import asyncio
+
+    seen = []
+
+    async def downstream(scope, receive, send):
+        seen.append(HTTP_REQUEST_CONTEXT.get())
+
+    asyncio.run(HTTPRequestContextMiddleware(downstream)({"type": scope_type}, None, None))
+    assert seen == [False]
+
+
+def test_framework_error_handlers_keep_http_context(client, monkeypatch):
+    from fastapi.responses import JSONResponse
+    from starlette.middleware.errors import ServerErrorMiddleware
+
+    observed = []
+
+    def fail():
+        raise RuntimeError("route failed")
+
+    def handler(request, exc):
+        observed.append(HTTP_REQUEST_CONTEXT.get())
+        with pytest.raises(RuntimeError, match="HTTP request must use async admit"):
+            with FLOOR_ADMISSION.hold("inst_error_handler"):
+                pass
+        return JSONResponse(status_code=500, content={"error": "failed"})
+
+    middleware = client.app.middleware_stack
+    while not isinstance(middleware, ServerErrorMiddleware):
+        middleware = middleware.app
+    monkeypatch.setattr(middleware, "handler", handler)
+    client.app.get("/test-error-context")(fail)
+    with pytest.raises(RuntimeError, match="route failed"):
+        client.get("/test-error-context")
+    assert observed == [True]
     assert FLOOR_ADMISSION.active_keys() == 0

@@ -651,8 +651,10 @@ def test_the_scan_sees_routes() -> None:
 
 
 def _http_hold_paths(modules: dict[str, ast.Module]) -> list[str]:
-    """Follow statically named callables, including methods and offloaded callbacks.
+    """Early-warning smoke check for statically named callables.
 
+    The request-context check in KeyedAdmission.hold is the runtime guarantee;
+    this scan does not model every Python indirection and must stay a smoke check.
     Each function has its own bindings. Nested imports stay in their scope,
     and a nested body is followed only when its callable is referenced.
     """
