@@ -300,8 +300,13 @@ def bound_window(instance: Any, bound_contract_id: str) -> SettleableWindow | No
     )
 
 
+# A stored window is open or resolved; an open one whose end has passed at the
+# read's evaluation instant reads as settleable, without another worker tick.
+_READ_STATUS = "CASE WHEN status='open' AND ends_at_us<=? THEN 'settleable' ELSE status END"
+
+
 def contract_windows(
-    instance: Any, identity: str, *, limit: int
+    instance: Any, identity: str, *, limit: int, evaluation_time: datetime
 ) -> tuple[tuple[tuple[str, BoundObservationWindowV1, str], ...], dict[str, int]] | None:
     """One contract's bound windows (soonest to close first, bounded) and counts by status.
 
@@ -309,20 +314,22 @@ def contract_windows(
     never mistaken for "no windows".
     """
 
+    at = _microseconds(evaluation_time)
     with _STATE.open(instance, create=False) as connection:
         if connection is None:
             return None
         counts = {status: 0 for status in ("open", "settleable", "resolved")}
         for status, count in connection.execute(
-            "SELECT status, count(*) FROM windows INDEXED BY windows_by_identity "
-            "WHERE identity=? GROUP BY status",
-            (identity,),
+            f"SELECT {_READ_STATUS} AS read_status, count(*) FROM windows "
+            "INDEXED BY windows_by_identity WHERE identity=? GROUP BY read_status",
+            (at, identity),
         ):
             counts[str(status)] = int(count)
         rows = connection.execute(
-            "SELECT contract_id, window, status FROM windows INDEXED BY windows_by_identity "
+            f"SELECT contract_id, window, {_READ_STATUS} FROM windows "
+            "INDEXED BY windows_by_identity "
             "WHERE identity=? ORDER BY status='resolved', ends_at_us, contract_id LIMIT ?",
-            (identity, limit),
+            (at, identity, limit),
         ).fetchall()
     return (
         tuple(
@@ -342,12 +349,15 @@ class WindowTally:
     next_close: datetime | None
 
 
-def window_tallies(instance: Any, identities: Iterable[str]) -> dict[str, WindowTally]:
+def window_tallies(
+    instance: Any, identities: Iterable[str], *, evaluation_time: datetime
+) -> dict[str, WindowTally]:
     """Bound windows by status for each named contract; empty before the worker ran."""
 
     wanted = tuple(identities)
     if not wanted:
         return {}
+    at = _microseconds(evaluation_time)
     with _STATE.open(instance, create=False) as connection:
         if connection is None:
             return {}
@@ -355,9 +365,9 @@ def window_tallies(instance: Any, identities: Iterable[str]) -> dict[str, Window
         closes: dict[str, int] = {}
         for identity in wanted:
             for status, count, soonest in connection.execute(
-                "SELECT status, count(*), min(ends_at_us) FROM windows "
-                "INDEXED BY windows_by_identity WHERE identity=? GROUP BY status",
-                (identity,),
+                f"SELECT {_READ_STATUS} AS read_status, count(*), min(ends_at_us) FROM windows "
+                "INDEXED BY windows_by_identity WHERE identity=? GROUP BY read_status",
+                (at, identity),
             ):
                 found.setdefault(identity, {})[str(status)] = int(count)
                 if status == "open" and soonest is not None:

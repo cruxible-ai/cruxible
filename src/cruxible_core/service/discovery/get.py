@@ -2110,7 +2110,13 @@ def service_playbill_get(
                 read_capture=functools.partial(_render_read_capture, surface),
             )
         elif resolved.kind == "resolution_contract":
-            card = resolution_contract_card(instance, coordinate, resolved.identity, render=render)
+            card = resolution_contract_card(
+                instance,
+                coordinate,
+                resolved.identity,
+                evaluation_time=evaluation_time,
+                render=render,
+            )
         elif resolved.kind == "procedure_run":
             card = procedure_run_card(
                 instance,

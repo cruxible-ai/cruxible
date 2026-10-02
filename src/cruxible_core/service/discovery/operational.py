@@ -767,6 +767,7 @@ def resolution_contract_card(
     coordinate: AcceptedProjectionCoordinate,
     identity: str,
     *,
+    evaluation_time: datetime,
     render: RenderGet,
 ) -> PlaybillGetResolutionContractCardV1:
     from cruxible_core.consumers.next.predictions import contract_windows
@@ -780,7 +781,9 @@ def resolution_contract_card(
     claim_id = contract.hypothesis.identity.name
     fields: dict[str, Any] = {}
     counts: dict[str, int] | None = None
-    found = contract_windows(instance, identity, limit=OPERATIONAL_CARD_LIST_LIMIT)
+    found = contract_windows(
+        instance, identity, limit=OPERATIONAL_CARD_LIST_LIMIT, evaluation_time=evaluation_time
+    )
     if found is not None:
         windows, counts = found
         fields["windows"] = tuple(
@@ -813,6 +816,8 @@ def resolution_contract_card(
 def prediction_rows(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
+    *,
+    evaluation_time: datetime,
 ) -> tuple[PlaybillOrientPredictionV1, ...]:
     """Every live ResolutionContract with its bound windows counted by status."""
 
@@ -825,7 +830,11 @@ def prediction_rows(
                 "SELECT identity FROM resolution_contracts WHERE lifecycle='live' ORDER BY identity"
             )
         ]
-    tallies = window_tallies(instance, [item.identity.qualified for item in contracts])
+    tallies = window_tallies(
+        instance,
+        [item.identity.qualified for item in contracts],
+        evaluation_time=evaluation_time,
+    )
     rows: list[PlaybillOrientPredictionV1] = []
     for contract in contracts:
         tally = tallies.get(contract.identity.qualified)
