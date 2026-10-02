@@ -44,6 +44,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+from cruxible_client._safe_files import SafeFileReadError, read_regular_file
 from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.floor import (
     FLOOR_STAGING_NAME,
@@ -60,7 +61,6 @@ from cruxible_client.contracts.floor import (
 
 _CLOEXEC = getattr(os, "O_CLOEXEC", 0)
 _DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | _CLOEXEC
-_READ = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | _CLOEXEC
 _CREATE = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | _CLOEXEC
 _LOCAL_KEYS = frozenset(floor_path_key(path) for path in PLAYBILL_FLOOR_LOCAL_PATHS)
 _MANIFEST_KEY = floor_path_key(PLAYBILL_FLOOR_MANIFEST_PATH)
@@ -125,28 +125,12 @@ def _directory(root: int, parts: tuple[str, ...], *, create: bool) -> Iterator[i
 
 
 def _read_at(directory: int, name: str, *, max_bytes: int | None = None) -> bytes:
-    """Read a no-follow regular file; nonblocking open also refuses swapped FIFOs.
+    """Translate the shared reader's special-file refusal into a floor refusal."""
 
-    Comparisons need only the expected bytes and one extra byte, while manifest
-    and inventory verification still read their complete regular files.
-    """
-
-    handle = os.open(name, _READ, dir_fd=directory)
     try:
-        if not stat.S_ISREG(os.fstat(handle).st_mode):
-            raise PlaybillFloorApplyError(f"{name} is not a regular file")
-        chunks = []
-        remaining = max_bytes
-        while remaining is None or remaining > 0:
-            chunk = os.read(handle, (1 << 20) if remaining is None else min(1 << 20, remaining))
-            if not chunk:
-                break
-            chunks.append(chunk)
-            if remaining is not None:
-                remaining -= len(chunk)
-        return b"".join(chunks)
-    finally:
-        os.close(handle)
+        return read_regular_file(name, dir_fd=directory, max_bytes=max_bytes)
+    except SafeFileReadError as exc:
+        raise PlaybillFloorApplyError(str(exc)) from exc
 
 
 def _write_file(

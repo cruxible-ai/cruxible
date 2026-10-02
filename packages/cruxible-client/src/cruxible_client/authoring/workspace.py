@@ -23,6 +23,7 @@ from typing import Any, Literal, Protocol, cast
 from urllib.parse import urlsplit
 
 from cruxible_client import contracts
+from cruxible_client._safe_files import read_regular_file
 from cruxible_client.authoring.blocks import (
     ProjectionMarkerError,
     parse_projection_blocks,
@@ -210,7 +211,7 @@ def _ensure_workspace_config_ignored(workspace: Path) -> None:
         raise PlaybillWorkspaceError("Git info/exclude path must not be a symbolic link")
     try:
         info_dir.mkdir(parents=True, exist_ok=True)
-        existing = exclude_path.read_bytes() if exclude_path.exists() else b""
+        existing = read_regular_file(exclude_path) if exclude_path.exists() else b""
     except OSError as exc:
         raise PlaybillWorkspaceError(f"Git info/exclude cannot be read: {exc}") from exc
     if _CONFIG_EXCLUDE_RULE.rstrip(b"\n") in existing.splitlines():
@@ -256,7 +257,7 @@ def _read_workspace_config(path: Path) -> dict[str, Any] | None:
     if path.is_symlink():
         raise PlaybillWorkspaceError("coverage config must not be a symbolic link")
     try:
-        payload: Any = json.loads(path.read_text(encoding="utf-8"))
+        payload: Any = json.loads(read_regular_file(path).decode("utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise PlaybillWorkspaceError(f"coverage config is invalid: {exc}") from exc
     if not isinstance(payload, dict):
@@ -453,7 +454,7 @@ def _presentation_policy(
     if not resolved.is_relative_to(root):
         return None, ("presentation_policy_path_escape",)
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw = json.loads(read_regular_file(path).decode("utf-8"))
         if isinstance(raw, Mapping) and raw.get("tag") == "playbill-presentation-policy-v2":
             parsed: PlaybillPresentationPolicyAny = PlaybillPresentationPolicyV2.model_validate(raw)
         else:
@@ -665,7 +666,7 @@ def configured_floor_output(
     if not config_path.exists():
         return None
     try:
-        config: Any = json.loads(config_path.read_text(encoding="utf-8"))
+        config: Any = json.loads(read_regular_file(config_path).decode("utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise PlaybillWorkspaceError(f"coverage config is invalid: {exc}") from exc
     if not isinstance(config, Mapping):
@@ -721,7 +722,7 @@ def _holds_exactly(destination: Path, files: Mapping[str, bytes]) -> bool:
             if source.is_symlink() or relative not in files:
                 return False
             try:
-                if source.read_bytes() != files[relative]:
+                if read_regular_file(source, max_bytes=len(files[relative]) + 1) != files[relative]:
                     return False
             except OSError:
                 return False
@@ -939,7 +940,9 @@ def _rendered_blocks(root: Path, content: bytes) -> list[tuple[str, str]]:
                 )
             )
             manifest = json.loads(
-                (directory / (digest.removeprefix("sha256:") + ".json")).read_text(encoding="utf-8")
+                read_regular_file(directory / (digest.removeprefix("sha256:") + ".json")).decode(
+                    "utf-8"
+                )
             )
         except (PlaybillError, OSError, ValueError):
             continue
@@ -1249,7 +1252,7 @@ def inspect_workspace_floor(
             current_coordinate=current_coordinate,
         )
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest = json.loads(read_regular_file(manifest_path).decode("utf-8"))
         installed = contracts.PlaybillAcceptedCoordinate.model_validate(manifest["coordinate"])
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         return contracts.PlaybillWorkspaceFloorStatus(
@@ -1288,7 +1291,7 @@ def workspace_floor_freshness(
     root = _workspace_root(workspace)
     floor = root / PLAYBILL_FLOOR_PATH
     try:
-        manifest = json.loads((floor / "manifest.json").read_text(encoding="utf-8"))
+        manifest = json.loads(read_regular_file(floor / "manifest.json").decode("utf-8"))
         at = manifest["coordinate"]["git_oid"]
         if not isinstance(at, str):
             return orientation

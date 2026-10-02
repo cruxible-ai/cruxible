@@ -604,7 +604,8 @@ def test_seeded_floor_trigger_delivers_after_accept_and_retirement_stops_it(tmp_
     )
 
 
-def test_fifo_gitignore_stalls_delivery_promptly_and_releases_admission(world):
+@pytest.mark.parametrize("relative", ["floor/.gitignore", "coverage.json"])
+def test_fifo_local_input_stalls_delivery_promptly_and_releases_admission(world, relative):
     import os
 
     from tests.support.fifos import call_with_fifo_timeout
@@ -612,8 +613,8 @@ def test_fifo_gitignore_stalls_delivery_promptly_and_releases_admission(world):
     instance, workspace, _ = world
     instance_id = instance.descriptor.instance_id
     refresh_floor(instance, instance_id)
-    fifo = workspace / ".playbill/floor/.gitignore"
-    fifo.unlink()
+    fifo = workspace / ".playbill" / relative
+    fifo.unlink(missing_ok=True)
     os.mkfifo(fifo)
     with pytest.raises(PlaybillWorkspaceError, match="not a regular file"):
         call_with_fifo_timeout(fifo, lambda: refresh_floor(instance, instance_id))
