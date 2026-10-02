@@ -136,6 +136,7 @@ from cruxible_core.service.discovery.query import (
 )
 from cruxible_core.service.evidence.evidence import (
     ClaimVerdictReadContext,
+    VerdictReads,
     _record_verdict_time_boundaries,
     accepted_claim_attestations,
     service_evaluate_playbill_claim_verdict,
@@ -1977,12 +1978,15 @@ def build_stored_claim_queue(
     coordinate: AcceptedProjectionCoordinate,
     attestation_head: str | None,
     evaluation_time: datetime,
+    body_reads: VerdictReads | None = None,
 ) -> _StoredClaimQueue:
     """Materialize only Claim rows and hold coverage, before caller presentation.
 
     Each family contributes its comparisons to the invariance interval. Hold
     coverage is fixed on that interval too, so serving it needs no history reads.
     A V1 queue has no door observations; the worker retains both wire versions.
+    ``body_reads`` receives the body-store identities the Claim verdicts rest
+    on, so the queue is served only while the live resolver would reuse them.
     """
 
     boundaries: set[datetime] = set()
@@ -1997,6 +2001,7 @@ def build_stored_claim_queue(
         verdicts_by_identity=verdicts,
         read_context=context,
         time_boundaries=boundaries,
+        body_reads=body_reads,
     )
     store = instance.claim_attestation_evidence_store()
     events = () if attestation_head is None else store.fold_events(at_head=attestation_head)

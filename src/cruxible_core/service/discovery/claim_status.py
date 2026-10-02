@@ -151,12 +151,15 @@ def claim_resolution_statuses(
     verdicts_by_identity: MutableMapping[str, ClaimVerdictResultAny] | None = None,
     read_context: ClaimVerdictReadContext | None = None,
     time_boundaries: set[datetime] | None = None,
+    body_reads: VerdictReads | None = None,
 ) -> dict[str, ClaimStatus]:
     """Derive each Claim's resolution status at one accepted coordinate.
 
     ``verdicts_by_identity`` lets one request share Claim verdicts with another
     fold over the same coordinate and evaluation time; it must never outlive
-    that pair.
+    that pair. ``body_reads`` receives the body-store identities this answer
+    rests on, exactly those the memo entry is checked against, or is marked
+    incomplete when no remembered entry could stand for the answer.
 
     The whole derivation is memoized per process on the instance, the accepted
     coordinate, the exact Claim set, and CAS shard metadata for live replay
@@ -189,6 +192,8 @@ def claim_resolution_statuses(
         ):
             if time_boundaries is not None:
                 time_boundaries.update(bound for bound in interval if bound is not None)
+            if body_reads is not None:
+                body_reads.note_bodies(dict(bodies))
             if verdicts_by_identity is not None:
                 verdicts_by_identity.update(
                     {
@@ -360,11 +365,14 @@ def claim_resolution_statuses(
     # Only a derivation whose every body read has the identity it used, and
     # whose bodies still have those identities now, is remembered: anything
     # that moved between a read and this insert forgoes the memo.
-    if (
+    remembered_now = (
         remember
         and bodies_read.bodies_complete
         and body_fingerprints_hold(instance, fingerprints, store=read_context.body_store())
-    ):
+    )
+    if body_reads is not None:
+        body_reads.note_bodies(dict(fingerprints) if remembered_now else None)
+    if remembered_now:
         memo_put(
             _RESOLUTION_MEMO,
             key,

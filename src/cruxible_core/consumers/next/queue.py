@@ -7,10 +7,19 @@ polling a clock: a deadline fire requests the next fold, and reads compute live
 until that fold catches up. A failed target remains stalled until an input
 changes or the operator rebuilds this disposable state, avoiding endless folds
 of the same broken inputs.
+
+The CAS shard fingerprint sees bodies arrive and go, not a body rewritten in
+place. Each published queue therefore keeps the file identity of every body
+its Claim verdicts rest on, the same identities the live resolver's memo is
+checked against, and is served only while one stat of each still matches.
+A changed identity is a miss (the read computes live, and fails exactly as live
+does) and a rebuild request; a fold whose bodies have no identity to stand for
+them publishes nothing a read will serve.
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -42,12 +51,26 @@ CREATE TABLE progress (
  target_coordinate TEXT NOT NULL, target_door TEXT NOT NULL, target_fingerprint TEXT,
  target_expire INTEGER NOT NULL DEFAULT 0, expire INTEGER NOT NULL DEFAULT 0,
  coordinate TEXT, door TEXT, generation INTEGER NOT NULL DEFAULT 0,
- checked_at TEXT, input_fingerprint TEXT, v1 TEXT, v2 TEXT,
+ checked_at TEXT, input_fingerprint TEXT, bodies TEXT, v1 TEXT, v2 TEXT,
  failed_coordinate TEXT, failed_door TEXT, failed_fingerprint TEXT, failed_expire INTEGER,
  last_error TEXT, last_error_at TEXT
 ) STRICT;
 """
 _STATE = DisposableState("next/queue", _SCHEMA)
+
+
+def _bodies_hold(instance: Any, bodies: str) -> bool:
+    """Whether every body a published queue rests on keeps its identity: one stat each."""
+
+    from cruxible_core.service.evidence.evidence import body_fingerprints_hold
+
+    return body_fingerprints_hold(
+        instance,
+        tuple(
+            (str(digest), None if identity is None else tuple(identity))
+            for digest, identity in json.loads(bodies)
+        ),
+    )
 
 
 def stored_claim_queue(
@@ -68,7 +91,7 @@ def stored_claim_queue(
         if connection is None:
             return None
         row = connection.execute(
-            "SELECT coordinate,door,input_fingerprint,expire,v1,v2 FROM progress"
+            "SELECT coordinate,door,input_fingerprint,expire,bodies,v1,v2 FROM progress"
         ).fetchone()
     if row is None or row[0] != AcceptedCoordinate.from_internal(coordinate).model_dump_json():
         return None
@@ -76,8 +99,8 @@ def stored_claim_queue(
         return None
     if row[3] != latest_sequence(instance, action="next.expire"):
         return None
-    payload = row[4 if version == 1 else 5]
-    if payload is None:
+    payload = row[5 if version == 1 else 6]
+    if payload is None or row[4] is None or not _bodies_hold(instance, row[4]):
         return None
     stored = _StoredClaimQueue.model_validate_json(payload)
     return (
@@ -102,11 +125,15 @@ class ClaimQueuePart:
         expiry = latest_sequence(instance, action="next.expire")
         with _STATE.open(instance) as connection:
             assert connection is not None
-            targets = connection.execute(
-                "SELECT target_coordinate,target_door,target_fingerprint,target_expire "
-                "FROM progress"
+            row = connection.execute(
+                "SELECT target_coordinate,target_door,target_fingerprint,target_expire,"
+                "coordinate,bodies FROM progress"
             ).fetchone()
-            if targets == (coordinate, door, fingerprint, expiry):
+            if row is not None and row[:4] == (coordinate, door, fingerprint, expiry):
+                if row[4] is not None and row[5] is not None and not _bodies_hold(instance, row[5]):
+                    # A body was rewritten in place: withdraw the published queue,
+                    # which also requests one rebuild of the unchanged target.
+                    connection.execute("UPDATE progress SET coordinate=NULL")
                 return
             connection.execute(
                 "INSERT INTO progress(singleton,target_coordinate,target_door,"
@@ -135,6 +162,7 @@ class ClaimQueuePart:
 
     def run(self, manager: Any, instance_id: str, work: ConsumerWork, *, now: datetime) -> None:
         from cruxible_core.service.discovery.next import build_stored_claim_queue
+        from cruxible_core.service.evidence.evidence import VerdictReads
 
         instance = manager.get(instance_id)
         try:
@@ -161,17 +189,31 @@ class ClaimQueuePart:
             # Both wire versions are served. V1 ignores door observations, so
             # keeping both ready avoids read-triggered work or a full live fold.
             # Their resolution derivation shares the existing verdict memo.
+            reads = VerdictReads()
             v1 = build_stored_claim_queue(
-                instance, coordinate=coordinate, attestation_head=None, evaluation_time=evaluated_at
+                instance,
+                coordinate=coordinate,
+                attestation_head=None,
+                evaluation_time=evaluated_at,
+                body_reads=reads,
             )
             v2 = build_stored_claim_queue(
                 instance,
                 coordinate=coordinate,
                 attestation_head=work.item[1],
                 evaluation_time=evaluated_at,
+                body_reads=reads,
             )
             if fingerprint != verdict_input_fingerprint(instance):
                 # Inputs moved during the fold. Matching will record their new target.
+                return
+            # NULL when some body had no identity to stand for it: published so
+            # the target is not folded again, never served (reads compute live).
+            bodies = (
+                json.dumps(sorted(reads.body_identities.items())) if reads.bodies_complete else None
+            )
+            if bodies is not None and not _bodies_hold(instance, bodies):
+                # A body was rewritten during the fold; the next pass folds again.
                 return
             with instance.accepted_history_reader(at=public) as history:
                 generation = history.sequence
@@ -186,7 +228,8 @@ class ClaimQueuePart:
                 assert connection is not None
                 connection.execute(
                     "UPDATE progress SET coordinate=?,door=?,generation=?,checked_at=?,"
-                    "input_fingerprint=?,v1=?,v2=?,expire=?,failed_coordinate=NULL,failed_door=NULL,"
+                    "input_fingerprint=?,bodies=?,v1=?,v2=?,expire=?,"
+                    "failed_coordinate=NULL,failed_door=NULL,"
                     "failed_fingerprint=NULL,failed_expire=NULL,last_error=NULL,last_error_at=NULL",
                     (
                         work.item[0],
@@ -194,6 +237,7 @@ class ClaimQueuePart:
                         generation,
                         format_datetime(now),
                         fingerprint,
+                        bodies,
                         v1.model_dump_json(),
                         v2.model_dump_json(),
                         work.item[3],

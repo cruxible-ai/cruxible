@@ -600,3 +600,112 @@ def test_orient_profile_reuses_inside_the_interval_and_falls_back_at_valid_until
         assert live.call_count == 2
     with patch.object(consumer, "stored_claim_queue", return_value=None):
         assert served == service_playbill_next(instance, request=edge)
+
+
+def _next_outcome(instance, version: int):  # type: ignore[no-untyped-def]
+    model = PlaybillNextRequestV1 if version == 1 else PlaybillNextRequestV2
+    request = model(evaluation_time=EVALUATION_TIME, access_profile=_access())
+    try:
+        return service_playbill_next(instance, request=request).model_dump_json()
+    except Exception as exc:  # noqa: BLE001 - the refusal itself is the outcome compared
+        return (type(exc).__name__, str(exc))
+
+
+def _rewrite_backing(instance, *, keep_mtime: bool) -> None:  # type: ignore[no-untyped-def]
+    from cruxible_core.service.claims.verdict_memo import verdict_input_fingerprint
+    from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
+    from tests.test_evidence.test_slot_verdict_reuse import _rewrite_in_place
+
+    context = ClaimVerdictReadContext(instance, instance.accepted_coordinate())
+    capture = context.claims()[0].backing.capture_digests[0]
+    fingerprint = verdict_input_fingerprint(instance)
+    _rewrite_in_place(instance.body_store()._path(capture), keep_mtime=keep_mtime)
+    # The shard fingerprint does not see an in-place rewrite; body identities must.
+    assert verdict_input_fingerprint(instance) == fingerprint
+
+
+def _assert_stalled_without_retry(instance) -> None:  # type: ignore[no-untyped-def]
+    (health,) = WORKER.health(instance, now=EVALUATION_TIME)
+    assert health.state == "stalled" and "PlaybillCasError" in health.detail["last_error"]
+    WORKER.match(instance, now=EVALUATION_TIME, daemon_id="restart")
+    assert tuple(WORKER.due(instance, now=EVALUATION_TIME)) == ()
+
+
+@pytest.mark.parametrize("version", (1, 2))
+@pytest.mark.parametrize("keep_mtime", (False, True), ids=("rewrite", "rewrite-keep-mtime"))
+def test_a_body_rewritten_in_place_is_never_served_from_the_stored_queue(
+    tmp_path: Path, version: int, keep_mtime: bool
+) -> None:
+    instance, _owner = seed_claims(tmp_path)
+    _drain(instance)
+    assert _stored(instance, EVALUATION_TIME, version) is not None
+
+    _rewrite_backing(instance, keep_mtime=keep_mtime)
+
+    # Served and live agree: both refuse the corrupt backing.
+    assert _stored(instance, EVALUATION_TIME, version) is None
+    served = _next_outcome(instance, version)
+    with patch.object(consumer, "stored_claim_queue", return_value=None):
+        assert served == _next_outcome(instance, version)
+    assert served[0] == "PlaybillCasError"
+
+    # Matching withdraws the queue and asks for one rebuild; a rebuild that fails
+    # on the same inputs is not retried until an input changes.
+    WORKER.match(instance, now=EVALUATION_TIME, daemon_id="first")
+    (work,) = WORKER.due(instance, now=EVALUATION_TIME)
+    with pytest.raises(Exception, match="CAS object bytes"):
+        WORKER.run(SimpleNamespace(get=lambda _id: instance), "instance", work, now=EVALUATION_TIME)
+    _assert_stalled_without_retry(instance)
+    assert _stored(instance, EVALUATION_TIME, version) is None
+
+
+@pytest.mark.parametrize("version", (1, 2))
+def test_a_body_rewritten_during_a_fold_is_not_published(tmp_path: Path, version: int) -> None:
+    from cruxible_core.service.discovery import next as next_module
+
+    instance, _owner = seed_claims(tmp_path)
+    WORKER.match(instance, now=EVALUATION_TIME, daemon_id="first")
+    (work,) = WORKER.due(instance, now=EVALUATION_TIME)
+    original = next_module.build_stored_claim_queue
+    calls = 0
+
+    def rewritten(*args, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        snapshot = original(*args, **kwargs)
+        calls += 1
+        if calls == 2:
+            # Both wire versions are folded; the body changes before the publish.
+            _rewrite_backing(instance, keep_mtime=True)
+        return snapshot
+
+    with patch.object(next_module, "build_stored_claim_queue", rewritten):
+        WORKER.run(SimpleNamespace(get=lambda _id: instance), "instance", work, now=EVALUATION_TIME)
+    assert _stored(instance, EVALUATION_TIME, version) is None
+    served = _next_outcome(instance, version)
+    with patch.object(consumer, "stored_claim_queue", return_value=None):
+        assert served == _next_outcome(instance, version)
+    assert served[0] == "PlaybillCasError"
+    (work,) = WORKER.due(instance, now=EVALUATION_TIME)
+    with pytest.raises(Exception, match="CAS object bytes"):
+        WORKER.run(SimpleNamespace(get=lambda _id: instance), "instance", work, now=EVALUATION_TIME)
+    _assert_stalled_without_retry(instance)
+
+
+def test_a_fold_without_body_identities_is_published_but_never_served(tmp_path: Path) -> None:
+    from cruxible_core.service.discovery import next as next_module
+
+    instance, _owner = seed_claims(tmp_path)
+    original = next_module.build_stored_claim_queue
+
+    def unobserved(*args, body_reads, **kwargs):  # type: ignore[no-untyped-def]
+        snapshot = original(*args, body_reads=body_reads, **kwargs)
+        body_reads.note_bodies(None)
+        return snapshot
+
+    with patch.object(next_module, "build_stored_claim_queue", unobserved):
+        _drain(instance)
+    assert _stored(instance, EVALUATION_TIME) is None
+    # The target is folded once, not again on every pass; reads compute live.
+    WORKER.match(instance, now=EVALUATION_TIME, daemon_id="restart")
+    assert tuple(WORKER.due(instance, now=EVALUATION_TIME)) == ()
+    assert WORKER.health(instance, now=EVALUATION_TIME)[0].state == "running"
