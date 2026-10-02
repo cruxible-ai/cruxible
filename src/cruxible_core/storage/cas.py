@@ -103,13 +103,22 @@ def observe_bodies() -> Iterator[BodyObservation]:
         _BODY_OBSERVATION.reset(token)
 
 
-def _observe(digest: str, identity: FileIdentity | None) -> None:
+# Every hook starts with one context lookup and does nothing else outside an
+# observation: no identity is built and no extra stat is taken for a caller that
+# is not observing.
+
+
+def _observe(digest: str, status: os.stat_result | None) -> None:
+    """Record one object as stat showed it; ``None`` is a confirmed absence."""
+
     observation = _BODY_OBSERVATION.get()
     if observation is not None:
-        observation.note(digest, identity)
+        observation.note(digest, None if status is None else _file_identity(status))
 
 
 def _observe_read(digest: str, before: os.stat_result, after: os.stat_result) -> None:
+    """Record one read bracketed by two stats of its descriptor."""
+
     observation = _BODY_OBSERVATION.get()
     if observation is None:
         return
@@ -118,6 +127,13 @@ def _observe_read(digest: str, before: os.stat_result, after: os.stat_result) ->
     else:
         # Written while it was read: no one identity stands for these bytes.
         observation.consistent = False
+
+
+def _observe_descriptor_read(digest: str, before: os.stat_result, descriptor: int) -> None:
+    """Record a read whose closing stat is taken only when someone is observing."""
+
+    if _BODY_OBSERVATION.get() is not None:
+        _observe_read(digest, before, os.fstat(descriptor))
 
 
 def note_unobservable_body() -> None:
@@ -264,7 +280,7 @@ class ContentAddressedBodyStore:
             status = None
         finally:
             os.close(descriptor)
-        _observe(digest, None if status is None else _file_identity(status))
+        _observe(digest, status)
         return status
 
     def peek(self, digest: str, length: int) -> bytes:
@@ -284,18 +300,24 @@ class ContentAddressedBodyStore:
                 descriptor = os.open(
                     name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory
                 )
+            except FileNotFoundError:
+                _observe(digest, None)
+                return b""
             except OSError:
+                note_unobservable_body()
                 return b""
         finally:
             os.close(directory)
         try:
             before = os.fstat(descriptor)
             if not stat.S_ISREG(before.st_mode):
+                _observe(digest, before)
                 return b""
             head = os.read(descriptor, length)
-            _observe_read(digest, before, os.fstat(descriptor))
+            _observe_descriptor_read(digest, before, descriptor)
             return head
         except OSError:
+            note_unobservable_body()
             return b""
         finally:
             os.close(descriptor)
@@ -449,7 +471,7 @@ class ContentAddressedBodyStore:
                 except FileNotFoundError as exc:
                     _observe(digest, None)
                     raise PlaybillCasError("CAS object is missing") from exc
-                _observe(digest, _file_identity(status))
+                _observe(digest, status)
                 if not stat.S_ISREG(status.st_mode):
                     raise PlaybillCasError("CAS object must be a regular file")
                 raise PlaybillCasError("CAS object cannot be read")
@@ -505,18 +527,21 @@ class ContentAddressedBodyStore:
                 _observe(digest, None)
                 return "missing"
             except OSError:
+                note_unobservable_body()
                 return "corrupt"
         finally:
             os.close(directory)
         try:
             before = os.fstat(descriptor)
             if not stat.S_ISREG(before.st_mode):
+                _observe(digest, before)
                 return "corrupt"
             hasher = hashlib.sha256()
             while chunk := os.read(descriptor, 1 << 20):
                 hasher.update(chunk)
-            _observe_read(digest, before, os.fstat(descriptor))
+            _observe_descriptor_read(digest, before, descriptor)
         except OSError:
+            note_unobservable_body()
             return "corrupt"
         finally:
             os.close(descriptor)
