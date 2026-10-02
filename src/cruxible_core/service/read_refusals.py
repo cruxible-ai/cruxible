@@ -60,8 +60,8 @@ OID_PREFIX_MIN = 12
 _MAX_OID_CANDIDATES = 5
 _OID_PREFIX = re.compile(rf"[0-9a-f]{{{OID_PREFIX_MIN},64}}")
 _AT_REPAIR = (
-    "Omit at to read the current head, or pass an accepted git oid, a unique prefix of one, "
-    "or a generation number"
+    "Omit at to read the current head, or pass an accepted git oid, a unique prefix of one "
+    "(12+ hex), or a generation number (all digits, 11 or fewer)"
 )
 
 
@@ -77,9 +77,11 @@ def _not_accepted(message: str, candidates: Iterable[str] = ()) -> ReadRefusalEr
 
 
 #: A generation number: what ``orient``, history rows and receipts print as the
-#: accepted sequence. Shorter than any git-oid prefix ``at`` accepts, so the two
-#: spellings never collide.
-_GENERATION = re.compile(rf"(?:0|[1-9][0-9]{{0,{OID_PREFIX_MIN - 2}}})")
+#: accepted sequence. The rule is by shape alone: an all-digit value of fewer
+#: characters than any git-oid prefix ``at`` accepts (11 or fewer) is always a
+#: generation, even when it is also the start of an accepted oid, so the two
+#: spellings never collide. Twelve or more digits are an oid prefix.
+_GENERATION = re.compile(rf"[0-9]{{1,{OID_PREFIX_MIN - 1}}}")
 
 
 def _oid_for_generation(instance: PlaybillInstance, at: str) -> str:
@@ -103,7 +105,8 @@ def _oid_for_generation(instance: PlaybillInstance, at: str) -> str:
 def _oid_for(instance: PlaybillInstance, at: str) -> str:
     """The one accepted generation's oid that ``at`` names.
 
-    ``at`` is a full git oid, a unique prefix of one, or a generation number.
+    ``at`` is a full git oid, a unique prefix of one, or a generation number;
+    an all-digit value of 11 or fewer characters is always a generation.
     """
 
     if _GENERATION.fullmatch(at):
@@ -143,8 +146,9 @@ def resolve_read_coordinate(
 
     A git oid may be shortened to a unique prefix of at least ``OID_PREFIX_MIN``
     hex characters, so the compact coordinate a read prints can be passed back.
-    A decimal of fewer digits is a generation number, the sequence ``orient``
-    and history rows print. Both resolve against accepted generations only.
+    An all-digit value of 11 or fewer characters is always a generation number,
+    the sequence ``orient`` and history rows print, never an oid prefix. Both
+    resolve against accepted generations only.
     """
 
     if at is None:

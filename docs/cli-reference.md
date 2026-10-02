@@ -1979,8 +1979,10 @@ summary's coordinate is the git oid's 12-hex prefix and the generation; the
 full accepted coordinate is under `--detail proof`. `--at` takes a git oid, a
 unique 12+ hex prefix of one, or a generation number, so either half of a
 printed coordinate reads back; each history row prints both (`seq N at
-<12 hex>`). Evidence names each Capture by its `CAP-<12 hex>` handle, which
-`get` and `capture read` both accept. A wrong or ambiguous REF
+<12 hex>`). An all-digit value of 11 or fewer characters is always a
+generation, never an oid prefix; twelve or more digits are a prefix. Evidence
+names each Capture by its `CAP-<12 hex>` handle, which `get` and `capture read`
+both accept. A wrong or ambiguous REF
 refuses with a code and the nearest names. `--json` prints the whole structured
 result.
 

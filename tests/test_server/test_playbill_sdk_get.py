@@ -24,6 +24,7 @@ from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.governance.keys import GeneratedKeyMaterial
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from tests.core_support._knowledge_loop_support import PREDICATE, seed_claims_into
+from tests.support.oid_prefixes import too_short_prefix
 from tests.test_server.test_playbill_procedure_measurements import (  # noqa: F401
     owned_playbill_http,
 )
@@ -374,13 +375,16 @@ def test_the_compact_coordinate_passes_back_as_at_on_every_surface(
     assert oriented.json()["generation"] == earlier.sequence
 
     # A too-short prefix is the resolver's coded refusal, not a request-shape fault.
-    short = client.post(get_url, json={"ref": ref, "at": compact[:8]})
+    # An all-digit value of 11 or fewer characters is a generation, so the short
+    # prefix must hold a hex letter to be read as a prefix at all.
+    too_short = too_short_prefix(compact)
+    short = client.post(get_url, json={"ref": ref, "at": too_short})
     assert short.status_code == 400, short.text
     assert short.json()["error_code"] == "playbill.read.coordinate_prefix_too_short"
-    short_orient = client.get(f"/api/v1/{instance_id}/playbill/orient", params={"at": compact[:8]})
+    short_orient = client.get(f"/api/v1/{instance_id}/playbill/orient", params={"at": too_short})
     assert short_orient.json()["error_code"] == "playbill.read.coordinate_prefix_too_short"
     short_query = client.post(
-        f"/api/v1/{instance_id}/playbill/query", json={"kind": "ClaimType", "at": compact[:8]}
+        f"/api/v1/{instance_id}/playbill/query", json={"kind": "ClaimType", "at": too_short}
     )
     assert short_query.json()["error_code"] == "playbill.read.coordinate_prefix_too_short"
 

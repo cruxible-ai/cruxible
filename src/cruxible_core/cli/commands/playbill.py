@@ -3769,7 +3769,10 @@ def write_changes(
     "--at",
     "at_oid",
     default=None,
-    help="Accepted git oid, a unique 12+ hex prefix, or a generation number; default head.",
+    help=(
+        "Accepted git oid, a unique 12+ hex prefix, or a generation number (all digits, "
+        "11 or fewer, is always a generation); default head."
+    ),
 )
 @click.option("--evaluation-time", default=None, help="Explicit ISO-8601 evaluation time.")
 @click.option(
@@ -4405,7 +4408,10 @@ def _follow_entry(spec: str, option: str) -> dict[str, str]:
     "--at",
     "at_oid",
     default=None,
-    help="Read at this accepted git oid (or a unique 12+ hex prefix), or a generation number.",
+    help=(
+        "Read at this accepted git oid (or a unique 12+ hex prefix), or a generation "
+        "number (all digits, 11 or fewer, is always a generation)."
+    ),
 )
 @click.option("--evaluation-time", default=None, help="ISO-8601 instant; default now.")
 @json_option
@@ -5772,7 +5778,10 @@ def _render_orient(result: Mapping[str, Any]) -> str:
     "--at",
     "at_oid",
     default=None,
-    help="An accepted generation's Git OID, a unique 12+ hex prefix, or its number.",
+    help=(
+        "An accepted generation's Git OID, a unique 12+ hex prefix, or its number "
+        "(all digits, 11 or fewer, is always a generation number)."
+    ),
 )
 @click.option("--evaluation-time", default=None, help="Explicit ISO-8601 evaluation time.")
 @json_option
