@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-- Add generation-accepted Triggers and `floor.refresh`. Refreshes coalesce at
+- Add generation-accepted Triggers and `floor.refresh`. New instances seed an
+  ordinary editable, retirable `floor-refresh` Trigger in genesis. Refreshes coalesce at
   latest head and skip accepts made before listening. Bound local workspaces
   default to daemon floor delivery; `workspace attach --no-floor-delivery` and
   `workspace floor-delivery off` opt out. Local client writes delegate to the

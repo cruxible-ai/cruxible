@@ -407,7 +407,7 @@ def test_new_routes_deliver_synchronously_and_refuse_tcp_callers(world, monkeypa
         asyncio.run(routes.deliver_playbill_floor_now(instance_id, tcp, deliver))
 
 
-def test_floor_schedule_advisory_is_opt_in(world, monkeypatch):
+def test_floor_schedule_advisory_requires_delivery_and_no_live_floor_trigger(world, monkeypatch):
     from cruxible_core.coverage.contracts import CoverageAccessProfileV1
     from cruxible_core.server import registry as registry_module
     from cruxible_core.service.discovery.next import _triggers_health
@@ -425,8 +425,20 @@ def test_floor_schedule_advisory_is_opt_in(world, monkeypatch):
     registry.set_floor_delivery(instance.descriptor.instance_id, False)
     assert health().state == "scheduled"
     registry.set_floor_delivery(instance.descriptor.instance_id, True)
+    assert health().state == "scheduled"
+    from cruxible_client.contracts.triggers import parse_trigger, render_trigger, trigger_path
+    from tests.support.lines import successor
+    from tests.test_floor.test_floor_index import accept_edit
+
+    path = trigger_path("floor-refresh")
+    live = parse_trigger(instance.tree_at(instance.accepted_coordinate().git_oid)[path], path=path)
+    accept_edit(
+        instance, "retire-floor-trigger", {path: render_trigger(successor(live, state="retired"))}
+    )
     assert health().state == "unscheduled"
     assert health().detail["unscheduled"] == ["floor.refresh"]
+    registry.set_floor_delivery(instance.descriptor.instance_id, False)
+    assert health().state == "scheduled"
 
 
 def test_retired_floor_trigger_is_active_only_until_outstanding_work_finishes(world, monkeypatch):
@@ -521,3 +533,60 @@ def test_daemon_delivery_writes_the_local_indexes_the_client_writes(tmp_path, mo
         client, export=_export_envelope(service_export_playbill_floor(instance))
     )
     assert delivered == {path: (client / ".playbill/floor" / path).read_bytes() for path in local}
+
+
+def test_seeded_floor_trigger_delivers_after_accept_and_retirement_stops_it(tmp_path, monkeypatch):
+    from datetime import timedelta
+
+    from cruxible_client.contracts.triggers import parse_trigger, trigger_path
+    from cruxible_core.consumers.runner import ConsumerRunner
+    from cruxible_core.triggers.journal import trigger_events
+    from tests.core_support._support import initialize_local
+    from tests.support.lines import action_trigger, successor, trigger_members
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
+
+    instance, owner = initialize_local(tmp_path)
+    workspace = tmp_path / "workspace"
+    registry = InstanceRegistry(tmp_path / "state/daemon/registry.db")
+    registry.create_governed_instance_with_id(instance.descriptor.instance_id, workspace)
+    monkeypatch.setattr(floor, "get_registry", lambda: registry)
+    manager = SimpleNamespace(get=lambda _: instance)
+    runner = ConsumerRunner(manager, kinds=(FLOOR,))
+    instance_id = instance.descriptor.instance_id
+    runner.match_once(instance_id, instance, now=NOW)
+    assert not (workspace / ".playbill/floor").exists()
+
+    def accept(name, at, trigger):
+        tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+        tree.update(trigger_members(trigger))
+        _accept_tree(
+            instance,
+            owner,
+            tree,
+            timestamp=at.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            proposal_name=name,
+        )
+        runner.match_once(instance_id, instance, now=at)
+        for work in FLOOR.due(instance, now=at):
+            FLOOR.run(manager, instance_id, work, now=at)
+
+    at = NOW + timedelta(seconds=1)
+    extra = action_trigger("extra-sweep", action="evidence.sweep", interval_seconds=60)
+    accept("first-accept", at, extra)
+    floor_root = workspace / ".playbill/floor"
+    delivered = read_floor_manifest(floor_root)
+    assert delivered.coordinate.git_oid == instance.accepted_coordinate().git_oid
+    assert [
+        event.trigger for event in trigger_events(instance) if event.action == "floor.refresh"
+    ] == ["Trigger:floor-refresh"]
+    path = trigger_path("floor-refresh")
+    seeded = parse_trigger(
+        instance.tree_at(instance.accepted_coordinate().git_oid)[path], path=path
+    )
+    accept("retire-floor", at + timedelta(seconds=1), successor(seeded, state="retired"))
+    accept("next-accept", at + timedelta(seconds=2), successor(extra))
+    assert read_floor_manifest(floor_root) == delivered
+    assert not FLOOR.active(instance)
+    assert (
+        len([event for event in trigger_events(instance) if event.action == "floor.refresh"]) == 1
+    )

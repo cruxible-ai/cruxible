@@ -366,6 +366,10 @@ accepts before the Trigger version's acceptance and before listening starts,
 including accepts made while the daemon was stopped. Lines use the same target
 input law, so a Line needing a Capture event refuses this schedule.
 
+New instances seed the ordinary governed `floor-refresh` Trigger with schedule
+`generation_accepted` and action `floor.refresh`. Edit or retire it through the
+usual Trigger authoring flow; existing instances are unchanged.
+
 `floor.refresh` warms the floor index on every daemon. Workspace delivery is
 on by default for an attached workspace. Use `workspace attach --no-floor-delivery`
 or `cruxible playbill workspace floor-delivery off` through the local Unix socket

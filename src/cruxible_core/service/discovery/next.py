@@ -4106,7 +4106,7 @@ def _triggers_health(
 
     record = get_registry().get(instance.descriptor.instance_id)
     delivery_enabled = record is not None and record.floor_delivery
-    # Workspace delivery is opt-in: an instance that has not requested it
+    # Workspace delivery defaults on when attached: an instance with it disabled
     # needs no floor schedule. Findings actions retain their existing advisory.
     unscheduled = [
         action

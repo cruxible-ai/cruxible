@@ -37,6 +37,7 @@ from cruxible_client.contracts.triggers import (
     CaptureEventInputV1,
     CaptureLandingScheduleV1,
     CronScheduleV1,
+    GenerationAcceptedScheduleV1,
     InternalActionSpec,
     NoTriggerInputV1,
     TriggerFormatError,
@@ -438,17 +439,22 @@ def test_new_instances_start_with_the_default_internal_triggers(tmp_path):
     defaults = {
         path: parse_trigger(tree[path], path=path) for path in tree if path.startswith("triggers/")
     }
-    assert {
-        path: (item.action, item.schedule.interval_seconds) for path, item in defaults.items()
-    } == {
-        "triggers/evidence-sweep.json": ("evidence.sweep", 86400),
-        "triggers/prediction-anchor-retry.json": ("prediction.anchor_retry", 3600),
+    assert {path: (item.action, item.schedule) for path, item in defaults.items()} == {
+        "triggers/evidence-sweep.json": (
+            "evidence.sweep",
+            CadenceScheduleV1(interval_seconds=86400),
+        ),
+        "triggers/floor-refresh.json": ("floor.refresh", GenerationAcceptedScheduleV1()),
+        "triggers/prediction-anchor-retry.json": (
+            "prediction.anchor_retry",
+            CadenceScheduleV1(interval_seconds=3600),
+        ),
     }
-    assert [
-        (item.action, item.schedule.interval_seconds) for item in internal_triggers(instance)
-    ] == [
-        ("evidence.sweep", 86400),
-        ("prediction.anchor_retry", 3600),
+    assert all(item.lifecycle.state == "live" for item in defaults.values())
+    assert [(item.action, item.schedule) for item in internal_triggers(instance)] == [
+        ("evidence.sweep", CadenceScheduleV1(interval_seconds=86400)),
+        ("floor.refresh", GenerationAcceptedScheduleV1()),
+        ("prediction.anchor_retry", CadenceScheduleV1(interval_seconds=3600)),
     ]
 
 

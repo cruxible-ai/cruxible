@@ -1756,6 +1756,9 @@ coalesces accepts into one fire at latest head. It fires only after the Trigger
 version was accepted and the daemon began listening. Use it with
 `draft.trigger(name="floor-refresh", schedule=GenerationAcceptedScheduleV1(),
 action="floor.refresh")`; Capture-input Lines refuse it through their usual law.
+New instances already seed this ordinary live `floor-refresh` Trigger in genesis;
+it can be edited or retired through the same authoring APIs as any other Trigger.
+Existing instances are unchanged.
 
 Floor refresh warms the index regardless of workspace delivery. A bound local
 workspace defaults to daemon delivery as its sole floor writer. Over a Unix-socket
