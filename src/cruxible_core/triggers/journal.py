@@ -24,7 +24,7 @@ fires happened. Readers seek by sequence and may retain their own resume cursor.
 from __future__ import annotations
 
 import sqlite3
-import threading
+from collections import OrderedDict
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -42,6 +42,7 @@ from cruxible_client.contracts.triggers import (
     trigger_digest,
     trigger_path,
 )
+from cruxible_core.derived.memo import memo_get, memo_put
 from cruxible_core.triggers.cadence import timer_instants
 
 _SCHEMA = """
@@ -104,8 +105,8 @@ def journal_path(instance: Any) -> Path:
 
 
 # Per instance root: the accepted generation last read and its live internal Triggers.
-_TRIGGERS: dict[str, tuple[str, tuple[InternalTrigger, ...]]] = {}
-_TRIGGERS_LOCK = threading.Lock()
+_TRIGGERS: OrderedDict[str, tuple[str, tuple[InternalTrigger, ...]]] = OrderedDict()
+_TRIGGERS_CAPACITY = 64
 
 
 def internal_triggers(instance: Any) -> tuple[InternalTrigger, ...]:
@@ -117,8 +118,7 @@ def internal_triggers(instance: Any) -> tuple[InternalTrigger, ...]:
 
     coordinate = instance.accepted_coordinate()
     key = str(instance.root)
-    with _TRIGGERS_LOCK:
-        cached = _TRIGGERS.get(key)
+    cached = memo_get(_TRIGGERS, key)
     if cached is not None and cached[0] == coordinate.generation_root:
         return cached[1]
     from cruxible_core.service.procedures.procedure_runs import trigger_accepted_at
@@ -143,8 +143,7 @@ def internal_triggers(instance: Any) -> tuple[InternalTrigger, ...]:
         )
         for trigger in accepted
     )
-    with _TRIGGERS_LOCK:
-        _TRIGGERS[key] = (coordinate.generation_root, triggers)
+    memo_put(_TRIGGERS, key, (coordinate.generation_root, triggers), capacity=_TRIGGERS_CAPACITY)
     return triggers
 
 

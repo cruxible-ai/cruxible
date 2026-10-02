@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import difflib
 import json
-import threading
 import time
+from collections import OrderedDict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass
@@ -193,6 +193,7 @@ from cruxible_client.contracts.workspace_file import (
     source_read_receipt_digest,
 )
 from cruxible_core.claims.closure import DEFERRED_PIN_TARGET_KINDS
+from cruxible_core.derived.memo import memo_get, memo_put
 from cruxible_core.documents.workspace_file import WorkspaceFileReader
 from cruxible_core.errors import PermissionDeniedError
 from cruxible_core.exhaust import (
@@ -931,8 +932,8 @@ def line_triggers(
 
 
 # Per instance root and Trigger version: the instant that version was accepted.
-_TRIGGER_ACCEPTED_AT: dict[tuple[str, str], datetime] = {}
-_TRIGGER_ACCEPTED_AT_LOCK = threading.Lock()
+_TRIGGER_ACCEPTED_AT: OrderedDict[tuple[str, str], datetime] = OrderedDict()
+_TRIGGER_ACCEPTED_AT_CAPACITY = 4096
 
 
 def trigger_accepted_at(instance: PlaybillInstance, trigger: AcceptedTriggerV1) -> datetime:
@@ -944,8 +945,7 @@ def trigger_accepted_at(instance: PlaybillInstance, trigger: AcceptedTriggerV1) 
     """
 
     key = (str(instance.root), trigger.artifact_digest)
-    with _TRIGGER_ACCEPTED_AT_LOCK:
-        cached = _TRIGGER_ACCEPTED_AT.get(key)
+    cached = memo_get(_TRIGGER_ACCEPTED_AT, key)
     if cached is not None:
         return cached
     with instance.accepted_history_reader() as history:
@@ -956,8 +956,7 @@ def trigger_accepted_at(instance: PlaybillInstance, trigger: AcceptedTriggerV1) 
             raise PlaybillExecutionError("Trigger version has no accepted occurrence")
         generation = history.generation(occurrence.occurrence_sequence)
     accepted_at = instance.accepted_evaluation_time(generation.git_oid)
-    with _TRIGGER_ACCEPTED_AT_LOCK:
-        _TRIGGER_ACCEPTED_AT[key] = accepted_at
+    memo_put(_TRIGGER_ACCEPTED_AT, key, accepted_at, capacity=_TRIGGER_ACCEPTED_AT_CAPACITY)
     return accepted_at
 
 
@@ -1221,9 +1220,12 @@ def _line_admissions(
 
 # Per process: (instance root, Line partition, Trigger) -> (last journal
 # sequence read, that Trigger's latest admission). Admission records are
-# append-only, so the chain only ever reads what landed since.
-_TRIGGER_CHAINS: dict[tuple[str, str, str], tuple[int, ProcedureRunAdmissionV5 | None]] = {}
-_TRIGGER_CHAINS_LOCK = threading.Lock()
+# append-only, so the chain only ever reads what landed since; an entry lost to
+# eviction or a concurrent write only means reading from an earlier sequence.
+_TRIGGER_CHAINS: OrderedDict[tuple[str, str, str], tuple[int, ProcedureRunAdmissionV5 | None]] = (
+    OrderedDict()
+)
+_TRIGGER_CHAINS_CAPACITY = 4096
 
 
 def _trigger_admissions(
@@ -1243,8 +1245,7 @@ def _trigger_admissions(
     stream = procedure_line_journal_stream(instance.descriptor.instance_id)
     partition = procedure_line_partition(accepted_line.line.identity)
     key = (str(instance.root), partition, trigger.qualified)
-    with _TRIGGER_CHAINS_LOCK:
-        seen, latest = _TRIGGER_CHAINS.get(key, (0, None))
+    seen, latest = memo_get(_TRIGGER_CHAINS, key) or (0, None)
     for stored in journal.select_records(
         stream,
         partition_id=partition,
@@ -1256,9 +1257,7 @@ def _trigger_admissions(
         binding = getattr(admission, "trigger_binding", None)
         if binding is not None and binding.trigger == trigger:
             latest = admission
-    with _TRIGGER_CHAINS_LOCK:
-        if _TRIGGER_CHAINS.get(key, (0, None))[0] <= seen:
-            _TRIGGER_CHAINS[key] = (seen, latest)
+    memo_put(_TRIGGER_CHAINS, key, (seen, latest), capacity=_TRIGGER_CHAINS_CAPACITY)
     return () if latest is None else (latest,)
 
 
