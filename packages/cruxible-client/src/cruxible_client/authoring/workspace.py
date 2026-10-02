@@ -832,27 +832,75 @@ def materialize_playbill_floor(
 
 
 PROJECTIONS_INDEX_PATH = "projections/INDEX"
-_SOURCES_INDEX_PATH = "sources/INDEX"
+SOURCES_INDEX_PATH = "sources/INDEX"
+_SOURCES_LEDGER_PATH = "sources/LEDGER"
 
 
-def _sources_generations(floor: Path) -> dict[str, str] | None:
-    """The floor's sources/INDEX as source -> the generation it last changed."""
+def _sources_ledger(floor: Path) -> tuple[str, list[list[str]]] | None:
+    """The floor's ``sources/LEDGER``: its header and its five-cell rows."""
 
     try:
-        text = (floor / _SOURCES_INDEX_PATH).read_text(encoding="utf-8")
+        text = (floor / _SOURCES_LEDGER_PATH).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return None
-    generations: dict[str, str] = {}
+    header = ""
+    rows: list[list[str]] = []
     for line in text.splitlines():
         if line.startswith("#"):
+            header = header or line
             continue
         cells = line.split("\t")
-        if len(cells) != 5 or not cells[4].isdigit():
-            continue
-        known = generations.get(cells[0])
-        if known is None or int(cells[4]) > int(known):
-            generations[cells[0]] = cells[4]
+        if len(cells) == 5 and cells[4].isdigit():
+            rows.append(cells)
+    return header, rows
+
+
+def _sources_generations(rows: Sequence[Sequence[str]]) -> dict[str, str]:
+    """Each source, and each Document ref a source lives at, to the generation it last changed."""
+
+    generations: dict[str, str] = {}
+    for source, _contracts, locator, _citing, changed in rows:
+        for key in (source, locator) if locator.startswith("Document:") else (source,):
+            known = generations.get(key)
+            if known is None or int(changed) > int(known):
+                generations[key] = changed
     return generations
+
+
+def _workspace_locators(root: Path, sources: WorkspaceSources | None) -> dict[str, str]:
+    """Each catalog source name and ``Document:<id>`` to its workspace path.
+
+    A path outside the workspace stays absolute; a bound file that does not
+    exist is marked ``(missing)``, which ``next`` reports for repair.
+    """
+
+    found: dict[str, str] = {}
+    for entry in () if sources is None else sources.document_entries:
+        try:
+            path = sources.path_for_source(entry.name) if sources is not None else None
+        except (OSError, ValueError, PlaybillError):
+            path = None
+        if path is None:
+            shown = entry.locator
+            missing = False
+        else:
+            shown = path.relative_to(root).as_posix() if path.is_relative_to(root) else str(path)
+            missing = not path.is_file()
+        located = f"{shown} (missing)" if missing else shown
+        found.setdefault(entry.name, located)
+        found.setdefault(f"Document:{entry.document_id}", located)
+    return found
+
+
+def _write_floor_local(floor: Path, relative: str, text: str) -> None:
+    target = floor / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if not target.resolve().is_relative_to(floor.resolve()):
+        raise PlaybillWorkspaceError(f"{relative} escapes the floor")
+    with NamedTemporaryFile("wb", dir=target.parent, delete=False) as stream:
+        stream.write(text.encode("utf-8"))
+        staged = Path(stream.name)
+    os.replace(staged, target)
 
 
 def _rendered_blocks(root: Path, content: bytes) -> list[tuple[str, str]]:
@@ -892,25 +940,51 @@ def _rendered_blocks(root: Path, content: bytes) -> list[tuple[str, str]]:
 def write_projection_index(workspace: str | Path) -> int | None:
     """Join the floor's ledger-pure sources with this workspace's bindings.
 
-    Writes ``projections/INDEX`` into the workspace floor: one line per
-    workspace file bound to accepted state -- a Document body, an evidence
-    source, or a rendered projection block -- with its role, the ref it is
-    bound to, and the generation that ref last changed. These local paths stay
-    outside the coordinate-pure manifest, whichever workspace writer applies it. A bound
-    file that does not exist is left out; ``next`` reports it for repair.
-    Returns the number of lines, or ``None`` when there is no v5 floor.
+    Writes two files into the workspace floor, both outside the coordinate-pure
+    manifest whichever workspace writer applies it:
+
+    - ``sources/INDEX``: ``sources/LEDGER`` with each source's locator replaced
+      by the workspace path its catalog entry (by source name, or by the
+      Document it lives at) binds it to; a source the catalog does not bind
+      keeps its ledger locator;
+    - ``projections/INDEX``: one line per workspace file bound to accepted
+      state -- a Document body, an evidence source, or a rendered projection
+      block -- with its role, the ref it is bound to, and the generation that
+      ref last changed. A bound file that does not exist is left out; ``next``
+      reports it for repair.
+
+    Returns the number of ``projections/INDEX`` lines, or ``None`` when there
+    is no v5 floor.
     """
 
     root = _workspace_root(workspace)
     floor = _relative_destination(root, PLAYBILL_FLOOR_PATH)
-    generations = _sources_generations(floor)
-    if generations is None:
+    ledger = _sources_ledger(floor)
+    if ledger is None:
         return None
-    rows: list[tuple[str, str, str, str]] = []
+    ledger_header, ledger_rows = ledger
+    generations = _sources_generations(ledger_rows)
     try:
         sources: WorkspaceSources | None = WorkspaceSources(root)
     except (OSError, ValueError, PlaybillError):
         sources = None
+    locators = _workspace_locators(root, sources)
+    joined = [
+        [source, contracts_cell, locators.get(source) or locators.get(locator) or locator, *rest]
+        for source, contracts_cell, locator, *rest in ledger_rows
+    ]
+    stamp = ledger_header.rsplit("  ", 1)[-1]
+    sources_header = (
+        f"# sources INDEX  {len(joined)} sources  columns: source, contracts, locator, "
+        f"citing claims, changed gen  {stamp}  (locators joined by the client from its "
+        "workspace catalog)"
+    )
+    _write_floor_local(
+        floor,
+        SOURCES_INDEX_PATH,
+        "".join(f"{line}\n" for line in (sources_header, *("\t".join(row) for row in joined))),
+    )
+    rows: list[tuple[str, str, str, str]] = []
     for entry in () if sources is None else sources.document_entries:
         try:
             path = sources.path_for_source(entry.name) if sources is not None else None
@@ -937,15 +1011,11 @@ def write_projection_index(workspace: str | Path) -> int | None:
         f"# projections INDEX  {len(rows)} bindings  columns: workspace path, role, "
         "bound ref, changed gen  (written from the local workspace)"
     )
-    text = "".join(f"{line}\n" for line in (header, *("\t".join(row) for row in rows)))
-    target = floor / PROJECTIONS_INDEX_PATH
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if not target.resolve().is_relative_to(floor.resolve()):
-        raise PlaybillWorkspaceError("projections INDEX escapes the floor")
-    with NamedTemporaryFile("wb", dir=target.parent, delete=False) as stream:
-        stream.write(text.encode("utf-8"))
-        staged = Path(stream.name)
-    os.replace(staged, target)
+    _write_floor_local(
+        floor,
+        PROJECTIONS_INDEX_PATH,
+        "".join(f"{line}\n" for line in (header, *("\t".join(row) for row in rows))),
+    )
     return len(rows)
 
 

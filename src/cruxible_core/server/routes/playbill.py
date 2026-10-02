@@ -59,7 +59,7 @@ from cruxible_client.contracts.write import (
 from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequest
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.runtime import playbill_api
-from cruxible_core.server.admission import KeyedAdmission
+from cruxible_core.runtime.admission import FLOOR_ADMISSION
 from cruxible_core.server.config import resolve_server_settings
 from cruxible_core.server.playbill_request_models import (
     PlaybillApprovalChallengeRequest,
@@ -113,10 +113,6 @@ from cruxible_core.service.procedures.procedure_runs import (
 )
 
 router = APIRouter(prefix="/api/v1", tags=["playbill"])
-
-# One floor export at a time per instance, admitted on the event loop; see
-# `export_floor`.
-_floor_export_admission = KeyedAdmission()
 
 
 def _coordinate(
@@ -1346,11 +1342,16 @@ async def export_floor(
     # An export is the daemon's heaviest read (hundreds of MB of working set on
     # real state). Exports of one instance are admitted one at a time, so a
     # second export of the same head is answered from the first one's memo
-    # instead of doubling the working set. Admission waits on the event loop,
-    # not in a worker thread, so queued exports never hold threadpool capacity
-    # that cheap reads, lifecycle routes and other instances need; the export
-    # itself runs in the threadpool. This is the one shape of async route the
-    # event-loop guardrail allows: await admission, then offload.
+    # instead of doubling the working set. `FLOOR_ADMISSION` is the one floor
+    # admission per instance, shared with the delta route and with in-process
+    # floor delivery on consumer threads, so no two floor renders of an
+    # instance overlap. Admission waits on the event loop, not in a worker
+    # thread, so queued exports never hold threadpool capacity that cheap
+    # reads, lifecycle routes and other instances need; the export itself runs
+    # in the threadpool through the admission ticket, which keeps the instance
+    # held until the export ends even if this route is cancelled mid-call. This
+    # is the one shape of async route the event-loop guardrail allows: await
+    # admission, then offload through its ticket.
     resolved = await run_in_threadpool(resolve_server_instance_id, instance_id)
 
     def export() -> contracts.PlaybillFloorExport:
@@ -1362,29 +1363,38 @@ async def export_floor(
             review_notes_oid=req.review_notes_oid,
         )
 
-    async with _floor_export_admission.admit(resolved):
-        return await run_in_threadpool(export)
+    async with FLOOR_ADMISSION.admit(resolved) as admitted:
+        return await run_in_threadpool(admitted.run, export)
 
 
 @router.post(
     "/{instance_id}/playbill/floor/delta",
     response_model=PlaybillFloorDeltaV1,
 )
-def floor_delta(
+async def floor_delta(
     instance_id: str,
     req: PlaybillFloorDeltaRequest,
 ) -> PlaybillFloorDeltaV1:
     """What brings the caller's floor at its base generation to the head.
 
-    Sync: the render runs in the threadpool, off the event loop.
+    Admitted exactly like `export_floor`, under the same `FLOOR_ADMISSION`: an
+    export, a delta and an in-process floor delivery of one instance never
+    render at once, and a delta queued behind them waits on the loop, holding
+    no worker thread.
     """
 
-    return playbill_api.playbill_floor_delta(
-        resolve_server_instance_id(instance_id),
-        at=req.at,
-        base_generation=req.base_generation,
-        base_renderer=req.base_renderer,
-    )
+    resolved = await run_in_threadpool(resolve_server_instance_id, instance_id)
+
+    def delta() -> PlaybillFloorDeltaV1:
+        return playbill_api.playbill_floor_delta(
+            resolved,
+            at=req.at,
+            base_generation=req.base_generation,
+            base_renderer=req.base_renderer,
+        )
+
+    async with FLOOR_ADMISSION.admit(resolved) as admitted:
+        return await run_in_threadpool(admitted.run, delta)
 
 
 __all__ = ["router"]

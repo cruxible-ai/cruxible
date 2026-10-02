@@ -26,16 +26,25 @@ import structlog
 from fastapi.testclient import TestClient
 
 from cruxible_client import contracts
+from cruxible_client.contracts.floor import PlaybillFloorDeltaV1
 from cruxible_core.mcp.permissions import reset_permissions
 from cruxible_core.runtime import playbill_api
+from cruxible_core.runtime.admission import FLOOR_ADMISSION
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import reset_registry
 from cruxible_core.server.routes import playbill as playbill_routes
+from tests.support.floor_exports import floor_v5_delta
 
 _FAILURE_BOUND_SECONDS = 30.0
 _DIGEST = "sha256:" + "0" * 64
+_COORDINATE = contracts.PlaybillAcceptedCoordinate(
+    git_oid="0" * 40,
+    semantic_root=_DIGEST,
+    generation_root=_DIGEST,
+    compiler_digest=_DIGEST,
+)
 
 
 @pytest.fixture
@@ -247,3 +256,269 @@ def test_queued_exports_hold_no_worker_thread_while_they_wait(
     assert sorted(statuses) == [200] * 5
     # Admission still runs one export per instance at a time.
     assert most_running == {"inst_a": 1, "inst_b": 1}
+
+
+def test_a_delta_waits_behind_an_export_of_its_instance_only(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An export and a delta of one instance share one admission, so the delta
+    renders only after the export finishes; another instance's delta does not
+    wait for either."""
+
+    export_entered = threading.Event()
+    release = threading.Event()
+    other_delta_entered = threading.Event()
+    released_by_test: list[bool] = []
+    order: list[str] = []
+    order_lock = threading.Lock()
+    resolved: list[str] = []
+    resolved_lock = threading.Lock()
+
+    def resolve(instance_id: str) -> str:
+        with resolved_lock:
+            resolved.append(instance_id)
+        return instance_id
+
+    def blocking_export(instance_id: str, **_: object) -> contracts.PlaybillFloorExport:
+        with order_lock:
+            order.append(f"export {instance_id} in")
+        export_entered.set()
+        released_by_test.append(release.wait(_FAILURE_BOUND_SECONDS))
+        with order_lock:
+            order.append(f"export {instance_id} out")
+        return contracts.PlaybillFloorExport(
+            tag="playbill-floor-export-v5", coordinate=_COORDINATE, manifest={}, files=[]
+        )
+
+    def delta(instance_id: str, **_: object) -> PlaybillFloorDeltaV1:
+        with order_lock:
+            order.append(f"delta {instance_id}")
+        if instance_id == "inst_b":
+            other_delta_entered.set()
+        return floor_v5_delta({}, coordinate=_COORDINATE, generation=1)
+
+    monkeypatch.setattr(playbill_routes, "resolve_server_instance_id", resolve)
+    monkeypatch.setattr(playbill_api, "playbill_export_floor", blocking_export)
+    monkeypatch.setattr(playbill_api, "playbill_floor_delta", delta)
+
+    statuses: dict[str, int] = {}
+
+    def post(name: str, instance_id: str, route: str) -> None:
+        response = client.post(f"/api/v1/{instance_id}/playbill/floor/{route}", json={})
+        statuses[name] = response.status_code
+
+    threads = [threading.Thread(target=post, args=("export a", "inst_a", "export"))]
+    threads[0].start()
+    try:
+        assert export_entered.wait(_FAILURE_BOUND_SECONDS), "the export never started"
+        threads.append(threading.Thread(target=post, args=("delta a", "inst_a", "delta")))
+        threads[-1].start()
+        # The delta has resolved its instance and is now waiting for admission.
+        for _ in range(int(_FAILURE_BOUND_SECONDS * 100)):
+            if resolved.count("inst_a") >= 2:
+                break
+            time.sleep(0.01)
+        threads.append(threading.Thread(target=post, args=("delta b", "inst_b", "delta")))
+        threads[-1].start()
+        assert other_delta_entered.wait(_FAILURE_BOUND_SECONDS), (
+            "another instance's delta waited behind this instance's export"
+        )
+        with order_lock:
+            assert "delta inst_a" not in order, "a delta rendered beside its instance's export"
+    finally:
+        release.set()
+        for thread in threads:
+            thread.join(_FAILURE_BOUND_SECONDS)
+
+    assert released_by_test == [True]
+    assert statuses == {"export a": 200, "delta a": 200, "delta b": 200}
+    assert order.index("export inst_a out") < order.index("delta inst_a")
+    assert order.index("delta inst_b") < order.index("export inst_a out")
+
+
+def test_an_in_process_floor_holder_on_a_thread_excludes_that_instances_routes(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A consumer thread holding `FLOOR_ADMISSION` (in-process floor delivery)
+    makes a delta route of its instance wait, without holding the event loop or
+    a worker; another instance's delta and cheap requests still run."""
+
+    held = threading.Event()
+    release = threading.Event()
+    other_delta_entered = threading.Event()
+    order: list[str] = []
+    order_lock = threading.Lock()
+    resolved: list[str] = []
+    resolved_lock = threading.Lock()
+
+    def resolve(instance_id: str) -> str:
+        with resolved_lock:
+            resolved.append(instance_id)
+        return instance_id
+
+    def delta(instance_id: str, **_: object) -> PlaybillFloorDeltaV1:
+        with order_lock:
+            order.append(f"delta {instance_id}")
+        if instance_id == "inst_b":
+            other_delta_entered.set()
+        return floor_v5_delta({}, coordinate=_COORDINATE, generation=1)
+
+    monkeypatch.setattr(playbill_routes, "resolve_server_instance_id", resolve)
+    monkeypatch.setattr(playbill_api, "playbill_floor_delta", delta)
+
+    def consumer() -> None:
+        with FLOOR_ADMISSION.hold("inst_a"):
+            with order_lock:
+                order.append("consumer in")
+            held.set()
+            release.wait(_FAILURE_BOUND_SECONDS)
+            with order_lock:
+                order.append("consumer out")
+
+    statuses: dict[str, int] = {}
+
+    def post(name: str, instance_id: str) -> None:
+        response = client.post(f"/api/v1/{instance_id}/playbill/floor/delta", json={})
+        statuses[name] = response.status_code
+
+    threads = [threading.Thread(target=consumer)]
+    threads[0].start()
+    try:
+        assert held.wait(_FAILURE_BOUND_SECONDS), "the consumer never took the admission"
+        threads.append(threading.Thread(target=post, args=("delta a", "inst_a")))
+        threads[-1].start()
+        for _ in range(int(_FAILURE_BOUND_SECONDS * 100)):
+            if "inst_a" in resolved:
+                break
+            time.sleep(0.01)
+        health = client.get("/health")
+        threads.append(threading.Thread(target=post, args=("delta b", "inst_b")))
+        threads[-1].start()
+        assert other_delta_entered.wait(_FAILURE_BOUND_SECONDS), (
+            "another instance's delta waited behind this instance's consumer"
+        )
+        with order_lock:
+            assert "delta inst_a" not in order, "a delta rendered beside the consumer's refresh"
+    finally:
+        release.set()
+        for thread in threads:
+            thread.join(_FAILURE_BOUND_SECONDS)
+
+    assert health.status_code == 200
+    assert statuses == {"delta a": 200, "delta b": 200}
+    assert order.index("consumer out") < order.index("delta inst_a")
+    assert FLOOR_ADMISSION.active_keys() == 0
+
+
+def test_a_route_cancelled_mid_render_keeps_its_instance_until_the_render_ends(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancelling an admitted export while its worker renders must not let a queued
+    delta route or consumer thread of that instance in beside the running render."""
+
+    import asyncio
+
+    from cruxible_core.server.playbill_request_models import (
+        PlaybillFloorDeltaRequest,
+        PlaybillFloorExportRequest,
+    )
+
+    export_entered = threading.Event()
+    release = threading.Event()
+    running = 0
+    overlapped: list[str] = []
+    order: list[str] = []
+    lock = threading.Lock()
+
+    def enter(name: str) -> None:
+        nonlocal running
+        with lock:
+            running += 1
+            if running > 1:
+                overlapped.append(name)
+            order.append(f"{name} in")
+
+    def leave(name: str) -> None:
+        nonlocal running
+        with lock:
+            running -= 1
+            order.append(f"{name} out")
+
+    def blocking_export(instance_id: str, **_: object) -> contracts.PlaybillFloorExport:
+        enter("export")
+        export_entered.set()
+        release.wait(_FAILURE_BOUND_SECONDS)
+        leave("export")
+        return contracts.PlaybillFloorExport(
+            tag="playbill-floor-export-v5", coordinate=_COORDINATE, manifest={}, files=[]
+        )
+
+    def delta(instance_id: str, **_: object) -> PlaybillFloorDeltaV1:
+        enter("delta")
+        leave("delta")
+        return floor_v5_delta({}, coordinate=_COORDINATE, generation=1)
+
+    monkeypatch.setattr(playbill_routes, "resolve_server_instance_id", lambda value: value)
+    monkeypatch.setattr(playbill_api, "playbill_export_floor", blocking_export)
+    monkeypatch.setattr(playbill_api, "playbill_floor_delta", delta)
+
+    def consumer() -> None:
+        with FLOOR_ADMISSION.hold("inst_cancel"):
+            enter("consumer")
+            leave("consumer")
+
+    async def scenario() -> None:
+        export = asyncio.create_task(
+            playbill_routes.export_floor("inst_cancel", PlaybillFloorExportRequest())
+        )
+        while not export_entered.is_set():
+            await asyncio.sleep(0.005)
+        queued = asyncio.create_task(
+            playbill_routes.floor_delta("inst_cancel", PlaybillFloorDeltaRequest())
+        )
+        thread = threading.Thread(target=consumer)
+        thread.start()
+        await asyncio.sleep(0.05)
+        export.cancel()
+        # Give a wrongly released key every chance to be taken.
+        await asyncio.sleep(0.1)
+        with lock:
+            assert order == ["export in"], order
+        release.set()
+        await queued
+        await asyncio.to_thread(thread.join, _FAILURE_BOUND_SECONDS)
+        try:
+            await export
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(scenario())
+    assert overlapped == []
+    assert order[:2] == ["export in", "export out"]
+    assert sorted(order[2:]) == ["consumer in", "consumer out", "delta in", "delta out"]
+    assert FLOOR_ADMISSION.active_keys() == 0
+
+
+def test_a_route_cancelled_before_its_worker_starts_releases_the_key() -> None:
+    """The ticket's other side: a route that leaves before any worker took the
+    key releases it, and a late worker never runs the call."""
+
+    import asyncio
+
+    from cruxible_core.runtime.admission import KeyedAdmission
+
+    admission = KeyedAdmission()
+    ran: list[str] = []
+
+    async def scenario() -> Any:
+        async with admission.admit("inst_x") as ticket:
+            pass
+        assert admission.active_keys() == 0
+        return ticket
+
+    ticket = asyncio.run(scenario())
+    with pytest.raises(RuntimeError, match="left before its call started"):
+        ticket.run(lambda: ran.append("late"))
+    assert ran == [] and admission.active_keys() == 0

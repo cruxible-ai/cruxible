@@ -168,7 +168,8 @@ ReadAt = Annotated[
     Field(
         description=(
             "Read at an accepted generation: its git oid (a unique prefix of 12+ hex "
-            "characters is enough) or its generation number; default the current head."
+            "characters is enough) or its generation number (an all-digit value of 11 "
+            "or fewer characters is always a generation); default the current head."
         )
     ),
 ]

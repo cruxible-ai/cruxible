@@ -150,7 +150,8 @@ class PlaybillGetRequestV1(_StrictGetModel):
         if isinstance(value, str) and not re.fullmatch(_GIT_OID, value):
             raise ValueError(
                 "at must be an accepted coordinate, a lowercase hex git oid (a unique "
-                "prefix of at least 12 characters), or a generation number (for example 42)"
+                "prefix of at least 12 characters), or a generation number (for example 42; "
+                "an all-digit value of 11 or fewer characters is always a generation)"
             )
         return value
 

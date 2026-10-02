@@ -34,8 +34,10 @@ PLAYBILL_FLOOR_FORMAT = "playbill-floor-export-v5"
 PLAYBILL_FLOOR_MANIFEST_TAG = "playbill-floor-manifest-v5"
 PLAYBILL_FLOOR_MANIFEST_PATH = "manifest.json"
 # Files the client writes into the floor directory from its own workspace
-# bindings. They are outside the daemon-verified manifest by construction.
-PLAYBILL_FLOOR_LOCAL_PATHS = frozenset({"projections/INDEX"})
+# bindings. They are outside the daemon-verified manifest by construction:
+# `sources/INDEX` is the daemon's `sources/LEDGER` with workspace paths joined
+# in, and `projections/INDEX` binds workspace files to accepted refs.
+PLAYBILL_FLOOR_LOCAL_PATHS = frozenset({"projections/INDEX", "sources/INDEX"})
 
 _SHA256 = r"^sha256:[0-9a-f]{64}$"
 _OID = r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$"

@@ -317,7 +317,8 @@ class PlaybillQueryRequestV1(BaseModel):
         default=None,
         description=(
             "An accepted coordinate, a git oid (a unique prefix of 12+ hex characters is "
-            "enough), or a generation number; the default is the current head."
+            "enough), or a generation number (an all-digit value of 11 or fewer characters "
+            "is always a generation); the default is the current head."
         ),
     )
     evaluation_time: datetime | None = Field(
