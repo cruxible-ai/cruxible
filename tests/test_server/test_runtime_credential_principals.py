@@ -478,23 +478,43 @@ def test_rotating_a_bound_credential_needs_its_principals_authority(
         private_key_path=reviewer_key,
         forbidden_roots=(),
     )
-    consented = _rotate(
+    # A rotation cannot be undone: it previews, then commits that preview.
+    previewed = _rotate(
         client,
         instance_id,
         unbound_admin,
         reviewer.record.credential_id,
         principal_proof=proof.model_dump(mode="json"),
     )
+    assert previewed.status_code == 200, previewed.text  # type: ignore[attr-defined]
+    assert previewed.json()["status"] == "would_rotate"  # type: ignore[attr-defined]
+    consented = _rotate(
+        client,
+        instance_id,
+        unbound_admin,
+        reviewer.record.credential_id,
+        principal_proof=proof.model_dump(mode="json"),
+        dry_run=False,
+        at=previewed.json()["coordinate"]["digest"],  # type: ignore[attr-defined]
+    )
     assert consented.status_code == 200, consented.text  # type: ignore[attr-defined]
     rotated = consented.json()  # type: ignore[attr-defined]
     assert rotated["credential"]["principal_id"] == "reviewer"
     own = _rotate(client, instance_id, rotated["token"], rotated["credential"]["credential_id"])
     assert own.status_code == 403  # governed_write cannot manage credentials at all
+    revoke_url = (
+        f"/api/v1/{instance_id}/runtime/credentials/{rotated['credential']['credential_id']}/revoke"
+    )
+    admin_headers = {"Authorization": f"Bearer {operator_admin}"}
+    revoke_preview = client.post(revoke_url, headers=admin_headers)
+    assert revoke_preview.status_code == 200, revoke_preview.text
     revoked = client.post(
-        f"/api/v1/{instance_id}/runtime/credentials/{rotated['credential']['credential_id']}/revoke",
-        headers={"Authorization": f"Bearer {operator_admin}"},
+        revoke_url,
+        json={"dry_run": False, "at": revoke_preview.json()["coordinate"]["digest"]},
+        headers=admin_headers,
     )
     assert revoked.status_code == 200, revoked.text
+    assert revoked.json()["status"] == "revoked"
 
 
 _UNGUARDED_WRITES = (

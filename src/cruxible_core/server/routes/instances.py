@@ -14,6 +14,7 @@ from cruxible_core.server.request_models import (
 )
 from cruxible_core.server.route_paths import RUNTIME_BOOTSTRAP_CLAIM_PATH
 from cruxible_core.server.routes import resolve_server_instance_id
+from cruxible_core.service.change_preview import state_change_scope
 
 router = APIRouter(prefix="/api/v1", tags=["instances"])
 
@@ -26,20 +27,38 @@ def claim_runtime_bootstrap(
     instance_id: str,
     req: BootstrapClaimRequest,
 ) -> contracts.RuntimeCredentialBootstrapResult:
-    """Exchange a one-time bootstrap secret for the initial ADMIN runtime token."""
+    """Exchange the bootstrap secret for one host's initial ADMIN runtime token.
+
+    The secret is claimable once per host. ``dry_run`` checks the claim and
+    claims nothing (R12).
+    """
     resolved_instance_id = resolve_server_instance_id(instance_id)
     check_permission("cruxible_runtime_credentials", instance_id=resolved_instance_id)
     store = get_runtime_credential_store()
-    created = store.claim_bootstrap_credential(
-        instance_id=resolved_instance_id,
-        bootstrap_secret=req.bootstrap_secret,
-        expected_bootstrap_secret=get_runtime_bootstrap_secret(),
-    )
+    with state_change_scope(
+        dry_run=req.dry_run,
+        at=req.at,
+        kind="direct",
+        operation="credential.claim-bootstrap",
+        describe=f"claiming the bootstrap credential of {resolved_instance_id}",
+    ) as change:
+        created = store.prepare_bootstrap_credential(
+            instance_id=resolved_instance_id,
+            bootstrap_secret=req.bootstrap_secret,
+            expected_bootstrap_secret=get_runtime_bootstrap_secret(),
+            observe=change.observe if change.previewing else None,
+        )
+        if not change.previewing:
+            created = store.claim_prepared_bootstrap_credential(
+                created, bootstrap_secret=req.bootstrap_secret, observe=change.observe
+            )
     return contracts.RuntimeCredentialBootstrapResult(
+        status="would_claim" if change.previewing else "claimed",
         credential_id=created.record.credential_id,
         instance_id=created.record.instance_id,
         permission_mode="admin",
-        token=created.token,
+        token=None if change.previewing else created.token,
+        coordinate=change.coordinate,
     )
 
 

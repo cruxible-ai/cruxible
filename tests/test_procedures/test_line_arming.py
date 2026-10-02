@@ -860,7 +860,10 @@ def test_arm_and_disarm_are_idempotent_and_a_changed_arm_rebinds(tmp_path):
     assert armed.outcome == "armed"
     again = arm(LOCAL, start + timedelta(seconds=5))
     assert again.outcome == "already_armed"
-    assert again.model_copy(update={"outcome": None}) == service_line_status(instance, name)
+    # A status read carries no outcome and no evaluation coordinate.
+    assert again.model_copy(update={"outcome": None, "coordinate": None}) == (
+        service_line_status(instance, name)
+    )
     assert (again.arm_id, again.armed_at) == (armed.arm_id, armed.armed_at)
 
     # A different credential is a different setting: the arm rebinds from now.
@@ -882,7 +885,7 @@ def test_arm_and_disarm_are_idempotent_and_a_changed_arm_rebinds(tmp_path):
     assert repeat.outcome == "already_disarmed"
     stopped = disarmed.model_copy(update={"outcome": None})
     assert repeat.model_copy(update={"outcome": None}) == stopped
-    assert service_line_status(instance, name) == stopped
+    assert service_line_status(instance, name) == stopped.model_copy(update={"coordinate": None})
 
 
 def test_a_line_with_two_triggers_runs_each_ones_occurrences_exactly_once(tmp_path):
@@ -1417,6 +1420,193 @@ def test_an_old_format_claimed_arm_admits_nothing_even_with_its_principal_revoke
     assert _admissions(instance) == 0
     status = service_line_status(instance, line.identity.name)
     assert status.state == "stopped" and status.stop_reason == "arm_requires_rearm"
+
+
+def test_arming_and_disarming_preview_on_their_own_path_and_write_nothing(tmp_path):
+    """R12: the arm the commit would open, and the disarm it would stop, with nothing kept."""
+
+    from tests.support.store_snapshot import assert_writes_nothing
+
+    instance, line, procedure = line_world(tmp_path, CaptureLandingScheduleV1(event=SELECTOR))
+    start = READ_TIME + timedelta(seconds=10)
+
+    def arm(dry_run):  # type: ignore[no-untyped-def]
+        return service_arm_line(
+            instance,
+            line.identity.name,
+            principal=LOCAL,
+            actor=_actor(instance),
+            now=start,
+            daemon_id="daemon",
+            dry_run=dry_run,
+        )
+
+    # Never armed: the dispatch store does not even exist yet, and the preview
+    # must not create it.
+    preview = assert_writes_nothing([tmp_path], lambda: arm(True))
+    assert (preview.outcome, preview.state) == ("would_arm", "armed")
+    armed = arm(None)
+    assert armed.outcome == "armed"
+    assert assert_writes_nothing([tmp_path], lambda: arm(True)).outcome == "already_armed"
+
+    capture(instance, procedure, at=start + timedelta(seconds=1))
+    _match(instance, start + timedelta(seconds=2))
+    disarm_preview = assert_writes_nothing(
+        [tmp_path],
+        lambda: service_disarm_line(
+            instance,
+            line.identity.name,
+            actor=_actor(instance),
+            now=start + timedelta(seconds=3),
+            dry_run=True,
+        ),
+    )
+    assert (disarm_preview.outcome, disarm_preview.state) == ("would_disarm", "stopped")
+    assert service_line_status(instance, line.identity.name).state == "armed"
+
+
+def test_an_arm_preview_answers_with_its_coordinate_and_a_stale_one_refuses(tmp_path):
+    """F-012: arm and disarm outcomes carry the coordinate they were evaluated at."""
+
+    from cruxible_core.errors import ChangeRefusedError
+
+    instance, line, _procedure = line_world(tmp_path, CaptureLandingScheduleV1(event=SELECTOR))
+    start = READ_TIME + timedelta(seconds=10)
+
+    def arm(**control):  # type: ignore[no-untyped-def]
+        return service_arm_line(
+            instance,
+            line.identity.name,
+            principal=LOCAL,
+            actor=_actor(instance),
+            now=start,
+            daemon_id="daemon",
+            **control,
+        )
+
+    preview = arm(dry_run=True)
+    head = instance.accepted_coordinate().git_oid
+    assert preview.outcome == "would_arm"
+    assert preview.coordinate is not None and preview.coordinate.git_oid == head
+    stale = ("0" if head[0] != "0" else "1") * len(head)
+    with pytest.raises(ChangeRefusedError) as moved:
+        arm(dry_run=False, at=stale)
+    assert moved.value.error_code == "playbill.preview.state_moved"
+    armed = arm(dry_run=False, at=preview.coordinate.git_oid)
+    assert (armed.outcome, armed.coordinate) == ("armed", preview.coordinate)
+    assert service_line_status(instance, line.identity.name).coordinate is None
+
+    disarm = service_disarm_line(
+        instance,
+        line.identity.name,
+        actor=_actor(instance),
+        now=start + timedelta(seconds=1),
+        dry_run=True,
+    )
+    assert (disarm.outcome, disarm.coordinate) == ("would_disarm", preview.coordinate)
+    with pytest.raises(ChangeRefusedError):
+        service_disarm_line(
+            instance,
+            line.identity.name,
+            actor=_actor(instance),
+            now=start + timedelta(seconds=1),
+            dry_run=False,
+            at=stale,
+        )
+    assert service_line_status(instance, line.identity.name).state == "armed"
+
+
+def test_a_revision_accepted_mid_arm_refuses_a_pinned_arm_and_disarm(tmp_path, monkeypatch):
+    """F-002: ``at`` is confirmed against the live head under the activation lock.
+
+    An acceptance that lands after the Line was read but before the arm is
+    written must refuse the pinned commit, not arm the version it replaced.
+    """
+
+    from cruxible_client.contracts.acquisition_policies import (
+        acquisition_policy_path,
+        render_acquisition_policy,
+    )
+    from cruxible_core.errors import ChangeRefusedError
+    from cruxible_core.exhaust.line_dispatch import dispatch_root
+    from cruxible_core.service.procedures import line_dispatch
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
+    from tests.test_server.test_playbill_line_run_refusals import _acquisition_policy
+
+    instance, line, _procedure, owner = line_world(
+        tmp_path, CaptureLandingScheduleV1(event=SELECTOR), with_owner=True
+    )
+    start = READ_TIME + timedelta(seconds=10)
+    original = line_dispatch._accepted_line_by_reference
+    moves = (f"revision-{index}" for index in range(100))
+
+    def read_then_accept(current, **kwargs):  # type: ignore[no-untyped-def]
+        found = original(current, **kwargs)
+        name = next(moves)
+        tree = current.tree_at(current.accepted_coordinate().git_oid)
+        policy = _acquisition_policy(name)
+        tree[acquisition_policy_path(policy.identity.name)] = render_acquisition_policy(policy)
+        _accept_tree(
+            current, owner, tree, timestamp="2026-08-28T15:02:00.000000Z", proposal_name=name
+        )
+        return found
+
+    at = service_arm_line(
+        instance,
+        line.identity.name,
+        principal=LOCAL,
+        actor=_actor(instance),
+        now=start,
+        daemon_id="daemon",
+        dry_run=True,
+    ).coordinate.git_oid
+    monkeypatch.setattr(line_dispatch, "_accepted_line_by_reference", read_then_accept)
+    with pytest.raises(ChangeRefusedError) as moved:
+        service_arm_line(
+            instance,
+            line.identity.name,
+            principal=LOCAL,
+            actor=_actor(instance),
+            now=start,
+            daemon_id="daemon",
+            dry_run=False,
+            at=at,
+        )
+    assert moved.value.error_code == "playbill.preview.state_moved"
+    assert not dispatch_root(instance).exists() or (
+        service_line_status_or_none(instance, line.identity.name) is None
+    )
+
+    monkeypatch.setattr(line_dispatch, "_accepted_line_by_reference", original)
+    armed = service_arm_line(
+        instance,
+        line.identity.name,
+        principal=LOCAL,
+        actor=_actor(instance),
+        now=start,
+        daemon_id="daemon",
+    )
+    monkeypatch.setattr(line_dispatch, "_accepted_line_by_reference", read_then_accept)
+    with pytest.raises(ChangeRefusedError):
+        service_disarm_line(
+            instance,
+            line.identity.name,
+            actor=_actor(instance),
+            now=start + timedelta(seconds=1),
+            dry_run=False,
+            at=armed.coordinate.git_oid,
+        )
+    monkeypatch.setattr(line_dispatch, "_accepted_line_by_reference", original)
+    assert service_line_status(instance, line.identity.name).state == "armed"
+
+
+def service_line_status_or_none(instance, name):  # type: ignore[no-untyped-def]
+    from cruxible_client.contracts.errors import PlaybillError
+
+    try:
+        return service_line_status(instance, name)
+    except PlaybillError:
+        return None
 
 
 def _accept_generation(instance, owner, name, instant):

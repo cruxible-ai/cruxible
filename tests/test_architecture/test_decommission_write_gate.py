@@ -122,7 +122,11 @@ DECLARED_WRITE_GATES: dict[str, frozenset[str]] = {
             "service_depublish_playbill_block",
         }
     ),
-    "cruxible_core/proposals/proposals.py": frozenset({"ProposalService.submit"}),
+    # A preview evaluates on submit's own path and writes nothing, but it
+    # refuses exactly where the submission would.
+    "cruxible_core/proposals/proposals.py": frozenset(
+        {"ProposalService.submit", "ProposalService.preview"}
+    ),
     "cruxible_core/service/authoring/documents.py": frozenset(
         {"service_submit_playbill_approval", "service_propose_compiler_upgrade"}
     ),

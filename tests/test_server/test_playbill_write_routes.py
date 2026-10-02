@@ -240,3 +240,53 @@ def test_the_openapi_outcome_declares_each_warning_variant(
     assert "verdict" in verdict["required"] and "capture" not in verdict["properties"]
     assert "capture" in newer["required"] and "verdict" not in newer["properties"]
     assert "WriteWarning" not in schemas
+
+
+def test_a_cold_write_preview_opens_its_instance_behind_the_guards(
+    playbill_http: tuple[TestClient, str, Path], tmp_path: Path
+) -> None:
+    """F-005: the actor is resolved and the instance opened behind the preview's guards.
+
+    A dry-run set on an instance the daemon has not opened yet writes nothing;
+    one whose open would first repair a derived file refuses by name. That
+    holds for a principal claim too, whose check opens the instance.
+    """
+
+    from cruxible_core.server.auth import PRINCIPAL_ID_HEADER
+    from tests.support.store_snapshot import assert_writes_nothing
+
+    client, instance_id, _key = playbill_http
+    actor = _seed(client, instance_id)
+    base = f"/api/v1/{instance_id}/playbill"
+    body = {"subject": WI1, "field": "status", "value": "ready", "because": "x", "dry_run": True}
+    manager = get_playbill_manager()
+
+    def settle() -> None:
+        # One ordinary cold open first: it writes the replay checkpoint a quiet
+        # daemon would already hold, so the preview's own open repairs nothing.
+        manager.clear()
+        client.get(f"{base}/head")
+        manager.consumer_runner.close()
+        manager.get(instance_id).settled_workspace_advertisement()
+        manager.flush_replay_checkpoints()
+
+    for headers in ({}, {PRINCIPAL_ID_HEADER: actor}):
+        settle()
+        manager.clear()
+        cold = assert_writes_nothing(
+            [tmp_path], lambda: client.post(f"{base}/set", json=body, headers=headers)
+        )
+        assert cold.status_code == 200 and cold.json()["status"] == "would_accept", cold.text
+
+        serving = manager.get(instance_id).root / "projections" / "serving.json"
+        settle()
+        serving.unlink()
+        manager.clear()
+        refused = assert_writes_nothing(
+            [tmp_path], lambda: client.post(f"{base}/set", json=body, headers=headers)
+        )
+        assert refused.status_code == 409, refused.text
+        assert refused.json()["error_code"] == "playbill.preview.recovery_pending"
+        assert not serving.exists()
+        client.get(f"{base}/head")  # an ordinary read repairs it
+        assert serving.exists()

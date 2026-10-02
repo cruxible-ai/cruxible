@@ -20,6 +20,8 @@ from pydantic import BaseModel, ConfigDict, ValidationInfo, field_validator
 
 from .authoring.models import ClaimTypeSuccessionDependentV1
 from .canonical import Sha256Value, canonical_digest
+from .change_control import DryRun, PreviewAt
+from .get_reads import PlaybillGetCoordinateV1
 
 KIT_MANIFEST_FILE = "cruxible-kit.json"
 KIT_ARTIFACT_DIRECTORY = "artifacts"
@@ -307,10 +309,16 @@ class PlaybillKitAddRequestV1(_Strict):
     # A changed ClaimType's live dependents are carried to the successor by
     # default, as a succession would; name one here to retire it instead.
     dependents: tuple[ClaimTypeSuccessionDependentV1, ...] = ()
+    #: A kit install is derived across many artifacts, so it previews by default.
+    dry_run: DryRun = None
+    at: PreviewAt = None
 
 
 class PlaybillKitRemoveRequestV1(_Strict):
     kit_id: str
+    #: A kit removal is derived across many artifacts, so it previews by default.
+    dry_run: DryRun = None
+    at: PreviewAt = None
 
     @field_validator("kit_id")
     @classmethod
@@ -335,11 +343,15 @@ class PlaybillKitChangeResultV1(_Strict):
     version: str | None
     # A kit change is proposed, never activated here: activation stays the
     # ordinary tier-gated step, after any approval the instance's policy requires.
-    status: Literal["unchanged", "proposed", "blocked"]
+    # A preview (the default) answers would_propose or would_block and proposes
+    # nothing; commit with dry_run=false and at=<coordinate>.
+    status: Literal["unchanged", "proposed", "blocked", "would_propose", "would_block"]
     proposal_id: str | None = None
     approval_required: bool = False
     plan: tuple[KitPathPlanV1, ...] = ()
     detail: str | None = None
+    #: The accepted coordinate this change was evaluated at.
+    coordinate: PlaybillGetCoordinateV1 | None = None
 
 
 class InstalledKitV1(_Strict):

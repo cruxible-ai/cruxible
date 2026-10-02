@@ -945,7 +945,28 @@ def projection_query_semantic_result_digest(result: object) -> str:
     ).tagged
 
 
+class PlaybillBlockRepinResultV1(BaseModel):
+    """One block repinned through the client-side adapter, or (preview) what would be.
+
+    The adapter reads the page, computes the stamp from the instance's own
+    reads, rewrites the opening marker and only then declares the block, so a
+    caller never computes a stamp itself. ``would_repin`` wrote nothing.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-block-repin-result-v1"] = "playbill-block-repin-result-v1"
+    status: Literal["repinned", "would_repin"]
+    source_id: str
+    block_id: str
+    #: The page, relative to the workspace root.
+    path: str
+    declared_generation: int
+    stamp: ProjectionBlockStampV2
+
+
 __all__ = [
+    "PlaybillBlockRepinResultV1",
     "MAX_PROJECTION_CARDS_PER_SOURCE",
     "MAX_PROJECTION_COVERAGE_BINDINGS",
     "PROJECTION_MARKER_GRAMMAR",

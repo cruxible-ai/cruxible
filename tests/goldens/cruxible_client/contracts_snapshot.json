@@ -12,7 +12,10 @@
         "rearmed",
         "already_armed",
         "disarmed",
-        "already_disarmed"
+        "already_disarmed",
+        "would_arm",
+        "would_rearm",
+        "would_disarm"
       ]
     },
     "LineArmStopReasonV1": {
@@ -67,7 +70,8 @@
         "host_state_incomplete",
         "host_state_malformed",
         "compiler_lineage_not_writable",
-        "instance_decommissioned"
+        "instance_decommissioned",
+        "location_outside_state_root"
       ]
     },
     "PlaybillHostCompatibilityV1": {
@@ -75,13 +79,15 @@
         "uninitialized",
         "writable",
         "reseed_required",
-        "decommissioned"
+        "decommissioned",
+        "refused"
       ]
     },
     "PlaybillHostStatus": {
       "values": [
         "created",
-        "already_exists"
+        "already_exists",
+        "would_create"
       ]
     },
     "PlaybillHostWorkspaceRegistrationStatus": {
@@ -1621,6 +1627,26 @@
             "$ref": "#/$defs/LineArmPrincipalV1"
           }
         },
+        "coordinate": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The accepted coordinate this arm or disarm call evaluated the Line at; absent on a status read. Commit a preview with at=<its git_oid>."
+          }
+        },
         "detail": {
           "default": null,
           "default_json_serializable": true,
@@ -1698,7 +1724,10 @@
                   "rearmed",
                   "already_armed",
                   "disarmed",
-                  "already_disarmed"
+                  "already_disarmed",
+                  "would_arm",
+                  "would_rearm",
+                  "would_disarm"
                 ],
                 "type": "string"
               },
@@ -1827,6 +1856,42 @@
       },
       "json_schema": {
         "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          },
           "LineArmPrincipalV1": {
             "additionalProperties": false,
             "description": "Who armed a Line: the authority rechecked before every automatic admission.\n\n``runtime_credential`` retains only the credential's identifier, never a\ntoken. On an auth-off daemon, ``principal_claim`` is an arm made under a\nconfigured principal ID (``label``), whose accepted standing is rechecked\nbefore every admission; ``local_operator`` is the implicit local operator\nthat claimed no principal, and never resolves to a registered principal.",
@@ -1907,6 +1972,18 @@
           "armed_by": {
             "$ref": "#/$defs/LineArmPrincipalV1"
           },
+          "coordinate": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The accepted coordinate this arm or disarm call evaluated the Line at; absent on a status read. Commit a preview with at=<its git_oid>."
+          },
           "detail": {
             "anyOf": [
               {
@@ -1945,7 +2022,10 @@
                   "rearmed",
                   "already_armed",
                   "disarmed",
-                  "already_disarmed"
+                  "already_disarmed",
+                  "would_arm",
+                  "would_rearm",
+                  "would_disarm"
                 ],
                 "type": "string"
               },
@@ -13781,7 +13861,8 @@
           "schema": {
             "enum": [
               "depublished",
-              "already_depublished"
+              "already_depublished",
+              "would_depublish"
             ],
             "title": "Outcome",
             "type": "string"
@@ -13912,7 +13993,8 @@
           "outcome": {
             "enum": [
               "depublished",
-              "already_depublished"
+              "already_depublished",
+              "would_depublish"
             ],
             "title": "Outcome",
             "type": "string"
@@ -17008,6 +17090,16 @@
                 "title": "Proposal",
                 "type": "object"
               },
+              "status": {
+                "default": "admitted",
+                "enum": [
+                  "admitted",
+                  "would_propose",
+                  "would_block"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
               "tag": {
                 "const": "playbill-proposal-inspection-v1",
                 "default": "playbill-proposal-inspection-v1",
@@ -17603,6 +17695,16 @@
                 "title": "Proposal",
                 "type": "object"
               },
+              "status": {
+                "default": "admitted",
+                "enum": [
+                  "admitted",
+                  "would_propose",
+                  "would_block"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
               "tag": {
                 "const": "playbill-proposal-inspection-v1",
                 "default": "playbill-proposal-inspection-v1",
@@ -18006,6 +18108,16 @@
                 "title": "Proposal",
                 "type": "object"
               },
+              "status": {
+                "default": "admitted",
+                "enum": [
+                  "admitted",
+                  "would_propose",
+                  "would_block"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
               "tag": {
                 "const": "playbill-proposal-inspection-v1",
                 "default": "playbill-proposal-inspection-v1",
@@ -18408,6 +18520,16 @@
                 "additionalProperties": true,
                 "title": "Proposal",
                 "type": "object"
+              },
+              "status": {
+                "default": "admitted",
+                "enum": [
+                  "admitted",
+                  "would_propose",
+                  "would_block"
+                ],
+                "title": "Status",
+                "type": "string"
               },
               "tag": {
                 "const": "playbill-proposal-inspection-v1",
@@ -19429,6 +19551,23 @@
             "type": "string"
           }
         },
+        "status": {
+          "default": "recorded",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": false,
+          "schema": {
+            "default": "recorded",
+            "enum": [
+              "recorded",
+              "would_record"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
         "tag": {
           "default": "playbill-curation-action-result-v1",
           "default_json_serializable": true,
@@ -19505,6 +19644,15 @@
           "operational_head_digest": {
             "pattern": "^sha256:[0-9a-f]{64}$",
             "title": "Operational Head Digest",
+            "type": "string"
+          },
+          "status": {
+            "default": "recorded",
+            "enum": [
+              "recorded",
+              "would_record"
+            ],
+            "title": "Status",
             "type": "string"
           },
           "tag": {
@@ -21446,7 +21594,8 @@
               "host_state_incomplete",
               "host_state_malformed",
               "compiler_lineage_not_writable",
-              "instance_decommissioned"
+              "instance_decommissioned",
+              "location_outside_state_root"
             ],
             "title": "Code",
             "type": "string"
@@ -21485,7 +21634,8 @@
               "host_state_incomplete",
               "host_state_malformed",
               "compiler_lineage_not_writable",
-              "instance_decommissioned"
+              "instance_decommissioned",
+              "location_outside_state_root"
             ],
             "title": "Code",
             "type": "string"
@@ -21528,7 +21678,8 @@
               "uninitialized",
               "writable",
               "reseed_required",
-              "decommissioned"
+              "decommissioned",
+              "refused"
             ],
             "title": "Compatibility",
             "type": "string"
@@ -21687,7 +21838,8 @@
                   "host_state_incomplete",
                   "host_state_malformed",
                   "compiler_lineage_not_writable",
-                  "instance_decommissioned"
+                  "instance_decommissioned",
+                  "location_outside_state_root"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -21721,7 +21873,8 @@
               "uninitialized",
               "writable",
               "reseed_required",
-              "decommissioned"
+              "decommissioned",
+              "refused"
             ],
             "title": "Compatibility",
             "type": "string"
@@ -21824,6 +21977,25 @@
     },
     "PlaybillHostResult": {
       "fields": {
+        "coordinate": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillStateCoordinateV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "git_workspace_note": {
           "default": null,
           "default_json_serializable": true,
@@ -21861,7 +22033,8 @@
           "schema": {
             "enum": [
               "created",
-              "already_exists"
+              "already_exists",
+              "would_create"
             ],
             "title": "Status",
             "type": "string"
@@ -21895,10 +22068,50 @@
             ],
             "title": "GitWorkspaceNoteV1",
             "type": "object"
+          },
+          "PlaybillStateCoordinateV1": {
+            "additionalProperties": false,
+            "description": "The operational state one change was evaluated against.\n\n``subject`` names the records (``runtime_credential:<id>``,\n``host_workspace:<instance>``, ...) and ``digest`` is the sha256 of their\ncanonical JSON. A commit carrying ``at`` recomputes it where it writes and\nrefuses ``playbill.preview.state_moved`` when it differs.",
+            "properties": {
+              "digest": {
+                "pattern": "^[0-9a-f]{64}$",
+                "title": "Digest",
+                "type": "string"
+              },
+              "subject": {
+                "maxLength": 512,
+                "minLength": 1,
+                "title": "Subject",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-state-coordinate-v1",
+                "default": "playbill-state-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject",
+              "digest"
+            ],
+            "title": "PlaybillStateCoordinateV1",
+            "type": "object"
           }
         },
         "additionalProperties": false,
         "properties": {
+          "coordinate": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillStateCoordinateV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "git_workspace_note": {
             "anyOf": [
               {
@@ -21917,7 +22130,8 @@
           "status": {
             "enum": [
               "created",
-              "already_exists"
+              "already_exists",
+              "would_create"
             ],
             "title": "Status",
             "type": "string"
@@ -21933,6 +22147,177 @@
       "required_fields": [
         "instance_id",
         "status"
+      ]
+    },
+    "PlaybillHostWorkspaceAttachResultV1": {
+      "fields": {
+        "coordinate": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillStateCoordinateV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "initialized": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "initialized",
+          "required": true,
+          "schema": {
+            "title": "Initialized",
+            "type": "boolean"
+          }
+        },
+        "instance_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "instance_id",
+          "required": true,
+          "schema": {
+            "title": "Instance Id",
+            "type": "string"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "attached",
+              "already_attached",
+              "would_attach"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-host-workspace-attach-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-host-workspace-attach-result-v1",
+            "default": "playbill-host-workspace-attach-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "workspace_root": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "workspace_root",
+          "required": true,
+          "schema": {
+            "title": "Workspace Root",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillStateCoordinateV1": {
+            "additionalProperties": false,
+            "description": "The operational state one change was evaluated against.\n\n``subject`` names the records (``runtime_credential:<id>``,\n``host_workspace:<instance>``, ...) and ``digest`` is the sha256 of their\ncanonical JSON. A commit carrying ``at`` recomputes it where it writes and\nrefuses ``playbill.preview.state_moved`` when it differs.",
+            "properties": {
+              "digest": {
+                "pattern": "^[0-9a-f]{64}$",
+                "title": "Digest",
+                "type": "string"
+              },
+              "subject": {
+                "maxLength": 512,
+                "minLength": 1,
+                "title": "Subject",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-state-coordinate-v1",
+                "default": "playbill-state-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject",
+              "digest"
+            ],
+            "title": "PlaybillStateCoordinateV1",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "One daemon host attached to a Git worktree, before or after its init.\n\nAn initialized host attaches when the worktree is in the ledger's own Git\nobject format and holds no part of the host's managed root; nothing is\nrebuilt. ``would_attach`` answers a preview, which registered nothing.",
+        "properties": {
+          "coordinate": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillStateCoordinateV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "initialized": {
+            "title": "Initialized",
+            "type": "boolean"
+          },
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "attached",
+              "already_attached",
+              "would_attach"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-host-workspace-attach-result-v1",
+            "default": "playbill-host-workspace-attach-result-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "workspace_root": {
+            "title": "Workspace Root",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instance_id",
+          "status",
+          "workspace_root",
+          "initialized"
+        ],
+        "title": "PlaybillHostWorkspaceAttachResultV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "initialized",
+        "instance_id",
+        "status",
+        "workspace_root"
       ]
     },
     "PlaybillHostWorkspaceRegistrationV1": {
@@ -22491,6 +22876,20 @@
             "type": "string"
           }
         },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "decommissioned",
+              "would_decommission"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
         "tag": {
           "default": "playbill-instance-decommission-result-v1",
           "default_json_serializable": true,
@@ -22570,6 +22969,14 @@
             "title": "Reason",
             "type": "string"
           },
+          "status": {
+            "enum": [
+              "decommissioned",
+              "would_decommission"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
           "tag": {
             "const": "playbill-instance-decommission-result-v1",
             "default": "playbill-instance-decommission-result-v1",
@@ -22578,6 +22985,7 @@
           }
         },
         "required": [
+          "status",
           "instance_id",
           "reason",
           "decommissioned_at",
@@ -22592,7 +23000,8 @@
         "decommissioned_at",
         "decommissioned_by",
         "instance_id",
-        "reason"
+        "reason",
+        "status"
       ]
     },
     "PlaybillLedgerMirrorV1": {
@@ -22629,6 +23038,25 @@
             "minimum": 0,
             "title": "Attempted Sequence",
             "type": "integer"
+          }
+        },
+        "coordinate": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "detail": {
@@ -22742,7 +23170,8 @@
               "current",
               "behind",
               "pending",
-              "publishing"
+              "publishing",
+              "would_publish"
             ],
             "title": "Status",
             "type": "string"
@@ -22785,6 +23214,47 @@
         }
       },
       "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
         "additionalProperties": false,
         "description": "Where one instance publishes its ledger, and whether that copy is current.\n\n`ledger set-mirror` binds a remote and waits boundedly for initial publication;\n`ledger clone-url` reads its status. A publish barrier is acknowledged when\npublished_sequence reaches wait_sequence, even if newer work is pending. The\nURL carries no credential -- one that could is refused before it is stored --\nso this model is safe to print, log and hand to anyone who may read the\ninstance at all.",
         "properties": {
@@ -22805,6 +23275,17 @@
             "minimum": 0,
             "title": "Attempted Sequence",
             "type": "integer"
+          },
+          "coordinate": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "detail": {
             "anyOf": [
@@ -22862,7 +23343,8 @@
               "current",
               "behind",
               "pending",
-              "publishing"
+              "publishing",
+              "would_publish"
             ],
             "title": "Status",
             "type": "string"
@@ -50855,6 +51337,24 @@
             "type": "object"
           }
         },
+        "status": {
+          "default": "admitted",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": false,
+          "schema": {
+            "default": "admitted",
+            "enum": [
+              "admitted",
+              "would_propose",
+              "would_block"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
         "tag": {
           "default": "playbill-proposal-inspection-v1",
           "default_json_serializable": true,
@@ -51048,6 +51548,16 @@
             "additionalProperties": true,
             "title": "Proposal",
             "type": "object"
+          },
+          "status": {
+            "default": "admitted",
+            "enum": [
+              "admitted",
+              "would_propose",
+              "would_block"
+            ],
+            "title": "Status",
+            "type": "string"
           },
           "tag": {
             "const": "playbill-proposal-inspection-v1",
@@ -51875,6 +52385,16 @@
                 "additionalProperties": true,
                 "title": "Proposal",
                 "type": "object"
+              },
+              "status": {
+                "default": "admitted",
+                "enum": [
+                  "admitted",
+                  "would_propose",
+                  "would_block"
+                ],
+                "title": "Status",
+                "type": "string"
               },
               "tag": {
                 "const": "playbill-proposal-inspection-v1",
@@ -52757,6 +53277,25 @@
             "type": "boolean"
           }
         },
+        "coordinate": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "proposal_id": {
           "has_default": false,
           "has_default_factory": false,
@@ -52774,6 +53313,23 @@
           "required": true,
           "schema": {
             "title": "Reason",
+            "type": "string"
+          }
+        },
+        "status": {
+          "default": "withdrawn",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": false,
+          "schema": {
+            "default": "withdrawn",
+            "enum": [
+              "withdrawn",
+              "would_withdraw"
+            ],
+            "title": "Status",
             "type": "string"
           }
         },
@@ -52803,6 +53359,47 @@
         }
       },
       "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
         "additionalProperties": false,
         "properties": {
           "actor_id": {
@@ -52814,12 +53411,32 @@
             "title": "Already Withdrawn",
             "type": "boolean"
           },
+          "coordinate": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "proposal_id": {
             "title": "Proposal Id",
             "type": "string"
           },
           "reason": {
             "title": "Reason",
+            "type": "string"
+          },
+          "status": {
+            "default": "withdrawn",
+            "enum": [
+              "withdrawn",
+              "would_withdraw"
+            ],
+            "title": "Status",
             "type": "string"
           },
           "tag": {
@@ -52968,6 +53585,28 @@
     },
     "PlaybillProviderInstallRequestV1": {
       "fields": {
+        "at": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "at",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{12,64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The coordinate a preview answered with: its git oid, or for a change to operational state its state digest (either may be shortened to a unique prefix of 12+ hex characters). A commit carrying it refuses playbill.preview.state_moved if that state moved since. Required to commit a change that cannot be undone.",
+            "title": "At"
+          }
+        },
         "control_domain": {
           "default": "operator",
           "default_json_serializable": true,
@@ -52995,6 +53634,27 @@
             },
             "title": "Dependencies",
             "type": "array"
+          }
+        },
+        "dry_run": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "dry_run",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "true: run every check up to the commit and write nothing, answering with a would_* status; false: commit. Omitted: this operation's default (a change derived across several artifacts, or one that cannot be undone, previews).",
+            "title": "Dry Run"
           }
         },
         "extras": {
@@ -53130,6 +53790,20 @@
         },
         "additionalProperties": false,
         "properties": {
+          "at": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{12,64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The coordinate a preview answered with: its git oid, or for a change to operational state its state digest (either may be shortened to a unique prefix of 12+ hex characters). A commit carrying it refuses playbill.preview.state_moved if that state moved since. Required to commit a change that cannot be undone.",
+            "title": "At"
+          },
           "control_domain": {
             "default": "operator",
             "title": "Control Domain",
@@ -53142,6 +53816,19 @@
             },
             "title": "Dependencies",
             "type": "array"
+          },
+          "dry_run": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "true: run every check up to the commit and write nothing, answering with a would_* status; false: commit. Omitted: this operation's default (a change derived across several artifacts, or one that cannot be undone, previews).",
+            "title": "Dry Run"
           },
           "extras": {
             "default": [],
@@ -53231,6 +53918,25 @@
             "title": "Candidate Digest"
           }
         },
+        "coordinate": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "detail": {
           "default": null,
           "default_json_serializable": true,
@@ -53271,6 +53977,27 @@
             "type": "boolean"
           }
         },
+        "not_run": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "not_run",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "enum": [
+                "package_preparation",
+                "deployment_readiness",
+                "registration"
+              ],
+              "type": "string"
+            },
+            "title": "Not Run",
+            "type": "array"
+          }
+        },
         "operations": {
           "default": [],
           "default_json_serializable": true,
@@ -53285,6 +54012,27 @@
             },
             "title": "Operations",
             "type": "array"
+          }
+        },
+        "preview_scope": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "preview_scope",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "const": "validation_only",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Preview Scope"
           }
         },
         "proposal_id": {
@@ -53336,7 +54084,8 @@
             "enum": [
               "ready",
               "awaiting_approval",
-              "blocked"
+              "blocked",
+              "would_install"
             ],
             "title": "Status",
             "type": "string"
@@ -53359,6 +54108,42 @@
       },
       "json_schema": {
         "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          },
           "ProviderOperationReadinessV1": {
             "additionalProperties": false,
             "properties": {
@@ -53401,6 +54186,17 @@
             "default": null,
             "title": "Candidate Digest"
           },
+          "coordinate": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "detail": {
             "anyOf": [
               {
@@ -53421,6 +54217,19 @@
             "title": "Installed",
             "type": "boolean"
           },
+          "not_run": {
+            "default": [],
+            "items": {
+              "enum": [
+                "package_preparation",
+                "deployment_readiness",
+                "registration"
+              ],
+              "type": "string"
+            },
+            "title": "Not Run",
+            "type": "array"
+          },
           "operations": {
             "default": [],
             "items": {
@@ -53428,6 +54237,19 @@
             },
             "title": "Operations",
             "type": "array"
+          },
+          "preview_scope": {
+            "anyOf": [
+              {
+                "const": "validation_only",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Preview Scope"
           },
           "proposal_id": {
             "anyOf": [
@@ -53453,7 +54275,8 @@
             "enum": [
               "ready",
               "awaiting_approval",
-              "blocked"
+              "blocked",
+              "would_install"
             ],
             "title": "Status",
             "type": "string"
@@ -63783,7 +64606,7 @@
                 "type": "string"
               },
               "field": {
-                "description": "A short predicate name of the kind (adoption_state), a fully qualified predicate, subject_id, or alias.field after follow.",
+                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
                 "maxLength": 256,
                 "minLength": 1,
                 "title": "Field",
@@ -63816,7 +64639,7 @@
                 "title": "Eq"
               },
               "field": {
-                "description": "A short predicate name of the kind (adoption_state), a fully qualified predicate, subject_id, or alias.field after follow.",
+                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
                 "maxLength": 256,
                 "minLength": 1,
                 "title": "Field",
@@ -63839,7 +64662,7 @@
                 "type": "boolean"
               },
               "field": {
-                "description": "A short predicate name of the kind (adoption_state), a fully qualified predicate, subject_id, or alias.field after follow.",
+                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
                 "maxLength": 256,
                 "minLength": 1,
                 "title": "Field",
@@ -63857,7 +64680,7 @@
             "additionalProperties": false,
             "properties": {
               "field": {
-                "description": "A short predicate name of the kind (adoption_state), a fully qualified predicate, subject_id, or alias.field after follow.",
+                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
                 "maxLength": 256,
                 "minLength": 1,
                 "title": "Field",
@@ -63889,7 +64712,7 @@
             "additionalProperties": false,
             "properties": {
               "field": {
-                "description": "A short predicate name of the kind (adoption_state), a fully qualified predicate, subject_id, or alias.field after follow.",
+                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
                 "maxLength": 256,
                 "minLength": 1,
                 "title": "Field",
@@ -63922,7 +64745,7 @@
             "description": "The value is one of these.",
             "properties": {
               "field": {
-                "description": "A short predicate name of the kind (adoption_state), a fully qualified predicate, subject_id, or alias.field after follow.",
+                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
                 "maxLength": 256,
                 "minLength": 1,
                 "title": "Field",
@@ -63959,7 +64782,7 @@
             "additionalProperties": false,
             "properties": {
               "field": {
-                "description": "A short predicate name of the kind (adoption_state), a fully qualified predicate, subject_id, or alias.field after follow.",
+                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
                 "maxLength": 256,
                 "minLength": 1,
                 "title": "Field",
@@ -63991,7 +64814,7 @@
             "additionalProperties": false,
             "properties": {
               "field": {
-                "description": "A short predicate name of the kind (adoption_state), a fully qualified predicate, subject_id, or alias.field after follow.",
+                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
                 "maxLength": 256,
                 "minLength": 1,
                 "title": "Field",
@@ -64024,7 +64847,7 @@
             "description": "No value equals this one; a Subject without the value matches.",
             "properties": {
               "field": {
-                "description": "A short predicate name of the kind (adoption_state), a fully qualified predicate, subject_id, or alias.field after follow.",
+                "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
                 "maxLength": 256,
                 "minLength": 1,
                 "title": "Field",
@@ -83944,6 +84767,80 @@
         "documents"
       ]
     },
+    "PlaybillStateCoordinateV1": {
+      "fields": {
+        "digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "digest",
+          "required": true,
+          "schema": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Digest",
+            "type": "string"
+          }
+        },
+        "subject": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "subject",
+          "required": true,
+          "schema": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-state-coordinate-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-state-coordinate-v1",
+            "default": "playbill-state-coordinate-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "The operational state one change was evaluated against.\n\n``subject`` names the records (``runtime_credential:<id>``,\n``host_workspace:<instance>``, ...) and ``digest`` is the sha256 of their\ncanonical JSON. A commit carrying ``at`` recomputes it where it writes and\nrefuses ``playbill.preview.state_moved`` when it differs.",
+        "properties": {
+          "digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Digest",
+            "type": "string"
+          },
+          "subject": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Subject",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-state-coordinate-v1",
+            "default": "playbill-state-coordinate-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject",
+          "digest"
+        ],
+        "title": "PlaybillStateCoordinateV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "digest",
+        "subject"
+      ]
+    },
     "PlaybillWhoAmI": {
       "fields": {
         "active_principal_ids": {
@@ -85307,6 +86204,25 @@
     },
     "PlaybillWorkspaceDetachResultV1": {
       "fields": {
+        "coordinate": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillStateCoordinateV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "instance_id": {
           "has_default": false,
           "has_default_factory": false,
@@ -85325,7 +86241,8 @@
           "schema": {
             "enum": [
               "detached",
-              "not_registered"
+              "not_registered",
+              "would_detach"
             ],
             "title": "Status",
             "type": "string"
@@ -85367,9 +86284,51 @@
         }
       },
       "json_schema": {
+        "$defs": {
+          "PlaybillStateCoordinateV1": {
+            "additionalProperties": false,
+            "description": "The operational state one change was evaluated against.\n\n``subject`` names the records (``runtime_credential:<id>``,\n``host_workspace:<instance>``, ...) and ``digest`` is the sha256 of their\ncanonical JSON. A commit carrying ``at`` recomputes it where it writes and\nrefuses ``playbill.preview.state_moved`` when it differs.",
+            "properties": {
+              "digest": {
+                "pattern": "^[0-9a-f]{64}$",
+                "title": "Digest",
+                "type": "string"
+              },
+              "subject": {
+                "maxLength": 512,
+                "minLength": 1,
+                "title": "Subject",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-state-coordinate-v1",
+                "default": "playbill-state-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject",
+              "digest"
+            ],
+            "title": "PlaybillStateCoordinateV1",
+            "type": "object"
+          }
+        },
         "additionalProperties": false,
         "description": "One daemon host released from the Git worktree it was attached to.\n\nThe registry exclusivity is a UNIQUE index on (backend, workspace_root), so\na worktree can only ever be one host's. Moving one between hosts had no\nverb: the refusal named \"archive/rebuild that host\", which is not a verb\neither, and the rollback that does exactly this was reachable only from an\ninitialization failure.",
         "properties": {
+          "coordinate": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillStateCoordinateV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "instance_id": {
             "title": "Instance Id",
             "type": "string"
@@ -85377,7 +86336,8 @@
           "status": {
             "enum": [
               "detached",
-              "not_registered"
+              "not_registered",
+              "would_detach"
             ],
             "title": "Status",
             "type": "string"
@@ -100496,7 +101456,7 @@
           "json_name": "field",
           "required": true,
           "schema": {
-            "description": "A short predicate name of the kind (adoption_state), a fully qualified predicate, subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -100515,7 +101475,7 @@
             "type": "string"
           },
           "field": {
-            "description": "A short predicate name of the kind (adoption_state), a fully qualified predicate, subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -100562,7 +101522,7 @@
           "json_name": "field",
           "required": true,
           "schema": {
-            "description": "A short predicate name of the kind (adoption_state), a fully qualified predicate, subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -100589,7 +101549,7 @@
             "title": "Eq"
           },
           "field": {
-            "description": "A short predicate name of the kind (adoption_state), a fully qualified predicate, subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -100626,7 +101586,7 @@
           "json_name": "field",
           "required": true,
           "schema": {
-            "description": "A short predicate name of the kind (adoption_state), a fully qualified predicate, subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -100643,7 +101603,7 @@
             "type": "boolean"
           },
           "field": {
-            "description": "A short predicate name of the kind (adoption_state), a fully qualified predicate, subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -100670,7 +101630,7 @@
           "json_name": "field",
           "required": true,
           "schema": {
-            "description": "A short predicate name of the kind (adoption_state), a fully qualified predicate, subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -100702,7 +101662,7 @@
         "additionalProperties": false,
         "properties": {
           "field": {
-            "description": "A short predicate name of the kind (adoption_state), a fully qualified predicate, subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -100743,7 +101703,7 @@
           "json_name": "field",
           "required": true,
           "schema": {
-            "description": "A short predicate name of the kind (adoption_state), a fully qualified predicate, subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -100775,7 +101735,7 @@
         "additionalProperties": false,
         "properties": {
           "field": {
-            "description": "A short predicate name of the kind (adoption_state), a fully qualified predicate, subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -100816,7 +101776,7 @@
           "json_name": "field",
           "required": true,
           "schema": {
-            "description": "A short predicate name of the kind (adoption_state), a fully qualified predicate, subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -100854,7 +101814,7 @@
         "description": "The value is one of these.",
         "properties": {
           "field": {
-            "description": "A short predicate name of the kind (adoption_state), a fully qualified predicate, subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -100900,7 +101860,7 @@
           "json_name": "field",
           "required": true,
           "schema": {
-            "description": "A short predicate name of the kind (adoption_state), a fully qualified predicate, subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -100932,7 +101892,7 @@
         "additionalProperties": false,
         "properties": {
           "field": {
-            "description": "A short predicate name of the kind (adoption_state), a fully qualified predicate, subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -100973,7 +101933,7 @@
           "json_name": "field",
           "required": true,
           "schema": {
-            "description": "A short predicate name of the kind (adoption_state), a fully qualified predicate, subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -101005,7 +101965,7 @@
         "additionalProperties": false,
         "properties": {
           "field": {
-            "description": "A short predicate name of the kind (adoption_state), a fully qualified predicate, subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -101046,7 +102006,7 @@
           "json_name": "field",
           "required": true,
           "schema": {
-            "description": "A short predicate name of the kind (adoption_state), a fully qualified predicate, subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -101079,7 +102039,7 @@
         "description": "No value equals this one; a Subject without the value matches.",
         "properties": {
           "field": {
-            "description": "A short predicate name of the kind (adoption_state), a fully qualified predicate, subject_id, or alias.field after follow.",
+            "description": "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow.",
             "maxLength": 256,
             "minLength": 1,
             "title": "Field",
@@ -103136,6 +104096,25 @@
     },
     "RuntimeCredentialBootstrapResult": {
       "fields": {
+        "coordinate": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillStateCoordinateV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "credential_id": {
           "has_default": false,
           "has_default_factory": false,
@@ -103167,19 +104146,85 @@
             "type": "string"
           }
         },
-        "token": {
+        "status": {
           "has_default": false,
           "has_default_factory": false,
-          "json_name": "token",
+          "json_name": "status",
           "required": true,
           "schema": {
-            "title": "Token",
+            "enum": [
+              "claimed",
+              "would_claim"
+            ],
+            "title": "Status",
             "type": "string"
+          }
+        },
+        "token": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "token",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Token"
           }
         }
       },
       "json_schema": {
+        "$defs": {
+          "PlaybillStateCoordinateV1": {
+            "additionalProperties": false,
+            "description": "The operational state one change was evaluated against.\n\n``subject`` names the records (``runtime_credential:<id>``,\n``host_workspace:<instance>``, ...) and ``digest`` is the sha256 of their\ncanonical JSON. A commit carrying ``at`` recomputes it where it writes and\nrefuses ``playbill.preview.state_moved`` when it differs.",
+            "properties": {
+              "digest": {
+                "pattern": "^[0-9a-f]{64}$",
+                "title": "Digest",
+                "type": "string"
+              },
+              "subject": {
+                "maxLength": 512,
+                "minLength": 1,
+                "title": "Subject",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-state-coordinate-v1",
+                "default": "playbill-state-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject",
+              "digest"
+            ],
+            "title": "PlaybillStateCoordinateV1",
+            "type": "object"
+          }
+        },
         "properties": {
+          "coordinate": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillStateCoordinateV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "credential_id": {
             "title": "Credential Id",
             "type": "string"
@@ -103193,16 +104238,32 @@
             "title": "Permission Mode",
             "type": "string"
           },
-          "token": {
-            "title": "Token",
+          "status": {
+            "enum": [
+              "claimed",
+              "would_claim"
+            ],
+            "title": "Status",
             "type": "string"
+          },
+          "token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Token"
           }
         },
         "required": [
+          "status",
           "credential_id",
           "instance_id",
-          "permission_mode",
-          "token"
+          "permission_mode"
         ],
         "title": "RuntimeCredentialBootstrapResult",
         "type": "object"
@@ -103211,7 +104272,7 @@
         "credential_id",
         "instance_id",
         "permission_mode",
-        "token"
+        "status"
       ]
     },
     "RuntimeCredentialListResult": {
@@ -103526,6 +104587,25 @@
     },
     "RuntimeCredentialResult": {
       "fields": {
+        "coordinate": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillStateCoordinateV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "credential": {
           "has_default": false,
           "has_default_factory": false,
@@ -103533,6 +104613,26 @@
           "required": true,
           "schema": {
             "$ref": "#/$defs/RuntimeCredentialMetadata"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "minted",
+              "revoked",
+              "rotated",
+              "recovered",
+              "would_mint",
+              "would_revoke",
+              "would_rotate",
+              "would_recover"
+            ],
+            "title": "Status",
+            "type": "string"
           }
         },
         "token": {
@@ -103558,6 +104658,35 @@
       },
       "json_schema": {
         "$defs": {
+          "PlaybillStateCoordinateV1": {
+            "additionalProperties": false,
+            "description": "The operational state one change was evaluated against.\n\n``subject`` names the records (``runtime_credential:<id>``,\n``host_workspace:<instance>``, ...) and ``digest`` is the sha256 of their\ncanonical JSON. A commit carrying ``at`` recomputes it where it writes and\nrefuses ``playbill.preview.state_moved`` when it differs.",
+            "properties": {
+              "digest": {
+                "pattern": "^[0-9a-f]{64}$",
+                "title": "Digest",
+                "type": "string"
+              },
+              "subject": {
+                "maxLength": 512,
+                "minLength": 1,
+                "title": "Subject",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-state-coordinate-v1",
+                "default": "playbill-state-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "subject",
+              "digest"
+            ],
+            "title": "PlaybillStateCoordinateV1",
+            "type": "object"
+          },
           "RuntimeCredentialMetadata": {
             "properties": {
               "created_at": {
@@ -103635,8 +104764,33 @@
           }
         },
         "properties": {
+          "coordinate": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillStateCoordinateV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "credential": {
             "$ref": "#/$defs/RuntimeCredentialMetadata"
+          },
+          "status": {
+            "enum": [
+              "minted",
+              "revoked",
+              "rotated",
+              "recovered",
+              "would_mint",
+              "would_revoke",
+              "would_rotate",
+              "would_recover"
+            ],
+            "title": "Status",
+            "type": "string"
           },
           "token": {
             "anyOf": [
@@ -103652,13 +104806,15 @@
           }
         },
         "required": [
+          "status",
           "credential"
         ],
         "title": "RuntimeCredentialResult",
         "type": "object"
       },
       "required_fields": [
-        "credential"
+        "credential",
+        "status"
       ]
     },
     "ServerInfoResult": {
@@ -103865,7 +105021,8 @@
                   "host_state_incomplete",
                   "host_state_malformed",
                   "compiler_lineage_not_writable",
-                  "instance_decommissioned"
+                  "instance_decommissioned",
+                  "location_outside_state_root"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -103899,7 +105056,8 @@
                   "uninitialized",
                   "writable",
                   "reseed_required",
-                  "decommissioned"
+                  "decommissioned",
+                  "refused"
                 ],
                 "title": "Compatibility",
                 "type": "string"

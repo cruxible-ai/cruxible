@@ -44,6 +44,7 @@ def test_cli_principal_add_keeps_private_key_client_side_and_proposes_public_rec
             *,
             principal: dict[str, Any],
             proposal_name: str,
+            **_: object,
         ) -> contracts.PlaybillProposalInspection:
             assert (instance_id, proposal_name) == ("inst_principals", "add-reviewer")
             submitted.append(principal)

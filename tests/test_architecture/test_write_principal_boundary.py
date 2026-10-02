@@ -37,6 +37,7 @@ EXEMPT: dict[str, str] = {
     "create_playbill_host": "allocates an empty host before any principal exists",
     "set_playbill_floor_delivery": "chooses a workspace writer under local attachment authority",
     "playbill_host_workspace_detach": "releases a worktree registration; the operator lever",
+    "playbill_host_workspace_attach": "registers a worktree to a host; the operator lever",
     "server_restart": "daemon lifecycle",
     "server_stop": "daemon lifecycle",
 }

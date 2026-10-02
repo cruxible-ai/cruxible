@@ -16,6 +16,7 @@ from cruxible_client.contracts.errors import (
     PlaybillObjectFormatConflict,
     PlaybillReseedRequired,
 )
+from cruxible_client.contracts.repairs import RepairOperationV1
 from cruxible_client.contracts.temporal import utc_now
 from cruxible_client.contracts.types import (
     GitObjectFormat,
@@ -24,7 +25,11 @@ from cruxible_client.contracts.types import (
     PrincipalRecord,
 )
 from cruxible_core.documents.workspace_file import WorkspaceFileReader
-from cruxible_core.errors import InstanceNotFoundError
+from cruxible_core.errors import (
+    ChangeRefusedError,
+    InstanceLocationRefusedError,
+    InstanceNotFoundError,
+)
 from cruxible_core.floor.workspace_advertisement import (
     advertise_workspace_refs,
     workspace_git_object_format,
@@ -42,6 +47,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     load_procedure_run_config,
 )
 from cruxible_core.service.proposals.proposal_receive import load_proposal_receive_config
+from cruxible_core.storage.preview_fence import PreviewWriteRefused
 
 _log = structlog.get_logger("cruxible.provider_runtime")
 
@@ -73,12 +79,13 @@ class PlaybillInstanceManager:
         record = registry.get(instance_id)
         if record is None or record.backend != GOVERNED_DAEMON_BACKEND:
             raise InstanceNotFoundError(instance_id)
-        managed_root = Path(record.location).resolve(strict=False)
+        # A row outside this state root names another root's instance (a copied
+        # state root still carries the original's registry): refused, never served.
+        managed_root = registry.instance_root(record)
         legacy_root = managed_root / ".cruxible"
-        if (legacy_root / "playbill-v1").exists() or (
-            legacy_root / "playbill-trust-root-v1.json"
-        ).exists():
-            raise PlaybillReseedRequired()
+        for legacy in (legacy_root / "playbill-v1", legacy_root / "playbill-trust-root-v1.json"):
+            if legacy.exists():
+                raise PlaybillReseedRequired(found=str(legacy))
         trust_root = registry.state_root / "trust" / f"{instance_id}.json"
         if managed_root.exists() != trust_root.exists():
             raise PlaybillReseedRequired()
@@ -230,13 +237,58 @@ class PlaybillInstanceManager:
                 raise PlaybillFormatError("persisted Playbill trust root is malformed") from exc
             if canonical_bytes(trust.model_dump(mode="json")) + b"\n" != raw:
                 raise PlaybillFormatError("persisted Playbill trust root is not canonical")
-            instance = PlaybillInstance.open(managed_root, trust_root=trust)
+            instance = self._open(instance_id, managed_root, trust)
             instance.bind_receive_limits(
                 load_proposal_receive_config(get_server_state_root()).limits()
             )
             self._bind_workspace(instance, _workspaces)
             self._keep(instance_id, instance)
             return instance
+
+    @staticmethod
+    def _open(instance_id: str, managed_root: Path, trust: PlaybillTrustRoot) -> PlaybillInstance:
+        """Open one instance; inside a preview, refuse rather than repair on disk.
+
+        Reopening replays accepted history and repairs derived files a crash
+        or an operator left behind (a projection, the serving pointer, replay
+        checkpoints, generation notes). An open that needs none of that writes
+        nothing and a preview may use it; one that does would write, so inside
+        a preview it is refused by name. An ordinary read repairs it, and the
+        preview then runs.
+        """
+
+        try:
+            return PlaybillInstance.open(managed_root, trust_root=trust)
+        except PreviewWriteRefused as exc:
+            raise ChangeRefusedError(
+                "playbill.preview.recovery_pending",
+                f"previewing first needs instance {instance_id} reopened, and reopening it "
+                f"would repair derived files on disk ({exc.door}), which a preview may not "
+                "write; run an ordinary read (`cruxible playbill orient`) to reopen it, then "
+                "preview again",
+                operation="playbill.orient",
+                repair=RepairOperationV1(operation="playbill.orient", arguments={}),
+            ) from exc
+
+    def initialized(self, instance_id: str) -> PlaybillInstance | None:
+        """The instance, or None while Playbill is not initialized under the host."""
+
+        try:
+            return self.get(instance_id)
+        except (PlaybillBootstrapError, InstanceNotFoundError):
+            return None
+
+    def rebind_workspace(self, instance_id: str) -> None:
+        """Bind an open instance's workspace advertiser to its current registration."""
+
+        with self._lock:
+            known = self._instances.get(instance_id)
+            if known is None:
+                return
+            _managed_root, _trust_path, workspaces = self._paths(instance_id)
+            self._bind_workspace(known, workspaces)
+        # The worktree learns the accepted ref now, not at the next write.
+        known.advertise_workspace()
 
     def open_instances(self) -> tuple[tuple[str, PlaybillInstance], ...]:
         """The instances this daemon already holds open, without opening any more."""
@@ -389,7 +441,12 @@ class PlaybillInstanceManager:
                 continue
             try:
                 instance = self.get(record.instance_id)
-            except (PlaybillBootstrapError, PlaybillReseedRequired, InstanceNotFoundError) as exc:
+            except (
+                PlaybillBootstrapError,
+                PlaybillReseedRequired,
+                InstanceNotFoundError,
+                InstanceLocationRefusedError,
+            ) as exc:
                 _log.warning(
                     "proposal_egress_recovery_instance_skipped",
                     instance_id=record.instance_id,
@@ -453,7 +510,12 @@ class PlaybillInstanceManager:
                 continue
             try:
                 instance = self.get(record.instance_id)
-            except (PlaybillBootstrapError, PlaybillReseedRequired, InstanceNotFoundError) as exc:
+            except (
+                PlaybillBootstrapError,
+                PlaybillReseedRequired,
+                InstanceNotFoundError,
+                InstanceLocationRefusedError,
+            ) as exc:
                 _log.warning(
                     "provider_recovery_instance_skipped",
                     instance_id=record.instance_id,

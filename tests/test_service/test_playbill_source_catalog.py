@@ -286,3 +286,42 @@ def test_procedure_only_catalog_compiles_as_a_typed_document_noop(tmp_path: Path
     assert bundle.documents == ()
     assert bundle.manifest.inputs == ()
     assert bundle.notes == ("procedure_projection_only_no_document_compilation",)
+
+
+def test_a_sources_proposal_previews_and_writes_neither_the_cas_nor_a_proposal(
+    tmp_path: Path,
+) -> None:
+    """F-006: the preview runs the propose path and stores no body, manifest or proposal."""
+
+    from tests.support.store_snapshot import assert_writes_nothing
+
+    instance, _owner, _reviewer = _instance(tmp_path)
+    repository = tmp_path / "authoring"
+    source = repository / "specs" / "design.md"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"# Previewed, never stored\n")
+    bundle = service_compile_playbill_sources(
+        instance, catalog=_catalog(_entry()), repository_root=repository
+    )
+    digest = bundle.documents[0].source.body_digest
+
+    def propose(**control: object):  # type: ignore[no-untyped-def]
+        return service_propose_playbill_source_bundle(
+            instance,
+            bundle=bundle,
+            source_name="playbill-design",
+            actor_id="owner",
+            proposal_name="catalog-design",
+            timestamp=TIMESTAMP,
+            **control,  # type: ignore[arg-type]
+        )
+
+    preview = assert_writes_nothing([tmp_path], lambda: propose(dry_run=True))
+
+    assert preview.status == "would_propose"
+    assert preview.proposal.candidate is not None
+    assert instance.body_store().verify(digest) is False
+    assert instance.proposal_evidence().list_admissions() == ()
+    committed = propose(dry_run=False, at=preview.accepted_coordinate.git_oid)
+    assert committed.status == "admitted"
+    assert instance.body_store().verify(digest) is True

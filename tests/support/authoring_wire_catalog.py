@@ -21,7 +21,7 @@ from cruxible_client.contracts.primitives import canonical_json
 
 AUTHORING_WIRE_CATALOG_VERSION = 1
 AUTHORING_WIRE_CONTRACT_CATALOG_DIGEST = (
-    "sha256:2f49e3bbb51b6974f324b55fe81afaead5933338091fce597e3727f3a32bfce7"
+    "sha256:e54b561ac1b0667d737d6b6f69b256ad5369d65f686e7943cbf19c55fe2b4543"
 )
 
 AUTHORING_WIRE_MODEL_NAMES = (
@@ -84,6 +84,7 @@ AUTHORING_WIRE_MODEL_NAMES = (
     "LineAuthoringPayloadV1",
     "MandateConditionAuthoringV1",
     "MandateScopeAuthoringV1",
+    "PlaybillBlockDetachResultV1",
     "PlaybillBlockSyncItemV1",
     "PlaybillBlockSyncReadRequestV1",
     "PlaybillBlockSyncReadResultV1",

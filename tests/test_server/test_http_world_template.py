@@ -49,7 +49,9 @@ def test_a_copied_host_registers_and_reopens_to_the_fresh_host(
     fresh_state = template.root / "server-state"
     copy_state = copied / "server-state"
 
-    assert _registered(copy_state) == [(instance_id, str(copy_state / "instances" / instance_id))]
+    # The registry stores state-root-relative locations, so the copy names its
+    # own instance with no path rewrite at all.
+    assert _registered(copy_state) == [(instance_id, f"instances/{instance_id}")]
     assert (copy_state / "trust" / f"{instance_id}.json").read_bytes() == (
         fresh_state / "trust" / f"{instance_id}.json"
     ).read_bytes()

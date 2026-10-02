@@ -134,7 +134,7 @@ def test_readmit_and_migration_delegate_to_existing_client_routes(
 
     class StubClient:
         def readmit_playbill_proposal(
-            self, instance_id: str, proposal_id: str
+            self, instance_id: str, proposal_id: str, **_control: object
         ) -> contracts.PlaybillProposalReadmitResult:
             calls.append(f"readmit:{proposal_id}")
             inspection = contracts.PlaybillProposalInspection(

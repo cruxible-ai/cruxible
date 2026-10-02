@@ -36,6 +36,7 @@ from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.evidence_rule_upgrade import (
     EvidenceRuleConversionV1,
     EvidenceRuleRefusalV1,
+    EvidenceRuleUpgradeRequestV1,
     EvidenceRuleUpgradeResultV1,
 )
 from cruxible_client.contracts.policies import (
@@ -54,8 +55,9 @@ from cruxible_core.claims.claim_type_migrations import (
 )
 from cruxible_core.errors import DataValidationError
 from cruxible_core.indexes.projection import AcceptedCoordinate
-from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
+from cruxible_core.proposals.proposals import ProposalAdmissionRequest
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.change_preview import ChangeMode, admit_change_set, change_scope
 
 
 class _Refused(Exception):
@@ -205,12 +207,34 @@ def _convert(
 def service_upgrade_evidence_rules(
     instance: PlaybillInstance,
     *,
+    request: EvidenceRuleUpgradeRequestV1,
     actor_id: str,
     timestamp: str,
 ) -> EvidenceRuleUpgradeResultV1:
-    """Propose the change set moving every convertible live exact-rule ClaimType to v6."""
+    """Propose (or preview) the change set moving every convertible exact-rule ClaimType to v6.
 
-    base = instance.accepted_coordinate()
+    The change set carries every dependent Claim, so it previews unless
+    ``dry_run`` is false; the preview evaluates it on the proposal service's own
+    admission path, under the same receive limits a submission meets, and
+    answers with counts and per-ClaimType entries rather than the Claims.
+    """
+
+    with change_scope(
+        instance,
+        dry_run=request.dry_run,
+        at=request.at,
+        kind="derived",
+        operation="playbill.claim-type.upgrade-evidence-rules",
+        describe="the evidence-rule upgrade",
+    ) as mode:
+        return _upgrade(instance, mode, actor_id=actor_id, timestamp=timestamp)
+
+
+def _upgrade(
+    instance: PlaybillInstance, mode: ChangeMode, *, actor_id: str, timestamp: str
+) -> EvidenceRuleUpgradeResultV1:
+    assert mode.head is not None
+    base = mode.head
     if not identity_rules_supported(base.compiler):
         raise DataValidationError(
             "identity evidence rules need compiler revision 31 or later; upgrade the compiler first"
@@ -237,7 +261,10 @@ def service_upgrade_evidence_rules(
         converted.append(conversion)
     if not changed:
         return EvidenceRuleUpgradeResultV1(
-            status="unchanged", refused=tuple(refused), detail="No ClaimType to convert."
+            status="unchanged",
+            refused=tuple(refused),
+            detail="No ClaimType to convert.",
+            coordinate=mode.coordinate,
         )
     roots = tuple(parse_claim_type(tree[path], path=path).identity for path in sorted(changed))
     try:
@@ -253,10 +280,11 @@ def service_upgrade_evidence_rules(
         )
     except ClaimTypeMigrationError as error:
         return EvidenceRuleUpgradeResultV1(
-            status="blocked",
+            status="would_block" if mode.previewing else "blocked",
             converted=tuple(converted),
             refused=tuple(refused),
             detail=str(error),
+            coordinate=mode.coordinate,
         )
     candidate = tree.fork()
     for path, content in {**settled, **changed}.items():
@@ -265,8 +293,10 @@ def service_upgrade_evidence_rules(
         "playbill-evidence-rule-upgrade-target-v1",
         {"base": base.semantic_root, "members": sorted(changed)},
     )
-    submitted = instance.proposal_service().submit(
-        actor=AuthenticatedActor(actor_id=actor_id),
+    admitted = admit_change_set(
+        instance,
+        mode,
+        actor_id=actor_id,
         request=ProposalAdmissionRequest(
             target_ref=f"refs/proposals/{actor_id}/evidence-rules-{suffix[:32]}",
             proposed_base_oid=base.git_oid,
@@ -274,17 +304,18 @@ def service_upgrade_evidence_rules(
         candidate_tree=candidate,
         timestamp=timestamp,
     )
-    if submitted.evaluation.verdict != "candidate":
+    if not admitted.admitted:
         return EvidenceRuleUpgradeResultV1(
-            status="blocked",
-            proposal_id=submitted.admission.proposal_id,
+            status=admitted.status,
+            proposal_id=admitted.proposal_id,
             converted=tuple(converted),
             refused=tuple(refused),
-            detail="Refused: " + "; ".join(item.code for item in submitted.evaluation.diagnostics),
+            detail=admitted.refusal_detail(),
+            coordinate=mode.coordinate,
         )
     return EvidenceRuleUpgradeResultV1(
-        status="proposed",
-        proposal_id=submitted.admission.proposal_id,
+        status=admitted.status,
+        proposal_id=admitted.proposal_id,
         converted=tuple(converted),
         refused=tuple(refused),
         carried_claims=sum(1 for item in inventory if item.path.startswith("claims/")),
@@ -293,6 +324,7 @@ def service_upgrade_evidence_rules(
             "contracts it names, including future successors; widened_versions lists the "
             "accepted versions it admits that it did not before."
         ),
+        coordinate=mode.coordinate,
     )
 
 

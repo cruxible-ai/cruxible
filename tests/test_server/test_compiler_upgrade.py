@@ -129,3 +129,43 @@ def test_upgrade_to_the_current_compiler_is_a_coded_400_not_a_500(
     assert before.compiler.rule_digest in body["message"]
     assert body["repair"]["hand_edit"]["required_change"]
     assert instance.accepted_coordinate() == before
+
+
+def test_an_upgrade_previews_on_the_proposal_path_and_writes_nothing(
+    tmp_path, monkeypatch, host_client
+):
+    """R12: the upgrade's own evaluation, with no proposal, ref or record written."""
+
+    from tests.support.store_snapshot import assert_writes_nothing
+
+    instance, _, _ = old_instance(tmp_path, monkeypatch)
+    instance_id = instance.descriptor.instance_id
+    get_registry().create_governed_instance_with_id(instance_id)
+    before = instance.accepted_coordinate()
+    base = PlaybillAcceptedCoordinate.from_internal(before)
+    monkeypatch.setattr(playbill_api.get_playbill_manager(), "get", lambda _: instance)
+    monkeypatch.setattr(playbill_api, "_actor_id", lambda _instance_id: "owner")
+    body = {
+        "target": UPGRADE_COMPILER.model_dump(mode="json"),
+        "base": base.model_dump(mode="json"),
+        "proposal_name": "upgrade",
+    }
+    url = f"/api/v1/{instance_id}/playbill/compiler/proposals"
+
+    response = assert_writes_nothing(
+        [tmp_path],
+        lambda: host_client.post(url, json={**body, "dry_run": True}),
+        warm=instance.settled_workspace_advertisement,
+    )
+
+    assert response.status_code == 200, response.text
+    preview = response.json()
+    assert preview["status"] == "would_propose"
+    assert "admission" not in preview["proposal"]
+    assert preview["proposal"]["candidate"] is not None
+    assert instance.accepted_coordinate() == before
+    committed = host_client.post(
+        url, json={**body, "dry_run": False, "at": preview["accepted_coordinate"]["git_oid"]}
+    )
+    assert committed.status_code == 200, committed.text
+    assert committed.json()["status"] == "admitted"

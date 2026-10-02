@@ -32,7 +32,6 @@ import json
 import re
 import shlex
 from collections.abc import Iterator, Mapping, Sequence
-from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
@@ -86,7 +85,6 @@ from cruxible_client.contracts.errors import (
     WriteRefusalError,
 )
 from cruxible_client.contracts.get_reads import (
-    PlaybillGetCoordinateV1,
     PlaybillReadSurface,
     summary_value,
 )
@@ -121,10 +119,10 @@ from cruxible_client.contracts.write import (
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.preflight import ComputedPreflight
 from cruxible_core.claims.claim_retirement import ClaimRetireError, claim_retirement_inventory
-from cruxible_core.indexes.history.history_index import detached_history_reads
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.change_preview import compact_coordinate, preview_guards
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.exact_content import ExactContentReader
 from cruxible_core.service.discovery.field_names import resolve_field_in
@@ -181,15 +179,6 @@ def _refuse(
 
 def _bare(claim: str) -> str:
     return claim.removeprefix("Claim:")
-
-
-def _compact(
-    instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate
-) -> PlaybillGetCoordinateV1:
-    public = AcceptedCoordinate.from_internal(coordinate)
-    with instance.accepted_history_reader(at=public) as history:
-        generation = int(history.sequence)
-    return PlaybillGetCoordinateV1(git_oid=public.git_oid[:12], generation=generation)
 
 
 def _full(coordinate: AcceptedProjectionCoordinate | AcceptedCoordinate) -> ClientCoordinate:
@@ -2146,9 +2135,11 @@ def service_playbill_write(
     # one would refuse, and an already-live value never answers "accepted" to a
     # caller who could not have written it.
     require_authoring_principal(instance, caller.actor.actor_id)
-    # A dry run writes nothing, derived indexes included: every history read it
-    # makes, from planning to the verdicts, is served without touching the index.
-    with detached_history_reads() if request.dry_run else nullcontext():
+    # A dry run writes nothing, derived indexes included: it runs behind the
+    # shared preview guards (R12), so every history read it makes, from planning
+    # to the verdicts, is served without touching the index, and no write door
+    # opens.
+    with preview_guards(request.dry_run):
         outcome = _service_write(instance, request=request, caller=caller)
         if request.full_coordinate and outcome.accepted_coordinate is None:
             pinned = resolve_read_coordinate(instance, outcome.coordinate.git_oid)
@@ -2168,7 +2159,7 @@ def _service_write(
     def refuse(refusal: WriteRefusal) -> WriteOutcome:
         return WriteOutcome(
             status=refused,
-            coordinate=_compact(instance, head),
+            coordinate=compact_coordinate(instance, head),
             refusal=refusal,
         )
 
@@ -2224,7 +2215,7 @@ def _service_write(
             status="refused",
             changes=changes,
             subjects_added=subjects_added,
-            coordinate=_compact(instance, head),
+            coordinate=compact_coordinate(instance, head),
             refusal=refusal,
         )
     if status.state == "accepted":
@@ -2281,7 +2272,7 @@ def _service_write(
             changes=changes,
             subjects_added=subjects_added,
             proposal=WriteProposalRef(proposal_id=proposal_id, state="conflicted_after_rebase"),
-            coordinate=_compact(instance, instance.accepted_coordinate()),
+            coordinate=compact_coordinate(instance, instance.accepted_coordinate()),
             refusal=_slot_moved(instance, planned_at=head, read_at=read_at, request=request)
             or WriteRefusal(
                 code="playbill.write.head_moved",
@@ -2321,7 +2312,7 @@ def _service_write(
         changes=changes,
         subjects_added=subjects_added,
         proposal=WriteProposalRef(proposal_id=proposal_id, state=status.state),
-        coordinate=_compact(instance, evaluated_at),
+        coordinate=compact_coordinate(instance, evaluated_at),
         approval=approval,
         warnings=warnings,
         next=approval.approve or approval.activate,
@@ -2351,8 +2342,8 @@ def _already_done(
     return WriteOutcome(
         status="would_accept" if request.dry_run else "accepted",
         changes=changes,
-        coordinate=_compact(instance, head),
-        base=None if request.dry_run else _compact(instance, head),
+        coordinate=compact_coordinate(instance, head),
+        base=None if request.dry_run else compact_coordinate(instance, head),
         warnings=warnings,
         next=None if first is None else _render_get(request.surface, first),
     )
@@ -2443,8 +2434,8 @@ def _accepted(
         changes=changes,
         subjects_added=subjects_added,
         proposal=proposal,
-        coordinate=_compact(instance, coordinate),
-        base=_compact(instance, head),
+        coordinate=compact_coordinate(instance, coordinate),
+        base=compact_coordinate(instance, head),
         accepted_coordinate=_full(coordinate) if request.full_coordinate else None,
         warnings=warnings,
         next=_first_repair(warnings)
@@ -2470,7 +2461,7 @@ def _dry_run(
         actor=caller.actor, payload=lowered.payload, canonical_timestamp=timestamp
     )
     changes = _change_outcomes(plan, lowered, intent)
-    compact = _compact(instance, head)
+    compact = compact_coordinate(instance, head)
     if computed.result.verdict != "passed":
         return WriteOutcome(
             status="would_refuse",

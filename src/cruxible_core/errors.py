@@ -9,10 +9,12 @@ credential errors shared by the daemon, CLI and MCP boundaries.
     ├── ConfigError (invalid configuration or request shape)
     ├── DataValidationError (payload does not match its declared contract)
     │   └── RequestRefusedError (a coded refusal of caller input, with its repair)
+    │       └── ChangeRefusedError (a commit refused by its preview pin, R12)
     ├── CustomerCodeExecutionUnsupportedError (hosted profile refuses customer code)
     ├── HostedProfileUnknownError (unknown hosted server profile)
     ├── IsolatedExecutorDiscoveryError (advertised isolated executor failed to load)
     ├── InstanceNotFoundError (instance registry lookup)
+    ├── InstanceLocationRefusedError (registry row outside the daemon's state root)
     ├── RuntimeCredentialNotFoundError (server credential store lookup)
     ├── AuthenticationError (HTTP/API credential failure)
     │   └── BootstrapClaimRefusedError (one refused runtime bootstrap claim)
@@ -107,6 +109,38 @@ class RequestRefusedError(DataValidationError):
         super().__init__(f"{error_code}: {message}")
 
 
+class ChangeRefusedError(RequestRefusedError):
+    """A change refused by its preview pin (rule R12), with the preview as repair.
+
+    ``playbill.preview.state_moved`` (409): the commit carried the coordinate of
+    a preview and that state has moved since. ``playbill.preview.
+    confirmation_required`` (400): a change that cannot be undone commits only
+    with the coordinate of its preview. ``playbill.preview.recovery_pending``
+    (409): previewing would first have to open the instance and repair derived
+    files on disk, which a preview may not write; an ordinary read repairs them,
+    and the preview then runs.
+    """
+
+    def __init__(
+        self,
+        error_code: Literal[
+            "playbill.preview.state_moved",
+            "playbill.preview.confirmation_required",
+            "playbill.preview.recovery_pending",
+        ],
+        message: str,
+        *,
+        operation: str,
+        repair: RepairOperationV1 | None = None,
+    ) -> None:
+        self.http_status = 400 if error_code == "playbill.preview.confirmation_required" else 409
+        super().__init__(
+            error_code,
+            message,
+            repair=repair or RepairOperationV1(operation=operation, arguments={"dry_run": True}),
+        )
+
+
 class CustomerCodeExecutionUnsupportedError(CoreError):
     """Customer code execution is unavailable in the current hosted runtime."""
 
@@ -187,6 +221,30 @@ class InstanceNotFoundError(CoreError):
         super().__init__(f"Instance '{instance_id}' not found")
 
 
+class InstanceLocationRefusedError(CoreError):
+    """A registry row places an instance outside the daemon's own state root.
+
+    A state root copied for a dry run still carries the original's registry. A
+    daemon serving such a row would write the original instance, so it refuses
+    the instance instead: only an instance under this state root is served.
+    """
+
+    error_code = "playbill.host.location_outside_state_root"
+
+    def __init__(self, *, instance_id: str, location: str, state_root: str) -> None:
+        self.instance_id = instance_id
+        self.location = location
+        self.state_root = state_root
+        super().__init__(
+            f"{self.error_code}: instance {instance_id!r} is registered at {location}, "
+            f"outside this daemon's state root {state_root}; a daemon serves only "
+            "instances under its own state root, so it will not write there. Repair: if "
+            "this state root is a copy, copy the instance into "
+            f"{state_root}/instances/{instance_id} and register it from that state root's "
+            "own daemon; otherwise start the daemon on the state root that holds it"
+        )
+
+
 class RuntimeCredentialNotFoundError(CoreError):
     """Runtime credential ID not found in the server credential store."""
 
@@ -217,7 +275,8 @@ _BOOTSTRAP_CLAIM_REFUSALS: dict[str, tuple[str, str]] = {
         "(--secret-file or the env var).",
     ),
     "runtime_bootstrap.secret_already_claimed": (
-        "This bootstrap secret has already been claimed; it mints one ADMIN credential once.",
+        "This bootstrap secret has already been claimed for instance {instance_id}; it "
+        "mints one ADMIN credential once per host.",
         "use the ADMIN token that claim printed, or run `cruxible credential recover-admin` "
         "with the daemon stopped.",
     ),

@@ -46,6 +46,7 @@ from cruxible_client.contracts.claim_types import (
     render_claim_type,
 )
 from cruxible_client.contracts.claims import claim_artifact_digest, claim_path, parse_claim
+from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeRequestV1
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
     ClaimEvidenceAdmissionPolicyV2,
@@ -457,7 +458,10 @@ def test_the_upgrade_converts_exact_rules_and_carries_the_claims(world: _World) 
     claim_id = world.observe(b"status: ready")
 
     result = service_upgrade_evidence_rules(
-        world.instance, actor_id="owner", timestamp=world.timestamp()
+        world.instance,
+        request=EvidenceRuleUpgradeRequestV1(dry_run=False),
+        actor_id="owner",
+        timestamp=world.timestamp(),
     )
 
     assert result.status == "proposed", result
@@ -504,7 +508,10 @@ def test_the_upgrade_refuses_rules_that_would_start_matching_the_same_evidence(
     world.accept(tree, name="split-rules")
 
     result = service_upgrade_evidence_rules(
-        world.instance, actor_id="owner", timestamp=world.timestamp()
+        world.instance,
+        request=EvidenceRuleUpgradeRequestV1(dry_run=False),
+        actor_id="owner",
+        timestamp=world.timestamp(),
     )
 
     assert result.status == "unchanged"
@@ -748,7 +755,10 @@ def test_the_upgrade_moves_original_v1_claim_types_and_their_verdicts_still_read
     claim_id = world.observe(b"status: ready")
 
     result = service_upgrade_evidence_rules(
-        world.instance, actor_id="owner", timestamp=world.timestamp()
+        world.instance,
+        request=EvidenceRuleUpgradeRequestV1(dry_run=False),
+        actor_id="owner",
+        timestamp=world.timestamp(),
     )
     assert result.status == "proposed", result
     assert result.proposal_id is not None
@@ -895,3 +905,51 @@ def test_a_release_diff_starting_at_the_contract_sees_no_cycle() -> None:
         order = [path for path, _pinned in _dependency_order(states, payloads, within={start})]  # type: ignore[arg-type]
         assert set(order) == set(tree)
         assert order.index(claim_type_path(identity_type.predicate)) < order.index(CONTRACT_PATH)
+
+
+def test_the_upgrade_previews_by_default_and_commits_only_at_its_coordinate(
+    world: _World,
+) -> None:
+    """R12, the folded dist-evidence-upgrade-preview case: dry run, explicit submit, pinned."""
+
+    from cruxible_core.errors import ChangeRefusedError
+    from cruxible_core.service.proposals.proposals import service_list_playbill_proposals
+    from tests.support.store_snapshot import assert_writes_nothing
+
+    world.seed(_v5_type(_digest_rule(_digest(ORIGINAL))))
+    world.observe(b"status: ready")
+    tree_before = world.tree()
+
+    preview = assert_writes_nothing(
+        [world.instance.root.parent],
+        lambda: service_upgrade_evidence_rules(
+            world.instance,
+            request=EvidenceRuleUpgradeRequestV1(),
+            actor_id="owner",
+            timestamp=world.timestamp(),
+        ),
+    )
+
+    assert preview.status == "would_propose", preview
+    assert preview.proposal_id is None
+    assert preview.carried_claims == 1
+    assert preview.coordinate is not None
+    assert world.tree() == tree_before
+    assert not service_list_playbill_proposals(world.instance, status="open").entries
+    committed = service_upgrade_evidence_rules(
+        world.instance,
+        request=EvidenceRuleUpgradeRequestV1(dry_run=False, at=preview.coordinate.git_oid),
+        actor_id="owner",
+        timestamp=world.timestamp(),
+    )
+    assert committed.status == "proposed" and committed.proposal_id is not None
+    world.activate_proposal(committed.proposal_id)
+
+    with pytest.raises(ChangeRefusedError) as moved:
+        service_upgrade_evidence_rules(
+            world.instance,
+            request=EvidenceRuleUpgradeRequestV1(dry_run=False, at=preview.coordinate.git_oid),
+            actor_id="owner",
+            timestamp=world.timestamp(),
+        )
+    assert moved.value.error_code == "playbill.preview.state_moved"

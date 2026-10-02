@@ -89,9 +89,8 @@ ExpectedValue = ClaimValue | tuple[ClaimValue, ...]
 value of the field as a list (``[]`` when it must hold none)."""
 
 _EXPECT_DESCRIPTION = (
-    "Compare-and-set: the value the field holds now, as you read it (a list of "
-    "every live value for a many-valued field; [] for none). If it holds anything "
-    "else the write refuses playbill.write.slot_changed, showing what it holds."
+    "Compare-and-set: the field's value as you read it (list every live value if "
+    "many-valued; [] for none); otherwise playbill.write.slot_changed shows it."
 )
 
 WriteRole = Literal["normative", "observation", "environment_binding"]
@@ -159,13 +158,10 @@ class CaptureEvidence(_StrictWriteModel):
 
 
 class ContractEvidence(_StrictWriteModel):
-    """The newest verified Capture of one CaptureContract about the change's Subject.
+    """The newest verified exact-bytes Capture of one CaptureContract about the Subject.
 
-    Every Capture the instance holds counts, cited or not. One is about the
-    Subject when an accepted Claim on that Subject cites it, or when its source
-    names the Subject itself; only a Capture committed as exact bytes can back a
-    Claim. It is resolved to its digest before the write is lowered, and the
-    outcome names it as ``capture``.
+    A Capture is about the Subject when an accepted Claim on it cites it or its
+    source names the Subject. The outcome names the one used as ``capture``.
     """
 
     kind: Literal["contract"] = "contract"
@@ -179,9 +175,9 @@ class ContractEvidence(_StrictWriteModel):
 class FileEvidence(_StrictWriteModel):
     """A span of a workspace file, cited as evidence: ``PATH#ANCHOR``.
 
-    The anchor is text that occurs exactly once in the file. The daemon never
-    reads workspace files, so the CLI, the SDK and the MCP adapter read it on the
-    writer's side and send what they observed in ``observation``.
+    The anchor is text occurring exactly once in the file. The writer's side
+    (CLI, SDK, MCP adapter) reads it and sends what it observed; the daemon
+    never reads workspace files.
     """
 
     kind: Literal["file"] = "file"

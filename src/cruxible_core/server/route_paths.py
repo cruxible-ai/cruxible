@@ -12,6 +12,7 @@ PLAYBILL_HOST_SHOW_PATH = "/{instance_id}/playbill/host"
 PLAYBILL_FLOOR_DELIVERY_PATH = "/{instance_id}/playbill/workspace/floor-delivery"
 PLAYBILL_FLOOR_DELIVER_NOW_PATH = "/{instance_id}/playbill/floor/deliver-now"
 PLAYBILL_WORKSPACE_DETACH_PATH = "/{instance_id}/playbill/workspace-detach"
+PLAYBILL_WORKSPACE_ATTACH_PATH = "/{instance_id}/playbill/workspace-attach"
 
 # Daemon-wide server-operation routes. These act on the whole shared daemon
 # (global metadata and in-place re-exec) rather than a single instance, so they

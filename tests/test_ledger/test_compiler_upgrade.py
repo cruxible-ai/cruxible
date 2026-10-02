@@ -493,7 +493,7 @@ def test_provider_installation_uses_accepted_compiler_after_upgrade_and_reopen(
     )
     reached = []
 
-    def preparation(current, *args):
+    def preparation(current, *args, **_kwargs):
         reached.append(current.accepted_coordinate().compiler)
 
     monkeypatch.setattr(provider_installation, "_install_locked", preparation)

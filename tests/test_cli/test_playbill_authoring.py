@@ -206,6 +206,8 @@ def test_cli_claim_type_propose_delivers_nonblocking_source_lint(
             *,
             input: dict[str, object],
             proposal_name: str,
+            dry_run: bool | None = None,
+            at: str | None = None,
         ) -> contracts.PlaybillClaimTypeInputProposalResult:
             assert (instance_id, proposal_name) == (
                 "inst_authoring",

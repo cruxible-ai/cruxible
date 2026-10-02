@@ -436,3 +436,64 @@ def test_the_secret_follows_only_the_exact_bound_endpoint(
         lock.release()
 
     assert (secret == "the-secret") is released
+
+
+_START_PATHS = {
+    "socket, generated secret": ({"auth": True}, None, True),
+    "socket, secret from the environment (an in-place restart)": (
+        {"auth": True},
+        "an-inherited-bootstrap-secret",
+        True,
+    ),
+    "socket, extra secret file": ({"auth": True, "bootstrap_secret_file": "extra"}, None, True),
+    "tcp with auth": ({"auth": True, "host": "127.0.0.1", "port": 8199}, None, False),
+}
+
+
+@pytest.mark.parametrize("start", sorted(_START_PATHS))
+def test_no_start_path_prints_or_logs_the_secret(
+    start: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    kwargs, inherited, socket = _START_PATHS[start]
+    if kwargs.get("bootstrap_secret_file") == "extra":
+        kwargs = {**kwargs, "bootstrap_secret_file": str(tmp_path / "extra" / "secret")}
+    state_root = tmp_path / "state"
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(state_root))
+    monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "false")
+    monkeypatch.setenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", inherited or "")
+    monkeypatch.setenv("CRUXIBLE_HOST", "127.0.0.1")
+    monkeypatch.setenv("CRUXIBLE_PORT", "8100")
+    if socket:
+        monkeypatch.setenv("CRUXIBLE_SERVER_SOCKET", "placeholder")
+        kwargs = {**kwargs, "socket_path": str(tmp_path / "run" / "d.sock")}
+    else:
+        monkeypatch.delenv("CRUXIBLE_SERVER_SOCKET", raising=False)
+    monkeypatch.setattr(server_app, "prepare_socket_directory", lambda _directory: None)
+    monkeypatch.setattr(server_app, "bind_private_unix_socket", lambda _path: _Socket())
+    monkeypatch.setitem(sys.modules, "uvicorn", SimpleNamespace(run=lambda *_a, **_k: None))
+    reset_registry()
+    reset_runtime_credential_store()
+    try:
+        server_app.run_server(**kwargs)
+    finally:
+        reset_registry()
+        reset_runtime_credential_store()
+
+    secret = os.environ["CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET"]
+    assert secret and (inherited is None or secret == inherited)
+    captured = capfd.readouterr()
+    assert secret not in captured.out
+    assert secret not in captured.err
+    held = {bootstrap_secret_path(state_root).resolve()}
+    if "bootstrap_secret_file" in kwargs:
+        held.add(Path(str(kwargs["bootstrap_secret_file"])).resolve())
+    for path in held:
+        assert path.read_text().strip() == secret
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    # Nothing else the start wrote anywhere carries it: not a log, not the lock.
+    for path in (tmp_path).rglob("*"):
+        if path.is_file() and path.resolve() not in held:
+            assert secret.encode() not in path.read_bytes(), path

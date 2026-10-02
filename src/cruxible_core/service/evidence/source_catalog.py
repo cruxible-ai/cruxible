@@ -32,6 +32,7 @@ from cruxible_core.service.authoring.documents import (
     service_propose_playbill_document,
     service_store_playbill_body,
 )
+from cruxible_core.service.change_preview import change_entry
 
 
 class _StrictSourceServiceModel(BaseModel):
@@ -210,8 +211,15 @@ def service_propose_playbill_source_bundle(
     actor_id: str,
     proposal_name: str,
     timestamp: str,
+    dry_run: bool | None = None,
+    at: str | None = None,
 ) -> PlaybillProposalInspection:
-    """Submit only the bundle's frozen bytes; no source path is accepted or read here."""
+    """Submit only the bundle's frozen bytes; no source path is accepted or read here.
+
+    ``dry_run`` runs the same path behind the preview guards: the body is held
+    in memory, the compilation manifest is not recorded, and the Document
+    change is evaluated on the admission path and admitted nowhere (R12).
+    """
 
     document = _compiled_document(bundle, source_name)
     try:
@@ -223,19 +231,23 @@ def service_propose_playbill_source_bundle(
         raise ProposalIntegrityError("compiled body bytes changed after compilation")
     if envelope_bytes != render_document(document.envelope):
         raise ProposalIntegrityError("compiled envelope bytes changed after compilation")
-    instance.proposal_evidence().write_source_compilation(bundle.manifest)
-    stored = service_store_playbill_body(instance, content=body)
-    if stored.digest != document.source.body_digest:
-        raise ProposalIntegrityError("stored body digest differs from compiled source")
-    return service_propose_playbill_document(
-        instance,
-        shell=document.envelope,
-        actor_id=actor_id,
-        proposal_name=proposal_name,
-        timestamp=timestamp,
-        base=bundle.manifest.accepted_base,
-        source_compilation_digest=bundle.manifest.compilation_digest,
-    )
+    with change_entry(dry_run, "direct") as previewing:
+        if not previewing:
+            instance.proposal_evidence().write_source_compilation(bundle.manifest)
+        stored = service_store_playbill_body(instance, content=body)
+        if stored.digest != document.source.body_digest:
+            raise ProposalIntegrityError("stored body digest differs from compiled source")
+        return service_propose_playbill_document(
+            instance,
+            shell=document.envelope,
+            actor_id=actor_id,
+            proposal_name=proposal_name,
+            timestamp=timestamp,
+            base=bundle.manifest.accepted_base,
+            source_compilation_digest=bundle.manifest.compilation_digest,
+            dry_run=dry_run,
+            at=at,
+        )
 
 
 __all__ = [

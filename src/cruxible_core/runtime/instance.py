@@ -169,6 +169,7 @@ from cruxible_core.storage.cas import (
     DryRunBodyStore,
     dry_run_held_bodies,
 )
+from cruxible_core.storage.preview_fence import is_previewing, refuse_write_while_previewing
 
 if TYPE_CHECKING:
     from cruxible_core.evidence.claim_attestation_store import ClaimAttestationEvidenceStore
@@ -643,7 +644,11 @@ class PlaybillInstance:
             recovered,
             promotion_verifier,
         )
-        if descriptor.mirror_url is not None and descriptor.decommissioned is None:
+        if (
+            descriptor.mirror_url is not None
+            and descriptor.decommissioned is None
+            and not is_previewing()
+        ):
             instance.request_ledger_mirror()
         return instance
 
@@ -747,6 +752,19 @@ class PlaybillInstance:
             storage_directories=storage_directories,
             daemon_private_key_present=(paths["credentials"] / DAEMON_PRIVATE_KEY_FILE).is_file(),
         )
+
+    @contextmanager
+    def accepted_head_held(self) -> Iterator[str]:
+        """Hold accepted main where it is (the activation lock) and yield its oid.
+
+        A change pinned to a preview's coordinate (R12 ``at``) confirms the
+        head inside this and writes before leaving it, so no acceptance can
+        land between the check and the write. Nothing inside may take the
+        activation lock again.
+        """
+
+        with self._ledger.activation_lock():
+            yield self._ledger.read_main()
 
     def accepted_coordinate(self) -> AcceptedProjectionCoordinate:
         """Return the verified accepted coordinate without consulting proposal refs."""
@@ -859,6 +877,7 @@ class PlaybillInstance:
     def _rewrite_descriptor(self, **updates: object) -> PlaybillDescriptor:
         """Persist one operational descriptor change over the bytes on disk."""
 
+        refuse_write_while_previewing("instance descriptor")
         updated = self._persisted_descriptor().model_copy(update=updates)
         _atomic_replace(
             self.root / DESCRIPTOR_FILE,
@@ -872,7 +891,13 @@ class PlaybillInstance:
 
         return self._persisted_descriptor().decommissioned
 
-    def decommission(self, *, reason: str, decommissioned_by: str) -> PlaybillDecommissionV1:
+    def decommission(
+        self,
+        *,
+        reason: str,
+        decommissioned_by: str,
+        confirm_head: Callable[[str], None] | None = None,
+    ) -> PlaybillDecommissionV1:
         """Stamp the terminal lifecycle state on the descriptor, deleting nothing.
 
         The record lands in the descriptor, which every reopen replays and
@@ -880,6 +905,10 @@ class PlaybillInstance:
         separate operational store that could disagree with it. Repeating the
         call is refused rather than silently restamping: a second reason would
         overwrite the first without a record.
+
+        ``confirm_head`` is called with the accepted head under the activation
+        lock, immediately before the stamp, so a head pinned by a preview
+        cannot move between the check and the write (R12).
         """
 
         self.require_writable()
@@ -895,7 +924,13 @@ class PlaybillInstance:
             decommissioned_at=format_datetime(utc_now()) or "",
             decommissioned_by=decommissioned_by,
         )
-        self._rewrite_descriptor(decommissioned=record)
+        if is_previewing():
+            # R12: the record the commit would stamp, and nothing stamped.
+            return record
+        with self._ledger.activation_lock():
+            if confirm_head is not None:
+                confirm_head(self._ledger.read_main())
+            self._rewrite_descriptor(decommissioned=record)
         return record
 
     def ledger_mirror_url(self) -> str | None:
@@ -903,7 +938,9 @@ class PlaybillInstance:
 
         return self.descriptor.mirror_url
 
-    def set_ledger_mirror(self, url: str) -> LedgerMirrorStateV1 | None:
+    def set_ledger_mirror(
+        self, url: str, *, confirm_head: Callable[[str], None] | None = None
+    ) -> LedgerMirrorStateV1 | None:
         """Bind a remote and publish to it at once, so a bad one is found now.
 
         Setting a mirror without pushing to it would leave the operator holding
@@ -915,7 +952,16 @@ class PlaybillInstance:
         """
 
         self.require_writable()
-        self._rewrite_descriptor(mirror_url=validate_mirror_url(url))
+        validated = validate_mirror_url(url)
+        if is_previewing():
+            # R12: the URL is checked and nothing is bound or sent.
+            return None
+        # A pinned binding is confirmed against the accepted head under the
+        # activation lock, so the head the preview saw is the head bound at.
+        with self._ledger.activation_lock():
+            if confirm_head is not None:
+                confirm_head(self._ledger.read_main())
+            self._rewrite_descriptor(mirror_url=validated)
         return self.publish_ledger_mirror()
 
     def ledger_mirror_state(self) -> LedgerMirrorStateV1 | None:
@@ -1317,7 +1363,9 @@ class PlaybillInstance:
         """Bind PB-C proposal evaluation to authenticated main and inert storage."""
 
         paths = self._validated_paths(self.root, self.descriptor.storage)
-        bodies = ContentAddressedBodyStore(paths["cas"])
+        # Through `body_store()`, so a preview evaluates against the bodies it holds
+        # in memory exactly as a submission does against the ones it stored.
+        bodies = self.body_store()
         return ProposalService(
             self._ledger,
             accepted=self.accepted_coordinate(),

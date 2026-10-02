@@ -1056,6 +1056,28 @@ class AuthoringIntentCoordinator:
         )
         return intent.candidate_status
 
+    def check_abandon_insertion(
+        self,
+        intent_id: str,
+        *,
+        actor: AuthenticatedActor,
+        expectation_id: str | None = None,
+    ) -> InsertionExpectationV2:
+        """Every check `abandon_insertion` makes before its write, writing nothing (R12).
+
+        The intent is read as stored; the protocol refresh `abandon_insertion`
+        runs first is a write, so a preview takes the stored intent instead.
+        The caller holds the instance's write gate.
+        """
+
+        current = self.store.get(intent_id, actor_id=actor.actor_id)
+        expectation = _select_expectation(current, expectation_id)
+        if expectation.state in {"expired", "claim_currency_changed"}:
+            raise PublicationTerminalStateRefused(
+                f"{PublicationTerminalStateRefused.code}: publication is already terminal"
+            )
+        return expectation
+
     def abandon_insertion(
         self,
         intent_id: str,

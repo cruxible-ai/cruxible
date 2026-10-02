@@ -48,13 +48,9 @@ from cruxible_core.claims.claim_type_migrations import (
 from cruxible_core.compiler.compiler import AUTHORITY_VERBS_COMPILER, GOVERNED_TRIGGERS_COMPILER
 from cruxible_core.errors import DataValidationError
 from cruxible_core.indexes.projection import AcceptedCoordinate
-from cruxible_core.proposals.proposals import (
-    AuthenticatedActor,
-    ProposalAdmissionRequest,
-    evaluate_proposal_tree,
-    validate_proposal_tree,
-)
+from cruxible_core.proposals.proposals import ProposalAdmissionRequest
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.change_preview import ChangeMode, admit_change_set, change_scope
 from cruxible_core.service.claims.evidence_rule_upgrade import _convert, _Lineages, _Refused
 
 _PreV7Format = Literal[
@@ -100,9 +96,33 @@ def service_upgrade_claim_types(
     actor_id: str,
     timestamp: str,
 ) -> ClaimTypeUpgradeResultV1:
-    """Propose (or, dry, evaluate) the change set moving live ClaimTypes to v7."""
+    """Propose (or preview) the change set moving live ClaimTypes to v7.
 
-    base = instance.accepted_coordinate()
+    The change set carries every dependent Claim, so it previews unless
+    ``dry_run`` is false.
+    """
+
+    with change_scope(
+        instance,
+        dry_run=request.dry_run,
+        at=request.at,
+        kind="derived",
+        operation="playbill.claim-type.upgrade",
+        describe="the ClaimType v7 upgrade",
+    ) as mode:
+        return _upgrade(instance, mode, request=request, actor_id=actor_id, timestamp=timestamp)
+
+
+def _upgrade(
+    instance: PlaybillInstance,
+    mode: ChangeMode,
+    *,
+    request: ClaimTypeUpgradeRequestV1,
+    actor_id: str,
+    timestamp: str,
+) -> ClaimTypeUpgradeResultV1:
+    assert mode.head is not None
+    base = mode.head
     if base.compiler not in (AUTHORITY_VERBS_COMPILER, GOVERNED_TRIGGERS_COMPILER):
         raise DataValidationError(
             "ClaimType v7 needs compiler revision 31 or later; upgrade it first"
@@ -158,6 +178,7 @@ def service_upgrade_claim_types(
             unchanged=tuple(unchanged),
             refused=tuple(refused),
             detail="No ClaimType to upgrade.",
+            coordinate=mode.coordinate,
         )
     roots = tuple(parse_claim_type(tree[path], path=path).identity for path in sorted(changed))
     try:
@@ -173,11 +194,12 @@ def service_upgrade_claim_types(
         )
     except ClaimTypeMigrationError as error:
         return ClaimTypeUpgradeResultV1(
-            status="blocked",
+            status="would_block" if mode.previewing else "blocked",
             upgraded=tuple(upgraded),
             unchanged=tuple(unchanged),
             refused=tuple(refused),
             detail=str(error),
+            coordinate=mode.coordinate,
         )
     candidate = tree.fork()
     for path, content in {**settled, **changed}.items():
@@ -191,38 +213,6 @@ def service_upgrade_claim_types(
         if flips
         else "Every upgraded ClaimType keeps accumulating evidence across revisions."
     )
-    if request.dry_run:
-        service = instance.proposal_service()
-        evaluation = evaluate_proposal_tree(
-            base_tree=tree,
-            current_tree=tree,
-            proposed_tree=validate_proposal_tree(
-                candidate, limits=service.receive_limits, base_tree=tree
-            ),
-            current=base,
-            bodies=instance.body_store(),
-            timestamp=timestamp,
-            rebased=False,
-            actor_id=actor_id,
-            promotion_verifier=service.promotion_verifier,
-            query_facts_provider=service.query_facts_provider,
-            principal_registry_provider=instance.accepted_principal_registry,
-            accepted_referents_provider=instance.accepted_referent_coordinates,
-            historical_artifact_provider=instance.accepted_artifact_version,
-        )
-        blocked = evaluation.candidate is None
-        return ClaimTypeUpgradeResultV1(
-            status="would_block" if blocked else "would_propose",
-            upgraded=tuple(upgraded),
-            unchanged=tuple(unchanged),
-            refused=tuple(refused),
-            carried_claims=carried,
-            detail=(
-                "Refused: " + "; ".join(item.code for item in evaluation.diagnostics)
-                if blocked
-                else detail
-            ),
-        )
     suffix = canonical_digest(
         "playbill-claim-type-upgrade-target-v1",
         {
@@ -231,8 +221,10 @@ def service_upgrade_claim_types(
             "revision_evidence": request.revision_evidence,
         },
     )
-    submitted = instance.proposal_service().submit(
-        actor=AuthenticatedActor(actor_id=actor_id),
+    admitted = admit_change_set(
+        instance,
+        mode,
+        actor_id=actor_id,
         request=ProposalAdmissionRequest(
             target_ref=f"refs/proposals/{actor_id}/claim-type-v7-{suffix[:32]}",
             proposed_base_oid=base.git_oid,
@@ -240,23 +232,15 @@ def service_upgrade_claim_types(
         candidate_tree=candidate,
         timestamp=timestamp,
     )
-    if submitted.evaluation.verdict != "candidate":
-        return ClaimTypeUpgradeResultV1(
-            status="blocked",
-            proposal_id=submitted.admission.proposal_id,
-            upgraded=tuple(upgraded),
-            unchanged=tuple(unchanged),
-            refused=tuple(refused),
-            detail="Refused: " + "; ".join(item.code for item in submitted.evaluation.diagnostics),
-        )
     return ClaimTypeUpgradeResultV1(
-        status="proposed",
-        proposal_id=submitted.admission.proposal_id,
+        status=admitted.status,
+        proposal_id=admitted.proposal_id,
         upgraded=tuple(upgraded),
         unchanged=tuple(unchanged),
         refused=tuple(refused),
-        carried_claims=carried,
-        detail=detail,
+        carried_claims=carried if admitted.admitted else 0,
+        detail=detail if admitted.admitted else admitted.refusal_detail(),
+        coordinate=mode.coordinate,
     )
 
 
