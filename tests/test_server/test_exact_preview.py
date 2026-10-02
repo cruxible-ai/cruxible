@@ -300,6 +300,34 @@ def test_a_cold_preview_opens_without_writing_or_refuses_a_repair_by_name(
         == "would_decommission"
     )
 
+    # A stale derived store: the proposal index has lost its source checkpoint,
+    # so the next read rebuilds it. A preview rebuilds a private copy instead.
+    proposed = _ok(
+        client.post(
+            _api(instance_id, "/playbill/documents/proposals"),
+            json={"shell": _document(client, instance_id, "stale"), "proposal_name": "stale"},
+        )
+    )
+    withdraw = _api(
+        instance_id, f"/playbill/proposals/{proposed['proposal']['admission']['proposal_id']}"
+    )
+    _warm(client, instance_id)()
+    checkpoint = root / "exhaust" / ".proposal-source.json"
+    checkpoint.unlink()
+    stale = assert_writes_nothing(
+        [tmp_path],
+        lambda: client.post(
+            f"{withdraw}/withdraw",
+            json={
+                "tag": "playbill-proposal-withdraw-request-v1",
+                "reason": "stale index",
+                "dry_run": True,
+            },
+        ),
+    )
+    assert _ok(stale)["status"] == "would_withdraw"
+    assert not checkpoint.exists()
+
 
 def test_a_document_proposal_previews_and_writes_nothing(
     playbill_http: tuple[TestClient, str, Path], tmp_path: Path
@@ -320,6 +348,50 @@ def test_a_document_proposal_previews_and_writes_nothing(
 
     assert preview["status"] in {"would_propose", "would_block"}
     assert _ok(client.get(_api(instance_id, "/playbill/proposals")))["entries"] == []
+
+
+def test_withdrawing_and_readmitting_a_proposal_preview_and_write_nothing(
+    playbill_http: tuple[TestClient, str, Path], tmp_path: Path
+) -> None:
+    """F-006: withdrawal and readmission change proposal state, so they preview too."""
+
+    client, instance_id, reviewer_key = playbill_http
+    proposed = _ok(
+        client.post(
+            _api(instance_id, "/playbill/documents/proposals"),
+            json={"shell": _document(client, instance_id, "beta"), "proposal_name": "beta"},
+        )
+    )
+    proposal_id = proposed["proposal"]["admission"]["proposal_id"]
+    base = _api(instance_id, f"/playbill/proposals/{proposal_id}")
+    withdraw = {"tag": "playbill-proposal-withdraw-request-v1", "reason": "superseded"}
+
+    previewed = _ok(
+        assert_writes_nothing(
+            [tmp_path],
+            lambda: client.post(f"{base}/withdraw", json={**withdraw, "dry_run": True}),
+            warm=_warm(client, instance_id),
+        )
+    )
+    assert previewed["status"] == "would_withdraw"
+    assert previewed["coordinate"]["git_oid"]
+
+    _move_head(client, instance_id, reviewer_key)  # the proposal is stale now
+    readmit = {"tag": "playbill-proposal-readmit-request-v1"}
+    readmit_preview = _ok(
+        assert_writes_nothing(
+            [tmp_path],
+            lambda: client.post(f"{base}/readmit", json={**readmit, "dry_run": True}),
+            warm=_warm(client, instance_id),
+        )
+    )
+    assert readmit_preview["proposal"]["status"] == "would_propose"
+    at = readmit_preview["proposal"]["accepted_coordinate"]["git_oid"]
+    readmitted = _ok(client.post(f"{base}/readmit", json={**readmit, "dry_run": False, "at": at}))
+    assert readmitted["proposal"]["status"] == "admitted"
+
+    withdrawn = _ok(client.post(f"{base}/withdraw", json={**withdraw, "dry_run": False, "at": at}))
+    assert (withdrawn["status"], withdrawn["already_withdrawn"]) == ("withdrawn", False)
 
 
 def test_decommissioning_previews_by_default_and_commits_only_with_its_coordinate(

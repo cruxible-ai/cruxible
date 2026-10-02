@@ -335,11 +335,17 @@ class CruxibleClient:
         return self._parse_model(response, contracts.PlaybillBlockDeclareResultV1)
 
     def depublish_playbill_block(
-        self, instance_id: str, source_id: str, block_id: str
+        self,
+        instance_id: str,
+        source_id: str,
+        block_id: str,
+        *,
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> contracts.PlaybillBlockDepublishResultV1:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/blocks/depublish",
-            json={"source_id": source_id, "block_id": block_id},
+            json={"source_id": source_id, "block_id": block_id, **_change_control(dry_run, at)},
         )
         return self._parse_model(response, contracts.PlaybillBlockDepublishResultV1)
 
@@ -786,10 +792,13 @@ class CruxibleClient:
         self,
         instance_id: str,
         proposal_id: str,
+        *,
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> contracts.PlaybillProposalReadmitResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/readmit",
-            json={"tag": "playbill-proposal-readmit-request-v1"},
+            json={"tag": "playbill-proposal-readmit-request-v1", **_change_control(dry_run, at)},
         )
         return self._parse_model(response, contracts.PlaybillProposalReadmitResult)
 
@@ -799,10 +808,16 @@ class CruxibleClient:
         proposal_id: str,
         *,
         reason: str,
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> contracts.PlaybillProposalWithdrawResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/withdraw",
-            json={"tag": "playbill-proposal-withdraw-request-v1", "reason": reason},
+            json={
+                "tag": "playbill-proposal-withdraw-request-v1",
+                "reason": reason,
+                **_change_control(dry_run, at),
+            },
         )
         return self._parse_model(response, contracts.PlaybillProposalWithdrawResult)
 
@@ -933,6 +948,8 @@ class CruxibleClient:
         bundle: Mapping[str, Any],
         source_name: str,
         proposal_name: str,
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> contracts.PlaybillProposalInspection:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/sources/proposals",
@@ -940,6 +957,7 @@ class CruxibleClient:
                 "bundle": dict(bundle),
                 "source_name": source_name,
                 "proposal_name": proposal_name,
+                **_change_control(dry_run, at),
             },
         )
         return self._parse_model(response, contracts.PlaybillProposalInspection)
@@ -1746,6 +1764,8 @@ class CruxibleClient:
         expected_latest_event_digest: str,
         reason: str,
         attribution_refs: tuple[str, ...] = (),
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> contracts.PlaybillCurationActionResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/curation/overrule",
@@ -1755,6 +1775,7 @@ class CruxibleClient:
                 "expected_latest_event_digest": expected_latest_event_digest,
                 "reason": reason,
                 "attribution_refs": list(attribution_refs),
+                **_change_control(dry_run, at),
             },
         )
         return self._parse_model(response, contracts.PlaybillCurationActionResult)
@@ -1769,6 +1790,8 @@ class CruxibleClient:
         accepted_proposal_id: str,
         accepted_changeset_digest: str,
         attribution_refs: tuple[str, ...] = (),
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> contracts.PlaybillCurationActionResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/curation/accept-fixed",
@@ -1780,6 +1803,7 @@ class CruxibleClient:
                 "accepted_proposal_id": accepted_proposal_id,
                 "accepted_changeset_digest": accepted_changeset_digest,
                 "attribution_refs": list(attribution_refs),
+                **_change_control(dry_run, at),
             },
         )
         return self._parse_model(response, contracts.PlaybillCurationActionResult)
@@ -1794,6 +1818,8 @@ class CruxibleClient:
         scope: Literal["item", "pattern", "instance"],
         until_generation: int | None = None,
         attribution_refs: tuple[str, ...] = (),
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> contracts.PlaybillCurationActionResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/curation/suppress",
@@ -1805,6 +1831,7 @@ class CruxibleClient:
                 "scope": scope,
                 "until_generation": until_generation,
                 "attribution_refs": list(attribution_refs),
+                **_change_control(dry_run, at),
             },
         )
         return self._parse_model(response, contracts.PlaybillCurationActionResult)

@@ -943,6 +943,23 @@ def test_a_bound_publication_can_be_depublished_and_the_registration_released(
     registered = (preparation.source_id, preparation.block_id)
     assert registered in (_registered_publication_blocks(instance) or frozenset())
 
+    # F-006: the preview runs the publication's abandon checks and releases nothing.
+    from tests.support.store_snapshot import assert_writes_nothing
+
+    previewed = assert_writes_nothing(
+        [tmp_path],
+        lambda: service_depublish_playbill_block(
+            instance,
+            coordinator=coordinator,
+            actor=actor,
+            source_id=preparation.source_id,
+            block_id=preparation.block_id,
+            dry_run=True,
+        ),
+    )
+    assert (previewed.outcome, previewed.intent_id) == ("would_depublish", intent_id)
+    assert registered in (_registered_publication_blocks(instance) or frozenset())
+
     released = service_depublish_playbill_block(
         instance,
         coordinator=coordinator,

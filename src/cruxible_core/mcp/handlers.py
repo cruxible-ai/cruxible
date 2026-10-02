@@ -912,12 +912,19 @@ def handle_playbill_list_proposals(
 def handle_playbill_readmit_proposal(
     instance_id: str,
     proposal_id: str,
+    *,
+    dry_run: bool | None = None,
+    at: str | None = None,
 ) -> contracts.PlaybillProposalReadmitResult:
     return _dispatch_remote_or_local(
-        lambda client: client.readmit_playbill_proposal(instance_id, proposal_id),
-        lambda: playbill_api.playbill_readmit_proposal(instance_id, proposal_id),
+        lambda client: client.readmit_playbill_proposal(
+            instance_id, proposal_id, dry_run=dry_run, at=at
+        ),
+        lambda: playbill_api.playbill_readmit_proposal(
+            instance_id, proposal_id, dry_run=dry_run, at=at
+        ),
         operation_name="cruxible_playbill_proposal_readmit",
-        local_payload={},
+        local_payload={"dry_run": dry_run, "at": at},
     )
 
 
@@ -925,16 +932,19 @@ def handle_playbill_withdraw_proposal(
     instance_id: str,
     proposal_id: str,
     reason: str,
+    *,
+    dry_run: bool | None = None,
+    at: str | None = None,
 ) -> contracts.PlaybillProposalWithdrawResult:
     return _dispatch_remote_or_local(
         lambda client: client.withdraw_playbill_proposal(
-            instance_id,
-            proposal_id,
-            reason=reason,
+            instance_id, proposal_id, reason=reason, dry_run=dry_run, at=at
         ),
-        lambda: playbill_api.playbill_withdraw_proposal(instance_id, proposal_id, reason),
+        lambda: playbill_api.playbill_withdraw_proposal(
+            instance_id, proposal_id, reason, dry_run=dry_run, at=at
+        ),
         operation_name="cruxible_playbill_proposal_withdraw",
-        local_payload={"reason": reason},
+        local_payload={"reason": reason, "dry_run": dry_run, "at": at},
     )
 
 
@@ -1002,6 +1012,8 @@ def handle_playbill_propose_source_bundle(
     *,
     source_name: str,
     proposal_name: str,
+    dry_run: bool | None = None,
+    at: str | None = None,
 ) -> contracts.PlaybillProposalInspection:
     frozen = SourceCompilationBundle.model_validate(bundle)
     return _dispatch_remote_or_local(
@@ -1010,18 +1022,24 @@ def handle_playbill_propose_source_bundle(
             bundle=frozen.model_dump(mode="json"),
             source_name=source_name,
             proposal_name=proposal_name,
+            dry_run=dry_run,
+            at=at,
         ),
         lambda: playbill_api.playbill_propose_source_bundle(
             instance_id,
             bundle=frozen,
             source_name=source_name,
             proposal_name=proposal_name,
+            dry_run=dry_run,
+            at=at,
         ),
         operation_name="cruxible_playbill_propose_source_bundle",
         local_payload={
             "bundle": frozen.model_dump(mode="json"),
             "source_name": source_name,
             "proposal_name": proposal_name,
+            "dry_run": dry_run,
+            "at": at,
         },
     )
 
@@ -1589,12 +1607,24 @@ def handle_playbill_block_depublish(
     instance_id: str,
     source_id: str,
     block_id: str,
+    *,
+    dry_run: bool | None = None,
+    at: str | None = None,
 ) -> contracts.PlaybillBlockDepublishResultV1:
     return _dispatch_remote_or_local(
-        lambda client: client.depublish_playbill_block(instance_id, source_id, block_id),
-        lambda: playbill_api.playbill_block_depublish(instance_id, source_id, block_id),
+        lambda client: client.depublish_playbill_block(
+            instance_id, source_id, block_id, dry_run=dry_run, at=at
+        ),
+        lambda: playbill_api.playbill_block_depublish(
+            instance_id, source_id, block_id, dry_run=dry_run, at=at
+        ),
         operation_name="cruxible_playbill_block_depublish",
-        local_payload={"source_id": source_id, "block_id": block_id},
+        local_payload={
+            "source_id": source_id,
+            "block_id": block_id,
+            "dry_run": dry_run,
+            "at": at,
+        },
     )
 
 
@@ -2268,6 +2298,8 @@ def handle_playbill_curation_overrule(
     expected_latest_event_digest: str,
     reason: str,
     attribution_refs: list[str],
+    dry_run: bool | None = None,
+    at: str | None = None,
 ) -> contracts.PlaybillCurationActionResult:
     return _dispatch_remote_or_local(
         lambda client: client.overrule_playbill_curation(
@@ -2276,6 +2308,8 @@ def handle_playbill_curation_overrule(
             expected_latest_event_digest=expected_latest_event_digest,
             reason=reason,
             attribution_refs=tuple(attribution_refs),
+            dry_run=dry_run,
+            at=at,
         ),
         lambda: playbill_api.playbill_curation_overrule(
             instance_id,
@@ -2285,6 +2319,8 @@ def handle_playbill_curation_overrule(
                 "expected_latest_event_digest": expected_latest_event_digest,
                 "reason": reason,
                 "attribution_refs": attribution_refs,
+                "dry_run": dry_run,
+                "at": at,
             },
         ),
         operation_name="cruxible_playbill_curation_overrule",
@@ -2293,6 +2329,8 @@ def handle_playbill_curation_overrule(
             "expected_latest_event_digest": expected_latest_event_digest,
             "reason": reason,
             "attribution_refs": attribution_refs,
+            "dry_run": dry_run,
+            "at": at,
         },
     )
 
@@ -2306,6 +2344,8 @@ def handle_playbill_curation_accept_fixed(
     accepted_proposal_id: str,
     accepted_changeset_digest: str,
     attribution_refs: list[str],
+    dry_run: bool | None = None,
+    at: str | None = None,
 ) -> contracts.PlaybillCurationActionResult:
     return _dispatch_remote_or_local(
         lambda client: client.accept_fixed_playbill_curation(
@@ -2316,6 +2356,8 @@ def handle_playbill_curation_accept_fixed(
             accepted_proposal_id=accepted_proposal_id,
             accepted_changeset_digest=accepted_changeset_digest,
             attribution_refs=tuple(attribution_refs),
+            dry_run=dry_run,
+            at=at,
         ),
         lambda: playbill_api.playbill_curation_accept_fixed(
             instance_id,
@@ -2327,6 +2369,8 @@ def handle_playbill_curation_accept_fixed(
                 "accepted_proposal_id": accepted_proposal_id,
                 "accepted_changeset_digest": accepted_changeset_digest,
                 "attribution_refs": attribution_refs,
+                "dry_run": dry_run,
+                "at": at,
             },
         ),
         operation_name="cruxible_playbill_curation_accept_fixed",
@@ -2337,6 +2381,8 @@ def handle_playbill_curation_accept_fixed(
             "accepted_proposal_id": accepted_proposal_id,
             "accepted_changeset_digest": accepted_changeset_digest,
             "attribution_refs": attribution_refs,
+            "dry_run": dry_run,
+            "at": at,
         },
     )
 
@@ -2350,6 +2396,8 @@ def handle_playbill_curation_suppress(
     scope: Literal["item", "pattern", "instance"],
     until_generation: int | None,
     attribution_refs: list[str],
+    dry_run: bool | None = None,
+    at: str | None = None,
 ) -> contracts.PlaybillCurationActionResult:
     return _dispatch_remote_or_local(
         lambda client: client.suppress_playbill_curation(
@@ -2360,6 +2408,8 @@ def handle_playbill_curation_suppress(
             scope=scope,
             until_generation=until_generation,
             attribution_refs=tuple(attribution_refs),
+            dry_run=dry_run,
+            at=at,
         ),
         lambda: playbill_api.playbill_curation_suppress(
             instance_id,
@@ -2371,6 +2421,8 @@ def handle_playbill_curation_suppress(
                 "scope": scope,
                 "until_generation": until_generation,
                 "attribution_refs": attribution_refs,
+                "dry_run": dry_run,
+                "at": at,
             },
         ),
         operation_name="cruxible_playbill_curation_suppress",
@@ -2381,6 +2433,8 @@ def handle_playbill_curation_suppress(
             "scope": scope,
             "until_generation": until_generation,
             "attribution_refs": attribution_refs,
+            "dry_run": dry_run,
+            "at": at,
         },
     )
 

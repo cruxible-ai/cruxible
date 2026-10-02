@@ -1013,13 +1013,19 @@ def playbill_resolve_proposal_selector(
 def playbill_readmit_proposal(
     instance_id: str,
     proposal_id: str,
+    *,
+    dry_run: bool | None = None,
+    at: str | None = None,
 ) -> contracts.PlaybillProposalReadmitResult:
     check_permission("cruxible_playbill_propose", instance_id=instance_id)
-    result = service_readmit_playbill_proposal(
-        get_playbill_manager().get(instance_id),
-        proposal_id=proposal_id,
-        actor_id=_actor_id(instance_id),
-    )
+    with change_entry(dry_run, "direct"):
+        result = service_readmit_playbill_proposal(
+            get_playbill_manager().get(instance_id),
+            proposal_id=proposal_id,
+            actor_id=_actor_id(instance_id),
+            dry_run=dry_run,
+            at=at,
+        )
     return contracts.PlaybillProposalReadmitResult.model_validate(result.model_dump(mode="json"))
 
 
@@ -1027,19 +1033,25 @@ def playbill_withdraw_proposal(
     instance_id: str,
     proposal_id: str,
     reason: str,
+    *,
+    dry_run: bool | None = None,
+    at: str | None = None,
 ) -> contracts.PlaybillProposalWithdrawResult:
     check_permission("cruxible_playbill_propose", instance_id=instance_id)
-    result = service_withdraw_playbill_proposal(
-        get_playbill_manager().get(instance_id),
-        proposal_id=proposal_id,
-        actor_id=_actor_id(instance_id),
-        reason=reason,
-        withdrawn_at=canonical_candidate_timestamp(utc_now()),
-        # No bound instance scope IS the daemon-wide operator credential (or an
-        # auth-off local daemon, which has one operator): the same reading
-        # `require_unscoped_operator` makes for every other daemon-wide lever.
-        unscoped_operator=current_request_instance_scope() is None,
-    )
+    with change_entry(dry_run, "direct"):
+        result = service_withdraw_playbill_proposal(
+            get_playbill_manager().get(instance_id),
+            proposal_id=proposal_id,
+            actor_id=_actor_id(instance_id),
+            reason=reason,
+            withdrawn_at=canonical_candidate_timestamp(utc_now()),
+            # No bound instance scope IS the daemon-wide operator credential (or
+            # an auth-off local daemon, which has one operator): the same reading
+            # `require_unscoped_operator` makes for every other daemon-wide lever.
+            unscoped_operator=current_request_instance_scope() is None,
+            dry_run=dry_run,
+            at=at,
+        )
     return contracts.PlaybillProposalWithdrawResult.model_validate(result.model_dump(mode="json"))
 
 
@@ -1246,19 +1258,24 @@ def playbill_propose_source_bundle(
     bundle: SourceCompilationBundle,
     source_name: str,
     proposal_name: str,
+    dry_run: bool | None = None,
+    at: str | None = None,
 ) -> contracts.PlaybillProposalInspection:
     check_permission("cruxible_playbill_propose", instance_id=instance_id)
-    result = _proposal_validation_boundary(
-        "source bundle",
-        lambda: service_propose_playbill_source_bundle(
-            get_playbill_manager().get(instance_id),
-            bundle=bundle,
-            source_name=source_name,
-            actor_id=_actor_id(instance_id),
-            proposal_name=proposal_name,
-            timestamp=canonical_candidate_timestamp(utc_now()),
-        ),
-    )
+    with change_entry(dry_run, "direct"):
+        result = _proposal_validation_boundary(
+            "source bundle",
+            lambda: service_propose_playbill_source_bundle(
+                get_playbill_manager().get(instance_id),
+                bundle=bundle,
+                source_name=source_name,
+                actor_id=_actor_id(instance_id),
+                proposal_name=proposal_name,
+                timestamp=canonical_candidate_timestamp(utc_now()),
+                dry_run=dry_run,
+                at=at,
+            ),
+        )
     return contracts.PlaybillProposalInspection.model_validate(result.model_dump(mode="json"))
 
 
@@ -1720,19 +1737,25 @@ def playbill_block_depublish(
     instance_id: str,
     source_id: str,
     block_id: str,
+    *,
+    dry_run: bool | None = None,
+    at: str | None = None,
 ) -> contracts.PlaybillBlockDepublishResultV1:
     """Release one bound publication registration, addressed as the page names it."""
 
     check_permission("cruxible_playbill_block_depublish", instance_id=instance_id)
-    instance = get_playbill_manager().get(instance_id)
-    coordinator, actor = _authoring_coordinator(instance_id)
-    return service_depublish_playbill_block(
-        instance,
-        coordinator=coordinator,
-        actor=actor,
-        source_id=source_id,
-        block_id=block_id,
-    )
+    with change_entry(dry_run, "direct"):
+        instance = get_playbill_manager().get(instance_id)
+        coordinator, actor = _authoring_coordinator(instance_id)
+        return service_depublish_playbill_block(
+            instance,
+            coordinator=coordinator,
+            actor=actor,
+            source_id=source_id,
+            block_id=block_id,
+            dry_run=dry_run,
+            at=at,
+        )
 
 
 def playbill_read_claim_batch(
@@ -2267,11 +2290,12 @@ def playbill_curation_overrule(
             else PlaybillCurationOverruleRequestV1.model_validate(request)
         )
     )
-    result = service_overrule_playbill_curation(
-        get_playbill_manager().get(instance_id),
-        request=parsed,
-        actor_context=_curation_actor(instance_id),
-    )
+    with change_entry(parsed.dry_run, "direct"):
+        result = service_overrule_playbill_curation(
+            get_playbill_manager().get(instance_id),
+            request=parsed,
+            actor_context=_curation_actor(instance_id),
+        )
     return contracts.PlaybillCurationActionResult.model_validate(result.model_dump(mode="json"))
 
 
@@ -2288,11 +2312,12 @@ def playbill_curation_accept_fixed(
             else PlaybillCurationAcceptFixedRequestV1.model_validate(request)
         )
     )
-    result = service_accept_fixed_playbill_curation(
-        get_playbill_manager().get(instance_id),
-        request=parsed,
-        actor_context=_curation_actor(instance_id),
-    )
+    with change_entry(parsed.dry_run, "direct"):
+        result = service_accept_fixed_playbill_curation(
+            get_playbill_manager().get(instance_id),
+            request=parsed,
+            actor_context=_curation_actor(instance_id),
+        )
     return contracts.PlaybillCurationActionResult.model_validate(result.model_dump(mode="json"))
 
 
@@ -2309,11 +2334,12 @@ def playbill_curation_suppress(
             else PlaybillCurationSuppressRequestV1.model_validate(request)
         )
     )
-    result = service_suppress_playbill_curation(
-        get_playbill_manager().get(instance_id),
-        request=parsed,
-        actor_context=_curation_actor(instance_id),
-    )
+    with change_entry(parsed.dry_run, "direct"):
+        result = service_suppress_playbill_curation(
+            get_playbill_manager().get(instance_id),
+            request=parsed,
+            actor_context=_curation_actor(instance_id),
+        )
     return contracts.PlaybillCurationActionResult.model_validate(result.model_dump(mode="json"))
 
 

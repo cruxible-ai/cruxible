@@ -1782,13 +1782,18 @@ def list_proposals(status: str | None, limit: int, cursor: str | None, output_js
 
 @proposal_group.command("readmit")
 @click.argument("proposal_id")
+@change_control_options
 @json_option
 @handle_errors
-def readmit_proposal(proposal_id: str, output_json: bool) -> None:
+def readmit_proposal(
+    proposal_id: str, dry_run: bool | None, at: str | None, output_json: bool
+) -> None:
     result = _server_call(
         lambda client, instance_id: client.readmit_playbill_proposal(
             instance_id,
             client.resolve_playbill_proposal_selector(instance_id, proposal_id).proposal_id,
+            dry_run=dry_run,
+            at=at,
         ),
         command_name="playbill proposal readmit",
     )
@@ -1798,6 +1803,10 @@ def readmit_proposal(proposal_id: str, output_json: bool) -> None:
     proposal = result.proposal.proposal
     evaluation = proposal.get("evaluation", {})
     admission = proposal.get("admission", {})
+    if result.proposal.status != "admitted":
+        click.echo(f"{result.proposal.status}  from {result.source_proposal_id}")
+        echo_preview_next(result.proposal.status, result.proposal.accepted_coordinate)
+        return
     click.echo(
         f"{evaluation.get('verdict')}  {admission.get('proposal_id')}  "
         f"from {result.source_proposal_id}"
@@ -1811,9 +1820,12 @@ def readmit_proposal(proposal_id: str, output_json: bool) -> None:
     required=True,
     help="Why this proposal will never be settled. Recorded verbatim.",
 )
+@change_control_options
 @json_option
 @handle_errors
-def withdraw_proposal(proposal_id: str, reason: str, output_json: bool) -> None:
+def withdraw_proposal(
+    proposal_id: str, reason: str, dry_run: bool | None, at: str | None, output_json: bool
+) -> None:
     """Retire an open proposal that will never be activated."""
 
     result = _server_call(
@@ -1821,6 +1833,8 @@ def withdraw_proposal(proposal_id: str, reason: str, output_json: bool) -> None:
             instance_id,
             client.resolve_playbill_proposal_selector(instance_id, proposal_id).proposal_id,
             reason=reason,
+            dry_run=dry_run,
+            at=at,
         ),
         command_name="playbill proposal withdraw",
     )
@@ -1828,8 +1842,9 @@ def withdraw_proposal(proposal_id: str, reason: str, output_json: bool) -> None:
         _emit_json(result.model_dump(mode="json"))
         return
     already = " (already withdrawn)" if result.already_withdrawn else ""
-    click.echo(f"withdrawn  {result.proposal_id}  {result.withdrawn_at}{already}")
+    click.echo(f"{result.status}  {result.proposal_id}  {result.withdrawn_at}{already}")
     click.echo(f"Reason: {result.reason}")
+    echo_preview_next(result.status, result.coordinate)
 
 
 @proposal_group.command("inspect")
@@ -2182,12 +2197,15 @@ def check_sources(
 )
 @click.option("--source", "source_name", required=True)
 @click.option("--name", "proposal_name", required=True)
+@change_control_options
 @json_option
 @handle_errors
 def propose_sources(
     bundle_path: str,
     source_name: str,
     proposal_name: str,
+    dry_run: bool | None,
+    at: str | None,
     output_json: bool,
 ) -> None:
     bundle = _read_model(bundle_path, SourceCompilationBundle)
@@ -2197,6 +2215,8 @@ def propose_sources(
             bundle=bundle.model_dump(mode="json"),
             source_name=source_name,
             proposal_name=proposal_name,
+            dry_run=dry_run,
+            at=at,
         ),
         command_name="playbill sources propose",
     )
@@ -4249,9 +4269,12 @@ def block_group() -> None:
 @block_group.command("depublish")
 @click.argument("source_id")
 @click.argument("block_id")
+@change_control_options
 @json_option
 @handle_errors
-def depublish_projection(source_id: str, block_id: str, output_json: bool) -> None:
+def depublish_projection(
+    source_id: str, block_id: str, dry_run: bool | None, at: str | None, output_json: bool
+) -> None:
     """Release the publication registration that demands one page block.
 
     The registration is what `next` reads to decide a removed marker is a
@@ -4266,6 +4289,8 @@ def depublish_projection(source_id: str, block_id: str, output_json: bool) -> No
             instance_id,
             source_id,
             block_id,
+            dry_run=dry_run,
+            at=at,
         ),
         command_name="playbill block depublish",
     )
@@ -4274,6 +4299,7 @@ def depublish_projection(source_id: str, block_id: str, output_json: bool) -> No
         return
     click.echo(f"{result.source_id}#{result.block_id}: {result.outcome}")
     click.echo(f"Backing Claim: {result.claim_identity}")
+    echo_preview_next(result.outcome, result.coordinate)
 
 
 @block_group.command("repin")
@@ -5663,12 +5689,15 @@ def curation_list(
 @click.argument("item_id")
 @click.option("--expected-latest-event-digest", required=True)
 @click.option("--reason", required=True)
+@change_control_options
 @json_option
 @handle_errors
 def curation_overrule(
     item_id: str,
     expected_latest_event_digest: str,
     reason: str,
+    dry_run: bool | None,
+    at: str | None,
     output_json: bool,
 ) -> None:
     result = _server_call(
@@ -5677,11 +5706,17 @@ def curation_overrule(
             item_id=item_id,
             expected_latest_event_digest=expected_latest_event_digest,
             reason=reason,
+            dry_run=dry_run,
+            at=at,
         ),
         command_name="playbill curation overrule",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
+        return
+    if result.status == "would_record":
+        click.echo(f"Would record the ruling on {result.item['item_id']}; nothing was appended")
+        echo_preview_next(result.status, result.coordinate)
         return
     click.echo(f"Curation item {result.item['item_id']}: {result.item['status']}")
 
@@ -5692,6 +5727,7 @@ def curation_overrule(
 @click.option("--reason", required=True)
 @click.option("--proposal-id", required=True)
 @click.option("--changeset-digest", required=True)
+@change_control_options
 @json_option
 @handle_errors
 def curation_accept_fixed(
@@ -5700,6 +5736,8 @@ def curation_accept_fixed(
     reason: str,
     proposal_id: str,
     changeset_digest: str,
+    dry_run: bool | None,
+    at: str | None,
     output_json: bool,
 ) -> None:
     result = _server_call(
@@ -5710,11 +5748,17 @@ def curation_accept_fixed(
             reason=reason,
             accepted_proposal_id=proposal_id,
             accepted_changeset_digest=changeset_digest,
+            dry_run=dry_run,
+            at=at,
         ),
         command_name="playbill curation accept-fixed",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
+        return
+    if result.status == "would_record":
+        click.echo(f"Would record the ruling on {result.item['item_id']}; nothing was appended")
+        echo_preview_next(result.status, result.coordinate)
         return
     click.echo(f"Curation item {result.item['item_id']}: {result.item['status']}")
 
@@ -5725,6 +5769,7 @@ def curation_accept_fixed(
 @click.option("--reason", required=True)
 @click.option("--scope", type=click.Choice(("item", "pattern", "instance")), required=True)
 @click.option("--until-generation", type=click.IntRange(min=0))
+@change_control_options
 @json_option
 @handle_errors
 def curation_suppress(
@@ -5733,6 +5778,8 @@ def curation_suppress(
     reason: str,
     scope: str,
     until_generation: int | None,
+    dry_run: bool | None,
+    at: str | None,
     output_json: bool,
 ) -> None:
     result = _server_call(
@@ -5743,11 +5790,17 @@ def curation_suppress(
             reason=reason,
             scope=cast(Any, scope),
             until_generation=until_generation,
+            dry_run=dry_run,
+            at=at,
         ),
         command_name="playbill curation suppress",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
+        return
+    if result.status == "would_record":
+        click.echo(f"Would record the ruling on {result.item['item_id']}; nothing was appended")
+        echo_preview_next(result.status, result.coordinate)
         return
     click.echo(f"Curation item {result.item['item_id']}: suppressed ({scope})")
 

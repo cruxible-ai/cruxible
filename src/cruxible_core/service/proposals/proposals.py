@@ -36,6 +36,7 @@ from cruxible_core.service.authoring.documents import (
     PlaybillAcceptedCoordinate,
     PlaybillProposalInspection,
 )
+from cruxible_core.service.change_preview import ChangeMode, change_scope
 from cruxible_core.service.identity import authoring_refusal, principal_standing
 from cruxible_core.service.list_pages import (
     decode_list_cursor,
@@ -114,11 +115,15 @@ class PlaybillProposalReadmitResultV1(_StrictOperationalReadModel):
 
 class PlaybillProposalWithdrawResultV1(_StrictOperationalReadModel):
     tag: Literal["playbill-proposal-withdraw-result-v1"] = "playbill-proposal-withdraw-result-v1"
+    #: ``would_withdraw`` answers a preview, which recorded nothing (R12).
+    status: Literal["withdrawn", "would_withdraw"] = "withdrawn"
     proposal_id: str
     actor_id: str
     reason: str
     withdrawn_at: str
     already_withdrawn: bool = False
+    #: The accepted coordinate the withdrawal was checked at; ``at`` pins a commit.
+    coordinate: PlaybillAcceptedCoordinate | None = None
 
 
 class PlaybillProposalSelectorResultV1(_StrictOperationalReadModel):
@@ -702,9 +707,29 @@ def service_readmit_playbill_proposal(
     *,
     proposal_id: str,
     actor_id: str,
+    dry_run: bool | None = None,
+    at: str | None = None,
 ) -> PlaybillProposalReadmitResultV1:
-    """Replay one stale authored tree through the current ProposalService rebase."""
+    """Replay one stale authored tree through the current ProposalService rebase.
 
+    ``dry_run`` evaluates the readmission on the admission path and admits
+    nothing (R12); ``at`` pins a commit to the head the preview saw.
+    """
+
+    with change_scope(
+        instance,
+        dry_run=dry_run,
+        at=at,
+        kind="direct",
+        operation="playbill.proposal.readmit",
+        describe=f"readmitting proposal {proposal_id}",
+    ) as mode:
+        return _readmit(instance, mode, proposal_id=proposal_id, actor_id=actor_id)
+
+
+def _readmit(
+    instance: PlaybillInstance, mode: ChangeMode, *, proposal_id: str, actor_id: str
+) -> PlaybillProposalReadmitResultV1:
     source = _proposal_result(instance, proposal_id)
     if source.admission.actor_id != actor_id:
         raise ProposalAdmissionError("only the source proposal actor may readmit it")
@@ -766,19 +791,40 @@ def service_readmit_playbill_proposal(
         generation = instance.accepted_history()[-1]
         if generation.record is None:  # pragma: no cover - stale source requires a successor
             raise ProposalIntegrityError("readmission requires an accepted candidate timestamp")
+        actor = AuthenticatedActor(actor_id=actor_id)
+        request = ProposalAdmissionRequest(
+            target_ref=_readmission_target_ref(actor_id, operation_digest),
+            proposed_base_oid=source.admission.proposed_base_oid,
+            source_compilation_digest=operation_digest,
+            claim_type_expansions=source.admission.claim_type_expansions,
+        )
+        candidate_tree = instance.proposal_tree(
+            source.admission.candidate_tree_oid, proposal_id=proposal_id
+        )
+        if mode.previewing:
+            preview = instance.proposal_service().preview(
+                actor=actor,
+                request=request,
+                candidate_tree=candidate_tree,
+                timestamp=generation.record.candidate.timestamp,
+                readmits=link,
+            )
+            return PlaybillProposalReadmitResultV1(
+                source_proposal_id=proposal_id,
+                operation_digest=operation_digest,
+                proposal=PlaybillProposalInspection(
+                    status="would_propose" if preview.candidate is not None else "would_block",
+                    proposal=preview,
+                    accepted_coordinate=coordinate,
+                ),
+            )
         result = instance.proposal_service().submit(
-            actor=AuthenticatedActor(actor_id=actor_id),
-            request=ProposalAdmissionRequest(
-                target_ref=_readmission_target_ref(actor_id, operation_digest),
-                proposed_base_oid=source.admission.proposed_base_oid,
-                source_compilation_digest=operation_digest,
-                claim_type_expansions=source.admission.claim_type_expansions,
-            ),
-            candidate_tree=instance.proposal_tree(
-                source.admission.candidate_tree_oid, proposal_id=proposal_id
-            ),
+            actor=actor,
+            request=request,
+            candidate_tree=candidate_tree,
             timestamp=generation.record.candidate.timestamp,
             readmits=link,
+            confirm_head=mode.confirm_head,
         )
     return PlaybillProposalReadmitResultV1(
         source_proposal_id=proposal_id,
@@ -825,8 +871,12 @@ def service_withdraw_playbill_proposal(
     reason: str,
     withdrawn_at: str,
     unscoped_operator: bool = False,
+    dry_run: bool | None = None,
+    at: str | None = None,
 ) -> PlaybillProposalWithdrawResultV1:
     """Record one actor's terminal statement that a proposal will not be settled.
+
+    ``dry_run`` runs every check and records nothing (``would_withdraw``, R12).
 
     A proposal whose activation a hard limit refuses -- the ledger's change-set
     record ceiling is the case this exists for -- is admitted, evaluated and
@@ -858,6 +908,35 @@ def service_withdraw_playbill_proposal(
     so it is a strictly smaller lever than the ones it holds.
     """
 
+    with change_scope(
+        instance,
+        dry_run=dry_run,
+        at=at,
+        kind="direct",
+        operation="playbill.proposal.withdraw",
+        describe=f"withdrawing proposal {proposal_id}",
+    ) as mode:
+        return _withdraw(
+            instance,
+            mode,
+            proposal_id=proposal_id,
+            actor_id=actor_id,
+            reason=reason,
+            withdrawn_at=withdrawn_at,
+            unscoped_operator=unscoped_operator,
+        )
+
+
+def _withdraw(
+    instance: PlaybillInstance,
+    mode: ChangeMode,
+    *,
+    proposal_id: str,
+    actor_id: str,
+    reason: str,
+    withdrawn_at: str,
+    unscoped_operator: bool,
+) -> PlaybillProposalWithdrawResultV1:
     admission = instance.proposal_evidence().read_admission(proposal_id)
     if admission.actor_id != actor_id and not unscoped_operator:
         raise ProposalAdmissionError(
@@ -896,6 +975,18 @@ def service_withdraw_playbill_proposal(
         reason=reason,
         withdrawn_at=withdrawn_at,
     )
+    head = mode.head
+    assert head is not None
+    coordinate = PlaybillAcceptedCoordinate.from_internal(head)
+    if mode.previewing:
+        return PlaybillProposalWithdrawResultV1(
+            status="would_withdraw",
+            proposal_id=record.proposal_id,
+            actor_id=record.actor_id,
+            reason=record.reason,
+            withdrawn_at=record.withdrawn_at,
+            coordinate=coordinate,
+        )
     instance.proposal_evidence().write_withdrawal(record)
     # Release local closed-candidate roots even without a configured mirror.
     instance.advertise_workspace()
@@ -905,6 +996,7 @@ def service_withdraw_playbill_proposal(
         actor_id=record.actor_id,
         reason=record.reason,
         withdrawn_at=record.withdrawn_at,
+        coordinate=coordinate,
     )
 
 

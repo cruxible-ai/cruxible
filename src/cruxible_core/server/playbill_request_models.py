@@ -174,6 +174,8 @@ class PlaybillSourceBundleRequest(_StrictPlaybillRequest):
 class PlaybillSourceProposeRequest(PlaybillSourceBundleRequest):
     source_name: str
     proposal_name: str
+    dry_run: DryRun = None
+    at: PreviewAt = None
 
 
 class PlaybillProposeClaimTypeRequest(_StrictPlaybillRequest):
@@ -243,15 +245,21 @@ class PlaybillBlockDepublishRequest(_StrictPlaybillRequest):
 
     source_id: str = Field(min_length=1)
     block_id: str = Field(min_length=1)
+    dry_run: DryRun = None
+    at: PreviewAt = None
 
 
 class PlaybillProposalReadmitRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-proposal-readmit-request-v1"] = "playbill-proposal-readmit-request-v1"
+    dry_run: DryRun = None
+    at: PreviewAt = None
 
 
 class PlaybillProposalWithdrawRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-proposal-withdraw-request-v1"] = "playbill-proposal-withdraw-request-v1"
     reason: str = Field(min_length=1, max_length=1_000)
+    dry_run: DryRun = None
+    at: PreviewAt = None
 
 
 class PlaybillNextRequest(_StrictPlaybillRequest):
@@ -327,6 +335,8 @@ class PlaybillCurationOverruleRequest(_StrictPlaybillRequest):
     expected_latest_event_digest: str
     reason: str
     attribution_refs: tuple[str, ...] = ()
+    dry_run: DryRun = None
+    at: PreviewAt = None
 
 
 class PlaybillCurationAcceptFixedRequest(_StrictPlaybillRequest):
@@ -339,6 +349,8 @@ class PlaybillCurationAcceptFixedRequest(_StrictPlaybillRequest):
     accepted_proposal_id: str
     accepted_changeset_digest: str
     attribution_refs: tuple[str, ...] = ()
+    dry_run: DryRun = None
+    at: PreviewAt = None
 
 
 class PlaybillCurationSuppressRequest(_StrictPlaybillRequest):
@@ -349,6 +361,8 @@ class PlaybillCurationSuppressRequest(_StrictPlaybillRequest):
     scope: Literal["item", "pattern", "instance"]
     until_generation: int | None = None
     attribution_refs: tuple[str, ...] = ()
+    dry_run: DryRun = None
+    at: PreviewAt = None
 
 
 class PlaybillResolveCoverageRequest(_StrictPlaybillRequest):

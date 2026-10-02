@@ -4754,6 +4754,7 @@ class ProposalService:
         request: ProposalAdmissionRequest,
         candidate_tree: Mapping[str, bytes],
         timestamp: str,
+        readmits: ProposalReadmissionLinkV1 | None = None,
     ) -> ProposalPreviewV1:
         """Evaluate one candidate tree exactly as `submit` would, and write nothing.
 
@@ -4772,7 +4773,7 @@ class ProposalService:
             prepared=None,
             settle_submission=None,
             expected_candidate=None,
-            readmits=None,
+            readmits=readmits,
         )
         candidate = evaluated.outcome.candidate
         return ProposalPreviewV1(

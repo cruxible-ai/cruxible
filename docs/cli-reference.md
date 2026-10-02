@@ -103,6 +103,24 @@ repair derived files a crash left behind, the preview refuses
 `playbill.preview.recovery_pending` instead of writing them; an ordinary read
 (`cruxible playbill orient`) reopens it, and the preview then runs.
 
+Exempt in v1, by the maintainer's scope ruling:
+
+- the exhaust paths -- `settle`, `predict`, `procedure run` and
+  `procedure measure`, and `line evaluate`, `line dispatch` and `line run` --
+  append observations to the instance's exhaust and need a separate
+  dry-run-execution feature;
+- client-local writes -- `context connect`, `context use`, `context clear`,
+  `kit build`, `kit pull` and `hook` -- change only the caller's own
+  configuration or output files;
+- `init` (genesis) and `server stop` / `server restart`, which have no
+  coordinate to preview against.
+
+`provider install --dry-run` is a labelled v1 exception: it validates and
+writes nothing, but it does not prepare the package, check deployment
+readiness or (for a package not yet prepared) evaluate its registration. Its
+outcome says so: `preview_scope: validation_only` and `not_run` naming those
+steps, with the coordinate it evaluated at.
+
 ## credential
 
 Manage runtime bearer credentials:

@@ -40,6 +40,7 @@ from cruxible_core.service.discovery.curation import (
 from tests.core_support._candidate_support import submit_subject_candidate
 from tests.core_support._knowledge_loop_support import accept_proposal, subject_shell
 from tests.core_support._support import initialize_local
+from tests.support.store_snapshot import assert_writes_nothing
 
 NOW = datetime(2026, 8, 26, 18, tzinfo=UTC)
 
@@ -147,19 +148,30 @@ def test_accept_fixed_verifies_proposal_changeset_generation_and_member_intersec
     record = instance.accepted_history()[-1].record
     assert record is not None
     accepted_before_action = instance.accepted_coordinate()
+    request = PlaybillCurationAcceptFixedRequestV1(
+        item_id=observation.item_id,
+        expected_latest_event_digest=event.event_digest,
+        reason="the accepted runbook revision changed the evidenced document",
+        accepted_proposal_id=second.proposal.admission.proposal_id,
+        accepted_changeset_digest=record.changeset_digest,
+    )
+    # F-006: the ruling previews on its own path and appends nothing.
+    preview = assert_writes_nothing(
+        [tmp_path],
+        lambda: service_accept_fixed_playbill_curation(
+            instance,
+            request=request.model_copy(update={"dry_run": True}),
+            actor_context=_actor(),
+        ),
+    )
+    assert (preview.status, preview.item.status) == ("would_record", "open")
     result = service_accept_fixed_playbill_curation(
         instance,
-        request=PlaybillCurationAcceptFixedRequestV1(
-            item_id=observation.item_id,
-            expected_latest_event_digest=event.event_digest,
-            reason="the accepted runbook revision changed the evidenced document",
-            accepted_proposal_id=second.proposal.admission.proposal_id,
-            accepted_changeset_digest=record.changeset_digest,
-        ),
+        request=request.model_copy(update={"dry_run": False, "at": preview.coordinate.git_oid}),
         actor_context=_actor(),
     )
 
-    assert result.item.status == "accepted_fixed"
+    assert (result.status, result.item.status) == ("recorded", "accepted_fixed")
     assert result.item.resolved_at_generation == 2
     assert result.item.accepted_changeset_digest == record.changeset_digest
     assert instance.accepted_coordinate() == accepted_before_action

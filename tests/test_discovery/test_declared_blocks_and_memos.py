@@ -261,13 +261,16 @@ def _declare(instance: PlaybillInstance, stamp: ProjectionBlockStampV1) -> None:
     )
 
 
-def _depublish(instance: PlaybillInstance, *, source_id: str, block_id: str) -> Any:
+def _depublish(
+    instance: PlaybillInstance, *, source_id: str, block_id: str, dry_run: bool | None = None
+) -> Any:
     return service_depublish_playbill_block(
         instance,
         coordinator=AuthoringIntentCoordinator.for_instance(instance),
         actor=AuthenticatedActor(actor_id="owner"),
         source_id=source_id,
         block_id=block_id,
+        dry_run=dry_run,
     )
 
 
@@ -519,6 +522,21 @@ def test_depublishing_a_declared_block_releases_it_from_the_fold(tmp_path: Path)
     _declare(instance, stamp)
     folded = registered_projection_blocks(instance)
     assert folded is not None and ("corpus.runbook", "held-rows") in folded
+
+    # F-006: the preview finds the declaration and releases nothing.
+    from tests.support.store_snapshot import assert_writes_nothing
+
+    previewed = assert_writes_nothing(
+        [tmp_path],
+        lambda: _depublish(
+            instance, source_id="corpus.runbook", block_id="held-rows", dry_run=True
+        ),
+        # The test builds its coordinator outside the service; the served
+        # door builds it behind the preview's guards.
+        warm=lambda: AuthoringIntentCoordinator.for_instance(instance),
+    )
+    assert (previewed.origin, previewed.outcome) == ("declaration", "would_depublish")
+    assert ("corpus.runbook", "held-rows") in (registered_projection_blocks(instance) or {})
 
     result = _depublish(instance, source_id="corpus.runbook", block_id="held-rows")
     assert result.origin == "declaration"

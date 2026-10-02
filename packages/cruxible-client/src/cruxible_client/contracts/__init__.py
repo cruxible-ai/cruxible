@@ -693,11 +693,15 @@ class PlaybillProposalWithdrawResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-proposal-withdraw-result-v1"] = "playbill-proposal-withdraw-result-v1"
+    #: ``would_withdraw`` answers a preview, which recorded nothing.
+    status: Literal["withdrawn", "would_withdraw"] = "withdrawn"
     proposal_id: str
     actor_id: str
     reason: str
     withdrawn_at: str
     already_withdrawn: bool = False
+    #: The accepted coordinate the withdrawal was checked at; ``at`` pins a commit.
+    coordinate: PlaybillAcceptedCoordinate | None = None
 
 
 class PlaybillWhoAmI(BaseModel):
@@ -1234,7 +1238,8 @@ class PlaybillBlockDepublishResultV1(BaseModel):
     origin: Literal["publication", "declaration"] = "publication"
     intent_id: str | None = None
     expectation_id: str | None = None
-    outcome: Literal["depublished", "already_depublished"]
+    #: ``would_depublish`` answers a preview, which released nothing.
+    outcome: Literal["depublished", "already_depublished", "would_depublish"]
     claim_identity: str | None = None
     coordinate: PlaybillAcceptedCoordinate
 
@@ -1600,6 +1605,9 @@ class PlaybillCurationActionResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-curation-action-result-v1"] = "playbill-curation-action-result-v1"
+    #: ``would_record`` answers a preview, which appended nothing; ``item`` is
+    #: then the item as it stands.
+    status: Literal["recorded", "would_record"] = "recorded"
     coordinate: PlaybillAcceptedCoordinate
     generation: int = Field(ge=0)
     operational_head_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")

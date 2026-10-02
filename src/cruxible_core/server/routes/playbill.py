@@ -489,11 +489,13 @@ def inspect_proposal(
 def readmit_proposal(
     instance_id: str,
     proposal_id: str,
-    _req: PlaybillProposalReadmitRequest,
+    req: PlaybillProposalReadmitRequest,
 ) -> contracts.PlaybillProposalReadmitResult:
     return playbill_api.playbill_readmit_proposal(
         resolve_server_instance_id(instance_id),
         proposal_id,
+        dry_run=req.dry_run,
+        at=req.at,
     )
 
 
@@ -510,6 +512,8 @@ def withdraw_proposal(
         resolve_server_instance_id(instance_id),
         proposal_id,
         req.reason,
+        dry_run=req.dry_run,
+        at=req.at,
     )
 
 
@@ -649,6 +653,8 @@ def propose_sources(
         bundle=req.bundle,
         source_name=req.source_name,
         proposal_name=req.proposal_name,
+        dry_run=req.dry_run,
+        at=req.at,
     )
 
 
@@ -987,6 +993,8 @@ def depublish_playbill_block(
         resolve_server_instance_id(instance_id),
         req.source_id,
         req.block_id,
+        dry_run=req.dry_run,
+        at=req.at,
     )
 
 

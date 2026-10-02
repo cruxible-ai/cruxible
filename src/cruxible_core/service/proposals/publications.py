@@ -40,6 +40,7 @@ from cruxible_core.authoring.registrations import (
 from cruxible_core.authoring.store import AuthoringIntentStore
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.change_preview import ChangeMode, change_scope
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
@@ -113,6 +114,8 @@ def service_depublish_playbill_block(
     actor: "AuthenticatedActor",
     source_id: str,
     block_id: str,
+    dry_run: bool | None = None,
+    at: str | None = None,
 ) -> PlaybillBlockDepublishResultV1:
     """Release the bound publication registration that demands one page block.
 
@@ -126,9 +129,40 @@ def service_depublish_playbill_block(
     folds and the expectation it released says so, and a released declaration
     leaves a tombstone that says the same. Neither mints an identity, and
     neither refuses a caller who asks twice.
+
+    ``dry_run`` runs every check -- which road registered the block, the
+    publication's own abandon checks -- and releases nothing
+    (``would_depublish``, R12).
     """
 
     instance.require_writable()
+    with change_scope(
+        instance,
+        dry_run=dry_run,
+        at=at,
+        kind="direct",
+        operation="playbill.block.depublish",
+        describe=f"depublishing block {source_id}#{block_id}",
+    ) as mode:
+        return _depublish(
+            instance,
+            mode,
+            coordinator=coordinator,
+            actor=actor,
+            source_id=source_id,
+            block_id=block_id,
+        )
+
+
+def _depublish(
+    instance: PlaybillInstance,
+    mode: ChangeMode,
+    *,
+    coordinator: "AuthoringIntentCoordinator",
+    actor: "AuthenticatedActor",
+    source_id: str,
+    block_id: str,
+) -> PlaybillBlockDepublishResultV1:
     coordinate = PlaybillAcceptedCoordinate.model_validate(
         AcceptedCoordinate.from_internal(instance.accepted_coordinate()).model_dump(mode="json")
     )
@@ -151,16 +185,17 @@ def service_depublish_playbill_block(
         item.source_id == source_id and item.block_id == block_id for item in declarations
     )
     if declared:
-        release_projection_block_declaration(
-            instance,
-            source_id=source_id,
-            block_id=block_id,
-        )
+        if not mode.previewing:
+            release_projection_block_declaration(
+                instance,
+                source_id=source_id,
+                block_id=block_id,
+            )
         return PlaybillBlockDepublishResultV1(
             source_id=source_id,
             block_id=block_id,
             origin="declaration",
-            outcome="depublished",
+            outcome="would_depublish" if mode.previewing else "depublished",
             coordinate=coordinate,
         )
     if released_projection_block_declaration(instance, source_id=source_id, block_id=block_id):
@@ -204,6 +239,21 @@ def service_depublish_playbill_block(
             "through `cruxible playbill authoring abandon-insertion`"
         )
     registration = matched[0]
+    if mode.previewing:
+        expectation = coordinator.check_abandon_insertion(
+            registration.intent_id,
+            actor=actor,
+            expectation_id=registration.preparation.expectation_id,
+        )
+        return PlaybillBlockDepublishResultV1(
+            source_id=source_id,
+            block_id=block_id,
+            intent_id=registration.intent_id,
+            expectation_id=expectation.expectation_id,
+            outcome="would_depublish",
+            claim_identity=registration.claim_identity,
+            coordinate=coordinate,
+        )
     result = coordinator.abandon_insertion(
         registration.intent_id,
         actor=actor,

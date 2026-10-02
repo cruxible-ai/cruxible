@@ -502,10 +502,12 @@ def register_tools(
         instance_id: InstanceId = None,
         *,
         proposal_id: str,
+        dry_run: DryRun = None,
+        at: PreviewAt = None,
     ) -> contracts.PlaybillProposalReadmitResult:
         """Re-admit one stale proposal against the current accepted coordinate."""
         return handlers.handle_playbill_readmit_proposal(
-            require_instance_id(instance_id), proposal_id
+            require_instance_id(instance_id), proposal_id, dry_run=dry_run, at=at
         )
 
     @_tool
@@ -514,10 +516,12 @@ def register_tools(
         *,
         proposal_id: str,
         reason: str,
+        dry_run: DryRun = None,
+        at: PreviewAt = None,
     ) -> contracts.PlaybillProposalWithdrawResult:
         """Retire one open proposal that will never be activated."""
         return handlers.handle_playbill_withdraw_proposal(
-            require_instance_id(instance_id), proposal_id, reason
+            require_instance_id(instance_id), proposal_id, reason, dry_run=dry_run, at=at
         )
 
     @_tool
@@ -567,6 +571,8 @@ def register_tools(
         bundle: SourceCompilationBundle,
         source_name: str,
         proposal_name: str,
+        dry_run: DryRun = None,
+        at: PreviewAt = None,
     ) -> contracts.PlaybillProposalInspection:
         """Propose frozen source bytes without a client path."""
         return handlers.handle_playbill_propose_source_bundle(
@@ -574,6 +580,8 @@ def register_tools(
             bundle.model_dump(mode="json"),
             source_name=source_name,
             proposal_name=proposal_name,
+            dry_run=dry_run,
+            at=at,
         )
 
     @_tool
@@ -918,10 +926,12 @@ def register_tools(
         *,
         source_id: str,
         block_id: str,
+        dry_run: DryRun = None,
+        at: PreviewAt = None,
     ) -> contracts.PlaybillBlockDepublishResultV1:
         """Release the publication registration that demands one page block."""
         return handlers.handle_playbill_block_depublish(
-            require_instance_id(instance_id), source_id, block_id
+            require_instance_id(instance_id), source_id, block_id, dry_run=dry_run, at=at
         )
 
     @_tool
@@ -1556,6 +1566,8 @@ def register_tools(
         expected_latest_event_digest: str,
         reason: str,
         attribution_refs: list[str] | None = None,
+        dry_run: DryRun = None,
+        at: PreviewAt = None,
     ) -> contracts.PlaybillCurationActionResult:
         """Resolve one detector-version item as mechanically inapplicable."""
         return handlers.handle_playbill_curation_overrule(
@@ -1564,6 +1576,8 @@ def register_tools(
             expected_latest_event_digest=expected_latest_event_digest,
             reason=reason,
             attribution_refs=attribution_refs or [],
+            dry_run=dry_run,
+            at=at,
         )
 
     @_tool
@@ -1576,6 +1590,8 @@ def register_tools(
         accepted_proposal_id: str,
         accepted_changeset_digest: str,
         attribution_refs: list[str] | None = None,
+        dry_run: DryRun = None,
+        at: PreviewAt = None,
     ) -> contracts.PlaybillCurationActionResult:
         """Link one curation item to its exact accepted resolving ChangeSet."""
         return handlers.handle_playbill_curation_accept_fixed(
@@ -1586,6 +1602,8 @@ def register_tools(
             accepted_proposal_id=accepted_proposal_id,
             accepted_changeset_digest=accepted_changeset_digest,
             attribution_refs=attribution_refs or [],
+            dry_run=dry_run,
+            at=at,
         )
 
     @_tool
@@ -1598,6 +1616,8 @@ def register_tools(
         scope: Literal["item", "pattern", "instance"],
         until_generation: int | None = None,
         attribution_refs: list[str] | None = None,
+        dry_run: DryRun = None,
+        at: PreviewAt = None,
     ) -> contracts.PlaybillCurationActionResult:
         """Hide curation work temporarily without resolving its detector facts."""
         return handlers.handle_playbill_curation_suppress(
@@ -1608,6 +1628,8 @@ def register_tools(
             scope=scope,
             until_generation=until_generation,
             attribution_refs=attribution_refs or [],
+            dry_run=dry_run,
+            at=at,
         )
 
     @_tool

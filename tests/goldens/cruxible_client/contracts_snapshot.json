@@ -13243,7 +13243,8 @@
           "schema": {
             "enum": [
               "depublished",
-              "already_depublished"
+              "already_depublished",
+              "would_depublish"
             ],
             "title": "Outcome",
             "type": "string"
@@ -13374,7 +13375,8 @@
           "outcome": {
             "enum": [
               "depublished",
-              "already_depublished"
+              "already_depublished",
+              "would_depublish"
             ],
             "title": "Outcome",
             "type": "string"
@@ -18931,6 +18933,23 @@
             "type": "string"
           }
         },
+        "status": {
+          "default": "recorded",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": false,
+          "schema": {
+            "default": "recorded",
+            "enum": [
+              "recorded",
+              "would_record"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
         "tag": {
           "default": "playbill-curation-action-result-v1",
           "default_json_serializable": true,
@@ -19007,6 +19026,15 @@
           "operational_head_digest": {
             "pattern": "^sha256:[0-9a-f]{64}$",
             "title": "Operational Head Digest",
+            "type": "string"
+          },
+          "status": {
+            "default": "recorded",
+            "enum": [
+              "recorded",
+              "would_record"
+            ],
+            "title": "Status",
             "type": "string"
           },
           "tag": {
@@ -51457,6 +51485,25 @@
             "type": "boolean"
           }
         },
+        "coordinate": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "proposal_id": {
           "has_default": false,
           "has_default_factory": false,
@@ -51474,6 +51521,23 @@
           "required": true,
           "schema": {
             "title": "Reason",
+            "type": "string"
+          }
+        },
+        "status": {
+          "default": "withdrawn",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": false,
+          "schema": {
+            "default": "withdrawn",
+            "enum": [
+              "withdrawn",
+              "would_withdraw"
+            ],
+            "title": "Status",
             "type": "string"
           }
         },
@@ -51503,6 +51567,47 @@
         }
       },
       "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
         "additionalProperties": false,
         "properties": {
           "actor_id": {
@@ -51514,12 +51619,32 @@
             "title": "Already Withdrawn",
             "type": "boolean"
           },
+          "coordinate": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "proposal_id": {
             "title": "Proposal Id",
             "type": "string"
           },
           "reason": {
             "title": "Reason",
+            "type": "string"
+          },
+          "status": {
+            "default": "withdrawn",
+            "enum": [
+              "withdrawn",
+              "would_withdraw"
+            ],
+            "title": "Status",
             "type": "string"
           },
           "tag": {

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Mapping
 from datetime import datetime
-from typing import Literal, TypeAlias
+from typing import Literal, TypeAlias, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -15,6 +15,7 @@ from cruxible_client.contracts import (
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity, parse_artifact_identity
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
+from cruxible_client.contracts.change_control import DryRun, PreviewAt
 from cruxible_client.contracts.declared_blocks import ProjectionMarkerSummaryV1
 from cruxible_client.contracts.documents import document_path, parse_document
 from cruxible_client.contracts.errors import PlaybillError
@@ -45,6 +46,7 @@ from cruxible_core.exhaust.consumption import (
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.proposals.settlement import ChangeSetRecordAnyVersion
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.change_preview import change_entry, change_scope
 from cruxible_core.service.discovery.next import (
     PlaybillNextAccessProfileInvalid,
     PlaybillNextSourceObservationV3,
@@ -153,6 +155,8 @@ class PlaybillCurationOverruleRequestV1(_StrictCurationModel):
     expected_latest_event_digest: str
     reason: str = Field(min_length=1)
     attribution_refs: tuple[str, ...] = ()
+    dry_run: DryRun = None
+    at: PreviewAt = None
 
     @field_validator("item_id", "expected_latest_event_digest")
     @classmethod
@@ -171,6 +175,8 @@ class PlaybillCurationAcceptFixedRequestV1(_StrictCurationModel):
     accepted_proposal_id: str
     accepted_changeset_digest: str
     attribution_refs: tuple[str, ...] = ()
+    dry_run: DryRun = None
+    at: PreviewAt = None
 
     @field_validator(
         "item_id",
@@ -192,6 +198,8 @@ class PlaybillCurationSuppressRequestV1(_StrictCurationModel):
     scope: Literal["item", "pattern", "instance"]
     until_generation: int | None = Field(default=None, ge=0)
     attribution_refs: tuple[str, ...] = ()
+    dry_run: DryRun = None
+    at: PreviewAt = None
 
     @field_validator("item_id", "expected_latest_event_digest")
     @classmethod
@@ -281,6 +289,9 @@ class PlaybillCurationListResultV1(_StrictCurationModel):
 
 class PlaybillCurationActionResultV1(_StrictCurationModel):
     tag: Literal["playbill-curation-action-result-v1"] = "playbill-curation-action-result-v1"
+    #: ``would_record`` answers a preview: every check ran and nothing was
+    #: appended, so ``item`` is the item as it stands (R12).
+    status: Literal["recorded", "would_record"] = "recorded"
     coordinate: AcceptedCoordinate
     generation: int = Field(ge=0)
     operational_head_digest: str
@@ -880,6 +891,54 @@ def _action_result(instance: PlaybillInstance, item_id: str) -> PlaybillCuration
     )
 
 
+def _record_ruling(
+    instance: PlaybillInstance,
+    *,
+    request: PlaybillCurationOverruleRequestV1
+    | PlaybillCurationSuppressRequestV1
+    | PlaybillCurationAcceptFixedRequestV1,
+    item_id: str,
+    payload: BaseModel,
+    coordinate: AcceptedCoordinate,
+    generation: int,
+    actor_context: GovernedActorContext,
+    operation: str,
+) -> PlaybillCurationActionResultV1:
+    """Append one ruling, or (previewing) run every check the append runs (R12)."""
+
+    with change_scope(
+        instance,
+        dry_run=request.dry_run,
+        at=request.at,
+        kind="direct",
+        operation=operation,
+        describe=f"recording a curation ruling on {item_id}",
+    ) as mode:
+        store = instance.review_operational_store()
+        event_id = cast(str, getattr(payload, "event_id"))
+        if mode.previewing:
+            store.check_append(
+                family="curation",
+                partition_id=item_id,
+                event_id=event_id,
+                payload=payload,
+                expected_latest_event_digest=request.expected_latest_event_digest,
+            )
+            return _action_result(instance, item_id).model_copy(update={"status": "would_record"})
+        store.append(
+            family="curation",
+            partition_id=item_id,
+            event_id=event_id,
+            payload=payload,
+            coordinate=coordinate,
+            generation=generation,
+            actor_context=actor_context,
+            recorded_at=actor_context.timestamp,
+            expected_latest_event_digest=request.expected_latest_event_digest,
+        )
+        return _action_result(instance, item_id)
+
+
 def service_overrule_playbill_curation(
     instance: PlaybillInstance,
     *,
@@ -887,28 +946,29 @@ def service_overrule_playbill_curation(
     actor_context: GovernedActorContext,
 ) -> PlaybillCurationActionResultV1:
     instance.require_writable()
-    item = _open_item(instance, request.item_id, allow_quarantined=True)
-    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    generation = _generation(instance, coordinate)
-    payload = build_curation_overruled(
-        item_id=item.item_id,
-        expected_latest_event_digest=request.expected_latest_event_digest,
-        actor_principal_id=actor_context.actor_id,
-        reason=request.reason,
-        attribution_refs=request.attribution_refs,
-    )
-    instance.review_operational_store().append(
-        family="curation",
-        partition_id=item.item_id,
-        event_id=payload.event_id,
-        payload=payload,
-        coordinate=coordinate,
-        generation=generation,
-        actor_context=actor_context,
-        recorded_at=actor_context.timestamp,
-        expected_latest_event_digest=request.expected_latest_event_digest,
-    )
-    return _action_result(instance, item.item_id)
+    # The whole ruling runs behind a preview's guards: reading the accepted
+    # history and proposal evidence may catch derived indexes up on disk.
+    with change_entry(request.dry_run, "direct"):
+        item = _open_item(instance, request.item_id, allow_quarantined=True)
+        coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+        generation = _generation(instance, coordinate)
+        payload = build_curation_overruled(
+            item_id=item.item_id,
+            expected_latest_event_digest=request.expected_latest_event_digest,
+            actor_principal_id=actor_context.actor_id,
+            reason=request.reason,
+            attribution_refs=request.attribution_refs,
+        )
+        return _record_ruling(
+            instance,
+            request=request,
+            item_id=item.item_id,
+            payload=payload,
+            coordinate=coordinate,
+            generation=generation,
+            actor_context=actor_context,
+            operation="playbill.curation.overrule",
+        )
 
 
 def service_suppress_playbill_curation(
@@ -918,34 +978,35 @@ def service_suppress_playbill_curation(
     actor_context: GovernedActorContext,
 ) -> PlaybillCurationActionResultV1:
     instance.require_writable()
-    item = _open_item(instance, request.item_id, allow_quarantined=True)
-    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    generation = _generation(instance, coordinate)
-    if request.until_generation is not None and request.until_generation < generation:
-        raise PlaybillCurationSuppressionInvalid(
-            "curation suppression until_generation is already expired"
+    # The whole ruling runs behind a preview's guards: reading the accepted
+    # history and proposal evidence may catch derived indexes up on disk.
+    with change_entry(request.dry_run, "direct"):
+        item = _open_item(instance, request.item_id, allow_quarantined=True)
+        coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+        generation = _generation(instance, coordinate)
+        if request.until_generation is not None and request.until_generation < generation:
+            raise PlaybillCurationSuppressionInvalid(
+                "curation suppression until_generation is already expired"
+            )
+        payload = build_curation_suppressed(
+            item_id=item.item_id,
+            expected_latest_event_digest=request.expected_latest_event_digest,
+            actor_principal_id=actor_context.actor_id,
+            reason=request.reason,
+            scope=request.scope,
+            until_generation=request.until_generation,
+            attribution_refs=request.attribution_refs,
         )
-    payload = build_curation_suppressed(
-        item_id=item.item_id,
-        expected_latest_event_digest=request.expected_latest_event_digest,
-        actor_principal_id=actor_context.actor_id,
-        reason=request.reason,
-        scope=request.scope,
-        until_generation=request.until_generation,
-        attribution_refs=request.attribution_refs,
-    )
-    instance.review_operational_store().append(
-        family="curation",
-        partition_id=item.item_id,
-        event_id=payload.event_id,
-        payload=payload,
-        coordinate=coordinate,
-        generation=generation,
-        actor_context=actor_context,
-        recorded_at=actor_context.timestamp,
-        expected_latest_event_digest=request.expected_latest_event_digest,
-    )
-    return _action_result(instance, item.item_id)
+        return _record_ruling(
+            instance,
+            request=request,
+            item_id=item.item_id,
+            payload=payload,
+            coordinate=coordinate,
+            generation=generation,
+            actor_context=actor_context,
+            operation="playbill.curation.suppress",
+        )
 
 
 def _accepted_change(
@@ -1053,49 +1114,50 @@ def service_accept_fixed_playbill_curation(
     actor_context: GovernedActorContext,
 ) -> PlaybillCurationActionResultV1:
     instance.require_writable()
-    item = _open_item(instance, request.item_id)
-    resolved_generation, record, parent_tree, candidate_tree = _accepted_change(
-        instance,
-        proposal_id=request.accepted_proposal_id,
-        changeset_digest=request.accepted_changeset_digest,
-    )
-    # The item is proposed only after its accepted coordinate is observed; a
-    # resolving ChangeSet must therefore postdate, not merely equal, that generation.
-    if resolved_generation <= item.first_proposed_generation:
-        raise PlaybillCurationResolvingProposalInvalid(
-            "curation resolving generation does not postdate the item"
+    # The whole ruling runs behind a preview's guards: reading the accepted
+    # history and proposal evidence may catch derived indexes up on disk.
+    with change_entry(request.dry_run, "direct"):
+        item = _open_item(instance, request.item_id)
+        resolved_generation, record, parent_tree, candidate_tree = _accepted_change(
+            instance,
+            proposal_id=request.accepted_proposal_id,
+            changeset_digest=request.accepted_changeset_digest,
         )
-    affected = _affected_members(record, parent_tree=parent_tree, candidate_tree=candidate_tree)
-    related = _related_paths(item, tree=parent_tree) | _related_paths(item, tree=candidate_tree)
-    if not any(member.path in related for member in affected):
-        raise PlaybillCurationResolvingChangeUnrelated(
-            "accepted ChangeSet does not intersect the curation subject or evidence"
+        # The item is proposed only after its accepted coordinate is observed; a
+        # resolving ChangeSet must therefore postdate, not merely equal, that generation.
+        if resolved_generation <= item.first_proposed_generation:
+            raise PlaybillCurationResolvingProposalInvalid(
+                "curation resolving generation does not postdate the item"
+            )
+        affected = _affected_members(record, parent_tree=parent_tree, candidate_tree=candidate_tree)
+        related = _related_paths(item, tree=parent_tree) | _related_paths(item, tree=candidate_tree)
+        if not any(member.path in related for member in affected):
+            raise PlaybillCurationResolvingChangeUnrelated(
+                "accepted ChangeSet does not intersect the curation subject or evidence"
+            )
+        coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+        generation = _generation(instance, coordinate)
+        payload = build_curation_accepted_fixed(
+            item_id=item.item_id,
+            expected_latest_event_digest=request.expected_latest_event_digest,
+            actor_principal_id=actor_context.actor_id,
+            reason=request.reason,
+            accepted_proposal_id=request.accepted_proposal_id,
+            accepted_changeset_digest=request.accepted_changeset_digest,
+            resolved_generation=resolved_generation,
+            affected_members=affected,
+            attribution_refs=request.attribution_refs,
         )
-    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    generation = _generation(instance, coordinate)
-    payload = build_curation_accepted_fixed(
-        item_id=item.item_id,
-        expected_latest_event_digest=request.expected_latest_event_digest,
-        actor_principal_id=actor_context.actor_id,
-        reason=request.reason,
-        accepted_proposal_id=request.accepted_proposal_id,
-        accepted_changeset_digest=request.accepted_changeset_digest,
-        resolved_generation=resolved_generation,
-        affected_members=affected,
-        attribution_refs=request.attribution_refs,
-    )
-    instance.review_operational_store().append(
-        family="curation",
-        partition_id=item.item_id,
-        event_id=payload.event_id,
-        payload=payload,
-        coordinate=coordinate,
-        generation=generation,
-        actor_context=actor_context,
-        recorded_at=actor_context.timestamp,
-        expected_latest_event_digest=request.expected_latest_event_digest,
-    )
-    return _action_result(instance, item.item_id)
+        return _record_ruling(
+            instance,
+            request=request,
+            item_id=item.item_id,
+            payload=payload,
+            coordinate=coordinate,
+            generation=generation,
+            actor_context=actor_context,
+            operation="playbill.curation.accept-fixed",
+        )
 
 
 __all__ = [

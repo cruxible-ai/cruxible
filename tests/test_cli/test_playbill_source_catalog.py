@@ -62,6 +62,8 @@ entries:
             bundle: dict[str, Any],
             source_name: str,
             proposal_name: str,
+            dry_run: bool | None = None,
+            at: str | None = None,
         ) -> contracts.PlaybillProposalInspection:
             assert instance_id == "inst_cli"
             assert source_name == "playbill-design"

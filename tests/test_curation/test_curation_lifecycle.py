@@ -538,6 +538,63 @@ def test_suppression_is_non_resolving_and_compare_and_append_is_mandatory(
         )
 
 
+def test_curation_rulings_preview_on_their_own_path_and_append_nothing(
+    tmp_path: Path,
+) -> None:
+    """F-006: overrule and suppress preview, refusing exactly where the append would."""
+
+    from tests.support.store_snapshot import assert_writes_nothing
+
+    instance, item = _seed_item(tmp_path)
+    overrule = PlaybillCurationOverruleRequestV1(
+        item_id=item.item_id,
+        expected_latest_event_digest=item.latest_event_digest,
+        reason="the mechanical pattern is inapplicable",
+        dry_run=True,
+    )
+    suppress = PlaybillCurationSuppressRequestV1(
+        item_id=item.item_id,
+        expected_latest_event_digest=item.latest_event_digest,
+        reason="handled elsewhere",
+        scope="item",
+        dry_run=True,
+    )
+    for preview in (
+        assert_writes_nothing(
+            [tmp_path],
+            lambda: service_overrule_playbill_curation(
+                instance, request=overrule, actor_context=_actor()
+            ),
+        ),
+        assert_writes_nothing(
+            [tmp_path],
+            lambda: service_suppress_playbill_curation(
+                instance, request=suppress, actor_context=_actor()
+            ),
+        ),
+    ):
+        assert (preview.status, preview.item.status) == ("would_record", "open")
+
+    # A stale compare-and-append digest refuses the preview as it would the append.
+    with pytest.raises(ReviewOperationalConcurrentChangeError):
+        assert_writes_nothing(
+            [tmp_path],
+            lambda: service_overrule_playbill_curation(
+                instance,
+                request=overrule.model_copy(
+                    update={"expected_latest_event_digest": "sha256:" + "9" * 64}
+                ),
+                actor_context=_actor(),
+            ),
+        )
+    done = service_overrule_playbill_curation(
+        instance,
+        request=overrule.model_copy(update={"dry_run": None}),
+        actor_context=_actor(),
+    )
+    assert (done.status, done.item.status) == ("recorded", "overruled")
+
+
 def test_overrule_is_terminal_for_the_detector_version(tmp_path: Path) -> None:
     instance, item = _seed_item(tmp_path)
     accepted_before = instance.accepted_coordinate()

@@ -25,6 +25,7 @@ from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_core.governance.actor_context import GovernedActorContext
+from cruxible_core.storage.preview_fence import is_previewing, refuse_write_while_previewing
 
 REVIEW_OPERATIONAL_EVENT_DIGEST_DOMAIN = "playbill-review-operational-event-v1"
 REVIEW_OPERATIONAL_PARTITION_GENESIS_DOMAIN = "playbill-review-operational-partition-genesis-v1"
@@ -281,6 +282,11 @@ class ReviewOperationalStore:
     def _locked(self):  # type: ignore[no-untyped-def]
         if self._lock_path.is_symlink():
             raise ReviewOperationalStoreError("operational lock path is not trustworthy")
+        if is_previewing() and not self._lock_path.exists():
+            # A preview reads; it never creates the lock file. With no lock
+            # file there has never been a writer, so there is nothing to race.
+            yield
+            return
         flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
         try:
             descriptor = os.open(self._lock_path, flags, 0o600)
@@ -475,6 +481,7 @@ class ReviewOperationalStore:
     ) -> PlaybillReviewOperationalEventV1:
         # Ordered consumers retain the original chain and compare-and-append
         # semantics. Independent consumption events use append_batch instead.
+        refuse_write_while_previewing("review operational store")
         value = payload.model_dump(mode="json") if isinstance(payload, BaseModel) else payload
         payload_digest = _payload_digest(value)
         payload_bytes = canonical_bytes(value) + b"\n"
@@ -517,6 +524,44 @@ class ReviewOperationalStore:
                 payload_digest=payload_digest,
                 payload_bytes=payload_bytes,
             )
+
+    def check_append(
+        self,
+        *,
+        family: ReviewOperationalFamily,
+        partition_id: str,
+        event_id: str,
+        payload: BaseModel | dict[str, object],
+        expected_latest_event_digest: str | None | object = _UNCHECKED_PARTITION_HEAD,
+    ) -> None:
+        """Everything `append` checks before it writes, writing nothing (R12).
+
+        The same event-identity and partition-head checks, read without
+        initializing the store or creating the partition.
+        """
+
+        value = payload.model_dump(mode="json") if isinstance(payload, BaseModel) else payload
+        payload_digest = _payload_digest(value)
+        with self._locked():
+            existing: tuple[tuple[PlaybillReviewOperationalEventV1, dict[str, object]], ...] = ()
+            if self.root.exists():
+                self._load_manifest()
+                directory = self._partition_directory(family, partition_id, create=False)
+                if any((directory / "events").glob("*.json")):
+                    existing = self._load_partition(family, partition_id)
+            for event, prior_payload in existing:
+                if prior_payload.get("event_id") == event_id:
+                    if event.payload_digest != payload_digest:
+                        raise ReviewOperationalStoreError(
+                            "operational event identity has conflicting payload bytes"
+                        )
+                    return
+            latest = existing[-1][0].event_digest if existing else None
+            if (
+                expected_latest_event_digest is not _UNCHECKED_PARTITION_HEAD
+                and expected_latest_event_digest != latest
+            ):
+                raise ReviewOperationalConcurrentChangeError
 
     def ensure_first(
         self,

@@ -22,6 +22,21 @@ Defaults, per operation:
   credential, binding a ledger mirror) previews unless ``dry_run`` is false, and
   then commits only with ``at``: the confirmation is the preview's coordinate;
 - everything else commits unless ``dry_run`` is true.
+
+Exempt in v1 (the maintainer's scope ruling, r12-scope-1001), and so taking
+no ``dry_run``:
+
+- the exhaust paths (settle, predict, Procedure run and measure, Line
+  evaluate, dispatch and run): append-only observations that need a separate
+  dry-run-execution feature;
+- client-local writes (context connect/use/clear, kit build/pull, hook): they
+  change only the caller's own configuration or output files;
+- init (genesis) and server stop/restart: there is no coordinate to preview
+  against.
+
+Provider installation is a labelled v1 exception: its preview validates and
+writes nothing but does not run the whole install, and its outcome says so
+(``preview_scope="validation_only"`` and ``not_run``).
 """
 
 from __future__ import annotations
