@@ -1548,18 +1548,23 @@ def handle_playbill_block_sync(
     )
 
 
-def _pages_state(root: Path, pages: Sequence[Path]) -> PlaybillStateCoordinateV1:
-    """The state coordinate of the pages a detach edits: each one's bytes."""
+def _pages_state(root: Path, preimages: Mapping[Path, bytes]) -> PlaybillStateCoordinateV1:
+    """The state coordinate of the pages a detach edits: each one's exact bytes."""
 
     return PlaybillStateCoordinateV1.of(
         "workspace_pages",
         {
-            page.relative_to(root).as_posix(): (
-                hashlib.sha256(page.read_bytes()).hexdigest() if page.is_file() else None
-            )
-            for page in sorted(pages)
+            _workspace_relative(root, path): hashlib.sha256(content).hexdigest()
+            for path, content in sorted(preimages.items())
         },
     )
+
+
+def _workspace_relative(root: Path, path: Path) -> str:
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        return path.as_posix()
 
 
 def handle_playbill_block_detach(
@@ -1571,9 +1576,11 @@ def handle_playbill_block_detach(
 ) -> PlaybillBlockDetachResultV1:
     """Remove retired blocks' markers from pages, keeping their bodies (R12 previewed).
 
-    A preview reports what the edit would change and edits nothing; the
-    outcome is pinned to the pages' bytes, and a commit carrying ``at``
-    refuses if any page changed since.
+    A preview reports what the edit would change and edits nothing. The
+    outcome is pinned to the exact page bytes the adapter read -- the same
+    bytes each replacement compare-and-swaps against -- so a commit carrying
+    ``at`` refuses if any page changed since its preview, and a page edited
+    after that check is left as it is.
     """
 
     if not files:
@@ -1587,14 +1594,18 @@ def handle_playbill_block_detach(
         operation="playbill.block.detach",
         describe="detaching retired projection blocks",
     ) as change:
-        change.observe(_pages_state(root, pages))
         synced = sync_projection_blocks(
             _block_client(),
             instance_id,
             workspace=root,
             check=change.previewing,
             detach_paths=pages,
+            observe_preimages=lambda preimages: change.observe(_pages_state(root, preimages)),
         )
+        if change.coordinate is None:
+            # A refusal before any page was read (an unattached workspace)
+            # read no bytes, and pins (and is checked against) the empty set.
+            change.observe(_pages_state(root, {}))
     assert change.coordinate is not None
     return PlaybillBlockDetachResultV1(
         status="would_detach" if change.previewing else "detached",

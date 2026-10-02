@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import cast
@@ -640,8 +640,16 @@ def sync_projection_blocks(
     all_sources: bool = False,
     check: bool = False,
     detach_paths: Sequence[str | Path] = (),
+    observe_preimages: Callable[[Mapping[Path, bytes]], None] | None = None,
 ) -> PlaybillBlockSyncResultV1:
-    """Check all dependencies without authoring prose. Only explicit detach edits files."""
+    """Check all dependencies without authoring prose. Only explicit detach edits files.
+
+    ``observe_preimages``, when given, is called once with the exact bytes of
+    every page this call read, after every read and before any write. Each
+    detach then replaces a page only if it still holds exactly those bytes
+    (a whole-file compare-and-swap), so a caller that pins its commit to those
+    bytes (R12 ``at``) can raise here and nothing is written.
+    """
 
     root = Path(workspace).expanduser().resolve()
     try:
@@ -799,6 +807,8 @@ def sync_projection_blocks(
             items.append(_marker_error_item(root=root, path=path, content=content, error=exc))
             continue
         prepared.append((path, source_id, content, tuple(blocks)))
+    if observe_preimages is not None:
+        observe_preimages({path: content for path, _, content, _ in prepared})
     stamps = tuple(
         block.stamp for _, _, _, blocks in prepared for block in blocks if block.stamp is not None
     )

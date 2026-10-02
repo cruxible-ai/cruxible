@@ -129,31 +129,128 @@ def test_a_read_only_agent_checks_blocks_but_never_edits_a_page(
     reset_permissions()
 
 
-def test_detaching_previews_and_commits_pinned_to_the_pages_bytes(
-    adapter: _RepinClient, tmp_path: Path
+def test_detaching_previews_on_a_retired_page_and_writes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    page = tmp_path / "runbook.md"
+    page = _retired_page(tmp_path, monkeypatch)
+    before = page.read_bytes()
 
     preview = assert_writes_nothing(
         [tmp_path],
         lambda: handlers.handle_playbill_block_detach(
-            "inst_projection", files=["runbook.md"], dry_run=True
+            "inst_block_sync", files=["corpus/runbook.md"], dry_run=True
         ),
     )
     assert preview.status == "would_detach"
     assert preview.coordinate.subject == "workspace_pages"
+    assert page.read_bytes() == before
 
-    page.write_bytes(page.read_bytes() + b"edited after the preview\n")
+    done = handlers.handle_playbill_block_detach(
+        "inst_block_sync", files=["corpus/runbook.md"], at=preview.coordinate.digest
+    )
+    assert (done.status, [item.outcome for item in done.sync.items]) == (
+        "detached",
+        ["detached"],
+    )
+    assert b"playbill:block" not in page.read_bytes()
+
+
+def _retired_page(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    from tests.test_client.test_playbill_block_sync import _SyncClient
+    from tests.test_client.test_playbill_block_sync import _workspace as _sync_workspace
+
+    page = _sync_workspace(tmp_path)
+    client = _SyncClient(refusal="block_backing_retired")
+    monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setattr(handlers, "_block_client", lambda: client)
+    return page
+
+
+def test_a_page_edited_after_the_preview_refuses_the_pinned_detach(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F-013: the coordinate is the exact bytes the adapter reads and replaces."""
+
+    page = _retired_page(tmp_path, monkeypatch)
+    preview = handlers.handle_playbill_block_detach(
+        "inst_block_sync", files=["corpus/runbook.md"], dry_run=True
+    )
+    assert [item.outcome for item in preview.sync.items] == ["would_detach"]
+    edited = page.read_bytes() + b"edited after the preview\n"
+    page.write_bytes(edited)
+
     with pytest.raises(ChangeRefusedError) as moved:
         handlers.handle_playbill_block_detach(
-            "inst_projection", files=["runbook.md"], at=preview.coordinate.digest
+            "inst_block_sync", files=["corpus/runbook.md"], at=preview.coordinate.digest
         )
     assert moved.value.error_code == "playbill.preview.state_moved"
+    assert page.read_bytes() == edited
 
-    fresh = handlers.handle_playbill_block_detach(
-        "inst_projection", files=["runbook.md"], dry_run=True
+
+def test_a_page_edited_after_the_adapter_read_is_never_overwritten(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F-013: an edit landing after the adapter read loses nothing to the detach.
+
+    The pin check passes on the bytes the adapter read; the replacement then
+    compare-and-swaps against those same bytes, so the edited page is kept.
+    """
+
+    from cruxible_client.authoring import blocks
+
+    page = _retired_page(tmp_path, monkeypatch)
+    preview = handlers.handle_playbill_block_detach(
+        "inst_block_sync", files=["corpus/runbook.md"], dry_run=True
     )
+    original = blocks.read_projection_source
+    edited: list[bytes] = []
+
+    def read_then_edit(path):  # type: ignore[no-untyped-def]
+        content = original(path)
+        if not edited:
+            edited.append(content + b"edited after the read\n")
+            page.write_bytes(edited[0])
+        return content
+
+    monkeypatch.setattr(blocks, "read_projection_source", read_then_edit)
     done = handlers.handle_playbill_block_detach(
-        "inst_projection", files=["runbook.md"], at=fresh.coordinate.digest
+        "inst_block_sync", files=["corpus/runbook.md"], at=preview.coordinate.digest
     )
-    assert done.status == "detached"
+
+    assert done.coordinate == preview.coordinate
+    assert [item.outcome for item in done.sync.items] != ["detached"]
+    assert page.read_bytes() == edited[0]
+
+
+def test_a_page_edited_at_the_adapter_read_refuses_the_pinned_detach(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F-013: the pin is checked on the bytes the adapter reads, not an earlier read.
+
+    The edit lands just before the adapter reads the page: the commit's pin
+    is checked against what the adapter actually read and would replace, so
+    it refuses and the edited page keeps its markers.
+    """
+
+    from cruxible_client.authoring import blocks
+
+    page = _retired_page(tmp_path, monkeypatch)
+    preview = handlers.handle_playbill_block_detach(
+        "inst_block_sync", files=["corpus/runbook.md"], dry_run=True
+    )
+    original = blocks.read_projection_source
+    edited: list[bytes] = []
+
+    def edit_then_read(path):  # type: ignore[no-untyped-def]
+        if not edited:
+            edited.append(page.read_bytes() + b"edited just before the read\n")
+            page.write_bytes(edited[0])
+        return original(path)
+
+    monkeypatch.setattr(blocks, "read_projection_source", edit_then_read)
+    with pytest.raises(ChangeRefusedError) as moved:
+        handlers.handle_playbill_block_detach(
+            "inst_block_sync", files=["corpus/runbook.md"], at=preview.coordinate.digest
+        )
+    assert moved.value.error_code == "playbill.preview.state_moved"
+    assert page.read_bytes() == edited[0]
