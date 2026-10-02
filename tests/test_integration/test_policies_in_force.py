@@ -79,7 +79,8 @@ def test_policies_in_force_lists_live_standalone_and_embedded_rows(tmp_path) -> 
         "claim_resolution_policy",
         "procedure_runtime_policy",
         "query_evaluation_policy",
-        # The two Triggers every new instance is seeded with.
+        # The three Triggers every new instance is seeded with.
+        "trigger_schedule",
         "trigger_schedule",
         "trigger_schedule",
     ]
@@ -114,7 +115,25 @@ def test_policies_in_force_lists_live_standalone_and_embedded_rows(tmp_path) -> 
         "procedure_runtime_policy",
         "trigger_schedule",
         "trigger_schedule",
+        "trigger_schedule",
     ]
+
+    assert historical.coordinate.git_oid == genesis.oid
+    assert historical.coordinate.git_oid != result.coordinate.git_oid
+    seeded_schedules = {
+        "Trigger:evidence-sweep": {"kind": "cadence", "interval_seconds": 86400},
+        "Trigger:floor-refresh": {"kind": "generation_accepted"},
+        "Trigger:prediction-anchor-retry": {"kind": "cadence", "interval_seconds": 3600},
+    }
+    for inventory in (result, historical):
+        schedules = [row for row in inventory.policies if row.policy_kind == "trigger_schedule"]
+        assert {
+            row.declaring_artifact_identity: row.policy for row in schedules
+        } == seeded_schedules
+        for row in schedules:
+            assert row.placement == "embedded"
+            assert row.declaring_artifact_kind == "Trigger"
+            assert row.field_path == "/schedule"
 
 
 def test_policy_inventory_skips_the_cards_an_accepted_change_leaves(tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -238,7 +257,7 @@ def complete_policy_inventory(
     for procedure in (live_procedure, retired_procedure):
         tree[procedure_path(procedure.identity.name)] = render_procedure(procedure)
 
-    # The seeded default Triggers are two live carriers; this inventory keeps one.
+    # The seeded default Triggers are three live carriers; this inventory keeps one.
     for path in [path for path in tree if path.startswith("triggers/")]:
         del tree[path]
     live_trigger = action_trigger("policy-sweep", action="evidence.sweep", interval_seconds=60)
