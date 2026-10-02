@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
@@ -43,8 +44,12 @@ from cruxible_client.authoring.workspace import (
 from cruxible_client.authoring.write_evidence import observe_changes, observe_evidence
 from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.attestations import ApprovalAttestation, ApprovalStatement
+from cruxible_client.contracts.authoring.models import PlaybillBlockDetachResultV1
 from cruxible_client.contracts.capture_reads import CaptureReadRequestV1, CaptureReadV1
-from cruxible_client.contracts.change_control import ChangeControlRequestV1
+from cruxible_client.contracts.change_control import (
+    ChangeControlRequestV1,
+    PlaybillStateCoordinateV1,
+)
 from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationAppendRequestV1,
     ClaimAttestationAppendResultV1,
@@ -148,6 +153,7 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillSourceProposeRequest,
     PlaybillStoreBodyRequest,
 )
+from cruxible_core.service.change_preview import state_change_scope
 from cruxible_core.service.discovery.since import validate_playbill_since_request
 from cruxible_core.service.procedures.procedure_runs import (
     LineRunRequestV1,
@@ -1507,10 +1513,12 @@ def handle_playbill_block_sync(
     *,
     files: Sequence[str] = (),
     all_sources: bool = False,
-    detach: Sequence[str] = (),
-    check: bool = False,
 ) -> contracts.PlaybillBlockSyncResultV1:
-    """Check every block's backings adapter-side; only ``detach`` edits a page."""
+    """Check every block's backings adapter-side; reads only, edits no page.
+
+    Detaching retired blocks edits pages, so it is its own write-tier tool
+    (`handle_playbill_block_detach`), never a flag on this read.
+    """
 
     root = mcp_workspace_root()
     return sync_projection_blocks(
@@ -1519,8 +1527,61 @@ def handle_playbill_block_sync(
         workspace=root,
         paths=tuple(resolve_workspace_path(item, root=root, kind="file") for item in files),
         all_sources=all_sources,
-        check=check,
-        detach_paths=tuple(resolve_workspace_path(item, root=root, kind="file") for item in detach),
+    )
+
+
+def _pages_state(root: Path, pages: Sequence[Path]) -> PlaybillStateCoordinateV1:
+    """The state coordinate of the pages a detach edits: each one's bytes."""
+
+    return PlaybillStateCoordinateV1.of(
+        "workspace_pages",
+        {
+            page.relative_to(root).as_posix(): (
+                hashlib.sha256(page.read_bytes()).hexdigest() if page.is_file() else None
+            )
+            for page in sorted(pages)
+        },
+    )
+
+
+def handle_playbill_block_detach(
+    instance_id: str,
+    *,
+    files: Sequence[str],
+    dry_run: bool | None = None,
+    at: str | None = None,
+) -> PlaybillBlockDetachResultV1:
+    """Remove retired blocks' markers from pages, keeping their bodies (R12 previewed).
+
+    A preview reports what the edit would change and edits nothing; the
+    outcome is pinned to the pages' bytes, and a commit carrying ``at``
+    refuses if any page changed since.
+    """
+
+    if not files:
+        raise DataValidationError("name at least one page to detach retired blocks from")
+    root = mcp_workspace_root()
+    pages = tuple(resolve_workspace_path(item, root=root, kind="file") for item in files)
+    with state_change_scope(
+        dry_run=dry_run,
+        at=at,
+        kind="direct",
+        operation="playbill.block.detach",
+        describe="detaching retired projection blocks",
+    ) as change:
+        change.observe(_pages_state(root, pages))
+        synced = sync_projection_blocks(
+            _block_client(),
+            instance_id,
+            workspace=root,
+            check=change.previewing,
+            detach_paths=pages,
+        )
+    assert change.coordinate is not None
+    return PlaybillBlockDetachResultV1(
+        status="would_detach" if change.previewing else "detached",
+        sync=synced,
+        coordinate=change.coordinate,
     )
 
 

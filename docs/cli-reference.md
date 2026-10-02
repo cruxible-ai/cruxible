@@ -1642,9 +1642,13 @@ repair.
 On MCP the same adapter runs in the MCP server process:
 `cruxible_playbill_block_repin` takes the block and its page (`file`,
 workspace-relative, or `source`, its catalog id) and computes the stamp there,
-so an agent never builds one; `cruxible_playbill_block_sync` is `block sync`.
-`--dry-run` (MCP `dry_run`) computes and checks the stamp and writes nothing:
-no manifest, no page edit, no declaration.
+so an agent never builds one; `cruxible_playbill_block_sync` is `block sync`
+without `--detach`, a read that edits no page. Detaching is the write-tier
+`cruxible_playbill_block_detach` (`files`, `dry_run`, `at`): its preview
+reports what the edit would change and is pinned to the pages' bytes, and a
+commit with `at` refuses if a page changed since. `--dry-run` (MCP `dry_run`)
+on a repin computes and checks the stamp and writes nothing: no manifest, no
+page edit, no declaration.
 
 ### Projection block markers
 

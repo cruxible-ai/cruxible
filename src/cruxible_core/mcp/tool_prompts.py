@@ -181,7 +181,11 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "cruxible_playbill_block_sync": (
         "Use to check whether page blocks still match their backings; each stale block names "
-        "its repin. Only `detach` edits a page."
+        "its repin. It edits no page."
+    ),
+    "cruxible_playbill_block_detach": (
+        "Use to take retired blocks' markers off pages, keeping the prose: preview with "
+        "dry_run, then commit with at set to the preview's coordinate digest."
     ),
     "cruxible_playbill_authoring_abandon_insertion": (
         "Use to release a publication expectation an instance already holds; nothing mints "

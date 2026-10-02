@@ -3843,7 +3843,8 @@ the author’s prose or silently repin. It never raises on drift: read
 what it would change without making it. `repin(..., dry_run=True)` returns the
 stamp it would write and writes nothing. The marker grammar is in the CLI
 reference under "Projection block markers"; MCP agents use the
-`cruxible_playbill_block_repin` and `cruxible_playbill_block_sync` tools, which
+`cruxible_playbill_block_repin`, `cruxible_playbill_block_sync` (read-only) and
+`cruxible_playbill_block_detach` (the page edit, previewed) tools, which
 run this same adapter.
 
 <a id="api-projectionblocks"></a>

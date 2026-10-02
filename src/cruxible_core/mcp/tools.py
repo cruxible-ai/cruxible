@@ -14,7 +14,10 @@ from pydantic.json_schema import SkipJsonSchema
 from cruxible_client import contracts
 from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
 from cruxible_client.contracts.attestations import ApprovalAttestation
-from cruxible_client.contracts.authoring.models import WorkingSelectionObservationV1
+from cruxible_client.contracts.authoring.models import (
+    PlaybillBlockDetachResultV1,
+    WorkingSelectionObservationV1,
+)
 from cruxible_client.contracts.capture_reads import CaptureReadRequestV1, CaptureReadV1
 from cruxible_client.contracts.captures import CanonicalDurationV1
 from cruxible_client.contracts.change_control import DryRun, PreviewAt
@@ -882,21 +885,31 @@ def register_tools(
         all_sources: Annotated[
             bool, Field(description="Check every page the source catalog names.")
         ] = False,
-        detach: Annotated[
-            list[str] | None,
-            Field(description="Pages whose retired blocks lose their markers, body kept."),
-        ] = None,
-        check: Annotated[
-            bool, Field(description="true: report what detach would change; edit nothing.")
-        ] = False,
     ) -> contracts.PlaybillBlockSyncResultV1:
-        """Check each block's backings against the instance; repairs name the next call."""
+        """Check each block's backings against the instance; reads only, edits no page."""
         return handlers.handle_playbill_block_sync(
             require_instance_id(instance_id),
             files=files or (),
             all_sources=all_sources,
-            detach=detach or (),
-            check=check,
+        )
+
+    @_tool
+    def cruxible_playbill_block_detach(
+        instance_id: InstanceId = None,
+        *,
+        files: Annotated[
+            list[str],
+            Field(
+                min_length=1,
+                description="Pages whose retired blocks lose their markers, body kept.",
+            ),
+        ],
+        dry_run: DryRun = None,
+        at: PreviewAt = None,
+    ) -> PlaybillBlockDetachResultV1:
+        """Remove retired blocks' markers from pages (bodies kept); dry_run edits nothing."""
+        return handlers.handle_playbill_block_detach(
+            require_instance_id(instance_id), files=files, dry_run=dry_run, at=at
         )
 
     @_tool

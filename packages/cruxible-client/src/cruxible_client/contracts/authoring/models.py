@@ -36,6 +36,7 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.captures import CaptureContractV1
+from cruxible_client.contracts.change_control import PlaybillStateCoordinateV1
 from cruxible_client.contracts.claim_attestations import ClaimAttestationV2
 from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import ClaimType
@@ -2925,7 +2926,22 @@ class PlaybillBlockSyncResultV1(_StrictAuthoringModel):
         return self
 
 
+class PlaybillBlockDetachResultV1(_StrictAuthoringModel):
+    """Retired blocks' markers removed from pages, bodies kept; or (preview) which would be.
+
+    ``coordinate`` digests the named pages' bytes as this call read them; a
+    commit carrying ``at`` refuses ``playbill.preview.state_moved`` if any page
+    changed since its preview.
+    """
+
+    tag: Literal["playbill-block-detach-result-v1"] = "playbill-block-detach-result-v1"
+    status: Literal["detached", "would_detach"]
+    sync: PlaybillBlockSyncResultV1
+    coordinate: PlaybillStateCoordinateV1
+
+
 __all__ = [
+    "PlaybillBlockDetachResultV1",
     "AUTHORING_CANDIDATE_TREE_DIGEST_DOMAIN",
     "AUTHORING_CREATE_FINGERPRINT_DOMAIN",
     "AUTHORING_FRONTIER_DIGEST_DOMAIN",
