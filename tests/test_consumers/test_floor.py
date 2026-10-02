@@ -473,3 +473,34 @@ def test_deliver_now_refuses_a_pinned_coordinate_with_a_runnable_repair(world, m
     assert client_error.repair == envelope.repair
     assert floor_outcomes(instance) == ()
     assert not (workspace / ".playbill").exists()
+
+
+def test_daemon_delivery_writes_the_local_indexes_the_client_writes(tmp_path, monkeypatch):
+    from cruxible_client.authoring.workspace import materialize_playbill_floor
+    from cruxible_core.service.floor.floor import service_export_playbill_floor
+    from tests.core_support._write_support import report_evidence
+    from tests.test_floor.test_floor_current import NOTE, _add_document, _export_envelope
+
+    (tmp_path / "host").mkdir()
+    instance, _ = seed_write_surface(tmp_path / "host")
+    workspace = tmp_path / "workspace"
+    _write(instance, _set(WI1, "measured", 3, evidence=report_evidence(workspace, "Count: 3")))
+    _add_document(instance, "reports", NOTE.encode())
+    registry = InstanceRegistry(tmp_path / "state" / "daemon" / "registry.db")
+    registry.create_governed_instance_with_id(
+        instance.descriptor.instance_id, workspace_root=workspace
+    )
+    registry.set_floor_delivery(instance.descriptor.instance_id, True)
+    monkeypatch.setattr(floor, "get_registry", lambda: registry)
+    local = ("sources/INDEX", "projections/INDEX")
+
+    assert refresh_floor(instance, instance.descriptor.instance_id).written.status == "written"
+    delivered = {path: (workspace / ".playbill/floor" / path).read_bytes() for path in local}
+    assert b"reports.md" in delivered["sources/INDEX"]
+
+    client = tmp_path / "client"
+    report_evidence(client, "Count: 3")
+    materialize_playbill_floor(
+        client, export=_export_envelope(service_export_playbill_floor(instance))
+    )
+    assert delivered == {path: (client / ".playbill/floor" / path).read_bytes() for path in local}

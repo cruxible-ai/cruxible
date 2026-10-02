@@ -976,7 +976,7 @@ def write_projection_index(workspace: str | Path) -> int | None:
     stamp = ledger_header.rsplit("  ", 1)[-1]
     sources_header = (
         f"# sources INDEX  {len(joined)} sources  columns: source, contracts, locator, "
-        f"citing claims, changed gen  {stamp}  (locators joined by the client from its "
+        f"citing claims, changed gen  {stamp}  (locators joined from the local "
         "workspace catalog)"
     )
     _write_floor_local(

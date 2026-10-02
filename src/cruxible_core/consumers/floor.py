@@ -92,7 +92,14 @@ def _floor_directory(workspace: str) -> tuple[Path, Path]:
 
 
 def _post_apply_joins(workspace: Path) -> None:
-    """Workspace joins stay together when another local index is added."""
+    """The workspace joins the client writes after it applies a floor, in its order.
+
+    ``write_projection_index`` joins the workspace's source catalogs into
+    ``sources/INDEX`` (the daemon's ``sources/LEDGER`` with workspace locators)
+    and binds workspace files into ``projections/INDEX``. Both stay outside the
+    coordinate-pure manifest, so a daemon-delivered floor and a client-applied
+    one leave the same local files.
+    """
 
     write_projection_index(workspace)
 
