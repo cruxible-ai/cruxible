@@ -651,41 +651,88 @@ def test_the_scan_sees_routes() -> None:
 
 
 def _http_hold_paths(modules: dict[str, ast.Module]) -> list[str]:
-    """Follow in-repository function references, including offloaded callbacks.
+    """Follow statically named callables, including methods and offloaded callbacks.
 
-    Nested bodies and local imports count too: moving a blocking acquisition
-    into a closure or another module must not evade the HTTP rule.
+    Each function has its own bindings. Nested imports stay in their scope,
+    and a nested body is followed only when its callable is referenced.
     """
     functions = {}
     bindings = {}
     routes = []
 
-    def imports(nodes):
-        result = {}
+    def scope_nodes(body):
+        found = []
+
+        def visit(node):
+            found.append(node)
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
+                # Defaults and decorators execute here; the body has its own scope.
+                found.extend(_executed(node))
+            elif isinstance(node, ast.ClassDef):
+                for expression in (
+                    *node.bases,
+                    *(keyword.value for keyword in node.keywords),
+                    *node.decorator_list,
+                ):
+                    found.extend(_executed(expression))
+            else:
+                for child in ast.iter_child_nodes(node):
+                    visit(child)
+
+        for statement in body:
+            visit(statement)
+        return found
+
+    def register_scope(body, parent, prefix, *, class_scope=False, arguments=None):
+        nodes = scope_nodes(body)
+        names = dict(parent)
+        # Parameters shadow enclosing names; defaults can contain other scopes.
+        if arguments is not None:
+            for argument in (
+                *arguments.posonlyargs,
+                *arguments.args,
+                *arguments.kwonlyargs,
+                arguments.vararg,
+                arguments.kwarg,
+            ):
+                if argument is not None:
+                    names[argument.arg] = None
         for node in nodes:
             if isinstance(node, ast.ImportFrom) and node.module and not node.level:
                 for alias in node.names:
-                    result[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+                    names[alias.asname or alias.name] = f"{node.module}.{alias.name}"
             elif isinstance(node, ast.Import):
                 for alias in node.names:
-                    result[alias.asname or alias.name.split(".")[0]] = (
+                    names[alias.asname or alias.name.split(".")[0]] = (
                         alias.name if alias.asname else alias.name.split(".")[0]
                     )
-        return result
+            elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+                names[node.name] = f"{prefix}.{node.name}"
+        for node in nodes:
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                qualified = f"{prefix}.{node.name}"
+                functions[qualified] = node
+                # A method closes over the class's enclosing scope, not its
+                # namespace. Nested functions close over their parent function.
+                bindings[qualified] = register_scope(
+                    node.body,
+                    parent if class_scope else names,
+                    qualified,
+                    arguments=node.args,
+                )
+                if _is_route(node):
+                    routes.append(qualified)
+            elif isinstance(node, ast.ClassDef):
+                register_scope(
+                    node.body,
+                    parent if class_scope else names,
+                    f"{prefix}.{node.name}",
+                    class_scope=True,
+                )
+        return names
 
     for module, tree in modules.items():
-        global_names = imports(tree.body)
-        for node in tree.body:
-            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-                global_names[node.name] = f"{module}.{node.name}"
-        for node in tree.body:
-            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-                continue
-            qualified = f"{module}.{node.name}"
-            functions[qualified] = node
-            bindings[qualified] = global_names | imports(ast.walk(node))
-            if _is_route(node):
-                routes.append(qualified)
+        register_scope(tree.body, {}, module)
 
     def resolve(node, names):
         if isinstance(node, ast.Name):
@@ -706,13 +753,12 @@ def _http_hold_paths(modules: dict[str, ast.Module]) -> list[str]:
             visited.add(name)
             function = functions[name]
             names = bindings[name]
-            for statement in function.body:
-                for node in ast.walk(statement):
-                    target = resolve(node, names)
-                    if target == "cruxible_core.runtime.admission.FLOOR_ADMISSION.hold":
-                        problems.append(" -> ".join([*path, "FLOOR_ADMISSION.hold"]))
-                    elif target in functions and target not in visited:
-                        pending.append((target, [*path, target]))
+            for node in scope_nodes(function.body):
+                target = resolve(node, names)
+                if target == "cruxible_core.runtime.admission.FLOOR_ADMISSION.hold":
+                    problems.append(" -> ".join([*path, "FLOOR_ADMISSION.hold"]))
+                elif target in functions and target not in visited:
+                    pending.append((target, [*path, target]))
     return sorted(set(problems))
 
 
@@ -762,3 +808,88 @@ def toggle():
     return admitted_body()
 """)
     assert _http_hold_paths(modules) == []
+
+
+def test_http_hold_check_rejects_a_statically_named_class_method() -> None:
+    modules = {
+        "routes": ast.parse("""
+from cruxible_core.runtime import host_api
+@router.post("/toggle")
+def toggle():
+    return host_api.Toggle.run()
+"""),
+        "cruxible_core.runtime.host_api": ast.parse("""
+from cruxible_core.runtime.admission import FLOOR_ADMISSION
+class Toggle:
+    @staticmethod
+    def run():
+        with FLOOR_ADMISSION.hold("instance"):
+            return 1
+"""),
+    }
+    assert _http_hold_paths(modules) == [
+        "routes.toggle -> cruxible_core.runtime.host_api.Toggle.run -> FLOOR_ADMISSION.hold"
+    ]
+
+
+def test_http_hold_check_keeps_nested_imports_out_of_the_outer_scope() -> None:
+    modules = {
+        "routes": ast.parse("""
+from cruxible_core.runtime.admission import FLOOR_ADMISSION
+@router.post("/toggle")
+def toggle():
+    def unrelated():
+        from harmless import object as FLOOR_ADMISSION
+        return FLOOR_ADMISSION
+    with FLOOR_ADMISSION.hold("instance"):
+        return 1
+"""),
+    }
+    assert _http_hold_paths(modules) == ["routes.toggle -> FLOOR_ADMISSION.hold"]
+
+
+def test_http_hold_check_resolves_called_nested_functions_in_their_own_scope() -> None:
+    source = """
+from cruxible_core.runtime.admission import FLOOR_ADMISSION
+@router.post("/toggle")
+def toggle():
+    def unused():
+        with FLOOR_ADMISSION.hold("instance"):
+            return 1
+    def called():
+        from harmless import object as FLOOR_ADMISSION
+        with FLOOR_ADMISSION.hold("instance"):
+            return 1
+    return called()
+"""
+    assert _http_hold_paths({"routes": ast.parse(source)}) == []
+    source = source.replace(
+        "from harmless import object as FLOOR_ADMISSION",
+        "from cruxible_core.runtime.admission import FLOOR_ADMISSION",
+    )
+    assert _http_hold_paths({"routes": ast.parse(source)}) == [
+        "routes.toggle -> routes.toggle.called -> FLOOR_ADMISSION.hold"
+    ]
+
+
+def test_http_hold_check_methods_do_not_inherit_class_namespace_imports() -> None:
+    modules = {
+        "routes": ast.parse("""
+from cruxible_core.runtime import host_api
+@router.post("/toggle")
+def toggle():
+    return host_api.Toggle.run()
+"""),
+        "cruxible_core.runtime.host_api": ast.parse("""
+from cruxible_core.runtime.admission import FLOOR_ADMISSION
+class Toggle:
+    from harmless import object as FLOOR_ADMISSION
+    @classmethod
+    def run(cls):
+        with FLOOR_ADMISSION.hold("instance"):
+            return 1
+"""),
+    }
+    assert _http_hold_paths(modules) == [
+        "routes.toggle -> cruxible_core.runtime.host_api.Toggle.run -> FLOOR_ADMISSION.hold"
+    ]
