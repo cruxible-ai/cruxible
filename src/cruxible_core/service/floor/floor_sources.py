@@ -4,8 +4,10 @@ A line names the source, the CaptureContract(s) its Captures were taken under,
 a ledger-derived locator, how many current Claims cite it, and the generation
 it last changed. The locator is the source's Document ref when an accepted
 Document carries the source's name (a ledger source, or a foreign source
-compiled from the same catalog entry), an external source's coordinate and
-selector types when it is no foreign source, and ``-`` otherwise. Self-source
+compiled from the same catalog entry); otherwise every distinct coordinate and
+selector type pair its Captures were taken at (a foreign source has none: its
+coordinate is a content digest), sorted and comma-separated; and ``-`` when
+there is none. Self-source
 Captures, the coordinator's record of a Claim's own value, are no evidence
 source and are left out. Every accepted Document is a source too, cited or not,
 on the one line of its name.
@@ -124,9 +126,23 @@ def capture_sources(
 @dataclass
 class _Line:
     contracts: set[str]
-    locator: str
+    locators: set[str]
     citing: set[str]
     changed: int
+    document: str | None = None
+
+    def locator(self) -> str:
+        """The Document of the source's name, else every distinct locator, sorted.
+
+        A set, never the first one seen, so the line is the same whatever order
+        the Claims arrive in (a cold render orders them by identity; an
+        incremental one reinserts the Claims it changed).
+        """
+
+        if self.document is not None:
+            return self.document
+        located = sorted((item for item in self.locators if item != "-"), key=str.encode)
+        return ",".join(located) or "-"
 
 
 def render_sources_ledger(
@@ -160,24 +176,23 @@ def render_sources_ledger(
                 COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity
             ):
                 continue
-            line = lines.setdefault(found.source, _Line(set(), found.locator, set(), 0))
+            line = lines.setdefault(found.source, _Line(set(), set(), set(), 0))
             line.contracts.add("-" if contract is None else contract.identity.name)
-            if line.locator == "-":
-                line.locator = found.locator
+            line.locators.add(found.locator)
             line.citing.add(claim.identity.name)
             line.changed = max(line.changed, claim_latest.get(claim.identity.name, 0))
     for path, latest in documents.items():
         ref = document_ref(path)
-        line = lines.setdefault(ref.removeprefix("Document:"), _Line(set(), ref, set(), 0))
+        line = lines.setdefault(ref.removeprefix("Document:"), _Line(set(), set(), set(), 0))
         # A Document of the source's own name is where the source lives in the ledger.
-        line.locator = ref
+        line.document = ref
         line.changed = max(line.changed, latest)
     rows = [
         "\t".join(
             (
                 source,
                 ",".join(sorted(line.contracts, key=str.encode)) or "-",
-                line.locator,
+                line.locator(),
                 str(len(line.citing)),
                 str(line.changed),
             )

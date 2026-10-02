@@ -55,8 +55,8 @@ verbs. The floor does no matching of its own: grep is the search.
 - `sources/INDEX`: one tab-separated line per evidence source: the source, its
   CaptureContract(s), where it lives (the workspace path the client's source
   catalog binds it to, marked `(missing)` when no such file exists; else a
-  Document ref or an external source's selector types), how many current Claims
-  cite it, and the generation it last changed. Every accepted Document is a
+  Document ref or the external `coordinate/selector` type pairs), how many
+  current Claims cite it, and the generation it last changed. Every accepted Document is a
   source, cited or not. The client writes it from `sources/LEDGER` and its own
   catalog after every refresh; the daemon never sees workspace paths.
 - `projections/INDEX`: written by the client from its own workspace, never by
@@ -95,8 +95,9 @@ the floor whole.
 ## Not for grep
 
 - `sources/LEDGER`: `sources/INDEX` as accepted state alone gives it, with
-  only ledger-derived locators (a Document ref, an external source's selector
-  types, or `-`); the client joins workspace paths into `sources/INDEX`.
+  only ledger-derived locators (a Document ref, else every external
+  `coordinate/selector` type pair, comma-separated, or `-`); the client joins
+  workspace paths into `sources/INDEX`.
 - `manifest.json` names the accepted coordinate and its generation, and binds
   every file by digest, and by the generation it last changed, into the floor
   digest. A refresh fetches only the files changed since the floor's own

@@ -4,7 +4,10 @@ The history mixes Claim changes, retirements, contenders, Subject-valued edges
 moved in place (fan-in to old and new targets), new ClaimTypes, a short-name
 shadow that appears and is retired, a ClaimType cardinality migration, long
 text that appears and goes away, evidence-cited Claims, a Document revised in
-place, and a review rationale revised after acceptance. For every pair of
+place, a review rationale revised after acceptance, and one source cited at two
+external coordinate/selector types by two Claims, the first of which (in
+identity order) is then revised, so an incremental render meets them in the
+other order. For every pair of
 generations the delta applied to the base floor is byte-identical to the full
 floor at the head; a floor installed before the notes revision is repaired to
 it; the deltas are the same whether the index was cold, warm or advanced in
@@ -13,6 +16,7 @@ one coalesced step; and applying one twice changes nothing.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -144,8 +148,59 @@ def _shadow_and_cardinality(instance: PlaybillInstance) -> None:
     assert receipt.status == "accepted"
 
 
+# Claim ID -> the external coordinate/selector types its Capture is described at.
+_EXTERNAL_LOCATORS: dict[str, str] = {}
+
+
+def _two_locators(instance: PlaybillInstance, workspace: Path) -> None:
+    """Two Claims citing one source at two external selector types, then the first revised.
+
+    The write verbs take workspace evidence through the foreign-source contract,
+    whose Captures carry no locator; the description of these two is replaced by
+    two non-foreign external ones (``_describe`` is the one place a Capture's
+    source is read), keyed by the Claim each Capture's selector names.
+    """
+
+    two = _write(instance, _set(WI2, "measured", 4, evidence=report_evidence(workspace, "C: 4")))
+    three = _write(instance, _set(WI3, "measured", 5, evidence=report_evidence(workspace, "C: 5")))
+    by_claim = {two.changes[0].claim: WI2, three.changes[0].claim: WI3}
+    first, second = sorted(by_claim)
+    _EXTERNAL_LOCATORS.update(
+        {
+            first: "postgres-lsn-v1/relation-primary-key-v1",
+            second: "http-response-v1/whole-response-v1",
+        }
+    )
+    _write(
+        instance, _set(by_claim[first], "measured", 6, evidence=report_evidence(workspace, "C: 6"))
+    )
+
+
+def _describe_external(original: Any) -> Any:
+    from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
+    from cruxible_core.service.floor.floor_sources import CaptureSource
+
+    def describe(contract_digest: str, source: object) -> Any:
+        found = original(contract_digest, source)
+        if isinstance(source, ExternalSourceReferenceV1) and isinstance(source.selector, dict):
+            locator = _EXTERNAL_LOCATORS.get(str(source.selector.get("claim_id")))
+            if locator is not None:
+                return CaptureSource(contract_digest, found.source, locator)
+        return found
+
+    return describe
+
+
 @pytest.fixture(scope="module")
-def world(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
+def world(tmp_path_factory: pytest.TempPathFactory) -> Iterator[dict[str, Any]]:
+    from cruxible_core.service.floor import floor_sources
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(floor_sources, "_describe", _describe_external(floor_sources._describe))
+        yield _build_world(tmp_path_factory)
+
+
+def _build_world(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
     root = tmp_path_factory.mktemp("floor-delta-properties")
     (root / "instance").mkdir()
     instance, _owner = seed_write_surface(root / "instance")
@@ -171,6 +226,7 @@ def world(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
     _shadow_and_cardinality(instance)
     _write(instance, {"op": "add", "subject": WI2, "field": "title", "value": "Two, again"})
     _write(instance, {"op": "retire", "target": {"subject": WI3, "field": "ruling"}})
+    _two_locators(instance, workspace)
     head = len(instance.accepted_history()) - 1
     # Every generation's floor as a client installed it before the notes moved.
     installed = root / "installed"
@@ -228,6 +284,10 @@ def test_every_delta_rebuilds_the_full_floor_byte_for_byte(
     assert b"project.work_item.ext.note: Hello" in shown and b"\next.note: Hello" in shown
     assert b"\ntitle:\n  - " in shown
     assert b"Later review text." in shown
+    assert (
+        b"http-response-v1/whole-response-v1,postgres-lsn-v1/relation-primary-key-v1"
+        in fulls[head]["sources/LEDGER"]
+    )
     for target in range(head + 1):
         for base in range(target + 1):
             directory = tmp_path / f"apply-{base}-{target}"
