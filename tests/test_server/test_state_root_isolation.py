@@ -23,6 +23,7 @@ from cruxible_core.governance.keys import generate_client_principal_key
 from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
+from cruxible_core.server.config import ServerStateConfigurationError
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import (
     InstanceRegistry,
@@ -115,7 +116,7 @@ def test_locations_are_stored_relative_to_the_state_root(
     state_root = _initialized_root(monkeypatch, tmp_path)
 
     assert _stored_locations(state_root) == {_INSTANCE: f"instances/{_INSTANCE}"}
-    record = InstanceRegistry(state_root / "daemon" / "registry.db").get(_INSTANCE)
+    record = InstanceRegistry(state_root).get(_INSTANCE)
     assert record is not None
     assert Path(record.location) == state_root / "instances" / _INSTANCE
     assert record.within_state_root
@@ -127,12 +128,12 @@ def test_absolute_rows_under_the_root_migrate_to_relative(
     state_root = _initialized_root(monkeypatch, tmp_path)
     _store_absolute(state_root, _INSTANCE, state_root / "instances" / _INSTANCE)
 
-    registry = InstanceRegistry(state_root / "daemon" / "registry.db")
+    registry = InstanceRegistry(state_root)
 
     assert _stored_locations(state_root) == {_INSTANCE: f"instances/{_INSTANCE}"}
     # The step is recorded once, by its own id, and an open runs it no more.
     assert _migration_steps(state_root) == ["2026-10-01-relative-locations"]
-    InstanceRegistry(state_root / "daemon" / "registry.db")
+    InstanceRegistry(state_root)
     assert _migration_steps(state_root) == ["2026-10-01-relative-locations"]
     record = registry.get(_INSTANCE)
     assert record is not None
@@ -141,7 +142,7 @@ def test_absolute_rows_under_the_root_migrate_to_relative(
 
 def test_containment_is_case_insensitive_and_maps_into_this_root(tmp_path: Path) -> None:
     state_root = (tmp_path / "Root").resolve()
-    registry = InstanceRegistry(state_root / "daemon" / "registry.db")
+    registry = InstanceRegistry(state_root)
     spelled = Path(str(state_root).upper()) / "instances" / _INSTANCE
 
     relative = registry.relative_location(spelled)
@@ -233,3 +234,54 @@ def test_the_live_root_keeps_serving_after_migration(
     assert instance.root.resolve() == state_root / "instances" / _INSTANCE
     assert get_registry().get(_INSTANCE) is not None
     assert _stored_locations(state_root) == {_INSTANCE: f"instances/{_INSTANCE}"}
+
+
+@pytest.mark.parametrize(
+    "linked",
+    [("daemon",), ("daemon", "registry.db"), ("daemon", "runtime_credentials.db"), ("instances",)],
+)
+def test_a_copy_linking_into_the_original_is_refused_before_anything_opens(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, linked: tuple[str, ...]
+) -> None:
+    """A copy whose daemon or instance store links back to the original serves nothing."""
+
+    original = _initialized_root(monkeypatch, tmp_path)
+    copy = tmp_path / "copy"
+    shutil.copytree(original, copy, symlinks=True)
+    source = original.joinpath(*linked)
+    if not source.exists():
+        sqlite3.connect(source).close()
+        gc.collect()
+    target = copy.joinpath(*linked)
+    if target.is_dir():
+        shutil.rmtree(target)
+    elif target.exists():
+        target.unlink()
+    target.symlink_to(original.joinpath(*linked))
+    before = _snapshot(original)
+
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(copy))
+    reset_registry()
+    reset_runtime_credential_store()
+    get_playbill_manager().clear()
+    with pytest.raises(ServerStateConfigurationError, match="not this state root's own"):
+        get_registry()
+    with pytest.raises(ServerStateConfigurationError):
+        InstanceRegistry(copy)
+    with pytest.raises(ServerStateConfigurationError):
+        get_playbill_manager().get(_INSTANCE)
+    assert _snapshot(original) == before
+
+
+def test_a_symlink_alias_of_the_whole_state_root_serves_the_real_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    state_root = _initialized_root(monkeypatch, tmp_path)
+    alias = tmp_path / "alias"
+    alias.symlink_to(state_root, target_is_directory=True)
+
+    _serve_root(monkeypatch, alias)
+
+    assert get_registry().state_root == state_root
+    instance = get_playbill_manager().get(_INSTANCE)
+    assert instance.root.resolve() == state_root / "instances" / _INSTANCE

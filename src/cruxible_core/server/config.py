@@ -5,7 +5,7 @@ from __future__ import annotations
 import ipaddress
 import os
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Iterable, Mapping
 from urllib.parse import urlsplit
 
@@ -104,7 +104,69 @@ def get_server_state_root(environ: Mapping[str, str] | None = None) -> Path:
         state_root / "runtime_credentials.db",
     ):
         _refuse_legacy_state_file(path)
+    for entry in STATE_ROOT_OWN_ENTRIES:
+        within_state_root(state_root, *entry)
     return state_root
+
+
+#: Paths every daemon component opens under its state root. Each must be the
+#: root's own: a copied root whose ``daemon/`` (or registry, or credential DB,
+#: or ``instances/``) links back into the original would serve and write the
+#: original's state.
+STATE_ROOT_OWN_ENTRIES: tuple[tuple[str, ...], ...] = (
+    ("daemon",),
+    ("daemon", "registry.db"),
+    ("daemon", "runtime_credentials.db"),
+    ("instances",),
+)
+
+
+def contained_relative(path: Path, root: Path) -> PurePath | None:
+    """``path`` relative to ``root`` when its real path lies strictly under root's.
+
+    Both sides are resolved through every symlink first, then compared one
+    component at a time with ``casefold``: a case-insensitive volume names one
+    directory by many spellings, and a byte comparison would let a spelling
+    other than the root's read as outside it (or, the other way round, an
+    alias of the original read as inside a copy).
+    """
+
+    parts = Path(os.path.realpath(path)).parts
+    root_parts = Path(os.path.realpath(root)).parts
+    if len(parts) <= len(root_parts):
+        return None
+    if any(a.casefold() != b.casefold() for a, b in zip(root_parts, parts, strict=False)):
+        return None
+    return PurePath(*parts[len(root_parts) :])
+
+
+def within_state_root(state_root: Path, *parts: str) -> Path:
+    """``state_root / parts``, refused when any existing step resolves elsewhere.
+
+    Each existing prefix must resolve to the same place under the state
+    root's real path (compared case-insensitively). A symlink alias of the
+    WHOLE state root is fine -- the root is resolved first -- but a link
+    inside it that leads out of it, or onto a different entry inside it, is
+    refused before anything is opened or migrated through it.
+    """
+
+    real_root = Path(os.path.realpath(state_root))
+    path = real_root
+    for depth, part in enumerate(parts, start=1):
+        path = path / part
+        if not os.path.lexists(path):
+            continue
+        expected = [step.casefold() for step in parts[:depth]]
+        relative = contained_relative(path, real_root)
+        if relative is None or [step.casefold() for step in relative.parts] != expected:
+            raise ServerStateConfigurationError(
+                f"{path} resolves to {os.path.realpath(path)!r}, which is not this state "
+                f"root's own {'/'.join(parts[:depth])}; a state root's daemon and instance "
+                "stores must live inside it (a copied state root may not link back to the "
+                "original's). Repair: replace the link with a real copy, or point "
+                "CRUXIBLE_STATE_ROOT at the root it names"
+            )
+    return path
 
 
 _SQLITE_HEADER = b"SQLite format 3\x00"

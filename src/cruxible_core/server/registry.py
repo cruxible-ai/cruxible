@@ -22,7 +22,12 @@ from pathlib import Path, PurePath
 from cruxible_client.contracts.primitives import new_id
 from cruxible_client.contracts.temporal import format_datetime, utc_now
 from cruxible_core.errors import ConfigError, InstanceLocationRefusedError
-from cruxible_core.server.config import get_server_state_root
+from cruxible_core.server.config import (
+    STATE_ROOT_OWN_ENTRIES,
+    contained_relative,
+    get_server_state_root,
+    within_state_root,
+)
 from cruxible_core.storage.preview_fence import refuse_write_while_previewing
 
 LOCAL_FILESYSTEM_BACKEND = "local_filesystem"
@@ -68,9 +73,16 @@ class RegisteredInstance:
 class InstanceRegistry:
     """SQLite-backed registry of server-owned instance IDs."""
 
-    def __init__(self, db_path: Path) -> None:
-        self.db_path = db_path.resolve()
-        self.state_root = self.db_path.parent.parent
+    def __init__(self, state_root: Path) -> None:
+        # Anchored to the CONFIGURED state root, never to where the registry
+        # file resolves: a copied root whose ``daemon/`` links back to the
+        # original's would otherwise adopt the original as its root. Every
+        # step to the registry must be this root's own (`within_state_root`),
+        # checked before the file is opened or migrated.
+        self.state_root = Path(os.path.realpath(state_root))
+        for entry in STATE_ROOT_OWN_ENTRIES:
+            within_state_root(self.state_root, *entry)
+        self.db_path = self.state_root / "daemon" / "registry.db"
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
         self._migrate()
@@ -106,7 +118,7 @@ class InstanceRegistry:
     def relative_location(self, path: str | Path) -> PurePath | None:
         """``path`` relative to the state root when it resolves under it, else None."""
 
-        return _contained_relative(Path(path), self.state_root)
+        return contained_relative(Path(path), self.state_root)
 
     def instance_root(self, record: InstanceRecord) -> Path:
         """The instance directory a daemon may serve for ``record``, or a typed refusal."""
@@ -455,29 +467,6 @@ class InstanceRegistry:
         )
 
 
-def _real_parts(path: Path) -> tuple[str, ...]:
-    return Path(os.path.realpath(path)).parts
-
-
-def _contained_relative(path: Path, root: Path) -> PurePath | None:
-    """``path`` relative to ``root`` when its real path lies strictly under root's.
-
-    Both sides are resolved through every symlink first, then compared one
-    component at a time with ``casefold``: a case-insensitive volume names one
-    directory by many spellings, and a byte comparison would let a spelling
-    other than the root's read as outside it (or, the other way round, an
-    alias of the original read as inside a copy).
-    """
-
-    parts = _real_parts(path)
-    root_parts = _real_parts(root)
-    if len(parts) <= len(root_parts):
-        return None
-    if any(a.casefold() != b.casefold() for a, b in zip(root_parts, parts, strict=False)):
-        return None
-    return PurePath(*parts[len(root_parts) :])
-
-
 def _validate_instance_id(instance_id: str) -> None:
     if not _INSTANCE_ID_RE.fullmatch(instance_id):
         raise ConfigError(
@@ -494,7 +483,7 @@ def get_registry() -> InstanceRegistry:
     global _registry
     if _registry is None:
         state_root = get_server_state_root()
-        _registry = InstanceRegistry(state_root / "daemon" / "registry.db")
+        _registry = InstanceRegistry(state_root)
     return _registry
 
 
