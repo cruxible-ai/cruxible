@@ -133,7 +133,17 @@ def test_the_trigger_example_says_cron_is_utc_and_how_to_convert(
     assert trigger_example.__doc__ is not None and CRON_UTC_HINT.split(";")[0] in " ".join(
         trigger_example.__doc__.split()
     )
-    assert authoring_example_note("trigger") == CRON_UTC_HINT
+    # The note leads with the UTC guidance, then names the generation floor refresh.
+    note = authoring_example_note("trigger")
+    assert note is not None and note.startswith(CRON_UTC_HINT)
+    generation = note.removeprefix(CRON_UTC_HINT).strip()
+    assert generation.startswith("Generation floor refresh: ")
+    assert json.loads(generation.removeprefix("Generation floor refresh: ").rstrip(".")) == {
+        "kind": "trigger",
+        "name": "floor-refresh",
+        "schedule": {"kind": "generation_accepted"},
+        "action": "floor.refresh",
+    }
     assert authoring_example_note("line") is None
     # The schema an agent reads says UTC on the expression itself.
     description = CronScheduleV1.model_json_schema()["properties"]["expression"]["description"]
@@ -143,8 +153,8 @@ def test_the_trigger_example_says_cron_is_utc_and_how_to_convert(
     assert printed.exit_code == 0, printed.output
     # stdout stays one JSON document; the hint rides beside it.
     assert json.loads(printed.stdout)["schedule"]["kind"] == "cron"
-    assert printed.stderr.strip() == f"# {CRON_UTC_HINT}"
-    assert handle_playbill_authoring_example("trigger").note == CRON_UTC_HINT
+    assert printed.stderr.strip() == f"# {note}"
+    assert handle_playbill_authoring_example("trigger").note == note
 
 
 def test_a_cron_line_tick_follows_its_last_fire_and_never_precedes_its_floor() -> None:
