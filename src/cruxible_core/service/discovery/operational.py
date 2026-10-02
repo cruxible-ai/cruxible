@@ -77,6 +77,8 @@ from cruxible_client.contracts.triggers import (
     CadenceScheduleV1,
     CaptureLandingScheduleV1,
     CronScheduleV1,
+    GenerationAcceptedScheduleV1,
+    TriggerFormatError,
     TriggerScheduleV1,
     TriggerV1,
     WindowCloseScheduleV1,
@@ -245,7 +247,9 @@ def schedule_summary(schedule: TriggerScheduleV1) -> str:
         return f"when {schedule.event.capture_contract_identity.qualified} lands"
     if isinstance(schedule, WindowCloseScheduleV1):
         return "when " + window_summary(schedule.window) + " closes"
-    return schedule.kind
+    if isinstance(schedule, GenerationAcceptedScheduleV1):
+        return "when a new generation is accepted"
+    raise TriggerFormatError(f"unsupported Trigger schedule kind {schedule.kind!r}")
 
 
 def aimed_triggers(projection: Any, lines: tuple[str, ...]) -> dict[str, tuple[TriggerV1, ...]]:

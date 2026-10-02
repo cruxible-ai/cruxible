@@ -286,3 +286,62 @@ def test_restarting_the_same_runner_skips_the_ticks_it_missed_while_stopped(
     finally:
         runner.close()
     assert [event.due_at for event in trigger_events(world)] == [NOW, NOW + timedelta(hours=5)]
+
+
+def test_generation_fires_coalesce_and_restart_skips_offline_accepts(tmp_path: Path) -> None:
+    from contextlib import contextmanager
+
+    from cruxible_client.contracts.triggers import GenerationAcceptedScheduleV1
+
+    world = instance(tmp_path)
+    head = [2]
+
+    @contextmanager
+    def history():
+        yield SimpleNamespace(
+            sequence=head[0], generation=lambda sequence: SimpleNamespace(git_oid=str(sequence))
+        )
+
+    world.accepted_history_reader = history
+    world.accepted_evaluation_time = lambda oid: NOW + timedelta(seconds=int(oid))
+    trigger = InternalTrigger(
+        "Trigger:floor",
+        "floor.refresh",
+        GenerationAcceptedScheduleV1(),
+        accepted_at=NOW + timedelta(seconds=2),
+        accepted_generation=2,
+        version="v1",
+    )
+    assert fire(world, NOW + timedelta(seconds=2), triggers=(trigger,), since=NOW) == ()
+    # One record covers a burst, not one record per accepted generation.
+    head[0] = 5
+    (event,) = fire(world, NOW + timedelta(seconds=6), triggers=(trigger,), since=NOW)
+    assert (event.action, event.due_at) == ("floor.refresh", NOW + timedelta(seconds=5))
+    assert fire(world, NOW + timedelta(seconds=7), triggers=(trigger,), since=NOW) == ()
+    head[0] = 8
+    restart = NOW + timedelta(seconds=9)
+    assert fire(world, restart, triggers=(trigger,), since=restart) == ()
+    head[0] = 9
+    assert len(fire(world, restart + timedelta(seconds=1), triggers=(trigger,), since=restart)) == 1
+    # A successor starts at its own acceptance, even with retained coverage.
+    successor = replace(
+        trigger, accepted_generation=10, accepted_at=NOW + timedelta(seconds=10), version="v2"
+    )
+    head[0] = 10
+    assert fire(world, NOW + timedelta(seconds=11), triggers=(successor,), since=restart) == ()
+
+
+def test_version_two_journal_migrates_in_place_without_losing_fires(tmp_path: Path) -> None:
+    world = instance(tmp_path)
+    fire(world, NOW + timedelta(hours=1))
+    events = trigger_events(world)
+    with sqlite3.connect(journal_path(world)) as connection:
+        timers = connection.execute("SELECT * FROM timers").fetchall()
+        connection.execute("DROP TABLE generations")
+        connection.execute("PRAGMA user_version=2")
+    assert trigger_events(world) == events
+    schedule_deadline(world, "next.expire", NOW + timedelta(hours=2))
+    with sqlite3.connect(journal_path(world)) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone() == (3,)
+        assert connection.execute("SELECT * FROM timers").fetchall() == timers
+    assert trigger_events(world) == events

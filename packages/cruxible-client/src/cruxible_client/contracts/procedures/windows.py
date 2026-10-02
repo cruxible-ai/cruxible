@@ -139,8 +139,9 @@ class LineTriggerBindingV1(_WindowModel):
     no event or window: its instant is the occurrence's own evaluation instant.
     """
 
-    kind: Literal["cadence", "cron", "capture_landing", "window_close"]
+    kind: Literal["cadence", "cron", "capture_landing", "window_close", "generation_accepted"]
     trigger: ArtifactIdentity
+    generation: int | None = Field(default=None, ge=0)
     event: TriggerEventReferenceV1 | None = None
     window: BoundObservationWindowV1 | None = None
 
@@ -148,7 +149,12 @@ class LineTriggerBindingV1(_WindowModel):
     def _shape(self) -> LineTriggerBindingV1:
         if self.trigger.kind != "Trigger":
             raise ValueError("a trigger binding names the Trigger that fired")
-        if self.kind in TIMED_BINDING_KINDS:
+        if (self.kind == "generation_accepted") != (self.generation is not None):
+            raise ValueError("only a generation trigger binds an accepted generation")
+        if self.kind == "generation_accepted":
+            if self.event is not None or self.window is not None:
+                raise ValueError("a generation trigger binds no Capture or window")
+        elif self.kind in TIMED_BINDING_KINDS:
             if self.event is not None or self.window is not None:
                 raise ValueError("a cadence or cron tick binds no event or window")
         elif self.kind == "capture_landing":

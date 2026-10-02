@@ -32,6 +32,7 @@ from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_client.contracts.triggers import (
     AcceptedTriggerV1,
     CaptureLandingScheduleV1,
+    GenerationAcceptedScheduleV1,
     WindowCloseScheduleV1,
     schedule_is_timed,
 )
@@ -62,6 +63,7 @@ def service_check_line_trigger(
     include_future_windows: bool = False,
     pending_scope: str | None = None,
     only_trigger: str | None = None,
+    generation_after: int | None = None,
 ) -> LineTriggerCheckResultV1:
     """Every occurrence the Line's live Triggers make eligible in one range.
 
@@ -214,6 +216,26 @@ def service_check_line_trigger(
                     bindings.append(
                         (trigger, trigger_binding_for(trigger, window=bound), bound.ends_at)
                     )
+            elif isinstance(schedule, GenerationAcceptedScheduleV1):
+                from cruxible_core.triggers.journal import generation_at, trigger_generation
+
+                with instance.accepted_history_reader() as history:
+                    head = history.sequence
+                covered = trigger_generation(instance, trigger.trigger)
+                if generation_after is not None:
+                    covered = max(covered, generation_after)
+                elif request.since is not None:
+                    # A listening segment starts afresh; accepts made while it
+                    # was stopped are never replayed.
+                    covered = max(covered, generation_at(instance, request.since))
+                for prior_admission in _trigger_admissions(
+                    instance, accepted, trigger.trigger.identity
+                ):
+                    cause = getattr(prior_admission, "trigger_binding", None)
+                    if cause is not None and cause.generation is not None:
+                        covered = max(covered, cause.generation)
+                if head > covered:
+                    bindings.append((trigger, trigger_binding_for(trigger, generation=head), now))
             elif schedule_is_timed(schedule):
                 binding = trigger_binding_for(trigger)
                 _, due = _line_occurrence(
@@ -244,6 +266,8 @@ def service_check_line_trigger(
                         if row is not None:
                             due = datetime.fromisoformat(row[0])
                 bindings.append((trigger, binding, due or now))
+            else:
+                raise PlaybillExecutionError(f"unsupported Trigger schedule kind {schedule.kind!r}")
         for trigger, binding, eligible in bindings:
             if (eligible >= until and not include_future_windows) or (
                 request.since is not None and eligible < request.since

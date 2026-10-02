@@ -793,7 +793,7 @@ def test_playbill_compiler_coordinate_is_exact() -> None:
     )
     assert (
         GOVERNED_TRIGGERS_COMPILER.rule_digest
-        == "sha256:caf61c6006d6d26b5e32e7b2e9ff5cbdc1a1882b66ab5e94af933f46426b15ce"
+        == "sha256:8bacc463a71bc42019d973362174e6eae9b3d3c5e97fd86429a889f18e36f9e7"
     )
     assert current_compiler_coordinate() == GOVERNED_TRIGGERS_COMPILER
     assert P2_B4_COMPILER in SUPPORTED_COMPILERS

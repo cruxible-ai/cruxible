@@ -192,7 +192,7 @@ GOVERNED_TRIGGERS_COMPILER = _coordinate(
     projection_content="claims-procedures-runtime-v1",
     semantic_revision=32,
     candidate_card_renderer_digest=CARD_RENDERER_DIGEST,
-    revision_name="governed-triggers-v1",
+    revision_name="governed-triggers-generation-v1",
 )
 
 # The renderer a coordinate commits to is resolved from the coordinate itself,

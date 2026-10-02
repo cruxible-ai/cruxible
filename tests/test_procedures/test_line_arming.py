@@ -1417,3 +1417,98 @@ def test_an_old_format_claimed_arm_admits_nothing_even_with_its_principal_revoke
     assert _admissions(instance) == 0
     status = service_line_status(instance, line.identity.name)
     assert status.state == "stopped" and status.stop_reason == "arm_requires_rearm"
+
+
+def _accept_generation(instance, owner, name, instant):
+    from cruxible_client.contracts.artifacts import ArtifactIdentity
+    from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
+
+    shell = SubjectShell(
+        identity=ArtifactIdentity(kind="Subject", name=f"project.work_item/{name}"),
+        subject_kind="project.work_item",
+        subject_id=name,
+    )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree[subject_path(shell.subject_kind, shell.subject_id)] = render_subject(shell)
+    _accept_tree(
+        instance,
+        owner,
+        tree,
+        timestamp=instant.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+        proposal_name=name,
+    )
+
+
+def test_generation_line_coalesces_and_skips_accepts_before_listening_or_restart(tmp_path):
+    from cruxible_client.contracts.triggers import GenerationAcceptedScheduleV1
+
+    instance, line, _, owner = line_world(tmp_path, GenerationAcceptedScheduleV1(), with_owner=True)
+    start = READ_TIME + timedelta(seconds=10)
+    _accept_generation(instance, owner, "before-listening", start - timedelta(seconds=1))
+    service_arm_line(
+        instance,
+        line.identity.name,
+        principal=LOCAL,
+        actor=_actor(instance),
+        now=start,
+        daemon_id="daemon",
+    )
+    _match(instance, start)
+    assert armed_work(instance, now=start) == ()
+    for offset in (1, 2, 3):
+        _accept_generation(instance, owner, f"burst-{offset}", start + timedelta(seconds=offset))
+    _match(instance, start + timedelta(seconds=4))
+    assert service_line_status(instance, line.identity.name).pending_automatic == 1
+    _accept_generation(instance, owner, "offline", start + timedelta(seconds=5))
+    _match(instance, start + timedelta(seconds=6), daemon_id="restarted")
+    status = service_line_status(instance, line.identity.name)
+    assert (status.pending_automatic, status.pending_explicit) == (0, 1)
+    assert armed_work(instance, now=start + timedelta(seconds=6)) == ()
+    _accept_generation(instance, owner, "after-restart", start + timedelta(seconds=7))
+    _match(instance, start + timedelta(seconds=8), daemon_id="restarted")
+    assert service_line_status(instance, line.identity.name).pending_automatic == 1
+
+
+def test_generation_line_accepts_once_then_reaches_a_fixed_point(tmp_path, monkeypatch):
+    from cruxible_client.contracts.triggers import GenerationAcceptedScheduleV1
+    from cruxible_core.service.procedures import line_dispatch
+
+    instance, line, _, owner = line_world(tmp_path, GenerationAcceptedScheduleV1(), with_owner=True)
+    start = READ_TIME + timedelta(seconds=10)
+    service_arm_line(
+        instance,
+        line.identity.name,
+        principal=LOCAL,
+        actor=_actor(instance),
+        now=start,
+        daemon_id="daemon",
+    )
+
+    # A post-listening accept starts the chain. Later, the Line's first run
+    # accepts once; its second settles nothing and leaves the head unchanged.
+    _accept_generation(instance, owner, "start-generation", start + timedelta(seconds=1))
+    run = line_dispatch.service_run_playbill_line
+    runs = []
+
+    def settling_once(*args, **kwargs):
+        result = run(*args, **kwargs)
+        runs.append(result)
+        if len(runs) == 1:
+            _accept_generation(instance, owner, "line-settlement", start + timedelta(seconds=2))
+        return result
+
+    monkeypatch.setattr(line_dispatch, "service_run_playbill_line", settling_once)
+    for offset in (2, 3, 4):
+        _match(instance, start + timedelta(seconds=offset))
+        service_dispatch_line(
+            instance,
+            line.identity.name,
+            LineDispatchRequestV1(),
+            actor=_actor(instance),
+            caller_rung=3,
+            now=start + timedelta(seconds=offset),
+        )
+    assert len(runs) == 2
+    assert _admissions(instance) == 2
+    assert service_line_status(instance, line.identity.name).pending_automatic == 0

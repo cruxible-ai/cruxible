@@ -2,7 +2,7 @@
 
 Which internal Triggers exist is governed: every one is a live Trigger artifact
 aimed at an internal action, read from the instance's accepted state. In v1 an
-internal action takes a time schedule (cadence or cron) only; the Trigger law
+internal action takes a time schedule (cadence or cron) or generation acceptance; the Trigger law
 refuses any other. The log records which Trigger fired and which action it
 fired, so a worker follows an action however many Triggers schedule it.
 
@@ -36,6 +36,7 @@ from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_client.contracts.triggers import (
     INTERNAL_ACTIONS,
     AcceptedTriggerV1,
+    GenerationAcceptedScheduleV1,
     TriggerScheduleV1,
     TriggerV1,
     schedule_is_timed,
@@ -59,9 +60,11 @@ CREATE TRIGGER events_no_update BEFORE UPDATE ON events
  BEGIN SELECT RAISE(ABORT,'trigger events are append-only'); END;
 CREATE TRIGGER events_no_delete BEFORE DELETE ON events
  BEGIN SELECT RAISE(ABORT,'trigger events are append-only'); END;
-PRAGMA user_version=2;
+CREATE TABLE generations (trigger_id TEXT PRIMARY KEY, version TEXT NOT NULL,
+ listening_since TEXT NOT NULL, covered INTEGER NOT NULL) STRICT;
+PRAGMA user_version=3;
 """
-_VERSION = 2
+_VERSION = 3
 
 
 @dataclass(frozen=True)
@@ -73,13 +76,24 @@ class InternalTrigger:
     schedule: TriggerScheduleV1
     #: When this Trigger version was accepted: it fires nothing before then.
     accepted_at: datetime
+    accepted_generation: int | None = None
+    version: str = ""
 
     @classmethod
-    def of(cls, trigger: TriggerV1, *, accepted_at: datetime) -> InternalTrigger:
+    def of(
+        cls, trigger: TriggerV1, *, accepted_at: datetime, accepted_generation: int | None = None
+    ) -> InternalTrigger:
         action = trigger.action
         if action is None:
             raise ValueError("an internal Trigger fires an internal action")
-        return cls(trigger.identity.qualified, action, trigger.schedule, accepted_at)
+        return cls(
+            trigger.identity.qualified,
+            action,
+            trigger.schedule,
+            accepted_at,
+            accepted_generation,
+            trigger_digest(trigger).tagged,
+        )
 
 
 @dataclass(frozen=True)
@@ -132,6 +146,7 @@ def internal_triggers(instance: Any) -> tuple[InternalTrigger, ...]:
     triggers = tuple(
         InternalTrigger.of(
             trigger,
+            accepted_generation=trigger_generation(instance, trigger),
             accepted_at=trigger_accepted_at(
                 instance,
                 AcceptedTriggerV1(
@@ -175,6 +190,14 @@ def _open(instance: Any, *, create: bool = False) -> Iterator[sqlite3.Connection
                 if sqlite3.complete_statement(statement):
                     connection.execute(statement)
                     statement = ""
+        elif version == 2:
+            if create:
+                connection.execute(
+                    "CREATE TABLE generations (trigger_id TEXT PRIMARY KEY, "
+                    "version TEXT NOT NULL, listening_since TEXT NOT NULL, "
+                    "covered INTEGER NOT NULL) STRICT"
+                )
+                connection.execute("PRAGMA user_version=3")
         elif version != _VERSION:
             raise ValueError("Unsupported trigger journal; retain it for operator repair")
         yield connection
@@ -272,8 +295,10 @@ def _due_timers(
         else dict(connection.execute("SELECT trigger_id,covered_until FROM timers").fetchall())
     )
     for item in triggers:
+        if isinstance(item.schedule, GenerationAcceptedScheduleV1):
+            continue
         if not schedule_is_timed(item.schedule):
-            # The Trigger law accepts only time schedules for internal actions.
+            # Capture schedules remain outside the internal-action journal.
             raise ValueError(f"{item.trigger} fires an internal action on a non-time schedule")
         after = max(item.accepted_at, listening_since - timedelta(microseconds=1))
         if item.trigger in covered:
@@ -329,12 +354,82 @@ def _record(
     return fired
 
 
+def trigger_generation(instance: Any, trigger: TriggerV1) -> int:
+    """The accepted sequence of this exact Trigger version."""
+
+    with instance.accepted_history_reader() as history:
+        occurrence = history.artifact(
+            trigger_digest(trigger).tagged, identity=trigger.identity.qualified
+        )
+        if occurrence is None:
+            raise ValueError("Trigger version has no accepted occurrence")
+        return int(occurrence.occurrence_sequence)
+
+
+def generation_at(instance: Any, instant: datetime) -> int:
+    """Latest accepted sequence at an instant, for an explicit matching range."""
+
+    with instance.accepted_history_reader() as history:
+        for sequence in range(history.sequence, -1, -1):
+            if instance.accepted_evaluation_time(history.generation(sequence).git_oid) <= instant:
+                return sequence
+    return 0
+
+
+def _generation_work(
+    connection: sqlite3.Connection | None,
+    instance: Any,
+    *,
+    triggers: Sequence[InternalTrigger],
+    listening_since: datetime,
+    listening_generation: int | None,
+) -> tuple[list[_Fire], list[tuple[Any, ...]]]:
+    items = [item for item in triggers if isinstance(item.schedule, GenerationAcceptedScheduleV1)]
+    if not items:
+        return [], []
+    with instance.accepted_history_reader() as history:
+        head = history.sequence
+        head_time = instance.accepted_evaluation_time(history.generation(head).git_oid)
+    rows = (
+        {}
+        if connection is None or connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        else {
+            name: (version, listener, covered)
+            for name, version, listener, covered in connection.execute("SELECT * FROM generations")
+        }
+    )
+    fires, updates = [], []
+    listener = format_datetime(listening_since)
+    for item in items:
+        version = item.version or format_datetime(item.accepted_at)
+        previous = rows.get(item.trigger)
+        baseline = max(
+            item.accepted_generation
+            if item.accepted_generation is not None
+            else generation_at(instance, item.accepted_at),
+            listening_generation
+            if listening_generation is not None
+            else generation_at(instance, listening_since),
+        )
+        covered = (
+            baseline if previous is None or previous[:2] != (version, listener) else previous[2]
+        )
+        if head > covered:
+            fires.append(
+                _Fire(item.action, item.trigger, head_time, f"generation:{version}:{head}")
+            )
+        if previous != (version, listener, head):
+            updates.append((item.trigger, version, listener, head))
+    return fires, updates
+
+
 def evaluate_triggers(
     instance: Any,
     *,
     now: datetime,
     listening_since: datetime,
     triggers: Sequence[InternalTrigger] | None = None,
+    listening_generation: int | None = None,
 ) -> tuple[TriggerEvent, ...]:
     """Fire each timer instant and due deadline once.
 
@@ -347,14 +442,40 @@ def evaluate_triggers(
     if triggers is None:
         triggers = internal_triggers(instance)
     with _open(instance) as connection:
-        if not _due_timers(connection, now=now, listening_since=listening_since, triggers=triggers):
+        generation_fires, generation_updates = _generation_work(
+            connection,
+            instance,
+            triggers=triggers,
+            listening_since=listening_since,
+            listening_generation=listening_generation,
+        )
+        if not (
+            _due_timers(connection, now=now, listening_since=listening_since, triggers=triggers)
+            or generation_fires
+            or generation_updates
+        ):
             return ()
     with _open(instance, create=True) as connection:
         assert connection is not None
         # Recheck under the writer lock: another evaluator may have fired, or
         # a deadline may have been replaced since the read-only due check.
         fires = _due_timers(connection, now=now, listening_since=listening_since, triggers=triggers)
+        generation_fires, generation_updates = _generation_work(
+            connection,
+            instance,
+            triggers=triggers,
+            listening_since=listening_since,
+            listening_generation=listening_generation,
+        )
+        fires.extend(generation_fires)
+        connection.executemany(
+            "INSERT INTO generations VALUES (?,?,?,?) ON CONFLICT(trigger_id) DO UPDATE SET "
+            "version=excluded.version,listening_since=excluded.listening_since,covered=excluded.covered",
+            generation_updates,
+        )
         for item in triggers:
+            if isinstance(item.schedule, GenerationAcceptedScheduleV1):
+                continue
             connection.execute(
                 "INSERT INTO timers VALUES (?,?) "
                 "ON CONFLICT(trigger_id) DO UPDATE SET covered_until=excluded.covered_until",

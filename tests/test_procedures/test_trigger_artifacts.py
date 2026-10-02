@@ -586,3 +586,29 @@ def test_an_unknown_schedule_kind_fails_loudly_everywhere_it_is_classified() -> 
     )
     with pytest.raises(ValidationError, match="query"):
         TriggerV1.model_validate({**wire, "schedule": {"kind": "query"}})
+
+
+def test_generation_schedule_uses_the_existing_target_input_law() -> None:
+    from cruxible_client.contracts.triggers import GenerationAcceptedScheduleV1, schedule_is_timed
+    from cruxible_core.service.discovery.operational import schedule_summary
+
+    schedule = GenerationAcceptedScheduleV1()
+    refresh = action_trigger("floor", action="floor.refresh", schedule=schedule)
+    assert _law(refresh).verdict == "accepted"
+    assert not schedule_is_timed(schedule)
+    assert schedule_summary(schedule) == "when a new generation is accepted"
+    capture_line = line_trigger("capture-line", line="triage", schedule=schedule)
+    assert (
+        _code(
+            _law(
+                capture_line,
+                target_line_live=True,
+                target_line_input=CaptureEventInputV1(event=SELECTOR),
+            )
+        )
+        == "playbill.trigger.event_not_accepted"
+    )
+    capture_action = action_trigger(
+        "floor", action="floor.refresh", schedule=CaptureLandingScheduleV1(event=SELECTOR)
+    )
+    assert _code(_law(capture_action)) == "playbill.trigger.schedule_unsupported_for_action"

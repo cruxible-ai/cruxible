@@ -45,6 +45,7 @@ from cruxible_client.contracts.repairs import served_repair_for_refusal
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_client.contracts.triggers import (
     AcceptedTriggerV1,
+    GenerationAcceptedScheduleV1,
     WindowCloseScheduleV1,
     schedule_is_timed,
 )
@@ -232,6 +233,11 @@ def _open_segment(
     return data
 
 
+def _accepted_sequence(instance: PlaybillInstance) -> int:
+    with instance.accepted_history_reader() as history:
+        return history.sequence
+
+
 def _segment(
     arm: dict[str, Any], *, instance: PlaybillInstance, now: datetime, daemon_id: str
 ) -> dict[str, Any]:
@@ -243,6 +249,7 @@ def _segment(
         stop_reason=None,
         evaluated_until=format_datetime(now),
         positions=_positions(instance),
+        generation_start=_accepted_sequence(instance),
         daemon_id=daemon_id,
         detail=None,
         scan=None,
@@ -608,8 +615,13 @@ def _timed(trigger: AcceptedTriggerV1) -> bool:
     """Whether a Trigger fires by time (ticks, fixed windows) rather than on events."""
 
     schedule = trigger.trigger.schedule
-    return schedule_is_timed(schedule) or (
-        isinstance(schedule, WindowCloseScheduleV1) and isinstance(schedule.window, FixedWindowV1)
+    return (
+        schedule_is_timed(schedule)
+        or isinstance(schedule, GenerationAcceptedScheduleV1)
+        or (
+            isinstance(schedule, WindowCloseScheduleV1)
+            and isinstance(schedule.window, FixedWindowV1)
+        )
     )
 
 
@@ -626,9 +638,14 @@ def _segment_request(
     name = trigger.trigger.identity.qualified
     return LineTriggerCheckRequestV1(
         since=(
-            parse_datetime(session.get("trigger_until", {}).get(name, session["starts_at"]))
-            if _timed(trigger)
-            else None
+            parse_datetime(session["starts_at"])
+            if isinstance(trigger.trigger.schedule, GenerationAcceptedScheduleV1)
+            else (
+                parse_datetime(session.get("trigger_until", {}).get(name, session["starts_at"]))
+                if _timed(trigger)
+                and not isinstance(trigger.trigger.schedule, GenerationAcceptedScheduleV1)
+                else None
+            )
         ),
         until=parse_datetime(scan["until"]),
         cursor=scan["cursors"].get(name),
@@ -752,12 +769,12 @@ def service_match_listening_lines(
                 # holds the arm's own ticks back.
                 if (
                     schedule_is_timed(trigger.trigger.schedule)
-                    and conn.execute(
-                        "SELECT 1 FROM pending WHERE session_id=? AND trigger_id=? "
-                        "AND disposition='pending' LIMIT 1",
-                        (session["session_id"], name),
-                    ).fetchone()
-                ):
+                    or isinstance(trigger.trigger.schedule, GenerationAcceptedScheduleV1)
+                ) and conn.execute(
+                    "SELECT 1 FROM pending WHERE session_id=? AND trigger_id=? "
+                    "AND disposition='pending' LIMIT 1",
+                    (session["session_id"], name),
+                ).fetchone():
                     scan["done"].append(name)
                     continue
                 request = _segment_request(trigger, session, scan)
@@ -771,6 +788,7 @@ def service_match_listening_lines(
                     include_future_windows=request.since is None,
                     pending_scope=session["session_id"],
                     only_trigger=name,
+                    generation_after=session.get("generation_start"),
                 )
                 stop = _arm_stop(
                     session,
@@ -1004,6 +1022,7 @@ def service_dispatch_line(
                                 trigger=None if binding is None else binding.trigger.name,
                                 occurrence_id=occurrence.occurrence_id,
                                 trigger_event=binding.event if binding else None,
+                                trigger_generation=binding.generation if binding else None,
                             ),
                             actor_context=run_actor,
                             caller_rung=run_rung,

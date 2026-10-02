@@ -1,8 +1,9 @@
 """Governed Trigger artifact: one schedule aimed at a Line or an internal action.
 
 Every trigger has one governed home. A Trigger holds when something happens
-(a cadence, a cron calendar, a Capture landing, an observation window closing) and what it sets
-off: a Line, named by identity so an ordinary Line successor never strands it,
+(a cadence, a cron calendar, a generation acceptance, a Capture landing, or an
+observation window closing) and what it sets off: a Line, named by identity so
+an ordinary Line successor never strands it,
 or one internal action from the code's action registry. Triggers are changed
 and retired through ordinary proposals; a Line no longer embeds its own.
 
@@ -10,7 +11,7 @@ What a Trigger may fire on is decided by what its target needs: a Line that
 binds its triggering Capture, and an internal action that declares a Capture
 input, each need a schedule that fires on that event; a target that needs no
 event takes any schedule the target admits. In v1 an internal action admits time
-schedules (cadence, cron) only; event schedules for actions come later, by
+schedules (cadence, cron) and generation acceptance; Capture schedules come later, by
 admitting them here and in the trigger journal, with the input rule unchanged.
 """
 
@@ -123,8 +124,18 @@ class WindowCloseScheduleV1(_StrictTriggerModel):
     window: ObservationWindowV1
 
 
+class GenerationAcceptedScheduleV1(_StrictTriggerModel):
+    """Fire once at the latest accepted head after it moves, coalescing a burst."""
+
+    kind: Literal["generation_accepted"] = "generation_accepted"
+
+
 TriggerScheduleV1: TypeAlias = Annotated[
-    CadenceScheduleV1 | CronScheduleV1 | CaptureLandingScheduleV1 | WindowCloseScheduleV1,
+    CadenceScheduleV1
+    | CronScheduleV1
+    | CaptureLandingScheduleV1
+    | WindowCloseScheduleV1
+    | GenerationAcceptedScheduleV1,
     Field(discriminator="kind"),
 ]
 
@@ -138,7 +149,9 @@ def schedule_is_timed(schedule: TriggerScheduleV1) -> bool:
 
     if isinstance(schedule, CadenceScheduleV1 | CronScheduleV1):
         return True
-    if isinstance(schedule, CaptureLandingScheduleV1 | WindowCloseScheduleV1):
+    if isinstance(
+        schedule, CaptureLandingScheduleV1 | WindowCloseScheduleV1 | GenerationAcceptedScheduleV1
+    ):
         return False
     raise TriggerFormatError(f"unsupported Trigger schedule kind {schedule.kind!r}")
 
@@ -178,8 +191,8 @@ class InternalActionSpec:
     name: str
     #: The event a fire must carry; the Trigger law checks the schedule supplies it.
     input: TriggerInputV1
-    #: What performing the action may change: findings only, never governed state.
-    effect: Literal["findings"]
+    #: What performing the action may change, never governed state.
+    effect: Literal["findings", "workspace_output"]
     #: The consumer kind and part that follow this action's fires.
     consumer: str
     part: str
@@ -189,6 +202,13 @@ INTERNAL_ACTIONS: Final[Mapping[str, InternalActionSpec]] = MappingProxyType(
     {
         spec.name: spec
         for spec in (
+            InternalActionSpec(
+                name="floor.refresh",
+                input=NoTriggerInputV1(),
+                effect="workspace_output",
+                consumer="floor",
+                part="deliver",
+            ),
             InternalActionSpec(
                 name="evidence.sweep",
                 input=NoTriggerInputV1(),
@@ -255,7 +275,7 @@ def schedule_capture_selector(schedule: TriggerScheduleV1) -> CaptureEventSelect
     if isinstance(schedule, WindowCloseScheduleV1):
         window = schedule.window
         return window.event if isinstance(window, CaptureEventWindowV1) else None
-    if schedule_is_timed(schedule):
+    if schedule_is_timed(schedule) or isinstance(schedule, GenerationAcceptedScheduleV1):
         return None
     raise TriggerFormatError(f"unsupported Trigger schedule kind {schedule.kind!r}")
 
@@ -468,10 +488,14 @@ def evaluate_trigger_law(
                     "may fire one of: " + ", ".join(sorted(actions)) + ".",
                     path=path,
                 )
-            if not schedule_is_timed(trigger.schedule):
+            if not (
+                schedule_is_timed(trigger.schedule)
+                or isinstance(trigger.schedule, GenerationAcceptedScheduleV1)
+            ):
                 return _refusal(
                     "playbill.trigger.schedule_unsupported_for_action",
-                    f"Internal action {spec.name!r} takes a cadence or cron schedule in this "
+                    f"Internal action {spec.name!r} takes cadence, cron or generation_accepted "
+                    "in this "
                     f"version; a {trigger.schedule.kind} schedule for an internal action is "
                     "not supported yet.",
                     path=path,
@@ -533,6 +557,7 @@ __all__ = [
     "parse_trigger",
     "render_trigger",
     "schedule_capture_selector",
+    "GenerationAcceptedScheduleV1",
     "schedule_is_timed",
     "schedule_satisfies_input",
     "trigger_digest",

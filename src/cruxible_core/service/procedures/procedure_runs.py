@@ -180,6 +180,7 @@ from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 from cruxible_client.contracts.triggers import (
     AcceptedTriggerV1,
     CaptureLandingScheduleV1,
+    GenerationAcceptedScheduleV1,
     TriggerV1,
     WindowCloseScheduleV1,
     schedule_is_timed,
@@ -663,6 +664,7 @@ class LineRunRequestV1(_StrictProcedureSurfaceModel):
     tag: Literal["playbill-line-run-request-v1"] = "playbill-line-run-request-v1"
     resolution_contract: ResolutionContractReferenceV1 | None = None
     trigger_event: TriggerEventReferenceV1 | None = None
+    trigger_generation: int | None = Field(default=None, ge=0)
     line: str = Field(validation_alias=AliasChoices("line", "line_identity_digest"))
     trigger: str | None = Field(
         default=None,
@@ -1266,10 +1268,15 @@ def trigger_binding_for(
     *,
     event: TriggerEventReferenceV1 | None = None,
     window: BoundObservationWindowV1 | None = None,
+    generation: int | None = None,
 ) -> LineTriggerBindingV1:
     """The semantic cause one Trigger gives an occurrence."""
 
     schedule = trigger.trigger.schedule
+    if isinstance(schedule, GenerationAcceptedScheduleV1):
+        return LineTriggerBindingV1(
+            kind="generation_accepted", trigger=trigger.trigger.identity, generation=generation
+        )
     if schedule_is_timed(schedule):
         return LineTriggerBindingV1(kind=schedule.kind, trigger=trigger.trigger.identity)
     if isinstance(schedule, CaptureLandingScheduleV1):
@@ -4077,7 +4084,34 @@ def _run_playbill_line(
     # The event, or the fixed window's close, this occurrence fires on.
     anchor: datetime | None = None
     try:
-        if trigger is not None and schedule is not None and schedule_is_timed(schedule):
+        if trigger is not None and isinstance(schedule, GenerationAcceptedScheduleV1):
+            from cruxible_core.triggers.journal import trigger_generation
+
+            with instance.accepted_history_reader() as history:
+                generation = (
+                    history.sequence
+                    if request.trigger_generation is None
+                    else request.trigger_generation
+                )
+                if (
+                    generation <= trigger_generation(instance, trigger.trigger)
+                    or generation > history.sequence
+                ):
+                    return _line_refusal_state(
+                        accepted,
+                        accepted_line,
+                        coordinate=coordinate,
+                        head_at_admission=head_at_admission,
+                        evaluation_time=evaluation_time,
+                        code="occurrence_not_due",
+                        message=(
+                            "Generation must follow this Trigger's acceptance "
+                            "and belong to accepted history."
+                        ),
+                        details={},
+                    )
+            trigger_binding = trigger_binding_for(trigger, generation=generation)
+        elif trigger is not None and schedule is not None and schedule_is_timed(schedule):
             trigger_binding = trigger_binding_for(trigger)
         elif trigger is not None and isinstance(schedule, CaptureLandingScheduleV1):
             if request.trigger_event is None:
