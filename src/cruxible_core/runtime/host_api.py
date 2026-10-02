@@ -238,13 +238,13 @@ def create_playbill_host(
             with preview_guards(bool(dry_run)):
                 attach_workspace(selected, workspace_root)
         return contracts.PlaybillHostResult(instance_id=selected, status="already_exists")
+    # Validation is shared: the preview answers from the same prepared row the
+    # commit inserts, so both refuse the same IDs and conflicts.
+    prepared = registry.prepare_governed_instance(selected, workspace_root=workspace_root)
     if dry_run:
         return contracts.PlaybillHostResult(instance_id=selected, status="would_create")
 
-    registered = registry.create_governed_instance_with_id(
-        selected,
-        workspace_root=workspace_root,
-    )
+    registered = registry.create_governed_instance(prepared)
     if registered.record.instance_id != selected:
         raise ConfigError(
             f"Workspace {registered.record.workspace_root!r} is already attached to Playbill "

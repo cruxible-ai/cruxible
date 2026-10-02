@@ -11,6 +11,7 @@ moved, and a change that cannot be undone commits only with that coordinate.
 from __future__ import annotations
 
 import base64
+import sqlite3
 import subprocess
 from collections.abc import Iterator
 from pathlib import Path
@@ -349,6 +350,47 @@ def test_allocating_a_host_previews(
     )
     assert preview["status"] == "would_create"
     assert get_registry().get("inst_maybe") is None
+
+
+@pytest.mark.parametrize("instance_id", ["bad/id", "nope", "inst_" + "x" * 80])
+def test_a_host_preview_refuses_every_id_its_commit_refuses(
+    playbill_http: tuple[TestClient, str, Path], tmp_path: Path, instance_id: str
+) -> None:
+    client, _instance_id, _reviewer_key = playbill_http
+    route = "/api/v1/runtime/instances"
+
+    preview = assert_writes_nothing(
+        [tmp_path],
+        lambda: client.post(route, json={"instance_id": instance_id, "dry_run": True}),
+        warm=_quiet,
+    )
+    commit = client.post(route, json={"instance_id": instance_id})
+    assert (preview.status_code, commit.status_code) == (400, 400), (preview.text, commit.text)
+    assert preview.json()["error_code"] == commit.json()["error_code"]
+
+
+def test_a_host_preview_refuses_a_location_another_row_holds(
+    playbill_http: tuple[TestClient, str, Path], tmp_path: Path
+) -> None:
+    client, _instance_id, _reviewer_key = playbill_http
+    registry = get_registry()
+    with sqlite3.connect(registry.db_path) as conn:
+        conn.execute(
+            "INSERT INTO instances(instance_id, backend, location, workspace_root, created_at)"
+            " VALUES ('inst_holder', 'governed_daemon', 'instances/inst_taken', NULL, 'x')"
+        )
+    route = "/api/v1/runtime/instances"
+
+    preview = assert_writes_nothing(
+        [tmp_path],
+        lambda: client.post(route, json={"instance_id": "inst_taken", "dry_run": True}),
+        warm=_quiet,
+    )
+    commit = client.post(route, json={"instance_id": "inst_taken"})
+    assert (preview.status_code, commit.status_code) == (400, 400), (preview.text, commit.text)
+    assert "inst_holder" in preview.json()["message"]
+    assert preview.json()["message"] == commit.json()["message"]
+    assert registry.get("inst_taken") is None
 
 
 # --- operator credentials (auth on) ---------------------------------------------------

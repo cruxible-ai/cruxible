@@ -49,6 +49,15 @@ class InstanceRecord:
 
 
 @dataclass(frozen=True)
+class PreparedInstance:
+    """One validated governed host row, ready to insert (or to answer a preview)."""
+
+    instance_id: str
+    location: str
+    workspace_root: str | None
+
+
+@dataclass(frozen=True)
 class RegisteredInstance:
     """Registry result for get-or-create flows."""
 
@@ -236,21 +245,66 @@ class InstanceRegistry:
         _validate_instance_id(instance_id)
         return (self.state_root / "instances" / instance_id).resolve()
 
+    def prepare_governed_instance(
+        self,
+        instance_id: str,
+        workspace_root: str | Path | None = None,
+    ) -> PreparedInstance:
+        """Validate one new governed host row and every conflict it would meet.
+
+        Reads only. The commit (`create_governed_instance`) inserts exactly what
+        this prepared, so a preview and its commit refuse the same requests: an
+        invalid ID, a location another row already holds, or a worktree already
+        attached to another host.
+        """
+
+        location = str(self.governed_instance_location(instance_id))
+        resolved_workspace_root: str | None = None
+        if workspace_root is not None:
+            resolved_workspace_root = str(Path(workspace_root).expanduser().resolve())
+            attached = self._get_by_backend_workspace_root(
+                GOVERNED_DAEMON_BACKEND, resolved_workspace_root
+            )
+            if attached is not None and attached.instance_id != instance_id:
+                raise ConfigError(
+                    f"Workspace {resolved_workspace_root!r} is already attached to Playbill "
+                    f"host {attached.instance_id!r}; release it with `cruxible playbill "
+                    f"workspace detach --instance-id {attached.instance_id}` or choose "
+                    f"another Git worktree before creating {instance_id!r}"
+                )
+        relative = self.relative_location(location)
+        stored = relative.as_posix() if relative is not None else location
+        holder = self._get_by_backend_location(GOVERNED_DAEMON_BACKEND, stored)
+        if holder is not None and holder.instance_id != instance_id:
+            raise ConfigError(
+                f"Location {location!r} is already registered to Playbill host "
+                f"{holder.instance_id!r}"
+            )
+        return PreparedInstance(
+            instance_id=instance_id,
+            location=location,
+            workspace_root=resolved_workspace_root,
+        )
+
     def create_governed_instance_with_id(
         self,
         instance_id: str,
         workspace_root: str | Path | None = None,
     ) -> RegisteredInstance:
-        """Register a server-owned governed instance with a caller-selected ID."""
-        location = str(self.governed_instance_location(instance_id))
-        resolved_workspace_root: str | None = None
-        if workspace_root is not None:
-            resolved_workspace_root = str(Path(workspace_root).expanduser().resolve())
+        """Prepare and register one governed host with a caller-selected ID."""
+
+        return self.create_governed_instance(
+            self.prepare_governed_instance(instance_id, workspace_root=workspace_root)
+        )
+
+    def create_governed_instance(self, prepared: PreparedInstance) -> RegisteredInstance:
+        """Register the governed host `prepare_governed_instance` validated."""
+
         return self._insert_instance(
             backend=GOVERNED_DAEMON_BACKEND,
-            location=location,
-            workspace_root=resolved_workspace_root,
-            preferred_instance_id=instance_id,
+            location=prepared.location,
+            workspace_root=prepared.workspace_root,
+            preferred_instance_id=prepared.instance_id,
         )
 
     def attach_governed_workspace(
