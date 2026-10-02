@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import Any
 
 from fastapi.testclient import TestClient
 
@@ -28,6 +29,23 @@ def test_clone_url_refuses_typed_before_a_mirror_is_bound(
     assert "set-mirror" in response.text
 
 
+def _bind(client: TestClient, instance_id: str, remote: Path) -> Any:
+    """Bind a mirror: it cannot be called back, so preview it, then commit that preview."""
+
+    url = f"/api/v1/{instance_id}/playbill/ledger/mirror"
+    preview = client.post(url, json={"url": str(remote)})
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["status"] == "would_publish"
+    return client.post(
+        url,
+        json={
+            "url": str(remote),
+            "dry_run": False,
+            "at": preview.json()["coordinate"]["git_oid"],
+        },
+    )
+
+
 def test_setting_a_mirror_publishes_and_reads_back(
     tmp_path: Path,
     playbill_http: tuple[TestClient, str, Path],
@@ -35,10 +53,7 @@ def test_setting_a_mirror_publishes_and_reads_back(
     client, instance_id, _reviewer = playbill_http
     remote = _bare(tmp_path / "mirror.git")
 
-    bound = client.post(
-        f"/api/v1/{instance_id}/playbill/ledger/mirror",
-        json={"url": str(remote)},
-    )
+    bound = _bind(client, instance_id, remote)
 
     assert bound.status_code == 200, bound.text
     assert bound.json()["status"] == "current"
@@ -69,13 +84,7 @@ def test_orientation_carries_the_mirror_url_without_a_second_round_trip(
 ) -> None:
     client, instance_id, _reviewer = playbill_http
     remote = _bare(tmp_path / "mirror.git")
-    assert (
-        client.post(
-            f"/api/v1/{instance_id}/playbill/ledger/mirror",
-            json={"url": str(remote)},
-        ).status_code
-        == 200
-    )
+    assert _bind(client, instance_id, remote).status_code == 200
 
     response = client.get(f"/api/v1/{instance_id}/playbill/orient")
 
@@ -123,6 +132,7 @@ def test_init_binds_the_mirror_during_bootstrap(
         "published_sequence": 1,
         "wait_sequence": None,
         "published_refs": {"refs/heads/main": read_back.json()["published_main_oid"]},
+        "coordinate": None,
         "detail": None,
     }
 
