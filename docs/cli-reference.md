@@ -445,7 +445,7 @@ it.
 cruxible playbill host create [--instance-id ID] [--workspace DIR] [--replace]
 cruxible playbill host show INSTANCE [--json]
 cruxible playbill workspace attach [--instance-id ID] [--replace] [--no-floor-delivery]
-cruxible playbill workspace floor-delivery on|off [--instance-id ID] [--json]
+cruxible playbill workspace floor-delivery STATE [--instance-id ID] [--json]
 cruxible playbill workspace detach [--instance-id ID] [--json]
 ~~~
 
@@ -461,7 +461,8 @@ the writer adds `.playbill/coverage.json` to this repository's machine-local
 
 Daemon floor delivery is on by default when a local workspace is registered.
 `workspace attach` enables it unless `--no-floor-delivery` is supplied;
-`workspace floor-delivery off` opts out after attachment, and `on` restores it.
+`workspace floor-delivery STATE` takes `on` or `off`: `off` opts out after
+attachment, and `on` restores it.
 
 A TCP client never sends its local path to the daemon. Implicit attachment from
 inside a TCP worktree remains refused; explicit `--workspace DIR` instead writes
