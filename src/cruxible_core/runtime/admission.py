@@ -16,6 +16,12 @@ instance) takes the key first. Two kinds of caller take it:
   ``hold(key)``, which blocks that thread until the key is its own. It refuses
   to run on a thread with a running event loop, which it would stall.
 
+HTTP request paths must never reach ``hold``, even from a synchronous route
+or an offloaded helper: waiting there consumes worker capacity before admission
+and can deadlock against an admitted route waiting for that capacity. Only
+non-request threads use ``hold``; HTTP paths admit before offloading and call
+bodies that do not acquire the key again.
+
 Both kinds queue on the same key in arrival order and exclude each other: an
 export, a delta and a consumer refresh of one instance never overlap, while
 different keys proceed independently. Key by the resolved instance id.

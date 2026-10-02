@@ -186,104 +186,123 @@ def refresh_floor(
     """Render at the current head and, when opted in, apply through the shared writer."""
 
     with FLOOR_ADMISSION.hold(instance_id):
-        record = get_registry().get(instance_id)
-        if require_delivery and (
-            record is None or not record.floor_delivery or record.workspace_root is None
-        ):
-            raise PlaybillWorkspaceError("Daemon floor delivery is off for this workspace")
-        covered = latest_sequence(instance, action="floor.refresh")
-        head = instance.accepted_coordinate()
-        if at is not None and at != contracts.PlaybillAcceptedCoordinate.model_validate(
-            AcceptedCoordinate.from_internal(head).model_dump(mode="json")
-        ):
-            raise RequestRefusedError(
-                "playbill.floor.delivery_head_only",
-                "Daemon floor delivery owns this workspace's floor and writes only the "
-                "current accepted head; at names a different coordinate. To read an older "
-                "coordinate, use get or query with at. To write a pinned floor, turn daemon "
-                "delivery off: cruxible playbill workspace floor-delivery off "
-                f"--instance-id {instance_id}.",
-                repair=RepairOperationV1(
-                    operation="playbill.workspace.floor-delivery",
-                    arguments={"state": "off", "instance_id": instance_id},
-                ),
-            )
-        target = _target(instance, record, head)
-        progress = _progress(instance)
-        if (
-            follow_fire
-            and progress is not None
-            and (progress[3] == target or (progress[2] == target and progress[0] >= covered))
-        ):
-            return None
-        with instance.accepted_history_reader() as history:
-            location = history.generation_for_oid(head.git_oid)
-            assert location is not None
-            generation = location.sequence
-        written = None
-        error = None
-        try:
-            advance_floor_index(instance, head)
-            if record is not None and record.floor_delivery and record.workspace_root is not None:
-                root, floor = _floor_directory(record.workspace_root)
-                profile = configured_floor_output(root)
-                parts = include or (() if profile is None else profile[1])
-                export = None
-                if parts:
-                    full, export = _included_floor(instance, head, tuple(parts))
-                    delta, applied = sync_floor_directory(lambda _base, _renderer: full, floor)
-                else:
-                    delta, applied = sync_floor_directory(
-                        lambda base, renderer: service_playbill_floor_delta(
-                            instance,
-                            head=AcceptedCoordinate.from_internal(head),
-                            base_generation=base,
-                            base_renderer=renderer,
-                        ),
-                        floor,
-                    )
-                _post_apply_joins(root)
-                assert applied.floor_digest is not None
-                receipt = contracts.PlaybillWorkspaceFloorWriteResult(
-                    status="unchanged" if applied.status == "unchanged" else "written",
-                    path=".playbill/floor",
-                    destination=str(floor),
-                    floor_digest=applied.floor_digest,
-                    coordinate=contracts.PlaybillAcceptedCoordinate.model_validate(
-                        delta.head.coordinate().model_dump(mode="json")
+        return _refresh_floor_admitted(
+            instance,
+            instance_id,
+            require_delivery=require_delivery,
+            follow_fire=follow_fire,
+            include=include,
+            at=at,
+        )
+
+
+def _refresh_floor_admitted(
+    instance: Any,
+    instance_id: str,
+    *,
+    require_delivery: bool = False,
+    follow_fire: bool = False,
+    include: tuple[contracts.PlaybillFloorExportPart, ...] = (),
+    at: contracts.PlaybillAcceptedCoordinate | None = None,
+) -> contracts.PlaybillFloorDeliveryResultV1 | None:
+    """Refresh with floor admission already held by the caller."""
+
+    record = get_registry().get(instance_id)
+    if require_delivery and (
+        record is None or not record.floor_delivery or record.workspace_root is None
+    ):
+        raise PlaybillWorkspaceError("Daemon floor delivery is off for this workspace")
+    covered = latest_sequence(instance, action="floor.refresh")
+    head = instance.accepted_coordinate()
+    if at is not None and at != contracts.PlaybillAcceptedCoordinate.model_validate(
+        AcceptedCoordinate.from_internal(head).model_dump(mode="json")
+    ):
+        raise RequestRefusedError(
+            "playbill.floor.delivery_head_only",
+            "Daemon floor delivery owns this workspace's floor and writes only the "
+            "current accepted head; at names a different coordinate. To read an older "
+            "coordinate, use get or query with at. To write a pinned floor, turn daemon "
+            "delivery off: cruxible playbill workspace floor-delivery off "
+            f"--instance-id {instance_id}.",
+            repair=RepairOperationV1(
+                operation="playbill.workspace.floor-delivery",
+                arguments={"state": "off", "instance_id": instance_id},
+            ),
+        )
+    target = _target(instance, record, head)
+    progress = _progress(instance)
+    if (
+        follow_fire
+        and progress is not None
+        and (progress[3] == target or (progress[2] == target and progress[0] >= covered))
+    ):
+        return None
+    with instance.accepted_history_reader() as history:
+        location = history.generation_for_oid(head.git_oid)
+        assert location is not None
+        generation = location.sequence
+    written = None
+    error = None
+    try:
+        advance_floor_index(instance, head)
+        if record is not None and record.floor_delivery and record.workspace_root is not None:
+            root, floor = _floor_directory(record.workspace_root)
+            profile = configured_floor_output(root)
+            parts = include or (() if profile is None else profile[1])
+            export = None
+            if parts:
+                full, export = _included_floor(instance, head, tuple(parts))
+                delta, applied = sync_floor_directory(lambda _base, _renderer: full, floor)
+            else:
+                delta, applied = sync_floor_directory(
+                    lambda base, renderer: service_playbill_floor_delta(
+                        instance,
+                        head=AcceptedCoordinate.from_internal(head),
+                        base_generation=base,
+                        base_renderer=renderer,
                     ),
-                    file_count=applied.file_count + 1,
+                    floor,
                 )
-                written = contracts.PlaybillFloorDeliveryResultV1(
-                    delta=delta, written=receipt, export=export
-                )
-            outcome = contracts.PlaybillFloorConsumerOutcomeV1(
-                generation=generation,
-                status="unchanged" if written is None else written.written.status,
-                file_count=0 if written is None else written.written.file_count,
+            _post_apply_joins(root)
+            assert applied.floor_digest is not None
+            receipt = contracts.PlaybillWorkspaceFloorWriteResult(
+                status="unchanged" if applied.status == "unchanged" else "written",
+                path=".playbill/floor",
+                destination=str(floor),
+                floor_digest=applied.floor_digest,
+                coordinate=contracts.PlaybillAcceptedCoordinate.model_validate(
+                    delta.head.coordinate().model_dump(mode="json")
+                ),
+                file_count=applied.file_count + 1,
             )
-        except Exception as exc:
-            error = exc
-            outcome = contracts.PlaybillFloorConsumerOutcomeV1(
-                generation=generation, status="failed", error=f"{type(exc).__name__}: {exc}"
+            written = contracts.PlaybillFloorDeliveryResultV1(
+                delta=delta, written=receipt, export=export
             )
-        with _STATE.open(instance) as connection:
-            assert connection is not None
-            connection.execute(
-                "INSERT INTO progress VALUES (1,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
-                "covered=excluded.covered,target=excluded.target,"
-                "completed=excluded.completed,failed=excluded.failed",
-                (covered, target, target if error is None else None, target if error else None),
-            )
-            connection.execute(
-                "INSERT INTO outcomes(payload) VALUES (?)", (outcome.model_dump_json(),)
-            )
-            connection.execute(
-                "DELETE FROM outcomes WHERE sequence < (SELECT max(sequence) FROM outcomes)"
-            )
-        if error is not None:
-            raise error
-        return written
+        outcome = contracts.PlaybillFloorConsumerOutcomeV1(
+            generation=generation,
+            status="unchanged" if written is None else written.written.status,
+            file_count=0 if written is None else written.written.file_count,
+        )
+    except Exception as exc:
+        error = exc
+        outcome = contracts.PlaybillFloorConsumerOutcomeV1(
+            generation=generation, status="failed", error=f"{type(exc).__name__}: {exc}"
+        )
+    with _STATE.open(instance) as connection:
+        assert connection is not None
+        connection.execute(
+            "INSERT INTO progress VALUES (1,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
+            "covered=excluded.covered,target=excluded.target,"
+            "completed=excluded.completed,failed=excluded.failed",
+            (covered, target, target if error is None else None, target if error else None),
+        )
+        connection.execute("INSERT INTO outcomes(payload) VALUES (?)", (outcome.model_dump_json(),))
+        connection.execute(
+            "DELETE FROM outcomes WHERE sequence < (SELECT max(sequence) FROM outcomes)"
+        )
+    if error is not None:
+        raise error
+    return written
 
 
 class FloorConsumers:

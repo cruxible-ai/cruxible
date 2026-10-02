@@ -648,3 +648,117 @@ def test_the_scan_sees_routes() -> None:
     assert {"export_floor", "floor_delta"} <= routes
     assert "FLOOR_ADMISSION" in _SHARED_ADMISSIONS
     assert "FLOOR_ADMISSION" in _RouteModule(tree).admissions
+
+
+def _http_hold_paths(modules: dict[str, ast.Module]) -> list[str]:
+    """Follow in-repository function references, including offloaded callbacks.
+
+    Nested bodies and local imports count too: moving a blocking acquisition
+    into a closure or another module must not evade the HTTP rule.
+    """
+    functions = {}
+    bindings = {}
+    routes = []
+
+    def imports(nodes):
+        result = {}
+        for node in nodes:
+            if isinstance(node, ast.ImportFrom) and node.module and not node.level:
+                for alias in node.names:
+                    result[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    result[alias.asname or alias.name.split(".")[0]] = (
+                        alias.name if alias.asname else alias.name.split(".")[0]
+                    )
+        return result
+
+    for module, tree in modules.items():
+        global_names = imports(tree.body)
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                global_names[node.name] = f"{module}.{node.name}"
+        for node in tree.body:
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            qualified = f"{module}.{node.name}"
+            functions[qualified] = node
+            bindings[qualified] = global_names | imports(ast.walk(node))
+            if _is_route(node):
+                routes.append(qualified)
+
+    def resolve(node, names):
+        if isinstance(node, ast.Name):
+            return names.get(node.id, node.id)
+        if isinstance(node, ast.Attribute):
+            parent = resolve(node.value, names)
+            return f"{parent}.{node.attr}" if parent else None
+        return None
+
+    problems = []
+    for route in routes:
+        pending = [(route, [route])]
+        visited = set()
+        while pending:
+            name, path = pending.pop()
+            if name in visited:
+                continue
+            visited.add(name)
+            function = functions[name]
+            names = bindings[name]
+            for statement in function.body:
+                for node in ast.walk(statement):
+                    target = resolve(node, names)
+                    if target == "cruxible_core.runtime.admission.FLOOR_ADMISSION.hold":
+                        problems.append(" -> ".join([*path, "FLOOR_ADMISSION.hold"]))
+                    elif target in functions and target not in visited:
+                        pending.append((target, [*path, target]))
+    return sorted(set(problems))
+
+
+def test_no_http_path_reaches_blocking_floor_admission() -> None:
+    source = ROOT / "src"
+    modules = {
+        ".".join(path.relative_to(source).with_suffix("").parts): ast.parse(
+            path.read_text(encoding="utf-8")
+        )
+        for path in (source / "cruxible_core").rglob("*.py")
+    }
+    assert _http_hold_paths(modules) == []
+
+
+def test_http_hold_check_rejects_a_sync_route_through_host_api() -> None:
+    modules = {
+        "routes": ast.parse("""
+from cruxible_core.runtime import host_api
+@router.post("/toggle")
+def toggle():
+    return host_api.toggle()
+"""),
+        "cruxible_core.runtime.host_api": ast.parse("""
+def toggle():
+    from cruxible_core.consumers.floor import refresh_floor
+    return refresh_floor()
+"""),
+        "cruxible_core.consumers.floor": ast.parse("""
+from cruxible_core.runtime.admission import FLOOR_ADMISSION
+
+def refresh_floor():
+    with FLOOR_ADMISSION.hold("instance"):
+        return admitted_body()
+
+def admitted_body():
+    return 1
+"""),
+    }
+    assert _http_hold_paths(modules) == [
+        "routes.toggle -> cruxible_core.runtime.host_api.toggle -> "
+        "cruxible_core.consumers.floor.refresh_floor -> FLOOR_ADMISSION.hold"
+    ]
+    modules["cruxible_core.runtime.host_api"] = ast.parse("""
+from cruxible_core.consumers.floor import admitted_body
+
+def toggle():
+    return admitted_body()
+""")
+    assert _http_hold_paths(modules) == []

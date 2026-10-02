@@ -522,3 +522,128 @@ def test_a_route_cancelled_before_its_worker_starts_releases_the_key() -> None:
     with pytest.raises(RuntimeError, match="left before its call started"):
         ticket.run(lambda: ran.append("late"))
     assert ran == [] and admission.active_keys() == 0
+
+
+def test_attachment_and_delivery_requests_wait_without_worker_tokens(monkeypatch):
+    """Pause an admitted export before offload, then queue two pool-sized toggles.
+
+    A synchronous route reaching hold would occupy both workers, preventing the
+    export from starting. Delta, deliver-now and detach share that same queue.
+    """
+    import asyncio
+    from types import SimpleNamespace
+
+    import httpx
+    from fastapi import FastAPI
+
+    from cruxible_core.consumers import floor
+    from cruxible_core.runtime import host_api
+    from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND
+    from cruxible_core.server.routes import hosted_instances
+
+    record = SimpleNamespace(
+        backend=GOVERNED_DAEMON_BACKEND, workspace_root="/workspace", floor_delivery=True
+    )
+
+    def toggle(instance_id, enabled):
+        record.floor_delivery = enabled
+
+    def detach(instance_id, **kwargs):
+        return SimpleNamespace(workspace_root=None)
+
+    registry = SimpleNamespace(
+        get=lambda _: record, set_floor_delivery=toggle, detach_governed_workspace=detach
+    )
+    monkeypatch.setattr(host_api, "get_registry", lambda: registry)
+    monkeypatch.setattr(host_api, "check_permission", lambda *a, **kw: None)
+    monkeypatch.setattr(host_api, "_refuse_detach_with_registered_blocks", lambda _: None)
+    monkeypatch.setattr(
+        host_api, "get_playbill_manager", lambda: SimpleNamespace(get=lambda _: None)
+    )
+    monkeypatch.setattr(
+        hosted_instances, "resolve_server_settings", lambda: SimpleNamespace(server_socket="socket")
+    )
+    for routes in (playbill_routes, hosted_instances):
+        monkeypatch.setattr(routes, "resolve_server_instance_id", lambda value: value)
+    delta = floor_v5_delta({}, coordinate=_COORDINATE, generation=1)
+    delivered = contracts.PlaybillFloorDeliveryResultV1(
+        delta=delta,
+        written=contracts.PlaybillWorkspaceFloorWriteResult(
+            path=".playbill/floor",
+            destination="/workspace/.playbill/floor",
+            floor_digest=_DIGEST,
+            coordinate=_COORDINATE,
+            file_count=1,
+        ),
+    )
+    monkeypatch.setattr(floor, "_refresh_floor_admitted", lambda *a, **kw: delivered)
+    monkeypatch.setattr(playbill_api, "playbill_floor_delta", lambda *a, **kw: delta)
+    monkeypatch.setattr(
+        playbill_api,
+        "playbill_export_floor",
+        lambda *a, **kw: contracts.PlaybillFloorExport(
+            tag="playbill-floor-export-v5", coordinate=_COORDINATE, manifest={}, files=[]
+        ),
+    )
+    app = FastAPI()
+    app.include_router(playbill_routes.router)
+    app.include_router(hosted_instances.router)
+    offload = playbill_routes.run_in_threadpool
+    enter = FLOOR_ADMISSION._enter
+
+    async def scenario():
+        admitted = asyncio.Event()
+        release = asyncio.Event()
+        toggles_queued = asyncio.Event()
+        arrivals = 0
+        loop = asyncio.get_running_loop()
+
+        def observe(*args, **kwargs):
+            nonlocal arrivals
+            waiter = enter(*args, **kwargs)
+            arrivals += 1
+            if arrivals >= 3:
+                loop.call_soon_threadsafe(toggles_queued.set)
+            return waiter
+
+        async def pause(call, *args, **kwargs):
+            if getattr(call, "__name__", None) == "run":
+                admitted.set()
+                await release.wait()
+            return await offload(call, *args, **kwargs)
+
+        monkeypatch.setattr(FLOOR_ADMISSION, "_enter", observe)
+        monkeypatch.setattr(playbill_routes, "run_in_threadpool", pause)
+        limiter = anyio.to_thread.current_default_thread_limiter()
+        previous = limiter.total_tokens
+        limiter.total_tokens = 2
+        tasks = []
+        try:
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app, client=None), base_url="http://test"
+            ) as http:
+                prefix = "/api/v1/inst_pool/playbill"
+                tasks.append(asyncio.create_task(http.post(prefix + "/floor/export", json={})))
+                await asyncio.wait_for(admitted.wait(), 5)
+                for _ in range(2):
+                    tasks.append(
+                        asyncio.create_task(
+                            http.post(prefix + "/workspace/floor-delivery", json={"enabled": True})
+                        )
+                    )
+                await asyncio.wait_for(toggles_queued.wait(), 5)
+                assert await asyncio.wait_for(offload(lambda: "free worker"), 2) == "free worker"
+                for suffix in ("/floor/delta", "/floor/deliver-now", "/workspace-detach"):
+                    tasks.append(asyncio.create_task(http.post(prefix + suffix, json={})))
+                release.set()
+                responses = await asyncio.wait_for(asyncio.gather(*tasks), 10)
+                assert [r.status_code for r in responses] == [200] * 6, [r.text for r in responses]
+        finally:
+            release.set()
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            limiter.total_tokens = previous
+
+    asyncio.run(scenario())
+    assert FLOOR_ADMISSION.active_keys() == 0

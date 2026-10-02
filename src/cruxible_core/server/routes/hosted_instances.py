@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Request
+from starlette.concurrency import run_in_threadpool
 
 from cruxible_client import contracts
 from cruxible_core.runtime import host_api
+from cruxible_core.runtime.admission import FLOOR_ADMISSION
 from cruxible_core.server.config import resolve_server_settings
 from cruxible_core.server.request_models import PlaybillHostCreateRequest
 from cruxible_core.server.route_paths import (
@@ -51,19 +53,25 @@ def create_playbill_host(
     PLAYBILL_WORKSPACE_DETACH_PATH,
     response_model=contracts.PlaybillWorkspaceDetachResultV1,
 )
-def playbill_host_workspace_detach(
+async def playbill_host_workspace_detach(
     instance_id: str,
     request: Request,
 ) -> contracts.PlaybillWorkspaceDetachResultV1:
     """Release one host's Git worktree; only local-socket callers may ask."""
 
-    return host_api.playbill_host_workspace_detach(
-        resolve_server_instance_id(instance_id),
-        workspace_attachment_authorized=(
-            request.scope.get("client") is None
-            and resolve_server_settings().server_socket is not None
-        ),
-    )
+    resolved = await run_in_threadpool(resolve_server_instance_id, instance_id)
+
+    def detach() -> contracts.PlaybillWorkspaceDetachResultV1:
+        return host_api._playbill_host_workspace_detach_admitted(
+            resolved,
+            workspace_attachment_authorized=(
+                request.scope.get("client") is None
+                and resolve_server_settings().server_socket is not None
+            ),
+        )
+
+    async with FLOOR_ADMISSION.admit(resolved) as ticket:
+        return await run_in_threadpool(ticket.run, detach)
 
 
 @router.get(
@@ -88,37 +96,49 @@ def playbill_host_workspace_registration(
 @router.post(
     PLAYBILL_FLOOR_DELIVERY_PATH, response_model=contracts.PlaybillHostWorkspaceRegistrationV1
 )
-def set_playbill_floor_delivery(
+async def set_playbill_floor_delivery(
     instance_id: str,
     req: contracts.PlaybillFloorDeliveryRequestV1,
     request: Request,
 ) -> contracts.PlaybillHostWorkspaceRegistrationV1:
     """Set the local workspace's floor writer through attachment authority."""
 
-    return host_api.set_playbill_floor_delivery(
-        resolve_server_instance_id(instance_id),
-        enabled=req.enabled,
-        workspace_attachment_authorized=(
-            request.scope.get("client") is None
-            and resolve_server_settings().server_socket is not None
-        ),
-    )
+    resolved = await run_in_threadpool(resolve_server_instance_id, instance_id)
+
+    def toggle() -> contracts.PlaybillHostWorkspaceRegistrationV1:
+        return host_api._set_playbill_floor_delivery_admitted(
+            resolved,
+            enabled=req.enabled,
+            workspace_attachment_authorized=(
+                request.scope.get("client") is None
+                and resolve_server_settings().server_socket is not None
+            ),
+        )
+
+    async with FLOOR_ADMISSION.admit(resolved) as ticket:
+        return await run_in_threadpool(ticket.run, toggle)
 
 
 @router.post(
     PLAYBILL_FLOOR_DELIVER_NOW_PATH, response_model=contracts.PlaybillFloorDeliveryResultV1
 )
-def deliver_playbill_floor_now(
+async def deliver_playbill_floor_now(
     instance_id: str, request: Request, req: contracts.PlaybillFloorDeliverNowRequestV1
 ) -> contracts.PlaybillFloorDeliveryResultV1:
     """Deliver under the floor consumer's admission and return its write receipt."""
 
-    return host_api.deliver_playbill_floor_now(
-        resolve_server_instance_id(instance_id),
-        include=req.include,
-        at=req.at,
-        workspace_attachment_authorized=(
-            request.scope.get("client") is None
-            and resolve_server_settings().server_socket is not None
-        ),
-    )
+    resolved = await run_in_threadpool(resolve_server_instance_id, instance_id)
+
+    def deliver() -> contracts.PlaybillFloorDeliveryResultV1:
+        return host_api._deliver_playbill_floor_now_admitted(
+            resolved,
+            include=req.include,
+            at=req.at,
+            workspace_attachment_authorized=(
+                request.scope.get("client") is None
+                and resolve_server_settings().server_socket is not None
+            ),
+        )
+
+    async with FLOOR_ADMISSION.admit(resolved) as ticket:
+        return await run_in_threadpool(ticket.run, deliver)

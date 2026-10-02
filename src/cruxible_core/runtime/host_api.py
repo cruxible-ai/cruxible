@@ -277,11 +277,26 @@ def set_playbill_floor_delivery(
 ) -> contracts.PlaybillHostWorkspaceRegistrationV1:
     """Opt a local workspace into its daemon's sole floor writer."""
 
+    with FLOOR_ADMISSION.hold(instance_id):
+        return _set_playbill_floor_delivery_admitted(
+            instance_id,
+            enabled=enabled,
+            workspace_attachment_authorized=workspace_attachment_authorized,
+        )
+
+
+def _set_playbill_floor_delivery_admitted(
+    instance_id: str,
+    *,
+    enabled: bool,
+    workspace_attachment_authorized: bool = False,
+) -> contracts.PlaybillHostWorkspaceRegistrationV1:
+    """Set delivery with floor admission already held by the caller."""
+
     check_permission("cruxible_playbill_workspace_floor_delivery", instance_id=instance_id)
     if not workspace_attachment_authorized:
         raise ConfigError("Floor delivery changes require the local Unix socket")
-    with FLOOR_ADMISSION.hold(instance_id):
-        get_registry().set_floor_delivery(instance_id, enabled)
+    get_registry().set_floor_delivery(instance_id, enabled)
     return playbill_host_workspace_registration(instance_id, expose_workspace_path=True)
 
 
@@ -294,12 +309,30 @@ def deliver_playbill_floor_now(
 ) -> contracts.PlaybillFloorDeliveryResultV1:
     """Synchronously run the same floor delivery that follows Trigger fires."""
 
+    with FLOOR_ADMISSION.hold(instance_id):
+        return _deliver_playbill_floor_now_admitted(
+            instance_id,
+            include=include,
+            at=at,
+            workspace_attachment_authorized=workspace_attachment_authorized,
+        )
+
+
+def _deliver_playbill_floor_now_admitted(
+    instance_id: str,
+    *,
+    include: tuple[contracts.PlaybillFloorExportPart, ...] = (),
+    at: contracts.PlaybillAcceptedCoordinate | None = None,
+    workspace_attachment_authorized: bool = False,
+) -> contracts.PlaybillFloorDeliveryResultV1:
+    """Deliver with floor admission already held by the caller."""
+
     check_permission("cruxible_playbill_floor_deliver_now", instance_id=instance_id)
     if not workspace_attachment_authorized:
         raise ConfigError("Floor delivery requires the local Unix socket")
-    from cruxible_core.consumers.floor import refresh_floor
+    from cruxible_core.consumers.floor import _refresh_floor_admitted
 
-    result = refresh_floor(
+    result = _refresh_floor_admitted(
         get_playbill_manager().get(instance_id),
         instance_id,
         require_delivery=True,
@@ -311,6 +344,20 @@ def deliver_playbill_floor_now(
 
 
 def playbill_host_workspace_detach(
+    instance_id: str,
+    *,
+    workspace_attachment_authorized: bool = False,
+) -> contracts.PlaybillWorkspaceDetachResultV1:
+    """Release a workspace under floor admission from a thread caller."""
+
+    with FLOOR_ADMISSION.hold(instance_id):
+        return _playbill_host_workspace_detach_admitted(
+            instance_id,
+            workspace_attachment_authorized=workspace_attachment_authorized,
+        )
+
+
+def _playbill_host_workspace_detach_admitted(
     instance_id: str,
     *,
     workspace_attachment_authorized: bool = False,
@@ -357,10 +404,9 @@ def playbill_host_workspace_detach(
             status="not_registered",
         )
     _refuse_detach_with_registered_blocks(instance_id)
-    with FLOOR_ADMISSION.hold(instance_id):
-        detached = registry.detach_governed_workspace(
-            instance_id, expected_workspace_root=record.workspace_root
-        )
+    detached = registry.detach_governed_workspace(
+        instance_id, expected_workspace_root=record.workspace_root
+    )
     assert detached.workspace_root is None
     return contracts.PlaybillWorkspaceDetachResultV1(
         instance_id=instance_id,

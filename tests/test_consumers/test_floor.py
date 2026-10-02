@@ -361,6 +361,8 @@ def test_deliver_now_keeps_opt_in_cards_under_the_same_writer(world):
 
 
 def test_new_routes_deliver_synchronously_and_refuse_tcp_callers(world, monkeypatch):
+    import asyncio
+
     from fastapi import Request
 
     from cruxible_client import contracts
@@ -382,13 +384,15 @@ def test_new_routes_deliver_synchronously_and_refuse_tcp_callers(world, monkeypa
     tcp = Request({"type": "http", "client": ("127.0.0.1", 1234)})
     request = contracts.PlaybillFloorDeliveryRequestV1(enabled=True)
     with pytest.raises(ConfigError, match="Unix socket"):
-        routes.set_playbill_floor_delivery(instance_id, request, tcp)
-    assert routes.set_playbill_floor_delivery(instance_id, request, local).floor_delivery
+        asyncio.run(routes.set_playbill_floor_delivery(instance_id, request, tcp))
+    assert asyncio.run(
+        routes.set_playbill_floor_delivery(instance_id, request, local)
+    ).floor_delivery
     deliver = contracts.PlaybillFloorDeliverNowRequestV1()
-    result = routes.deliver_playbill_floor_now(instance_id, local, deliver)
+    result = asyncio.run(routes.deliver_playbill_floor_now(instance_id, local, deliver))
     assert result.written.status == "written"
     with pytest.raises(ConfigError, match="Unix socket"):
-        routes.deliver_playbill_floor_now(instance_id, tcp, deliver)
+        asyncio.run(routes.deliver_playbill_floor_now(instance_id, tcp, deliver))
 
 
 def test_floor_schedule_advisory_is_opt_in(world, monkeypatch):
