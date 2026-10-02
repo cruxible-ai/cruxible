@@ -67,18 +67,48 @@ cruxible context show
 cruxible context clear
 ~~~
 
+## Previews
+
+Every operation that can change governed state, operational state or anything
+outside the daemon takes `--dry-run` (MCP and SDK: `dry_run`). A dry run runs
+the change's own checks and evaluation up to the commit and writes nothing
+anywhere: no proposal, ref, record, body, credential, registry row, journal
+entry or workspace file. It answers in the change's own result shape with a
+`would_*` status (`would_propose`, `would_block`, `would_decommission`,
+`would_revoke`, `would_publish`, ...), pinned to the accepted coordinate it was
+evaluated at.
+
+- A change the server derives across several artifacts previews unless asked
+  to commit: `kit add`, `kit remove`, `claim-type upgrade` and
+  `claim-type upgrade-evidence-rules`. Commit with `--commit`.
+- A change that cannot be undone previews unless asked to commit, and commits
+  only with the preview's coordinate: `instance decommission`,
+  `credential revoke`, `credential rotate` and `ledger set-mirror`. Commit with
+  `--commit --at OID`; without `--at` it refuses
+  `playbill.preview.confirmation_required`.
+- Everything else commits unless `--dry-run` is given.
+
+`--at OID` pins any commit to a preview: if accepted state moved since, the
+commit refuses `playbill.preview.state_moved` and changes nothing; preview
+again. The write verbs (`set`, `retire`, `write`) take `--dry-run` and `--at` the
+same way, where `--at` pins each changed slot.
+
 ## credential
 
 Manage runtime bearer credentials:
 
 ~~~text
-cruxible credential claim-bootstrap [--secret-file PATH] [--json]
-cruxible credential mint --principal-id ID --mode TIER [--key-dir DIR] [--label TEXT] [--json]
+cruxible credential claim-bootstrap [--secret-file PATH] [--dry-run] [--json]
+cruxible credential mint --principal-id ID --mode TIER [--key-dir DIR] [--label TEXT]
+  [--dry-run|--commit] [--at OID] [--json]
 cruxible credential list [--json]
-cruxible credential rotate CREDENTIAL_ID [--key-dir DIR]
-cruxible credential revoke CREDENTIAL_ID
-cruxible credential recover-admin [--state-root DIR] [--instance-id ID] [--json]
+cruxible credential rotate CREDENTIAL_ID [--key-dir DIR] [--dry-run|--commit] [--at OID] [--json]
+cruxible credential revoke CREDENTIAL_ID [--dry-run|--commit] [--at OID] [--json]
+cruxible credential recover-admin [--state-root DIR] [--instance-id ID] [--dry-run] [--json]
 ~~~
+
+Revoking or rotating a credential cannot be undone, so both preview first; see
+[Previews](#previews).
 
 `recover-admin` is local-only: it opens the state root's credentials DB
 directly with the daemon stopped. It ignores a remembered CLI context and
@@ -382,10 +412,10 @@ it.
 ## playbill host
 
 ~~~text
-cruxible playbill host create [--instance-id ID] [--workspace DIR] [--replace]
+cruxible playbill host create [--instance-id ID] [--workspace DIR] [--replace] [--dry-run]
 cruxible playbill host show INSTANCE [--json]
 cruxible playbill workspace attach [--instance-id ID] [--replace]
-cruxible playbill workspace detach [--instance-id ID] [--json]
+cruxible playbill workspace detach [--instance-id ID] [--dry-run] [--json]
 ~~~
 
 Allocates an empty daemon-owned host and remembers it. When the selected daemon
@@ -529,7 +559,7 @@ Stores exact bytes in inert CAS and prints their digest.
 ## playbill instance
 
 ~~~text
-cruxible playbill instance decommission --reason TEXT --yes
+cruxible playbill instance decommission --reason TEXT [--dry-run|--commit] [--at OID]
 ~~~
 
 Decommissioning is the terminal lifecycle state of one governed instance. It
@@ -541,15 +571,16 @@ and `search --mode orient` marks the orientation decommissioned.
 
 Nothing is deleted. Every accepted generation, receipt, and body stays exactly
 where it is, and archiving or erasing the directory afterwards is the operator's
-own step — no verb performs it, and the state cannot be reversed, so `--yes` is
-required.
+own step — no verb performs it, and the state cannot be reversed. So the command
+previews first and changes nothing; the confirmation is that preview's
+coordinate: `--commit --at OID` (see [Previews](#previews)).
 
 ## playbill ledger
 
 ~~~text
-cruxible playbill ledger set-mirror URL
+cruxible playbill ledger set-mirror URL [--dry-run|--commit] [--at OID]
 cruxible playbill ledger clone-url
-cruxible playbill ledger publish [--timeout 0..60] [--json]
+cruxible playbill ledger publish [--timeout 0..60] [--dry-run|--commit] [--at OID] [--json]
 ~~~
 
 The ledger is Git, so review is Git — but only for a reviewer who can reach the
@@ -656,7 +687,7 @@ the init body.
 ~~~text
 cruxible playbill provider list [--json]
 cruxible playbill provider install NAME[==VERSION] | WHEEL [--lock FILE]
-  [--dependency WHEEL]... [--extra NAME]... [--reverify] [--json]
+  [--dependency WHEEL]... [--extra NAME]... [--reverify] [--dry-run] [--json]
 ~~~
 
 Installation requires **ADMIN**. A package name resolves through the daemon's
@@ -694,11 +725,11 @@ and `POST /{instance}/playbill/providers/install`.
 ~~~text
 cruxible playbill kit build --id ID --version X.Y.Z --owns PREFIX. [--owns PREFIX.]...
   --out KIT_DIR [--json]
-cruxible playbill kit add KIT [--source TEXT] [--json]
-cruxible playbill kit push KIT REFERENCE [--json]
+cruxible playbill kit add KIT [--source TEXT] [--dry-run|--commit] [--at OID] [--json]
+cruxible playbill kit push KIT REFERENCE [--dry-run] [--json]
 cruxible playbill kit pull REFERENCE --out DIR [--layout] [--json]
 cruxible playbill kit status [--json]
-cruxible playbill kit remove ID [--json]
+cruxible playbill kit remove ID [--dry-run|--commit] [--at OID] [--json]
 ~~~
 
 `KIT` is a kit directory, an OCI image layout directory, or a registry
@@ -771,7 +802,7 @@ with the matching `CruxibleClient` methods.
 ## playbill document
 
 ~~~text
-cruxible playbill document propose --envelope FILE --name NAME
+cruxible playbill document propose --envelope FILE --name NAME [--dry-run|--commit] [--at OID]
 ~~~
 
 `document propose` is the only Document subcommand; Documents are read through
@@ -802,10 +833,11 @@ section nothing answers "what touches this package" from the object side.
 
 ~~~text
 cruxible playbill claim-type propose --template
-cruxible playbill claim-type propose --input FILE --name NAME
+cruxible playbill claim-type propose --input FILE --name NAME [--dry-run|--commit] [--at OID]
 cruxible playbill claim-type migrate REQUEST_FILE
-cruxible playbill claim-type upgrade-evidence-rules
-cruxible playbill claim-type upgrade [--claim-type P]... [--revision-evidence replace|accumulate] [--dry-run]
+cruxible playbill claim-type upgrade-evidence-rules [--dry-run|--commit] [--at OID]
+cruxible playbill claim-type upgrade [--claim-type P]... [--revision-evidence replace|accumulate]
+  [--dry-run|--commit] [--at OID]
 ~~~
 
 Read the accepted ClaimTypes with `cruxible playbill orient --section
@@ -851,7 +883,9 @@ their Claims. A rule converts only when it keeps its meaning: every version of a
 named contract must be compatible with its predecessor, and two rules that did
 not overlap may not start matching the same evidence. It lists, per ClaimType,
 the accepted contract versions a converted rule newly admits, and leaves the
-rest unchanged with the reason. Approve and activate the proposal as usual.
+rest unchanged with the reason. The change set carries every dependent Claim, so
+both upgrades preview by default (see [Previews](#previews)); commit the preview
+with `--commit --at OID`, then approve and activate the proposal as usual.
 
 ClaimType v7 adds a `description`, `member_descriptions` for a literal enum, a
 `default_role` a write takes when it names none, an `evidence_requirement`
@@ -1277,8 +1311,8 @@ PRD-c1… rollout-healthy procedure_unit satisfied run=RUN-3f…
 
 ~~~text
 cruxible playbill line check LINE [--since TS] [--until TS] [--limit 100] [--cursor CURSOR] [--json]
-cruxible playbill line arm LINE [--json]
-cruxible playbill line disarm LINE [--json]
+cruxible playbill line arm LINE [--dry-run|--commit] [--at OID] [--json]
+cruxible playbill line disarm LINE [--dry-run|--commit] [--at OID] [--json]
 cruxible playbill line status LINE [--json]
 cruxible playbill line evaluate LINE --since TS --until TS [--limit 100] [--cursor CURSOR] [--json]
 cruxible playbill line dispatch LINE [--occurrence-id DIGEST] [--retry] [--limit 1] [--json]
@@ -1517,7 +1551,7 @@ to clear the row.
 cruxible playbill block repin SOURCE_ID BLOCK_ID [--claim ID]... [--query ID]...
   [--backing SHA256] [--params CANONICAL_JSON]... [--workspace-root DIR]
   [--evaluation-time TS] [--artifact ID]... [--currency-policy warn|require_current]
-  [--clear-claims] [--clear-queries] [--clear-artifacts]
+  [--clear-claims] [--clear-queries] [--clear-artifacts] [--dry-run]
 cruxible playbill block sync [PATH]... [--all] [--check]
   [--detach PATH]... [--workspace-root DIR]
 cruxible playbill block depublish SOURCE_ID BLOCK_ID [--json]
@@ -2422,7 +2456,7 @@ ledger](#playbill-ledger) for what the mirror carries and how to get its URL.
 
 ~~~text
 cruxible playbill principal add PRINCIPAL_ID --key-dir DIR [--signer-key PATH]
-  [--mode governed_write] [--kind ordinary] [--name NAME] [--json]
+  [--mode governed_write] [--kind ordinary] [--name NAME] [--dry-run|--commit] [--at OID] [--json]
 cruxible playbill principal rotate ...
 cruxible playbill principal revoke ...
 cruxible playbill principal recover ...
@@ -2489,7 +2523,7 @@ with --help for its exact options.
 
 ### Compiler upgrade
 
-`cruxible playbill compiler upgrade --to DIGEST --name NAME` creates an admin-only
+`cruxible playbill compiler upgrade --to DIGEST --name NAME [--dry-run]` creates an admin-only
 proposal bound to the exact accepted head and target compiler. Review it, sign
 through `cruxible playbill proposal approve`, then use
 `cruxible playbill proposal activate`. Activation validates the full target

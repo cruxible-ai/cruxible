@@ -51,6 +51,7 @@ from cruxible_core.procedures.line_admission import (
     line_arm_boundary,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.change_preview import change_scope
 from cruxible_core.service.procedures.line_triggers import service_check_line_trigger
 from cruxible_core.service.procedures.procedure_runs import (
     LineNeverArmed,
@@ -64,6 +65,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     require_run_permission,
     service_run_playbill_line,
 )
+from cruxible_core.storage.preview_fence import is_previewing
 
 _ARM_FIELDS = (
     "arm_id",
@@ -83,6 +85,11 @@ _IDLE_COVERAGE_INTERVAL = timedelta(minutes=1)
 
 
 def _positions(instance: PlaybillInstance) -> dict[str, Any]:
+    root = instance.root / instance.descriptor.storage.exhaust / "procedure-runs"
+    if is_previewing() and not root.is_dir():
+        # No run was ever journaled, so there is no position to start from, and
+        # a preview must not create the journal to read that it is empty.
+        return {}
     journal, _ = _journal(instance)
     return journal.index.positions(_stream(instance))
 
@@ -347,8 +354,13 @@ def service_arm_line(
     actor: GovernedActorContext,
     now: datetime,
     daemon_id: str,
+    dry_run: bool | None = None,
+    at: str | None = None,
 ) -> LineArmV1:
     """Arm the current Line version forward-only under the caller's credential.
+
+    ``dry_run`` previews the arm on this same path and records nothing; its
+    outcome reads ``would_arm`` or ``would_rearm`` (R12).
 
     Arming never catches up: matching starts at `now`, and any work already
     pending stays for explicit dispatch. A Line that can propose or settle
@@ -360,6 +372,46 @@ def service_arm_line(
     """
 
     instance.require_writable()
+    with change_scope(
+        instance,
+        dry_run=dry_run,
+        at=at,
+        kind="direct",
+        operation="playbill.line.arm",
+        describe=f"arming Line {line}",
+    ) as mode:
+        return _previewed(
+            mode.previewing,
+            _arm_line(
+                instance, line, principal=principal, actor=actor, now=now, daemon_id=daemon_id
+            ),
+        )
+
+
+def _previewed(previewing: bool, view: LineArmV1) -> LineArmV1:
+    """A preview's arm view: the state the commit would leave, outcome ``would_*``."""
+
+    if not previewing or view.outcome not in _WOULD_OUTCOMES:
+        return view
+    return view.model_copy(update={"outcome": _WOULD_OUTCOMES[view.outcome]})
+
+
+_WOULD_OUTCOMES: dict[str | None, LineArmOutcomeV1] = {
+    "armed": "would_arm",
+    "rearmed": "would_rearm",
+    "disarmed": "would_disarm",
+}
+
+
+def _arm_line(
+    instance: PlaybillInstance,
+    line: str,
+    *,
+    principal: LineArmPrincipalV1,
+    actor: GovernedActorContext,
+    now: datetime,
+    daemon_id: str,
+) -> LineArmV1:
     coordinate = instance.accepted_coordinate()
     accepted = _accepted_line_by_reference(instance, coordinate=coordinate, reference=line)
     # An arm admits on its own; one whose every admission would refuse for want
@@ -408,14 +460,31 @@ def service_disarm_line(
     *,
     actor: GovernedActorContext,
     now: datetime,
+    dry_run: bool | None = None,
+    at: str | None = None,
 ) -> LineArmV1:
     """Stop admitting new work; a run already admitted is not cancelled.
 
     Disarming a Line whose arm already stopped changes nothing and returns that
     arm with `already_disarmed`. A Line never armed has no arm to return.
+    ``dry_run`` previews it and records nothing (outcome ``would_disarm``).
     """
 
     instance.require_writable()
+    with change_scope(
+        instance,
+        dry_run=dry_run,
+        at=at,
+        kind="direct",
+        operation="playbill.line.disarm",
+        describe=f"disarming Line {line}",
+    ) as mode:
+        return _previewed(mode.previewing, _disarm_line(instance, line, actor=actor, now=now))
+
+
+def _disarm_line(
+    instance: PlaybillInstance, line: str, *, actor: GovernedActorContext, now: datetime
+) -> LineArmV1:
     accepted = _accepted_line_by_reference(
         instance, coordinate=instance.accepted_coordinate(), reference=line
     )

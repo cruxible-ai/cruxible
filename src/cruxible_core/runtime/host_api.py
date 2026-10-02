@@ -192,8 +192,12 @@ def create_playbill_host(
     instance_id: str | None = None,
     workspace_root: str | None = None,
     workspace_attachment_authorized: bool = False,
+    dry_run: bool | None = None,
 ) -> contracts.PlaybillHostResult:
-    """Allocate one empty daemon-owned host record for later Playbill bootstrap."""
+    """Allocate one empty daemon-owned host record for later Playbill bootstrap.
+
+    ``dry_run`` registers nothing (R12).
+    """
 
     registry = get_registry()
     selected = (instance_id or "").strip() or registry.generate_governed_instance_id()
@@ -234,8 +238,12 @@ def create_playbill_host(
                     "attachment; archive/rebuild an attached host, record attachment before "
                     "init, then re-seed"
                 )
+            if dry_run:
+                return contracts.PlaybillHostResult(instance_id=selected, status="already_exists")
             registry.attach_governed_workspace(selected, workspace_root)
         return contracts.PlaybillHostResult(instance_id=selected, status="already_exists")
+    if dry_run:
+        return contracts.PlaybillHostResult(instance_id=selected, status="would_create")
 
     registered = registry.create_governed_instance_with_id(
         selected,
@@ -283,6 +291,7 @@ def playbill_host_workspace_detach(
     instance_id: str,
     *,
     workspace_attachment_authorized: bool = False,
+    dry_run: bool | None = None,
 ) -> contracts.PlaybillWorkspaceDetachResultV1:
     """Release one governed host from the Git worktree it is attached to.
 
@@ -326,6 +335,12 @@ def playbill_host_workspace_detach(
             status="not_registered",
         )
     _refuse_detach_with_registered_blocks(instance_id)
+    if dry_run:
+        return contracts.PlaybillWorkspaceDetachResultV1(
+            instance_id=instance_id,
+            status="would_detach",
+            workspace_root=record.workspace_root,
+        )
     detached = registry.detach_governed_workspace(
         instance_id,
         expected_workspace_root=record.workspace_root,

@@ -8,6 +8,7 @@ credential errors shared by the daemon, CLI and MCP boundaries.
     ├── ConfigError (invalid configuration or request shape)
     ├── DataValidationError (payload does not match its declared contract)
     │   └── RequestRefusedError (a coded refusal of caller input, with its repair)
+    │       └── ChangeRefusedError (a commit refused by its preview pin, R12)
     ├── CustomerCodeExecutionUnsupportedError (hosted profile refuses customer code)
     ├── HostedProfileUnknownError (unknown hosted server profile)
     ├── IsolatedExecutorDiscoveryError (advertised isolated executor failed to load)
@@ -96,6 +97,32 @@ class RequestRefusedError(DataValidationError):
         self.error_code = error_code
         self.repair = repair
         super().__init__(f"{error_code}: {message}")
+
+
+class ChangeRefusedError(RequestRefusedError):
+    """A change refused by its preview pin (rule R12), with the preview as repair.
+
+    ``playbill.preview.state_moved`` (409): the commit carried the coordinate of
+    a preview and accepted state has moved since. ``playbill.preview.
+    confirmation_required`` (400): a change that cannot be undone commits only
+    with the coordinate of its preview.
+    """
+
+    def __init__(
+        self,
+        error_code: Literal[
+            "playbill.preview.state_moved", "playbill.preview.confirmation_required"
+        ],
+        message: str,
+        *,
+        operation: str,
+    ) -> None:
+        self.http_status = 409 if error_code == "playbill.preview.state_moved" else 400
+        super().__init__(
+            error_code,
+            message,
+            repair=RepairOperationV1(operation=operation, arguments={"dry_run": True}),
+        )
 
 
 class CustomerCodeExecutionUnsupportedError(CoreError):

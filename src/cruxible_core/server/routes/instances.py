@@ -7,6 +7,7 @@ from fastapi import APIRouter
 from cruxible_client import contracts
 from cruxible_core.runtime import host_api
 from cruxible_core.runtime.permissions import check_permission
+from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.config import get_runtime_bootstrap_secret
 from cruxible_core.server.credentials import get_runtime_credential_store
 from cruxible_core.server.request_models import (
@@ -14,6 +15,7 @@ from cruxible_core.server.request_models import (
 )
 from cruxible_core.server.route_paths import RUNTIME_BOOTSTRAP_CLAIM_PATH
 from cruxible_core.server.routes import resolve_server_instance_id
+from cruxible_core.service.change_preview import change_scope
 
 router = APIRouter(prefix="/api/v1", tags=["instances"])
 
@@ -26,20 +28,37 @@ def claim_runtime_bootstrap(
     instance_id: str,
     req: BootstrapClaimRequest,
 ) -> contracts.RuntimeCredentialBootstrapResult:
-    """Exchange a one-time bootstrap secret for the initial ADMIN runtime token."""
+    """Exchange the bootstrap secret for one host's initial ADMIN runtime token.
+
+    The secret is claimable once per host. ``dry_run`` checks the claim and
+    claims nothing (R12).
+    """
     resolved_instance_id = resolve_server_instance_id(instance_id)
     check_permission("cruxible_runtime_credentials", instance_id=resolved_instance_id)
     store = get_runtime_credential_store()
-    created = store.claim_bootstrap_credential(
-        instance_id=resolved_instance_id,
-        bootstrap_secret=req.bootstrap_secret,
-        expected_bootstrap_secret=get_runtime_bootstrap_secret(),
-    )
+    with change_scope(
+        get_playbill_manager().initialized(resolved_instance_id),
+        dry_run=req.dry_run,
+        at=None,
+        kind="direct",
+        operation="credential.claim-bootstrap",
+        describe=f"claiming the bootstrap credential of {resolved_instance_id}",
+    ) as mode:
+        created = store.prepare_bootstrap_credential(
+            instance_id=resolved_instance_id,
+            bootstrap_secret=req.bootstrap_secret,
+            expected_bootstrap_secret=get_runtime_bootstrap_secret(),
+        )
+        if not mode.previewing:
+            created = store.claim_prepared_bootstrap_credential(
+                created, bootstrap_secret=req.bootstrap_secret
+            )
     return contracts.RuntimeCredentialBootstrapResult(
+        status="would_claim" if mode.previewing else "claimed",
         credential_id=created.record.credential_id,
         instance_id=created.record.instance_id,
         permission_mode="admin",
-        token=created.token,
+        token=None if mode.previewing else created.token,
     )
 
 

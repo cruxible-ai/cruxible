@@ -1,0 +1,253 @@
+"""One exact-preview mechanism for every change, built once (rule R12).
+
+Every change operation runs inside ``change_scope``. It decides from the
+request's ``dry_run`` and the operation's ``ChangeKind`` whether this call
+previews or commits, and pins the call to the accepted coordinate it runs at:
+
+- a preview runs behind every guard there is -- bodies held in memory
+  (``dry_run_bodies``), history reads detached from the on-disk index
+  (``detached_history_reads``) and every fenced write door closed
+  (``previewing``) -- so the change's own code runs up to its commit and stops
+  there, writing nothing anywhere;
+- a commit carrying ``at`` refuses ``playbill.preview.state_moved`` when the
+  accepted head is no longer the one the preview saw, and a change that cannot
+  be undone refuses ``playbill.preview.confirmation_required`` without ``at``.
+
+Changes that become a proposal go through ``admit_change_set``: a preview
+evaluates the candidate on the proposal service's own admission path
+(``ProposalService.preview``) and a commit submits it, so both reach the same
+verdict on the same tree.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterator, Mapping
+from contextlib import ExitStack, contextmanager
+from dataclasses import dataclass
+from typing import Literal
+
+from cruxible_client import contracts
+from cruxible_client.contracts.actor_types import TransportCapability
+from cruxible_client.contracts.candidates import CandidateRecordAnyVersion
+from cruxible_client.contracts.change_control import ChangeKind
+from cruxible_client.contracts.diagnostics import CompilerDiagnostic
+from cruxible_client.contracts.get_reads import PlaybillGetCoordinateV1
+from cruxible_core.errors import ChangeRefusedError
+from cruxible_core.indexes.history.history_index import detached_history_reads
+from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.proposals.proposals import (
+    AuthenticatedActor,
+    ProposalAdmissionRequest,
+    ProposalPreviewV1,
+    ProposalResult,
+)
+from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.storage.cas import dry_run_bodies
+from cruxible_core.storage.preview_fence import previewing
+
+
+class ChangeMode:
+    """Whether this call previews, and the accepted coordinate it is pinned to.
+
+    The head is read once, when first needed: at once for a preview or a pinned
+    commit, and only if the change asks for it otherwise, so an unpinned commit
+    that reports no coordinate reads nothing extra.
+    """
+
+    def __init__(self, instance: PlaybillInstance | None, *, previewing: bool) -> None:
+        self.previewing = previewing
+        self._instance = instance
+        self._head: AcceptedProjectionCoordinate | None = None
+        self._coordinate: PlaybillGetCoordinateV1 | None = None
+
+    @property
+    def head(self) -> AcceptedProjectionCoordinate | None:
+        if self._head is None and self._instance is not None:
+            self._head = self._instance.accepted_coordinate()
+        return self._head
+
+    @property
+    def coordinate(self) -> PlaybillGetCoordinateV1 | None:
+        head = self.head
+        if self._coordinate is None and self._instance is not None and head is not None:
+            self._coordinate = compact_coordinate(self._instance, head)
+        return self._coordinate
+
+
+def previews_by_default(kind: ChangeKind) -> bool:
+    return kind != "direct"
+
+
+def compact_coordinate(
+    instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate
+) -> PlaybillGetCoordinateV1:
+    """The 12-hex git oid and generation every outcome is pinned to."""
+
+    public = AcceptedCoordinate.from_internal(coordinate)
+    with instance.accepted_history_reader(at=public) as history:
+        generation = int(history.sequence)
+    return PlaybillGetCoordinateV1(git_oid=public.git_oid[:12], generation=generation)
+
+
+def full_coordinate(instance: PlaybillInstance) -> contracts.PlaybillAcceptedCoordinate:
+    """The whole accepted coordinate, for an outcome that reports it in full."""
+
+    return contracts.PlaybillAcceptedCoordinate.model_validate(
+        AcceptedCoordinate.from_internal(instance.accepted_coordinate()).model_dump(mode="json")
+    )
+
+
+@contextmanager
+def preview_guards(active: bool) -> Iterator[None]:
+    """Every guard a preview runs behind, or nothing for a commit."""
+
+    with ExitStack() as stack:
+        if active:
+            stack.enter_context(dry_run_bodies())
+            stack.enter_context(detached_history_reads())
+            stack.enter_context(previewing())
+        yield
+
+
+def _pin(
+    *,
+    head_oid: str | None,
+    at: str | None,
+    kind: ChangeKind,
+    operation: str,
+    describe: str,
+) -> None:
+    if at is None:
+        if kind == "irreversible":
+            raise ChangeRefusedError(
+                "playbill.preview.confirmation_required",
+                f"{describe} cannot be undone, so it commits only with the coordinate of "
+                "its preview; preview it (dry_run), then commit with at=<that coordinate>",
+                operation=operation,
+            )
+        return
+    if head_oid is None or not head_oid.startswith(at):
+        raise ChangeRefusedError(
+            "playbill.preview.state_moved",
+            f"{describe} was previewed at {at}, but accepted state is now at "
+            f"{'nothing' if head_oid is None else head_oid[:12]}; preview it again",
+            operation=operation,
+        )
+
+
+@contextmanager
+def change_scope(
+    instance: PlaybillInstance | None,
+    *,
+    dry_run: bool | None,
+    at: str | None,
+    kind: ChangeKind,
+    operation: str,
+    describe: str,
+) -> Iterator[ChangeMode]:
+    """Run one change as a preview or as a pinned commit; see the module docstring.
+
+    ``instance`` is None for a change on a host with no instance yet: such a
+    change has no accepted coordinate, and ``at`` cannot pin it.
+    ``operation`` is the CLI leaf the refusal repairs name; ``describe`` names
+    the change in refusal prose.
+    """
+
+    active = previews_by_default(kind) if dry_run is None else dry_run
+    with preview_guards(active):
+        mode = ChangeMode(instance, previewing=active)
+        if active:
+            mode.coordinate  # noqa: B018 - the preview pins to the head it starts at
+        elif at is not None or kind == "irreversible":
+            head = mode.head
+            _pin(
+                head_oid=None if head is None else head.git_oid,
+                at=at,
+                kind=kind,
+                operation=operation,
+                describe=describe,
+            )
+        yield mode
+
+
+@dataclass(frozen=True)
+class AdmittedChangeSet:
+    """A change set admitted as a proposal, or evaluated as one by a preview."""
+
+    previewed: bool
+    candidate: CandidateRecordAnyVersion | None
+    diagnostics: tuple[CompilerDiagnostic, ...]
+    proposal_id: str | None
+    result: ProposalResult | None
+    preview: ProposalPreviewV1 | None = None
+
+    @property
+    def admitted(self) -> bool:
+        return self.candidate is not None
+
+    @property
+    def candidate_digest(self) -> str | None:
+        return None if self.candidate is None else self.candidate.candidate_digest
+
+    @property
+    def approval_required(self) -> bool:
+        return self.candidate is not None and bool(self.candidate.approval_requirements)
+
+    @property
+    def status(self) -> Literal["proposed", "blocked", "would_propose", "would_block"]:
+        if self.previewed:
+            return "would_propose" if self.admitted else "would_block"
+        return "proposed" if self.admitted else "blocked"
+
+    def refusal_detail(self) -> str:
+        return "Refused: " + "; ".join(item.code for item in self.diagnostics)
+
+
+def admit_change_set(
+    instance: PlaybillInstance,
+    mode: ChangeMode,
+    *,
+    actor_id: str,
+    request: ProposalAdmissionRequest,
+    candidate_tree: Mapping[str, bytes],
+    timestamp: str,
+    capabilities: tuple[TransportCapability, ...] = ("propose",),
+) -> AdmittedChangeSet:
+    """Submit one candidate tree, or (previewing) evaluate it on submit's own path."""
+
+    service = instance.proposal_service()
+    actor = AuthenticatedActor(actor_id=actor_id, capabilities=capabilities)
+    if mode.previewing:
+        preview = service.preview(
+            actor=actor, request=request, candidate_tree=candidate_tree, timestamp=timestamp
+        )
+        return AdmittedChangeSet(
+            previewed=True,
+            candidate=preview.candidate,
+            diagnostics=preview.evaluation.diagnostics,
+            proposal_id=None,
+            result=None,
+            preview=preview,
+        )
+    submitted = service.submit(
+        actor=actor, request=request, candidate_tree=candidate_tree, timestamp=timestamp
+    )
+    return AdmittedChangeSet(
+        previewed=False,
+        candidate=submitted.candidate,
+        diagnostics=submitted.evaluation.diagnostics,
+        proposal_id=submitted.admission.proposal_id,
+        result=submitted,
+    )
+
+
+__all__ = [
+    "AdmittedChangeSet",
+    "ChangeMode",
+    "admit_change_set",
+    "change_scope",
+    "compact_coordinate",
+    "full_coordinate",
+    "preview_guards",
+    "previews_by_default",
+]

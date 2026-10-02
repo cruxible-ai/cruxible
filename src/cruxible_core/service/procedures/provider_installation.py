@@ -81,7 +81,9 @@ from cruxible_core.runtime.provider_runtime import (
     ProviderRuntimeOperator,
 )
 from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
+from cruxible_core.service.change_preview import ChangeMode, admit_change_set, change_scope
 from cruxible_core.service.proposals.proposals import service_list_playbill_proposals
+from cruxible_core.storage.preview_fence import refuse_write_while_previewing
 
 
 def _repository_projects(operator: ProviderRuntimeOperator) -> dict[str, Path]:
@@ -403,11 +405,27 @@ def service_install_provider(
         source = {"index": release.index_url, "wheel": release.filename, "sha256": release.sha256}
     identifier = "sha256:" + canonical_digest(
         "playbill-provider-installation-request-v1",
-        {"request": request.model_dump(mode="json", exclude={"reverify"}), "source": source},
+        {
+            "request": request.model_dump(mode="json", exclude={"reverify", "dry_run", "at"}),
+            "source": source,
+        },
     )
     directory = (
         instance.root / "exhaust" / "provider-installations" / identifier.removeprefix("sha256:")
     )
+    with change_scope(
+        instance,
+        dry_run=request.dry_run,
+        at=request.at,
+        kind="direct",
+        operation="playbill.provider.install",
+        describe=f"installing provider {request.package or 'wheel'}",
+    ) as mode:
+        if mode.previewing:
+            return _preview_installation(
+                instance, mode, request, identifier, directory, actor_id, timestamp
+            )
+    refuse_write_while_previewing("provider installation")
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     with (directory / "installation.lock").open("a+b") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
@@ -425,6 +443,87 @@ def service_install_provider(
             )
         finally:
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def _preview_installation(
+    instance: PlaybillInstance,
+    mode: ChangeMode,
+    request: PlaybillProviderInstallRequestV1,
+    identifier: str,
+    directory: Path,
+    actor_id: str,
+    timestamp: str,
+) -> PlaybillProviderInstallResultV1:
+    """What an install would do, with nothing fetched, built, registered or proposed (R12).
+
+    The package's definitions come out of preparing it -- fetching its wheels
+    and building its environment -- which is itself a write. So a package
+    already prepared on this daemon has its registration evaluated on the
+    proposal path exactly as the install would propose it; one not yet prepared
+    is reported as the fetch and build it would need, with nothing evaluated.
+    """
+
+    prepared_path = directory / "prepared.json"
+    name = request.package or "transferred wheel"
+    if not prepared_path.is_file():
+        return PlaybillProviderInstallResultV1(
+            installation_id=identifier,
+            provider_id=name,
+            status="would_install",
+            installed=False,
+            registered=False,
+            detail=(
+                f"would fetch and build {name} and then propose its definitions; the "
+                "registration is evaluated once the package is prepared, so preview it again "
+                "after installing reports it prepared"
+            ),
+        )
+    saved = json.loads(prepared_path.read_bytes())
+    document = PackageRegistrationDocumentV1.model_validate(saved["document"])
+    provider = ProviderV3.model_validate(saved["provider"])
+    assert mode.head is not None
+    candidate_tree, changed = _definition_changes(instance, document, provider, mode.head.git_oid)
+    if not changed:
+        return PlaybillProviderInstallResultV1(
+            installation_id=identifier,
+            provider_id=provider.identity.name,
+            status="would_install",
+            installed=True,
+            registered=True,
+            detail="prepared and registered already; an install changes no definition",
+        )
+    suffix = canonical_digest(
+        "playbill-provider-registration-target-v1",
+        {
+            "base": mode.head.semantic_root,
+            "members": {path: candidate_tree[path].hex() for path in changed},
+        },
+    ).removeprefix("sha256:")
+    admitted = admit_change_set(
+        instance,
+        mode,
+        actor_id=actor_id,
+        request=ProposalAdmissionRequest(
+            target_ref=f"refs/proposals/{actor_id}/provider-install-{suffix}",
+            proposed_base_oid=mode.head.git_oid,
+        ),
+        candidate_tree=candidate_tree,
+        timestamp=timestamp,
+    )
+    return PlaybillProviderInstallResultV1(
+        installation_id=identifier,
+        provider_id=provider.identity.name,
+        status="would_install",
+        installed=True,
+        registered=False,
+        candidate_digest=admitted.candidate_digest,
+        detail=(
+            admitted.refusal_detail()
+            if not admitted.admitted
+            else "would propose its definitions"
+            + (" (approval required)" if admitted.approval_required else " and activate them")
+        ),
+    )
 
 
 def _install_locked(

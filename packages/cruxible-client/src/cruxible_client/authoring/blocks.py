@@ -1066,6 +1066,7 @@ def repin_projection_block(
     coordinate: AcceptedCoordinate | None = None,
     body: bytes | None = None,
     compact: bool = True,
+    dry_run: bool = False,
 ) -> ProjectionBlockStampV2:
     """Repin one block, optionally installing explicitly supplied agent-authored body bytes.
 
@@ -1073,6 +1074,8 @@ def repin_projection_block(
     are retained before the page write. Use a reviewed exact-content package Claim
     for ledger recovery.
     The whole-file compare-and-swap preserves concurrent author edits.
+    ``dry_run`` computes and checks the stamp on this same path and stops before
+    the first write: no manifest, no page edit, no declaration (R12).
     """
 
     if evaluation_time.tzinfo is None or evaluation_time.utcoffset() is None:
@@ -1229,6 +1232,8 @@ def repin_projection_block(
         )
     except ProjectionMarkerError as exc:
         raise ProjectionRepinError("replacement does not reproduce the declared block") from exc
+    if dry_run:
+        return stamp
     retain_local_manifests(root, manifests)
     load_projection_manifests(root, replacement)
     try:

@@ -23,6 +23,7 @@ from cruxible_client.contracts.primitives import new_id
 from cruxible_client.contracts.temporal import format_datetime, utc_now
 from cruxible_core.errors import ConfigError, InstanceLocationRefusedError
 from cruxible_core.server.config import get_server_state_root
+from cruxible_core.storage.preview_fence import refuse_write_while_previewing
 
 LOCAL_FILESYSTEM_BACKEND = "local_filesystem"
 GOVERNED_DAEMON_BACKEND = "governed_daemon"
@@ -259,6 +260,7 @@ class InstanceRegistry:
     ) -> InstanceRecord:
         """Attach one exact local workspace without replacing an existing attachment."""
 
+        refuse_write_while_previewing("instance registry")
         _validate_instance_id(instance_id)
         try:
             resolved = str(Path(workspace_root).expanduser().resolve(strict=True))
@@ -291,6 +293,7 @@ class InstanceRegistry:
     ) -> InstanceRecord:
         """Roll back only the exact attachment made by a failed initialization."""
 
+        refuse_write_while_previewing("instance registry")
         _validate_instance_id(instance_id)
         expected = str(Path(expected_workspace_root).expanduser().resolve(strict=False))
         with self._connect() as conn:
@@ -316,6 +319,7 @@ class InstanceRegistry:
         workspace_root: str | None,
         preferred_instance_id: str | None = None,
     ) -> RegisteredInstance:
+        refuse_write_while_previewing("instance registry")
         if Path(location).is_absolute():
             relative = self.relative_location(location)
             if relative is not None:

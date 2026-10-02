@@ -5,6 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from cruxible_client import contracts
+from cruxible_client.contracts.change_control import DryRun, PreviewAt
 from cruxible_client.contracts.runtime_credentials import RuntimeCredentialPrincipalProofV1
 from cruxible_core.server.playbill_request_models import (  # noqa: F401
     PlaybillApprovalChallengeRequest,
@@ -28,10 +29,12 @@ class _StrictHostRequest(BaseModel):
 class PlaybillHostCreateRequest(_StrictHostRequest):
     instance_id: str | None = None
     workspace_root: str | None = None
+    dry_run: DryRun = None
 
 
 class BootstrapClaimRequest(_StrictHostRequest):
     bootstrap_secret: str = Field(min_length=1)
+    dry_run: DryRun = None
 
 
 class RuntimeCredentialCreateRequest(_StrictHostRequest):
@@ -41,9 +44,15 @@ class RuntimeCredentialCreateRequest(_StrictHostRequest):
     # A description only (default: the principal ID); it never decides who acts.
     label: str | None = Field(default=None, min_length=1, max_length=256)
     principal_proof: RuntimeCredentialPrincipalProofV1 | None = None
+    dry_run: DryRun = None
+    at: PreviewAt = None
 
 
 class RuntimeCredentialRotateRequest(_StrictHostRequest):
     # The bound principal's signed consent to the replacement's exact terms;
     # needed unless the request already acts as that principal.
     principal_proof: RuntimeCredentialPrincipalProofV1 | None = None
+    #: Rotating revokes the old token, which cannot be undone: it previews by
+    #: default and commits only with ``at``.
+    dry_run: DryRun = None
+    at: PreviewAt = None

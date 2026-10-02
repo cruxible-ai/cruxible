@@ -180,7 +180,8 @@ class _World:
     def add(self, bundle: KitBundleV1) -> PlaybillKitChangeResultV1:
         before = self.tree()
         result = playbill_api.playbill_kit_add(
-            self.instance_id, PlaybillKitAddRequestV1(bundle=bundle, source="test")
+            self.instance_id,
+            PlaybillKitAddRequestV1(bundle=bundle, source="test", dry_run=False),
         )
         if result.status == "proposed":
             # Proposing lands nothing; the ordinary activation does.
@@ -527,7 +528,7 @@ def test_claim_type_upgrade_is_one_verb_on_the_sdk_http_and_mcp_doors(
     publisher.author(_claim_type(SEATS, {"type": "integer"}))
     before = publisher.tree()
 
-    dry = publisher.pb.upgrade_claim_types(SEATS, dry_run=True)
+    dry = publisher.pb.upgrade_claim_types(SEATS)
     assert dry.status == "would_propose", dry
     assert [(item.claim_type, item.revision_evidence_after) for item in dry.upgraded] == [
         (f"ClaimType:{SEATS}", "replace")
@@ -536,7 +537,9 @@ def test_claim_type_upgrade_is_one_verb_on_the_sdk_http_and_mcp_doors(
 
     local = handlers.handle_playbill_claim_type_upgrade(
         publisher.instance_id,
-        ClaimTypeUpgradeRequestV1(claim_types=(SEATS,), revision_evidence="accumulate"),
+        ClaimTypeUpgradeRequestV1(
+            claim_types=(SEATS,), revision_evidence="accumulate", dry_run=False
+        ),
     )
     assert local.status == "proposed" and local.proposal_id is not None, local
     publisher.approve(local.proposal_id)
@@ -589,7 +592,7 @@ def test_removing_a_kit_retires_what_it_installed(worlds: tuple[_World, _World])
     consumer.add(publisher.build("1.0.0"))
 
     removed = playbill_api.playbill_kit_remove(
-        consumer.instance_id, PlaybillKitRemoveRequestV1(kit_id="acme")
+        consumer.instance_id, PlaybillKitRemoveRequestV1(kit_id="acme", dry_run=False)
     )
     consumer.settle(removed)
 
@@ -623,7 +626,7 @@ def test_a_kit_needs_the_approval_the_consumer_policy_requires(
     publisher.author(_claim_type(SEATS, {"type": "integer"}))
     proposed = playbill_api.playbill_kit_add(
         consumer.instance_id,
-        PlaybillKitAddRequestV1(bundle=publisher.build("1.0.0"), source="test"),
+        PlaybillKitAddRequestV1(bundle=publisher.build("1.0.0"), source="test", dry_run=False),
     )
 
     assert proposed.status == "proposed" and proposed.approval_required
@@ -658,7 +661,8 @@ def test_a_release_travels_as_a_directory_through_the_http_client(
     assert read_back == built.bundle
 
     proposed = transport.add_playbill_kit(
-        consumer.instance_id, PlaybillKitAddRequestV1(bundle=read_back, source=directory.name)
+        consumer.instance_id,
+        PlaybillKitAddRequestV1(bundle=read_back, source=directory.name, dry_run=False),
     )
     consumer.settle(proposed)
     status = transport.playbill_kit_status(consumer.instance_id)
@@ -1101,6 +1105,7 @@ def test_a_local_type_pinning_a_changed_contract_keeps_its_literals_and_its_clai
                     claim_retirement_reason="was-rescinded",
                 ),
             ),
+            dry_run=False,
         ),
     )
     consumer.settle(result)
@@ -1114,3 +1119,64 @@ def test_a_local_type_pinning_a_changed_contract_keeps_its_literals_and_its_clai
     assert retired.lifecycle.state == "retired"
     assert retired.statement.claim_type_digest == claim_type_digest(successor).tagged
     assert retired.statement.object.value == held_digest
+
+
+def test_a_kit_install_and_removal_preview_by_default_and_write_nothing(
+    worlds: tuple[_World, _World], tmp_path: Path
+) -> None:
+    """R12: a kit change is derived across many artifacts, so it previews first."""
+
+    from cruxible_core.errors import ChangeRefusedError
+    from tests.support.store_snapshot import assert_writes_nothing
+
+    publisher, consumer = worlds
+    publisher.author(_claim_type(SEATS, {"type": "integer"}), _claim_type(PLAN, {"type": "string"}))
+    release = publisher.build("1.0.0")
+    get_playbill_manager().consumer_runner.close()
+
+    def settle_background() -> None:
+        # Advisory ref refreshes from earlier writes finish before comparing.
+        for world in (publisher, consumer):
+            get_playbill_manager().get(world.instance_id).settled_workspace_advertisement()
+        consumer.tree()
+
+    preview = assert_writes_nothing(
+        [tmp_path],
+        lambda: playbill_api.playbill_kit_add(
+            consumer.instance_id, PlaybillKitAddRequestV1(bundle=release, source="test")
+        ),
+        warm=settle_background,
+    )
+
+    assert preview.status == "would_propose" and preview.proposal_id is None
+    assert preview.coordinate is not None
+    assert {item.action for item in preview.plan} == {"add"}
+    committed = playbill_api.playbill_kit_add(
+        consumer.instance_id,
+        PlaybillKitAddRequestV1(
+            bundle=release, source="test", dry_run=False, at=preview.coordinate.git_oid
+        ),
+    )
+    consumer.settle(committed)
+    # The head moved under the preview's coordinate: a commit pinned to it refuses.
+    with pytest.raises(ChangeRefusedError) as moved:
+        playbill_api.playbill_kit_add(
+            consumer.instance_id,
+            PlaybillKitAddRequestV1(
+                bundle=release, source="test", dry_run=False, at=preview.coordinate.git_oid
+            ),
+        )
+    assert moved.value.error_code == "playbill.preview.state_moved"
+
+    removal = assert_writes_nothing(
+        [tmp_path],
+        lambda: playbill_api.playbill_kit_remove(
+            consumer.instance_id, PlaybillKitRemoveRequestV1(kit_id="acme")
+        ),
+        warm=settle_background,
+    )
+    assert removal.status == "would_propose" and removal.proposal_id is None
+    assert {item.action for item in removal.plan} == {"retire"}
+    assert [kit.kit_id for kit in playbill_api.playbill_kit_status(consumer.instance_id).kits] == [
+        "acme"
+    ]

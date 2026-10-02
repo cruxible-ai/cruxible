@@ -45,7 +45,7 @@ def test_cli_publish_reports_own_barrier_even_when_newer_work_pending(mirror_cli
     args, calls = mirror_cli
     result = CliRunner().invoke(cli, [*args, "publish", "--timeout", "0"])
     assert result.exit_code == 0, result.output
-    assert calls == [("inst_test", {"timeout": 0})]
+    assert calls == [("inst_test", {"timeout": 0, "dry_run": None, "at": None})]
     assert "Publication: pending" in result.stdout
     assert "Request 2: acknowledged" in result.stdout
 
@@ -55,7 +55,7 @@ def test_cli_publish_json_and_timeout_validation(mirror_cli):
     result = CliRunner().invoke(cli, [*args, "publish", "--json"])
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout)["wait_sequence"] == 2
-    assert calls == [("inst_test", {"timeout": 60})]
+    assert calls == [("inst_test", {"timeout": 60, "dry_run": None, "at": None})]
     refused = CliRunner().invoke(cli, [*args, "publish", "--timeout", "61"])
     assert refused.exit_code == 2
     assert len(calls) == 1

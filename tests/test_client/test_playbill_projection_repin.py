@@ -501,3 +501,31 @@ def test_old_manifest_bytes_remain_verifiable_after_repin_adds_policy(tmp_path: 
         frame_projection_block(stamp=old, body=BODY), source_id="corpus.runbook"
     )
     assert projection_manifest(historical.stamp) == (old_digest, old_bytes)
+
+
+def test_a_dry_run_repin_computes_the_stamp_and_writes_nothing(tmp_path: Path) -> None:
+    """R12: the same stamp the commit would write, with no page edit, manifest or declaration."""
+
+    from tests.support.store_snapshot import assert_writes_nothing
+
+    _workspace(tmp_path)
+    client = _RepinClient()
+
+    previewed = assert_writes_nothing(
+        [tmp_path],
+        lambda: repin_projection_block(
+            client,  # type: ignore[arg-type]
+            "inst_projection",
+            workspace=tmp_path,
+            source_id="corpus.runbook",
+            block_id="summary",
+            claims=("CLM-first",),
+            evaluation_time=NOW,
+            dry_run=True,
+        ),
+    )
+
+    assert client.declared == []
+    committed = _repin(client, tmp_path, claims=("CLM-first",))
+    assert committed == previewed
+    assert len(client.declared) == 1

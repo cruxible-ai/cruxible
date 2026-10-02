@@ -1559,9 +1559,16 @@ def test_a_decommissioned_host_reports_decommissioned_not_writable(
     assert initialized.status_code == 200, initialized.text
     assert host_client.get(f"/api/v1/{instance_id}/playbill/host").json()["writable"] is True
 
+    route = f"/api/v1/{instance_id}/playbill/instance/decommission"
+    previewed = host_client.post(route, json={"reason": "superseded by a fresh host"})
+    assert previewed.status_code == 200, previewed.text
     ended = host_client.post(
-        f"/api/v1/{instance_id}/playbill/instance/decommission",
-        json={"reason": "superseded by a fresh host"},
+        route,
+        json={
+            "reason": "superseded by a fresh host",
+            "dry_run": False,
+            "at": previewed.json()["coordinate"]["git_oid"],
+        },
     )
     assert ended.status_code == 200, ended.text
 

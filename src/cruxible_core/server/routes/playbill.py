@@ -10,6 +10,7 @@ from starlette.concurrency import run_in_threadpool
 
 from cruxible_client import contracts
 from cruxible_client.contracts.capture_reads import CaptureReadRequestV1, CaptureReadV1
+from cruxible_client.contracts.change_control import ChangeControlRequestV1
 from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationAppendRequestV1,
     ClaimAttestationAppendResultV1,
@@ -25,7 +26,10 @@ from cruxible_client.contracts.claim_type_upgrade import (
     ClaimTypeUpgradeResultV1,
 )
 from cruxible_client.contracts.errors import PlaybillFormatError
-from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeResultV1
+from cruxible_client.contracts.evidence_rule_upgrade import (
+    EvidenceRuleUpgradeRequestV1,
+    EvidenceRuleUpgradeResultV1,
+)
 from cruxible_client.contracts.floor import PlaybillFloorDeltaV1
 from cruxible_client.contracts.get_reads import (
     PlaybillGetBatchRequestV1,
@@ -178,6 +182,8 @@ def instance_decommission(
     return playbill_api.playbill_instance_decommission(
         resolve_server_instance_id(instance_id),
         reason=req.reason,
+        dry_run=req.dry_run,
+        at=req.at,
     )
 
 
@@ -192,6 +198,8 @@ def set_ledger_mirror(
     return playbill_api.playbill_ledger_set_mirror(
         resolve_server_instance_id(instance_id),
         url=req.url,
+        dry_run=req.dry_run,
+        at=req.at,
     )
 
 
@@ -204,7 +212,10 @@ def publish_ledger(
     req: PlaybillLedgerPublishRequest,
 ) -> contracts.PlaybillLedgerMirrorV1:
     return playbill_api.playbill_ledger_publish(
-        resolve_server_instance_id(instance_id), timeout=req.timeout
+        resolve_server_instance_id(instance_id),
+        timeout=req.timeout,
+        dry_run=req.dry_run,
+        at=req.at,
     )
 
 
@@ -249,8 +260,12 @@ def kit_add(instance_id: str, request: PlaybillKitAddRequestV1) -> PlaybillKitCh
     "/{instance_id}/playbill/claim-types/evidence-rules/upgrade",
     response_model=EvidenceRuleUpgradeResultV1,
 )
-def evidence_rules_upgrade(instance_id: str) -> EvidenceRuleUpgradeResultV1:
-    return playbill_api.playbill_evidence_rules_upgrade(resolve_server_instance_id(instance_id))
+def evidence_rules_upgrade(
+    instance_id: str, request: EvidenceRuleUpgradeRequestV1
+) -> EvidenceRuleUpgradeResultV1:
+    return playbill_api.playbill_evidence_rules_upgrade(
+        resolve_server_instance_id(instance_id), request
+    )
 
 
 @router.post(
@@ -297,6 +312,8 @@ def propose_document(
         proposal_name=req.proposal_name,
         source_compilation_digest=req.source_compilation_digest,
         base=req.base,
+        dry_run=req.dry_run,
+        at=req.at,
     )
 
 
@@ -313,6 +330,8 @@ def propose_compiler_upgrade(
         target=req.target,
         base=req.base,
         proposal_name=req.proposal_name,
+        dry_run=req.dry_run,
+        at=req.at,
     )
 
 
@@ -329,6 +348,8 @@ def propose_principal(
         principal=req.principal,
         proposal_name=req.proposal_name,
         base=req.base,
+        dry_run=req.dry_run,
+        at=req.at,
     )
 
 
@@ -646,12 +667,16 @@ def propose_claim_type(
             resolve_server_instance_id(instance_id),
             input=req.input,
             proposal_name=req.proposal_name,
+            dry_run=req.dry_run,
+            at=req.at,
         )
     return playbill_api.playbill_propose_claim_type(
         resolve_server_instance_id(instance_id),
         claim_type=req.claim_type,
         proposal_name=req.proposal_name,
         base=req.base,
+        dry_run=req.dry_run,
+        at=req.at,
     )
 
 
@@ -1121,13 +1146,23 @@ def check_line_trigger(
 
 
 @router.post("/{instance_id}/playbill/lines/{line}/arm", response_model=contracts.LineArmV1)
-def arm_line(instance_id: str, line: str) -> contracts.LineArmV1:
-    return playbill_api.playbill_line_arm(resolve_server_instance_id(instance_id), line)
+def arm_line(
+    instance_id: str, line: str, req: ChangeControlRequestV1 | None = None
+) -> contracts.LineArmV1:
+    control = req or ChangeControlRequestV1()
+    return playbill_api.playbill_line_arm(
+        resolve_server_instance_id(instance_id), line, dry_run=control.dry_run, at=control.at
+    )
 
 
 @router.post("/{instance_id}/playbill/lines/{line}/disarm", response_model=contracts.LineArmV1)
-def disarm_line(instance_id: str, line: str) -> contracts.LineArmV1:
-    return playbill_api.playbill_line_disarm(resolve_server_instance_id(instance_id), line)
+def disarm_line(
+    instance_id: str, line: str, req: ChangeControlRequestV1 | None = None
+) -> contracts.LineArmV1:
+    control = req or ChangeControlRequestV1()
+    return playbill_api.playbill_line_disarm(
+        resolve_server_instance_id(instance_id), line, dry_run=control.dry_run, at=control.at
+    )
 
 
 @router.get("/{instance_id}/playbill/lines/{line}/arm", response_model=contracts.LineArmV1)

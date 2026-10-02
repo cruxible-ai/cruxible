@@ -63,8 +63,9 @@ from cruxible_core.claims.claim_type_migrations import (
 )
 from cruxible_core.claims.closure import ArtifactDependencyStateV1, parse_dependency_artifact
 from cruxible_core.errors import DataValidationError, RequestRefusedError
-from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
+from cruxible_core.proposals.proposals import ProposalAdmissionRequest
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.change_preview import ChangeMode, admit_change_set, change_scope
 from cruxible_core.service.proposals.proposals import service_list_playbill_proposals
 
 # Definition families an owned artifact may pin. A pin into any other family is
@@ -487,6 +488,7 @@ def _ownership_conflicts(
 
 def _submit(
     instance: PlaybillInstance,
+    mode: ChangeMode,
     *,
     kit_id: str,
     version: str | None,
@@ -497,7 +499,8 @@ def _submit(
     actor_id: str,
     timestamp: str,
 ) -> PlaybillKitChangeResultV1:
-    base = instance.accepted_coordinate()
+    assert mode.head is not None
+    base = mode.head
     body = instance.store_document_body(pretty_canonical_bytes(receipt.model_dump(mode="json")))
     shell = DocumentShell(
         identity=f"document:{kit_receipt_document_id(kit_id)}",
@@ -535,39 +538,37 @@ def _submit(
         ),
         None,
     )
-    if pending is None:
-        submitted = instance.proposal_service().submit(
-            actor=AuthenticatedActor(actor_id=actor_id),
-            request=ProposalAdmissionRequest(target_ref=target, proposed_base_oid=base.git_oid),
-            candidate_tree=candidate,
-            timestamp=timestamp,
+    if pending is not None:
+        # The same change is already proposed: a commit returns it, and a
+        # preview says the commit would.
+        assert pending.candidate_digest is not None
+        evidence = instance.proposal_evidence().read_candidate(pending.candidate_digest)
+        return PlaybillKitChangeResultV1(
+            kit_id=kit_id,
+            version=version,
+            status="would_propose" if mode.previewing else "proposed",
+            proposal_id=pending.proposal_id,
+            approval_required=bool(evidence.approval_requirements),
+            plan=plan,
+            coordinate=mode.coordinate,
         )
-        if (
-            submitted.evaluation.verdict != "candidate"
-            or submitted.evaluation.candidate_digest is None
-        ):
-            return PlaybillKitChangeResultV1(
-                kit_id=kit_id,
-                version=version,
-                status="blocked",
-                proposal_id=submitted.admission.proposal_id,
-                plan=plan,
-                detail="Refused: "
-                + "; ".join(item.code for item in submitted.evaluation.diagnostics),
-            )
-        proposal_id: str = submitted.admission.proposal_id
-        candidate_digest: str | None = submitted.evaluation.candidate_digest
-    else:
-        proposal_id, candidate_digest = pending.proposal_id, pending.candidate_digest
-    assert candidate_digest is not None
-    evidence = instance.proposal_evidence().read_candidate(candidate_digest)
+    admitted = admit_change_set(
+        instance,
+        mode,
+        actor_id=actor_id,
+        request=ProposalAdmissionRequest(target_ref=target, proposed_base_oid=base.git_oid),
+        candidate_tree=candidate,
+        timestamp=timestamp,
+    )
     return PlaybillKitChangeResultV1(
         kit_id=kit_id,
         version=version,
-        status="proposed",
-        proposal_id=proposal_id,
-        approval_required=bool(evidence.approval_requirements),
+        status=admitted.status,
+        proposal_id=admitted.proposal_id,
+        approval_required=admitted.approval_required,
         plan=plan,
+        detail=None if admitted.admitted else admitted.refusal_detail(),
+        coordinate=mode.coordinate,
     )
 
 
@@ -596,13 +597,36 @@ def service_add_kit(
     actor_id: str,
     timestamp: str,
 ) -> PlaybillKitChangeResultV1:
-    """Propose the diff that brings this instance to one kit release."""
+    """Propose the diff that brings this instance to one kit release.
 
+    Derived across many artifacts, so it previews unless ``dry_run`` is false.
+    """
+
+    with change_scope(
+        instance,
+        dry_run=request.dry_run,
+        at=request.at,
+        kind="derived",
+        operation="playbill.kit.add",
+        describe=f"installing kit {request.bundle.manifest.kit_id}",
+    ) as mode:
+        return _add_kit(instance, mode, request, actor_id=actor_id, timestamp=timestamp)
+
+
+def _add_kit(
+    instance: PlaybillInstance,
+    mode: ChangeMode,
+    request: PlaybillKitAddRequestV1,
+    *,
+    actor_id: str,
+    timestamp: str,
+) -> PlaybillKitChangeResultV1:
+    assert mode.head is not None
     bundle = request.bundle
     manifest = bundle.manifest
     contents = _verify_bundle(bundle)
     overrides = _overrides(request)
-    tree = instance.immutable_tree_at(instance.accepted_coordinate().git_oid)
+    tree = instance.immutable_tree_at(mode.head.git_oid)
     found = _read_receipt(instance, tree, manifest.kit_id)
     shell, receipt = (None, None) if found is None else found
     installed = {} if receipt is None else receipt.digests()
@@ -619,9 +643,10 @@ def service_add_kit(
         return PlaybillKitChangeResultV1(
             kit_id=manifest.kit_id,
             version=manifest.version,
-            status="blocked",
+            status="would_block" if mode.previewing else "blocked",
             plan=plan,
             detail="; ".join(blocked),
+            coordinate=mode.coordinate,
         )
     if not writes and receipt is not None and receipt.content_digest == manifest.content_digest:
         return PlaybillKitChangeResultV1(
@@ -629,6 +654,7 @@ def service_add_kit(
             version=manifest.version,
             status="unchanged",
             plan=plan,
+            coordinate=mode.coordinate,
         )
 
     def entries(paths: set[str]) -> tuple[KitInstalledArtifactV1, ...]:
@@ -653,6 +679,7 @@ def service_add_kit(
     )
     return _submit(
         instance,
+        mode,
         kit_id=manifest.kit_id,
         version=manifest.version,
         receipt=receipt_body,
@@ -671,9 +698,32 @@ def service_remove_kit(
     actor_id: str,
     timestamp: str,
 ) -> PlaybillKitChangeResultV1:
-    """Propose retiring every definition a kit owns; carried ones stay."""
+    """Propose retiring every definition a kit owns; carried ones stay.
 
-    tree = instance.immutable_tree_at(instance.accepted_coordinate().git_oid)
+    Derived across many artifacts, so it previews unless ``dry_run`` is false.
+    """
+
+    with change_scope(
+        instance,
+        dry_run=request.dry_run,
+        at=request.at,
+        kind="derived",
+        operation="playbill.kit.remove",
+        describe=f"removing kit {request.kit_id}",
+    ) as mode:
+        return _remove_kit(instance, mode, request, actor_id=actor_id, timestamp=timestamp)
+
+
+def _remove_kit(
+    instance: PlaybillInstance,
+    mode: ChangeMode,
+    request: PlaybillKitRemoveRequestV1,
+    *,
+    actor_id: str,
+    timestamp: str,
+) -> PlaybillKitChangeResultV1:
+    assert mode.head is not None
+    tree = instance.immutable_tree_at(mode.head.git_oid)
     found = _read_receipt(instance, tree, request.kit_id)
     if found is None or not found[1].artifacts:
         installed = sorted(
@@ -693,12 +743,14 @@ def service_remove_kit(
         return PlaybillKitChangeResultV1(
             kit_id=request.kit_id,
             version=receipt.version,
-            status="blocked",
+            status="would_block" if mode.previewing else "blocked",
             plan=plan,
             detail="edited kit paths must be reverted or retired by their own change first",
+            coordinate=mode.coordinate,
         )
     return _submit(
         instance,
+        mode,
         kit_id=request.kit_id,
         version=receipt.version,
         receipt=receipt.model_copy(update={"artifacts": (), "carried": ()}),

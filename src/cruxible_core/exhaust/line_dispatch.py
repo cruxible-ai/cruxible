@@ -29,6 +29,7 @@ from cruxible_core.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.storage.cas import BodyAccessContext
+from cruxible_core.storage.preview_fence import is_previewing
 
 _LOCK = threading.RLock()
 _FENCE = "line-dispatch-local-v1"
@@ -57,24 +58,46 @@ def dispatch_root(instance: PlaybillInstance) -> Path:
 
 
 class LineDispatchStore:
+    """The Line dispatch journal and its disposable SQLite projection.
+
+    Inside a preview (``previewing()``, rule R12) the store writes nothing: the
+    projection is an in-memory copy of the one on disk, caught up from the
+    journal the same way, and a transition the commit would record is applied
+    to that copy only, never appended to the journal.
+    """
+
     def __init__(self, instance: PlaybillInstance):
         self.instance = instance
         self.root = dispatch_root(instance)
-        self.root.mkdir(mode=0o700, exist_ok=True)
-        self.journal = LocalJournalBackend(self.root)
+        if not is_previewing():
+            self.root.mkdir(mode=0o700, exist_ok=True)
+        self.journal = LocalJournalBackend(self.root) if self.root.is_dir() else None
         self.stream = JournalStreamIdentityV1(
             instance_id=instance.descriptor.instance_id,
             journal_family=LINE_DISPATCH_JOURNAL_FAMILY,
             stream_id="lines",
         )
         self.path = self.root / "dispatch.sqlite3"
+        self._preview_sequence = 0
+
+    def _open_projection(self) -> sqlite3.Connection:
+        if not is_previewing():
+            return sqlite3.connect(self.path)
+        conn = sqlite3.connect(":memory:")
+        if self.path.is_file():
+            source = sqlite3.connect(f"file:{self.path}?mode=ro", uri=True)
+            try:
+                source.backup(conn)
+            finally:
+                source.close()
+        return conn
 
     @contextmanager
     def locked(self) -> Iterator[sqlite3.Connection]:
         with _LOCK:
             if self.path.is_symlink():
                 raise ValueError("dispatch projection must be a regular file")
-            conn = sqlite3.connect(self.path)
+            conn = self._open_projection()
             conn.row_factory = sqlite3.Row
             try:
                 # This is a disposable projection, never a migration of authority.
@@ -87,8 +110,13 @@ class LineDispatchStore:
                 conn.executescript(_SCHEMA)
                 row = conn.execute("SELECT sequence FROM progress WHERE singleton=1").fetchone()
                 start = row[0] + 1 if row else 1
-                for stored in self.journal.select_records(
-                    self.stream, partition_id="dispatch", first_sequence=start
+                self._preview_sequence = start - 1
+                for stored in (
+                    ()
+                    if self.journal is None
+                    else self.journal.select_records(
+                        self.stream, partition_id="dispatch", first_sequence=start
+                    )
                 ):
                     payload = parse_journal_payload(
                         self.instance.body_store().read(
@@ -101,6 +129,7 @@ class LineDispatchStore:
                     if not isinstance(payload, dict):
                         raise ValueError("invalid Line dispatch transition")
                     self._apply(conn, payload, stored.record.sequence)
+                    self._preview_sequence = stored.record.sequence
                 conn.commit()
                 yield conn
                 conn.commit()
@@ -176,11 +205,20 @@ class LineDispatchStore:
         actor: GovernedActorContext,
         now: datetime,
     ) -> None:
+        event = {"tag": "playbill-line-dispatch-transition-v1", "kind": kind, "data": data}
+        if is_previewing():
+            # What the commit would record, applied to this preview's in-memory
+            # projection only: no journal record and no body are written.
+            self._preview_sequence += 1
+            self._apply(conn, event, self._preview_sequence)
+            return
+        journal = self.journal
+        assert journal is not None
         from cruxible_core.storage.material_reservations import ProcedureMaterialReservationStore
 
         bodies = self.instance.body_store()
         ProcedureMaterialReservationStore(bodies.reservation_root).recover_run_material(
-            lambda reservation: self.journal.select_records(
+            lambda reservation: journal.select_records(
                 self.stream,
                 event_kind="line_dispatch_transition",
                 payload_digest=reservation.body_digest,
@@ -188,13 +226,10 @@ class LineDispatchStore:
             bodies=bodies,
             intended_event_kinds=frozenset({"line_dispatch_transition"}),
         )
-        head = self.journal.read_head(self.stream, "dispatch")
-        self.journal.activate_writer(
-            self.stream, "dispatch", fencing_token=_FENCE, expected_head=head
-        )
-        event = {"tag": "playbill-line-dispatch-transition-v1", "kind": kind, "data": data}
+        head = journal.read_head(self.stream, "dispatch")
+        journal.activate_writer(self.stream, "dispatch", fencing_token=_FENCE, expected_head=head)
         stored = ProcedureExhaustWriter(
-            journal=self.journal, bodies=self.instance.body_store(), fencing_token=_FENCE
+            journal=journal, bodies=self.instance.body_store(), fencing_token=_FENCE
         ).append(
             stream=self.stream,
             partition_id="dispatch",

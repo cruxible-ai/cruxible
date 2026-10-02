@@ -17,6 +17,7 @@ from cruxible_client.contracts.attestations import ApprovalAttestation
 from cruxible_client.contracts.authoring.models import WorkingSelectionObservationV1
 from cruxible_client.contracts.capture_reads import CaptureReadRequestV1, CaptureReadV1
 from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.change_control import DryRun, PreviewAt
 from cruxible_client.contracts.claim_attestations import ClaimAttestationAppendResultV1
 from cruxible_client.contracts.claim_type_upgrade import (
     ClaimTypeUpgradeRequestV1,
@@ -30,7 +31,10 @@ from cruxible_client.contracts.compact_query import (
 )
 from cruxible_client.contracts.declared_blocks import ProjectionBlockStamp
 from cruxible_client.contracts.documents import DocumentShell
-from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeResultV1
+from cruxible_client.contracts.evidence_rule_upgrade import (
+    EvidenceRuleUpgradeRequestV1,
+    EvidenceRuleUpgradeResultV1,
+)
 from cruxible_client.contracts.get_reads import (
     GET_HISTORY_MAX_LIMIT,
     PlaybillByteRangeV1,
@@ -264,9 +268,15 @@ def register_tools(
     @_tool
     def cruxible_playbill_evidence_rules_upgrade(
         instance_id: InstanceId = None,
+        *,
+        dry_run: DryRun = None,
+        at: PreviewAt = None,
     ) -> EvidenceRuleUpgradeResultV1:
         """Propose moving live ClaimTypes to evidence rules that name contracts by identity."""
-        return handlers.handle_playbill_evidence_rules_upgrade(require_instance_id(instance_id))
+        return handlers.handle_playbill_evidence_rules_upgrade(
+            require_instance_id(instance_id),
+            EvidenceRuleUpgradeRequestV1(dry_run=dry_run, at=at),
+        )
 
     @_tool
     def cruxible_playbill_kit_remove(
@@ -312,6 +322,8 @@ def register_tools(
         shell: DocumentShell,
         proposal_name: str,
         source_compilation_digest: str | None = None,
+        dry_run: DryRun = None,
+        at: PreviewAt = None,
     ) -> contracts.PlaybillProposalInspection:
         """Propose a governed Document create or supersession."""
         return handlers.handle_playbill_propose_document(
@@ -319,6 +331,8 @@ def register_tools(
             shell.model_dump(mode="json"),
             proposal_name,
             source_compilation_digest,
+            dry_run=dry_run,
+            at=at,
         )
 
     @_tool
@@ -558,6 +572,8 @@ def register_tools(
         target_compiler_digest: str,
         base: contracts.PlaybillAcceptedCoordinate,
         proposal_name: str,
+        dry_run: DryRun = None,
+        at: PreviewAt = None,
     ) -> contracts.PlaybillProposalInspection:
         """Propose an admin-only compiler upgrade; review, approve and activate separately."""
         return handlers.handle_playbill_compiler_upgrade(
@@ -565,6 +581,8 @@ def register_tools(
             target_compiler_digest,
             base.model_dump(mode="json"),
             proposal_name,
+            dry_run=dry_run,
+            at=at,
         )
 
     @_tool
@@ -573,10 +591,16 @@ def register_tools(
         *,
         principal: PrincipalRecord,
         proposal_name: str,
+        dry_run: DryRun = None,
+        at: PreviewAt = None,
     ) -> contracts.PlaybillProposalInspection:
         """Propose principal registration, rotation, revocation, or recovery."""
         return handlers.handle_playbill_propose_principal_change(
-            require_instance_id(instance_id), principal.model_dump(mode="json"), proposal_name
+            require_instance_id(instance_id),
+            principal.model_dump(mode="json"),
+            proposal_name,
+            dry_run=dry_run,
+            at=at,
         )
 
     @_tool
@@ -585,10 +609,16 @@ def register_tools(
         *,
         input: ClaimTypeInputV1,
         proposal_name: str,
+        dry_run: DryRun = None,
+        at: PreviewAt = None,
     ) -> contracts.PlaybillClaimTypeInputProposalResult:
         """Propose one governed ClaimType interface."""
         return handlers.handle_playbill_propose_claim_type(
-            require_instance_id(instance_id), input.model_dump(mode="json"), proposal_name
+            require_instance_id(instance_id),
+            input.model_dump(mode="json"),
+            proposal_name,
+            dry_run=dry_run,
+            at=at,
         )
 
     @_tool
@@ -1206,17 +1236,29 @@ def register_tools(
 
     @_tool
     def cruxible_playbill_line_arm(
-        instance_id: InstanceId = None, *, line: str
+        instance_id: InstanceId = None,
+        *,
+        line: str,
+        dry_run: DryRun = None,
+        at: PreviewAt = None,
     ) -> contracts.LineArmV1:
         """Arm a Line forward-only; the daemon admits what it matches under your credential."""
-        return handlers.handle_playbill_line_arm(require_instance_id(instance_id), line)
+        return handlers.handle_playbill_line_arm(
+            require_instance_id(instance_id), line, dry_run=dry_run, at=at
+        )
 
     @_tool
     def cruxible_playbill_line_disarm(
-        instance_id: InstanceId = None, *, line: str
+        instance_id: InstanceId = None,
+        *,
+        line: str,
+        dry_run: DryRun = None,
+        at: PreviewAt = None,
     ) -> contracts.LineArmV1:
         """Stop a Line admitting work on its own; admitted runs are not cancelled."""
-        return handlers.handle_playbill_line_disarm(require_instance_id(instance_id), line)
+        return handlers.handle_playbill_line_disarm(
+            require_instance_id(instance_id), line, dry_run=dry_run, at=at
+        )
 
     @_tool
     def cruxible_playbill_line_status(

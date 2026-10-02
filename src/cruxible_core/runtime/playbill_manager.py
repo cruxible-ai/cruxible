@@ -239,6 +239,14 @@ class PlaybillInstanceManager:
             self._keep(instance_id, instance)
             return instance
 
+    def initialized(self, instance_id: str) -> PlaybillInstance | None:
+        """The instance, or None while Playbill is not initialized under the host."""
+
+        try:
+            return self.get(instance_id)
+        except (PlaybillBootstrapError, InstanceNotFoundError):
+            return None
+
     def open_instances(self) -> tuple[tuple[str, PlaybillInstance], ...]:
         """The instances this daemon already holds open, without opening any more."""
         with self._lock:

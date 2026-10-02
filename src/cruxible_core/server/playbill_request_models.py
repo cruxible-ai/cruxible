@@ -24,6 +24,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringIntentCreateRequestV2,
     AuthoringIntentCreateRequestV3,
 )
+from cruxible_client.contracts.change_control import DryRun, PreviewAt
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.declared_blocks import (
     PlaybillReviewWorkspaceObservationV1,
@@ -85,18 +86,26 @@ class PlaybillLedgerMirrorRequest(_StrictPlaybillRequest):
     """The remote this ledger publishes to. Never a URL carrying a credential."""
 
     url: str = Field(min_length=1, max_length=MIRROR_URL_MAX_LENGTH)
+    #: Publishing to a new remote cannot be called back: previews by default.
+    dry_run: DryRun = None
+    at: PreviewAt = None
 
 
 class PlaybillLedgerPublishRequest(_StrictPlaybillRequest):
     """Wait at most this many seconds for the configured mirror to acknowledge."""
 
     timeout: float = Field(default=60.0, ge=0.0, le=60.0, allow_inf_nan=False, strict=True)
+    dry_run: DryRun = None
+    at: PreviewAt = None
 
 
 class PlaybillInstanceDecommissionRequest(_StrictPlaybillRequest):
     """The operator's stated reason for ending this instance's governed writes."""
 
     reason: str = Field(min_length=1, max_length=DECOMMISSION_REASON_MAX_LENGTH)
+    #: Decommissioning cannot be undone: previews by default, commits with ``at``.
+    dry_run: DryRun = None
+    at: PreviewAt = None
 
     @field_validator("reason")
     @classmethod
@@ -117,18 +126,24 @@ class PlaybillProposeDocumentRequest(_StrictPlaybillRequest):
     proposal_name: str
     source_compilation_digest: str | None = None
     base: AcceptedCoordinate | None = None
+    dry_run: DryRun = None
+    at: PreviewAt = None
 
 
 class PlaybillCompilerUpgradeRequest(_StrictPlaybillRequest):
     target: CompilerCoordinate
     base: AcceptedCoordinate
     proposal_name: str
+    dry_run: DryRun = None
+    at: PreviewAt = None
 
 
 class PlaybillProposePrincipalRequest(_StrictPlaybillRequest):
     principal: PrincipalRecord
     proposal_name: str
     base: AcceptedCoordinate | None = None
+    dry_run: DryRun = None
+    at: PreviewAt = None
 
 
 class PlaybillApprovalRequest(_StrictPlaybillRequest):
@@ -165,6 +180,8 @@ class PlaybillProposeClaimTypeRequest(_StrictPlaybillRequest):
     claim_type: ClaimType
     proposal_name: str
     base: AcceptedCoordinate | None = None
+    dry_run: DryRun = None
+    at: PreviewAt = None
 
 
 class PlaybillProposeClaimTypeInputRequest(_StrictPlaybillRequest):
@@ -173,6 +190,8 @@ class PlaybillProposeClaimTypeInputRequest(_StrictPlaybillRequest):
     )
     input: ClaimTypeInputV1
     proposal_name: str
+    dry_run: DryRun = None
+    at: PreviewAt = None
 
 
 class PlaybillAuthoringInputCreateRequest(_StrictPlaybillRequest):

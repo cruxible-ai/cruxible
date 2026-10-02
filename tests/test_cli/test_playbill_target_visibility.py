@@ -265,7 +265,11 @@ def test_host_creation_names_explicit_requested_id(
 
     class StubClient:
         def create_playbill_host(
-            self, *, instance_id: str | None = None
+            self,
+            *,
+            instance_id: str | None = None,
+            workspace_root: str | None = None,
+            dry_run: bool | None = None,
         ) -> contracts.PlaybillHostResult:
             assert instance_id == "inst_requested"
             return contracts.PlaybillHostResult(instance_id=instance_id, status="created")
@@ -658,14 +662,15 @@ def test_instance_decommission_names_the_instance_it_is_about_to_end(
 ) -> None:
     """The one irreversible verb must name its target before it runs."""
 
-    calls: list[tuple[str, str]] = []
+    calls: list[tuple[str, str, bool | None, str | None]] = []
 
     class StubClient:
         def decommission_playbill_instance(
-            self, instance_id: str, *, reason: str
+            self, instance_id: str, *, reason: str, dry_run: bool | None, at: str | None
         ) -> contracts.PlaybillInstanceDecommissionResultV1:
-            calls.append((instance_id, reason))
+            calls.append((instance_id, reason, dry_run, at))
             return contracts.PlaybillInstanceDecommissionResultV1(
+                status="decommissioned",
                 instance_id=instance_id,
                 reason=reason,
                 decommissioned_at="2026-09-03T12:00:00.000000Z",
@@ -694,13 +699,15 @@ def test_instance_decommission_names_the_instance_it_is_about_to_end(
             "decommission",
             "--reason",
             "superseded",
-            "--yes",
+            "--commit",
+            "--at",
+            "0" * 12,
             "--json",
         ],
     )
 
     assert result.exit_code == 0, result.output
-    assert calls == [("inst_terminal", "superseded")]
+    assert calls == [("inst_terminal", "superseded", False, "0" * 12)]
     assert result.stderr == ("target: inst_terminal @ https://terminal.example.test (explicit)\n")
 
 

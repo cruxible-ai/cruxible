@@ -166,6 +166,7 @@ from cruxible_core.storage.cas import (
     DryRunBodyStore,
     dry_run_held_bodies,
 )
+from cruxible_core.storage.preview_fence import is_previewing, refuse_write_while_previewing
 
 if TYPE_CHECKING:
     from cruxible_core.evidence.claim_attestation_store import ClaimAttestationEvidenceStore
@@ -844,6 +845,7 @@ class PlaybillInstance:
     def _rewrite_descriptor(self, **updates: object) -> PlaybillDescriptor:
         """Persist one operational descriptor change over the bytes on disk."""
 
+        refuse_write_while_previewing("instance descriptor")
         updated = self._persisted_descriptor().model_copy(update=updates)
         _atomic_replace(
             self.root / DESCRIPTOR_FILE,
@@ -880,6 +882,9 @@ class PlaybillInstance:
             decommissioned_at=format_datetime(utc_now()) or "",
             decommissioned_by=decommissioned_by,
         )
+        if is_previewing():
+            # R12: the record the commit would stamp, and nothing stamped.
+            return record
         self._rewrite_descriptor(decommissioned=record)
         return record
 
@@ -900,7 +905,11 @@ class PlaybillInstance:
         """
 
         self.require_writable()
-        self._rewrite_descriptor(mirror_url=validate_mirror_url(url))
+        validated = validate_mirror_url(url)
+        if is_previewing():
+            # R12: the URL is checked and nothing is bound or sent.
+            return None
+        self._rewrite_descriptor(mirror_url=validated)
         return self.publish_ledger_mirror()
 
     def ledger_mirror_state(self) -> LedgerMirrorStateV1 | None:
@@ -1300,7 +1309,9 @@ class PlaybillInstance:
         """Bind PB-C proposal evaluation to authenticated main and inert storage."""
 
         paths = self._validated_paths(self.root, self.descriptor.storage)
-        bodies = ContentAddressedBodyStore(paths["cas"])
+        # Through `body_store()`, so a preview evaluates against the bodies it holds
+        # in memory exactly as a submission does against the ones it stored.
+        bodies = self.body_store()
         return ProposalService(
             self._ledger,
             accepted=self.accepted_coordinate(),

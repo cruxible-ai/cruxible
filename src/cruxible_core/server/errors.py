@@ -43,6 +43,7 @@ from cruxible_core.derived.derived_runtime import BuildCapacityError
 from cruxible_core.errors import (
     AuthenticationError,
     BootstrapClaimRefusedError,
+    ChangeRefusedError,
     ConfigError,
     CoreError,
     CustomerCodeExecutionUnsupportedError,
@@ -178,6 +179,8 @@ def _status_for_error(exc: CoreError) -> int:
         # the code and the repair the envelope carries are actionable.
         return exc.http_status
     if isinstance(exc, PrincipalRefusedError):
+        return exc.http_status
+    if isinstance(exc, ChangeRefusedError):
         return exc.http_status
     if isinstance(exc, AuthenticationError):
         return 401

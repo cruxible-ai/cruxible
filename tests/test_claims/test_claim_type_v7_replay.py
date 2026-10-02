@@ -85,6 +85,7 @@ BUILD = textwrap.dedent(
     )
     from cruxible_client.contracts.claim_types import claim_type_digest, claim_type_path
     from cruxible_client.contracts.claim_types import render_claim_type
+    from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeRequestV1
     from cruxible_core.service.claims.evidence_rule_upgrade import service_upgrade_evidence_rules
     from tests.test_claims.test_claim_type_v7_revisions import _selection, _V7World
     from tests.test_claims.test_identity_evidence_rules import (
@@ -140,7 +141,10 @@ BUILD = textwrap.dedent(
         "lifecycle": ArtifactLifecycle(predecessor_digest=claim_type_digest(current).tagged),
     }))
     upgraded = service_upgrade_evidence_rules(
-        world.instance, actor_id="owner", timestamp=world.timestamp()
+        world.instance,
+        request=EvidenceRuleUpgradeRequestV1(dry_run=False),
+        actor_id="owner",
+        timestamp=world.timestamp(),
     )
     assert upgraded.status == "proposed", upgraded
     world.activate_proposal(upgraded.proposal_id)
@@ -275,7 +279,7 @@ def test_pre_v7_history_replays_settles_and_extends_under_the_new_laws(tmp_path:
 
     upgraded = service_upgrade_claim_types(
         instance,
-        request=ClaimTypeUpgradeRequestV1(claim_types=(PREDICATE,)),
+        request=ClaimTypeUpgradeRequestV1(claim_types=(PREDICATE,), dry_run=False),
         actor_id="owner",
         timestamp=world.timestamp(),
     )

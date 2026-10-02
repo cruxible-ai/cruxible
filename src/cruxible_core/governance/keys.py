@@ -198,6 +198,31 @@ def generate_client_principal_key(
     )
 
 
+def preview_client_principal(
+    key_directory: Path,
+    *,
+    principal_id: str,
+    kind: PrincipalKind,
+    forbidden_roots: Sequence[Path],
+) -> PrincipalRecord:
+    """The record a key generation would register, with nothing written (R12 preview).
+
+    The custody target is validated exactly as generation validates it, and the
+    record carries a fresh in-memory public key that is never stored: a preview
+    evaluates the same principal change, and the real generation then makes the
+    key the commit registers.
+    """
+
+    target = validate_client_principal_key_target(
+        key_directory, principal_id=principal_id, kind=kind, forbidden_roots=forbidden_roots
+    )
+    if target.private_key_path.exists() or target.public_key_path.exists():
+        raise PlaybillKeyError(f"refusing to overwrite existing key material for {principal_id}")
+    return target.principal.model_copy(
+        update={"public_key": _public_key_hex(Ed25519PrivateKey.generate())}
+    )
+
+
 def validate_client_principal_key_target(
     key_directory: Path,
     *,
@@ -305,6 +330,7 @@ __all__ = [
     "assert_outside_roots",
     "generate_client_principal_key",
     "generate_daemon_key",
+    "preview_client_principal",
     "public_key_hex_from_private_file",
     "raw_public_key_hex_from_openssh",
     "validate_client_principal_key_target",

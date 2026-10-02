@@ -12,7 +12,10 @@
         "rearmed",
         "already_armed",
         "disarmed",
-        "already_disarmed"
+        "already_disarmed",
+        "would_arm",
+        "would_rearm",
+        "would_disarm"
       ]
     },
     "LineArmStopReasonV1": {
@@ -81,7 +84,8 @@
     "PlaybillHostStatus": {
       "values": [
         "created",
-        "already_exists"
+        "already_exists",
+        "would_create"
       ]
     },
     "PlaybillHostWorkspaceRegistrationStatus": {
@@ -1487,7 +1491,10 @@
                   "rearmed",
                   "already_armed",
                   "disarmed",
-                  "already_disarmed"
+                  "already_disarmed",
+                  "would_arm",
+                  "would_rearm",
+                  "would_disarm"
                 ],
                 "type": "string"
               },
@@ -1697,7 +1704,10 @@
                   "rearmed",
                   "already_armed",
                   "disarmed",
-                  "already_disarmed"
+                  "already_disarmed",
+                  "would_arm",
+                  "would_rearm",
+                  "would_disarm"
                 ],
                 "type": "string"
               },
@@ -16392,6 +16402,16 @@
                 "title": "Proposal",
                 "type": "object"
               },
+              "status": {
+                "default": "admitted",
+                "enum": [
+                  "admitted",
+                  "would_propose",
+                  "would_block"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
               "tag": {
                 "const": "playbill-proposal-inspection-v1",
                 "default": "playbill-proposal-inspection-v1",
@@ -16987,6 +17007,16 @@
                 "title": "Proposal",
                 "type": "object"
               },
+              "status": {
+                "default": "admitted",
+                "enum": [
+                  "admitted",
+                  "would_propose",
+                  "would_block"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
               "tag": {
                 "const": "playbill-proposal-inspection-v1",
                 "default": "playbill-proposal-inspection-v1",
@@ -17390,6 +17420,16 @@
                 "title": "Proposal",
                 "type": "object"
               },
+              "status": {
+                "default": "admitted",
+                "enum": [
+                  "admitted",
+                  "would_propose",
+                  "would_block"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
               "tag": {
                 "const": "playbill-proposal-inspection-v1",
                 "default": "playbill-proposal-inspection-v1",
@@ -17792,6 +17832,16 @@
                 "additionalProperties": true,
                 "title": "Proposal",
                 "type": "object"
+              },
+              "status": {
+                "default": "admitted",
+                "enum": [
+                  "admitted",
+                  "would_propose",
+                  "would_block"
+                ],
+                "title": "Status",
+                "type": "string"
               },
               "tag": {
                 "const": "playbill-proposal-inspection-v1",
@@ -20192,7 +20242,8 @@
           "schema": {
             "enum": [
               "created",
-              "already_exists"
+              "already_exists",
+              "would_create"
             ],
             "title": "Status",
             "type": "string"
@@ -20248,7 +20299,8 @@
           "status": {
             "enum": [
               "created",
-              "already_exists"
+              "already_exists",
+              "would_create"
             ],
             "title": "Status",
             "type": "string"
@@ -20804,6 +20856,20 @@
             "type": "string"
           }
         },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "decommissioned",
+              "would_decommission"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
         "tag": {
           "default": "playbill-instance-decommission-result-v1",
           "default_json_serializable": true,
@@ -20883,6 +20949,14 @@
             "title": "Reason",
             "type": "string"
           },
+          "status": {
+            "enum": [
+              "decommissioned",
+              "would_decommission"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
           "tag": {
             "const": "playbill-instance-decommission-result-v1",
             "default": "playbill-instance-decommission-result-v1",
@@ -20891,6 +20965,7 @@
           }
         },
         "required": [
+          "status",
           "instance_id",
           "reason",
           "decommissioned_at",
@@ -20905,7 +20980,8 @@
         "decommissioned_at",
         "decommissioned_by",
         "instance_id",
-        "reason"
+        "reason",
+        "status"
       ]
     },
     "PlaybillLedgerMirrorV1": {
@@ -20942,6 +21018,25 @@
             "minimum": 0,
             "title": "Attempted Sequence",
             "type": "integer"
+          }
+        },
+        "coordinate": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "detail": {
@@ -21055,7 +21150,8 @@
               "current",
               "behind",
               "pending",
-              "publishing"
+              "publishing",
+              "would_publish"
             ],
             "title": "Status",
             "type": "string"
@@ -21098,6 +21194,47 @@
         }
       },
       "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
         "additionalProperties": false,
         "description": "Where one instance publishes its ledger, and whether that copy is current.\n\n`ledger set-mirror` binds a remote and waits boundedly for initial publication;\n`ledger clone-url` reads its status. A publish barrier is acknowledged when\npublished_sequence reaches wait_sequence, even if newer work is pending. The\nURL carries no credential -- one that could is refused before it is stored --\nso this model is safe to print, log and hand to anyone who may read the\ninstance at all.",
         "properties": {
@@ -21118,6 +21255,17 @@
             "minimum": 0,
             "title": "Attempted Sequence",
             "type": "integer"
+          },
+          "coordinate": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "detail": {
             "anyOf": [
@@ -21175,7 +21323,8 @@
               "current",
               "behind",
               "pending",
-              "publishing"
+              "publishing",
+              "would_publish"
             ],
             "title": "Status",
             "type": "string"
@@ -49129,6 +49278,24 @@
             "type": "object"
           }
         },
+        "status": {
+          "default": "admitted",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": false,
+          "schema": {
+            "default": "admitted",
+            "enum": [
+              "admitted",
+              "would_propose",
+              "would_block"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
         "tag": {
           "default": "playbill-proposal-inspection-v1",
           "default_json_serializable": true,
@@ -49322,6 +49489,16 @@
             "additionalProperties": true,
             "title": "Proposal",
             "type": "object"
+          },
+          "status": {
+            "default": "admitted",
+            "enum": [
+              "admitted",
+              "would_propose",
+              "would_block"
+            ],
+            "title": "Status",
+            "type": "string"
           },
           "tag": {
             "const": "playbill-proposal-inspection-v1",
@@ -50149,6 +50326,16 @@
                 "additionalProperties": true,
                 "title": "Proposal",
                 "type": "object"
+              },
+              "status": {
+                "default": "admitted",
+                "enum": [
+                  "admitted",
+                  "would_propose",
+                  "would_block"
+                ],
+                "title": "Status",
+                "type": "string"
               },
               "tag": {
                 "const": "playbill-proposal-inspection-v1",
@@ -51242,6 +51429,28 @@
     },
     "PlaybillProviderInstallRequestV1": {
       "fields": {
+        "at": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "at",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{12,64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The coordinate a preview answered with (its git oid, or a unique prefix of 12+ hex characters). A commit carrying it refuses playbill.preview.state_moved if accepted state moved since. Required to commit a change that cannot be undone.",
+            "title": "At"
+          }
+        },
         "control_domain": {
           "default": "operator",
           "default_json_serializable": true,
@@ -51269,6 +51478,27 @@
             },
             "title": "Dependencies",
             "type": "array"
+          }
+        },
+        "dry_run": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "dry_run",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "true: run every check up to the commit and write nothing, answering with a would_* status; false: commit. Omitted: this operation's default (a change derived across several artifacts, or one that cannot be undone, previews).",
+            "title": "Dry Run"
           }
         },
         "extras": {
@@ -51404,6 +51634,20 @@
         },
         "additionalProperties": false,
         "properties": {
+          "at": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{12,64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The coordinate a preview answered with (its git oid, or a unique prefix of 12+ hex characters). A commit carrying it refuses playbill.preview.state_moved if accepted state moved since. Required to commit a change that cannot be undone.",
+            "title": "At"
+          },
           "control_domain": {
             "default": "operator",
             "title": "Control Domain",
@@ -51416,6 +51660,19 @@
             },
             "title": "Dependencies",
             "type": "array"
+          },
+          "dry_run": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "true: run every check up to the commit and write nothing, answering with a would_* status; false: commit. Omitted: this operation's default (a change derived across several artifacts, or one that cannot be undone, previews).",
+            "title": "Dry Run"
           },
           "extras": {
             "default": [],
@@ -51610,7 +51867,8 @@
             "enum": [
               "ready",
               "awaiting_approval",
-              "blocked"
+              "blocked",
+              "would_install"
             ],
             "title": "Status",
             "type": "string"
@@ -51727,7 +51985,8 @@
             "enum": [
               "ready",
               "awaiting_approval",
-              "blocked"
+              "blocked",
+              "would_install"
             ],
             "title": "Status",
             "type": "string"
@@ -83599,7 +83858,8 @@
           "schema": {
             "enum": [
               "detached",
-              "not_registered"
+              "not_registered",
+              "would_detach"
             ],
             "title": "Status",
             "type": "string"
@@ -83651,7 +83911,8 @@
           "status": {
             "enum": [
               "detached",
-              "not_registered"
+              "not_registered",
+              "would_detach"
             ],
             "title": "Status",
             "type": "string"
@@ -101437,14 +101698,38 @@
             "type": "string"
           }
         },
-        "token": {
+        "status": {
           "has_default": false,
           "has_default_factory": false,
-          "json_name": "token",
+          "json_name": "status",
           "required": true,
           "schema": {
-            "title": "Token",
+            "enum": [
+              "claimed",
+              "would_claim"
+            ],
+            "title": "Status",
             "type": "string"
+          }
+        },
+        "token": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "token",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Token"
           }
         }
       },
@@ -101463,16 +101748,32 @@
             "title": "Permission Mode",
             "type": "string"
           },
-          "token": {
-            "title": "Token",
+          "status": {
+            "enum": [
+              "claimed",
+              "would_claim"
+            ],
+            "title": "Status",
             "type": "string"
+          },
+          "token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Token"
           }
         },
         "required": [
+          "status",
           "credential_id",
           "instance_id",
-          "permission_mode",
-          "token"
+          "permission_mode"
         ],
         "title": "RuntimeCredentialBootstrapResult",
         "type": "object"
@@ -101481,7 +101782,7 @@
         "credential_id",
         "instance_id",
         "permission_mode",
-        "token"
+        "status"
       ]
     },
     "RuntimeCredentialListResult": {
@@ -101796,6 +102097,25 @@
     },
     "RuntimeCredentialResult": {
       "fields": {
+        "coordinate": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "credential": {
           "has_default": false,
           "has_default_factory": false,
@@ -101803,6 +102123,24 @@
           "required": true,
           "schema": {
             "$ref": "#/$defs/RuntimeCredentialMetadata"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "minted",
+              "revoked",
+              "rotated",
+              "would_mint",
+              "would_revoke",
+              "would_rotate"
+            ],
+            "title": "Status",
+            "type": "string"
           }
         },
         "token": {
@@ -101828,6 +102166,45 @@
       },
       "json_schema": {
         "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          },
           "RuntimeCredentialMetadata": {
             "properties": {
               "created_at": {
@@ -101905,8 +102282,31 @@
           }
         },
         "properties": {
+          "coordinate": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "credential": {
             "$ref": "#/$defs/RuntimeCredentialMetadata"
+          },
+          "status": {
+            "enum": [
+              "minted",
+              "revoked",
+              "rotated",
+              "would_mint",
+              "would_revoke",
+              "would_rotate"
+            ],
+            "title": "Status",
+            "type": "string"
           },
           "token": {
             "anyOf": [
@@ -101922,13 +102322,15 @@
           }
         },
         "required": [
+          "status",
           "credential"
         ],
         "title": "RuntimeCredentialResult",
         "type": "object"
       },
       "required_fields": [
-        "credential"
+        "credential",
+        "status"
       ]
     },
     "ServerInfoResult": {

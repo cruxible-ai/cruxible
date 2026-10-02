@@ -1093,3 +1093,46 @@ def test_an_old_format_claimed_arm_admits_nothing_even_with_its_principal_revoke
     assert _admissions(instance) == 0
     status = service_line_status(instance, line.identity.name)
     assert status.state == "stopped" and status.stop_reason == "arm_requires_rearm"
+
+
+def test_arming_and_disarming_preview_on_their_own_path_and_write_nothing(tmp_path):
+    """R12: the arm the commit would open, and the disarm it would stop, with nothing kept."""
+
+    from tests.support.store_snapshot import assert_writes_nothing
+
+    instance, line, procedure = line_world(tmp_path, CaptureLandingTriggerPolicyV2(event=SELECTOR))
+    start = READ_TIME + timedelta(seconds=10)
+
+    def arm(dry_run):  # type: ignore[no-untyped-def]
+        return service_arm_line(
+            instance,
+            line.identity.name,
+            principal=LOCAL,
+            actor=_actor(instance),
+            now=start,
+            daemon_id="daemon",
+            dry_run=dry_run,
+        )
+
+    # Never armed: the dispatch store does not even exist yet, and the preview
+    # must not create it.
+    preview = assert_writes_nothing([tmp_path], lambda: arm(True))
+    assert (preview.outcome, preview.state) == ("would_arm", "armed")
+    armed = arm(None)
+    assert armed.outcome == "armed"
+    assert assert_writes_nothing([tmp_path], lambda: arm(True)).outcome == "already_armed"
+
+    capture(instance, procedure, at=start + timedelta(seconds=1))
+    _match(instance, start + timedelta(seconds=2))
+    disarm_preview = assert_writes_nothing(
+        [tmp_path],
+        lambda: service_disarm_line(
+            instance,
+            line.identity.name,
+            actor=_actor(instance),
+            now=start + timedelta(seconds=3),
+            dry_run=True,
+        ),
+    )
+    assert (disarm_preview.outcome, disarm_preview.state) == ("would_disarm", "stopped")
+    assert service_line_status(instance, line.identity.name).state == "armed"

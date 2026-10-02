@@ -27,7 +27,7 @@ from cruxible_client import (
 from cruxible_client._error_base import CoreError, printable
 from cruxible_client.artifacts import (
     RegistryClient,
-    parse_reference,
+    pack_artifact,
     unpack_artifact,
     write_layout,
 )
@@ -84,6 +84,7 @@ from cruxible_client.contracts.errors import (
     PlaybillKeyError,
     PlaybillSinceRequestInvalid,
 )
+from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeRequestV1
 from cruxible_client.contracts.get_display import (
     GET_CLI_HISTORY_VALUE_WIDTH,
     GET_CLI_VALUE_WIDTH,
@@ -118,6 +119,7 @@ from cruxible_client.errors import DataValidationError
 from cruxible_client.kits import (
     KIT_ARTIFACT,
     fetch_kit_image,
+    kit_reference,
     push_kit,
     resolve_kit,
     write_kit_directory,
@@ -137,6 +139,8 @@ from cruxible_core.cli.commands._common import (
     _transport_target,
     and_activate_option,
     brief_option,
+    change_control_options,
+    echo_preview_next,
     json_option,
 )
 from cruxible_core.cli.main import handle_errors
@@ -185,6 +189,7 @@ from cruxible_core.governance.keys import (
     GeneratedKeyMaterial,
     adopt_client_principal_key,
     generate_client_principal_key,
+    preview_client_principal,
     validate_client_principal_key_target,
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
@@ -790,9 +795,15 @@ def attach_workspace(
 
 @workspace_group.command("detach")
 @click.option("--instance-id", default=None, help="Existing registered daemon host ID.")
+@click.option(
+    "--dry-run/--commit",
+    "dry_run",
+    default=None,
+    help="--dry-run: check the release and release nothing.",
+)
 @json_option
 @handle_errors
-def detach_workspace(instance_id: str | None, output_json: bool) -> None:
+def detach_workspace(instance_id: str | None, dry_run: bool | None, output_json: bool) -> None:
     """Release a daemon host from the Git worktree it is registered against.
 
     The registry allows one host per worktree, so re-binding a worktree to a
@@ -807,7 +818,7 @@ def detach_workspace(instance_id: str | None, output_json: bool) -> None:
         instance_source="explicit" if instance_id is not None else None,
     )
     result = _dispatch_cli(
-        lambda client: client.playbill_host_workspace_detach(selected),
+        lambda client: client.playbill_host_workspace_detach(selected, dry_run=dry_run),
         lambda: None,
         allow_local=False,
         command_name="playbill workspace detach",
@@ -818,6 +829,9 @@ def detach_workspace(instance_id: str | None, output_json: bool) -> None:
         return
     if result.status == "not_registered":
         click.echo(f"Playbill host {selected} registers no workspace")
+        return
+    if result.status == "would_detach":
+        click.echo(f"Would detach {result.workspace_root} from Playbill host {selected}")
         return
     click.echo(f"Detached {result.workspace_root} from Playbill host {selected}")
 
@@ -874,12 +888,14 @@ def show_host(instance_id: str, output_json: bool) -> None:
     help="Explicit Git workspace to configure; remote paths stay client-local.",
 )
 @click.option("--replace", is_flag=True, help="Replace a differing workspace config.")
+@click.option("--dry-run", is_flag=True, help="Check the allocation; register and write nothing.")
 @json_option
 @handle_errors
 def create_host(
     instance_id: str | None,
     workspace_path: str | None,
     replace: bool,
+    dry_run: bool,
     output_json: bool,
 ) -> None:
     """Allocate an empty host and remember it as the active instance."""
@@ -907,8 +923,7 @@ def create_host(
         )
     result = _dispatch_cli(
         lambda client: client.create_playbill_host(
-            instance_id=instance_id,
-            **({"workspace_root": workspace_root} if workspace_root is not None else {}),
+            instance_id=instance_id, workspace_root=workspace_root, dry_run=dry_run or None
         ),
         lambda: None,
         allow_local=False,
@@ -916,6 +931,12 @@ def create_host(
     )
     assert isinstance(result, contracts.PlaybillHostResult)
     result = _with_git_workspace_note(result)
+    if dry_run:
+        if output_json:
+            _emit_json(_json_receipt(result))
+        else:
+            click.echo(f"Playbill host: {result.instance_id} ({result.status}); nothing written")
+        return
     if git_workspace is not None:
         write_playbill_workspace_config(
             git_workspace,
@@ -1189,35 +1210,33 @@ def instance_group() -> None:
 
 @instance_group.command("decommission")
 @click.option("--reason", required=True, help="Why this instance stops accepting writes.")
-@click.option(
-    "--yes",
-    "confirmed",
-    is_flag=True,
-    default=False,
-    help="Confirm the terminal state; it cannot be undone.",
-)
+@change_control_options
 @json_option
 @handle_errors
-def decommission_instance(reason: str, confirmed: bool, output_json: bool) -> None:
+def decommission_instance(
+    reason: str, dry_run: bool | None, at: str | None, output_json: bool
+) -> None:
     """End this instance's governed writes without deleting anything.
 
     Reads keep serving at the accepted coordinate and every byte stays on disk.
     Archiving or erasing the directory afterwards is your own step; no verb here
-    performs it, and the state cannot be reversed.
+    performs it, and the state cannot be reversed. So it previews first; the
+    confirmation is that preview's coordinate: ``--commit --at OID``.
     """
 
-    if not confirmed:
-        raise click.UsageError(
-            "decommissioning is terminal and cannot be undone; rerun with --yes to confirm"
-        )
     result = _server_call(
         lambda client, instance_id: client.decommission_playbill_instance(
-            instance_id, reason=reason
+            instance_id, reason=reason, dry_run=dry_run, at=at
         ),
         command_name="playbill instance decommission",
     )
     if output_json:
         _emit_json(result.model_dump(mode="json"))
+        return
+    if result.status == "would_decommission":
+        click.echo(f"Would decommission instance {result.instance_id}; nothing changed.")
+        click.echo(f"Reason: {printable(result.reason)}")
+        echo_preview_next(result.status, result.coordinate)
         return
     click.echo(f"Instance {result.instance_id} decommissioned at {result.decommissioned_at}.")
     # Operator prose reaches the terminal here; escape it so a control
@@ -1235,18 +1254,23 @@ def ledger_group() -> None:
 
 @ledger_group.command("set-mirror")
 @click.argument("url")
+@change_control_options
 @json_option
 @handle_errors
-def set_ledger_mirror(url: str, output_json: bool) -> None:
+def set_ledger_mirror(url: str, dry_run: bool | None, at: str | None, output_json: bool) -> None:
     """Bind the remote and wait boundedly for its initial publication attempt.
 
     The URL must carry no credential: the daemon reads its token from its own
     environment, and this string is printed back by `ledger clone-url` to
-    anyone who may read the instance at all.
+    anyone who may read the instance at all. Every accepted byte is sent there at
+    once and cannot be called back, so it previews first; commit that preview
+    with ``--commit --at OID``.
     """
 
     result = _server_call(
-        lambda client, instance_id: client.set_playbill_ledger_mirror(instance_id, url=url),
+        lambda client, instance_id: client.set_playbill_ledger_mirror(
+            instance_id, url=url, dry_run=dry_run, at=at
+        ),
         command_name="playbill ledger set-mirror",
     )
     if output_json:
@@ -1256,6 +1280,7 @@ def set_ledger_mirror(url: str, output_json: bool) -> None:
     click.echo(f"Publication: {result.status}")
     if result.detail is not None:
         click.echo(f"Detail: {printable(result.detail)}")
+    echo_preview_next(result.status, result.coordinate)
 
 
 @ledger_group.command("clone-url")
@@ -1281,13 +1306,16 @@ def ledger_clone_url(output_json: bool) -> None:
 
 @ledger_group.command("publish")
 @click.option("--timeout", type=click.FloatRange(0, 60), default=60.0, show_default=True)
+@change_control_options
 @json_option
 @handle_errors
-def ledger_publish(timeout: float, output_json: bool) -> None:
+def ledger_publish(timeout: float, dry_run: bool | None, at: str | None, output_json: bool) -> None:
     """Wait for publication to the configured mirror; timeout 0 only requests it."""
 
     result = _server_call(
-        lambda client, instance_id: client.publish_playbill_ledger(instance_id, timeout=timeout),
+        lambda client, instance_id: client.publish_playbill_ledger(
+            instance_id, timeout=timeout, dry_run=dry_run, at=at
+        ),
         command_name="playbill ledger publish",
     )
     if output_json:
@@ -1302,6 +1330,7 @@ def ledger_publish(timeout: float, output_json: bool) -> None:
         )
     if result.detail is not None:
         click.echo(f"Detail: {printable(result.detail)}")
+    echo_preview_next(result.status, result.coordinate)
 
 
 @playbill_group.group("provider")
@@ -1338,6 +1367,14 @@ def list_provider_packages(output_json: bool) -> None:
 )
 @click.option("--extra", "extras", multiple=True)
 @click.option("--reverify", is_flag=True, help="Recheck a retained installation explicitly.")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help=(
+        "Resolve the package and, if it is already prepared here, evaluate the registration "
+        "it would propose; fetch, build, register and propose nothing. By name only."
+    ),
+)
 @json_option
 @handle_errors
 def install_provider(
@@ -1346,6 +1383,7 @@ def install_provider(
     dependencies: tuple[Path, ...],
     extras: tuple[str, ...],
     reverify: bool,
+    dry_run: bool,
     output_json: bool,
 ) -> None:
     """Install a package by name (NAME or NAME==VERSION) or transfer a local wheel.
@@ -1356,6 +1394,11 @@ def install_provider(
     if package_or_wheel.endswith(".whl"):
         if lock_path is None:
             raise click.UsageError("a local wheel requires --lock")
+        if dry_run:
+            raise click.UsageError(
+                "--dry-run previews an install by name; a local wheel is transferred to the "
+                "daemon before anything can be evaluated"
+            )
         result = _server_call(
             lambda client, instance_id: install_provider_package(
                 client,
@@ -1377,6 +1420,7 @@ def install_provider(
             version=version if pinned else None,
             extras=tuple(sorted(set(extras))),
             reverify=reverify,
+            dry_run=dry_run or None,
         )
         result = _server_call(
             lambda client, instance_id: client.install_playbill_provider(instance_id, request),
@@ -1418,6 +1462,7 @@ def _echo_kit_change(result: PlaybillKitChangeResultV1) -> None:
             )
         else:
             click.echo(f"Next: cruxible playbill proposal activate {result.proposal_id}")
+    echo_preview_next(result.status, result.coordinate)
 
 
 @kit_group.command("build")
@@ -1469,16 +1514,22 @@ def build_kit(
 @click.option(
     "--source", "source", default=None, help="Recorded origin; defaults to where KIT came from."
 )
+@change_control_options
 @json_option
 @handle_errors
-def add_kit(kit: str, source: str | None, output_json: bool) -> None:
+def add_kit(
+    kit: str, source: str | None, dry_run: bool | None, at: str | None, output_json: bool
+) -> None:
     """Propose installing or upgrading KIT as one change set.
 
     KIT is a kit directory, an OCI image layout, or a registry reference such as
-    ``project-state:1.0.0`` or ``ghcr.io/acme/kits/foo@sha256:...``.
+    ``project-state:1.0.0`` or ``ghcr.io/acme/kits/foo@sha256:...``. It previews
+    by default; commit the preview with ``--commit --at OID``.
     """
     bundle, origin = resolve_kit(kit)
-    request = PlaybillKitAddRequestV1(bundle=bundle, source=source or origin)
+    request = PlaybillKitAddRequestV1(
+        bundle=bundle, source=source or origin, dry_run=dry_run, at=at
+    )
     result = _server_call(
         lambda client, instance_id: client.add_playbill_kit(instance_id, request),
         command_name="playbill kit add",
@@ -1492,16 +1543,31 @@ def add_kit(kit: str, source: str | None, output_json: bool) -> None:
 @kit_group.command("push")
 @click.argument("kit")
 @click.argument("reference")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Pack KIT and print the reference it would publish; contact no registry.",
+)
 @json_option
 @handle_errors
-def push_kit_cmd(kit: str, reference: str, output_json: bool) -> None:
+def push_kit_cmd(kit: str, reference: str, dry_run: bool, output_json: bool) -> None:
     """Publish KIT (a directory or OCI layout) to a registry REFERENCE.
 
     Credentials come from CRUXIBLE_REGISTRY_USERNAME and CRUXIBLE_REGISTRY_PASSWORD,
-    for the one registry host named in CRUXIBLE_REGISTRY.
+    for the one registry host named in CRUXIBLE_REGISTRY. A push leaves this
+    machine for good, so `--dry-run` packs the exact artifact and prints the
+    digest-pinned reference it would publish without contacting the registry.
     """
     bundle, _origin = resolve_kit(kit)
-    ref = parse_reference(reference)
+    ref = kit_reference(reference)
+    if dry_run:
+        digest = pack_artifact(KIT_ARTIFACT, bundle).digest
+        pinned = str(ref.pinned(digest))
+        if output_json:
+            _emit_json({"status": "would_push", "reference": pinned, "digest": digest})
+        else:
+            click.echo(f"Would push {pinned}; nothing was sent.")
+        return
     with RegistryClient() as registry:
         digest = push_kit(bundle, ref, registry=registry)
     pinned = str(ref.pinned(digest))
@@ -1558,11 +1624,12 @@ def kit_status(output_json: bool) -> None:
 
 @kit_group.command("remove")
 @click.argument("kit_id")
+@change_control_options
 @json_option
 @handle_errors
-def remove_kit(kit_id: str, output_json: bool) -> None:
-    """Propose retiring every artifact KIT_ID installed."""
-    request = PlaybillKitRemoveRequestV1(kit_id=kit_id)
+def remove_kit(kit_id: str, dry_run: bool | None, at: str | None, output_json: bool) -> None:
+    """Propose retiring every artifact KIT_ID installed (previews by default)."""
+    request = PlaybillKitRemoveRequestV1(kit_id=kit_id, dry_run=dry_run, at=at)
     result = _server_call(
         lambda client, instance_id: client.remove_playbill_kit(instance_id, request),
         command_name="playbill kit remove",
@@ -1582,12 +1649,15 @@ def document_group() -> None:
 @click.option("--envelope", type=click.Path(exists=True, dir_okay=False))
 @click.option("--example", type=click.Choice(["document"]))
 @click.option("--name", "proposal_name")
+@change_control_options
 @json_option
 @handle_errors
 def propose_document(
     envelope: str | None,
     example: str | None,
     proposal_name: str | None,
+    dry_run: bool | None,
+    at: str | None,
     output_json: bool,
 ) -> None:
     """Use the sanctioned command-local Document proposal path."""
@@ -1608,6 +1678,8 @@ def propose_document(
             instance_id,
             shell=shell.model_dump(mode="json"),
             proposal_name=proposal_name,
+            dry_run=dry_run,
+            at=at,
         ),
         command_name="playbill document propose",
     )
@@ -2142,6 +2214,7 @@ def principal_group() -> None:
         "with auth. governed_write proposes and authors but cannot approve or activate."
     ),
 )
+@change_control_options
 @json_option
 @handle_errors
 def add_principal(
@@ -2151,6 +2224,8 @@ def add_principal(
     proposal_name: str | None,
     signer_key: str | None,
     permission_mode: str,
+    dry_run: bool | None,
+    at: str | None,
     output_json: bool,
 ) -> None:
     """Set up one principal (an agent) in one command.
@@ -2160,6 +2235,8 @@ def add_principal(
     the daemon runs with auth it also mints the principal's bearer credential,
     signed with the new key. Everything the agent needs -- connection settings,
     principal ID, key path, and that credential -- lands in `DIR/cruxible.env`.
+    `--dry-run` evaluates the registration and writes nothing: no key, no
+    settings, no proposal.
     """
 
     principal_kind = cast(PrincipalKind, kind)
@@ -2169,6 +2246,17 @@ def add_principal(
         raise click.BadParameter(str(exc), param_hint="--name") from exc
     custody = Path(key_dir).expanduser()
     mode = cast(contracts.RuntimeCredentialPermissionMode, permission_mode)
+    if dry_run:
+        preview = _preview_principal_change(
+            principal_id=principal_id,
+            kind=principal_kind,
+            key_dir=custody,
+            proposal_name=ref_name,
+            at=at,
+            refuse_existing=True,
+        )
+        _emit_principal_preview(preview, output_json=output_json)
+        return
 
     def call(client: CruxibleClient, instance_id: str) -> _PrincipalAddOutcome:
         existing = principal_records(client, instance_id)
@@ -2184,6 +2272,8 @@ def add_principal(
             instance_id,
             principal=material.principal.model_dump(mode="json"),
             proposal_name=ref_name,
+            dry_run=False if dry_run is False else None,
+            at=at,
         )
         outcome = _PrincipalAddOutcome(
             instance_id=instance_id,
@@ -2336,12 +2426,75 @@ def _principal_add_next_steps(
     return steps
 
 
+def _preview_principal_change(
+    *,
+    principal_id: str,
+    kind: PrincipalKind | None,
+    key_dir: Path,
+    proposal_name: str,
+    at: str | None,
+    refuse_existing: bool,
+) -> contracts.PlaybillProposalInspection:
+    """Preview a principal change whose key would be generated: nothing is written.
+
+    The record carries a throwaway in-memory public key; the change set, the
+    principal-lifecycle law and the approval it needs are exactly the commit's.
+    """
+
+    def call(client: CruxibleClient, instance_id: str) -> contracts.PlaybillProposalInspection:
+        matches = principal_records(client, instance_id)
+        target = next((item for item in matches if item.principal_id == principal_id), None)
+        if refuse_existing and target is not None:
+            raise click.ClickException(f"Playbill principal already exists: {principal_id}")
+        if not refuse_existing and target is None:
+            raise click.ClickException(f"Unknown Playbill principal: {principal_id}")
+        principal_kind = kind if target is None else target.kind
+        assert principal_kind is not None
+        record = preview_client_principal(
+            key_dir,
+            principal_id=principal_id,
+            kind=principal_kind,
+            forbidden_roots=_custody_forbidden_roots(),
+        )
+        return client.propose_playbill_principal_change(
+            instance_id,
+            principal=record.model_dump(mode="json"),
+            proposal_name=proposal_name,
+            dry_run=True,
+            at=at,
+        )
+
+    return _server_call(call, command_name="playbill principal change")
+
+
+def _emit_principal_preview(
+    preview: contracts.PlaybillProposalInspection, *, output_json: bool
+) -> None:
+    if output_json:
+        _emit_json(preview.model_dump(mode="json"))
+        return
+    click.echo(f"Principal change: {preview.status}; nothing was written")
+    echo_preview_next(preview.status, preview.accepted_coordinate)
+
+
 def _principal_successor(
     *,
     target_id: str,
     key_dir: str,
     proposal_name: str,
+    dry_run: bool | None,
+    at: str | None,
 ) -> contracts.PlaybillProposalInspection:
+    if dry_run:
+        return _preview_principal_change(
+            principal_id=target_id,
+            kind=None,
+            key_dir=Path(key_dir).expanduser(),
+            proposal_name=proposal_name,
+            at=at,
+            refuse_existing=False,
+        )
+
     def call(client: CruxibleClient, instance_id: str) -> contracts.PlaybillProposalInspection:
         matches = principal_records(client, instance_id)
         target = next((item for item in matches if item.principal_id == target_id), None)
@@ -2357,6 +2510,8 @@ def _principal_successor(
             instance_id,
             principal=material.principal.model_dump(mode="json"),
             proposal_name=proposal_name,
+            dry_run=dry_run,
+            at=at,
         )
 
     return _server_call(call, command_name="playbill principal change")
@@ -2366,10 +2521,16 @@ def _principal_successor(
 @click.argument("principal_id")
 @click.option("--key-dir", required=True)
 @click.option("--name", "proposal_name", required=True)
+@change_control_options
 @json_option
 @handle_errors
 def rotate_principal(
-    principal_id: str, key_dir: str, proposal_name: str, output_json: bool
+    principal_id: str,
+    key_dir: str,
+    proposal_name: str,
+    dry_run: bool | None,
+    at: str | None,
+    output_json: bool,
 ) -> None:
     """Propose a self-rotation; activation requires the actor's key signature."""
 
@@ -2377,6 +2538,8 @@ def rotate_principal(
         target_id=principal_id,
         key_dir=key_dir,
         proposal_name=proposal_name,
+        dry_run=dry_run,
+        at=at,
     )
     _emit_json(result.model_dump(mode="json"))
 
@@ -2385,10 +2548,16 @@ def rotate_principal(
 @click.argument("principal_id")
 @click.option("--key-dir", required=True)
 @click.option("--name", "proposal_name", required=True)
+@change_control_options
 @json_option
 @handle_errors
 def recover_principal(
-    principal_id: str, key_dir: str, proposal_name: str, output_json: bool
+    principal_id: str,
+    key_dir: str,
+    proposal_name: str,
+    dry_run: bool | None,
+    at: str | None,
+    output_json: bool,
 ) -> None:
     """Use recovery identity for a narrowly governed key replacement."""
 
@@ -2396,6 +2565,8 @@ def recover_principal(
         target_id=principal_id,
         key_dir=key_dir,
         proposal_name=proposal_name,
+        dry_run=dry_run,
+        at=at,
     )
     _emit_json(result.model_dump(mode="json"))
 
@@ -2403,9 +2574,14 @@ def recover_principal(
 @principal_group.command("revoke")
 @click.argument("principal_id")
 @click.option("--name", "proposal_name", required=True)
+@change_control_options
 @json_option
 @handle_errors
-def revoke_principal(principal_id: str, proposal_name: str, output_json: bool) -> None:
+def revoke_principal(
+    principal_id: str, proposal_name: str, dry_run: bool | None, at: str | None, output_json: bool
+) -> None:
+    """Propose revoking a principal (and, once active, every credential that acts as it)."""
+
     def call(client: CruxibleClient, instance_id: str) -> contracts.PlaybillProposalInspection:
         matches = principal_records(client, instance_id)
         target = next((item for item in matches if item.principal_id == principal_id), None)
@@ -2416,6 +2592,8 @@ def revoke_principal(principal_id: str, proposal_name: str, output_json: bool) -
             instance_id,
             principal=revoked.model_dump(mode="json"),
             proposal_name=proposal_name,
+            dry_run=dry_run,
+            at=at,
         )
 
     result = _server_call(call, command_name="playbill principal revoke")
@@ -2436,6 +2614,7 @@ def claim_type_group() -> None:
     help="Print one complete model-generated ClaimTypeInputV1 without contacting the daemon.",
 )
 @click.option("--name", "proposal_name")
+@change_control_options
 @json_option
 @handle_errors
 def propose_claim_type(
@@ -2443,6 +2622,8 @@ def propose_claim_type(
     envelope: str | None,
     template: bool,
     proposal_name: str | None,
+    dry_run: bool | None,
+    at: str | None,
     output_json: bool,
 ) -> None:
     """Use the sanctioned typed-input ClaimType proposal path."""
@@ -2462,6 +2643,8 @@ def propose_claim_type(
                 instance_id,
                 claim_type=envelope_payload,
                 proposal_name=resolved_name,
+                dry_run=dry_run,
+                at=at,
             ),
             command_name="playbill claim-type propose",
         )
@@ -2485,6 +2668,8 @@ def propose_claim_type(
             instance_id,
             input=claim_type_input.model_dump(mode="json"),
             proposal_name=proposal_name or claim_type_input.predicate,
+            dry_run=dry_run,
+            at=at,
         ),
         command_name="playbill claim-type propose",
     )
@@ -2575,17 +2760,22 @@ def migrate_claim_type(request_file: str, output_json: bool) -> None:
         "before v7)."
     ),
 )
-@click.option("--dry-run", is_flag=True, help="Evaluate the change set; propose nothing.")
+@change_control_options
 @json_option
 @handle_errors
 def upgrade_claim_types(
-    claim_types: tuple[str, ...], revision_evidence: str, dry_run: bool, output_json: bool
+    claim_types: tuple[str, ...],
+    revision_evidence: str,
+    dry_run: bool | None,
+    at: str | None,
+    output_json: bool,
 ) -> None:
     """Propose moving live ClaimTypes to v7, one reviewed change set.
 
     v7 states what a ClaimType's Claims need (evidence_requirement, kept at
     self) and what a statement-changing revision keeps (revision_evidence).
-    Every Claim is carried with its backing intact. Approve the proposal as usual.
+    Every Claim is carried with its backing intact. It previews by default;
+    commit the preview with ``--commit --at OID``, then approve as usual.
     """
 
     request = ClaimTypeUpgradeRequestV1.model_validate(
@@ -2593,6 +2783,7 @@ def upgrade_claim_types(
             "claim_types": claim_types,
             "revision_evidence": revision_evidence,
             "dry_run": dry_run,
+            "at": at,
         }
     )
     result = _server_call(
@@ -2620,20 +2811,24 @@ def upgrade_claim_types(
         click.echo(result.detail)
     if result.proposal_id:
         click.echo(f"Next: cruxible playbill proposal approve {result.proposal_id}")
+    echo_preview_next(result.status, result.coordinate)
 
 
 @claim_type_group.command("upgrade-evidence-rules")
+@change_control_options
 @json_option
 @handle_errors
-def upgrade_evidence_rules(output_json: bool) -> None:
+def upgrade_evidence_rules(dry_run: bool | None, at: str | None, output_json: bool) -> None:
     """Propose moving every live ClaimType to identity evidence rules (v6).
 
     Needs compiler revision 31. Each rule converts only when it keeps its meaning;
-    the rest are reported for an explicit decision. Approve the proposal as usual.
+    the rest are reported for an explicit decision. It previews by default;
+    commit the preview with ``--commit --at OID``, then approve as usual.
     """
 
+    request = EvidenceRuleUpgradeRequestV1(dry_run=dry_run, at=at)
     result = _server_call(
-        lambda client, instance_id: client.upgrade_playbill_evidence_rules(instance_id),
+        lambda client, instance_id: client.upgrade_playbill_evidence_rules(instance_id, request),
         command_name="playbill claim-type upgrade-evidence-rules",
     )
     if output_json:
@@ -2652,6 +2847,7 @@ def upgrade_evidence_rules(output_json: bool) -> None:
         click.echo(result.detail)
     if result.proposal_id:
         click.echo(f"Next: cruxible playbill proposal approve {result.proposal_id}")
+    echo_preview_next(result.status, result.coordinate)
 
 
 @playbill_group.group("claim")
@@ -4074,6 +4270,7 @@ def depublish_projection(source_id: str, block_id: str, output_json: bool) -> No
 )
 @click.option("--workspace-root", default=".", show_default=True, type=click.Path(file_okay=False))
 @click.option("--evaluation-time", default=None, help="Explicit absolute ISO-8601 instant.")
+@click.option("--dry-run", is_flag=True, help="Compute and check the stamp; write nothing.")
 @json_option
 @handle_errors
 def repin_projection(
@@ -4090,6 +4287,7 @@ def repin_projection(
     parameters: tuple[str, ...],
     workspace_root: str,
     evaluation_time: str | None,
+    dry_run: bool,
     output_json: bool,
 ) -> None:
     """Refresh one declaration marker without writing its body or closing line."""
@@ -4152,11 +4350,18 @@ def repin_projection(
             currency_policy=currency_policy,
             backing_digest=backing_digest,
             evaluation_time=instant,
+            dry_run=dry_run,
         ),
         command_name="playbill block repin",
     )
     if output_json:
         _emit_json(stamp.model_dump(mode="json"))
+        return
+    if dry_run:
+        click.echo(
+            f"Would repin {source_id}#{block_id} at generation {stamp.declared_generation}; "
+            "nothing was written."
+        )
         return
     click.echo(f"Repinned {source_id}#{block_id} at generation {stamp.declared_generation}.")
 
@@ -4232,9 +4437,16 @@ def compiler_group() -> None:
     "--to", "target_digest", required=True, help="Exact installed target compiler digest."
 )
 @click.option("--name", "proposal_name", required=True)
+@change_control_options
 @json_option
 @handle_errors
-def propose_compiler_upgrade(target_digest: str, proposal_name: str, output_json: bool) -> None:
+def propose_compiler_upgrade(
+    target_digest: str,
+    proposal_name: str,
+    dry_run: bool | None,
+    at: str | None,
+    output_json: bool,
+) -> None:
     """Create an upgrade proposal at the selected accepted head; does not activate it."""
     from cruxible_client.contracts.types import CompilerCoordinate
 
@@ -4247,6 +4459,8 @@ def propose_compiler_upgrade(target_digest: str, proposal_name: str, output_json
                 head.coordinate.model_dump(mode="json")
             ),
             proposal_name=proposal_name,
+            dry_run=dry_run,
+            at=at,
         )
 
     result = _server_call(call, command_name="playbill compiler upgrade")
@@ -4918,7 +5132,13 @@ def check_line(
 
 def _echo_line_arm(result: Any) -> None:
     state = "armed" if result.state == "armed" else f"stopped ({result.stop_reason})"
-    unchanged = {"already_armed": "already armed", "already_disarmed": "already disarmed"}
+    unchanged = {
+        "already_armed": "already armed",
+        "already_disarmed": "already disarmed",
+        "would_arm": "preview: would arm",
+        "would_rearm": "preview: would rearm",
+        "would_disarm": "preview: would disarm",
+    }
     note = unchanged.get(result.outcome or "")
     click.echo(f"{result.line}: {state}" + (f" ({note}; nothing changed)" if note else ""))
     click.echo(f"Armed by: {result.armed_by.label} at {result.armed_at.isoformat()}")
@@ -4933,13 +5153,16 @@ def _echo_line_arm(result: Any) -> None:
 
 @line_group.command("arm")
 @click.argument("line")
+@change_control_options
 @json_option
 @handle_errors
-def arm_line(line: str, output_json: bool) -> None:
+def arm_line(line: str, dry_run: bool | None, at: str | None, output_json: bool) -> None:
     """Admit what this Line matches from now on, under your credential."""
 
     result = _server_call(
-        lambda client, instance_id: client.arm_playbill_line(instance_id, line),
+        lambda client, instance_id: client.arm_playbill_line(
+            instance_id, line, dry_run=dry_run, at=at
+        ),
         command_name="playbill line arm",
     )
     if output_json:
@@ -4950,13 +5173,16 @@ def arm_line(line: str, output_json: bool) -> None:
 
 @line_group.command("disarm")
 @click.argument("line")
+@change_control_options
 @json_option
 @handle_errors
-def disarm_line(line: str, output_json: bool) -> None:
+def disarm_line(line: str, dry_run: bool | None, at: str | None, output_json: bool) -> None:
     """Stop admitting work automatically; admitted runs keep going."""
 
     result = _server_call(
-        lambda client, instance_id: client.disarm_playbill_line(instance_id, line),
+        lambda client, instance_id: client.disarm_playbill_line(
+            instance_id, line, dry_run=dry_run, at=at
+        ),
         command_name="playbill line disarm",
     )
     if output_json:

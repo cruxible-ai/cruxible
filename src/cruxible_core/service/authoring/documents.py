@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import base64
+from collections.abc import Mapping
 from typing import Literal, cast
 
 import structlog
 from pydantic import BaseModel, ConfigDict
 
+from cruxible_client.contracts.actor_types import TransportCapability
 from cruxible_client.contracts.attestations import (
     ApprovalAttestation,
     ApprovalSubmission,
@@ -44,12 +46,13 @@ from cruxible_core.documents.projection_documents import DocumentProjectionView
 from cruxible_core.errors import RequestRefusedError
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.proposals.proposals import (
-    AuthenticatedActor,
     ProposalAdmissionRequest,
+    ProposalPreviewV1,
     ProposalResult,
 )
 from cruxible_core.proposals.settlement import ChangeActorBinding
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.change_preview import admit_change_set, change_scope
 from cruxible_core.service.proposals.proposal_names import canonical_playbill_proposal_name
 from cruxible_core.storage.cas import BodyAccessContext, CasObjectMetadata
 
@@ -104,7 +107,13 @@ class PlaybillDocumentHistory(_StrictServiceModel):
 
 class PlaybillProposalInspection(_StrictServiceModel):
     tag: Literal["playbill-proposal-inspection-v1"] = "playbill-proposal-inspection-v1"
-    proposal: ProposalResult
+    #: ``admitted``: ``proposal`` is the admitted proposal (its own verdict says
+    #: whether it passed). ``would_propose``/``would_block``: a preview, which
+    #: admitted nothing; ``proposal`` is its evaluation (R12).
+    status: Literal["admitted", "would_propose", "would_block"] = "admitted"
+    proposal: ProposalResult | ProposalPreviewV1
+    #: The accepted coordinate after the call; a preview's is the one it was
+    #: evaluated at, which a commit passes back as ``at``.
     accepted_coordinate: PlaybillAcceptedCoordinate
     workspace_advertisement: PlaybillWorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
 
@@ -173,6 +182,51 @@ def service_store_playbill_body(
     return instance.store_document_body(content)
 
 
+def admit_proposal(
+    instance: PlaybillInstance,
+    *,
+    dry_run: bool | None,
+    at: str | None,
+    operation: str,
+    describe: str,
+    actor_id: str,
+    proposed_base: AcceptedProjectionCoordinate,
+    request: ProposalAdmissionRequest,
+    candidate_tree: Mapping[str, bytes],
+    timestamp: str,
+    capabilities: tuple[TransportCapability, ...] = ("propose",),
+) -> PlaybillProposalInspection:
+    """Admit one directly authored change set, or preview it (R12)."""
+
+    with change_scope(
+        instance, dry_run=dry_run, at=at, kind="direct", operation=operation, describe=describe
+    ) as mode:
+        admitted = admit_change_set(
+            instance,
+            mode,
+            actor_id=actor_id,
+            request=request,
+            candidate_tree=candidate_tree,
+            timestamp=timestamp,
+            capabilities=capabilities,
+        )
+        if admitted.preview is not None:
+            assert mode.head is not None
+            return PlaybillProposalInspection(
+                status="would_propose" if admitted.admitted else "would_block",
+                proposal=admitted.preview,
+                accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(mode.head),
+            )
+    assert admitted.result is not None
+    return PlaybillProposalInspection(
+        proposal=admitted.result,
+        workspace_advertisement=admitted.result.workspace_advertisement,
+        accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
+            instance.accepted_coordinate()
+        ),
+    )
+
+
 def service_propose_playbill_document(
     instance: PlaybillInstance,
     *,
@@ -182,6 +236,8 @@ def service_propose_playbill_document(
     timestamp: str,
     base: PlaybillAcceptedCoordinate | None = None,
     source_compilation_digest: str | None = None,
+    dry_run: bool | None = None,
+    at: str | None = None,
 ) -> PlaybillProposalInspection:
     """Admit and deterministically evaluate one exact Document envelope change."""
 
@@ -189,8 +245,14 @@ def service_propose_playbill_document(
     candidate_tree = instance.immutable_tree_at(proposed_base.git_oid).fork()
     candidate_tree[document_path(shell.document_id)] = render_document(shell)
     ref_name = canonical_playbill_proposal_name(proposal_name, family="document")
-    result = instance.proposal_service().submit(
-        actor=AuthenticatedActor(actor_id=actor_id),
+    return admit_proposal(
+        instance,
+        dry_run=dry_run,
+        at=at,
+        operation="playbill.document.propose",
+        describe=f"proposing Document {shell.document_id}",
+        actor_id=actor_id,
+        proposed_base=proposed_base,
         request=ProposalAdmissionRequest(
             target_ref=f"refs/proposals/{actor_id}/{ref_name}",
             proposed_base_oid=proposed_base.git_oid,
@@ -198,13 +260,6 @@ def service_propose_playbill_document(
         ),
         candidate_tree=candidate_tree,
         timestamp=timestamp,
-    )
-    return PlaybillProposalInspection(
-        proposal=result,
-        workspace_advertisement=result.workspace_advertisement,
-        accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
-            instance.accepted_coordinate()
-        ),
     )
 
 
@@ -216,6 +271,8 @@ def service_propose_playbill_principal_change(
     proposal_name: str,
     timestamp: str,
     base: PlaybillAcceptedCoordinate | None = None,
+    dry_run: bool | None = None,
+    at: str | None = None,
 ) -> PlaybillProposalInspection:
     """Use the distinct principal-lifecycle law; never the ordinary Document path."""
 
@@ -223,21 +280,20 @@ def service_propose_playbill_principal_change(
     candidate_tree = instance.immutable_tree_at(proposed_base.git_oid).fork()
     candidate_tree[f"principals/{principal.principal_id}.json"] = render_principal(principal)
     ref_name = canonical_playbill_proposal_name(proposal_name, family="principal")
-    result = instance.proposal_service().submit(
-        actor=AuthenticatedActor(actor_id=actor_id),
+    return admit_proposal(
+        instance,
+        dry_run=dry_run,
+        at=at,
+        operation="playbill.principal.add",
+        describe=f"the change to principal {principal.principal_id}",
+        actor_id=actor_id,
+        proposed_base=proposed_base,
         request=ProposalAdmissionRequest(
             target_ref=f"refs/proposals/{actor_id}/{ref_name}",
             proposed_base_oid=proposed_base.git_oid,
         ),
         candidate_tree=candidate_tree,
         timestamp=timestamp,
-    )
-    return PlaybillProposalInspection(
-        proposal=result,
-        workspace_advertisement=result.workspace_advertisement,
-        accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
-            instance.accepted_coordinate()
-        ),
     )
 
 
@@ -285,6 +341,7 @@ def _candidate_for_proposal(
     proposal_id: str,
 ) -> tuple[ProposalResult, CandidateRecordAnyVersion]:
     inspection = service_inspect_playbill_proposal(instance, proposal_id=proposal_id)
+    assert isinstance(inspection.proposal, ProposalResult)
     # The settlement doors, approval and activation, both resolve their
     # candidate here, so this is where a withdrawal becomes terminal in fact
     # rather than a note in the inventory.
@@ -721,8 +778,14 @@ def service_propose_compiler_upgrade(
     proposal_name: str,
     timestamp: str,
     base: PlaybillAcceptedCoordinate,
+    dry_run: bool | None = None,
+    preview_at: str | None = None,
 ) -> PlaybillProposalInspection:
-    """Propose an exact forward transition using the normal evidence and review path."""
+    """Propose an exact forward transition using the normal evidence and review path.
+
+    ``preview_at`` is the request's ``at``: the coordinate of a preview this
+    commit is pinned to (``at`` here already names the resolved base).
+    """
     instance.require_writable()
     from cruxible_client.contracts.candidates import LawEvaluationCoordinateV1
     from cruxible_client.contracts.compiler_upgrade import (
@@ -751,21 +814,20 @@ def service_propose_compiler_upgrade(
     tree = instance.immutable_tree_at(at.git_oid).fork()
     tree[COMPILER_UPGRADE_PATH] = render_compiler_upgrade(value)
     name = canonical_playbill_proposal_name(proposal_name, family="compiler")
-    result = instance.proposal_service().submit(
-        actor=AuthenticatedActor(actor_id=actor_id),
+    return admit_proposal(
+        instance,
+        dry_run=dry_run,
+        at=preview_at,
+        operation="playbill.compiler.upgrade",
+        describe=f"the compiler upgrade to {target.rule_digest}",
+        actor_id=actor_id,
+        proposed_base=at,
         request=ProposalAdmissionRequest(
             target_ref=f"refs/proposals/{actor_id}/{name}",
             proposed_base_oid=at.git_oid,
         ),
         candidate_tree=tree,
         timestamp=timestamp,
-    )
-    return PlaybillProposalInspection(
-        proposal=result,
-        workspace_advertisement=result.workspace_advertisement,
-        accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
-            instance.accepted_coordinate()
-        ),
     )
 
 
@@ -790,6 +852,7 @@ __all__ = [
     "service_propose_compiler_upgrade",
     "service_propose_playbill_document",
     "service_propose_playbill_principal_change",
+    "admit_proposal",
     "service_store_playbill_body",
     "service_submit_playbill_approval",
 ]

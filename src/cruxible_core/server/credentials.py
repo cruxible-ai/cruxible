@@ -25,6 +25,7 @@ from cruxible_core.errors import (
 )
 from cruxible_core.runtime.permissions import PermissionMode
 from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
+from cruxible_core.storage.preview_fence import refuse_write_while_previewing
 
 _TOKEN_PREFIX = "crt"
 _TOKEN_SECRET_BYTES = 32
@@ -205,6 +206,7 @@ class RuntimeCredentialStore:
         consumed; recording it in the same transaction makes that consent
         single-use.
         """
+        refuse_write_while_previewing("runtime credential store")
         _validate_governed_instance_id(created.record.instance_id)
         try:
             with self._connect() as conn:
@@ -242,8 +244,17 @@ class RuntimeCredentialStore:
         )
         return self.commit_prepared_credential(created, proof_digest=proof_digest)
 
+    def proof_spent(self, proof_digest: str) -> bool:
+        """Whether this signed consent already minted a credential (a read)."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM runtime_credential_proofs WHERE proof_digest = ?", (proof_digest,)
+            ).fetchone()
+        return row is not None
+
     def revoke_credentials_of_principal(self, *, instance_id: str, principal_id: str) -> int:
         """Revoke every active credential that acts as ``principal_id``; return the count."""
+        refuse_write_while_previewing("runtime credential store")
         revoked_at = format_datetime(utc_now())
         with self._connect() as conn:
             cursor = conn.execute(
@@ -273,6 +284,7 @@ class RuntimeCredentialStore:
         state, and credential insertion still use the same store helpers as the
         normal mint path.
         """
+        refuse_write_while_previewing("runtime credential store")
         created = self._new_created_credential(
             instance_id=instance_id,
             label=label,
@@ -375,6 +387,7 @@ class RuntimeCredentialStore:
         bootstrap_secret: str,
     ) -> CreatedRuntimeCredential:
         """Commit a prepared bootstrap credential after materialization succeeds."""
+        refuse_write_while_previewing("runtime credential store")
         _validate_governed_instance_id(created.record.instance_id)
         bootstrap_secret_hash = _hash_token(bootstrap_secret)
         try:
@@ -514,6 +527,7 @@ class RuntimeCredentialStore:
         credential_id: str,
     ) -> RuntimeCredentialRecord:
         """Revoke one instance-scoped credential and return its metadata."""
+        refuse_write_while_previewing("runtime credential store")
         _validate_governed_instance_id(instance_id)
         revoked_at = format_datetime(utc_now())
         assert revoked_at is not None
@@ -573,6 +587,7 @@ class RuntimeCredentialStore:
         ``proof_digest`` names the principal's signed consent the replacement
         consumed, spent in the same transaction exactly as a mint spends one.
         """
+        refuse_write_while_previewing("runtime credential store")
         _validate_governed_instance_id(instance_id)
         try:
             return self._commit_rotation(
@@ -661,6 +676,7 @@ class RuntimeCredentialStore:
 
     def mark_auth_required(self, reason: str) -> None:
         """Persist that this server state dir must not restart without auth."""
+        refuse_write_while_previewing("runtime credential store")
         updated_at = format_datetime(utc_now())
         assert updated_at is not None
         with self._connect() as conn:

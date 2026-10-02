@@ -2703,14 +2703,17 @@ class Playbill:
         self,
         *claim_types: str | ClaimTypeRef,
         revision_evidence: Literal["replace", "accumulate"] = "replace",
-        dry_run: bool = False,
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> ClaimTypeUpgradeResultV1:
         """Propose moving live ClaimTypes to v7 as one reviewed change set.
 
         Names no ClaimType to move every live one before v7. v7 states what a
         statement-changing revision keeps (``revision_evidence``, default
-        ``replace``); every Claim is carried with its backing intact. ``dry_run``
-        evaluates the change set and proposes nothing. Approve as usual.
+        ``replace``); every Claim is carried with its backing intact. The change
+        set carries every dependent Claim, so it previews by default and
+        proposes nothing; commit that preview with ``dry_run=False,
+        at=result.coordinate.git_oid``. Approve as usual.
 
         Next: ``pb.proposal(result.proposal_id).review()`` and approve it.
         """
@@ -2722,6 +2725,7 @@ class Playbill:
             claim_types=tuple(_address(item, RefKind.CLAIM_TYPE) for item in claim_types),
             revision_evidence=revision_evidence,
             dry_run=dry_run,
+            at=at,
         )
         return self._client.upgrade_playbill_claim_types(self._instance_id, request)
 
@@ -4555,11 +4559,13 @@ class ProjectionBlocks:
         evaluation_time: datetime,
         body: str | bytes | None = None,
         compact: bool = True,
+        dry_run: bool = False,
     ) -> ProjectionBlockStampV2:
         """Refresh backing pins and optionally replace this block's authored body.
 
         Compact markers are the default: digest references with local manifests. Subsequent
-        repins preserve that format.
+        repins preserve that format. ``dry_run`` returns the stamp it would write and
+        writes nothing.
 
         Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
         """
@@ -4595,6 +4601,7 @@ class ProjectionBlocks:
             coordinate=self._playbill.coordinate,
             body=body.encode("utf-8") if isinstance(body, str) else body,
             compact=compact,
+            dry_run=dry_run,
         )
 
     def sync(

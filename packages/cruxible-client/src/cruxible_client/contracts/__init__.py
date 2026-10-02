@@ -257,7 +257,7 @@ RuntimeCredentialPermissionMode = Literal[
     "graph_write",
     "admin",
 ]
-PlaybillHostStatus = Literal["created", "already_exists"]
+PlaybillHostStatus = Literal["created", "already_exists", "would_create"]
 PlaybillHostWorkspaceRegistrationStatus = Literal["registered", "not_registered"]
 PlaybillAuthoringExampleName = Literal[
     "claim-existing-capture",
@@ -438,10 +438,13 @@ class PlaybillHostInspectionV1(BaseModel):
 
 
 class RuntimeCredentialBootstrapResult(BaseModel):
+    #: ``would_claim`` answers a preview: the secret checked out and nothing was
+    #: claimed, so no token is issued.
+    status: Literal["claimed", "would_claim"]
     credential_id: str
     instance_id: str
     permission_mode: Literal["admin"]
-    token: str
+    token: str | None = None
 
 
 class RuntimeCredentialMetadata(BaseModel):
@@ -461,8 +464,14 @@ class RuntimeCredentialMetadata(BaseModel):
 
 
 class RuntimeCredentialResult(BaseModel):
+    #: ``would_*`` answers a preview: nothing was minted, revoked or rotated, and
+    #: no token is issued.
+    status: Literal["minted", "revoked", "rotated", "would_mint", "would_revoke", "would_rotate"]
     credential: RuntimeCredentialMetadata
     token: str | None = None
+    #: The accepted coordinate the change was checked at; a commit of a revoke or
+    #: rotate (which cannot be undone) passes its git oid as ``at``.
+    coordinate: PlaybillAcceptedCoordinate | None = None
 
 
 class RuntimeCredentialListResult(BaseModel):
@@ -604,7 +613,13 @@ class PlaybillProposalInspection(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-proposal-inspection-v1"] = "playbill-proposal-inspection-v1"
+    #: ``admitted``: ``proposal`` is the admitted proposal (its own evaluation
+    #: says whether it passed). ``would_propose``/``would_block``: a preview that
+    #: admitted nothing; ``proposal`` holds its evaluation and candidate (R12).
+    status: Literal["admitted", "would_propose", "would_block"] = "admitted"
     proposal: dict[str, Any]
+    #: After the call; a preview's is the head it evaluated at, which a commit
+    #: passes back as ``at`` (its git oid).
     accepted_coordinate: PlaybillAcceptedCoordinate
     workspace_advertisement: PlaybillWorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
     lint: PlaybillClaimTypeProposalLint | None = Field(
@@ -898,6 +913,9 @@ class PlaybillInstanceDecommissionResultV1(BaseModel):
     tag: Literal["playbill-instance-decommission-result-v1"] = (
         "playbill-instance-decommission-result-v1"
     )
+    #: ``would_decommission`` answers a preview, which stamped nothing; commit it
+    #: with ``at`` set to this coordinate's git oid.
+    status: Literal["decommissioned", "would_decommission"]
     instance_id: str
     reason: str
     decommissioned_at: str
@@ -921,7 +939,11 @@ class PlaybillLedgerMirrorV1(BaseModel):
     tag: Literal["playbill-ledger-mirror-v1"] = "playbill-ledger-mirror-v1"
     instance_id: str
     mirror_url: str
-    status: Literal["current", "behind", "pending", "publishing"]
+    #: ``would_publish`` answers a preview: nothing was bound, requested or sent.
+    status: Literal["current", "behind", "pending", "publishing", "would_publish"]
+    #: A preview's accepted coordinate; binding a mirror commits only with
+    #: ``at`` set to its git oid.
+    coordinate: PlaybillAcceptedCoordinate | None = None
     attempted_at: str | None = None
     published_main_oid: str | None = None
     requested_sequence: int = Field(default=0, ge=0)
@@ -1935,7 +1957,8 @@ class PlaybillWorkspaceDetachResultV1(BaseModel):
 
     tag: Literal["playbill-workspace-detach-result-v1"] = "playbill-workspace-detach-result-v1"
     instance_id: str
-    status: Literal["detached", "not_registered"]
+    #: ``would_detach`` answers a preview, which released nothing.
+    status: Literal["detached", "not_registered", "would_detach"]
     workspace_root: str | None = None
 
 

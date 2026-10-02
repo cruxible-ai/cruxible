@@ -26,16 +26,22 @@ from cruxible_client.contracts.runtime_credentials import (
     verify_runtime_credential_proof,
 )
 from cruxible_client.contracts.temporal import parse_datetime, utc_now
-from cruxible_core.errors import PrincipalRefusedError, RuntimeCredentialNotFoundError
+from cruxible_core.errors import (
+    PrincipalRefusedError,
+    RuntimeCredentialNotFoundError,
+)
 from cruxible_core.runtime.permissions import PermissionMode
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.auth import ResolvedAuthContext
 from cruxible_core.server.config import is_server_auth_enabled
 from cruxible_core.server.credentials import (
     CreatedRuntimeCredential,
+    RuntimeCredentialRecord,
+    _proof_replayed,
     get_runtime_credential_store,
 )
 from cruxible_core.service.identity import principal_refusal
+from cruxible_core.storage.preview_fence import is_previewing
 
 
 def _mint_command(principal_id: str, permission_mode: str) -> str:
@@ -190,14 +196,21 @@ def mint_principal_credential(
         principal_proof=principal_proof,
         auth_context=auth_context,
     )
-    return get_runtime_credential_store().create_credential(
+    store = get_runtime_credential_store()
+    prepared = store.prepare_credential(
         instance_id=instance_id,
         label=description,
         permission_mode=permission_mode,
         created_by=None if auth_context is None else auth_context.credential_id,
         principal_id=principal_id,
-        proof_digest=proof_digest,
     )
+    if is_previewing():
+        # R12: everything a mint checks has passed; nothing is stored, and the
+        # prepared token is discarded by the caller.
+        if proof_digest is not None and store.proof_spent(proof_digest):
+            raise _proof_replayed()
+        return prepared
+    return store.commit_prepared_credential(prepared, proof_digest=proof_digest)
 
 
 def rotate_principal_credential(
@@ -237,6 +250,10 @@ def rotate_principal_credential(
         credential_id=credential_id,
         rotated_by=None if auth_context is None else auth_context.credential_id,
     )
+    if is_previewing():
+        if proof_digest is not None and store.proof_spent(proof_digest):
+            raise _proof_replayed()
+        return created
     return store.commit_prepared_rotation(
         created,
         instance_id=instance_id,
@@ -245,4 +262,20 @@ def rotate_principal_credential(
     )
 
 
-__all__ = ["mint_principal_credential", "rotate_principal_credential"]
+def revoke_runtime_credential(*, instance_id: str, credential_id: str) -> RuntimeCredentialRecord:
+    """Revoke one credential; a preview returns it unrevoked and changes nothing."""
+
+    store = get_runtime_credential_store()
+    if is_previewing():
+        existing = store.get(credential_id)
+        if existing is None or existing.instance_id != instance_id:
+            raise RuntimeCredentialNotFoundError(credential_id)
+        return existing
+    return store.revoke_credential(instance_id=instance_id, credential_id=credential_id)
+
+
+__all__ = [
+    "mint_principal_credential",
+    "revoke_runtime_credential",
+    "rotate_principal_credential",
+]

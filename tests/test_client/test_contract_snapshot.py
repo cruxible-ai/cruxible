@@ -299,7 +299,11 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
 
 
 def test_host_and_coordinate_contracts_are_strict() -> None:
-    assert set(get_args(contracts.PlaybillHostStatus)) == {"created", "already_exists"}
+    assert set(get_args(contracts.PlaybillHostStatus)) == {
+        "created",
+        "already_exists",
+        "would_create",
+    }
     assert contracts.PlaybillHostResult.model_config["extra"] == "forbid"
     assert contracts.PlaybillAcceptedCoordinate.model_config["extra"] == "forbid"
     assert set(contracts.PlaybillAcceptedCoordinate.model_fields) == {

@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from .canonical import Sha256Value
+from .change_control import DryRun, PreviewAt
 from .providers import ProviderLocalDistributionPinV1
 
 
@@ -42,6 +43,10 @@ class PlaybillProviderInstallRequestV1(_Strict):
     extras: tuple[str, ...] = ()
     control_domain: str = "operator"
     reverify: bool = False
+    #: Preview: resolve the package and, for one already prepared here, evaluate
+    #: the registration it would propose; fetch, build and register nothing.
+    dry_run: DryRun = None
+    at: PreviewAt = None
 
     @field_validator("lock_digest")
     @classmethod
@@ -89,7 +94,8 @@ class PlaybillProviderInstallResultV1(_Strict):
     tag: Literal["playbill-provider-install-result-v1"] = "playbill-provider-install-result-v1"
     installation_id: str
     provider_id: str
-    status: Literal["ready", "awaiting_approval", "blocked"]
+    #: ``would_install`` answers a preview, which installed and proposed nothing.
+    status: Literal["ready", "awaiting_approval", "blocked", "would_install"]
     installed: bool
     registered: bool
     operations: tuple[ProviderOperationReadinessV1, ...] = ()

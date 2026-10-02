@@ -60,6 +60,7 @@ from cruxible_core.providers.provider_process_leases import (
     ProviderProcessRecoveryResultV1,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.storage.preview_fence import refuse_write_while_previewing
 
 PROVIDER_RUNTIME_CONFIG_PATH = Path("daemon/provider-runtime.json")
 ProviderRecoveryFoldDisposition = Literal["handled", "unclaimed", "fold_failed"]
@@ -826,6 +827,7 @@ class ProviderRuntimeOperator:
 
     def register_deployment(self, deployment: ProviderDeploymentConfigV1) -> None:
         """Publish prepared custody without replacing any older admitted deployment."""
+        refuse_write_while_previewing("provider runtime configuration")
         path = self.state_root / PROVIDER_RUNTIME_CONFIG_PATH
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         with self._lock, (path.parent / "provider-runtime.lock").open("a+b") as lock:

@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 
 from cruxible_client import contracts
+from cruxible_client.contracts.change_control import ChangeControlRequestV1
 from cruxible_core.runtime import host_api
 from cruxible_core.server.config import resolve_server_settings
 from cruxible_core.server.request_models import PlaybillHostCreateRequest
@@ -38,10 +39,14 @@ def create_playbill_host(
     return host_api.create_playbill_host(
         instance_id=req.instance_id,
         workspace_root=req.workspace_root,
-        workspace_attachment_authorized=(
-            request.scope.get("client") is None
-            and resolve_server_settings().server_socket is not None
-        ),
+        workspace_attachment_authorized=_local_socket(request),
+        dry_run=req.dry_run,
+    )
+
+
+def _local_socket(request: Request) -> bool:
+    return request.scope.get("client") is None and (
+        resolve_server_settings().server_socket is not None
     )
 
 
@@ -52,15 +57,14 @@ def create_playbill_host(
 def playbill_host_workspace_detach(
     instance_id: str,
     request: Request,
+    req: ChangeControlRequestV1 | None = None,
 ) -> contracts.PlaybillWorkspaceDetachResultV1:
     """Release one host's Git worktree; only local-socket callers may ask."""
 
     return host_api.playbill_host_workspace_detach(
         resolve_server_instance_id(instance_id),
-        workspace_attachment_authorized=(
-            request.scope.get("client") is None
-            and resolve_server_settings().server_socket is not None
-        ),
+        workspace_attachment_authorized=_local_socket(request),
+        dry_run=None if req is None else req.dry_run,
     )
 
 

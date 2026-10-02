@@ -41,6 +41,49 @@ json_option = click.option(
 )
 
 
+def change_control_options(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """``--dry-run/--commit`` and ``--at``: the R12 change control on every change.
+
+    Neither flag: the operation's default (a change derived across several
+    artifacts, or one that cannot be undone, previews). ``--commit --at OID``
+    commits exactly the preview that answered at OID.
+    """
+
+    fn = click.option(
+        "--at",
+        "at",
+        default=None,
+        metavar="OID",
+        help=(
+            "The coordinate a preview answered with; the commit refuses if accepted "
+            "state moved since. Required to commit a change that cannot be undone."
+        ),
+    )(fn)
+    return click.option(
+        "--dry-run/--commit",
+        "dry_run",
+        default=None,
+        help=(
+            "--dry-run: run every check and write nothing. --commit: make the change. "
+            "Default: preview a change derived across several artifacts or one that "
+            "cannot be undone; commit anything else."
+        ),
+    )(fn)
+
+
+def echo_preview_next(status: str, coordinate: Any) -> None:
+    """After a preview, say nothing was written and how to commit exactly it."""
+
+    if not status.startswith("would_") or coordinate is None:
+        return
+    git_oid = getattr(coordinate, "git_oid", None)
+    if git_oid is None:
+        return
+    click.echo(f"Preview at {git_oid}; nothing was written.")
+    if status != "would_block" and status != "would_refuse":
+        click.echo(f"Commit it: rerun the same command with --commit --at {git_oid}")
+
+
 brief_option = click.option(
     "--brief",
     "output_brief",
