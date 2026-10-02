@@ -186,3 +186,42 @@ def test_gitignore_comparison_refuses_a_symlink(tmp_path):
     with pytest.raises(PlaybillWorkspaceError, match="could not be written atomically"):
         authoring.write_projection_index(workspace)
     assert outside.read_bytes() == b"outside sentinel\n"
+
+
+@pytest.mark.parametrize("relative", [".gitignore", "sources/LEDGER"])
+def test_local_join_refuses_a_fifo_promptly(tmp_path, relative):
+    from tests.support.fifos import call_with_fifo_timeout
+
+    workspace = tmp_path / "workspace"
+    floor = workspace / ".playbill/floor"
+    (floor / "sources").mkdir(parents=True)
+    (floor / "sources/LEDGER").write_bytes(b"# sources LEDGER  0 sources  changed gen 0\n")
+    fifo = floor / relative
+    fifo.unlink(missing_ok=True)
+    os.mkfifo(fifo)
+    with pytest.raises(PlaybillWorkspaceError, match="not a regular file"):
+        call_with_fifo_timeout(fifo, lambda: authoring.write_projection_index(workspace))
+    assert fifo.is_fifo()
+
+
+def test_local_comparison_reads_only_the_expected_length_plus_one(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    floor = workspace / ".playbill/floor"
+    floor.mkdir(parents=True)
+    ignore = floor / ".gitignore"
+    ignore.write_bytes(b"*\n" + b"x" * 10000)
+    identity = ignore.stat().st_ino
+    sizes = []
+    read = os.read
+
+    def observed(handle, size):
+        if os.fstat(handle).st_ino == identity:
+            sizes.append(size)
+        return read(handle, size)
+
+    monkeypatch.setattr(floor_apply.os, "read", observed)
+    authoring._write_workspace_local(
+        workspace, ".playbill/floor/.gitignore", b"*\n", only_if_changed=True
+    )
+    assert sizes == [3]
+    assert ignore.read_bytes() == b"*\n"

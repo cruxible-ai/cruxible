@@ -602,3 +602,25 @@ def test_seeded_floor_trigger_delivers_after_accept_and_retirement_stops_it(tmp_
     assert (
         len([event for event in trigger_events(instance) if event.action == "floor.refresh"]) == 1
     )
+
+
+def test_fifo_gitignore_stalls_delivery_promptly_and_releases_admission(world):
+    import os
+
+    from tests.support.fifos import call_with_fifo_timeout
+
+    instance, workspace, _ = world
+    instance_id = instance.descriptor.instance_id
+    refresh_floor(instance, instance_id)
+    fifo = workspace / ".playbill/floor/.gitignore"
+    fifo.unlink()
+    os.mkfifo(fifo)
+    with pytest.raises(PlaybillWorkspaceError, match="not a regular file"):
+        call_with_fifo_timeout(fifo, lambda: refresh_floor(instance, instance_id))
+    assert FLOOR_ADMISSION.active_keys() == 0
+    with FLOOR_ADMISSION.hold(instance_id):
+        pass
+    assert floor_outcomes(instance)[0].status == "failed"
+    health = FLOOR.health(instance, now=NOW)
+    assert health[0].state == "stalled"
+    assert health[0].repair.operation == "playbill.floor.export"

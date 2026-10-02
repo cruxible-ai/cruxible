@@ -546,3 +546,42 @@ def test_gitignore_aliases_are_reserved_in_manifests(normalization):
                 notes_digest="sha256:" + "6" * 64,
                 files={path: ("sha256:" + "0" * 64, 1, 1)},
             )
+
+
+def test_fifo_manifest_read_returns_promptly_without_a_valid_manifest(tmp_path):
+    from tests.support.fifos import call_with_fifo_timeout
+
+    directory = _base_dir(tmp_path)
+    fifo = directory / "manifest.json"
+    fifo.unlink()
+    os.mkfifo(fifo)
+    assert call_with_fifo_timeout(fifo, lambda: read_floor_manifest(directory)) is None
+
+
+@pytest.mark.parametrize("relative", ["manifest.json", "current/k/a.yaml"])
+def test_floor_verification_refuses_a_fifo_swapped_after_stat(tmp_path, monkeypatch, relative):
+    from tests.support.fifos import call_with_fifo_timeout
+
+    directory = _base_dir(tmp_path)
+    fifo = directory / relative
+    parent_identity = fifo.parent.stat().st_ino
+    open_file = os.open
+    swapped = False
+
+    def open_at(path, flags, mode=0o777, *, dir_fd=None):
+        nonlocal swapped
+        if (
+            not swapped
+            and path == fifo.name
+            and dir_fd is not None
+            and os.fstat(dir_fd).st_ino == parent_identity
+        ):
+            fifo.unlink()
+            os.mkfifo(fifo)
+            swapped = True
+        return open_file(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(floor_apply.os, "open", open_at)
+    with pytest.raises(PlaybillFloorApplyError, match="not a regular file"):
+        call_with_fifo_timeout(fifo, lambda: apply_floor_delta(directory, _delta()))
+    assert swapped

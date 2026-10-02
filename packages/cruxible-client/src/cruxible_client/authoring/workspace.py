@@ -818,10 +818,18 @@ _SOURCES_LEDGER_PATH = "sources/LEDGER"
 def _sources_ledger(floor: Path) -> tuple[str, list[list[str]]] | None:
     """The floor's ``sources/LEDGER``: its header and its five-cell rows."""
 
+    anchor = os.open(floor.anchor, _DIRECTORY)
     try:
-        text = (floor / _SOURCES_LEDGER_PATH).read_text(encoding="utf-8")
+        with _directory(anchor, (*floor.parts[1:], "sources"), create=False) as directory:
+            if directory is None:
+                return None
+            text = _read_at(directory, "LEDGER").decode("utf-8")
+    except PlaybillFloorApplyError as exc:
+        raise PlaybillWorkspaceError(f"{_SOURCES_LEDGER_PATH} could not be read: {exc}") from exc
     except (OSError, UnicodeDecodeError):
         return None
+    finally:
+        os.close(anchor)
     header = ""
     rows: list[list[str]] = []
     for line in text.splitlines():
@@ -895,7 +903,7 @@ def _write_workspace_local(
                 with _directory(directory, parts[:-1], create=True) as parent:
                     assert parent is not None
                     try:
-                        if _read_at(parent, parts[-1]) == content:
+                        if _read_at(parent, parts[-1], max_bytes=len(content) + 1) == content:
                             return
                     except FileNotFoundError:
                         pass
