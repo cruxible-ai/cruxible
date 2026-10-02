@@ -23,8 +23,20 @@ Defaults, per operation:
   then commits only with ``at``: the confirmation is the preview's coordinate;
 - everything else commits unless ``dry_run`` is true.
 
-Exempt in v1 (the maintainer's scope ruling, r12-scope-1001), and so taking
-no ``dry_run``:
+Which operations preview follows one principle (r12-principle-1002): an
+operation previews when its effect is derived (computed by the server from more
+than its input), or when it is irreversible or reaches outside the daemon and
+its effect is not already shown to the caller. An operation whose full effect
+is determined by its input and that writes nothing when refused is exempt:
+
+- claim attest: the signed statement is the whole effect;
+- body store: an inert content-addressed put;
+- proposal approve: signs an evaluation ``proposal inspect`` already shows;
+- proposal activate: its preview is the proposal's evaluation, already shown,
+  and the commit-time ``at`` check covers head movement.
+
+Exempt in v1 as well (the maintainer's scope ruling, r12-scope-1001), and so
+taking no ``dry_run``:
 
 - the exhaust paths (settle, predict, Procedure run and measure, Line
   evaluate, dispatch and run): append-only observations that need a separate

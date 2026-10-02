@@ -103,7 +103,22 @@ repair derived files a crash left behind, the preview refuses
 `playbill.preview.recovery_pending` instead of writing them; an ordinary read
 (`cruxible playbill orient`) reopens it, and the preview then runs.
 
-Exempt in v1, by the maintainer's scope ruling:
+Which operations preview follows one principle (the maintainer's ruling):
+an operation previews when its effect is derived -- computed by the server
+from more than its input -- or when it cannot be undone or reaches outside the
+daemon and its effect is not already shown to the caller. An operation whose
+full effect is determined by its input and that writes nothing when refused is
+exempt. By that principle these are exempt:
+
+- `claim attest`: the statement the caller signs is the whole effect, and a
+  refused attestation writes nothing;
+- `body store`: an inert content-addressed put whose effect is its input;
+- `proposal approve`: records the caller's signed approval of an evaluation
+  already shown by `proposal inspect`;
+- `proposal activate`: its preview is the proposal's evaluation, already
+  shown; the commit-time `at` check covers the head moving under it.
+
+Exempt in v1 as well, by the maintainer's earlier scope ruling:
 
 - the exhaust paths -- `settle`, `predict`, `procedure run` and
   `procedure measure`, and `line evaluate`, `line dispatch` and `line run` --
