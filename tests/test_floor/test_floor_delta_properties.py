@@ -221,7 +221,9 @@ def test_every_delta_rebuilds_the_full_floor_byte_for_byte(
     paths = set().union(*fulls.values())
     assert any(path.endswith(".txt") for path in paths)
     assert any(b"incoming:" in content for tree in fulls.values() for content in tree.values())
-    assert any(b"Document:design-note" in tree.get("sources/INDEX", b"") for tree in fulls.values())
+    assert any(
+        b"Document:design-note" in tree.get("sources/LEDGER", b"") for tree in fulls.values()
+    )
     shown = b"".join(content for tree in fulls.values() for content in tree.values())
     assert b"project.work_item.ext.note: Hello" in shown and b"\next.note: Hello" in shown
     assert b"\ntitle:\n  - " in shown
