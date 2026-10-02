@@ -144,7 +144,7 @@ def settle_world(  # type: ignore[no-untyped-def]
         }
     )
     line = fixtures._served_line(with_terminal, policy).model_copy(
-        update={"requested_terminal_rung": 3}
+        update={"max_authority": "settle"}
     )
     trigger_members: dict[str, bytes] = {}
     if capture_triggered:
@@ -154,32 +154,19 @@ def settle_world(  # type: ignore[no-untyped-def]
             capture_contract_path,
             render_capture_contract,
         )
-        from cruxible_client.contracts.procedures.line_specs import (
-            CaptureLandingTriggerPolicyV2,
-            LineSpecV3,
-        )
+        from cruxible_client.contracts.triggers import CaptureLandingScheduleV1
+        from tests.support.lines import line_trigger
+        from tests.support.lines import trigger_members as trigger_files
         from tests.test_procedures.test_line_triggers import SELECTOR
 
-        line = LineSpecV3.model_validate(
-            {
-                **line.model_dump(mode="python"),
-                "artifact_format": "playbill-line-v3",
-                "provider_implementation_closures": (),
-                "trigger_policy": CaptureLandingTriggerPolicyV2(event=SELECTOR),
-                "pins": tuple(
-                    sorted(
-                        (
-                            *line.pins,
-                            ArtifactPin(
-                                role="trigger-capture-contract",
-                                target=SELECTOR.capture_contract_identity,
-                                artifact_digest=SELECTOR.capture_contract_digest,
-                            ),
-                        ),
-                        key=lambda pin: (pin.role, pin.target.qualified, pin.artifact_digest),
-                    )
-                ),
-            }
+        trigger_members.update(
+            trigger_files(
+                line_trigger(
+                    "settle-on-landing",
+                    line=line.identity.name,
+                    schedule=CaptureLandingScheduleV1(event=SELECTOR),
+                )
+            )
         )
         trigger_members[
             capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name)

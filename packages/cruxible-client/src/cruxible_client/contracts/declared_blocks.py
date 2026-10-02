@@ -26,6 +26,7 @@ from pydantic import (
     model_validator,
 )
 
+from cruxible_client._safe_files import read_regular_file
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import (
     CanonicalValue,
@@ -446,8 +447,7 @@ def check_projection_processing_bytes(size: int) -> None:
 def read_projection_source(path: Path) -> bytes:
     """Bound allocation even for an oversized or concurrently growing source."""
     limit = projection_processing_policy().max_bytes
-    with path.open("rb") as stream:
-        content = stream.read(limit + 1)
+    content = read_regular_file(path, max_bytes=limit + 1)
     check_projection_processing_bytes(len(content))
     return content
 

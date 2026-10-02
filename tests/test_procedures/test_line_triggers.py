@@ -9,7 +9,6 @@ from cruxible_client.contracts.acquisition_policies import (
     acquisition_policy_path,
     render_acquisition_policy,
 )
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     capture_contract_digest,
@@ -21,27 +20,14 @@ from cruxible_client.contracts.procedure_mandates import (
     procedure_mandate_path,
     render_procedure_mandate,
 )
-from cruxible_client.contracts.procedures.artifacts import (
-    AcceptedProcedureV1,
-    ProcedureArtifactV2,
-    procedure_artifact_digest,
-    procedure_path,
-    render_procedure,
-)
-from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v4
-from cruxible_client.contracts.procedures.line_specs import (
-    CaptureLandingTriggerPolicyV2,
-    LineSpecV3,
-    WindowCloseTriggerPolicyV2,
-    line_spec_path,
-    render_line_spec,
-)
-from cruxible_client.contracts.procedures.models import ProcedureDefinitionV4
+from cruxible_client.contracts.procedures.artifacts import render_procedure
+from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
 from cruxible_client.contracts.procedures.windows import (
     CaptureEventSelectorV1,
     CaptureEventWindowV1,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.triggers import CaptureLandingScheduleV1, WindowCloseScheduleV1
 from cruxible_core.exhaust import ProcedureExhaustWriter
 from cruxible_core.service.procedures.line_triggers import service_check_line_trigger
 from cruxible_core.service.procedures.procedure_runs import (
@@ -50,6 +36,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     _journal,
     _stream,
 )
+from tests.support.lines import graph_v4, line_trigger, trigger_members
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_procedures.test_independent_resolution_contracts import contract_world
 from tests.test_procedures.test_procedure_run_surface import READ_TIME, _actor, _slotless_procedure
@@ -65,66 +52,20 @@ SELECTOR = CaptureEventSelectorV1(
 )
 
 
-def line_world(tmp_path, trigger, *, with_owner=False):
+TRIGGER = "trigger-test-trigger"
+
+
+def line_world(tmp_path, schedule, *, with_owner=False, triggers=None):
+    """An accepted Line v6 and the Trigger aimed at it on `schedule`.
+
+    `triggers` replaces the one default Trigger with several (or none).
+    """
+
     instance, owner, contract = contract_world(tmp_path)
-    base = _slotless_procedure("trigger-method").procedure
-    definition = ProcedureDefinitionV4.model_validate(
-        {**base.definition.model_dump(mode="python"), "graph_format": 4}
-    )
-    procedure = ProcedureArtifactV2.model_validate(
-        {
-            **base.model_dump(mode="python"),
-            "definition": definition,
-            "definition_digest": compute_procedure_definition_digest_v4(definition).tagged,
-        }
-    )
-    accepted = AcceptedProcedureV1(
-        path=procedure_path(procedure.identity.name),
-        procedure=procedure,
-        artifact_digest=procedure_artifact_digest(procedure).tagged,
-    )
+    accepted = graph_v4(_slotless_procedure("trigger-method"))
+    procedure = accepted.procedure
     policy = _acquisition_policy("trigger-policy")
-    base_line = _served_line("trigger-test", accepted=accepted, policy=policy)
-    pins = tuple(
-        sorted(
-            (
-                *base_line.pins,
-                ArtifactPin(
-                    role="trigger-capture-contract",
-                    target=SELECTOR.capture_contract_identity,
-                    artifact_digest=SELECTOR.capture_contract_digest,
-                ),
-            ),
-            key=lambda p: (p.role, p.target.qualified, p.artifact_digest),
-        )
-    )
-    if trigger.kind not in {"capture_landing", "window_close"} or (
-        trigger.kind == "window_close" and trigger.window.kind == "fixed"
-    ):
-        pins = base_line.pins
-    if trigger.kind == "cadence":
-        pins = tuple(
-            sorted(
-                (
-                    *pins,
-                    ArtifactPin(
-                        role="trigger-cadence-policy",
-                        target=ArtifactIdentity(kind="Policy", name="cadence"),
-                        artifact_digest=trigger.cadence_policy_digest,
-                    ),
-                ),
-                key=lambda p: (p.role, p.target.qualified, p.artifact_digest),
-            )
-        )
-    line = LineSpecV3.model_validate(
-        {
-            **base_line.model_dump(mode="python"),
-            "pins": pins,
-            "artifact_format": "playbill-line-v3",
-            "provider_implementation_closures": (),
-            "trigger_policy": trigger,
-        }
-    )
+    line = _served_line("trigger-test", accepted=accepted, policy=policy)
     mandate = _line_mandate(accepted)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree[capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name)] = (
@@ -136,10 +77,17 @@ def line_world(tmp_path, trigger, *, with_owner=False):
             acquisition_policy_path(policy.identity.name): render_acquisition_policy(policy),
             procedure_mandate_path(mandate.identity.name): render_procedure_mandate(mandate),
             line_spec_path(line.identity.name): render_line_spec(line),
+            **trigger_members(
+                *(
+                    (line_trigger(TRIGGER, line=line.identity.name, schedule=schedule),)
+                    if triggers is None
+                    else triggers
+                )
+            ),
         }
     )
     _accept_tree(
-        instance, owner, tree, timestamp="2026-08-28T15:01:00.000000Z", proposal_name="trigger"
+        instance, owner, tree, timestamp="2026-08-24T15:00:00.000000Z", proposal_name="trigger"
     )
     return (instance, line, accepted, owner) if with_owner else (instance, line, accepted)
 
@@ -177,7 +125,7 @@ def capture(
 
 
 def test_indexed_capture_check_is_read_only_scoped_and_paginated(tmp_path: Path, monkeypatch):
-    instance, line, procedure = line_world(tmp_path, CaptureLandingTriggerPolicyV2(event=SELECTOR))
+    instance, line, procedure = line_world(tmp_path, CaptureLandingScheduleV1(event=SELECTOR))
     assert (
         service_check_line_trigger(
             instance, line.identity.name, LineTriggerCheckRequestV1(), now=READ_TIME
@@ -217,9 +165,7 @@ def test_indexed_capture_check_is_read_only_scoped_and_paginated(tmp_path: Path,
 
 
 def test_window_eligibility_uses_fixed_event_boundary_and_missing_evidence_is_incomplete(tmp_path):
-    policy = WindowCloseTriggerPolicyV2(
-        window=CaptureEventWindowV1(event=SELECTOR, duration_seconds=60)
-    )
+    policy = WindowCloseScheduleV1(window=CaptureEventWindowV1(event=SELECTOR, duration_seconds=60))
     instance, line, procedure = line_world(tmp_path, policy)
     stored = capture(instance, procedure)
     before = service_check_line_trigger(

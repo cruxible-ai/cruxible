@@ -18,6 +18,7 @@ import os
 import signal
 import threading
 from collections.abc import Callable
+from contextvars import Context
 
 from cruxible_core.errors import ConfigError
 
@@ -51,7 +52,7 @@ _signal_self = _default_signal_self
 
 def schedule_server_stop() -> None:
     """Schedule a graceful shutdown after the current response is flushed."""
-    timer = threading.Timer(_STOP_DELAY_SECONDS, _signal_self)
+    timer = threading.Timer(_STOP_DELAY_SECONDS, Context().run, args=(_signal_self,))
     timer.daemon = True
     timer.start()
 

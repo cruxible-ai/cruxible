@@ -280,6 +280,7 @@ def _loop_work(node: ast.AsyncFunctionDef, module: _RouteModule) -> list[str]:
 _ON_LOOP_CALLS: dict[str, frozenset[str]] = {
     "KeyedAdmission.admit": frozenset(
         {
+            "self._check_reentrant",
             "asyncio.get_running_loop",
             "loop.create_future",
             "self._enter",
@@ -288,6 +289,7 @@ _ON_LOOP_CALLS: dict[str, frozenset[str]] = {
             "self._close",
         }
     ),
+    "KeyedAdmission._check_reentrant": frozenset({"getattr", "FloorAdmissionMisuse"}),
     "KeyedAdmission._enter": frozenset(
         {"self._entries.get", "_Entry", "_Waiter", "entry.waiters.append"}
     ),
@@ -320,6 +322,7 @@ _RECEIVER_VALUES: dict[str, frozenset[str]] = {
 _FIELDS: dict[str, tuple[str, str]] = {
     "self._lock": ("KeyedAdmission.__init__", "threading.Lock()"),
     "self._entries": ("KeyedAdmission.__init__", "{}"),
+    "self._owned": ("KeyedAdmission.__init__", "threading.local()"),
     "self.waiters": ("_Entry.__init__", "deque()"),
 }
 
@@ -648,3 +651,250 @@ def test_the_scan_sees_routes() -> None:
     assert {"export_floor", "floor_delta"} <= routes
     assert "FLOOR_ADMISSION" in _SHARED_ADMISSIONS
     assert "FLOOR_ADMISSION" in _RouteModule(tree).admissions
+
+
+def _http_hold_paths(modules: dict[str, ast.Module]) -> list[str]:
+    """Early-warning smoke check for statically named callables.
+
+    The request-context check in KeyedAdmission.hold is the runtime guarantee;
+    this scan does not model every Python indirection and must stay a smoke check.
+    Each function has its own bindings. Nested imports stay in their scope,
+    and a nested body is followed only when its callable is referenced.
+    """
+    functions = {}
+    bindings = {}
+    routes = []
+
+    def scope_nodes(body):
+        found = []
+
+        def visit(node):
+            found.append(node)
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
+                # Defaults and decorators execute here; the body has its own scope.
+                found.extend(_executed(node))
+            elif isinstance(node, ast.ClassDef):
+                for expression in (
+                    *node.bases,
+                    *(keyword.value for keyword in node.keywords),
+                    *node.decorator_list,
+                ):
+                    found.extend(_executed(expression))
+            else:
+                for child in ast.iter_child_nodes(node):
+                    visit(child)
+
+        for statement in body:
+            visit(statement)
+        return found
+
+    def register_scope(body, parent, prefix, *, class_scope=False, arguments=None):
+        nodes = scope_nodes(body)
+        names = dict(parent)
+        # Parameters shadow enclosing names; defaults can contain other scopes.
+        if arguments is not None:
+            for argument in (
+                *arguments.posonlyargs,
+                *arguments.args,
+                *arguments.kwonlyargs,
+                arguments.vararg,
+                arguments.kwarg,
+            ):
+                if argument is not None:
+                    names[argument.arg] = None
+        for node in nodes:
+            if isinstance(node, ast.ImportFrom) and node.module and not node.level:
+                for alias in node.names:
+                    names[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    names[alias.asname or alias.name.split(".")[0]] = (
+                        alias.name if alias.asname else alias.name.split(".")[0]
+                    )
+            elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+                names[node.name] = f"{prefix}.{node.name}"
+        for node in nodes:
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                qualified = f"{prefix}.{node.name}"
+                functions[qualified] = node
+                # A method closes over the class's enclosing scope, not its
+                # namespace. Nested functions close over their parent function.
+                bindings[qualified] = register_scope(
+                    node.body,
+                    parent if class_scope else names,
+                    qualified,
+                    arguments=node.args,
+                )
+                if _is_route(node):
+                    routes.append(qualified)
+            elif isinstance(node, ast.ClassDef):
+                register_scope(
+                    node.body,
+                    parent if class_scope else names,
+                    f"{prefix}.{node.name}",
+                    class_scope=True,
+                )
+        return names
+
+    for module, tree in modules.items():
+        register_scope(tree.body, {}, module)
+
+    def resolve(node, names):
+        if isinstance(node, ast.Name):
+            return names.get(node.id, node.id)
+        if isinstance(node, ast.Attribute):
+            parent = resolve(node.value, names)
+            return f"{parent}.{node.attr}" if parent else None
+        return None
+
+    problems = []
+    for route in routes:
+        pending = [(route, [route])]
+        visited = set()
+        while pending:
+            name, path = pending.pop()
+            if name in visited:
+                continue
+            visited.add(name)
+            function = functions[name]
+            names = bindings[name]
+            for node in scope_nodes(function.body):
+                target = resolve(node, names)
+                if target == "cruxible_core.runtime.admission.FLOOR_ADMISSION.hold":
+                    problems.append(" -> ".join([*path, "FLOOR_ADMISSION.hold"]))
+                elif target in functions and target not in visited:
+                    pending.append((target, [*path, target]))
+    return sorted(set(problems))
+
+
+def test_no_http_path_reaches_blocking_floor_admission() -> None:
+    source = ROOT / "src"
+    modules = {
+        ".".join(path.relative_to(source).with_suffix("").parts): ast.parse(
+            path.read_text(encoding="utf-8")
+        )
+        for path in (source / "cruxible_core").rglob("*.py")
+    }
+    assert _http_hold_paths(modules) == []
+
+
+def test_http_hold_check_rejects_a_sync_route_through_host_api() -> None:
+    modules = {
+        "routes": ast.parse("""
+from cruxible_core.runtime import host_api
+@router.post("/toggle")
+def toggle():
+    return host_api.toggle()
+"""),
+        "cruxible_core.runtime.host_api": ast.parse("""
+def toggle():
+    from cruxible_core.consumers.floor import refresh_floor
+    return refresh_floor()
+"""),
+        "cruxible_core.consumers.floor": ast.parse("""
+from cruxible_core.runtime.admission import FLOOR_ADMISSION
+
+def refresh_floor():
+    with FLOOR_ADMISSION.hold("instance"):
+        return admitted_body()
+
+def admitted_body():
+    return 1
+"""),
+    }
+    assert _http_hold_paths(modules) == [
+        "routes.toggle -> cruxible_core.runtime.host_api.toggle -> "
+        "cruxible_core.consumers.floor.refresh_floor -> FLOOR_ADMISSION.hold"
+    ]
+    modules["cruxible_core.runtime.host_api"] = ast.parse("""
+from cruxible_core.consumers.floor import admitted_body
+
+def toggle():
+    return admitted_body()
+""")
+    assert _http_hold_paths(modules) == []
+
+
+def test_http_hold_check_rejects_a_statically_named_class_method() -> None:
+    modules = {
+        "routes": ast.parse("""
+from cruxible_core.runtime import host_api
+@router.post("/toggle")
+def toggle():
+    return host_api.Toggle.run()
+"""),
+        "cruxible_core.runtime.host_api": ast.parse("""
+from cruxible_core.runtime.admission import FLOOR_ADMISSION
+class Toggle:
+    @staticmethod
+    def run():
+        with FLOOR_ADMISSION.hold("instance"):
+            return 1
+"""),
+    }
+    assert _http_hold_paths(modules) == [
+        "routes.toggle -> cruxible_core.runtime.host_api.Toggle.run -> FLOOR_ADMISSION.hold"
+    ]
+
+
+def test_http_hold_check_keeps_nested_imports_out_of_the_outer_scope() -> None:
+    modules = {
+        "routes": ast.parse("""
+from cruxible_core.runtime.admission import FLOOR_ADMISSION
+@router.post("/toggle")
+def toggle():
+    def unrelated():
+        from harmless import object as FLOOR_ADMISSION
+        return FLOOR_ADMISSION
+    with FLOOR_ADMISSION.hold("instance"):
+        return 1
+"""),
+    }
+    assert _http_hold_paths(modules) == ["routes.toggle -> FLOOR_ADMISSION.hold"]
+
+
+def test_http_hold_check_resolves_called_nested_functions_in_their_own_scope() -> None:
+    source = """
+from cruxible_core.runtime.admission import FLOOR_ADMISSION
+@router.post("/toggle")
+def toggle():
+    def unused():
+        with FLOOR_ADMISSION.hold("instance"):
+            return 1
+    def called():
+        from harmless import object as FLOOR_ADMISSION
+        with FLOOR_ADMISSION.hold("instance"):
+            return 1
+    return called()
+"""
+    assert _http_hold_paths({"routes": ast.parse(source)}) == []
+    source = source.replace(
+        "from harmless import object as FLOOR_ADMISSION",
+        "from cruxible_core.runtime.admission import FLOOR_ADMISSION",
+    )
+    assert _http_hold_paths({"routes": ast.parse(source)}) == [
+        "routes.toggle -> routes.toggle.called -> FLOOR_ADMISSION.hold"
+    ]
+
+
+def test_http_hold_check_methods_do_not_inherit_class_namespace_imports() -> None:
+    modules = {
+        "routes": ast.parse("""
+from cruxible_core.runtime import host_api
+@router.post("/toggle")
+def toggle():
+    return host_api.Toggle.run()
+"""),
+        "cruxible_core.runtime.host_api": ast.parse("""
+from cruxible_core.runtime.admission import FLOOR_ADMISSION
+class Toggle:
+    from harmless import object as FLOOR_ADMISSION
+    @classmethod
+    def run(cls):
+        with FLOOR_ADMISSION.hold("instance"):
+            return 1
+"""),
+    }
+    assert _http_hold_paths(modules) == [
+        "routes.toggle -> cruxible_core.runtime.host_api.Toggle.run -> FLOOR_ADMISSION.hold"
+    ]

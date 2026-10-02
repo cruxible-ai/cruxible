@@ -11,11 +11,13 @@ import pytest
 
 from cruxible_client.contracts.captures import parse_capture_envelope
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
-from cruxible_core.consumers import evidence
-from cruxible_core.consumers.evidence import EVIDENCE_AVAILABILITY as WORKER
-from cruxible_core.consumers.evidence import SWEEP_INTERVAL, evidence_findings
+from cruxible_core.consumers.next import NEXT_QUEUE, evidence
+from cruxible_core.consumers.next.evidence import _PART as WORKER
+from cruxible_core.consumers.next.evidence import evidence_findings
+from tests.support.internal_triggers import fire_internal_triggers
 from tests.test_authoring.test_authoring_existing_capture import shared_capture_world
 
+SWEEP_INTERVAL = timedelta(days=1)
 READ = BodyAccessContext(principal_id="test", can_read_body=True)
 NOW = datetime(2026, 9, 1, tzinfo=UTC)
 
@@ -33,10 +35,22 @@ def _world(tmp_path: Path):  # type: ignore[no-untyped-def]
 
 
 def _drain(instance, *, now: datetime) -> None:  # type: ignore[no-untyped-def]
-    WORKER.match(instance, now=now, daemon_id="daemon")
+    fire_internal_triggers(instance, now=now)
     manager = SimpleNamespace(get=lambda _id: instance)
-    for work in WORKER.due(instance, now=now):
-        WORKER.run(manager, "instance", work, now=now)
+    for _pass in range(16):
+        NEXT_QUEUE.match(instance, now=now, daemon_id="daemon")
+        units = tuple(NEXT_QUEUE.due(instance, now=now))
+        if not units:
+            return
+        for work in units:
+            try:
+                NEXT_QUEUE.run(manager, "instance", work, now=now)
+            except Exception:
+                # Like the runner, one failed queue fold cannot stop evidence checks.
+                # This fixture deliberately removes/corrupts CAS material.
+                if not work.key.startswith("queue:"):
+                    raise
+    raise AssertionError("the folded worker never ran out of due work")
 
 
 def _findings(instance):  # type: ignore[no-untyped-def]
@@ -118,10 +132,10 @@ def test_a_body_its_policy_lets_go_is_not_a_finding_but_a_rotted_body_is(
 
 
 def test_the_operator_can_turn_the_worker_off(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CRUXIBLE_DISABLED_CONSUMERS", "evidence")
-    assert not WORKER.active(SimpleNamespace())
+    monkeypatch.setenv("CRUXIBLE_DISABLED_CONSUMERS", "next")
+    assert not NEXT_QUEUE.active(SimpleNamespace())
     monkeypatch.setenv("CRUXIBLE_DISABLED_CONSUMERS", "")
-    assert WORKER.active(SimpleNamespace())
+    assert NEXT_QUEUE.active(SimpleNamespace())
 
 
 def test_a_failing_worker_is_stalled_with_a_repair_and_recovers_on_success(
@@ -140,8 +154,10 @@ def test_a_failing_worker_is_stalled_with_a_repair_and_recovers_on_success(
     due = NOW + SWEEP_INTERVAL
     with pytest.raises(OSError):
         _drain(instance, now=due)
-    (health,) = [item for item in consumer_health(instance, now=due) if item.kind == "evidence"]
-    assert health.state == "stalled" and "store unreadable" in health.detail["last_error"]
+    (health,) = [item for item in consumer_health(instance, now=due) if item.kind == "next"]
+    assert (
+        health.state == "stalled" and "store unreadable" in health.detail["evidence"]["last_error"]
+    )
     assert health.repair is not None and health.repair.operation == "hand_edit"
 
     monkeypatch.setattr(WORKER, "_sweep", original)
@@ -161,11 +177,11 @@ def test_server_status_lists_open_instances_consumers_including_disabled_workers
     manager = SimpleNamespace(open_instances=lambda: (("inst", instance),))
 
     (running,) = consumer_statuses(manager)
-    assert (running.instance_id, running.kind, running.state) == ("inst", "evidence", "running")
+    assert (running.instance_id, running.kind, running.state) == ("inst", "next", "running")
 
-    monkeypatch.setenv("CRUXIBLE_DISABLED_CONSUMERS", "evidence")
+    monkeypatch.setenv("CRUXIBLE_DISABLED_CONSUMERS", "next")
     (disabled,) = consumer_statuses(manager)
-    assert (disabled.consumer_id, disabled.state) == ("consumer:evidence", "disabled")
+    assert (disabled.consumer_id, disabled.state) == ("consumer:next", "disabled")
 
 
 def _citations(count: int) -> sqlite3.Connection:
@@ -219,8 +235,8 @@ def test_health_costs_the_same_whatever_the_pending_backlog(
             assert connection is not None
             connection.execute("INSERT INTO progress(singleton,generation) VALUES (1,0)")
             connection.executemany(
-                "INSERT INTO pending VALUES (?)",
-                ((f"sha256:{index:064x}",) for index in range(count)),
+                "INSERT INTO pending VALUES (?,?)",
+                ((f"sha256:{index:064x}", "2026-09-01T00:00:00.000000Z") for index in range(count)),
             )
         (health,) = WORKER.health(instance, now=NOW)
         assert health.detail["pending_checks"] == count
@@ -241,7 +257,8 @@ def test_state_an_earlier_version_wrote_is_rebuilt_with_exact_counts(tmp_path: P
             connection.execute(f"DROP TRIGGER {trigger}")
         connection.execute("DROP TABLE tally")
         connection.executemany(
-            "INSERT INTO pending VALUES (?)", ((f"sha256:{index:064x}",) for index in range(3))
+            "INSERT INTO pending VALUES (?,?)",
+            ((f"sha256:{index:064x}", "2026-09-01T00:00:00.000000Z") for index in range(3)),
         )
 
     # Rebuilt: nothing survives, so the worker starts over as on a new instance.
@@ -253,3 +270,53 @@ def test_state_an_earlier_version_wrote_is_rebuilt_with_exact_counts(tmp_path: P
     _drain(instance, now=NOW)
     (health,) = WORKER.health(instance, now=NOW)
     assert health.detail["pending_checks"] == 0 and _findings(instance) == set()
+
+
+def test_no_sweep_or_clock_lag_without_a_fired_event(tmp_path: Path) -> None:
+    instance, _capture = _world(tmp_path)
+    WORKER.match(instance, now=NOW, daemon_id="daemon")
+    assert tuple(WORKER.due(instance, now=NOW + timedelta(days=100))) == ()
+    (health,) = WORKER.health(instance, now=NOW + timedelta(days=100))
+    assert health.state == "running" and health.detail["sweep_completed_at"] is None
+    fire_internal_triggers(instance, now=NOW)
+    (health,) = WORKER.health(instance, now=NOW)
+    assert health.state == "running" and health.detail["sweep_in_progress"]
+    fire_internal_triggers(instance, now=NOW + SWEEP_INTERVAL)
+    (health,) = WORKER.health(instance, now=NOW)
+    assert health.state == "lagging"
+    _drain(instance, now=NOW)
+    _drain(instance, now=NOW)
+    (health,) = WORKER.health(instance, now=NOW + timedelta(days=100))
+    assert health.state == "running"
+
+
+def test_sweep_resumes_a_fired_event_at_its_logged_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instance, capture = _world(tmp_path)
+    fire_internal_triggers(instance, now=NOW)
+    WORKER.match(instance, now=NOW, daemon_id="daemon")
+    monkeypatch.setattr(evidence, "CHECK_BATCH", 1)
+    manager = SimpleNamespace(get=lambda _id: instance)
+    seen = []
+    check = WORKER._check
+
+    def checked(instance, digests, *, now):  # type: ignore[no-untyped-def]
+        seen.append(now)
+        return check(instance, digests, now=now)
+
+    monkeypatch.setattr(WORKER, "_check", checked)
+    (work,) = WORKER.due(instance, now=NOW)
+    WORKER.run(manager, "instance", work, now=NOW + timedelta(days=100))
+    (health,) = WORKER.health(instance, now=NOW)
+    assert health.state == "running" and health.detail["sweep_position"] == 0
+    # A restart continues this event, even if another one has fired meanwhile.
+    fire_internal_triggers(instance, now=NOW + SWEEP_INTERVAL)
+    (health,) = WORKER.health(instance, now=NOW)
+    assert health.state == "lagging"
+    for _ in range(4):
+        for work in WORKER.due(instance, now=NOW):
+            WORKER.run(manager, "instance", work, now=NOW + timedelta(days=100))
+    assert NOW in seen and NOW + SWEEP_INTERVAL in seen
+    assert NOW + timedelta(days=100) not in seen
+    assert capture and not tuple(WORKER.due(instance, now=NOW))

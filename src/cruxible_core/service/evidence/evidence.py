@@ -75,7 +75,7 @@ from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import (
     PlaybillAcceptedCoordinate,
 )
-from cruxible_core.storage.cas import BodyAccessContext
+from cruxible_core.storage.cas import BodyAccessContext, note_unobservable_body
 
 
 class _StrictEvidenceServiceModel(BaseModel):
@@ -745,6 +745,8 @@ def _current_replay_available(
         instance, capture_digest_value, readers=readers, store=store, consulted=first
     )
     if key is None:
+        # An external reader's answer rests on more than CAS objects.
+        note_unobservable_body()
         if bodies is not None:
             bodies[_UNKNOWN_BODIES] = None
         return available

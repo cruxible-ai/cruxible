@@ -24,7 +24,12 @@ from cruxible_client.contracts.approval_policy import (
     approval_policy_digest,
     render_approval_policy,
 )
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
+from cruxible_client.contracts.artifacts import (
+    ArtifactIdentity,
+    ArtifactLifecycle,
+    ArtifactPin,
+    ArtifactRef,
+)
 from cruxible_client.contracts.authoring.models import (
     MAX_REPAIR_BYTES,
     ApprovalPolicyAuthoringPayloadV1,
@@ -55,6 +60,7 @@ from cruxible_client.contracts.authoring.models import (
     SelfSourceBodyV1,
     SourceAcquisitionPolicyAuthoringPayloadV1,
     SubjectAuthoringPayloadV1,
+    TriggerAuthoringPayloadV1,
     WorkingSelectionObservationV1,
     authoring_member_identity,
 )
@@ -152,9 +158,7 @@ from cruxible_client.contracts.procedures.graph import (
 )
 from cruxible_client.contracts.procedures.line_specs import (
     RUNG_AUTHORITY,
-    CaptureLandingTriggerPolicyV2,
-    LineSpecV5,
-    WindowCloseTriggerPolicyV2,
+    LineSpecV6,
     line_spec_digest,
     line_spec_path,
     parse_line_spec,
@@ -172,7 +176,7 @@ from cruxible_client.contracts.procedures.models import (
     SourceNodeV4,
     iter_pin_bindings,
 )
-from cruxible_client.contracts.procedures.windows import CaptureEventWindowV1
+from cruxible_client.contracts.procedures.windows import CaptureEventSelectorV1
 from cruxible_client.contracts.providers import parse_provider, provider_digest, provider_path
 from cruxible_client.contracts.query.definitions import (
     CLAIM_TYPE_PIN_ROLE,
@@ -192,6 +196,19 @@ from cruxible_client.contracts.subjects import (
     render_subject,
     subject_digest,
     subject_path,
+)
+from cruxible_client.contracts.triggers import (
+    TRIGGER_LINE_REF_ROLE,
+    ActionTargetV1,
+    LineTargetV1,
+    TriggerTargetV1,
+    TriggerV1,
+    parse_trigger,
+    render_trigger,
+    schedule_capture_selector,
+    trigger_digest,
+    trigger_path,
+    trigger_schedule_pins,
 )
 from cruxible_core.authoring.registrations import registered_projection_blocks
 from cruxible_core.claims.claim_retirement import (
@@ -2212,7 +2229,9 @@ def _render_line_member(
     the staged tree -- accepted at the base or authored earlier in the same
     set -- and lowering pins their exact digests. A Procedure that pins every
     Provider it names fills no slot, so the Line's slot bindings and Provider
-    closures are empty. Every Line lowers to v5, which states its authority as a verb.
+    closures are empty. Every Line lowers to v6: it embeds no trigger, and a
+    ``trigger_input`` Line declares the exact event its Source input accepts,
+    read from that Source's pinned CaptureContract.
     """
 
     procedure_target = procedure_path(payload.procedure_name)
@@ -2306,36 +2325,38 @@ def _render_line_member(
     if previous_content is not None:
         previous = parse_line_spec(previous_content, path=path)
         predecessor_digest = line_spec_digest(previous).tagged
-    trigger = payload.trigger_policy
-    selector = (
-        trigger.event
-        if isinstance(trigger, CaptureLandingTriggerPolicyV2)
-        else trigger.window.event
-        if isinstance(trigger, WindowCloseTriggerPolicyV2)
-        and isinstance(trigger.window, CaptureEventWindowV1)
-        else None
-    )
+    trigger_event: CaptureEventSelectorV1 | None = None
     trigger_pins: tuple[ArtifactPin, ...] = ()
-    if selector is not None:
-        capture_path = capture_contract_path(selector.capture_contract_identity.name)
-        content = tree.get(capture_path)
-        if (
-            content is None
-            or capture_contract_digest(parse_capture_contract(content, path=capture_path)).tagged
-            != selector.capture_contract_digest
-        ):
+    if payload.trigger_input is not None:
+        sources = [
+            node
+            for node in procedure.definition.nodes
+            if getattr(node, "as_", None) == payload.trigger_input
+        ]
+        contract = (
+            sources[0].capture_contract
+            if len(sources) == 1 and isinstance(sources[0], SourceNodeV4)
+            else None
+        )
+        if not isinstance(contract, ArtifactPin):
             _refuse(
-                "playbill.authoring.trigger_capture_missing",
-                "trigger_policy",
-                "Trigger CaptureContract does not match the accepted or staged version.",
-                repair_kind="replace_trigger_policy",
-                repair_description="Use the exact accepted CaptureContract identity and digest.",
+                "playbill.authoring.line_trigger_input_invalid",
+                "trigger_input",
+                f"trigger_input {payload.trigger_input!r} must name exactly one graph-v4 "
+                "Source input of the Procedure that pins its CaptureContract exactly.",
+                repair_kind="replace_trigger_input",
+                repair_description="Name the `as` alias of one Source node, or omit it.",
             )
+        assert isinstance(contract, ArtifactPin)
+        trigger_event = CaptureEventSelectorV1(
+            capture_contract_identity=contract.target,
+            capture_contract_digest=contract.artifact_digest,
+        )
         trigger_pins = (
             ArtifactPin(
                 role="trigger-capture-contract",
-                target=selector.capture_contract_identity,
-                artifact_digest=selector.capture_contract_digest,
+                target=contract.target,
+                artifact_digest=contract.artifact_digest,
             ),
         )
     line_fields = dict(
@@ -2344,12 +2365,12 @@ def _render_line_member(
         procedure=procedure_pin,
         parameters=payload.parameters,
         slot_bindings=(),
-        trigger_policy=payload.trigger_policy,
         acquisition_policy=policy_pin,
         max_authority=(
             payload.max_authority or RUNG_AUTHORITY[procedure.definition.terminal_capability]
         ),
         trigger_input=payload.trigger_input,
+        trigger_event=trigger_event,
         budgets=budgets,
         epsilon=payload.epsilon,
         pins=tuple(
@@ -2372,10 +2393,77 @@ def _render_line_member(
             predecessor_digest=predecessor_digest,
         ),
     )
-    line = LineSpecV5.model_validate(line_fields)
+    line = LineSpecV6.model_validate(line_fields)
     if previous_content is not None and _same_revision_content(line, previous):
         return path, previous_content, line_spec_digest(previous).tagged
     return path, render_line_spec(line), line_spec_digest(line).tagged
+
+
+def _render_trigger_member(
+    payload: TriggerAuthoringPayloadV1,
+    *,
+    tree: Mapping[str, bytes],
+) -> tuple[str, bytes, str]:
+    """Lower one Trigger decision; a Line target is named by identity, never pinned.
+
+    A live Trigger's Line must be present in the staged tree -- accepted at the
+    base or authored earlier in the same set -- and an event schedule's exact
+    CaptureContract must be too. Whether the Line is live and accepts the event
+    is the Trigger law's to judge at acceptance.
+    """
+
+    live = not payload.retire
+    if payload.line_name is not None:
+        if live and line_spec_path(payload.line_name) not in tree:
+            _refuse(
+                "playbill.authoring.trigger_line_missing",
+                "line_name",
+                "Trigger authoring requires the named accepted or same-ChangeSet Line.",
+                repair_kind="replace_line_name",
+                repair_description="Use a Line name present at the authoring coordinate.",
+            )
+        target: TriggerTargetV1 = LineTargetV1(
+            line=ArtifactRef(
+                role=TRIGGER_LINE_REF_ROLE,
+                target=ArtifactIdentity(kind="Line", name=payload.line_name),
+            )
+        )
+    else:
+        assert payload.action is not None
+        target = ActionTargetV1(action=payload.action)
+    selector = schedule_capture_selector(payload.schedule)
+    if live and selector is not None:
+        capture_path = capture_contract_path(selector.capture_contract_identity.name)
+        content = tree.get(capture_path)
+        if (
+            content is None
+            or capture_contract_digest(parse_capture_contract(content, path=capture_path)).tagged
+            != selector.capture_contract_digest
+        ):
+            _refuse(
+                "playbill.authoring.trigger_capture_missing",
+                "schedule",
+                "The Trigger's CaptureContract does not match the accepted or staged version.",
+                repair_kind="replace_schedule",
+                repair_description="Use the exact accepted CaptureContract identity and digest.",
+            )
+    path = trigger_path(payload.name)
+    previous_content = tree.get(path)
+    previous = None if previous_content is None else parse_trigger(previous_content, path=path)
+    trigger = TriggerV1(
+        identity=ArtifactIdentity(kind="Trigger", name=payload.name),
+        schedule=payload.schedule,
+        target=target,
+        pins=trigger_schedule_pins(payload.schedule),
+        lifecycle=ArtifactLifecycle(
+            state="retired" if payload.retire else "live",
+            predecessor_digest=None if previous is None else trigger_digest(previous).tagged,
+        ),
+    )
+    if previous_content is not None and previous is not None:
+        if _same_revision_content(trigger, previous):
+            return path, previous_content, trigger_digest(previous).tagged
+    return path, render_trigger(trigger), trigger_digest(trigger).tagged
 
 
 def _contract_fields_summary(
@@ -2590,6 +2678,7 @@ MEMBER_STAGING_ORDER = (
     "procedure",
     "procedure_mandate",
     "line",
+    "trigger",
     "claim_retirement",
 )
 
@@ -2626,6 +2715,8 @@ def _member_stage(member: AuthoringChangeSetMemberV1) -> str:
         return "procedure_mandate"
     if isinstance(member, LineAuthoringPayloadV1):
         return "line"
+    if isinstance(member, TriggerAuthoringPayloadV1):
+        return "trigger"
     return "definition"
 
 
@@ -2648,6 +2739,8 @@ def _member_primary_path(
         return procedure_mandate_path(member.name)
     if isinstance(member, LineAuthoringPayloadV1):
         return line_spec_path(member.name)
+    if isinstance(member, TriggerAuthoringPayloadV1):
+        return trigger_path(member.name)
     if isinstance(member, QueryDefinitionAuthoringPayloadV1):
         return query_definition_path(member.query_definition.identity.name)
     path, _content, _digest = _render_non_procedure_member(member)
@@ -2989,6 +3082,11 @@ def _stage_change_set_member(
         line_path, content, digest = _render_line_member(member, tree=staged_tree)
         candidate_tree = fork_tree(staged_tree)
         candidate_tree[line_path] = content
+        return candidate_tree, {"artifact_digest": digest}, set(), {}
+    if isinstance(member, TriggerAuthoringPayloadV1):
+        trigger_member_path, content, digest = _render_trigger_member(member, tree=staged_tree)
+        candidate_tree = fork_tree(staged_tree)
+        candidate_tree[trigger_member_path] = content
         return candidate_tree, {"artifact_digest": digest}, set(), {}
     _path, content, digest = _render_non_procedure_member(member, tree=staged_tree)
     candidate_tree = fork_tree(staged_tree)
@@ -3614,8 +3712,12 @@ def lower_authoring(
             base_tree=base_tree,
             derivation_procedure=derivation_procedure,
         )
-    if isinstance(intent.payload, LineAuthoringPayloadV1):
-        path, content, digest = _render_line_member(intent.payload, tree=base_tree)
+    if isinstance(intent.payload, LineAuthoringPayloadV1 | TriggerAuthoringPayloadV1):
+        path, content, digest = (
+            _render_line_member(intent.payload, tree=base_tree)
+            if isinstance(intent.payload, LineAuthoringPayloadV1)
+            else _render_trigger_member(intent.payload, tree=base_tree)
+        )
         candidate_tree = fork_tree(base_tree)
         candidate_tree[path] = content
         changed = () if base_tree.get(path) == content else ((path, content),)

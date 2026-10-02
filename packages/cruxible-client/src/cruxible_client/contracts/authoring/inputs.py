@@ -42,6 +42,7 @@ from cruxible_client.contracts.authoring.models import (
     SelfSourceBodyV1,
     SourceAcquisitionPolicyAuthoringPayloadV1,
     SubjectAuthoringPayloadV1,
+    TriggerAuthoringPayloadV1,
     WorkingSelectionObservationV1,
     authoring_member_identity,
 )
@@ -57,7 +58,6 @@ from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicyV1
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContractV1
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
-from cruxible_client.contracts.procedures.line_specs import ManualTriggerPolicyV1, TriggerPolicyV2
 from cruxible_client.contracts.procedures.models import ProcedureHardCapsV3
 from cruxible_client.contracts.proposal_models import (
     CHANGE_SET_RATIONALE_MAX_LENGTH,
@@ -66,6 +66,7 @@ from cruxible_client.contracts.proposal_models import (
 from cruxible_client.contracts.query.definitions import QueryDefinitionSpecV1, QueryDefinitionV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, subject_path
+from cruxible_client.contracts.triggers import InternalActionName, TriggerScheduleV1
 
 if TYPE_CHECKING:
     from cruxible_client.contracts.records import RecordConstructor
@@ -299,11 +300,12 @@ class AcquisitionPolicyInput(_StrictInputModel):
 
 
 class LineInput(_StrictInputModel):
-    """One Line: a trigger that runs an accepted or same-set Procedure.
+    """One Line: a stable instantiation of an accepted or same-set Procedure.
 
     Lowering resolves the named Procedure and acquisition policy into exact
-    pins. A Line that proposes or settles also needs a live ProcedureMandate
-    covering its Procedure before it can run; an observe-only Line needs none.
+    pins. A Line runs when run explicitly, or when a Trigger aimed at it fires.
+    A Line that proposes or settles also needs a live ProcedureMandate covering
+    its Procedure before it can run; an observe-only Line needs none.
     """
 
     kind: Literal["line"]
@@ -314,10 +316,6 @@ class LineInput(_StrictInputModel):
         description=(
             "SourceAcquisitionPolicy name; required only when the Procedure has Source nodes."
         ),
-    )
-    trigger_policy: TriggerPolicyV2 = Field(
-        default_factory=ManualTriggerPolicyV1,
-        description="When the Line runs; manual (run or dispatch explicitly) by default.",
     )
     max_authority: Literal["observe", "propose", "settle"] | None = Field(
         default=None,
@@ -338,6 +336,25 @@ class LineInput(_StrictInputModel):
     retire: bool = False
 
 
+class TriggerInput(_StrictInputModel):
+    """One schedule aimed at an accepted or same-set Line, or a registered action.
+
+    Actions admit cadence, cron and generation_accepted. Every target's declared
+    input must be supplied by its schedule. Change or retire through a successor.
+    """
+
+    kind: Literal["trigger"]
+    name: str
+    schedule: TriggerScheduleV1
+    line_name: str | None = Field(
+        default=None, description="The Line this Trigger runs; omit when naming an action."
+    )
+    action: InternalActionName | None = Field(
+        default=None, description="The internal action this Trigger fires; omit for a Line."
+    )
+    retire: bool = False
+
+
 AuthoringChangeSetMemberInputV1: TypeAlias = Annotated[
     ClaimInput
     | ClaimTypeInput
@@ -350,6 +367,7 @@ AuthoringChangeSetMemberInputV1: TypeAlias = Annotated[
     | ProcedureMandateInputV1
     | AcquisitionPolicyInput
     | LineInput
+    | TriggerInput
     | ProcedureInput,
     Field(discriminator="kind"),
 ]
@@ -380,6 +398,7 @@ AuthoringInputV1: TypeAlias = Annotated[
     | ProcedureMandateInputV1
     | AcquisitionPolicyInput
     | LineInput
+    | TriggerInput
     | ChangeSetInput,
     Field(discriminator="kind"),
 ]
@@ -699,12 +718,17 @@ def _line_payload(value: LineInput) -> LineAuthoringPayloadV1:
         procedure_name=value.procedure_name,
         acquisition_policy_name=value.acquisition_policy_name,
         max_authority=value.max_authority,
-        trigger_policy=value.trigger_policy,
         trigger_input=value.trigger_input,
         parameters=value.parameters,
         budgets=value.budgets,
         occurrence_epoch=value.occurrence_epoch,
         retire=value.retire,
+    )
+
+
+def _trigger_payload(value: TriggerInput) -> TriggerAuthoringPayloadV1:
+    return TriggerAuthoringPayloadV1.model_validate(
+        value.model_dump(mode="python", exclude={"kind"})
     )
 
 
@@ -744,6 +768,8 @@ def _change_set_member(member: AuthoringChangeSetMemberInputV1) -> AuthoringChan
         )
     if isinstance(member, LineInput):
         return _line_payload(member)
+    if isinstance(member, TriggerInput):
+        return _trigger_payload(member)
     return _mandate_payload(member)
 
 
@@ -771,6 +797,8 @@ def lower_authoring_input(value: AuthoringInputV1) -> AuthoringPayloadV1:
         )
     if isinstance(value, LineInput):
         return _line_payload(value)
+    if isinstance(value, TriggerInput):
+        return _trigger_payload(value)
     members = tuple(_change_set_member(member) for member in value.members)
     identities = tuple(authoring_member_identity(member) for member in members)
     if len(set(identities)) != len(identities):
@@ -812,6 +840,7 @@ __all__ = [
     "ExistingCaptureInput",
     "ExactContentObjectInput",
     "LineInput",
+    "TriggerInput",
     "LiteralObjectInput",
     "ProcedureInput",
     "ProcedureMandateInputV1",

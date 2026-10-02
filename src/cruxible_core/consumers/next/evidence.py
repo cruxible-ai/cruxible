@@ -1,10 +1,10 @@
-"""Evidence availability as a consumer kind: resuming, findings only.
+"""Evidence availability within the next consumer.
 
-A Claim's evidence is only as good as the stored Capture it cites. This kind
+A Claim's evidence is only as good as the stored Capture it cites. This part
 re-checks cited Captures against the content-addressed store and records the
 ones that are missing or no longer hash to their address. It checks a Capture
-when a generation starts citing it, and sweeps every cited Capture on a slow
-cadence, because bytes can rot with no event to say so.
+when a generation starts citing it, and sweeps every cited Capture when a
+durable trigger event requests it, because bytes can rot without a generation.
 
 What counts is the Capture's own retention policy, exactly as admission reads
 it: the envelope is the evidence record and must always be there, a body that
@@ -12,8 +12,9 @@ is present must hash to its address, and a missing body is a finding only
 while the Capture's contract requires it to be retained. Absence a policy
 permits is not a defect.
 
-The findings are a disposable projection of the store's current state:
-deleting them costs only a fresh sweep. Nothing here is governed, so the
+Retention is evaluated at the generation or trigger event's recorded instant,
+never the worker's clock. The findings are a disposable projection of the
+store's current state: deleting them replays retained sweep events. Nothing here is governed, so the
 worker needs no authority and a restart resumes from its cursor.
 """
 
@@ -38,33 +39,35 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
-from cruxible_core.consumers.clock import cadence_due
+from cruxible_client.contracts.triggers import INTERNAL_ACTIONS
 from cruxible_core.consumers.protocol import (
     ConsumerHealth,
     ConsumerRepair,
     ConsumerWork,
-    CursorPolicy,
-    EffectClass,
 )
 from cruxible_core.consumers.state import DisposableState
-from cruxible_core.server.config import get_disabled_consumers
+from cruxible_core.triggers.journal import trigger_events
 
-#: How often every cited Capture is re-hashed.
-SWEEP_INTERVAL = timedelta(days=1)
+#: The internal action this part performs; its registry entry names this part.
+ACTION = INTERNAL_ACTIONS["evidence.sweep"]
+
 #: Captures one unit of work checks before yielding.
 CHECK_BATCH = 256
 #: Generations one matching pass reads before yielding.
 GENERATION_BATCH = 64
 
-_READER = BodyAccessContext(principal_id="evidence-availability", can_read_body=True)
+_READER = BodyAccessContext(principal_id="next-evidence", can_read_body=True)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS progress (
  singleton INTEGER PRIMARY KEY CHECK(singleton=1),
- generation INTEGER NOT NULL, sweep_after TEXT, sweep_completed_at TEXT,
+ generation INTEGER NOT NULL, sweep_sequence INTEGER NOT NULL DEFAULT 0,
+ sweep_after TEXT, sweep_completed_at TEXT,
  last_error TEXT, last_error_at TEXT
 ) STRICT;
-CREATE TABLE IF NOT EXISTS pending (capture_digest TEXT PRIMARY KEY) STRICT;
+CREATE TABLE IF NOT EXISTS pending (
+ capture_digest TEXT PRIMARY KEY, evaluation_time TEXT NOT NULL
+) STRICT;
 CREATE TABLE IF NOT EXISTS tally (name TEXT PRIMARY KEY, value INTEGER NOT NULL) STRICT;
 INSERT OR IGNORE INTO tally VALUES ('pending',0);
 CREATE TRIGGER IF NOT EXISTS pending_added AFTER INSERT ON pending
@@ -77,7 +80,7 @@ CREATE TABLE IF NOT EXISTS findings (
  checked_at TEXT NOT NULL, PRIMARY KEY(capture_digest, part)
 ) STRICT;
 """
-_STATE = DisposableState("evidence-availability", _SCHEMA)
+_STATE = DisposableState("next/evidence", _SCHEMA)
 
 
 @dataclass(frozen=True)
@@ -193,15 +196,7 @@ def _absence_permitted(
     return now >= observed_at + timedelta(microseconds=policy.minimum_retention.microseconds)
 
 
-class EvidenceAvailabilityConsumers:
-    name = "evidence"
-    cursor_policy: CursorPolicy = "resume"
-    effect_class: EffectClass = "findings"
-    workers = 1
-
-    def active(self, instance: Any) -> bool:
-        return self.name not in get_disabled_consumers()
-
+class EvidencePart:
     def match(self, instance: Any, *, now: datetime, daemon_id: str) -> None:
         with instance.accepted_history_reader() as history:
             head = history.sequence
@@ -232,10 +227,13 @@ class EvidenceAvailabilityConsumers:
                         str(use["capture_digest"])
                         for use in projection.citations.owner_uses("Claim", identity)
                     )
+        evaluated_at = instance.accepted_evaluation_time(instance.accepted_coordinate().git_oid)
         with _STATE.open(instance) as connection:
             assert connection is not None
             connection.executemany(
-                "INSERT OR IGNORE INTO pending VALUES (?)", ((digest,) for digest in captures)
+                "INSERT INTO pending VALUES (?,?) ON CONFLICT(capture_digest) "
+                "DO UPDATE SET evaluation_time=excluded.evaluation_time",
+                ((digest, format_datetime(evaluated_at)) for digest in captures),
             )
             connection.execute("UPDATE progress SET generation=?", (through,))
 
@@ -243,19 +241,12 @@ class EvidenceAvailabilityConsumers:
         with _STATE.open(instance) as connection:
             assert connection is not None
             pending = connection.execute("SELECT 1 FROM pending LIMIT 1").fetchone()
-            row = connection.execute(
-                "SELECT sweep_after,sweep_completed_at FROM progress"
-            ).fetchone()
+            row = connection.execute("SELECT sweep_sequence FROM progress").fetchone()
         work = []
         if pending is not None:
             work.append(ConsumerWork(key="events", item="events"))
-        if row is not None:
-            sweep_after, completed = row
-            next_sweep = cadence_due(
-                SWEEP_INTERVAL, last=None if completed is None else _instant(completed)
-            )
-            if sweep_after is not None or next_sweep is None or next_sweep <= now:
-                work.append(ConsumerWork(key="sweep", item="sweep"))
+        if row is not None and trigger_events(instance, after=row[0], action=ACTION.name, limit=1):
+            work.append(ConsumerWork(key="sweep", item="sweep"))
         return tuple(work)
 
     def run(self, manager: Any, instance_id: str, work: ConsumerWork, *, now: datetime) -> None:
@@ -280,35 +271,43 @@ class EvidenceAvailabilityConsumers:
     def _check_pending(self, instance: Any, *, now: datetime) -> None:
         with _STATE.open(instance) as connection:
             assert connection is not None
-            digests = [
-                row[0]
-                for row in connection.execute(
-                    "SELECT capture_digest FROM pending ORDER BY capture_digest LIMIT ?",
-                    (CHECK_BATCH,),
-                ).fetchall()
-            ]
-        self._check(instance, digests, now=now)
+            pending = connection.execute(
+                "SELECT capture_digest,evaluation_time FROM pending "
+                "ORDER BY capture_digest LIMIT ?",
+                (CHECK_BATCH,),
+            ).fetchall()
+        by_time: dict[str, list[str]] = {}
+        for digest, evaluated_at in pending:
+            by_time.setdefault(evaluated_at, []).append(digest)
+        for evaluated_at, digests in by_time.items():
+            self._check(instance, digests, now=_instant(evaluated_at))
         with _STATE.open(instance) as connection:
             assert connection is not None
             connection.executemany(
-                "DELETE FROM pending WHERE capture_digest=?", ((digest,) for digest in digests)
+                "DELETE FROM pending WHERE capture_digest=? AND evaluation_time=?", pending
             )
 
     def _sweep(self, instance: Any, *, now: datetime) -> None:
         with _STATE.open(instance) as connection:
             assert connection is not None
-            (after,) = connection.execute("SELECT sweep_after FROM progress").fetchone()
+            sequence, after = connection.execute(
+                "SELECT sweep_sequence,sweep_after FROM progress"
+            ).fetchone()
+        events = trigger_events(instance, after=sequence, action=ACTION.name, limit=1)
+        if not events:
+            return
+        (event,) = events
         with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
             digests, stopped = _cited_captures(
                 projection.typed.connection, after=after or "", limit=CHECK_BATCH
             )
-        self._check(instance, digests, now=now)
+        self._check(instance, digests, now=event.fired_at)
         with _STATE.open(instance) as connection:
             assert connection is not None
             if stopped is None:
                 connection.execute(
-                    "UPDATE progress SET sweep_after=NULL,sweep_completed_at=?",
-                    (format_datetime(now),),
+                    "UPDATE progress SET sweep_after=NULL,sweep_completed_at=?,sweep_sequence=?",
+                    (format_datetime(event.fired_at), event.sequence),
                 )
             else:
                 connection.execute("UPDATE progress SET sweep_after=?", (stopped,))
@@ -319,14 +318,12 @@ class EvidenceAvailabilityConsumers:
         store = instance.body_store()
         coordinate = instance.accepted_coordinate()
         observed: list[tuple[str, str, str, str]] = []
-        cleared: list[str] = []
         with instance.bind_accepted_projection(coordinate) as projection:
             for digest in digests:
                 envelope_state = store.availability(digest)
                 if envelope_state != "present":
                     observed.append((digest, "envelope", digest, envelope_state))
                     continue
-                cleared.append(digest)
                 try:
                     envelope = parse_capture_envelope(store.read(digest, access=_READER))
                 except PlaybillError:
@@ -362,7 +359,7 @@ class EvidenceAvailabilityConsumers:
             if connection is None:
                 return ()
             row = connection.execute(
-                "SELECT generation,sweep_after,sweep_completed_at,last_error,last_error_at "
+                "SELECT generation,sweep_sequence,sweep_completed_at,last_error,last_error_at "
                 "FROM progress"
             ).fetchone()
             # Kept by triggers as checks queue and drain, so health reads no backlog.
@@ -371,24 +368,24 @@ class EvidenceAvailabilityConsumers:
             ]
         if row is None:
             return ()
-        generation, sweep_after, completed, error, error_at = row
+        generation, sequence, completed, error, error_at = row
         failing = error is not None
         with instance.accepted_history_reader() as history:
             behind = history.sequence - generation
-        # Behind by more than one matching pass, or a sweep a full interval late.
-        lagging = behind > GENERATION_BATCH or (
-            completed is not None and now >= _instant(completed) + 2 * SWEEP_INTERVAL
-        )
+        sweeps = trigger_events(instance, after=sequence, action=ACTION.name, limit=2)
+        sweep_pending = bool(sweeps)
+        lagging = behind > GENERATION_BATCH or len(sweeps) > 1
         return (
             ConsumerHealth(
-                kind=self.name,
-                consumer_id="consumer:evidence",
+                kind="next",
+                consumer_id="consumer:next",
                 state="stalled" if failing else "lagging" if lagging else "running",
                 detail={
                     "generation": generation,
                     "generations_behind": behind,
                     "pending_checks": pending,
-                    "sweep_in_progress": sweep_after is not None,
+                    "sweep_in_progress": sweep_pending,
+                    "sweep_position": sequence,
                     "sweep_completed_at": completed,
                     "last_error": error,
                     "last_error_at": error_at,
@@ -406,4 +403,4 @@ class EvidenceAvailabilityConsumers:
         )
 
 
-EVIDENCE_AVAILABILITY = EvidenceAvailabilityConsumers()
+_PART = EvidencePart()

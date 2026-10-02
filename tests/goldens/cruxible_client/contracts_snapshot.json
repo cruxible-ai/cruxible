@@ -19,6 +19,7 @@
       "values": [
         "disarmed",
         "line_changed",
+        "trigger_changed",
         "epoch_changed",
         "credential_revoked",
         "credential_unbound",
@@ -49,6 +50,7 @@
         "procedure-runtime-policy",
         "procedure-mandate",
         "line",
+        "trigger",
         "acquisition-policy",
         "change-set",
         "claim-type-succession"
@@ -189,7 +191,7 @@
         "query_evaluation_policy",
         "document_activation_policy",
         "procedure_activation_policy",
-        "line_trigger_policy"
+        "trigger_schedule"
       ]
     },
     "ProcedureMeasurementRefusalCodeV1": {
@@ -224,6 +226,153 @@
   },
   "manifest_version": 1,
   "models": {
+    "CadenceScheduleV1": {
+      "fields": {
+        "interval_seconds": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "interval_seconds",
+          "required": true,
+          "schema": {
+            "description": "Reads VALIDITY WINDOW.",
+            "exclusiveMinimum": 0,
+            "title": "Interval Seconds",
+            "type": "integer"
+          }
+        },
+        "kind": {
+          "default": "cadence",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "kind",
+          "required": false,
+          "schema": {
+            "const": "cadence",
+            "default": "cadence",
+            "title": "Kind",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "Fire one interval after the last fire; a new schedule fires on its first tick.",
+        "properties": {
+          "interval_seconds": {
+            "description": "Reads VALIDITY WINDOW.",
+            "exclusiveMinimum": 0,
+            "title": "Interval Seconds",
+            "type": "integer"
+          },
+          "kind": {
+            "const": "cadence",
+            "default": "cadence",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "interval_seconds"
+        ],
+        "title": "CadenceScheduleV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "interval_seconds"
+      ]
+    },
+    "CaptureLandingScheduleV1": {
+      "fields": {
+        "event": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "event",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/CaptureEventSelectorV1"
+          }
+        },
+        "kind": {
+          "default": "capture_landing",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "kind",
+          "required": false,
+          "schema": {
+            "const": "capture_landing",
+            "default": "capture_landing",
+            "title": "Kind",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Playbill artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          },
+          "CaptureEventSelectorV1": {
+            "additionalProperties": false,
+            "description": "Match a durable produced-capture event, never an accepted-head change.",
+            "properties": {
+              "capture_contract_digest": {
+                "title": "Capture Contract Digest",
+                "type": "string"
+              },
+              "capture_contract_identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "capture_contract_identity",
+              "capture_contract_digest"
+            ],
+            "title": "CaptureEventSelectorV1",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Fire once for each retained Capture landing under one exact CaptureContract.",
+        "properties": {
+          "event": {
+            "$ref": "#/$defs/CaptureEventSelectorV1"
+          },
+          "kind": {
+            "const": "capture_landing",
+            "default": "capture_landing",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event"
+        ],
+        "title": "CaptureLandingScheduleV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "event"
+      ]
+    },
     "ClaimStatementCardV1": {
       "fields": {
         "lifecycle": {
@@ -865,6 +1014,70 @@
         "instance_id",
         "kind",
         "state"
+      ]
+    },
+    "CronScheduleV1": {
+      "fields": {
+        "expression": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "expression",
+          "required": true,
+          "schema": {
+            "description": "Five fields, minute hour day-of-month month day-of-week, evaluated in UTC. Cron expressions are evaluated in UTC; convert local times first (09:00 New York in winter is 14:00 UTC).",
+            "examples": [
+              "0 14 * * 1-5"
+            ],
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Expression",
+            "type": "string"
+          }
+        },
+        "kind": {
+          "default": "cron",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "kind",
+          "required": false,
+          "schema": {
+            "const": "cron",
+            "default": "cron",
+            "title": "Kind",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "Fire at each instant a standard five-field cron expression names, in UTC.\n\n``minute hour day-of-month month day-of-week``, always read as UTC: no host\ntimezone database enters an instant, and a schedule names no timezone. The\nTrigger law refuses an expression the grammar does not admit; see\n``cruxible_client.contracts.cron``.",
+        "properties": {
+          "expression": {
+            "description": "Five fields, minute hour day-of-month month day-of-week, evaluated in UTC. Cron expressions are evaluated in UTC; convert local times first (09:00 New York in winter is 14:00 UTC).",
+            "examples": [
+              "0 14 * * 1-5"
+            ],
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Expression",
+            "type": "string"
+          },
+          "kind": {
+            "const": "cron",
+            "default": "cron",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expression"
+        ],
+        "title": "CronScheduleV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "expression"
       ]
     },
     "GitWorkspaceNoteV1": {
@@ -1553,6 +1766,7 @@
                 "enum": [
                   "disarmed",
                   "line_changed",
+                  "trigger_changed",
                   "epoch_changed",
                   "credential_revoked",
                   "credential_unbound",
@@ -1592,6 +1806,22 @@
             "default": null,
             "description": "Reads VALIDITY WINDOW.",
             "title": "Stopped At"
+          }
+        },
+        "triggers": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "triggers",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/LineTriggerVersionV1"
+            },
+            "title": "Triggers",
+            "type": "array"
           }
         }
       },
@@ -1639,10 +1869,30 @@
             ],
             "title": "LineArmPrincipalV1",
             "type": "object"
+          },
+          "LineTriggerVersionV1": {
+            "additionalProperties": false,
+            "description": "One exact version of a live Trigger aimed at a Line.",
+            "properties": {
+              "artifact_digest": {
+                "title": "Artifact Digest",
+                "type": "string"
+              },
+              "trigger": {
+                "title": "Trigger",
+                "type": "string"
+              }
+            },
+            "required": [
+              "trigger",
+              "artifact_digest"
+            ],
+            "title": "LineTriggerVersionV1",
+            "type": "object"
           }
         },
         "additionalProperties": false,
-        "description": "One Line's automatic dispatch: armed forward-only, or why it stopped.\n\nAn armed Line admits the occurrences its daemon matched since it was armed\nor last restarted, under the pinned Line version and the arming credential.\nOccurrences matched before a restart, or by explicit evaluation, stay\npending for explicit dispatch.",
+        "description": "One Line's automatic dispatch: armed forward-only, or why it stopped.\n\nAn armed Line admits the occurrences its daemon matched since it was armed\nor last restarted, under the pinned Line version, the exact Trigger versions\naimed at it when it was armed, and the arming credential. Occurrences\nmatched before a restart, or by explicit evaluation, stay pending for\nexplicit dispatch.",
         "properties": {
           "arm_id": {
             "title": "Arm Id",
@@ -1733,6 +1983,7 @@
                 "enum": [
                   "disarmed",
                   "line_changed",
+                  "trigger_changed",
                   "epoch_changed",
                   "credential_revoked",
                   "credential_unbound",
@@ -1764,6 +2015,14 @@
             "default": null,
             "description": "Reads VALIDITY WINDOW.",
             "title": "Stopped At"
+          },
+          "triggers": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/LineTriggerVersionV1"
+            },
+            "title": "Triggers",
+            "type": "array"
           }
         },
         "required": [
@@ -1958,6 +2217,7 @@
                   "trigger_capture_forbidden",
                   "trigger_capture_invalid",
                   "trigger_capture_not_yet_observed",
+                  "trigger_event_precedes_acceptance",
                   "line_binding_superseded"
                 ],
                 "title": "Code",
@@ -2398,7 +2658,7 @@
           "required": false,
           "schema": {
             "default": false,
-            "description": "Explicitly retry one closed or blocked occurrence against the current Line version in the same epoch.",
+            "description": "Explicitly retry one closed or blocked occurrence against the current Line version in the same epoch, while its Trigger still aims at the Line unchanged.",
             "title": "Retry",
             "type": "boolean"
           }
@@ -2428,7 +2688,7 @@
           },
           "retry": {
             "default": false,
-            "description": "Explicitly retry one closed or blocked occurrence against the current Line version in the same epoch.",
+            "description": "Explicitly retry one closed or blocked occurrence against the current Line version in the same epoch, while its Trigger still aims at the Line unchanged.",
             "title": "Retry",
             "type": "boolean"
           }
@@ -2597,6 +2857,7 @@
                   "trigger_capture_forbidden",
                   "trigger_capture_invalid",
                   "trigger_capture_not_yet_observed",
+                  "trigger_event_precedes_acceptance",
                   "line_binding_superseded"
                 ],
                 "title": "Code",
@@ -3097,6 +3358,27 @@
             "default": null
           }
         },
+        "generation": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "generation",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Generation"
+          }
+        },
         "kind": {
           "has_default": false,
           "has_default_factory": false,
@@ -3104,11 +3386,23 @@
           "required": true,
           "schema": {
             "enum": [
+              "cadence",
+              "cron",
               "capture_landing",
-              "window_close"
+              "window_close",
+              "generation_accepted"
             ],
             "title": "Kind",
             "type": "string"
+          }
+        },
+        "trigger": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "trigger",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/ArtifactIdentity"
           }
         },
         "window": {
@@ -3133,6 +3427,26 @@
       },
       "json_schema": {
         "$defs": {
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Playbill artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          },
           "BoundObservationWindowV1": {
             "additionalProperties": false,
             "description": "Exact boundaries retained at admission, including the verified event anchor.",
@@ -3203,7 +3517,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "Semantic cause of one occurrence, independent of its dispatch instant.",
+        "description": "Semantic cause of one occurrence, independent of its dispatch instant.\n\n``trigger`` is the Trigger artifact that fired. A cadence or cron tick binds\nno event or window: its instant is the occurrence's own evaluation instant.",
         "properties": {
           "event": {
             "anyOf": [
@@ -3216,13 +3530,32 @@
             ],
             "default": null
           },
+          "generation": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Generation"
+          },
           "kind": {
             "enum": [
+              "cadence",
+              "cron",
               "capture_landing",
-              "window_close"
+              "window_close",
+              "generation_accepted"
             ],
             "title": "Kind",
             "type": "string"
+          },
+          "trigger": {
+            "$ref": "#/$defs/ArtifactIdentity"
           },
           "window": {
             "anyOf": [
@@ -3237,13 +3570,15 @@
           }
         },
         "required": [
-          "kind"
+          "kind",
+          "trigger"
         ],
         "title": "LineTriggerBindingV1",
         "type": "object"
       },
       "required_fields": [
-        "kind"
+        "kind",
+        "trigger"
       ]
     },
     "LineTriggerCheckRequestV1": {
@@ -3539,6 +3874,22 @@
             "title": "Status",
             "type": "string"
           }
+        },
+        "triggers": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "triggers",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/LineTriggerVersionV1"
+            },
+            "title": "Triggers",
+            "type": "array"
+          }
         }
       },
       "json_schema": {
@@ -3579,6 +3930,26 @@
             "title": "AcceptedCoordinate",
             "type": "object"
           },
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Playbill artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          },
           "BoundObservationWindowV1": {
             "additionalProperties": false,
             "description": "Exact boundaries retained at admission, including the verified event anchor.",
@@ -3616,7 +3987,7 @@
           },
           "LineTriggerBindingV1": {
             "additionalProperties": false,
-            "description": "Semantic cause of one occurrence, independent of its dispatch instant.",
+            "description": "Semantic cause of one occurrence, independent of its dispatch instant.\n\n``trigger`` is the Trigger artifact that fired. A cadence or cron tick binds\nno event or window: its instant is the occurrence's own evaluation instant.",
             "properties": {
               "event": {
                 "anyOf": [
@@ -3629,13 +4000,32 @@
                 ],
                 "default": null
               },
+              "generation": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Generation"
+              },
               "kind": {
                 "enum": [
+                  "cadence",
+                  "cron",
                   "capture_landing",
-                  "window_close"
+                  "window_close",
+                  "generation_accepted"
                 ],
                 "title": "Kind",
                 "type": "string"
+              },
+              "trigger": {
+                "$ref": "#/$defs/ArtifactIdentity"
               },
               "window": {
                 "anyOf": [
@@ -3650,7 +4040,8 @@
               }
             },
             "required": [
-              "kind"
+              "kind",
+              "trigger"
             ],
             "title": "LineTriggerBindingV1",
             "type": "object"
@@ -3721,6 +4112,26 @@
               "eligible_at"
             ],
             "title": "LineTriggerOccurrenceV1",
+            "type": "object"
+          },
+          "LineTriggerVersionV1": {
+            "additionalProperties": false,
+            "description": "One exact version of a live Trigger aimed at a Line.",
+            "properties": {
+              "artifact_digest": {
+                "title": "Artifact Digest",
+                "type": "string"
+              },
+              "trigger": {
+                "title": "Trigger",
+                "type": "string"
+              }
+            },
+            "required": [
+              "trigger",
+              "artifact_digest"
+            ],
+            "title": "LineTriggerVersionV1",
             "type": "object"
           },
           "TriggerEventReferenceV1": {
@@ -3838,6 +4249,14 @@
             ],
             "title": "Status",
             "type": "string"
+          },
+          "triggers": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/LineTriggerVersionV1"
+            },
+            "title": "Triggers",
+            "type": "array"
           }
         },
         "required": [
@@ -3965,6 +4384,26 @@
       },
       "json_schema": {
         "$defs": {
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Playbill artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          },
           "BoundObservationWindowV1": {
             "additionalProperties": false,
             "description": "Exact boundaries retained at admission, including the verified event anchor.",
@@ -4002,7 +4441,7 @@
           },
           "LineTriggerBindingV1": {
             "additionalProperties": false,
-            "description": "Semantic cause of one occurrence, independent of its dispatch instant.",
+            "description": "Semantic cause of one occurrence, independent of its dispatch instant.\n\n``trigger`` is the Trigger artifact that fired. A cadence or cron tick binds\nno event or window: its instant is the occurrence's own evaluation instant.",
             "properties": {
               "event": {
                 "anyOf": [
@@ -4015,13 +4454,32 @@
                 ],
                 "default": null
               },
+              "generation": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Generation"
+              },
               "kind": {
                 "enum": [
+                  "cadence",
+                  "cron",
                   "capture_landing",
-                  "window_close"
+                  "window_close",
+                  "generation_accepted"
                 ],
                 "title": "Kind",
                 "type": "string"
+              },
+              "trigger": {
+                "$ref": "#/$defs/ArtifactIdentity"
               },
               "window": {
                 "anyOf": [
@@ -4036,7 +4494,8 @@
               }
             },
             "required": [
-              "kind"
+              "kind",
+              "trigger"
             ],
             "title": "LineTriggerBindingV1",
             "type": "object"
@@ -4146,6 +4605,54 @@
         "binding",
         "eligible_at",
         "occurrence_id"
+      ]
+    },
+    "LineTriggerVersionV1": {
+      "fields": {
+        "artifact_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "artifact_digest",
+          "required": true,
+          "schema": {
+            "title": "Artifact Digest",
+            "type": "string"
+          }
+        },
+        "trigger": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "trigger",
+          "required": true,
+          "schema": {
+            "title": "Trigger",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "One exact version of a live Trigger aimed at a Line.",
+        "properties": {
+          "artifact_digest": {
+            "title": "Artifact Digest",
+            "type": "string"
+          },
+          "trigger": {
+            "title": "Trigger",
+            "type": "string"
+          }
+        },
+        "required": [
+          "trigger",
+          "artifact_digest"
+        ],
+        "title": "LineTriggerVersionV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "artifact_digest",
+        "trigger"
       ]
     },
     "ObservationSettlementEvidenceV2": {
@@ -7290,12 +7797,33 @@
               "procedure-runtime-policy",
               "procedure-mandate",
               "line",
+              "trigger",
               "acquisition-policy",
               "change-set",
               "claim-type-succession"
             ],
             "title": "Name",
             "type": "string"
+          }
+        },
+        "note": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "note",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Note"
           }
         },
         "payload": {
@@ -7315,7 +7843,8 @@
                 "procedure_mandate": "#/$defs/ProcedureMandateInputV1",
                 "procedure_runtime_policy": "#/$defs/ProcedureRuntimePolicyInput",
                 "query_definition": "#/$defs/QueryDefinitionInput",
-                "subject": "#/$defs/SubjectInput"
+                "subject": "#/$defs/SubjectInput",
+                "trigger": "#/$defs/TriggerInput"
               },
               "propertyName": "kind"
             },
@@ -7346,6 +7875,9 @@
               },
               {
                 "$ref": "#/$defs/LineInput"
+              },
+              {
+                "$ref": "#/$defs/TriggerInput"
               },
               {
                 "$ref": "#/$defs/ChangeSetInput"
@@ -7549,14 +8081,10 @@
             "title": "BoundedWindowCoherenceV1",
             "type": "object"
           },
-          "CadenceTriggerPolicyV1": {
+          "CadenceScheduleV1": {
             "additionalProperties": false,
-            "description": "A cadence trigger whose period is part of the accepted Line artifact.\n\n``cadence_policy_digest`` still pins the governing Policy exactly, but the\nPolicy pin target kind has no ledger artifact envelope, so nothing in an\naccepted tree can be read for the period. The period therefore lives here,\non the artifact the registry does produce, and is accepted, digested, and\nsucceeded with the Line itself.",
+            "description": "Fire one interval after the last fire; a new schedule fires on its first tick.",
             "properties": {
-              "cadence_policy_digest": {
-                "title": "Cadence Policy Digest",
-                "type": "string"
-              },
               "interval_seconds": {
                 "description": "Reads VALIDITY WINDOW.",
                 "exclusiveMinimum": 0,
@@ -7568,19 +8096,12 @@
                 "default": "cadence",
                 "title": "Kind",
                 "type": "string"
-              },
-              "tag": {
-                "const": "playbill-cadence-trigger-v1",
-                "default": "playbill-cadence-trigger-v1",
-                "title": "Tag",
-                "type": "string"
               }
             },
             "required": [
-              "cadence_policy_digest",
               "interval_seconds"
             ],
-            "title": "CadenceTriggerPolicyV1",
+            "title": "CadenceScheduleV1",
             "type": "object"
           },
           "CanonicalDurationV1": {
@@ -7649,8 +8170,9 @@
             "title": "CaptureEventWindowV1",
             "type": "object"
           },
-          "CaptureLandingTriggerPolicyV2": {
+          "CaptureLandingScheduleV1": {
             "additionalProperties": false,
+            "description": "Fire once for each retained Capture landing under one exact CaptureContract.",
             "properties": {
               "event": {
                 "$ref": "#/$defs/CaptureEventSelectorV1"
@@ -7660,18 +8182,12 @@
                 "default": "capture_landing",
                 "title": "Kind",
                 "type": "string"
-              },
-              "tag": {
-                "const": "playbill-capture-landing-trigger-v2",
-                "default": "playbill-capture-landing-trigger-v2",
-                "title": "Tag",
-                "type": "string"
               }
             },
             "required": [
               "event"
             ],
-            "title": "CaptureLandingTriggerPolicyV2",
+            "title": "CaptureLandingScheduleV1",
             "type": "object"
           },
           "CarriedContractInput": {
@@ -7736,7 +8252,8 @@
                       "procedure_mandate": "#/$defs/ProcedureMandateInputV1",
                       "procedure_runtime_policy": "#/$defs/ProcedureRuntimePolicyInput",
                       "query_definition": "#/$defs/QueryDefinitionInput",
-                      "subject": "#/$defs/SubjectInput"
+                      "subject": "#/$defs/SubjectInput",
+                      "trigger": "#/$defs/TriggerInput"
                     },
                     "propertyName": "kind"
                   },
@@ -7773,6 +8290,9 @@
                     },
                     {
                       "$ref": "#/$defs/LineInput"
+                    },
+                    {
+                      "$ref": "#/$defs/TriggerInput"
                     },
                     {
                       "$ref": "#/$defs/ProcedureInput"
@@ -9058,6 +9578,33 @@
             "title": "CorroborationRequirementV1",
             "type": "object"
           },
+          "CronScheduleV1": {
+            "additionalProperties": false,
+            "description": "Fire at each instant a standard five-field cron expression names, in UTC.\n\n``minute hour day-of-month month day-of-week``, always read as UTC: no host\ntimezone database enters an instant, and a schedule names no timezone. The\nTrigger law refuses an expression the grammar does not admit; see\n``cruxible_client.contracts.cron``.",
+            "properties": {
+              "expression": {
+                "description": "Five fields, minute hour day-of-month month day-of-week, evaluated in UTC. Cron expressions are evaluated in UTC; convert local times first (09:00 New York in winter is 14:00 UTC).",
+                "examples": [
+                  "0 14 * * 1-5"
+                ],
+                "maxLength": 128,
+                "minLength": 1,
+                "title": "Expression",
+                "type": "string"
+              },
+              "kind": {
+                "const": "cron",
+                "default": "cron",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "expression"
+            ],
+            "title": "CronScheduleV1",
+            "type": "object"
+          },
           "DeclaredSnapshotGroupCoherenceV1": {
             "additionalProperties": false,
             "properties": {
@@ -9225,6 +9772,20 @@
             "title": "FreezeRequirementV1",
             "type": "object"
           },
+          "GenerationAcceptedScheduleV1": {
+            "additionalProperties": false,
+            "description": "Fire once at the latest accepted head after it moves, coalescing a burst.",
+            "properties": {
+              "kind": {
+                "const": "generation_accepted",
+                "default": "generation_accepted",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "title": "GenerationAcceptedScheduleV1",
+            "type": "object"
+          },
           "IndependentCoherenceV1": {
             "additionalProperties": false,
             "properties": {
@@ -9368,7 +9929,7 @@
           },
           "LineInput": {
             "additionalProperties": false,
-            "description": "One Line: a trigger that runs an accepted or same-set Procedure.\n\nLowering resolves the named Procedure and acquisition policy into exact\npins. A Line that proposes or settles also needs a live ProcedureMandate\ncovering its Procedure before it can run; an observe-only Line needs none.",
+            "description": "One Line: a stable instantiation of an accepted or same-set Procedure.\n\nLowering resolves the named Procedure and acquisition policy into exact\npins. A Line runs when run explicitly, or when a Trigger aimed at it fires.\nA Line that proposes or settles also needs a live ProcedureMandate covering\nits Procedure before it can run; an observe-only Line needs none.",
             "properties": {
               "acquisition_policy_name": {
                 "anyOf": [
@@ -9458,33 +10019,6 @@
                 ],
                 "default": null,
                 "title": "Trigger Input"
-              },
-              "trigger_policy": {
-                "description": "When the Line runs; manual (run or dispatch explicitly) by default.",
-                "discriminator": {
-                  "mapping": {
-                    "cadence": "#/$defs/CadenceTriggerPolicyV1",
-                    "capture_landing": "#/$defs/CaptureLandingTriggerPolicyV2",
-                    "manual": "#/$defs/ManualTriggerPolicyV1",
-                    "window_close": "#/$defs/WindowCloseTriggerPolicyV2"
-                  },
-                  "propertyName": "kind"
-                },
-                "oneOf": [
-                  {
-                    "$ref": "#/$defs/CadenceTriggerPolicyV1"
-                  },
-                  {
-                    "$ref": "#/$defs/CaptureLandingTriggerPolicyV2"
-                  },
-                  {
-                    "$ref": "#/$defs/WindowCloseTriggerPolicyV2"
-                  },
-                  {
-                    "$ref": "#/$defs/ManualTriggerPolicyV1"
-                  }
-                ],
-                "title": "Trigger Policy"
               }
             },
             "required": [
@@ -9605,25 +10139,6 @@
               "change_kinds"
             ],
             "title": "MandateScopeAuthoringV1",
-            "type": "object"
-          },
-          "ManualTriggerPolicyV1": {
-            "additionalProperties": false,
-            "properties": {
-              "kind": {
-                "const": "manual",
-                "default": "manual",
-                "title": "Kind",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-manual-trigger-v1",
-                "default": "playbill-manual-trigger-v1",
-                "title": "Tag",
-                "type": "string"
-              }
-            },
-            "title": "ManualTriggerPolicyV1",
             "type": "object"
           },
           "ProcedureHardCapsV3": {
@@ -11857,19 +12372,105 @@
             "title": "SubjectShell",
             "type": "object"
           },
-          "WindowCloseTriggerPolicyV2": {
+          "TriggerInput": {
             "additionalProperties": false,
+            "description": "One schedule aimed at an accepted or same-set Line, or a registered action.\n\nActions admit cadence, cron and generation_accepted. Every target's declared\ninput must be supplied by its schedule. Change or retire through a successor.",
+            "properties": {
+              "action": {
+                "anyOf": [
+                  {
+                    "description": "A registered internal action: floor.refresh, evidence.sweep, prediction.anchor_retry.",
+                    "examples": [
+                      "floor.refresh",
+                      "evidence.sweep",
+                      "prediction.anchor_retry"
+                    ],
+                    "maxLength": 128,
+                    "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The internal action this Trigger fires; omit for a Line.",
+                "title": "Action"
+              },
+              "kind": {
+                "const": "trigger",
+                "title": "Kind",
+                "type": "string"
+              },
+              "line_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The Line this Trigger runs; omit when naming an action.",
+                "title": "Line Name"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "retire": {
+                "default": false,
+                "title": "Retire",
+                "type": "boolean"
+              },
+              "schedule": {
+                "discriminator": {
+                  "mapping": {
+                    "cadence": "#/$defs/CadenceScheduleV1",
+                    "capture_landing": "#/$defs/CaptureLandingScheduleV1",
+                    "cron": "#/$defs/CronScheduleV1",
+                    "generation_accepted": "#/$defs/GenerationAcceptedScheduleV1",
+                    "window_close": "#/$defs/WindowCloseScheduleV1"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/CadenceScheduleV1"
+                  },
+                  {
+                    "$ref": "#/$defs/CronScheduleV1"
+                  },
+                  {
+                    "$ref": "#/$defs/CaptureLandingScheduleV1"
+                  },
+                  {
+                    "$ref": "#/$defs/WindowCloseScheduleV1"
+                  },
+                  {
+                    "$ref": "#/$defs/GenerationAcceptedScheduleV1"
+                  }
+                ],
+                "title": "Schedule"
+              }
+            },
+            "required": [
+              "kind",
+              "name",
+              "schedule"
+            ],
+            "title": "TriggerInput",
+            "type": "object"
+          },
+          "WindowCloseScheduleV1": {
+            "additionalProperties": false,
+            "description": "Fire when a fixed window, or a window anchored on a Capture landing, closes.",
             "properties": {
               "kind": {
                 "const": "window_close",
                 "default": "window_close",
                 "title": "Kind",
-                "type": "string"
-              },
-              "tag": {
-                "const": "playbill-window-close-trigger-v2",
-                "default": "playbill-window-close-trigger-v2",
-                "title": "Tag",
                 "type": "string"
               },
               "window": {
@@ -11894,7 +12495,7 @@
             "required": [
               "window"
             ],
-            "title": "WindowCloseTriggerPolicyV2",
+            "title": "WindowCloseScheduleV1",
             "type": "object"
           },
           "WorkingSelectionInput": {
@@ -11941,12 +12542,25 @@
               "procedure-runtime-policy",
               "procedure-mandate",
               "line",
+              "trigger",
               "acquisition-policy",
               "change-set",
               "claim-type-succession"
             ],
             "title": "Name",
             "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Note"
           },
           "payload": {
             "discriminator": {
@@ -11960,7 +12574,8 @@
                 "procedure_mandate": "#/$defs/ProcedureMandateInputV1",
                 "procedure_runtime_policy": "#/$defs/ProcedureRuntimePolicyInput",
                 "query_definition": "#/$defs/QueryDefinitionInput",
-                "subject": "#/$defs/SubjectInput"
+                "subject": "#/$defs/SubjectInput",
+                "trigger": "#/$defs/TriggerInput"
               },
               "propertyName": "kind"
             },
@@ -11991,6 +12606,9 @@
               },
               {
                 "$ref": "#/$defs/LineInput"
+              },
+              {
+                "$ref": "#/$defs/TriggerInput"
               },
               {
                 "$ref": "#/$defs/ChangeSetInput"
@@ -19187,6 +19805,1046 @@
         "result_digest"
       ]
     },
+    "PlaybillFloorConsumerOutcomeV1": {
+      "fields": {
+        "error": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "error",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Error"
+          }
+        },
+        "file_count": {
+          "default": 0,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "file_count",
+          "required": false,
+          "schema": {
+            "default": 0,
+            "minimum": 0,
+            "title": "File Count",
+            "type": "integer"
+          }
+        },
+        "generation": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "generation",
+          "required": true,
+          "schema": {
+            "minimum": 0,
+            "title": "Generation",
+            "type": "integer"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "written",
+              "unchanged",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-floor-consumer-outcome-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-floor-consumer-outcome-v1",
+            "default": "playbill-floor-consumer-outcome-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "One floor refresh at an accepted head, including a typed stalled outcome.",
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Error"
+          },
+          "file_count": {
+            "default": 0,
+            "minimum": 0,
+            "title": "File Count",
+            "type": "integer"
+          },
+          "generation": {
+            "minimum": 0,
+            "title": "Generation",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "written",
+              "unchanged",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-floor-consumer-outcome-v1",
+            "default": "playbill-floor-consumer-outcome-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "generation",
+          "status"
+        ],
+        "title": "PlaybillFloorConsumerOutcomeV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "generation",
+        "status"
+      ]
+    },
+    "PlaybillFloorDeliverNowRequestV1": {
+      "fields": {
+        "at": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "at",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "include": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "include",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "const": "discovery",
+              "type": "string"
+            },
+            "title": "Include",
+            "type": "array"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "include": {
+            "default": [],
+            "items": {
+              "const": "discovery",
+              "type": "string"
+            },
+            "title": "Include",
+            "type": "array"
+          }
+        },
+        "title": "PlaybillFloorDeliverNowRequestV1",
+        "type": "object"
+      },
+      "required_fields": []
+    },
+    "PlaybillFloorDeliveryRequestV1": {
+      "fields": {
+        "enabled": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "enabled",
+          "required": true,
+          "schema": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "PlaybillFloorDeliveryRequestV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "enabled"
+      ]
+    },
+    "PlaybillFloorDeliveryResultV1": {
+      "fields": {
+        "delta": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "delta",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillFloorDeltaV1"
+          }
+        },
+        "export": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "export",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillFloorExport"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "tag": {
+          "default": "playbill-floor-delivery-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-floor-delivery-result-v1",
+            "default": "playbill-floor-delivery-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "written": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "written",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillWorkspaceFloorWriteResult"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "GitWorkspaceNoteV1": {
+            "additionalProperties": false,
+            "description": "Client-side advisory when CWD wins over inherited Git selectors.",
+            "properties": {
+              "code": {
+                "const": "inherited_git_workspace_ignored",
+                "title": "Code",
+                "type": "string"
+              },
+              "cwd_workspace_root": {
+                "title": "Cwd Workspace Root",
+                "type": "string"
+              },
+              "inherited_workspace_root": {
+                "title": "Inherited Workspace Root",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "cwd_workspace_root",
+              "inherited_workspace_root"
+            ],
+            "title": "GitWorkspaceNoteV1",
+            "type": "object"
+          },
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          },
+          "PlaybillFloorDeltaFileV1": {
+            "additionalProperties": false,
+            "description": "One file the base lacks or holds at different bytes.",
+            "properties": {
+              "changed_at": {
+                "minimum": 0,
+                "title": "Changed At",
+                "type": "integer"
+              },
+              "content_b64": {
+                "title": "Content B64",
+                "type": "string"
+              },
+              "path": {
+                "title": "Path",
+                "type": "string"
+              },
+              "sha256": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Sha256",
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "content_b64",
+              "sha256",
+              "changed_at"
+            ],
+            "title": "PlaybillFloorDeltaFileV1",
+            "type": "object"
+          },
+          "PlaybillFloorDeltaV1": {
+            "additionalProperties": false,
+            "description": "What brings a floor at ``base_generation`` to ``head``.\n\n``kind=\"full\"`` carries every file and no base; a receiver replaces its\nfloor. ``kind=\"delta\"`` carries the files whose ``changed_at`` is after the\nbase, and ``tombstones``, the base's paths the head no longer has. Both are\na deterministic function of (head, base) for one renderer.",
+            "properties": {
+              "base_generation": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Base Generation"
+              },
+              "base_manifest_digest": {
+                "anyOf": [
+                  {
+                    "pattern": "^sha256:[0-9a-f]{64}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Base Manifest Digest"
+              },
+              "delta_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Delta Digest",
+                "type": "string"
+              },
+              "files": {
+                "items": {
+                  "$ref": "#/$defs/PlaybillFloorDeltaFileV1"
+                },
+                "title": "Files",
+                "type": "array"
+              },
+              "head": {
+                "$ref": "#/$defs/PlaybillFloorHeadV1"
+              },
+              "head_manifest_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Head Manifest Digest",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "delta",
+                  "full"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "renderer": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Renderer",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-floor-delta-v1",
+                "default": "playbill-floor-delta-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "tombstones": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Tombstones",
+                "type": "array"
+              }
+            },
+            "required": [
+              "kind",
+              "renderer",
+              "head",
+              "head_manifest_digest",
+              "files",
+              "delta_digest"
+            ],
+            "title": "PlaybillFloorDeltaV1",
+            "type": "object"
+          },
+          "PlaybillFloorExport": {
+            "additionalProperties": false,
+            "description": "The deterministic greppable floor as base64 bytes keyed by floor path.\n\n``manifest`` is the decoded root ``manifest.json``: it binds every file to\nthe accepted coordinate it was projected from. The service is\nfilesystem-free, so materializing the directory is the client's act.",
+            "properties": {
+              "coordinate": {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              "files": {
+                "items": {
+                  "$ref": "#/$defs/PlaybillFloorFile"
+                },
+                "title": "Files",
+                "type": "array"
+              },
+              "manifest": {
+                "additionalProperties": true,
+                "title": "Manifest",
+                "type": "object"
+              },
+              "tag": {
+                "default": "playbill-floor-export-v2",
+                "enum": [
+                  "playbill-floor-export-v1",
+                  "playbill-floor-export-v2",
+                  "playbill-floor-export-v5"
+                ],
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "coordinate",
+              "manifest",
+              "files"
+            ],
+            "title": "PlaybillFloorExport",
+            "type": "object"
+          },
+          "PlaybillFloorFile": {
+            "additionalProperties": false,
+            "properties": {
+              "content_base64": {
+                "title": "Content Base64",
+                "type": "string"
+              },
+              "path": {
+                "title": "Path",
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "content_base64"
+            ],
+            "title": "PlaybillFloorFile",
+            "type": "object"
+          },
+          "PlaybillFloorHeadV1": {
+            "additionalProperties": false,
+            "description": "The accepted coordinate a delta brings a floor to, and its generation.",
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation": {
+                "minimum": 0,
+                "title": "Generation",
+                "type": "integer"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "notes_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Notes Digest",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "generation",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest",
+              "notes_digest"
+            ],
+            "title": "PlaybillFloorHeadV1",
+            "type": "object"
+          },
+          "PlaybillWorkspaceFloorWriteResult": {
+            "additionalProperties": false,
+            "description": "A verified floor export materialized by the workspace writer.",
+            "properties": {
+              "coordinate": {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              "destination": {
+                "title": "Destination",
+                "type": "string"
+              },
+              "file_count": {
+                "minimum": 1,
+                "title": "File Count",
+                "type": "integer"
+              },
+              "floor_digest": {
+                "title": "Floor Digest",
+                "type": "string"
+              },
+              "git_workspace_note": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/GitWorkspaceNoteV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "path": {
+                "title": "Path",
+                "type": "string"
+              },
+              "status": {
+                "default": "written",
+                "enum": [
+                  "written",
+                  "unchanged"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-workspace-floor-write-result-v1",
+                "default": "playbill-workspace-floor-write-result-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "destination",
+              "floor_digest",
+              "coordinate",
+              "file_count"
+            ],
+            "title": "PlaybillWorkspaceFloorWriteResult",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "The same floor delta and write receipt returned by a daemon delivery.",
+        "properties": {
+          "delta": {
+            "$ref": "#/$defs/PlaybillFloorDeltaV1"
+          },
+          "export": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillFloorExport"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "tag": {
+            "const": "playbill-floor-delivery-result-v1",
+            "default": "playbill-floor-delivery-result-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "written": {
+            "$ref": "#/$defs/PlaybillWorkspaceFloorWriteResult"
+          }
+        },
+        "required": [
+          "delta",
+          "written"
+        ],
+        "title": "PlaybillFloorDeliveryResultV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "delta",
+        "written"
+      ]
+    },
+    "PlaybillFloorDeltaV1": {
+      "fields": {
+        "base_generation": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "base_generation",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Base Generation"
+          }
+        },
+        "base_manifest_digest": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "base_manifest_digest",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Base Manifest Digest"
+          }
+        },
+        "delta_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "delta_digest",
+          "required": true,
+          "schema": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Delta Digest",
+            "type": "string"
+          }
+        },
+        "files": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "files",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/PlaybillFloorDeltaFileV1"
+            },
+            "title": "Files",
+            "type": "array"
+          }
+        },
+        "head": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "head",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillFloorHeadV1"
+          }
+        },
+        "head_manifest_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "head_manifest_digest",
+          "required": true,
+          "schema": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Head Manifest Digest",
+            "type": "string"
+          }
+        },
+        "kind": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "kind",
+          "required": true,
+          "schema": {
+            "enum": [
+              "delta",
+              "full"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "renderer": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "renderer",
+          "required": true,
+          "schema": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Renderer",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-floor-delta-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-floor-delta-v1",
+            "default": "playbill-floor-delta-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "tombstones": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tombstones",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Tombstones",
+            "type": "array"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillFloorDeltaFileV1": {
+            "additionalProperties": false,
+            "description": "One file the base lacks or holds at different bytes.",
+            "properties": {
+              "changed_at": {
+                "minimum": 0,
+                "title": "Changed At",
+                "type": "integer"
+              },
+              "content_b64": {
+                "title": "Content B64",
+                "type": "string"
+              },
+              "path": {
+                "title": "Path",
+                "type": "string"
+              },
+              "sha256": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Sha256",
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "content_b64",
+              "sha256",
+              "changed_at"
+            ],
+            "title": "PlaybillFloorDeltaFileV1",
+            "type": "object"
+          },
+          "PlaybillFloorHeadV1": {
+            "additionalProperties": false,
+            "description": "The accepted coordinate a delta brings a floor to, and its generation.",
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation": {
+                "minimum": 0,
+                "title": "Generation",
+                "type": "integer"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "notes_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Notes Digest",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "generation",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest",
+              "notes_digest"
+            ],
+            "title": "PlaybillFloorHeadV1",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "What brings a floor at ``base_generation`` to ``head``.\n\n``kind=\"full\"`` carries every file and no base; a receiver replaces its\nfloor. ``kind=\"delta\"`` carries the files whose ``changed_at`` is after the\nbase, and ``tombstones``, the base's paths the head no longer has. Both are\na deterministic function of (head, base) for one renderer.",
+        "properties": {
+          "base_generation": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Base Generation"
+          },
+          "base_manifest_digest": {
+            "anyOf": [
+              {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Base Manifest Digest"
+          },
+          "delta_digest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Delta Digest",
+            "type": "string"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/$defs/PlaybillFloorDeltaFileV1"
+            },
+            "title": "Files",
+            "type": "array"
+          },
+          "head": {
+            "$ref": "#/$defs/PlaybillFloorHeadV1"
+          },
+          "head_manifest_digest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Head Manifest Digest",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "delta",
+              "full"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "renderer": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Renderer",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-floor-delta-v1",
+            "default": "playbill-floor-delta-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "tombstones": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Tombstones",
+            "type": "array"
+          }
+        },
+        "required": [
+          "kind",
+          "renderer",
+          "head",
+          "head_manifest_digest",
+          "files",
+          "delta_digest"
+        ],
+        "title": "PlaybillFloorDeltaV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "delta_digest",
+        "files",
+        "head",
+        "head_manifest_digest",
+        "kind",
+        "renderer"
+      ]
+    },
     "PlaybillFloorExport": {
       "fields": {
         "coordinate": {
@@ -19917,6 +21575,19 @@
             "title": "Compiler Revision"
           }
         },
+        "floor_delivery": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "floor_delivery",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Floor Delivery",
+            "type": "boolean"
+          }
+        },
         "instance_id": {
           "has_default": false,
           "has_default_factory": false,
@@ -20079,6 +21750,11 @@
             ],
             "default": null,
             "title": "Compiler Revision"
+          },
+          "floor_delivery": {
+            "default": false,
+            "title": "Floor Delivery",
+            "type": "boolean"
           },
           "instance_id": {
             "title": "Instance Id",
@@ -20261,6 +21937,19 @@
     },
     "PlaybillHostWorkspaceRegistrationV1": {
       "fields": {
+        "floor_delivery": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "floor_delivery",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Floor Delivery",
+            "type": "boolean"
+          }
+        },
         "instance_id": {
           "has_default": false,
           "has_default_factory": false,
@@ -20324,6 +22013,11 @@
         "additionalProperties": false,
         "description": "Whether one daemon host has a daemon-local workspace registration.",
         "properties": {
+          "floor_delivery": {
+            "default": false,
+            "title": "Floor Delivery",
+            "type": "boolean"
+          },
           "instance_id": {
             "title": "Instance Id",
             "type": "string"
@@ -23921,6 +25615,9 @@
                 "default": "playbill-next-status-v1",
                 "title": "Tag",
                 "type": "string"
+              },
+              "triggers": {
+                "$ref": "#/$defs/PlaybillNextHealth"
               }
             },
             "required": [
@@ -23932,7 +25629,8 @@
               "procedure_catalog",
               "compiler",
               "line_dispatch",
-              "consumers"
+              "consumers",
+              "triggers"
             ],
             "title": "PlaybillNextStatus",
             "type": "object"
@@ -24199,6 +25897,15 @@
             "default": "playbill-next-status-v1",
             "title": "Tag",
             "type": "string"
+          }
+        },
+        "triggers": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "triggers",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillNextHealth"
           }
         }
       },
@@ -24543,6 +26250,9 @@
             "default": "playbill-next-status-v1",
             "title": "Tag",
             "type": "string"
+          },
+          "triggers": {
+            "$ref": "#/$defs/PlaybillNextHealth"
           }
         },
         "required": [
@@ -24554,7 +26264,8 @@
           "procedure_catalog",
           "compiler",
           "line_dispatch",
-          "consumers"
+          "consumers",
+          "triggers"
         ],
         "title": "PlaybillNextStatus",
         "type": "object"
@@ -24568,7 +26279,8 @@
         "ledger_mirror",
         "line_dispatch",
         "procedure_catalog",
-        "provider_lane"
+        "provider_lane",
+        "triggers"
       ]
     },
     "PlaybillOrientFloorV1": {
@@ -26547,7 +28259,7 @@
                   "query_evaluation_policy",
                   "document_activation_policy",
                   "procedure_activation_policy",
-                  "line_trigger_policy"
+                  "trigger_schedule"
                 ],
                 "title": "Policy Kind",
                 "type": "string"
@@ -27352,7 +29064,7 @@
               "query_evaluation_policy",
               "document_activation_policy",
               "procedure_activation_policy",
-              "line_trigger_policy"
+              "trigger_schedule"
             ],
             "title": "Policy Kind",
             "type": "string"
@@ -27423,7 +29135,7 @@
               "query_evaluation_policy",
               "document_activation_policy",
               "procedure_activation_policy",
-              "line_trigger_policy"
+              "trigger_schedule"
             ],
             "title": "Policy Kind",
             "type": "string"
@@ -27622,7 +29334,7 @@
                   "query_evaluation_policy",
                   "document_activation_policy",
                   "procedure_activation_policy",
-                  "line_trigger_policy"
+                  "trigger_schedule"
                 ],
                 "title": "Policy Kind",
                 "type": "string"
@@ -43928,7 +45640,7 @@
           },
           "LineTriggerBindingV1": {
             "additionalProperties": false,
-            "description": "Semantic cause of one occurrence, independent of its dispatch instant.",
+            "description": "Semantic cause of one occurrence, independent of its dispatch instant.\n\n``trigger`` is the Trigger artifact that fired. A cadence or cron tick binds\nno event or window: its instant is the occurrence's own evaluation instant.",
             "properties": {
               "event": {
                 "anyOf": [
@@ -43941,13 +45653,32 @@
                 ],
                 "default": null
               },
+              "generation": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Generation"
+              },
               "kind": {
                 "enum": [
+                  "cadence",
+                  "cron",
                   "capture_landing",
-                  "window_close"
+                  "window_close",
+                  "generation_accepted"
                 ],
                 "title": "Kind",
                 "type": "string"
+              },
+              "trigger": {
+                "$ref": "#/$defs/ArtifactIdentity"
               },
               "window": {
                 "anyOf": [
@@ -43962,7 +45693,8 @@
               }
             },
             "required": [
-              "kind"
+              "kind",
+              "trigger"
             ],
             "title": "LineTriggerBindingV1",
             "type": "object"
@@ -44155,6 +45887,7 @@
                   "trigger_capture_forbidden",
                   "trigger_capture_invalid",
                   "trigger_capture_not_yet_observed",
+                  "trigger_event_precedes_acceptance",
                   "line_binding_superseded"
                 ],
                 "title": "Code",
@@ -84115,7 +85848,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "A verified floor export materialized by a client-side adapter.",
+        "description": "A verified floor export materialized by the workspace writer.",
         "properties": {
           "coordinate": {
             "$ref": "#/$defs/PlaybillAcceptedCoordinate"
@@ -88565,6 +90298,7 @@
                   "trigger_capture_forbidden",
                   "trigger_capture_invalid",
                   "trigger_capture_not_yet_observed",
+                  "trigger_event_precedes_acceptance",
                   "line_binding_superseded"
                 ],
                 "title": "Code",
@@ -90660,6 +92394,7 @@
                   "trigger_capture_forbidden",
                   "trigger_capture_invalid",
                   "trigger_capture_not_yet_observed",
+                  "trigger_event_precedes_acceptance",
                   "line_binding_superseded"
                 ],
                 "title": "Code",
@@ -93093,6 +94828,7 @@
                   "trigger_capture_forbidden",
                   "trigger_capture_invalid",
                   "trigger_capture_not_yet_observed",
+                  "trigger_event_precedes_acceptance",
                   "line_binding_superseded"
                 ],
                 "title": "Code",
@@ -95630,6 +97366,7 @@
                   "trigger_capture_forbidden",
                   "trigger_capture_invalid",
                   "trigger_capture_not_yet_observed",
+                  "trigger_event_precedes_acceptance",
                   "line_binding_superseded"
                 ],
                 "title": "Code",
@@ -102192,6 +103929,11 @@
                 "default": null,
                 "title": "Compiler Revision"
               },
+              "floor_delivery": {
+                "default": false,
+                "title": "Floor Delivery",
+                "type": "boolean"
+              },
               "instance_id": {
                 "title": "Instance Id",
                 "type": "string"
@@ -103174,6 +104916,723 @@
         "record_digest",
         "run_id",
         "sequence"
+      ]
+    },
+    "TriggerV1": {
+      "fields": {
+        "artifact_format": {
+          "default": "playbill-trigger-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "artifact_format",
+          "required": false,
+          "schema": {
+            "const": "playbill-trigger-v1",
+            "default": "playbill-trigger-v1",
+            "title": "Artifact Format",
+            "type": "string"
+          }
+        },
+        "identity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "identity",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/ArtifactIdentity"
+          }
+        },
+        "lifecycle": {
+          "default_json_serializable": false,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "lifecycle",
+          "required": false,
+          "schema": {
+            "$ref": "#/$defs/ArtifactLifecycle",
+            "default": {
+              "predecessor_digest": null,
+              "state": "live"
+            }
+          }
+        },
+        "pins": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "pins",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ArtifactPin"
+            },
+            "title": "Pins",
+            "type": "array"
+          }
+        },
+        "schedule": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "schedule",
+          "required": true,
+          "schema": {
+            "discriminator": {
+              "mapping": {
+                "cadence": "#/$defs/CadenceScheduleV1",
+                "capture_landing": "#/$defs/CaptureLandingScheduleV1",
+                "cron": "#/$defs/CronScheduleV1",
+                "generation_accepted": "#/$defs/GenerationAcceptedScheduleV1",
+                "window_close": "#/$defs/WindowCloseScheduleV1"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/CadenceScheduleV1"
+              },
+              {
+                "$ref": "#/$defs/CronScheduleV1"
+              },
+              {
+                "$ref": "#/$defs/CaptureLandingScheduleV1"
+              },
+              {
+                "$ref": "#/$defs/WindowCloseScheduleV1"
+              },
+              {
+                "$ref": "#/$defs/GenerationAcceptedScheduleV1"
+              }
+            ],
+            "title": "Schedule"
+          }
+        },
+        "target": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "target",
+          "required": true,
+          "schema": {
+            "discriminator": {
+              "mapping": {
+                "action": "#/$defs/ActionTargetV1",
+                "line": "#/$defs/LineTargetV1"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/LineTargetV1"
+              },
+              {
+                "$ref": "#/$defs/ActionTargetV1"
+              }
+            ],
+            "title": "Target"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "ActionTargetV1": {
+            "additionalProperties": false,
+            "description": "Fire one internal action; the worker that owns it follows its fires.",
+            "properties": {
+              "action": {
+                "description": "A registered internal action: floor.refresh, evidence.sweep, prediction.anchor_retry.",
+                "examples": [
+                  "floor.refresh",
+                  "evidence.sweep",
+                  "prediction.anchor_retry"
+                ],
+                "maxLength": 128,
+                "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+                "title": "Action",
+                "type": "string"
+              },
+              "kind": {
+                "const": "action",
+                "default": "action",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "action"
+            ],
+            "title": "ActionTargetV1",
+            "type": "object"
+          },
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Playbill artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          },
+          "ArtifactLifecycle": {
+            "additionalProperties": false,
+            "properties": {
+              "predecessor_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Predecessor Digest"
+              },
+              "state": {
+                "default": "live",
+                "enum": [
+                  "live",
+                  "retired"
+                ],
+                "title": "State",
+                "type": "string"
+              }
+            },
+            "title": "ArtifactLifecycle",
+            "type": "object"
+          },
+          "ArtifactPin": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_digest": {
+                "title": "Artifact Digest",
+                "type": "string"
+              },
+              "role": {
+                "title": "Role",
+                "type": "string"
+              },
+              "target": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "role",
+              "target",
+              "artifact_digest"
+            ],
+            "title": "ArtifactPin",
+            "type": "object"
+          },
+          "ArtifactRef": {
+            "additionalProperties": false,
+            "description": "A governed dependency named by identity: whatever version is accepted.\n\nA pin names exact bytes, which is right for code, fixed content and the\nrecords of what happened. A definition that names another governed\ndefinition names its identity instead, so improving the dependency through an\nordinary successor does not strand everything that names it.",
+            "properties": {
+              "role": {
+                "title": "Role",
+                "type": "string"
+              },
+              "target": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "role",
+              "target"
+            ],
+            "title": "ArtifactRef",
+            "type": "object"
+          },
+          "CadenceScheduleV1": {
+            "additionalProperties": false,
+            "description": "Fire one interval after the last fire; a new schedule fires on its first tick.",
+            "properties": {
+              "interval_seconds": {
+                "description": "Reads VALIDITY WINDOW.",
+                "exclusiveMinimum": 0,
+                "title": "Interval Seconds",
+                "type": "integer"
+              },
+              "kind": {
+                "const": "cadence",
+                "default": "cadence",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "interval_seconds"
+            ],
+            "title": "CadenceScheduleV1",
+            "type": "object"
+          },
+          "CaptureEventSelectorV1": {
+            "additionalProperties": false,
+            "description": "Match a durable produced-capture event, never an accepted-head change.",
+            "properties": {
+              "capture_contract_digest": {
+                "title": "Capture Contract Digest",
+                "type": "string"
+              },
+              "capture_contract_identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "capture_contract_identity",
+              "capture_contract_digest"
+            ],
+            "title": "CaptureEventSelectorV1",
+            "type": "object"
+          },
+          "CaptureEventWindowV1": {
+            "additionalProperties": false,
+            "properties": {
+              "duration_seconds": {
+                "description": "Reads VALIDITY WINDOW.",
+                "exclusiveMinimum": 0,
+                "title": "Duration Seconds",
+                "type": "integer"
+              },
+              "event": {
+                "$ref": "#/$defs/CaptureEventSelectorV1"
+              },
+              "kind": {
+                "const": "capture_event",
+                "default": "capture_event",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "event",
+              "duration_seconds"
+            ],
+            "title": "CaptureEventWindowV1",
+            "type": "object"
+          },
+          "CaptureLandingScheduleV1": {
+            "additionalProperties": false,
+            "description": "Fire once for each retained Capture landing under one exact CaptureContract.",
+            "properties": {
+              "event": {
+                "$ref": "#/$defs/CaptureEventSelectorV1"
+              },
+              "kind": {
+                "const": "capture_landing",
+                "default": "capture_landing",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "event"
+            ],
+            "title": "CaptureLandingScheduleV1",
+            "type": "object"
+          },
+          "CronScheduleV1": {
+            "additionalProperties": false,
+            "description": "Fire at each instant a standard five-field cron expression names, in UTC.\n\n``minute hour day-of-month month day-of-week``, always read as UTC: no host\ntimezone database enters an instant, and a schedule names no timezone. The\nTrigger law refuses an expression the grammar does not admit; see\n``cruxible_client.contracts.cron``.",
+            "properties": {
+              "expression": {
+                "description": "Five fields, minute hour day-of-month month day-of-week, evaluated in UTC. Cron expressions are evaluated in UTC; convert local times first (09:00 New York in winter is 14:00 UTC).",
+                "examples": [
+                  "0 14 * * 1-5"
+                ],
+                "maxLength": 128,
+                "minLength": 1,
+                "title": "Expression",
+                "type": "string"
+              },
+              "kind": {
+                "const": "cron",
+                "default": "cron",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "expression"
+            ],
+            "title": "CronScheduleV1",
+            "type": "object"
+          },
+          "FixedWindowV1": {
+            "additionalProperties": false,
+            "properties": {
+              "duration_seconds": {
+                "description": "Reads VALIDITY WINDOW.",
+                "exclusiveMinimum": 0,
+                "title": "Duration Seconds",
+                "type": "integer"
+              },
+              "kind": {
+                "const": "fixed",
+                "default": "fixed",
+                "title": "Kind",
+                "type": "string"
+              },
+              "starts_at": {
+                "description": "Reads VALIDITY WINDOW.",
+                "format": "date-time",
+                "title": "Starts At",
+                "type": "string"
+              }
+            },
+            "required": [
+              "starts_at",
+              "duration_seconds"
+            ],
+            "title": "FixedWindowV1",
+            "type": "object"
+          },
+          "GenerationAcceptedScheduleV1": {
+            "additionalProperties": false,
+            "description": "Fire once at the latest accepted head after it moves, coalescing a burst.",
+            "properties": {
+              "kind": {
+                "const": "generation_accepted",
+                "default": "generation_accepted",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "title": "GenerationAcceptedScheduleV1",
+            "type": "object"
+          },
+          "LineTargetV1": {
+            "additionalProperties": false,
+            "description": "Run one Line, whatever version of it is accepted when the Trigger fires.",
+            "properties": {
+              "kind": {
+                "const": "line",
+                "default": "line",
+                "title": "Kind",
+                "type": "string"
+              },
+              "line": {
+                "$ref": "#/$defs/ArtifactRef"
+              }
+            },
+            "required": [
+              "line"
+            ],
+            "title": "LineTargetV1",
+            "type": "object"
+          },
+          "WindowCloseScheduleV1": {
+            "additionalProperties": false,
+            "description": "Fire when a fixed window, or a window anchored on a Capture landing, closes.",
+            "properties": {
+              "kind": {
+                "const": "window_close",
+                "default": "window_close",
+                "title": "Kind",
+                "type": "string"
+              },
+              "window": {
+                "discriminator": {
+                  "mapping": {
+                    "capture_event": "#/$defs/CaptureEventWindowV1",
+                    "fixed": "#/$defs/FixedWindowV1"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/FixedWindowV1"
+                  },
+                  {
+                    "$ref": "#/$defs/CaptureEventWindowV1"
+                  }
+                ],
+                "title": "Window"
+              }
+            },
+            "required": [
+              "window"
+            ],
+            "title": "WindowCloseScheduleV1",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "One schedule and the one Line or internal action it sets off.",
+        "properties": {
+          "artifact_format": {
+            "const": "playbill-trigger-v1",
+            "default": "playbill-trigger-v1",
+            "title": "Artifact Format",
+            "type": "string"
+          },
+          "identity": {
+            "$ref": "#/$defs/ArtifactIdentity"
+          },
+          "lifecycle": {
+            "$ref": "#/$defs/ArtifactLifecycle",
+            "default": {
+              "predecessor_digest": null,
+              "state": "live"
+            }
+          },
+          "pins": {
+            "default": [],
+            "items": {
+              "$ref": "#/$defs/ArtifactPin"
+            },
+            "title": "Pins",
+            "type": "array"
+          },
+          "schedule": {
+            "discriminator": {
+              "mapping": {
+                "cadence": "#/$defs/CadenceScheduleV1",
+                "capture_landing": "#/$defs/CaptureLandingScheduleV1",
+                "cron": "#/$defs/CronScheduleV1",
+                "generation_accepted": "#/$defs/GenerationAcceptedScheduleV1",
+                "window_close": "#/$defs/WindowCloseScheduleV1"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/CadenceScheduleV1"
+              },
+              {
+                "$ref": "#/$defs/CronScheduleV1"
+              },
+              {
+                "$ref": "#/$defs/CaptureLandingScheduleV1"
+              },
+              {
+                "$ref": "#/$defs/WindowCloseScheduleV1"
+              },
+              {
+                "$ref": "#/$defs/GenerationAcceptedScheduleV1"
+              }
+            ],
+            "title": "Schedule"
+          },
+          "target": {
+            "discriminator": {
+              "mapping": {
+                "action": "#/$defs/ActionTargetV1",
+                "line": "#/$defs/LineTargetV1"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/LineTargetV1"
+              },
+              {
+                "$ref": "#/$defs/ActionTargetV1"
+              }
+            ],
+            "title": "Target"
+          }
+        },
+        "required": [
+          "identity",
+          "schedule",
+          "target"
+        ],
+        "title": "TriggerV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "identity",
+        "schedule",
+        "target"
+      ]
+    },
+    "WindowCloseScheduleV1": {
+      "fields": {
+        "kind": {
+          "default": "window_close",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "kind",
+          "required": false,
+          "schema": {
+            "const": "window_close",
+            "default": "window_close",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "window": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "window",
+          "required": true,
+          "schema": {
+            "discriminator": {
+              "mapping": {
+                "capture_event": "#/$defs/CaptureEventWindowV1",
+                "fixed": "#/$defs/FixedWindowV1"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/FixedWindowV1"
+              },
+              {
+                "$ref": "#/$defs/CaptureEventWindowV1"
+              }
+            ],
+            "title": "Window"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Playbill artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          },
+          "CaptureEventSelectorV1": {
+            "additionalProperties": false,
+            "description": "Match a durable produced-capture event, never an accepted-head change.",
+            "properties": {
+              "capture_contract_digest": {
+                "title": "Capture Contract Digest",
+                "type": "string"
+              },
+              "capture_contract_identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "capture_contract_identity",
+              "capture_contract_digest"
+            ],
+            "title": "CaptureEventSelectorV1",
+            "type": "object"
+          },
+          "CaptureEventWindowV1": {
+            "additionalProperties": false,
+            "properties": {
+              "duration_seconds": {
+                "description": "Reads VALIDITY WINDOW.",
+                "exclusiveMinimum": 0,
+                "title": "Duration Seconds",
+                "type": "integer"
+              },
+              "event": {
+                "$ref": "#/$defs/CaptureEventSelectorV1"
+              },
+              "kind": {
+                "const": "capture_event",
+                "default": "capture_event",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "event",
+              "duration_seconds"
+            ],
+            "title": "CaptureEventWindowV1",
+            "type": "object"
+          },
+          "FixedWindowV1": {
+            "additionalProperties": false,
+            "properties": {
+              "duration_seconds": {
+                "description": "Reads VALIDITY WINDOW.",
+                "exclusiveMinimum": 0,
+                "title": "Duration Seconds",
+                "type": "integer"
+              },
+              "kind": {
+                "const": "fixed",
+                "default": "fixed",
+                "title": "Kind",
+                "type": "string"
+              },
+              "starts_at": {
+                "description": "Reads VALIDITY WINDOW.",
+                "format": "date-time",
+                "title": "Starts At",
+                "type": "string"
+              }
+            },
+            "required": [
+              "starts_at",
+              "duration_seconds"
+            ],
+            "title": "FixedWindowV1",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Fire when a fixed window, or a window anchored on a Capture landing, closes.",
+        "properties": {
+          "kind": {
+            "const": "window_close",
+            "default": "window_close",
+            "title": "Kind",
+            "type": "string"
+          },
+          "window": {
+            "discriminator": {
+              "mapping": {
+                "capture_event": "#/$defs/CaptureEventWindowV1",
+                "fixed": "#/$defs/FixedWindowV1"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/FixedWindowV1"
+              },
+              {
+                "$ref": "#/$defs/CaptureEventWindowV1"
+              }
+            ],
+            "title": "Window"
+          }
+        },
+        "required": [
+          "window"
+        ],
+        "title": "WindowCloseScheduleV1",
+        "type": "object"
+      },
+      "required_fields": [
+        "window"
       ]
     },
     "WorkspaceFileSourceRequestV1": {

@@ -159,6 +159,7 @@ def test_role_demotion_inventory_covers_every_candidate_member_family() -> None:
         "procedure",
         "exhaust-promotion",
         "line",
+        "trigger",
         "query-definition",
         "provider",
         "provider-interface",

@@ -56,9 +56,7 @@ def test_runtime_bootstrap_secret_repeatably_authorizes_every_daemon_wide_action
     assert "bootstrap_secret_claimed" not in operator_branch
 
 
-def test_repeatable_bootstrap_server_operations_are_info_host_show_detach_restart_and_stop() -> (
-    None
-):
+def test_repeatable_bootstrap_operations_include_workspace_delivery_control() -> None:
     """Pin the exact daemon-operation route set an unscoped operator may repeat.
 
     PC-DF4 added the pre-init host-show route to the set without moving the
@@ -74,6 +72,7 @@ def test_repeatable_bootstrap_server_operations_are_info_host_show_detach_restar
         ("GET", "/api/v1/server/info"),
         ("GET", "/api/v1/{instance_id}/playbill/host"),
         ("POST", "/api/v1/{instance_id}/playbill/workspace-detach"),
+        ("POST", "/api/v1/{instance_id}/playbill/workspace/floor-delivery"),
         ("POST", "/api/v1/server/restart"),
         ("POST", "/api/v1/server/stop"),
     }

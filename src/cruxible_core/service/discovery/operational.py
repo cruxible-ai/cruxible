@@ -62,7 +62,8 @@ from cruxible_client.contracts.procedures.line_specs import (
     CadenceTriggerPolicyV1,
     CaptureLandingTriggerPolicyV1,
     CaptureLandingTriggerPolicyV2,
-    LineSpecV1,
+    LineSpecAny,
+    LineSpecV6,
     WindowCloseTriggerPolicyV1,
     WindowCloseTriggerPolicyV2,
     line_identity_digest,
@@ -72,6 +73,16 @@ from cruxible_client.contracts.procedures.models import RUNG_AUTHORITY
 from cruxible_client.contracts.procedures.windows import CaptureEventWindowV1, FixedWindowV1
 from cruxible_client.contracts.resolution_contracts import ResolutionContractV1
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
+from cruxible_client.contracts.triggers import (
+    CadenceScheduleV1,
+    CaptureLandingScheduleV1,
+    CronScheduleV1,
+    GenerationAcceptedScheduleV1,
+    TriggerFormatError,
+    TriggerScheduleV1,
+    TriggerV1,
+    WindowCloseScheduleV1,
+)
 from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -193,9 +204,22 @@ def uncited_capture_present(instance: PlaybillInstance, digest: str) -> bool:
 # -- Lines -----------------------------------------------------------------------------
 
 
-def trigger_summary(line: LineSpecV1) -> tuple[str, str | None]:
-    """A Line's trigger kind, and one line saying when it fires."""
+def trigger_summary(line: LineSpecAny, triggers: tuple[TriggerV1, ...]) -> tuple[str, str | None]:
+    """A Line's trigger kind, and one line saying when it fires.
 
+    A v6 Line embeds no trigger: the live Triggers aimed at it say when it
+    fires (``triggers``, in identity order), and with none it runs only when
+    run explicitly. An older Line answers from the trigger it embeds.
+    """
+
+    if isinstance(line, LineSpecV6):
+        if not triggers:
+            return "manual", "runs only when run explicitly"
+        kinds = sorted({item.schedule.kind for item in triggers})
+        return "+".join(kinds), "; ".join(
+            f"{item.identity.qualified} fires {schedule_summary(item.schedule)}"
+            for item in triggers
+        )
     trigger = line.trigger_policy
     if isinstance(trigger, CadenceTriggerPolicyV1):
         return trigger.kind, f"every {trigger.interval_seconds}s"
@@ -212,6 +236,40 @@ def trigger_summary(line: LineSpecV1) -> tuple[str, str | None]:
     return trigger.kind, None
 
 
+def schedule_summary(schedule: TriggerScheduleV1) -> str:
+    """One phrase saying when a Trigger schedule fires."""
+
+    if isinstance(schedule, CadenceScheduleV1):
+        return f"every {schedule.interval_seconds}s"
+    if isinstance(schedule, CronScheduleV1):
+        return f"on cron {schedule.expression} (UTC)"
+    if isinstance(schedule, CaptureLandingScheduleV1):
+        return f"when {schedule.event.capture_contract_identity.qualified} lands"
+    if isinstance(schedule, WindowCloseScheduleV1):
+        return "when " + window_summary(schedule.window) + " closes"
+    if isinstance(schedule, GenerationAcceptedScheduleV1):
+        return "when a new generation is accepted"
+    raise TriggerFormatError(f"unsupported Trigger schedule kind {schedule.kind!r}")
+
+
+def aimed_triggers(projection: Any, lines: tuple[str, ...]) -> dict[str, tuple[TriggerV1, ...]]:
+    """The live Triggers aimed at each named Line in a bound projection, in identity order."""
+
+    if not lines:
+        return {}
+    marks = ",".join("?" * len(lines))
+    found: dict[str, list[TriggerV1]] = {}
+    for identity, target in projection.typed.connection.execute(
+        "SELECT identity,target FROM triggers WHERE target_kind='line' AND lifecycle='live' "
+        f"AND target IN ({marks}) ORDER BY identity",
+        lines,
+    ):
+        found.setdefault(str(target), []).append(
+            cast(TriggerV1, projection.typed.source(str(identity)))
+        )
+    return {line: tuple(items) for line, items in found.items()}
+
+
 def window_summary(window: object) -> str:
     if isinstance(window, FixedWindowV1):
         return (
@@ -226,7 +284,7 @@ def window_summary(window: object) -> str:
     return "its window"
 
 
-def line_authority(line: LineSpecV1) -> Literal["observe", "propose", "settle"]:
+def line_authority(line: LineSpecAny) -> Literal["observe", "propose", "settle"]:
     return RUNG_AUTHORITY[line_requested_rung(line)]
 
 
@@ -397,9 +455,10 @@ def line_card(
     viewer: OperationalViewer | None = None,
 ) -> PlaybillGetLineCardV1:
     with instance.bind_accepted_projection(coordinate) as projection:
-        line = cast(LineSpecV1, projection.typed.source(identity))
+        line = cast(LineSpecAny, projection.typed.source(identity))
+        triggers = aimed_triggers(projection, (line.identity.qualified,))
     digest = line_identity_digest(line.identity)
-    trigger, detail = trigger_summary(line)
+    trigger, detail = trigger_summary(line, triggers.get(line.identity.qualified, ()))
     procedure = line.procedure.target.qualified
     next_steps = [render(procedure, None)]
     operations = line_operations(instance, digest, now=evaluation_time, viewer=viewer)
@@ -440,11 +499,12 @@ def line_rows(
 
     with instance.bind_accepted_projection(coordinate) as projection:
         lines = [
-            cast(LineSpecV1, projection.typed.source(str(identity)))
+            cast(LineSpecAny, projection.typed.source(str(identity)))
             for (identity,) in projection.typed.connection.execute(
                 "SELECT identity FROM lines ORDER BY identity"
             )
         ]
+        triggers = aimed_triggers(projection, tuple(line.identity.qualified for line in lines))
     operations_by_line: dict[str, LineOperations] = {}
     if lines and dispatch_root(instance).exists():
         # One store session for every Line, not one replay per row.
@@ -468,7 +528,7 @@ def line_rows(
                 lifecycle="retired" if line.lifecycle.state == "retired" else "live",
                 procedure=line.procedure.target.qualified,
                 authority=line_authority(line),
-                trigger=trigger_summary(line)[0],
+                trigger=trigger_summary(line, triggers.get(line.identity.qualified, ()))[0],
                 arm=operations.arm_state,
                 due=operations.due,
                 waiting=operations.waiting,
@@ -485,7 +545,7 @@ def _availability(
 ) -> tuple[Literal["available", "unavailable"], str | None]:
     """Whether the store can still produce a Capture, as the evidence worker last saw."""
 
-    from cruxible_core.consumers.evidence import evidence_findings
+    from cruxible_core.consumers.next.evidence import evidence_findings
 
     found = [item for item in evidence_findings(instance) if item.capture_digest == digest]
     if found:
@@ -711,9 +771,10 @@ def resolution_contract_card(
     coordinate: AcceptedProjectionCoordinate,
     identity: str,
     *,
+    evaluation_time: datetime,
     render: RenderGet,
 ) -> PlaybillGetResolutionContractCardV1:
-    from cruxible_core.consumers.predictions import contract_windows
+    from cruxible_core.consumers.next.predictions import contract_windows
 
     with instance.bind_accepted_projection(coordinate) as projection:
         contract = cast(ResolutionContractV1, projection.typed.source(identity))
@@ -724,7 +785,9 @@ def resolution_contract_card(
     claim_id = contract.hypothesis.identity.name
     fields: dict[str, Any] = {}
     counts: dict[str, int] | None = None
-    found = contract_windows(instance, identity, limit=OPERATIONAL_CARD_LIST_LIMIT)
+    found = contract_windows(
+        instance, identity, limit=OPERATIONAL_CARD_LIST_LIMIT, evaluation_time=evaluation_time
+    )
     if found is not None:
         windows, counts = found
         fields["windows"] = tuple(
@@ -757,10 +820,12 @@ def resolution_contract_card(
 def prediction_rows(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
+    *,
+    evaluation_time: datetime,
 ) -> tuple[PlaybillOrientPredictionV1, ...]:
     """Every live ResolutionContract with its bound windows counted by status."""
 
-    from cruxible_core.consumers.predictions import window_tallies
+    from cruxible_core.consumers.next.predictions import window_tallies
 
     with instance.bind_accepted_projection(coordinate) as projection:
         contracts = [
@@ -769,7 +834,11 @@ def prediction_rows(
                 "SELECT identity FROM resolution_contracts WHERE lifecycle='live' ORDER BY identity"
             )
         ]
-    tallies = window_tallies(instance, [item.identity.qualified for item in contracts])
+    tallies = window_tallies(
+        instance,
+        [item.identity.qualified for item in contracts],
+        evaluation_time=evaluation_time,
+    )
     rows: list[PlaybillOrientPredictionV1] = []
     for contract in contracts:
         tally = tallies.get(contract.identity.qualified)
@@ -859,6 +928,7 @@ __all__ = [
     "LIVE_CARD_FIELDS",
     "LineOperations",
     "OperationalViewer",
+    "aimed_triggers",
     "capture_card",
     "capture_contract_rows",
     "capture_count",
@@ -877,6 +947,7 @@ __all__ = [
     "may_see_arming",
     "prediction_rows",
     "resolution_contract_card",
+    "schedule_summary",
     "trigger_summary",
     "uncited_capture_present",
     "window_summary",

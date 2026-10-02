@@ -74,6 +74,9 @@ def is_time_bearing_field(name: str, annotation: str) -> bool:
 # `observed_at` the instant the daemon evaluated the source, while an attestation
 # is `observed_at` the time its attestor asserts.
 CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
+    ("PlaybillFloorConsumerOutcomeV1", "generation"): "SETTLEMENT ORDER",
+    ("LineTriggerBindingV1", "generation"): "SETTLEMENT ORDER",
+    ("LineRunRequestV1", "trigger_generation"): "SETTLEMENT ORDER",
     # A signed mint consent is accepted only within a window around the
     # daemon's clock; issued_at anchors that window.
     ("RuntimeCredentialMintStatementV1", "issued_at"): "VALIDITY WINDOW",
@@ -230,6 +233,7 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("LineEgressReadingV1", "sequence"): "SETTLEMENT ORDER",
     ("LineRunRequestV1", "evaluation_time"): "EVALUATION INSTANT",
     ("CadenceTriggerPolicyV1", "interval_seconds"): "VALIDITY WINDOW",
+    ("CadenceScheduleV1", "interval_seconds"): "VALIDITY WINDOW",
     ("WindowCloseTriggerPolicyV1", "window_seconds"): "VALIDITY WINDOW",
     ("MemberLawEvaluationV2", "evaluation_time"): "EVALUATION INSTANT",
     ("PlaybillAuditCursor", "evaluation_time"): "EVALUATION INSTANT",
@@ -493,6 +497,8 @@ CLOCK_FIELD_DECLARATIONS: Mapping[tuple[str, str], ClockDomainV1] = {
     ("_CaptureObservation", "observed_at"): "ASSERTION TIME",
     ("ClaimLineageNode", "generation"): "SETTLEMENT ORDER",
     ("_CurationHistoryIndex", "last_generation"): "SETTLEMENT ORDER",
+    ("_StoredClaimQueue", "valid_from"): "EVALUATION INSTANT",
+    ("_StoredClaimQueue", "valid_until"): "EVALUATION INSTANT",
     ("_DeterministicClock", "evaluation_time"): "EVALUATION INSTANT",
     ("_GenerationWindow", "generation"): "SETTLEMENT ORDER",
     ("_ProcessOutcome", "duration_seconds"): "VALIDITY WINDOW",

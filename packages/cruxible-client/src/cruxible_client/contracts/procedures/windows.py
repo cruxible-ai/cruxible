@@ -128,18 +128,41 @@ def bind_observation_window(
     )
 
 
-class LineTriggerBindingV1(_WindowModel):
-    """Semantic cause of one occurrence, independent of its dispatch instant."""
+#: Binding kinds whose occurrence is a tick of time rather than an event or window.
+TIMED_BINDING_KINDS = frozenset({"cadence", "cron"})
 
-    kind: Literal["capture_landing", "window_close"]
+
+class LineTriggerBindingV1(_WindowModel):
+    """Semantic cause of one occurrence, independent of its dispatch instant.
+
+    ``trigger`` is the Trigger artifact that fired. A cadence or cron tick binds
+    no event or window: its instant is the occurrence's own evaluation instant.
+    """
+
+    kind: Literal["cadence", "cron", "capture_landing", "window_close", "generation_accepted"]
+    trigger: ArtifactIdentity
+    generation: int | None = Field(default=None, ge=0)
     event: TriggerEventReferenceV1 | None = None
     window: BoundObservationWindowV1 | None = None
 
     @model_validator(mode="after")
     def _shape(self) -> LineTriggerBindingV1:
-        if self.kind == "capture_landing":
+        if self.trigger.kind != "Trigger":
+            raise ValueError("a trigger binding names the Trigger that fired")
+        if (self.kind == "generation_accepted") != (self.generation is not None):
+            raise ValueError("only a generation trigger binds an accepted generation")
+        if self.kind == "generation_accepted":
+            if self.event is not None or self.window is not None:
+                raise ValueError("a generation trigger binds no Capture or window")
+        elif self.kind in TIMED_BINDING_KINDS:
+            if self.event is not None or self.window is not None:
+                raise ValueError("a cadence or cron tick binds no event or window")
+        elif self.kind == "capture_landing":
             if self.event is None or self.window is not None:
                 raise ValueError("capture trigger must bind exactly one retained event")
-        elif self.window is None or self.event != self.window.event:
-            raise ValueError("window trigger must reproduce its event anchor")
+        elif self.kind == "window_close":
+            if self.window is None or self.event != self.window.event:
+                raise ValueError("window trigger must reproduce its event anchor")
+        else:
+            raise ValueError(f"unsupported trigger binding kind {self.kind!r}")
         return self

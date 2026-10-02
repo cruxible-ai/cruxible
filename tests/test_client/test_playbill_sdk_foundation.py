@@ -199,14 +199,16 @@ def test_next_workspace_degrades_unreadable_presentation_policy(
     _catalog(tmp_path)
     policy_path = tmp_path / ".playbill" / "presentation-policy.json"
     policy_path.write_text('{"tag":"playbill-presentation-policy-v1"}', encoding="utf-8")
-    original = Path.read_text
+    original = os.open
 
-    def unreadable(path: Path, *args: object, **kwargs: object) -> str:
-        if path == policy_path:
+    def unreadable(
+        path: str | Path, flags: int, mode: int = 0o777, *, dir_fd: int | None = None
+    ) -> int:
+        if Path(path) == policy_path:
             raise PermissionError("policy denied")
-        return original(path, *args, **kwargs)  # type: ignore[arg-type]
+        return original(path, flags, mode, dir_fd=dir_fd)
 
-    monkeypatch.setattr(Path, "read_text", unreadable)
+    monkeypatch.setattr("cruxible_client._safe_files.os.open", unreadable)
 
     observation = observe_playbill_next_workspace(tmp_path)
 

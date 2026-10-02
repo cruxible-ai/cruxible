@@ -256,22 +256,29 @@ decommissioned state. Its `Instances` count is the number
 of governed daemon hosts shown, excluding unrelated local registry entries.
 `server status` also lists the daemon's consumers on every instance it holds
 open: each armed Line and each built-in worker, as `running`, `stalled`,
-`stopped`, or `disabled`. The built-in evidence worker runs on every instance
-by default. It re-hashes the Captures live Claims cite whenever a generation
-cites one, and sweeps them all daily. A missing or corrupt Capture envelope, a
+`lagging`, `stopped`, or `disabled`. The built-in `next` worker runs on every
+instance by default. It maintains the
+current Claim queue, cited evidence availability and prediction windows under
+one health entry, with independent cursors for each part. Queue rows carry
+evaluation-time bounds; a `next.expire` deadline refreshes them at the next
+boundary. Its evidence part re-hashes the Captures live Claims cite whenever a generation
+cites one, and sweeps them all on a daily `evidence.sweep` trigger event.
+Retention is evaluated at the generation or trigger event's recorded instant. A missing or corrupt Capture envelope, a
 corrupt body, or a missing body its contract still requires to be retained is a
 finding. A body whose contract lets it go (`optional` or `never_materialize`
 retention, or a `required_for_duration` window that has passed) is not.
-`CRUXIBLE_DISABLED_CONSUMERS=evidence` turns it off.
-The built-in prediction worker also runs on every instance by default. It binds
+Its prediction part binds
 each accepted ResolutionContract's observation window: a fixed window when the
 contract is accepted, and an event window once per landed Capture its selector
 matches, each its own contract instance. On first start it reads every live
-contract and every retained matching Capture. When a bound window closes, it
-reads that window's own resolution journal, and it reads it again whenever a
-settlement or overturn lands there. A retired or revised contract withdraws its
-windows. `CRUXIBLE_DISABLED_CONSUMERS=prediction` turns it off; list both names,
-comma-separated, to turn off both workers.
+contract and every retained matching Capture. It reads each bound window's
+resolution journal initially and whenever a settlement or overturn lands there.
+It stores whether an answer exists; reads decide whether an unanswered window
+has closed at the request's evaluation time. Unbindable anchors are retried on
+`prediction.anchor_retry` events (hourly by default) and new capture landings. A retired or revised contract withdraws its
+windows. `CRUXIBLE_DISABLED_CONSUMERS=next` turns off the whole findings worker.
+Unknown names, including the former `evidence` and `prediction` names, refuse
+the setting. Armed Lines remain a separate governed consumer.
 `server status` also renders `Provider lane:` and, when degraded,
 `Provider lane reason:`. Provider-lane degradation never prevents the daemon's
 non-Provider surfaces from starting, so these lines are the operator's recovery
@@ -326,7 +333,60 @@ exact stale JSON record under `<state-root>/daemon/provider-process-leases/`.
 Removing a record while its process may still be live abandons the recovery
 identity and is unsafe; prefer repairing the typed cause and allowing re-arm.
 
-`<state-root>/daemon/proposal-receive.json` is a second daemon-local operational
+### Internal triggers
+
+The daemon's internal schedules are governed Trigger artifacts
+(`triggers/<name>.json`) aimed at an internal action, not daemon-local
+configuration. Internal actions are registered in code (`evidence.sweep`,
+`prediction.anchor_retry`, `floor.refresh`); a Trigger aimed at one takes a
+`cadence`, `cron`, or `generation_accepted` schedule. Capture-landing and
+window-close schedules for internal actions are
+not supported yet (`playbill.trigger.schedule_unsupported_for_action`), and an
+action name that is not registered is refused at acceptance
+(`playbill.trigger.action_unknown`). A new
+instance is initialized with `evidence-sweep` (daily) and
+`prediction-anchor-retry` (hourly); change a schedule, add a Trigger, or retire
+one through an ordinary proposal. `playbill next` reports unscheduled findings
+actions, and an unscheduled floor action when workspace delivery is enabled.
+
+No Trigger fires retroactively. A timer fires each of its instants once, all of
+them after the acceptance of its Trigger version: a new cadence first fires one
+interval after its acceptance (never on sight), a cron schedule at its first
+calendar instant after acceptance, and a changed schedule starts again from the
+successor's acceptance. Instants that pass while no daemon is running are
+skipped when it restarts, never fired late as a catch-up; a retired Trigger
+stops. Fires, which record the Trigger and the action, and pending one-shot
+deadlines are retained under each instance's `exhaust/triggers.sqlite3`; this
+append-only event log is not disposable worker state. Workers follow fires by
+action and resume from its sequences. Library mode fires no triggers.
+
+A `generation_accepted` schedule has no fields or predicate. It fires once at
+latest head when accepted generations advance; a burst coalesces. It skips
+accepts before the Trigger version's acceptance and before listening starts,
+including accepts made while the daemon was stopped. Lines use the same target
+input law, so a Line needing a Capture event refuses this schedule.
+
+New instances seed the ordinary governed `floor-refresh` Trigger with schedule
+`generation_accepted` and action `floor.refresh`. Edit or retire it through the
+usual Trigger authoring flow; existing instances are unchanged.
+
+`floor.refresh` warms the floor index on every daemon. Workspace delivery is
+on by default for an attached workspace. Use `workspace attach --no-floor-delivery`
+or `cruxible playbill workspace floor-delivery off` through the local Unix socket
+to opt out; `on` enables delivery again. Detaching clears it, and a later attachment
+defaults on again. Host inspection and daemon status label it "on (default)" or
+"off (opted out)". With delivery
+on, the daemon writes only `.playbill/floor`, and local client floor writes ask
+it to deliver immediately. Remote clients and workspaces with delivery off keep
+applying deltas locally. Both writers create `.playbill/floor/.gitignore` containing
+`*`, which ignores the entire floor, including itself, in Git. It is local metadata
+outside the accepted floor manifest and survives delta applies and full repairs.
+A failed apply stalls the floor consumer with `playbill floor export` as its
+repair; automatic retries wait for a changed head or workspace registration.
+
+### Proposal receive operational configuration
+
+`<state-root>/daemon/proposal-receive.json` is another daemon-local operational
 file, tag `cruxible-proposal-receive-operational-config-v1`, with one entry:
 
 | Entry | Default | Purpose |
@@ -384,7 +444,8 @@ it.
 ~~~text
 cruxible playbill host create [--instance-id ID] [--workspace DIR] [--replace]
 cruxible playbill host show INSTANCE [--json]
-cruxible playbill workspace attach [--instance-id ID] [--replace]
+cruxible playbill workspace attach [--instance-id ID] [--replace] [--no-floor-delivery]
+cruxible playbill workspace floor-delivery on|off [--instance-id ID] [--json]
 cruxible playbill workspace detach [--instance-id ID] [--json]
 ~~~
 
@@ -397,6 +458,10 @@ and secrets are never inputs to that writer. A differing config is refused
 unless `--replace` is explicit. Because the binding may carry a local socket,
 the writer adds `.playbill/coverage.json` to this repository's machine-local
 `.git/info/exclude` rather than changing a shared ignore file.
+
+Daemon floor delivery is on by default when a local workspace is registered.
+`workspace attach` enables it unless `--no-floor-delivery` is supplied;
+`workspace floor-delivery off` opts out after attachment, and `on` restores it.
 
 A TCP client never sends its local path to the daemon. Implicit attachment from
 inside a TCP worktree remains refused; explicit `--workspace DIR` instead writes
@@ -1282,25 +1347,50 @@ cruxible playbill line disarm LINE [--json]
 cruxible playbill line status LINE [--json]
 cruxible playbill line evaluate LINE --since TS --until TS [--limit 100] [--cursor CURSOR] [--json]
 cruxible playbill line dispatch LINE [--occurrence-id DIGEST] [--retry] [--limit 1] [--json]
-cruxible playbill line run LINE --evaluation-time TS
+cruxible playbill line run LINE --evaluation-time TS [--trigger TRIGGER]
   [--occurrence-id ID] [--json]
 ~~~
 
 A Line is authored like any other definition: a `line` input (alone or as a
-change-set member) names its Procedure, trigger policy and `parameters` -- the
-Procedure's input record, which lowering checks against the Procedure's input
-contract, refusing `playbill.authoring.line_parameters_refused` with the
-expected fields. It names an `acquisition_policy` (an `acquisition_policy`
-input) only when the Procedure has Source nodes. `authoring create --example
-line` prints a manual Line over the `--example procedure` Procedure, and
-`--example acquisition-policy` a policy for a Source Procedure's Line.
+change-set member) names its Procedure and `parameters` -- the Procedure's
+input record, which lowering checks against the Procedure's input contract,
+refusing `playbill.authoring.line_parameters_refused` with the expected
+fields. It names an `acquisition_policy` (an `acquisition_policy` input) only
+when the Procedure has Source nodes. `authoring create --example line` prints a
+Line over the `--example procedure` Procedure, and `--example
+acquisition-policy` a policy for a Source Procedure's Line.
 
-`check` is read-only: it returns `met`, `not_met`, or `incomplete`, exact
-matching events/windows, and the dispatch status of each occurrence (pending,
+When a Line runs is not the Line's own: a `trigger` input authors a Trigger
+(`triggers/<name>.json`) whose `schedule` is a `cadence`, a `cron`,
+`generation_accepted`, `capture_landing` on one exact CaptureContract, or a
+`window_close`, and whose
+target is one Line (`line_name`) or one registered internal action (`action`,
+which takes a `cadence`, `cron`, or `generation_accepted` schedule).
+A `cron` schedule is a standard five-field expression (`minute hour
+day-of-month month day-of-week`; numbers, `*`, ranges, steps and lists, with
+day-of-week 0-7 and Sunday both 0 and 7; no names or `@` macros) evaluated in
+UTC, always: a schedule names no timezone, so an instant never depends on a
+host's timezone database. Convert local times first (09:00 New York in winter
+is 14:00 UTC); a schedule that supplies a `timezone` is refused with that
+reason. The Trigger law refuses an expression outside this grammar
+(`playbill.trigger.cron_invalid`). A Line can
+have several Triggers; one with none runs only when run explicitly, and `run`
+of a Line with Triggers names the Trigger it fires on (`--trigger`). Retiring
+a Line with live Triggers aimed at it refuses unless they are retired or
+retargeted in the same change set. `authoring create --example trigger` prints
+an hourly cron Trigger for the `--example line` Line, and `get Trigger:NAME` reads
+one. A Trigger never fires retroactively: it matches only Captures recorded
+strictly after its version was accepted and fixed windows that close strictly
+after it, and admission refuses an earlier one supplied or queued anyway
+(`trigger_event_precedes_acceptance`).
+
+`check` is read-only: it evaluates every live Trigger aimed at the Line and
+returns `met`, `not_met`, or `incomplete`, exact matching events/windows (each
+naming its Trigger), and the dispatch status of each occurrence (pending,
 admitted, rejected, or superseded).
 
-`arm` makes the daemon match the Line's trigger forward from now and admit what
-it matches, with no explicit call. Runs use the arming caller's credential,
+`arm` makes the daemon match the Line's Triggers forward from now and admit what
+they match, with no explicit call. Runs use the arming caller's credential,
 which the daemon rechecks before every admission: a revoked credential, one
 moved to another instance, or one no longer permitted to dispatch stops the arm
 with that reason (`credential_revoked`, `credential_scope_changed`,
@@ -1315,20 +1405,27 @@ restart, and `line status`, `server status` and `next` name the rearm repair.
 Arming needs governed write, and keeps only the
 credential's identifier, never a token. A Line that can propose
 or settle refuses to arm while no current mandate covers it. An arm is pinned to the
-Line version current when it was armed: any accepted change to the Line stops
-it (`line_changed`, or `epoch_changed`) until it is rearmed. Because a settle
+Line version and the exact Trigger versions aimed at it when it was armed: any
+accepted change to the Line stops it (`line_changed`, or `epoch_changed`), and
+so does adding, changing or retiring a Trigger aimed at it (`trigger_changed`),
+until it is rearmed. Because a settle
 mandate, not the caller's tier, authorizes settling, an armed Line whose
 Procedure settles does so on its own under its mandate.
 
 An arm never catches up. It admits only what it matched itself since it was
 armed or since the daemon last restarted; anything pending before that, or
-recorded by `evaluate`, waits for explicit `dispatch`. A cadence tick is the
-exception: it is not an event but "the Line is due", so when a cadence Line is
+recorded by `evaluate`, waits for explicit `dispatch`. A cadence or cron tick is
+the exception: it is not an event but "the Trigger is due", so when a Line is
 armed or its arm resumes, a tick still pending from before closes as `lapsed`
 -- retained, never run implicitly, and still runnable as exactly that tick
 with `dispatch --occurrence-id DIGEST --retry`, even after newer ticks ran --
 and the arm ticks on from its own start rather than catching up on ticks it
-missed. `disarm` stops further
+missed. Each cadence or cron Trigger keeps its own chain: it is due one interval,
+or at the next calendar instant, after the last occurrence it fired, whatever
+other Triggers aimed at the Line fired, and never before the first instant
+after its Trigger version's acceptance: a new cadence ticks first one interval
+after it was accepted, a successor schedule from its own acceptance. `disarm`
+stops further
 admissions; a run already admitted keeps going. Both are idempotent: arming a
 Line already armed by the same credential at the same version returns it
 unchanged with `outcome: already_armed`, and disarming a stopped arm returns
@@ -1353,7 +1450,8 @@ its matches as pending. Follow its cursor to finish a bounded page.
 and the ordinary Line admission checks. `run` and `dispatch` of a Line whose
 runs can propose or settle (and `procedure run` of such a Procedure) need
 governed write; an observe-only Line or Procedure runs at read-only. Permanent input failures close as
-`rejected`; changed Line bindings close as `superseded`. Both leave the runnable
+`rejected`; changed Line bindings, and occurrences whose Trigger changed or no
+longer aims at the Line, close as `superseded`. Both leave the runnable
 queue, retaining their evidence and a typed refusal with repair instructions.
 Invalid event bindings, unavailable event material, and Captures that exceed
 their fixed read budget close as rejected. Budget refusals name the limiting
@@ -1363,7 +1461,8 @@ failures and events whose recorded time has not arrived remain blocked.
 Historical evaluation does not reopen closed work.
 
 `dispatch --occurrence-id DIGEST --retry` explicitly retries one occurrence,
-binding the current accepted Line version only within the same occurrence epoch.
+binding the current accepted Line version only within the same occurrence epoch
+and only while its Trigger still aims at the Line unchanged.
 It preserves the exact event/window and rechecks present authority and freshness;
 it cannot substitute a newer Capture. An existing admission is always reused.
 
@@ -1373,8 +1472,9 @@ replayed automatically, and what the previous range matched but did not admit
 waits for explicit `dispatch`. Rebuilding the disposable event index similarly
 opens a new forward range, while retained pending work survives. Pending work
 bound to an older Line version is closed as superseded rather than silently
-rebound. A Line v4 or v5 can bind its
-trigger Capture to a named Source input. Its `max_age` is checked at admission
+rebound. A Line can bind its
+trigger Capture to a named Source input (`trigger_input`); it then declares the
+exact event it accepts, and every Trigger aimed at it must fire on that event. Its `max_age` is checked at admission
 time, not backdated to when the trigger occurred.
 
 `run` triggers one daemon-derived due occurrence. The occurrence's evaluation
@@ -1701,13 +1801,13 @@ profile excludes instance material reads `not_observed`.
 These rows come from the daemon's consumers rather than from a computation at
 read time. Findings are what a worker last observed, so each row reflects its
 last check:
-- `evidence_unavailable` names a Capture the evidence worker found missing or
+- `evidence_unavailable` names a Capture the next worker found missing or
   corrupt, with the live Claims that cite it. Restore its bytes, or recapture
   and re-cite; the worker's next check clears the row.
 - `prediction_settleable` names a ResolutionContract with a closed bound window
   whose resolution journal holds no current answer, with its hypothesis Claim.
   `detail` carries the window, its `anchor_event` (null for a fixed window), the
-  `bound_contract_id`, and `evaluated_at`. An event window has one row per
+  `bound_contract_id`. An event window has one row per
   anchor. The repair is `cruxible playbill settle RSC-...`; add
   `--observation CLAIM_ID` naming an accepted observation inside the window. The worker does not check that such an observation exists; if
   none does, see the note under `playbill settle`.
@@ -1716,20 +1816,24 @@ last check:
 - `prediction_window_unbindable` names a ResolutionContract with a matching
   anchor Capture whose retained material no longer binds a window, with the
   refusal `code`. Restore the material, and the worker binds the window on its
-  hourly retry; or retire the contract.
+  next retry trigger event or new capture landing; or retire the contract.
 - `consumer_stalled` names a consumer that stopped by itself or stopped
   keeping up, with its kind in `detail.kind` and the kind's own repair.
 
 Because those rows are what a worker last observed, `status.consumers` says how
 current that observation is: `current`, `lagging` (a worker is behind on
-generations or overdue on its sweep; this is the facet that asks for
+generations or has not finished earlier sweep/retry work before another fire;
+this facet asks for
 attention), `stalled` (already a `consumer_stalled` row), or `not_running` when
 no consumer loop is running, as in a library read. There, worker rows stand as
 of each worker's last pass. `detail.workers` lists each built-in worker's state
 and cursor, including disabled ones, and `detail.line_arms` counts the
 instance's armed Lines as `running`, `stalled` or `stopped` (the text header
-prints `Status: line arms ...` when any is stalled or stopped). Worker-derived
-rows carry when they were observed in their own detail.
+prints `Status: line arms ...` when any is stalled or stopped). The `next` entry
+keeps each part's figures under `queue`, `evidence` and `prediction`. Evidence
+rows carry when they were observed in their own detail; prediction rows omit
+observation timestamps so their identity stays stable while the finding is
+unchanged.
 
 A current `unsure` examined attestation holds a row, and `status.held` counts
 the rows held. A hold lasts only while its basis is unchanged:

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Add generation-accepted Triggers and `floor.refresh`. New instances seed an
+  ordinary editable, retirable `floor-refresh` Trigger in genesis. Refreshes
+  coalesce at latest head and skip accepts made before listening. Bound local workspaces
+  default to daemon floor delivery; `workspace attach --no-floor-delivery` and
+  `workspace floor-delivery off` opt out. Local client writes delegate to the
+  same writer. Client and daemon delivery create a self-ignoring floor `.gitignore`,
+  reserved from deltas and preserved on full replay. Apply failures surface a
+  stalled consumer and a floor-write repair.
+
 - **Reads are orient, query and get; the older read surfaces are removed.**
   Every read of accepted state now goes through three verbs on every surface:
   `orient` (the map, or one `kind`, or one `section`), `query` and `get`. The

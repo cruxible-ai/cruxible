@@ -26,6 +26,7 @@ from cruxible_client.authoring.inputs import (
     SelfSourceInput,
     SubjectInput,
     SubjectObjectInput,
+    TriggerInput,
     WorkingSelectionInput,
 )
 from cruxible_client.contracts.acquisition_policies import (
@@ -38,6 +39,7 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.artifacts import ArtifactLifecycle as _ArtifactLifecycle
 from cruxible_client.contracts.authoring.models import ClaimTypeSuccessionDependentV1
 from cruxible_client.contracts.claim_types import ClaimType
+from cruxible_client.contracts.cron import CRON_UTC_HINT
 from cruxible_client.contracts.documents import DocumentLifecycle, DocumentShell
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicyV1,
@@ -61,6 +63,7 @@ from cruxible_client.contracts.query.grammar import (
     QuerySubjectFieldRefV1,
 )
 from cruxible_client.contracts.subjects import SubjectShell
+from cruxible_client.contracts.triggers import CronScheduleV1
 
 AuthoringExampleName = Literal[
     "claim-existing-capture",
@@ -81,6 +84,7 @@ AuthoringExampleName = Literal[
     "procedure-runtime-policy",
     "procedure-mandate",
     "line",
+    "trigger",
     "acquisition-policy",
     "change-set",
     "claim-type-succession",
@@ -257,14 +261,39 @@ def procedure_mandate_example() -> ProcedureMandateInputV1:
 
 
 def line_example() -> LineInput:
-    """A manual Line over the `--example procedure` Procedure.
+    """A Line over the `--example procedure` Procedure.
 
     That Procedure has no Source nodes, so the Line names no acquisition
     policy, and its input contract is empty, so `parameters` is `{}`. It only
-    observes, so it runs without a ProcedureMandate.
+    observes, so it runs without a ProcedureMandate. With no Trigger aimed at it
+    it runs when run explicitly; `--example trigger` schedules it.
     """
 
     return LineInput(kind="line", name="replace-me", procedure_name="replace-me", parameters={})
+
+
+def trigger_example() -> TriggerInput:
+    """A Trigger that runs the `--example line` Line hourly, on the hour, in UTC.
+
+    Cron expressions are evaluated in UTC; convert local times first (09:00 New
+    York in winter is 14:00 UTC).
+
+    Name `line_name` or `action` (a registered internal action such as
+    `evidence.sweep`), never both. A schedule is `cadence` (`interval_seconds`),
+    `cron` (a five-field UTC `expression`), `generation_accepted` (no fields),
+    `capture_landing` (an exact CaptureContract `event`), or `window_close` (a
+    `window`). Actions admit timed or generation-accepted schedules; a Line that binds
+    its triggering Capture needs a schedule that fires on that exact event. Nothing
+    fires before the Trigger is accepted: this one first runs at the top of the
+    hour after its acceptance.
+    """
+
+    return TriggerInput(
+        kind="trigger",
+        name="replace-me",
+        schedule=CronScheduleV1(expression="0 * * * *"),
+        line_name="replace-me",
+    )
 
 
 def acquisition_policy_example() -> AcquisitionPolicyInput:
@@ -699,10 +728,25 @@ AUTHORING_EXAMPLE_FACTORIES: Final[dict[AuthoringExampleName, Callable[[], Autho
     "procedure-runtime-policy": procedure_runtime_policy_example,
     "procedure-mandate": procedure_mandate_example,
     "line": line_example,
+    "trigger": trigger_example,
     "acquisition-policy": acquisition_policy_example,
     "change-set": change_set_example,
     "claim-type-succession": claim_type_succession_example,
 }
+
+#: One line shown beside an example's payload, where the payload alone could mislead.
+AUTHORING_EXAMPLE_NOTES: Final[dict[AuthoringExampleName, str]] = {
+    "trigger": (
+        CRON_UTC_HINT + ' Generation floor refresh: {"kind":"trigger",'
+        '"name":"floor-refresh","schedule":{"kind":"generation_accepted"},'
+        '"action":"floor.refresh"}.'
+    ),
+}
+
+
+def authoring_example_note(name: AuthoringExampleName) -> str | None:
+    return AUTHORING_EXAMPLE_NOTES.get(name)
+
 
 _DOOR_EXAMPLES = {
     "claim-adjudicate-contradicting-evidence",
@@ -728,6 +772,7 @@ AUTHORING_EXAMPLE_NAMES: Final[tuple[AuthoringExampleName, ...]] = (
     "procedure-runtime-policy",
     "procedure-mandate",
     "line",
+    "trigger",
     "acquisition-policy",
     "change-set",
     "claim-type-succession",
@@ -783,9 +828,11 @@ def authoring_example(
 __all__ = [
     "AUTHORING_EXAMPLE_FACTORIES",
     "AUTHORING_EXAMPLE_NAMES",
+    "AUTHORING_EXAMPLE_NOTES",
     "AuthoringExampleName",
     "acquisition_policy_example",
     "authoring_example",
+    "authoring_example_note",
     "change_set_example",
     "claim_type_succession_example",
     "claim_existing_capture_example",

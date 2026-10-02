@@ -1153,7 +1153,7 @@ def _operational_rows(
         contracts = capture_contract_rows(instance, coordinate)
         return contracts, [row.contract for row in contracts], lambda row: row.contract
     if section == "predictions":
-        predictions = prediction_rows(instance, coordinate)
+        predictions = prediction_rows(instance, coordinate, evaluation_time=evaluation_time)
         return predictions, [row.contract for row in predictions], lambda row: row.contract
     mandates = mandate_rows(instance, coordinate, evaluation_time=evaluation_time)
     return (

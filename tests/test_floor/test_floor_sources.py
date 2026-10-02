@@ -102,7 +102,7 @@ def test_the_client_joins_workspace_paths_into_sources_and_projections(tmp_path:
     floor = workspace / ".playbill/floor"
     header, rows = _rows((floor / "sources/INDEX").read_bytes())
     assert header.startswith("# sources INDEX  3 sources  columns: source, contracts, locator")
-    assert header.endswith("(locators joined by the client from its workspace catalog)")
+    assert header.endswith("(locators joined from the local workspace catalog)")
     located = {row[0]: row[2] for row in rows}
     assert located == {
         # By source name; the Document by its catalog document_id; a missing file marked.

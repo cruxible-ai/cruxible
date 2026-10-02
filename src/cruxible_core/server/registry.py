@@ -15,6 +15,20 @@ from cruxible_core.server.config import get_server_state_root
 LOCAL_FILESYSTEM_BACKEND = "local_filesystem"
 GOVERNED_DAEMON_BACKEND = "governed_daemon"
 _INSTANCE_ID_RE = re.compile(r"^inst_[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+FLOOR_DELIVERY_MIGRATION_STEP = "2026-10-01-floor-delivery-column"
+
+
+def _migrate_floor_delivery_column(conn: sqlite3.Connection) -> None:
+    """2026-10-01-floor-delivery-column: safe in either registry migration order."""
+
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(instances)")}
+    if "floor_delivery" not in columns:
+        conn.execute(
+            "ALTER TABLE instances ADD COLUMN floor_delivery INTEGER NOT NULL DEFAULT 0 "
+            "CHECK (floor_delivery IN (0,1) AND "
+            "(floor_delivery=0 OR workspace_root IS NOT NULL))"
+        )
+        conn.execute("UPDATE instances SET floor_delivery=1 WHERE workspace_root IS NOT NULL")
 
 
 @dataclass(frozen=True)
@@ -26,6 +40,7 @@ class InstanceRecord:
     location: str
     workspace_root: str | None
     created_at: str
+    floor_delivery: bool = False
 
 
 @dataclass(frozen=True)
@@ -72,11 +87,28 @@ class InstanceRegistry:
                 """
             )
 
+            _migrate_floor_delivery_column(conn)
+
+    def set_floor_delivery(self, instance_id: str, enabled: bool) -> InstanceRecord:
+        """Set delivery only for a registered governed host with a local workspace."""
+
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "UPDATE instances SET floor_delivery=? WHERE instance_id=? AND backend=? "
+                "AND workspace_root IS NOT NULL",
+                (int(enabled), instance_id, GOVERNED_DAEMON_BACKEND),
+            )
+        if cursor.rowcount != 1:
+            raise ConfigError("Floor delivery requires a bound local workspace")
+        record = self.get(instance_id)
+        assert record is not None
+        return record
+
     def get(self, instance_id: str) -> InstanceRecord | None:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT instance_id, backend, location, workspace_root, created_at
+                SELECT instance_id, backend, location, workspace_root, created_at, floor_delivery
                 FROM instances
                 WHERE instance_id = ?
                 """,
@@ -91,7 +123,7 @@ class InstanceRegistry:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT instance_id, backend, location, workspace_root, created_at
+                SELECT instance_id, backend, location, workspace_root, created_at, floor_delivery
                 FROM instances
                 ORDER BY instance_id
                 """
@@ -114,7 +146,7 @@ class InstanceRegistry:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT instance_id, backend, location, workspace_root, created_at
+                SELECT instance_id, backend, location, workspace_root, created_at, floor_delivery
                 FROM instances
                 WHERE backend = ?
                 ORDER BY instance_id
@@ -178,7 +210,8 @@ class InstanceRegistry:
         try:
             with self._connect() as conn:
                 conn.execute(
-                    "UPDATE instances SET workspace_root = ? WHERE instance_id = ?",
+                    "UPDATE instances SET workspace_root = ?, floor_delivery = 1 "
+                    "WHERE instance_id = ?",
                     (resolved, instance_id),
                 )
         except sqlite3.IntegrityError as exc:
@@ -201,7 +234,7 @@ class InstanceRegistry:
             cursor = conn.execute(
                 """
                 UPDATE instances
-                SET workspace_root = NULL
+                SET workspace_root = NULL, floor_delivery = 0
                 WHERE instance_id = ? AND workspace_root = ?
                 """,
                 (instance_id, expected),
@@ -230,9 +263,10 @@ class InstanceRegistry:
                     backend,
                     location,
                     workspace_root,
-                    created_at
+                    created_at,
+                    floor_delivery
                 )
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     instance_id,
@@ -240,6 +274,7 @@ class InstanceRegistry:
                     location,
                     workspace_root,
                     created_at,
+                    int(backend == GOVERNED_DAEMON_BACKEND and workspace_root is not None),
                 ),
             )
 
@@ -255,7 +290,7 @@ class InstanceRegistry:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT instance_id, backend, location, workspace_root, created_at
+                SELECT instance_id, backend, location, workspace_root, created_at, floor_delivery
                 FROM instances
                 WHERE backend = ? AND location = ?
                 """,
@@ -273,7 +308,7 @@ class InstanceRegistry:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT instance_id, backend, location, workspace_root, created_at
+                SELECT instance_id, backend, location, workspace_root, created_at, floor_delivery
                 FROM instances
                 WHERE backend = ? AND workspace_root = ?
                 """,
@@ -291,6 +326,7 @@ class InstanceRegistry:
             location=row["location"],
             workspace_root=row["workspace_root"],
             created_at=row["created_at"],
+            floor_delivery=bool(row["floor_delivery"]),
         )
 
 

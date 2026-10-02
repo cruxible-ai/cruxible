@@ -17,6 +17,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
+from contextvars import Context
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Literal, Protocol, cast
@@ -1161,7 +1162,7 @@ class _DescendantTracker:
         self._successful_observation_count = 0
         self._observation_lock = threading.Lock()
         self._stop = threading.Event()
-        self._thread = threading.Thread(target=self._track, daemon=True)
+        self._thread = threading.Thread(target=Context().run, args=(self._track,), daemon=True)
         self._thread.start()
 
     def observe(self) -> None:
@@ -1237,7 +1238,7 @@ def _open_secret_channel(
             with contextlib.suppress(OSError):
                 os.close(write_fd)
 
-    writer = threading.Thread(target=write, daemon=True)
+    writer = threading.Thread(target=Context().run, args=(write,), daemon=True)
     writer.start()
     try:
         yield read_fd
@@ -1500,7 +1501,7 @@ def _collect_child_output(
         except (BrokenPipeError, OSError, ValueError):
             pass
 
-    writer = threading.Thread(target=write_stdin, daemon=True)
+    writer = threading.Thread(target=Context().run, args=(write_stdin,), daemon=True)
     writer.start()
     assert process.stdout is not None and process.stderr is not None
     streams = (process.stdout, process.stderr)

@@ -19,6 +19,7 @@ import os
 import sys
 import threading
 from collections.abc import Callable
+from contextvars import Context
 
 from cruxible_client.contracts.primitives import new_id
 
@@ -44,7 +45,7 @@ _exec_self = _default_exec_self
 
 def schedule_server_restart() -> None:
     """Schedule an in-place re-exec after the current response is flushed."""
-    timer = threading.Timer(_RESTART_DELAY_SECONDS, _exec_self)
+    timer = threading.Timer(_RESTART_DELAY_SECONDS, Context().run, args=(_exec_self,))
     timer.daemon = True
     timer.start()
 

@@ -184,12 +184,14 @@ def test_a_full_floor_replaces_whatever_the_directory_held(tmp_path: Path) -> No
     (directory / "stray.txt").write_text("not the floor\n", encoding="utf-8")
     (directory / "projections").mkdir()
     (directory / "projections/INDEX").write_text("# client-written\n", encoding="utf-8")
+    (directory / ".gitignore").write_bytes(b"*\n")
     full = floor_v5_delta(HEAD, coordinate=COORDINATE, generation=5)
     applied = apply_floor_delta(directory, full)
     assert applied.status == "applied"
     tree = _tree(directory)
     # The client's own projections/INDEX is not the daemon's to remove.
     assert tree.pop("projections/INDEX") == b"# client-written\n"
+    assert tree.pop(".gitignore") == b"*\n"
     assert tree == _expected(tmp_path)
 
 
@@ -277,6 +279,9 @@ def test_a_parent_swapped_for_a_symlink_mid_apply_is_never_written_through(
         ("current/k/é.yaml", "current/k/é.yaml"),
         ("current/k", "current/k/a.yaml"),
         ("MANIFEST.JSON",),
+        (".gitignore",),
+        (".GITIGNORE",),
+        (".gitIgnore",),
         ("Projections/index",),
         ("projections",),
     ],
@@ -286,7 +291,17 @@ def test_paths_one_filesystem_cannot_hold_apart_are_refused(paths: tuple[str, ..
         floor_v5_delta({path: (b"x\n", 1) for path in paths}, coordinate=COORDINATE, generation=1)
 
 
-@pytest.mark.parametrize("tombstone", ["manifest.json", "Manifest.Json", "projections/INDEX"])
+@pytest.mark.parametrize(
+    "tombstone",
+    [
+        "manifest.json",
+        "Manifest.Json",
+        "projections/INDEX",
+        ".gitignore",
+        ".GITIGNORE",
+        ".gitIgnore",
+    ],
+)
 def test_a_reserved_tombstone_is_refused_before_any_mutation(
     tmp_path: Path, tombstone: str
 ) -> None:
@@ -332,10 +347,12 @@ def test_a_full_floor_at_its_head_still_repairs_stray_and_edited_files(tmp_path:
     (directory / "current/k/a.yaml").write_bytes(b"hand edit\n")
     (directory / "projections").mkdir()
     (directory / "projections/INDEX").write_text("# client-written\n", encoding="utf-8")
+    (directory / ".gitignore").write_bytes(b"*\n")
     repaired = apply_floor_delta(directory, full)
     assert (repaired.status, repaired.written, repaired.removed) == ("applied", 1, 1)
     tree = _tree(directory)
     assert tree.pop("projections/INDEX") == b"# client-written\n"
+    assert tree.pop(".gitignore") == b"*\n"
     assert tree == _expected(tmp_path)
     assert apply_floor_delta(directory, full).status == "unchanged"
 
@@ -355,6 +372,8 @@ def test_an_empty_delta_at_the_head_refuses_a_damaged_floor(tmp_path: Path) -> N
 @pytest.mark.parametrize(
     "path",
     [
+        ".gitignore/child",
+        ".GITIGNORE/child",
         "manifest.json/child",
         "Manifest.JSON/child",
         "projections/INDEX/child",
@@ -408,6 +427,7 @@ def test_a_directory_where_a_floor_file_goes_is_repaired_by_a_full_floor(
     directory = _base_dir(tmp_path)
     (directory / "projections").mkdir()
     (directory / "projections/INDEX").write_text("# client-written\n", encoding="utf-8")
+    (directory / ".gitignore").write_bytes(b"*\n")
     managed = directory / "current/k/a.yaml"
     managed.unlink()
     managed.mkdir()
@@ -422,6 +442,7 @@ def test_a_directory_where_a_floor_file_goes_is_repaired_by_a_full_floor(
     assert apply_floor_delta(directory, full).status == "applied"
     tree = _tree(directory)
     assert tree.pop("projections/INDEX") == b"# client-written\n"
+    assert tree.pop(".gitignore") == b"*\n"
     assert tree == _expected(tmp_path)
     assert apply_floor_delta(directory, full).status == "unchanged"
 
@@ -494,3 +515,73 @@ def test_a_floor_entry_under_another_spelling_is_never_taken_for_it(
     assert apply_floor_delta(directory, _delta()).status == "base_mismatch"
     assert (_tree(directory), _spellings(directory)) == before
     _assert_repaired(tmp_path, directory)
+
+
+def test_delta_and_replay_preserve_the_local_gitignore(tmp_path):
+    directory = _base_dir(tmp_path)
+    ignore = directory / ".gitignore"
+    ignore.write_bytes(b"*\n")
+    inode = ignore.stat().st_ino
+    assert apply_floor_delta(directory, _delta()).status == "applied"
+    assert ignore.read_bytes() == b"*\n" and ignore.stat().st_ino == inode
+    assert apply_floor_delta(directory, _delta()).status == "unchanged"
+    assert ignore.read_bytes() == b"*\n" and ignore.stat().st_ino == inode
+
+
+@pytest.mark.parametrize("normalization", ["NFC", "NFD"])
+def test_gitignore_aliases_are_reserved_in_manifests(normalization):
+    import unicodedata
+
+    from cruxible_client.contracts.floor import build_floor_manifest, check_floor_paths
+
+    for alias in (".gitignore", ".GITIGNORE", ".gitIgnore"):
+        path = unicodedata.normalize(normalization, alias)
+        with pytest.raises(ValueError, match="reserved"):
+            check_floor_paths([path], label="test paths")
+        with pytest.raises(ValueError, match="floor manifest may not list"):
+            build_floor_manifest(
+                renderer="sha256:" + "5" * 64,
+                coordinate=COORDINATE,
+                generation=1,
+                notes_digest="sha256:" + "6" * 64,
+                files={path: ("sha256:" + "0" * 64, 1, 1)},
+            )
+
+
+def test_fifo_manifest_read_returns_promptly_without_a_valid_manifest(tmp_path):
+    from tests.support.fifos import call_with_fifo_timeout
+
+    directory = _base_dir(tmp_path)
+    fifo = directory / "manifest.json"
+    fifo.unlink()
+    os.mkfifo(fifo)
+    assert call_with_fifo_timeout(fifo, lambda: read_floor_manifest(directory)) is None
+
+
+@pytest.mark.parametrize("relative", ["manifest.json", "current/k/a.yaml"])
+def test_floor_verification_refuses_a_fifo_swapped_after_stat(tmp_path, monkeypatch, relative):
+    from tests.support.fifos import call_with_fifo_timeout
+
+    directory = _base_dir(tmp_path)
+    fifo = directory / relative
+    parent_identity = fifo.parent.stat().st_ino
+    open_file = os.open
+    swapped = False
+
+    def open_at(path, flags, mode=0o777, *, dir_fd=None):
+        nonlocal swapped
+        if (
+            not swapped
+            and path == fifo.name
+            and dir_fd is not None
+            and os.fstat(dir_fd).st_ino == parent_identity
+        ):
+            fifo.unlink()
+            os.mkfifo(fifo)
+            swapped = True
+        return open_file(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(floor_apply.os, "open", open_at)
+    with pytest.raises(PlaybillFloorApplyError, match="not a regular file"):
+        call_with_fifo_timeout(fifo, lambda: apply_floor_delta(directory, _delta()))
+    assert swapped

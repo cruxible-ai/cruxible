@@ -57,7 +57,6 @@ from cruxible_client.contracts.procedure_runtime_policy import (
     ProcedureRuntimePolicyV1,
 )
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContractV1
-from cruxible_client.contracts.procedures.line_specs import TriggerPolicyV2
 from cruxible_client.contracts.procedures.models import ProcedureHardCapsV3
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.proposal_models import (
@@ -72,6 +71,7 @@ from cruxible_client.contracts.resolution_contracts import ResolutionContractV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
+from cruxible_client.contracts.triggers import InternalActionName, TriggerScheduleV1
 from cruxible_client.contracts.types import CompilerCoordinate
 from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
@@ -100,7 +100,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:71a3ea89690aab6b1f93d1b197f852a101de100566a463109ae2915702fc98d7"
+    "sha256:8b7bcd0e7f85e94992b8784c0fd59d9cee846324766128642ebd4f5e9c160805"
 )
 INSERTION_EXPECTATION_ID_DOMAIN = "playbill-insertion-expectation-id-v1"
 INSERTION_RESULT_KEY_DOMAIN = "playbill-insertion-result-key-v1"
@@ -1034,6 +1034,9 @@ class LineAuthoringPayloadV1(_StrictAuthoringModel):
     policy is required only when the Procedure acquires (has Source or exhaust
     nodes); a pure-compute Line pins none. ``parameters`` is the Procedure's
     input record, checked against its input Contract when the Line lowers.
+    When the Line runs is not its own: Triggers aim at it. ``trigger_input``
+    binds the triggering Capture to one Source input, and lowering declares the
+    exact event that input accepts from its CaptureContract.
     """
 
     tag: Literal["playbill-line-authoring-payload-v1"] = "playbill-line-authoring-payload-v1"
@@ -1042,7 +1045,6 @@ class LineAuthoringPayloadV1(_StrictAuthoringModel):
     acquisition_policy_name: str | None = None
     # Caps this Line below its Procedure's capability; omitted, it is that capability.
     max_authority: Literal["observe", "propose", "settle"] | None = None
-    trigger_policy: TriggerPolicyV2
     trigger_input: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
     parameters: object = Field(default_factory=dict)
     budgets: dict[str, int] | None = None
@@ -1061,6 +1063,34 @@ class LineAuthoringPayloadV1(_StrictAuthoringModel):
     @classmethod
     def _canonical(cls, value: object) -> object:
         return normalize_canonical(value)
+
+
+class TriggerAuthoringPayloadV1(_StrictAuthoringModel):
+    """Decision-only Trigger input: a schedule and exactly one target.
+
+    ``line_name`` names an accepted or same-set Line, which lowering refers to by
+    identity; ``action`` names an internal action instead.
+    """
+
+    tag: Literal["playbill-trigger-authoring-payload-v1"] = "playbill-trigger-authoring-payload-v1"
+    name: str
+    schedule: TriggerScheduleV1
+    line_name: str | None = None
+    action: InternalActionName | None = None
+    retire: bool = False
+
+    @field_validator("name", "line_name")
+    @classmethod
+    def _names(cls, value: str | None) -> str | None:
+        if value is not None and (not value or value.strip() != value):
+            raise ValueError("Trigger authoring names must be nonblank and normalized")
+        return value
+
+    @model_validator(mode="after")
+    def _one_target(self) -> "TriggerAuthoringPayloadV1":
+        if (self.line_name is None) == (self.action is None):
+            raise ValueError("a Trigger names exactly one target: line_name or action")
+        return self
 
 
 class ProcedureAuthoringPayloadV1(_StrictAuthoringModel):
@@ -1363,6 +1393,7 @@ AuthoringChangeSetMemberV1: TypeAlias = Annotated[
     | CaptureContractAuthoringPayloadV1
     | SourceAcquisitionPolicyAuthoringPayloadV1
     | LineAuthoringPayloadV1
+    | TriggerAuthoringPayloadV1
     | ProcedureAuthoringPayloadV1
     | ProcedureAuthoringPayloadV2,
     Field(discriminator="tag"),
@@ -1420,6 +1451,8 @@ def authoring_member_identity(payload: AuthoringChangeSetMemberV1) -> str:
         return f"SourceAcquisitionPolicy:{payload.acquisition_policy.identity.name}"
     if isinstance(payload, LineAuthoringPayloadV1):
         return f"Line:{payload.name}"
+    if isinstance(payload, TriggerAuthoringPayloadV1):
+        return f"Trigger:{payload.name}"
     return f"Procedure:{payload.definition['name']}"
 
 
@@ -1508,6 +1541,7 @@ AuthoringPayloadV1 = Annotated[
     | CaptureContractAuthoringPayloadV1
     | SourceAcquisitionPolicyAuthoringPayloadV1
     | LineAuthoringPayloadV1
+    | TriggerAuthoringPayloadV1
     | ChangeSetAuthoringPayloadV1,
     Field(discriminator="tag"),
 ]
@@ -3033,6 +3067,7 @@ __all__ = [
     "MandateConditionAuthoringV1",
     "MandateScopeAuthoringV1",
     "ProcedureMandateAuthoringPayloadV1",
+    "TriggerAuthoringPayloadV1",
     "QueryDefinitionAuthoringPayloadV1",
     "AttestationAuthoringPayloadV1",
     "ResolutionContractAuthoringPayloadV1",

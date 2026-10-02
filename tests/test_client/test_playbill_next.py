@@ -29,6 +29,7 @@ HEALTHY_STATUS = {
     "compiler": {"tag": "playbill-next-health-v1", "state": "current"},
     "line_dispatch": {"tag": "playbill-next-health-v1", "state": "idle"},
     "consumers": {"tag": "playbill-next-health-v1", "state": "current"},
+    "triggers": {"tag": "playbill-next-health-v1", "state": "scheduled"},
     "held": 0,
 }
 HAND_EDIT = {

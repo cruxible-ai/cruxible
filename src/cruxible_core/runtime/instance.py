@@ -13,6 +13,7 @@ import time
 from collections import OrderedDict
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
+from contextvars import Context
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -76,6 +77,7 @@ from cruxible_core.compiler.assembler import ProjectionAssembler
 from cruxible_core.compiler.compiler import (
     PC_HR_ARTIFACT_CODEC_COMPILERS,
     SUPPORTED_COMPILERS,
+    artifact_kinds_for_compiler,
     current_compiler_coordinate,
 )
 from cruxible_core.compiler.projection_artifacts import (
@@ -124,6 +126,7 @@ from cruxible_core.ledger.bootstrap import (
     VerifiedGenesis,
     prepare_genesis,
     seeded_procedure_runtime_policy,
+    seeded_triggers,
     verify_genesis,
 )
 from cruxible_core.ledger.checkpoints import (
@@ -460,6 +463,18 @@ class PlaybillInstance:
                     )
                 ),
                 procedure_runtime_policy=seeded_procedure_runtime_policy(),
+                # A compiler that admits Triggers starts the instance with the
+                # default internal-action Triggers; they are governed from here on.
+                triggers=(
+                    seeded_triggers()
+                    if any(
+                        entry.kind == "trigger"
+                        for entry in artifact_kinds_for_compiler(
+                            current_compiler_coordinate()
+                        ).entries()
+                    )
+                    else ()
+                ),
                 timestamp=commit_timestamp,
             )
             descriptor = PlaybillDescriptor(
@@ -960,7 +975,8 @@ class PlaybillInstance:
             with self._mirror_condition:
                 if self._mirror_thread is None or not self._mirror_thread.is_alive():
                     self._mirror_thread = threading.Thread(
-                        target=self._run_ledger_publisher,
+                        target=Context().run,
+                        args=(self._run_ledger_publisher,),
                         name=f"ledger-publisher-{self.descriptor.instance_id}",
                         daemon=True,
                     )
@@ -1073,7 +1089,8 @@ class PlaybillInstance:
                     or current.requested_sequence > observed[1]
                 ):
                     self._mirror_thread = threading.Thread(
-                        target=self._run_ledger_publisher,
+                        target=Context().run,
+                        args=(self._run_ledger_publisher,),
                         name=f"ledger-publisher-{self.descriptor.instance_id}",
                         daemon=True,
                     )
@@ -1402,7 +1419,8 @@ class PlaybillInstance:
         # Not a daemon thread: a short-lived process finishes the refresh it
         # queued before the interpreter exits.
         thread = threading.Thread(
-            target=self._run_workspace_advertiser,
+            target=Context().run,
+            args=(self._run_workspace_advertiser,),
             name=f"workspace-advertiser-{self.descriptor.instance_id}",
         )
         try:
@@ -2055,6 +2073,20 @@ class PlaybillInstance:
             # serving or rewriting the accepted record/receipt.
             assembler.assemble(request)
         return self._projection_sources(bind_projection(manifest_path, expected=verified))
+
+    @contextmanager
+    def holding_accepted_head(self) -> Iterator[str]:
+        """Hold accepted main still and yield its commit, for one short critical section.
+
+        Takes the locks every acceptance takes, in the same order (this
+        instance's state lock, then the ledger activation lock), so no
+        activation in this or any other process can move main until exit and
+        the hold cannot deadlock against one. The body must not accept,
+        activate or refresh, and must not wait on a thread that does.
+        """
+
+        with self._state_lock, self._ledger.activation_lock():
+            yield self._ledger.read_main()
 
     def refresh(self, *, witness: WitnessSink | None = None) -> AcceptedProjectionCoordinate:
         """Replay accepted state and repair publication, excluding concurrent writers."""

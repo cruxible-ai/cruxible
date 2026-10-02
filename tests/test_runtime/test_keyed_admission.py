@@ -10,6 +10,7 @@ import weakref
 
 import pytest
 
+from cruxible_core.errors import FloorAdmissionMisuse
 from cruxible_core.runtime.admission import KeyedAdmission
 
 
@@ -288,7 +289,7 @@ def test_hold_refuses_to_block_a_running_loop() -> None:
     admission = KeyedAdmission()
 
     async def run() -> None:
-        with pytest.raises(RuntimeError, match="event loop"):
+        with pytest.raises(FloorAdmissionMisuse, match="event loop"):
             with admission.hold("inst_a"):
                 pass  # pragma: no cover - refused before entry
 
@@ -297,8 +298,87 @@ def test_hold_refuses_to_block_a_running_loop() -> None:
 
 
 def test_the_floor_admission_is_one_shared_object() -> None:
+    from cruxible_core.consumers import floor
     from cruxible_core.runtime import admission as module
+    from cruxible_core.runtime import host_api
     from cruxible_core.server.routes import playbill as routes
 
     assert isinstance(module.FLOOR_ADMISSION, KeyedAdmission)
     assert routes.FLOOR_ADMISSION is module.FLOOR_ADMISSION
+    # Daemon floor delivery and attachment changes take the same object.
+    assert floor.FLOOR_ADMISSION is module.FLOOR_ADMISSION
+    assert host_api.FLOOR_ADMISSION is module.FLOOR_ADMISSION
+
+
+@pytest.mark.parametrize("owner", ["hold", "ticket"])
+@pytest.mark.parametrize("nested", ["hold", "admit"])
+def test_same_thread_reentry_refuses_before_queueing(monkeypatch, owner, nested):
+    admission = KeyedAdmission()
+
+    def callee():
+        def must_not_enter(*args, **kwargs):
+            pytest.fail("re-entry queued behind the thread's own key")
+
+        async def readmit():
+            async with admission.admit("inst_reentrant"):
+                pytest.fail("re-entry was admitted")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(admission, "_enter", must_not_enter)
+            with pytest.raises(FloorAdmissionMisuse, match="same key is not re-entrant"):
+                if nested == "hold":
+                    with admission.hold("inst_reentrant"):
+                        pytest.fail("re-entry was admitted")
+                else:
+                    # A ticket's worker can run a loop of its own; it must not
+                    # wait for the key the enclosing synchronous call owns.
+                    asyncio.run(readmit())
+        assert admission.active_keys() == 1
+
+    async def route():
+        async with admission.admit("inst_reentrant") as ticket:
+            await asyncio.to_thread(ticket.run, callee)
+
+    if owner == "hold":
+        with admission.hold("inst_reentrant"):
+            callee()
+    else:
+        asyncio.run(route())
+    assert admission.active_keys() == 0
+    # A refusal does not poison ownership or the admission for later callers.
+    with admission.hold("inst_reentrant"):
+        pass
+    assert admission.active_keys() == 0
+
+
+def test_thread_ownership_allows_other_keys_and_cleans_up_after_failure():
+    from concurrent.futures import ThreadPoolExecutor
+
+    admission = KeyedAdmission()
+    threads = []
+
+    def callee():
+        threads.append(threading.get_ident())
+        with admission.hold("inst_other"):
+            assert admission.active_keys() == 2
+        raise ValueError("worker failed")
+
+    def reuse():
+        threads.append(threading.get_ident())
+        with admission.hold("inst_owner"):
+            with admission.hold("inst_other"):
+                assert admission.active_keys() == 2
+
+    async def route(pool):
+        loop = asyncio.get_running_loop()
+        async with admission.admit("inst_owner") as ticket:
+            with pytest.raises(ValueError, match="worker failed"):
+                await loop.run_in_executor(pool, ticket.run, callee)
+        assert admission.active_keys() == 0
+        # Reuse the same physical worker after ticket failure, with no ticket.
+        await loop.run_in_executor(pool, reuse)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        asyncio.run(route(pool))
+    assert len(threads) == 2 and threads[0] == threads[1]
+    assert admission.active_keys() == 0

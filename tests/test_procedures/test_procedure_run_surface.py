@@ -17,6 +17,7 @@ from cruxible_client.contracts.acquisition_policies import (
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.errors import PlaybillExecutionError
 from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandateV1,
     procedure_mandate_digest,
@@ -40,8 +41,7 @@ from cruxible_client.contracts.procedures.graph import (
 )
 from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpecV1,
-    CadenceTriggerPolicyV1,
-    LineSpecV1,
+    LineSpecV6,
     line_identity_digest,
     line_spec_digest,
     line_spec_path,
@@ -75,6 +75,15 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureRunReceiptV3,
 )
 from cruxible_client.contracts.query.definitions import query_definition_digest
+from cruxible_client.contracts.triggers import (
+    AcceptedTriggerV1,
+    CadenceScheduleV1,
+    CaptureLandingScheduleV1,
+    TriggerV1,
+    WindowCloseScheduleV1,
+    trigger_digest,
+    trigger_path,
+)
 from cruxible_core.exhaust import ProcedureExhaustWriter, parse_journal_payload
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.indexes.projection import AcceptedCoordinate
@@ -116,6 +125,7 @@ from tests.core_support._knowledge_loop_support import (
     work_item_query,
 )
 from tests.core_support._support import FIXED_TIMESTAMP, initialize_local
+from tests.support.lines import graph_v4, line_trigger, trigger_members
 from tests.test_integration.test_graph_v4_provider_closure import (
     _accepted_procedure as _accepted_provider_v4_procedure,
 )
@@ -356,19 +366,19 @@ def _slotless_procedure(name: str) -> AcceptedProcedureV1:
     )
 
 
-def _scheduled_line(name: str, *, trigger, accepted: AcceptedProcedureV1) -> LineSpecV1:  # type: ignore[no-untyped-def]
-    return LineSpecV1(
+def _scheduled_line(name: str, *, accepted: AcceptedProcedureV1) -> LineSpecV6:
+    procedure_pin = ArtifactPin(
+        role="procedure",
+        target=accepted.procedure.identity,
+        artifact_digest=accepted.artifact_digest,
+    )
+    return LineSpecV6(
         identity=ArtifactIdentity(kind="Line", name=name),
         occurrence_epoch=1,
-        procedure=ArtifactPin(
-            role="procedure",
-            target=accepted.procedure.identity,
-            artifact_digest=accepted.artifact_digest,
-        ),
+        procedure=procedure_pin,
         parameters={"status": "open"},
         slot_bindings=(),
-        trigger_policy=trigger,
-        requested_terminal_rung=2,  # type: ignore[arg-type]
+        max_authority="propose",
         budgets={
             "max_capture_bytes": 0,
             "max_items": 100,
@@ -376,26 +386,16 @@ def _scheduled_line(name: str, *, trigger, accepted: AcceptedProcedureV1) -> Lin
             "max_wall_clock_microseconds": 1_000_000,
         },
         epsilon={"$decimal": "0.1"},
-        pins=(
-            ArtifactPin(
-                role="procedure",
-                target=accepted.procedure.identity,
-                artifact_digest=accepted.artifact_digest,
-            ),
-            ArtifactPin(
-                role=(
-                    "trigger-cadence-policy"
-                    if isinstance(trigger, CadenceTriggerPolicyV1)
-                    else "trigger-window-policy"
-                ),
-                target=ArtifactIdentity(kind="Policy", name=f"{name}-policy"),
-                artifact_digest=(
-                    trigger.cadence_policy_digest
-                    if isinstance(trigger, CadenceTriggerPolicyV1)
-                    else trigger.window_policy_digest
-                ),
-            ),
-        ),
+        pins=(procedure_pin,),
+        provider_implementation_closures=(),
+    )
+
+
+def _accepted_trigger(trigger: TriggerV1) -> AcceptedTriggerV1:
+    return AcceptedTriggerV1(
+        path=trigger_path(trigger.identity.name),
+        trigger=trigger,
+        artifact_digest=trigger_digest(trigger).tagged,
     )
 
 
@@ -406,14 +406,16 @@ def _accept_line_tree(
     line,  # type: ignore[no-untyped-def]
     accepted,  # type: ignore[no-untyped-def]
     proposal_name: str,
+    triggers: tuple[TriggerV1, ...] = (),
 ) -> AcceptedLineSpecV1:
-    """Accept one Line and its bound Procedure into a real accepted tree."""
+    """Accept one Line, its bound Procedure and the Triggers aimed at it."""
 
     inspection = submit_member_candidate(
         instance,
         members={
             accepted.path: render_procedure(accepted.procedure),
             line_spec_path(line.identity.name): render_line_spec(line),
+            **trigger_members(*triggers),
         },
         actor_id="owner",
         proposal_name=proposal_name,
@@ -439,50 +441,40 @@ def test_daemon_derives_manual_and_capture_occurrences() -> None:
     assert first.startswith("sha256:")
     assert next_due is None
 
-    from cruxible_client.contracts.procedures.line_specs import (
-        CaptureLandingTriggerPolicyV2,
-        LineSpecV3,
-    )
     from cruxible_client.contracts.procedures.windows import (
         CaptureEventSelectorV1,
         LineTriggerBindingV1,
         TriggerEventReferenceV1,
     )
-    from tests.test_integration.test_graph_v4_provider_closure import _line as graph_line
 
-    base = graph_line()
     selector = CaptureEventSelectorV1(
         capture_contract_identity=ArtifactIdentity(kind="CaptureContract", name="anchor"),
         capture_contract_digest=_line_digest("anchor"),
     )
-    pin = ArtifactPin(
-        role="trigger-capture-contract",
-        target=selector.capture_contract_identity,
-        artifact_digest=selector.capture_contract_digest,
+    trigger = _accepted_trigger(
+        line_trigger(
+            "anchor-landed",
+            line=manual.identity.name,
+            schedule=CaptureLandingScheduleV1(event=selector),
+        )
     )
-    payload = base.model_dump()
-    payload.update(
-        artifact_format="playbill-line-v3",
-        trigger_policy=CaptureLandingTriggerPolicyV2(event=selector),
-        pins=tuple(
-            sorted((*base.pins, pin), key=lambda p: (p.role, p.target.qualified, p.artifact_digest))
-        ),
-    )
-    line = _accepted_line(LineSpecV3.model_validate(payload))
     ref = TriggerEventReferenceV1(
         run_id="RUN-anchor",
         partition_id="run:anchor",
         sequence=1,
         record_digest=_line_digest("event"),
     )
-    binding = LineTriggerBindingV1(kind="capture_landing", event=ref)
+    binding = LineTriggerBindingV1(
+        kind="capture_landing", trigger=trigger.trigger.identity, event=ref
+    )
     first = procedure_run_service._line_occurrence(
-        line, evaluation_time=READ_TIME, prior=(), binding=binding
+        manual_line, evaluation_time=READ_TIME, prior=(), trigger=trigger, binding=binding
     )
     later = procedure_run_service._line_occurrence(
-        line,
+        manual_line,
         evaluation_time=READ_TIME + timedelta(days=1),
         prior=(),
+        trigger=trigger,
         binding=binding,
     )
     assert first == later
@@ -492,26 +484,44 @@ def test_daemon_derives_manual_and_capture_occurrences() -> None:
     )
     assert (
         procedure_run_service._line_occurrence(
-            line, evaluation_time=READ_TIME, prior=(), binding=other
+            manual_line, evaluation_time=READ_TIME, prior=(), trigger=trigger, binding=other
         )[0]
         != first[0]
     )
+    # A second Trigger firing on the very same event is its own occurrence.
+    twin = _accepted_trigger(
+        line_trigger(
+            "anchor-landed-twin",
+            line=manual.identity.name,
+            schedule=CaptureLandingScheduleV1(event=selector),
+        )
+    )
+    twin_binding = binding.model_copy(update={"trigger": twin.trigger.identity})
+    assert (
+        procedure_run_service._line_occurrence(
+            manual_line, evaluation_time=READ_TIME, prior=(), trigger=twin, binding=twin_binding
+        )[0]
+        != first[0]
+    )
+    # A binding names the Trigger it came from; another Trigger's binding refuses.
+    with pytest.raises(PlaybillExecutionError, match="exact tick"):
+        procedure_run_service._line_occurrence(
+            manual_line, evaluation_time=READ_TIME, prior=(), trigger=trigger, binding=twin_binding
+        )
 
 
 def test_a_cadence_line_admits_two_occurrences_one_period_apart_over_a_real_tree(
     tmp_path: Path,
 ) -> None:
-    """The period is read from the accepted artifact, never a fabricated path."""
+    """The period is read from the accepted Trigger, never a fabricated path."""
 
     instance, owner = initialize_local(tmp_path)
-    accepted = _slotless_procedure("scheduled-triage")
-    line = _scheduled_line(
-        "scheduled-triage-hourly",
-        trigger=CadenceTriggerPolicyV1(
-            cadence_policy_digest=_line_digest("hourly"),
-            interval_seconds=3600,
-        ),
-        accepted=accepted,
+    accepted = graph_v4(_slotless_procedure("scheduled-triage"))
+    line = _scheduled_line("scheduled-triage-hourly", accepted=accepted)
+    hourly = line_trigger(
+        "scheduled-triage-hourly-tick",
+        line=line.identity.name,
+        schedule=CadenceScheduleV1(interval_seconds=3600),
     )
     accepted_line = _accept_line_tree(
         instance,
@@ -519,37 +529,55 @@ def test_a_cadence_line_admits_two_occurrences_one_period_apart_over_a_real_tree
         line=line,
         accepted=accepted,
         proposal_name="cadence-line",
+        triggers=(hourly,),
     )
-    # The Line really is in the accepted tree, and the invented `policies/`
-    # directory the period used to be read from is not.
+    # The Line and its Trigger really are in the accepted tree, and the invented
+    # `policies/` directory the period used to be read from is not.
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     assert accepted_line.path in tree
+    assert trigger_path(hourly.identity.name) in tree
     assert [path for path in tree if path.startswith("policies/")] == []
+    (trigger,) = procedure_run_service.line_triggers(
+        instance, accepted_line, coordinate=instance.accepted_coordinate()
+    )
+    binding = procedure_run_service.trigger_binding_for(trigger)
+    accepted_at = procedure_run_service.trigger_accepted_at(instance, trigger)
 
+    # The first tick is one period after the Trigger's acceptance, never on sight.
     first, next_due = procedure_run_service._line_occurrence(  # noqa: SLF001
         accepted_line,
-        evaluation_time=READ_TIME,
+        evaluation_time=accepted_at + timedelta(minutes=5),
         prior=(),
+        trigger=trigger,
+        binding=binding,
+        accepted_at=accepted_at,
     )
-    assert next_due is None
+    assert next_due == accepted_at + timedelta(hours=1)
 
+    ticked = accepted_at + timedelta(hours=1)
     prior = SimpleNamespace(
-        occurrence_evaluation_time=READ_TIME,
+        occurrence_evaluation_time=ticked,
         bound_coordinate=SimpleNamespace(git_oid="9" * 40),
     )
     _early, next_due = procedure_run_service._line_occurrence(  # noqa: SLF001
         accepted_line,
-        evaluation_time=READ_TIME + timedelta(minutes=30),
+        evaluation_time=ticked + timedelta(minutes=30),
         prior=(prior,),  # type: ignore[arg-type]
+        trigger=trigger,
+        binding=binding,
+        accepted_at=accepted_at,
     )
-    assert next_due == READ_TIME + timedelta(hours=1)
+    assert next_due == ticked + timedelta(hours=1)
 
     second, next_due = procedure_run_service._line_occurrence(  # noqa: SLF001
         accepted_line,
-        evaluation_time=READ_TIME + timedelta(hours=1),
+        evaluation_time=ticked + timedelta(hours=1),
         prior=(prior,),  # type: ignore[arg-type]
+        trigger=trigger,
+        binding=binding,
+        accepted_at=accepted_at,
     )
-    assert next_due == READ_TIME + timedelta(hours=1)
+    assert next_due == ticked + timedelta(hours=1)
     assert second != first
 
 
@@ -557,15 +585,21 @@ def test_warm_line_admission_uses_selected_sources_without_tree_inventory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     instance, owner = initialize_local(tmp_path)
-    procedure = _slotless_procedure("selected-line-procedure")
-    line = _scheduled_line(
-        "selected-line",
-        trigger=CadenceTriggerPolicyV1(
-            cadence_policy_digest=_line_digest("hourly"), interval_seconds=3600
-        ),
-        accepted=procedure,
+    procedure = graph_v4(_slotless_procedure("selected-line-procedure"))
+    line = _scheduled_line("selected-line", accepted=procedure)
+    hourly = line_trigger(
+        "selected-line-tick",
+        line=line.identity.name,
+        schedule=CadenceScheduleV1(interval_seconds=3600),
     )
-    _accept_line_tree(instance, owner, line=line, accepted=procedure, proposal_name="selected-line")
+    _accept_line_tree(
+        instance,
+        owner,
+        line=line,
+        accepted=procedure,
+        proposal_name="selected-line",
+        triggers=(hourly,),
+    )
     with instance.accepted_history_reader():
         pass
 
@@ -578,7 +612,11 @@ def test_warm_line_admission_uses_selected_sources_without_tree_inventory(
     result = procedure_run_service.service_run_playbill_line(
         instance,
         path_identity_digest=digest,
-        request=LineRunRequestV1(line_identity_digest=digest, evaluation_time=READ_TIME),
+        request=LineRunRequestV1(
+            line_identity_digest=digest,
+            trigger=hourly.identity.name,
+            evaluation_time=READ_TIME,
+        ),
         actor_context=_actor(instance),
         caller_rung=3,
         daemon_clock=_DAEMON_CLOCK,
@@ -593,13 +631,13 @@ def test_a_caller_cannot_walk_the_cadence_by_advancing_the_claimed_instant(
     """The reviewer's probe: five hourly occurrences in zero wall time."""
 
     instance, _owner = initialize_local(tmp_path)
-    line, accepted, _interfaces = _line(
-        trigger=CadenceTriggerPolicyV1(
-            cadence_policy_digest=_line_digest("hourly"),
-            interval_seconds=3600,
+    line, accepted, _interfaces = _line()
+    accepted_line = _accepted_line(line)
+    trigger = _accepted_trigger(
+        line_trigger(
+            "hourly", line=line.identity.name, schedule=CadenceScheduleV1(interval_seconds=3600)
         )
     )
-    accepted_line = _accepted_line(line)
     digest = line_identity_digest(line.identity)
 
     with pytest.raises(procedure_run_service.LineRunEvaluationInstantSkewed) as caught:
@@ -608,6 +646,7 @@ def test_a_caller_cannot_walk_the_cadence_by_advancing_the_claimed_instant(
             path_identity_digest=digest,
             request=LineRunRequestV1(
                 line_identity_digest=digest,
+                trigger="hourly",
                 evaluation_time=READ_TIME + timedelta(hours=5),
             ),
             actor_context=_actor(instance),
@@ -623,37 +662,39 @@ def test_a_caller_cannot_walk_the_cadence_by_advancing_the_claimed_instant(
         accepted_line,
         evaluation_time=READ_TIME,
         prior=(),
+        trigger=trigger,
+        binding=procedure_run_service.trigger_binding_for(trigger),
+        accepted_at=READ_TIME - timedelta(hours=1),
     )
     assert inside[0].startswith("sha256:")
 
 
 def test_a_window_line_has_fixed_boundary_even_when_dispatch_is_late(tmp_path: Path) -> None:
-    from cruxible_client.contracts.procedures.line_specs import (
-        LineSpecV3,
-        WindowCloseTriggerPolicyV2,
-    )
     from cruxible_client.contracts.procedures.windows import (
         FixedWindowV1,
-        LineTriggerBindingV1,
         bind_observation_window,
     )
-    from tests.test_integration.test_graph_v4_provider_closure import _line as graph_line
 
-    base = graph_line()
+    manual, _accepted, _interfaces = _line()
+    line = _accepted_line(manual)
     window = FixedWindowV1(starts_at=READ_TIME, duration_seconds=86400)
-    payload = base.model_dump()
-    payload.update(
-        artifact_format="playbill-line-v3", trigger_policy=WindowCloseTriggerPolicyV2(window=window)
+    trigger = _accepted_trigger(
+        line_trigger(
+            "daily-window",
+            line=manual.identity.name,
+            schedule=WindowCloseScheduleV1(window=window),
+        )
     )
-    line = _accepted_line(LineSpecV3.model_validate(payload))
-    bound = bind_observation_window(window)
-    binding = LineTriggerBindingV1(kind="window_close", window=bound)
+    binding = procedure_run_service.trigger_binding_for(
+        trigger, window=bind_observation_window(window)
+    )
     prior = SimpleNamespace(occurrence_evaluation_time=READ_TIME + timedelta(hours=6))
     results = [
         procedure_run_service._line_occurrence(
             line,
             evaluation_time=at,
             prior=(prior,),
+            trigger=trigger,
             binding=binding,
         )
         for at in (READ_TIME, READ_TIME + timedelta(days=1), READ_TIME + timedelta(days=3))

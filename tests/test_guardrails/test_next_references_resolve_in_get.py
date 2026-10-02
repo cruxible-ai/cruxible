@@ -137,7 +137,7 @@ def test_prediction_and_capture_references_resolve(
 ) -> None:
     from tests.test_consumers.test_prediction_settlement import FIXED_CLOSES, drain, fixed_world
 
-    from cruxible_core.consumers import evidence
+    from cruxible_core.consumers.next import evidence
 
     instance, _owner, capture_digest, _contract = fixed_world(tmp_path)
     drain(instance, now=FIXED_CLOSES + timedelta(minutes=1))

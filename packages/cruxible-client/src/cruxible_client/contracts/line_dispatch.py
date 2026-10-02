@@ -44,6 +44,14 @@ class LineTriggerCheckRequestV1(BaseModel):
         return self
 
 
+class LineTriggerVersionV1(BaseModel):
+    """One exact version of a live Trigger aimed at a Line."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    trigger: str
+    artifact_digest: str
+
+
 class LineTriggerOccurrenceV1(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     occurrence_id: str
@@ -62,6 +70,8 @@ class LineTriggerCheckResultV1(BaseModel):
     line_identity_digest: str
     line_artifact_digest: str
     occurrence_epoch: int
+    #: The live Triggers aimed at the Line that this check evaluated.
+    triggers: tuple[LineTriggerVersionV1, ...] = ()
     coordinate: AcceptedCoordinate
     status: Literal["met", "not_met", "incomplete"]
     occurrences: tuple[LineTriggerOccurrenceV1, ...] = ()
@@ -87,7 +97,8 @@ class LineDispatchRequestV1(BaseModel):
         default=False,
         description=(
             "Explicitly retry one closed or blocked occurrence against "
-            "the current Line version in the same epoch."
+            "the current Line version in the same epoch, while its Trigger still "
+            "aims at the Line unchanged."
         ),
     )
 
@@ -99,11 +110,12 @@ class LineDispatchRequestV1(BaseModel):
 
 
 #: Why an arm stopped admitting work on its own. Every reason but `disarmed`
-#: is the daemon noticing that the authority or Line the arm was bound to no
-#: longer holds; rearming is the explicit way back.
+#: is the daemon noticing that the authority, Line or Triggers the arm was
+#: bound to no longer hold; rearming is the explicit way back.
 LineArmStopReasonV1 = Literal[
     "disarmed",
     "line_changed",
+    "trigger_changed",
     "epoch_changed",
     "credential_revoked",
     "credential_unbound",
@@ -163,9 +175,10 @@ class LineArmV1(BaseModel):
     """One Line's automatic dispatch: armed forward-only, or why it stopped.
 
     An armed Line admits the occurrences its daemon matched since it was armed
-    or last restarted, under the pinned Line version and the arming credential.
-    Occurrences matched before a restart, or by explicit evaluation, stay
-    pending for explicit dispatch.
+    or last restarted, under the pinned Line version, the exact Trigger versions
+    aimed at it when it was armed, and the arming credential. Occurrences
+    matched before a restart, or by explicit evaluation, stay pending for
+    explicit dispatch.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -173,6 +186,9 @@ class LineArmV1(BaseModel):
     line: str
     line_artifact_digest: str
     occurrence_epoch: int
+    #: The Trigger versions the arm matches; any change to the Triggers aimed
+    #: at the Line stops it (`trigger_changed`).
+    triggers: tuple[LineTriggerVersionV1, ...] = ()
     state: Literal["armed", "stopped"]
     armed_at: datetime = Field(description="Reads VALIDITY WINDOW.")
     armed_by: LineArmPrincipalV1

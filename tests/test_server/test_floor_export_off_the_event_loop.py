@@ -27,13 +27,15 @@ from fastapi.testclient import TestClient
 
 from cruxible_client import contracts
 from cruxible_client.contracts.floor import PlaybillFloorDeltaV1
+from cruxible_core.errors import FloorAdmissionMisuse
 from cruxible_core.mcp.permissions import reset_permissions
 from cruxible_core.runtime import playbill_api
-from cruxible_core.runtime.admission import FLOOR_ADMISSION
+from cruxible_core.runtime.admission import FLOOR_ADMISSION, HTTP_REQUEST_CONTEXT
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import reset_registry
+from cruxible_core.server.request_context import HTTPRequestContextMiddleware
 from cruxible_core.server.routes import playbill as playbill_routes
 from tests.support.floor_exports import floor_v5_delta
 
@@ -519,6 +521,376 @@ def test_a_route_cancelled_before_its_worker_starts_releases_the_key() -> None:
         return ticket
 
     ticket = asyncio.run(scenario())
-    with pytest.raises(RuntimeError, match="left before its call started"):
+    with pytest.raises(FloorAdmissionMisuse, match="left before its call started"):
         ticket.run(lambda: ran.append("late"))
     assert ran == [] and admission.active_keys() == 0
+
+
+def test_attachment_and_delivery_requests_wait_without_worker_tokens(monkeypatch):
+    """Pause an admitted export before offload, then queue two pool-sized toggles.
+
+    A synchronous route reaching hold would occupy both workers, preventing the
+    export from starting. Delta, deliver-now and detach share that same queue.
+    """
+    import asyncio
+    from types import SimpleNamespace
+
+    import httpx
+    from fastapi import FastAPI
+
+    from cruxible_core.consumers import floor
+    from cruxible_core.runtime import host_api
+    from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND
+    from cruxible_core.server.routes import hosted_instances
+
+    record = SimpleNamespace(
+        backend=GOVERNED_DAEMON_BACKEND, workspace_root="/workspace", floor_delivery=True
+    )
+
+    def toggle(instance_id, enabled):
+        record.floor_delivery = enabled
+
+    def detach(instance_id, **kwargs):
+        return SimpleNamespace(workspace_root=None)
+
+    registry = SimpleNamespace(
+        get=lambda _: record, set_floor_delivery=toggle, detach_governed_workspace=detach
+    )
+    monkeypatch.setattr(host_api, "get_registry", lambda: registry)
+    monkeypatch.setattr(host_api, "check_permission", lambda *a, **kw: None)
+    monkeypatch.setattr(host_api, "_refuse_detach_with_registered_blocks", lambda _: None)
+    monkeypatch.setattr(
+        host_api, "get_playbill_manager", lambda: SimpleNamespace(get=lambda _: None)
+    )
+    monkeypatch.setattr(
+        hosted_instances, "resolve_server_settings", lambda: SimpleNamespace(server_socket="socket")
+    )
+    for routes in (playbill_routes, hosted_instances):
+        monkeypatch.setattr(routes, "resolve_server_instance_id", lambda value: value)
+    delta = floor_v5_delta({}, coordinate=_COORDINATE, generation=1)
+    delivered = contracts.PlaybillFloorDeliveryResultV1(
+        delta=delta,
+        written=contracts.PlaybillWorkspaceFloorWriteResult(
+            path=".playbill/floor",
+            destination="/workspace/.playbill/floor",
+            floor_digest=_DIGEST,
+            coordinate=_COORDINATE,
+            file_count=1,
+        ),
+    )
+    monkeypatch.setattr(floor, "_refresh_floor_admitted", lambda *a, **kw: delivered)
+    monkeypatch.setattr(playbill_api, "playbill_floor_delta", lambda *a, **kw: delta)
+    monkeypatch.setattr(
+        playbill_api,
+        "playbill_export_floor",
+        lambda *a, **kw: contracts.PlaybillFloorExport(
+            tag="playbill-floor-export-v5", coordinate=_COORDINATE, manifest={}, files=[]
+        ),
+    )
+    app = FastAPI()
+    app.add_middleware(HTTPRequestContextMiddleware)
+    app.include_router(playbill_routes.router)
+    app.include_router(hosted_instances.router)
+    offload = playbill_routes.run_in_threadpool
+    enter = FLOOR_ADMISSION._enter
+
+    async def scenario():
+        admitted = asyncio.Event()
+        release = asyncio.Event()
+        toggles_queued = asyncio.Event()
+        arrivals = 0
+        loop = asyncio.get_running_loop()
+
+        def observe(*args, **kwargs):
+            nonlocal arrivals
+            waiter = enter(*args, **kwargs)
+            arrivals += 1
+            if arrivals >= 3:
+                loop.call_soon_threadsafe(toggles_queued.set)
+            return waiter
+
+        async def pause(call, *args, **kwargs):
+            if getattr(call, "__name__", None) == "run":
+                admitted.set()
+                await release.wait()
+            return await offload(call, *args, **kwargs)
+
+        monkeypatch.setattr(FLOOR_ADMISSION, "_enter", observe)
+        monkeypatch.setattr(playbill_routes, "run_in_threadpool", pause)
+        limiter = anyio.to_thread.current_default_thread_limiter()
+        previous = limiter.total_tokens
+        limiter.total_tokens = 2
+        tasks = []
+        try:
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app, client=None), base_url="http://test"
+            ) as http:
+                prefix = "/api/v1/inst_pool/playbill"
+                tasks.append(asyncio.create_task(http.post(prefix + "/floor/export", json={})))
+                await asyncio.wait_for(admitted.wait(), 5)
+                for _ in range(2):
+                    tasks.append(
+                        asyncio.create_task(
+                            http.post(prefix + "/workspace/floor-delivery", json={"enabled": True})
+                        )
+                    )
+                await asyncio.wait_for(toggles_queued.wait(), 5)
+                assert await asyncio.wait_for(offload(lambda: "free worker"), 2) == "free worker"
+                for suffix in ("/floor/delta", "/floor/deliver-now", "/workspace-detach"):
+                    tasks.append(asyncio.create_task(http.post(prefix + suffix, json={})))
+                release.set()
+                responses = await asyncio.wait_for(asyncio.gather(*tasks), 10)
+                assert [r.status_code for r in responses] == [200] * 6, [r.text for r in responses]
+        finally:
+            release.set()
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            limiter.total_tokens = previous
+
+    asyncio.run(scenario())
+    assert FLOOR_ADMISSION.active_keys() == 0
+
+
+@pytest.mark.parametrize("form", ["direct", "helper", "lambda_alias"])
+def test_http_hold_fails_before_admission_for_every_call_form(client, monkeypatch, form):
+    """Worker context survives indirection; a forbidden hold never starts a wait."""
+    error = "floor admission from an HTTP request must use async admit with the ticket"
+
+    def blocking():
+        with FLOOR_ADMISSION.hold("inst_http_hold"):
+            return {"entered": True}
+
+    def direct():
+        with FLOOR_ADMISSION.hold("inst_http_hold"):
+            return {"entered": True}
+
+    def helper():
+        return blocking()
+
+    def lambda_alias():
+        invoke = lambda: blocking()  # noqa: E731 - regression for the review's lambda alias
+        return invoke()
+
+    def must_not_enter(*args, **kwargs):
+        pytest.fail("an HTTP hold reached admission bookkeeping instead of failing fast")
+
+    monkeypatch.setattr(FLOOR_ADMISSION, "_enter", must_not_enter)
+    client.app.get("/test-http-hold")(
+        {"direct": direct, "helper": helper, "lambda_alias": lambda_alias}[form]
+    )
+    response = client.get("/test-http-hold")
+    assert response.status_code == 500
+    body = response.json()
+    assert body["error_type"] == "FloorAdmissionMisuse"
+    assert body["error_code"] == "internal.floor_admission_misuse"
+    assert error in body["message"]
+    assert body["repair"] is None
+    assert "Traceback" not in response.text and "RuntimeError" not in response.text
+    assert FLOOR_ADMISSION.active_keys() == 0
+    assert not HTTP_REQUEST_CONTEXT.get()
+
+
+def test_http_ticket_workers_keep_request_context_and_consumers_can_hold(client):
+
+    from starlette.concurrency import run_in_threadpool
+
+    worker_entered = threading.Event()
+    consumer_finished = threading.Event()
+    observed = []
+
+    def consumer():
+        if not worker_entered.wait(_FAILURE_BOUND_SECONDS):
+            return
+        with FLOOR_ADMISSION.hold("inst_consumer"):
+            observed.append((HTTP_REQUEST_CONTEXT.get(), FLOOR_ADMISSION.active_keys()))
+        consumer_finished.set()
+
+    def worker():
+        assert HTTP_REQUEST_CONTEXT.get()
+        # A ticket is already admitted, but even its body must not acquire
+        # another key through hold. The check belongs to hold, not ticket.run.
+        with pytest.raises(FloorAdmissionMisuse, match="HTTP request must use async admit"):
+            with FLOOR_ADMISSION.hold("inst_illegal_nested_hold"):
+                pass
+        worker_entered.set()
+        assert consumer_finished.wait(_FAILURE_BOUND_SECONDS)
+        return {"admitted": True}
+
+    async def route():
+        async with FLOOR_ADMISSION.admit("inst_http_ticket") as ticket:
+            return await run_in_threadpool(ticket.run, worker)
+
+    client.app.get("/test-http-ticket")(route)
+    # Created outside the request, as the daemon's consumer runner is.
+    thread = threading.Thread(target=consumer)
+    thread.start()
+    try:
+        response = client.get("/test-http-ticket")
+    finally:
+        worker_entered.set()
+        thread.join(_FAILURE_BOUND_SECONDS)
+    assert not thread.is_alive()
+    assert response.status_code == 200 and response.json() == {"admitted": True}
+    assert observed == [(False, 2)]
+    assert FLOOR_ADMISSION.active_keys() == 0
+    assert not HTTP_REQUEST_CONTEXT.get()
+
+
+@pytest.mark.parametrize("ending", ["success", "exception", "cancellation"])
+def test_http_context_lasts_through_response_and_resets_on_every_exit(ending):
+    import asyncio
+
+    seen = []
+
+    async def send(message):
+        seen.append((message["type"], HTTP_REQUEST_CONTEXT.get()))
+
+    async def receive():
+        return {"type": "http.disconnect"}
+
+    async def downstream(scope, receive, send):
+        assert HTTP_REQUEST_CONTEXT.get()
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await asyncio.sleep(0)
+        await send({"type": "http.response.body", "body": b"ok"})
+        if ending == "exception":
+            raise RuntimeError("request failed")
+        if ending == "cancellation":
+            raise asyncio.CancelledError
+
+    async def scenario():
+        assert not HTTP_REQUEST_CONTEXT.get()
+        middleware = HTTPRequestContextMiddleware(downstream)
+        if ending == "success":
+            await middleware({"type": "http"}, receive, send)
+        else:
+            error = RuntimeError if ending == "exception" else asyncio.CancelledError
+            with pytest.raises(error):
+                await middleware({"type": "http"}, receive, send)
+        assert not HTTP_REQUEST_CONTEXT.get()
+
+    asyncio.run(scenario())
+    assert seen == [("http.response.start", True), ("http.response.body", True)]
+
+
+@pytest.mark.parametrize("scope_type", ["lifespan", "websocket"])
+def test_non_http_scopes_have_no_http_admission_context(scope_type):
+    import asyncio
+
+    seen = []
+
+    async def downstream(scope, receive, send):
+        seen.append(HTTP_REQUEST_CONTEXT.get())
+
+    asyncio.run(HTTPRequestContextMiddleware(downstream)({"type": scope_type}, None, None))
+    assert seen == [False]
+
+
+def test_framework_error_handlers_keep_http_context(client, monkeypatch):
+    from fastapi.responses import JSONResponse
+    from starlette.middleware.errors import ServerErrorMiddleware
+
+    observed = []
+
+    def fail():
+        raise RuntimeError("route failed")
+
+    def handler(request, exc):
+        observed.append(HTTP_REQUEST_CONTEXT.get())
+        with pytest.raises(FloorAdmissionMisuse, match="HTTP request must use async admit"):
+            with FLOOR_ADMISSION.hold("inst_error_handler"):
+                pass
+        return JSONResponse(status_code=500, content={"error": "failed"})
+
+    middleware = client.app.middleware_stack
+    while not isinstance(middleware, ServerErrorMiddleware):
+        middleware = middleware.app
+    monkeypatch.setattr(middleware, "handler", handler)
+    client.app.get("/test-error-context")(fail)
+    with pytest.raises(RuntimeError, match="route failed"):
+        client.get("/test-error-context")
+    assert observed == [True]
+    assert FLOOR_ADMISSION.active_keys() == 0
+
+
+def test_request_launched_detached_work_uses_fresh_contexts(client, monkeypatch):
+    """Emulate inheriting threads even on Python builds that start them empty."""
+    from contextvars import ContextVar, copy_context
+    from types import SimpleNamespace
+
+    from cruxible_core.consumers.protocol import ConsumerWork
+    from cruxible_core.consumers.runner import ConsumerRunner
+    from cruxible_core.ledger.checkpoints import QuietCheckpointWriter
+
+    original_thread = threading.Thread
+
+    class InheritingThread(original_thread):
+        def __init__(self, *, target, args=(), **kwargs):
+            super().__init__(target=copy_context().run, args=(target, *args), **kwargs)
+
+    monkeypatch.setattr(threading, "Thread", InheritingThread)
+    owner: ContextVar[str | None] = ContextVar("detached_test_owner", default=None)
+    release = threading.Event()
+    loop_entered = threading.Event()
+    work_finished = threading.Event()
+    checkpoint_finished = threading.Event()
+    observed = {}
+    held = []
+
+    def run_work(*args, **kwargs):
+        try:
+            assert release.wait(5)
+            observed["pool"] = (HTTP_REQUEST_CONTEXT.get(), owner.get())
+            with FLOOR_ADMISSION.hold("inst_detached_pool"):
+                held.append("pool")
+        finally:
+            work_finished.set()
+
+    kind = SimpleNamespace(name="detached-test", workers=1, run=run_work)
+    runner = ConsumerRunner(SimpleNamespace(), kinds=(kind,))
+
+    def loop():
+        observed["runner"] = (HTTP_REQUEST_CONTEXT.get(), owner.get())
+        loop_entered.set()
+        runner.stop_event.wait(5)
+
+    monkeypatch.setattr(runner, "_run", loop)
+    writer = QuietCheckpointWriter(quiet_seconds=0, name="detached-checkpoint-test")
+
+    def checkpoint():
+        try:
+            assert release.wait(5)
+            observed["checkpoint"] = (HTTP_REQUEST_CONTEXT.get(), owner.get())
+            with FLOOR_ADMISSION.hold("inst_detached_checkpoint"):
+                held.append("checkpoint")
+        finally:
+            checkpoint_finished.set()
+
+    def launch():
+        assert HTTP_REQUEST_CONTEXT.get()
+        token = owner.set("request-owner")
+        try:
+            runner.start()
+            assert loop_entered.wait(5)
+            # Submit directly from the request, not just from the fresh loop.
+            runner._schedule("inst_detached", kind, ConsumerWork(key="unit", item=None))
+            writer.defer(checkpoint)
+            assert HTTP_REQUEST_CONTEXT.get() and owner.get() == "request-owner"
+            return {"launched": True}
+        finally:
+            owner.reset(token)
+
+    client.app.get("/test-detached-launch")(launch)
+    try:
+        response = client.get("/test-detached-launch")
+        assert response.status_code == 200
+        release.set()
+        assert work_finished.wait(5) and checkpoint_finished.wait(5)
+    finally:
+        release.set()
+        runner.close()
+        writer.flush(timeout=5)
+    assert observed == {"runner": (False, None), "pool": (False, None), "checkpoint": (False, None)}
+    assert sorted(held) == ["checkpoint", "pool"]
+    assert FLOOR_ADMISSION.active_keys() == 0

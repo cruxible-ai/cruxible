@@ -20,6 +20,7 @@ HEALTHY_STATUS = {
     "compiler": {"state": "current"},
     "line_dispatch": {"state": "idle"},
     "consumers": {"state": "current"},
+    "triggers": {"state": "scheduled"},
 }
 
 AUTHOR = {

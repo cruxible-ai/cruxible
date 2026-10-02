@@ -263,7 +263,7 @@ def test_a_decommissioned_instance_blocks_in_the_status_header(tmp_path: Path) -
 def test_a_compiler_behind_the_running_one_names_the_upgrade_until_it_lands(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from cruxible_core.compiler.compiler import AUTHORITY_VERBS_COMPILER, TRIGGER_CAPTURE_COMPILER
+    from cruxible_core.compiler.compiler import GOVERNED_TRIGGERS_COMPILER, TRIGGER_CAPTURE_COMPILER
     from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
     from tests.test_ledger.test_compiler_upgrade import approve, old_instance, propose
 
@@ -272,12 +272,19 @@ def test_a_compiler_behind_the_running_one_names_the_upgrade_until_it_lands(
     assert behind.compiler.state == "upgrade_available"
     assert behind.compiler.repair is not None
     assert behind.compiler.repair.command == (
-        f"cruxible playbill compiler upgrade --to {AUTHORITY_VERBS_COMPILER.rule_digest} "
-        "--name upgrade-to-authority-verbs-settle-mandates-v1"
+        f"cruxible playbill compiler upgrade --to {GOVERNED_TRIGGERS_COMPILER.rule_digest} "
+        "--name upgrade-to-governed-triggers-v1"
     )
-    assert _attention(behind) == (("compiler", behind.compiler),)
+    # A compiler before Trigger artifacts schedules no internal action at all.
+    assert behind.triggers.state == "unscheduled"
+    assert behind.triggers.repair is not None
+    assert behind.triggers.repair.required_change.startswith("upgrade_the_compiler")
+    assert _attention(behind) == (
+        ("compiler", behind.compiler),
+        ("triggers", behind.triggers),
+    )
 
-    proposal = propose(instance, AUTHORITY_VERBS_COMPILER)
+    proposal = propose(instance, GOVERNED_TRIGGERS_COMPILER)
     approve(instance, proposal, reviewer)
     assert (
         service_activate_playbill_proposal(
@@ -286,7 +293,13 @@ def test_a_compiler_behind_the_running_one_names_the_upgrade_until_it_lands(
         == "accepted"
     )
     upgraded = _status(instance, _request(instance))
-    assert upgraded.compiler.state == "current" and _attention(upgraded) == ()
+    # The upgrade seeds nothing: its internal actions wait for authored Triggers.
+    assert upgraded.compiler.state == "current"
+    assert _attention(upgraded) == (("triggers", upgraded.triggers),)
+    assert upgraded.triggers.repair is not None
+    assert upgraded.triggers.repair.required_change == (
+        "author_a_trigger_aimed_at_the_unscheduled_action"
+    )
 
 
 def test_a_status_repair_the_caller_cannot_perform_keeps_the_facet_but_not_the_repair(
@@ -408,19 +421,19 @@ def test_a_retired_lines_pending_work_is_neither_due_nor_a_repair(tmp_path: Path
     from cruxible_client.contracts.artifacts import ArtifactLifecycle
     from cruxible_client.contracts.line_dispatch import LineEvaluateRequestV1
     from cruxible_client.contracts.procedures.line_specs import (
-        CaptureLandingTriggerPolicyV2,
         line_spec_digest,
         line_spec_path,
         render_line_spec,
     )
+    from cruxible_client.contracts.triggers import CaptureLandingScheduleV1
     from cruxible_core.service.procedures.line_dispatch import service_evaluate_line
+    from tests.support.lines import line_trigger, successor, trigger_members
     from tests.test_indexes.test_resolution_contracts import _accept_tree
-    from tests.test_procedures.test_line_triggers import SELECTOR, capture, line_world
+    from tests.test_procedures.test_line_triggers import SELECTOR, TRIGGER, capture, line_world
     from tests.test_procedures.test_procedure_run_surface import READ_TIME, _actor
 
-    instance, line, procedure, owner = line_world(
-        tmp_path, CaptureLandingTriggerPolicyV2(event=SELECTOR), with_owner=True
-    )
+    schedule = CaptureLandingScheduleV1(event=SELECTOR)
+    instance, line, procedure, owner = line_world(tmp_path, schedule, with_owner=True)
     capture(instance, procedure)
     now = READ_TIME + timedelta(seconds=2)
     service_evaluate_line(
@@ -441,6 +454,14 @@ def test_a_retired_lines_pending_work_is_neither_due_nor_a_repair(tmp_path: Path
     )
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree[line_spec_path(line.identity.name)] = render_line_spec(retired)
+    # A Line retires with the Triggers aimed at it.
+    tree.update(
+        trigger_members(
+            successor(
+                line_trigger(TRIGGER, line=line.identity.name, schedule=schedule), state="retired"
+            )
+        )
+    )
     _accept_tree(
         instance, owner, tree, timestamp="2026-08-28T15:02:00.000000Z", proposal_name="retire-line"
     )
@@ -452,9 +473,9 @@ def test_a_retired_lines_pending_work_is_neither_due_nor_a_repair(tmp_path: Path
 def test_worker_findings_report_how_current_they_are(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from datetime import UTC, datetime
+    from datetime import UTC, datetime, timedelta
 
-    from cruxible_core.consumers.evidence import SWEEP_INTERVAL
+    from tests.support.internal_triggers import fire_internal_triggers
     from tests.test_consumers.test_evidence_availability import _drain, _world
 
     instance, _capture = _world(tmp_path)
@@ -467,18 +488,22 @@ def test_worker_findings_report_how_current_they_are(
     # No consumer loop: findings stand as of the last pass, and that is not work.
     idle = consumers(swept)
     assert idle.state == "not_running" and idle.repair is None
-    assert [worker["kind"] for worker in idle.detail["workers"]] == ["evidence"]
+    assert [worker["kind"] for worker in idle.detail["workers"]] == ["next"]
 
     assert consumers(swept, consumers_running=True).state == "current"
-    late = swept + 2 * SWEEP_INTERVAL
+    first_fire = swept + timedelta(days=1)
+    fire_internal_triggers(instance, now=first_fire)
+    assert consumers(first_fire, consumers_running=True).state == "current"
+    late = swept + timedelta(days=2)
+    fire_internal_triggers(instance, now=late)
     lagging = _status(instance, _request(instance, evaluation_time=late), consumers_running=True)
     assert lagging.consumers.state == "lagging"
     assert _attention(lagging) == (("consumers", lagging.consumers),)
 
-    monkeypatch.setenv("CRUXIBLE_DISABLED_CONSUMERS", "evidence")
+    monkeypatch.setenv("CRUXIBLE_DISABLED_CONSUMERS", "next")
     off = consumers(late, consumers_running=True)
     assert off.state == "current" and off.detail["workers"] == [
-        {"kind": "evidence", "state": "disabled"}
+        {"kind": "next", "state": "disabled"}
     ]
 
     hidden = PlaybillNextRequestV1(
@@ -493,20 +518,82 @@ def test_one_next_request_reads_each_workers_health_once(
 ) -> None:
     from datetime import UTC, datetime
 
-    from cruxible_core.consumers.evidence import EVIDENCE_AVAILABILITY
+    from cruxible_core.consumers.next import NEXT_QUEUE
     from tests.test_consumers.test_evidence_availability import _drain, _world
 
     instance, _capture = _world(tmp_path)
     swept = datetime(2026, 9, 1, tzinfo=UTC)
     _drain(instance, now=swept)
-    health = EVIDENCE_AVAILABILITY.health
+    health = NEXT_QUEUE.health
     calls: list[datetime] = []
 
     def counted(target, *, now):  # type: ignore[no-untyped-def]
         calls.append(now)
         return health(target, now=now)
 
-    monkeypatch.setattr(EVIDENCE_AVAILABILITY, "health", counted)
+    monkeypatch.setattr(NEXT_QUEUE, "health", counted)
     _status(instance, _request(instance, evaluation_time=swept), consumers_running=True)
 
     assert calls == [swept]
+
+
+def test_an_internal_action_no_trigger_schedules_is_status_with_an_authoring_repair(
+    tmp_path: Path,
+) -> None:
+
+    from cruxible_client.contracts.triggers import CadenceScheduleV1
+    from cruxible_core.triggers.journal import internal_triggers
+    from tests.support.lines import action_trigger, successor, trigger_members
+    from tests.test_indexes.test_resolution_contracts import _accept_tree
+
+    instance, owner = initialize_local(tmp_path)
+    seeded = _status(instance, _request(instance))
+    assert seeded.triggers.state == "scheduled" and _attention(seeded) == ()
+    assert seeded.triggers.detail["scheduled"] == {
+        "evidence.sweep": ["Trigger:evidence-sweep"],
+        "prediction.anchor_retry": ["Trigger:prediction-anchor-retry"],
+    }
+
+    sweep = action_trigger("evidence-sweep", action="evidence.sweep", interval_seconds=86400)
+    retry = action_trigger(
+        "prediction-anchor-retry", action="prediction.anchor_retry", interval_seconds=3600
+    )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree.update(
+        trigger_members(
+            successor(sweep, schedule=CadenceScheduleV1(interval_seconds=600)),
+            successor(retry, state="retired"),
+        )
+    )
+    _accept_tree(
+        instance, owner, tree, timestamp="2026-09-30T12:00:00.000000Z", proposal_name="retime"
+    )
+    # The daemon's cadences are whatever the accepted Triggers say, per generation.
+    assert [(item.action, item.schedule) for item in internal_triggers(instance)] == [
+        ("evidence.sweep", CadenceScheduleV1(interval_seconds=600))
+    ]
+    unscheduled = _status(instance, _request(instance))
+    facet = unscheduled.triggers
+    assert facet.state == "unscheduled" and not unscheduled.blocking
+    assert facet.detail["unscheduled"] == ["prediction.anchor_retry"]
+    assert facet.detail["message"] == "no trigger schedules prediction.anchor_retry"
+    assert facet.repair is not None
+    assert (facet.repair.operation, facet.repair.arguments) == (
+        "playbill.authoring.create",
+        {"example": "trigger"},
+    )
+    assert _attention(unscheduled) == (("triggers", facet),)
+
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree.update(
+        trigger_members(
+            action_trigger(
+                "anchor-retry-often", action="prediction.anchor_retry", interval_seconds=900
+            )
+        )
+    )
+    _accept_tree(
+        instance, owner, tree, timestamp="2026-09-30T12:01:00.000000Z", proposal_name="restore"
+    )
+    restored = _status(instance, _request(instance))
+    assert restored.triggers.state == "scheduled" and _attention(restored) == ()

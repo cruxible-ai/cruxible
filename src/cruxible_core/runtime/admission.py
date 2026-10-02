@@ -16,6 +16,21 @@ instance) takes the key first. Two kinds of caller take it:
   ``hold(key)``, which blocks that thread until the key is its own. It refuses
   to run on a thread with a running event loop, which it would stall.
 
+HTTP request paths must never reach ``hold``, even from a synchronous route
+or an offloaded helper: waiting there consumes worker capacity before admission
+and can deadlock against an admitted route waiting for that capacity. Only
+non-request threads use ``hold``; HTTP paths admit before offloading and call
+bodies that do not acquire the key again. The server marks every HTTP request
+with ``HTTP_REQUEST_CONTEXT``, which propagates into offloaded workers. ``hold``
+refuses that context before acquiring or waiting for any key; this runtime check
+is the guarantee across all call indirections. Ticket workers keep the request
+context and run normally because they have already been admitted. Consumer
+threads have no request context. Blocking holders and ticket workers track
+ownership on their thread; entering either admission path again for the same
+key refuses immediately instead of waiting for oneself. Misuses raise the typed
+internal error ``FloorAdmissionMisuse``, so served and CLI boundaries report a
+code rather than a raw traceback.
+
 Both kinds queue on the same key in arrival order and exclude each other: an
 export, a delta and a consumer refresh of one instance never overlap, while
 different keys proceed independently. Key by the resolved instance id.
@@ -32,7 +47,9 @@ skipped. So nothing here keeps a finished loop alive.
 
 The event-loop guardrail (``tests/test_architecture/test_routes_off_the_event_loop.py``)
 checks every call ``admit`` makes on the loop, through each method it reaches;
-keep that path to this bookkeeping.
+keep that path to this bookkeeping. Its transitive hold scan is a cheap early
+warning smoke check; the request-context check in ``hold`` guarantees the HTTP
+prohibition at runtime.
 """
 
 from __future__ import annotations
@@ -42,9 +59,15 @@ import threading
 from collections import deque
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
+from contextvars import ContextVar
 from typing import Literal, TypeVar
 
+from cruxible_core.errors import FloorAdmissionMisuse
+
 _T = TypeVar("_T")
+
+#: Set by the server for HTTP requests, including their offloaded worker calls.
+HTTP_REQUEST_CONTEXT: ContextVar[bool] = ContextVar("cruxible_http_request", default=False)
 
 
 def _grant(future: asyncio.Future[None]) -> None:
@@ -117,9 +140,10 @@ class _Ticket:
         """
 
         if not self.admission._claim(self):
-            raise RuntimeError("the admitted caller left before its call started")
+            raise FloorAdmissionMisuse("the admitted caller left before its call started")
         try:
-            return call()
+            with self.admission._mark_held(self.key):
+                return call()
         finally:
             self.admission._leave(self.key)
 
@@ -130,6 +154,7 @@ class KeyedAdmission:
     def __init__(self) -> None:
         self._lock: threading.Lock = threading.Lock()
         self._entries: dict[str, _Entry] = {}
+        self._owned: threading.local = threading.local()
 
     # -- bookkeeping; every method runs with self._lock held only briefly ----------
 
@@ -196,6 +221,25 @@ class KeyedAdmission:
             entry = self._entries[key]
             entry.waiters.remove(waiter)
 
+    def _check_reentrant(self, key: str) -> None:
+        if key in getattr(self._owned, "keys", ()):
+            raise FloorAdmissionMisuse(
+                "floor admission for the same key is not re-entrant on its owning thread"
+            )
+
+    @contextmanager
+    def _mark_held(self, key: str) -> Iterator[None]:
+        """Track physical thread ownership, without propagating it into other workers."""
+
+        keys = getattr(self._owned, "keys", None)
+        if keys is None:
+            keys = self._owned.keys = set()
+        keys.add(key)
+        try:
+            yield
+        finally:
+            keys.remove(key)
+
     # -- the two ways in -----------------------------------------------------------
 
     @asynccontextmanager
@@ -206,6 +250,7 @@ class KeyedAdmission:
         then stays held until the call ends, even if the route is cancelled.
         """
 
+        self._check_reentrant(key)
         loop = asyncio.get_running_loop()
         future: asyncio.Future[None] = loop.create_future()
         waiter = self._enter(key, loop, future, None)
@@ -225,12 +270,19 @@ class KeyedAdmission:
     def hold(self, key: str) -> Iterator[None]:
         """Hold ``key`` from a worker thread, blocking it until the key is its own."""
 
+        if HTTP_REQUEST_CONTEXT.get():
+            raise FloorAdmissionMisuse(
+                "floor admission from an HTTP request must use async admit with the ticket"
+            )
         try:
             asyncio.get_running_loop()
         except RuntimeError:
             pass
         else:
-            raise RuntimeError("KeyedAdmission.hold would block a running event loop; use admit")
+            raise FloorAdmissionMisuse(
+                "KeyedAdmission.hold would block a running event loop; use admit"
+            )
+        self._check_reentrant(key)
         event = threading.Event()
         waiter = self._enter(key, None, None, event)
         if waiter is not None:
@@ -240,7 +292,8 @@ class KeyedAdmission:
                 self._withdraw(key, waiter)
                 raise
         try:
-            yield
+            with self._mark_held(key):
+                yield
         finally:
             self._leave(key)
 
@@ -273,4 +326,4 @@ class KeyedAdmission:
 FLOOR_ADMISSION = KeyedAdmission()
 
 
-__all__ = ["FLOOR_ADMISSION", "KeyedAdmission"]
+__all__ = ["FLOOR_ADMISSION", "HTTP_REQUEST_CONTEXT", "KeyedAdmission"]

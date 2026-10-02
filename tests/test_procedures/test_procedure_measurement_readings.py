@@ -57,8 +57,7 @@ from cruxible_client.contracts.procedures.graph import (
     compute_procedure_node_digests_v3,
 )
 from cruxible_client.contracts.procedures.line_specs import (
-    LineSpecV1,
-    ManualTriggerPolicyV1,
+    LineSpecV6,
     line_identity_digest,
     line_spec_path,
     render_line_spec,
@@ -1347,15 +1346,15 @@ def _line_world(tmp_path: Path):  # type: ignore[no-untyped-def]
         artifact_digest=acquisition_policy_digest(policy).tagged,
     )
     caps = procedure.definition.hard_caps
-    line = LineSpecV1(
+    line = LineSpecV6(
         identity=ArtifactIdentity(kind="Line", name="measured-line"),
         occurrence_epoch=1,
         procedure=procedure_pin,
         parameters={},
         slot_bindings=(),
-        trigger_policy=ManualTriggerPolicyV1(),
         acquisition_policy=policy_pin,
-        requested_terminal_rung=1,
+        max_authority="observe",
+        provider_implementation_closures=(),
         budgets={
             "max_capture_bytes": 0,
             "max_items": caps.max_items,

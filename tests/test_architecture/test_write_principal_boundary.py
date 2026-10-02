@@ -35,9 +35,19 @@ EXEMPT: dict[str, str] = {
     # Daemon-wide operator levers the runtime bootstrap secret drives before,
     # or independently of, any principal; none changes governed state.
     "create_playbill_host": "allocates an empty host before any principal exists",
+    "set_playbill_floor_delivery": "chooses a workspace writer under local attachment authority",
     "playbill_host_workspace_detach": "releases a worktree registration; the operator lever",
     "server_restart": "daemon lifecycle",
     "server_stop": "daemon lifecycle",
+}
+
+
+# HTTP calls these permission-checked bodies after async admission. Thread
+# callers use their public hold wrappers; both reach the same authority check.
+_ADMITTED_FACADES = {
+    "_set_playbill_floor_delivery_admitted": "set_playbill_floor_delivery",
+    "_playbill_host_workspace_detach_admitted": "playbill_host_workspace_detach",
+    "_deliver_playbill_floor_now_admitted": "deliver_playbill_floor_now",
 }
 
 
@@ -93,7 +103,11 @@ def _write_facade_functions() -> dict[str, bool]:
         for name, function in functions.items():
             if name.startswith("_"):
                 continue
-            tiers = [PERMISSION_REQUIREMENTS[tool] for tool in _permission_tools(function)]
+            tools = _permission_tools(function)
+            for body, wrapper in _ADMITTED_FACADES.items():
+                if name == wrapper:
+                    tools.extend(_permission_tools(functions[body]))
+            tiers = [PERMISSION_REQUIREMENTS[tool] for tool in tools]
             if any(tier >= PermissionMode.GOVERNED_WRITE for tier in tiers):
                 found[name] = _reaches_boundary(name, functions, set())
     return found
@@ -117,6 +131,7 @@ def test_every_mutating_route_delegates_to_an_enumerated_facade_function() -> No
     known = {
         name for path in FACADES.values() for name in _functions(path) if not name.startswith("_")
     }
+    known.update(_ADMITTED_FACADES)
     strays: list[str] = []
     checked = 0
     for path in ROUTES:
@@ -141,3 +156,13 @@ def test_every_mutating_route_delegates_to_an_enumerated_facade_function() -> No
                 strays.append(f"{path.name}:{function.name}")
     assert checked > 50, "the route scan found almost no mutating routes; it is broken"
     assert strays == []
+
+
+def test_admitted_facades_keep_the_wrappers_authority_checks() -> None:
+    functions = _functions(FACADES["host_api"])
+    for body, wrapper in _ADMITTED_FACADES.items():
+        assert body in _called_names(functions[wrapper])
+        assert _permission_tools(functions[body])
+        assert _reaches_boundary(body, functions, set()) == _reaches_boundary(
+            wrapper, functions, set()
+        )
