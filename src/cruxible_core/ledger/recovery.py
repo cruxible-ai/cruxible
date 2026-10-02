@@ -102,6 +102,7 @@ from cruxible_core.proposals.settlement import (
 )
 from cruxible_core.query.backends import ClaimQueryFactsV1
 from cruxible_core.storage.cas import BodyProjectionProtocol
+from cruxible_core.storage.preview_fence import is_previewing, refuse_write_while_previewing
 
 
 @dataclass(frozen=True)
@@ -776,8 +777,10 @@ def _projection_for_head(
         except ProjectionIntegrityError:
             # The coordinate determines both exact v1 publication names. The
             # projection is disposable, so a corrupt/torn copy is rebuilt.
+            refuse_write_while_previewing("instance recovery")
             manifest_path.unlink(missing_ok=True)
             (publication_directory / projection_piece_name(request)).unlink(missing_ok=True)
+    refuse_write_while_previewing("instance recovery")
     return assembler.assemble(request)
 
 
@@ -817,6 +820,7 @@ def _clean_unaccepted_publications(
             manifest = load_projection_manifest(path)
         except ProjectionIntegrityError:
             # A malformed immutable build is never authority and cannot serve.
+            refuse_write_while_previewing("instance recovery")
             path.unlink(missing_ok=True)
             continue
         if manifest.git_oid in accepted_oids:
@@ -832,6 +836,7 @@ def _clean_unaccepted_publications(
         )
         with bind_projection(path, expected=expected):
             pass
+        refuse_write_while_previewing("instance recovery")
         remove_exact_projection_build(
             _result_for_manifest(path, manifest),
             expected=manifest,
@@ -918,6 +923,7 @@ def _clean_torn_projection_files(publication_directory: Path) -> None:
     """Remove detector-proven staging/unreferenced output after replay."""
 
     for orphan in detect_projection_orphans(publication_directory):
+        refuse_write_while_previewing("instance recovery")
         path = Path(orphan.path)
         if orphan.kind == "staging-build":
             if path.is_symlink() or not path.is_dir() or path.parent != publication_directory:
@@ -932,6 +938,7 @@ def _clean_torn_projection_files(publication_directory: Path) -> None:
     for path in publication_directory.glob(".serving-*.tmp"):
         if path.is_symlink() or not path.is_file() or path.parent != publication_directory:
             raise ProjectionIntegrityError("serving temporary cleanup target is unsafe")
+        refuse_write_while_previewing("instance recovery")
         path.unlink()
 
 
@@ -989,6 +996,38 @@ def _repair_witness(
         start = matches[0] + 1
     for record in expected[start:]:
         witness.publish(record)
+
+
+def _collect_unaccepted(
+    ledger: GitLedger,
+    *,
+    history: tuple[RecoveredGeneration, ...],
+    repository_path: str,
+    object_format: GitObjectFormat,
+    instance_id: str,
+    bodies: BodyProjectionProtocol,
+    laws: AcceptanceLawRegistry,
+    promotion_verifier: ExhaustPromotionVerifierProtocol | None,
+    producer_receipt_resolver: ProducerReceiptResolverProtocol | None,
+    query_facts_builder: AcceptedQueryFactsBuilder | None,
+) -> None:
+    """Collect generations left in flight, holding writers off for the scan."""
+
+    with ledger.unaccepted_cleanup() as markers:
+        if markers is not None:
+            _clean_unaccepted_generations(
+                ledger,
+                history=history,
+                repository_path=repository_path,
+                object_format=object_format,
+                instance_id=instance_id,
+                bodies=bodies,
+                laws=laws,
+                promotion_verifier=promotion_verifier,
+                producer_receipt_resolver=producer_receipt_resolver,
+                query_facts_builder=query_facts_builder,
+            )
+            ledger.complete_unaccepted_cleanup(markers)
 
 
 def recover_instance(
@@ -1159,21 +1198,24 @@ def recover_instance(
     # The whole-object-store scan runs only when a generation was left in flight
     # (or has never run on this ledger); a clean stop leaves nothing to collect.
     # Writers are held off for the scan; while one is in flight it waits.
-    with ledger.unaccepted_cleanup() as markers:
-        if markers is not None:
-            _clean_unaccepted_generations(
-                ledger,
-                history=recovered_history,
-                repository_path=repository_path,
-                object_format=object_format,
-                instance_id=instance_id,
-                bodies=bodies,
-                laws=laws,
-                promotion_verifier=promotion_verifier,
-                producer_receipt_resolver=producer_receipt_resolver,
-                query_facts_builder=query_facts_builder,
-            )
-            ledger.complete_unaccepted_cleanup(markers)
+    if is_previewing():
+        # The cleanup below holds a lock file it may create; a preview only
+        # asks whether a collection is due, and refuses if one is.
+        if ledger.unaccepted_cleanup_due() is not None:
+            refuse_write_while_previewing("instance recovery")
+    else:
+        _collect_unaccepted(
+            ledger,
+            history=recovered_history,
+            repository_path=repository_path,
+            object_format=object_format,
+            instance_id=instance_id,
+            bodies=bodies,
+            laws=laws,
+            promotion_verifier=promotion_verifier,
+            producer_receipt_resolver=producer_receipt_resolver,
+            query_facts_builder=query_facts_builder,
+        )
     _clean_unaccepted_publications(
         ledger,
         history=recovered_history,
@@ -1197,6 +1239,7 @@ def recover_instance(
         # notes are re-checked whenever a genesis-rooted replay runs.
         for generation in recovered_history[replayed_from:]:
             if ledger.read_generation_note(generation.oid) is None:
+                refuse_write_while_previewing("instance recovery")
                 ledger.write_recovered_generation_note(
                     generation.oid,
                     render_generation_descriptor(generation.descriptor),

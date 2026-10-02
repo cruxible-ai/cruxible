@@ -90,7 +90,7 @@ def test_http_publish_forwards_bounded_wait_and_returns_full_status(
     receipt = playbill_api._mirror_receipt(instance_id, url=state.url, state=state)
     calls = []
 
-    def publish(instance_id, *, timeout):
+    def publish(instance_id, *, timeout, dry_run=None, at=None):
         calls.append((instance_id, timeout))
         return receipt
 

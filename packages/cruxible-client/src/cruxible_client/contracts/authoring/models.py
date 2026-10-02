@@ -36,6 +36,7 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.captures import CaptureContractV1
+from cruxible_client.contracts.change_control import PlaybillStateCoordinateV1
 from cruxible_client.contracts.claim_attestations import ClaimAttestationV2
 from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import ClaimType
@@ -100,7 +101,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:8b7bcd0e7f85e94992b8784c0fd59d9cee846324766128642ebd4f5e9c160805"
+    "sha256:6f59d67cafc5062404999e838497b4bf19866f60cd755ed203b29a1c8f159fca"
 )
 INSERTION_EXPECTATION_ID_DOMAIN = "playbill-insertion-expectation-id-v1"
 INSERTION_RESULT_KEY_DOMAIN = "playbill-insertion-result-key-v1"
@@ -2959,7 +2960,22 @@ class PlaybillBlockSyncResultV1(_StrictAuthoringModel):
         return self
 
 
+class PlaybillBlockDetachResultV1(_StrictAuthoringModel):
+    """Retired blocks' markers removed from pages, bodies kept; or (preview) which would be.
+
+    ``coordinate`` digests the named pages' bytes as this call read them; a
+    commit carrying ``at`` refuses ``playbill.preview.state_moved`` if any page
+    changed since its preview.
+    """
+
+    tag: Literal["playbill-block-detach-result-v1"] = "playbill-block-detach-result-v1"
+    status: Literal["detached", "would_detach"]
+    sync: PlaybillBlockSyncResultV1
+    coordinate: PlaybillStateCoordinateV1
+
+
 __all__ = [
+    "PlaybillBlockDetachResultV1",
     "AUTHORING_CANDIDATE_TREE_DIGEST_DOMAIN",
     "AUTHORING_CREATE_FINGERPRINT_DOMAIN",
     "AUTHORING_FRONTIER_DIGEST_DOMAIN",

@@ -55,6 +55,7 @@ from cruxible_core.proposals.proposals import (
     ProposalEvaluationRecord,
     ProposalWithdrawalRecordV1,
 )
+from cruxible_core.storage.preview_fence import is_previewing
 
 _EvidenceModelT = TypeVar("_EvidenceModelT", bound=BaseModel)
 
@@ -123,6 +124,12 @@ class ProposalEvidenceStore:
 
     def _directory(self, name: str) -> Path:
         path = self.root / name
+        if is_previewing():
+            # A preview reads, and writes nothing (R12): a directory no record
+            # has been written to yet holds nothing to read, so it is not made.
+            if path.is_symlink() or (path.exists() and not path.is_dir()):
+                raise ProposalIntegrityError("proposal evidence directory is not trustworthy")
+            return path.resolve(strict=False)
         path.mkdir(mode=0o700, exist_ok=True)
         if path.is_symlink() or not path.is_dir():
             raise ProposalIntegrityError("proposal evidence directory is not trustworthy")

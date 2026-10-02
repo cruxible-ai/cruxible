@@ -33,10 +33,11 @@ def test_credential_claim_bootstrap_reads_secret_file_and_prints_token_once(
     captured: dict[str, str] = {}
 
     class StubClient:
-        def claim_runtime_bootstrap(self, instance_id: str, bootstrap_secret: str):
+        def claim_runtime_bootstrap(self, instance_id: str, bootstrap_secret: str, **_: object):
             captured["instance_id"] = instance_id
             captured["bootstrap_secret"] = bootstrap_secret
             return contracts.RuntimeCredentialBootstrapResult(
+                status="claimed",
                 credential_id="rcred_bootstrap",
                 instance_id=instance_id,
                 permission_mode="admin",
@@ -75,7 +76,7 @@ def test_credential_claim_bootstrap_requires_secret(
     monkeypatch.delenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", raising=False)
 
     class StubClient:
-        def claim_runtime_bootstrap(self, instance_id: str, bootstrap_secret: str):
+        def claim_runtime_bootstrap(self, instance_id: str, bootstrap_secret: str, **_: object):
             raise AssertionError("claim should not be attempted without a secret")
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
@@ -114,11 +115,12 @@ def test_credential_claim_bootstrap_second_claim_renders_refusal(
         def __init__(self) -> None:
             self.claims = 0
 
-        def claim_runtime_bootstrap(self, instance_id: str, bootstrap_secret: str):
+        def claim_runtime_bootstrap(self, instance_id: str, bootstrap_secret: str, **_: object):
             self.claims += 1
             if self.claims > 1:
                 raise AuthenticationError("runtime_bootstrap.secret_already_claimed: claimed")
             return contracts.RuntimeCredentialBootstrapResult(
+                status="claimed",
                 credential_id="rcred_bootstrap",
                 instance_id=instance_id,
                 permission_mode="admin",
@@ -154,7 +156,7 @@ def test_credential_claim_bootstrap_wrong_secret_renders_auth_error(
     monkeypatch.setenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", "wrong-secret")
 
     class StubClient:
-        def claim_runtime_bootstrap(self, instance_id: str, bootstrap_secret: str):
+        def claim_runtime_bootstrap(self, instance_id: str, bootstrap_secret: str, **_: object):
             raise AuthenticationError("runtime_bootstrap.secret_invalid: mismatch")
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
@@ -195,6 +197,7 @@ def test_credential_mint_list_and_revoke_round_trip(
             permission_mode: contracts.RuntimeCredentialPermissionMode,
             label: str | None = None,
             principal_proof: object = None,
+            **_: object,
         ):
             captured["created"] = {
                 "instance_id": instance_id,
@@ -214,20 +217,22 @@ def test_credential_mint_list_and_revoke_round_trip(
                 revoked_at=None,
             )
             self.records = [credential]
-            return contracts.RuntimeCredentialResult(credential=credential, token="crt_dispatch")
+            return contracts.RuntimeCredentialResult(
+                status="minted", credential=credential, token="crt_dispatch"
+            )
 
         def list_runtime_credentials(self, instance_id: str):
             captured["listed_instance_id"] = instance_id
             return contracts.RuntimeCredentialListResult(credentials=self.records)
 
-        def revoke_runtime_credential(self, instance_id: str, credential_id: str):
+        def revoke_runtime_credential(self, instance_id: str, credential_id: str, **_: object):
             captured["revoked"] = {
                 "instance_id": instance_id,
                 "credential_id": credential_id,
             }
             credential = self.records[0].model_copy(update={"revoked_at": revoked_at})
             self.records = [credential]
-            return contracts.RuntimeCredentialResult(credential=credential)
+            return contracts.RuntimeCredentialResult(status="revoked", credential=credential)
 
     stub = StubClient()
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: stub)
@@ -338,8 +343,9 @@ def test_credential_claim_mint_and_list_emit_json(
     )
 
     class StubClient:
-        def claim_runtime_bootstrap(self, instance_id: str, bootstrap_secret: str):
+        def claim_runtime_bootstrap(self, instance_id: str, bootstrap_secret: str, **_: object):
             return contracts.RuntimeCredentialBootstrapResult(
+                status="claimed",
                 credential_id="rcred_bootstrap",
                 instance_id=instance_id,
                 permission_mode="admin",
@@ -347,7 +353,9 @@ def test_credential_claim_mint_and_list_emit_json(
             )
 
         def create_runtime_credential(self, instance_id: str, **_kwargs: object):
-            return contracts.RuntimeCredentialResult(credential=credential, token="crt_reader")
+            return contracts.RuntimeCredentialResult(
+                status="minted", credential=credential, token="crt_reader"
+            )
 
         def list_runtime_credentials(self, instance_id: str):
             return contracts.RuntimeCredentialListResult(credentials=[credential])
@@ -365,10 +373,12 @@ def test_credential_claim_mint_and_list_emit_json(
     for result in (claimed, minted, listed):
         assert result.exit_code == 0, result.output
     assert json.loads(claimed.stdout) == {
+        "status": "claimed",
         "credential_id": "rcred_bootstrap",
         "instance_id": "inst_123",
         "permission_mode": "admin",
         "token": "crt_bootstrap",
+        "coordinate": None,
     }
     assert json.loads(minted.stdout)["token"] == "crt_reader"
     assert json.loads(minted.stdout)["credential"]["credential_id"] == "rcred_reader"
@@ -399,7 +409,9 @@ def test_credential_mint_signs_the_principals_consent_with_its_key_dir(
                 permission_mode="governed_write",
                 created_at="2026-09-29T00:00:00Z",
             )
-            return contracts.RuntimeCredentialResult(credential=credential, token="crt_agent")
+            return contracts.RuntimeCredentialResult(
+                status="minted", credential=credential, token="crt_agent"
+            )
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
     base = ["--server-url", "http://server", "--instance-id", "inst_123", "credential", "mint"]
@@ -465,7 +477,9 @@ def test_credential_mint_writes_the_token_into_the_principals_settings(
                 permission_mode="governed_write",
                 created_at="2026-09-29T00:00:00Z",
             )
-            return contracts.RuntimeCredentialResult(credential=credential, token="crt_secret")
+            return contracts.RuntimeCredentialResult(
+                status="minted", credential=credential, token="crt_secret"
+            )
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
     minted = runner.invoke(

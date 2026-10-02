@@ -13,7 +13,10 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.fastmcp.tools.tool_manager import ToolManager
 from mcp.types import Tool as MCPTool
+from pydantic import ValidationError
 
+from cruxible_client.contracts.repairs import RepairOperationV1, render_served_repair
+from cruxible_client.contracts.validation_messages import validation_summary
 from cruxible_core import __version__
 from cruxible_core.errors import ConfigError
 from cruxible_core.mcp.curation import (
@@ -171,15 +174,38 @@ def _install_tool_curation(
                     advertised=advertised,
                 )
             )
-        return await inner_call_tool(
-            name,
-            arguments,
-            context=context,
-            convert_result=convert_result,
-        )
+        try:
+            return await inner_call_tool(
+                name,
+                arguments,
+                context=context,
+                convert_result=convert_result,
+            )
+        except ToolError as exc:
+            raise ToolError(_tool_failure_message(name, exc)) from exc.__cause__
 
     curated_call_tool._cruxible_curated = True  # type: ignore[attr-defined]
     manager.call_tool = curated_call_tool
+
+
+def _tool_failure_message(name: str, error: ToolError) -> str:
+    """One tool failure as the caller should read it (rule R10).
+
+    FastMCP renders whatever the tool raised with ``str()``. For pydantic's
+    ``ValidationError`` that is a multi-line dump naming internal model types
+    and documentation URLs, so argument and request faults become JSON paths
+    with their messages instead; a refusal that carries a runnable repair says
+    it.
+    """
+
+    cause = error.__cause__
+    if isinstance(cause, ValidationError):
+        return f"Error executing tool {name}: invalid arguments: {validation_summary(cause)}"
+    message = str(error)
+    repair = getattr(cause, "repair", None)
+    if isinstance(repair, RepairOperationV1) and "Repair:" not in message:
+        message += f" Repair: {render_served_repair(repair)}"
+    return message
 
 
 def create_server() -> FastMCP:

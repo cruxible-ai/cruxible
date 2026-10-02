@@ -109,7 +109,10 @@ def test_host_allocation_is_idempotent_and_creates_no_semantic_state(
     assert created.json() == {
         "instance_id": "inst_dp0b_host",
         "status": "created",
+        # Pinned to the row it allocated against: there was none.
+        "coordinate": created.json()["coordinate"],
     }
+    assert created.json()["coordinate"]["subject"] == "host:inst_dp0b_host"
 
     record = get_registry().get("inst_dp0b_host")
     assert record is not None
@@ -706,10 +709,12 @@ def test_unavailable_workspace_configuration_reaches_run_service_as_typed_absenc
         )
 
 
-def test_workspace_attachment_after_init_names_archive_and_rebuild_repair(
+def test_an_initialized_host_attaches_a_worktree_in_place(
     host_client: TestClient,
     tmp_path: Path,
 ) -> None:
+    """Q16: attachment is not fixed at host create; nothing is archived or rebuilt."""
+
     del host_client
     host_api.create_playbill_host(instance_id="inst_unattached_initialized")
     record = get_registry().get("inst_unattached_initialized")
@@ -724,18 +729,22 @@ def test_workspace_attachment_after_init_names_archive_and_rebuild_repair(
         "inst_unattached_initialized",
         principals=(owner.principal,),
     )
+    before = get_playbill_manager().get("inst_unattached_initialized").accepted_coordinate()
     workspace = tmp_path / "late-workspace"
     subprocess.run(["git", "init", "-b", "main", str(workspace)], check=True, capture_output=True)
 
-    with pytest.raises(
-        ConfigError,
-        match="inst_unattached_initialized.*archive/rebuild.*before init.*re-seed",
-    ):
-        host_api.create_playbill_host(
-            instance_id="inst_unattached_initialized",
-            workspace_root=str(workspace),
-            workspace_attachment_authorized=True,
-        )
+    result = host_api.create_playbill_host(
+        instance_id="inst_unattached_initialized",
+        workspace_root=str(workspace),
+        workspace_attachment_authorized=True,
+    )
+
+    assert result.status == "already_exists"
+    attached = get_registry().get("inst_unattached_initialized")
+    assert attached is not None and attached.workspace_root == str(workspace.resolve())
+    instance = get_playbill_manager().get("inst_unattached_initialized")
+    assert instance.accepted_coordinate() == before
+    assert instance.settled_workspace_advertisement().workspace_path == str(workspace.resolve())
 
 
 def test_attached_bootstrap_inherits_sha1_and_advertises_genesis(
@@ -1272,14 +1281,22 @@ def test_a_daemon_allocates_more_than_one_host_per_bootstrap_secret(
 
     assert second.status_code == 200, second.text
     assert second.json()["instance_id"] == "inst_second_tenant"
-    # The claim itself stays one-shot: the secret allocates hosts, it does not
-    # mint a second admin credential.
-    reclaimed = client.post(
+    # The claim is once per host (Q16): the second host claims its own first
+    # ADMIN credential with the same secret, and no host claims twice.
+    second_claim = client.post(
         "/api/v1/inst_second_tenant/runtime/bootstrap/claim",
         json={"bootstrap_secret": bootstrap_secret},
         headers=bootstrap_headers,
     )
+    assert second_claim.status_code == 200, second_claim.text
+    assert second_claim.json()["instance_id"] == "inst_second_tenant"
+    reclaimed = client.post(
+        f"/api/v1/{first.json()['instance_id']}/runtime/bootstrap/claim",
+        json={"bootstrap_secret": bootstrap_secret},
+        headers=bootstrap_headers,
+    )
     assert reclaimed.status_code == 401, reclaimed.text
+    assert reclaimed.json()["error_code"] == "runtime_bootstrap.secret_already_claimed"
 
 
 def test_an_instance_scoped_credential_creating_a_host_is_told_what_to_present(
@@ -1560,9 +1577,16 @@ def test_a_decommissioned_host_reports_decommissioned_not_writable(
     assert initialized.status_code == 200, initialized.text
     assert host_client.get(f"/api/v1/{instance_id}/playbill/host").json()["writable"] is True
 
+    route = f"/api/v1/{instance_id}/playbill/instance/decommission"
+    previewed = host_client.post(route, json={"reason": "superseded by a fresh host"})
+    assert previewed.status_code == 200, previewed.text
     ended = host_client.post(
-        f"/api/v1/{instance_id}/playbill/instance/decommission",
-        json={"reason": "superseded by a fresh host"},
+        route,
+        json={
+            "reason": "superseded by a fresh host",
+            "dry_run": False,
+            "at": previewed.json()["coordinate"]["git_oid"],
+        },
     )
     assert ended.status_code == 200, ended.text
 

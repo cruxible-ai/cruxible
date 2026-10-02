@@ -32,6 +32,7 @@ from cruxible_client.contracts.authoring.models import (
     PlaybillProjectionCheckResultV1 as PlaybillProjectionCheckResultV1,
 )
 from cruxible_client.contracts.canonical import Sha256Value
+from cruxible_client.contracts.change_control import PlaybillStateCoordinateV1
 from cruxible_client.contracts.claims import ClaimStatementCardV1 as ClaimStatementCardV1
 from cruxible_client.contracts.compact_query import (
     PLAYBILL_QUERY_DEFAULT_LIMIT as PLAYBILL_QUERY_DEFAULT_LIMIT,
@@ -276,7 +277,7 @@ RuntimeCredentialPermissionMode = Literal[
     "graph_write",
     "admin",
 ]
-PlaybillHostStatus = Literal["created", "already_exists"]
+PlaybillHostStatus = Literal["created", "already_exists", "would_create"]
 PlaybillHostWorkspaceRegistrationStatus = Literal["registered", "not_registered"]
 PlaybillAuthoringExampleName = Literal[
     "claim-existing-capture",
@@ -389,6 +390,9 @@ class PlaybillHostResult(BaseModel):
     instance_id: str
     status: PlaybillHostStatus
     git_workspace_note: GitWorkspaceNoteV1 | None = None
+    #: The host's registry row the allocation was checked against (absent, for
+    #: a new host), read where it is written; commit a preview with ``at``.
+    coordinate: PlaybillStateCoordinateV1 | None = None
 
 
 class PlaybillHostWorkspaceRegistrationV1(BaseModel):
@@ -406,7 +410,7 @@ class PlaybillHostWorkspaceRegistrationV1(BaseModel):
 
 
 PlaybillHostCompatibilityV1: TypeAlias = Literal[
-    "uninitialized", "writable", "reseed_required", "decommissioned"
+    "uninitialized", "writable", "reseed_required", "decommissioned", "refused"
 ]
 PlaybillHostCompatibilityReasonCodeV1: TypeAlias = Literal[
     "legacy_layout_requires_reseed",
@@ -414,6 +418,7 @@ PlaybillHostCompatibilityReasonCodeV1: TypeAlias = Literal[
     "host_state_malformed",
     "compiler_lineage_not_writable",
     "instance_decommissioned",
+    "location_outside_state_root",
 ]
 
 
@@ -451,16 +456,24 @@ class PlaybillHostInspectionV1(BaseModel):
             or self.reason is not None
         ):
             raise ValueError("uninitialized host cannot carry compiler or reason")
-        if self.compatibility in {"reseed_required", "decommissioned"} and self.reason is None:
+        if self.compatibility in {"reseed_required", "decommissioned", "refused"} and (
+            self.reason is None
+        ):
             raise ValueError(f"{self.compatibility} host must carry a typed reason")
         return self
 
 
 class RuntimeCredentialBootstrapResult(BaseModel):
+    #: ``would_claim`` answers a preview: the secret checked out and nothing was
+    #: claimed, so no token is issued.
+    status: Literal["claimed", "would_claim"]
     credential_id: str
     instance_id: str
     permission_mode: Literal["admin"]
-    token: str
+    token: str | None = None
+    #: The host's credentials the claim was checked against (none, for a
+    #: claimable host), read where the claim is written.
+    coordinate: PlaybillStateCoordinateV1 | None = None
 
 
 class RuntimeCredentialMetadata(BaseModel):
@@ -480,8 +493,25 @@ class RuntimeCredentialMetadata(BaseModel):
 
 
 class RuntimeCredentialResult(BaseModel):
+    #: ``would_*`` answers a preview: nothing was minted, revoked, rotated or
+    #: recovered, and no token is issued.
+    status: Literal[
+        "minted",
+        "revoked",
+        "rotated",
+        "recovered",
+        "would_mint",
+        "would_revoke",
+        "would_rotate",
+        "would_recover",
+    ]
     credential: RuntimeCredentialMetadata
     token: str | None = None
+    #: The credential state the change was checked against (the credential
+    #: itself, or for a mint or recovery the credentials it adds to), read where
+    #: it writes. A commit of a revoke or rotate (which cannot be undone)
+    #: passes its digest as ``at``; it exists before Playbill is initialized.
+    coordinate: PlaybillStateCoordinateV1 | None = None
 
 
 class RuntimeCredentialListResult(BaseModel):
@@ -623,7 +653,13 @@ class PlaybillProposalInspection(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-proposal-inspection-v1"] = "playbill-proposal-inspection-v1"
+    #: ``admitted``: ``proposal`` is the admitted proposal (its own evaluation
+    #: says whether it passed). ``would_propose``/``would_block``: a preview that
+    #: admitted nothing; ``proposal`` holds its evaluation and candidate (R12).
+    status: Literal["admitted", "would_propose", "would_block"] = "admitted"
     proposal: dict[str, Any]
+    #: After the call; a preview's is the head it evaluated at, which a commit
+    #: passes back as ``at`` (its git oid).
     accepted_coordinate: PlaybillAcceptedCoordinate
     workspace_advertisement: PlaybillWorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
     lint: PlaybillClaimTypeProposalLint | None = Field(
@@ -682,11 +718,15 @@ class PlaybillProposalWithdrawResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-proposal-withdraw-result-v1"] = "playbill-proposal-withdraw-result-v1"
+    #: ``would_withdraw`` answers a preview, which recorded nothing.
+    status: Literal["withdrawn", "would_withdraw"] = "withdrawn"
     proposal_id: str
     actor_id: str
     reason: str
     withdrawn_at: str
     already_withdrawn: bool = False
+    #: The accepted coordinate the withdrawal was checked at; ``at`` pins a commit.
+    coordinate: PlaybillAcceptedCoordinate | None = None
 
 
 class PlaybillWhoAmI(BaseModel):
@@ -917,6 +957,9 @@ class PlaybillInstanceDecommissionResultV1(BaseModel):
     tag: Literal["playbill-instance-decommission-result-v1"] = (
         "playbill-instance-decommission-result-v1"
     )
+    #: ``would_decommission`` answers a preview, which stamped nothing; commit it
+    #: with ``at`` set to this coordinate's git oid.
+    status: Literal["decommissioned", "would_decommission"]
     instance_id: str
     reason: str
     decommissioned_at: str
@@ -940,7 +983,11 @@ class PlaybillLedgerMirrorV1(BaseModel):
     tag: Literal["playbill-ledger-mirror-v1"] = "playbill-ledger-mirror-v1"
     instance_id: str
     mirror_url: str
-    status: Literal["current", "behind", "pending", "publishing"]
+    #: ``would_publish`` answers a preview: nothing was bound, requested or sent.
+    status: Literal["current", "behind", "pending", "publishing", "would_publish"]
+    #: A preview's accepted coordinate; binding a mirror commits only with
+    #: ``at`` set to its git oid.
+    coordinate: PlaybillAcceptedCoordinate | None = None
     attempted_at: str | None = None
     published_main_oid: str | None = None
     requested_sequence: int = Field(default=0, ge=0)
@@ -1218,7 +1265,8 @@ class PlaybillBlockDepublishResultV1(BaseModel):
     origin: Literal["publication", "declaration"] = "publication"
     intent_id: str | None = None
     expectation_id: str | None = None
-    outcome: Literal["depublished", "already_depublished"]
+    #: ``would_depublish`` answers a preview, which released nothing.
+    outcome: Literal["depublished", "already_depublished", "would_depublish"]
     claim_identity: str | None = None
     coordinate: PlaybillAcceptedCoordinate
 
@@ -1586,6 +1634,9 @@ class PlaybillCurationActionResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-curation-action-result-v1"] = "playbill-curation-action-result-v1"
+    #: ``would_record`` answers a preview, which appended nothing; ``item`` is
+    #: then the item as it stands.
+    status: Literal["recorded", "would_record"] = "recorded"
     coordinate: PlaybillAcceptedCoordinate
     generation: int = Field(ge=0)
     operational_head_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
@@ -1990,8 +2041,35 @@ class PlaybillWorkspaceDetachResultV1(BaseModel):
 
     tag: Literal["playbill-workspace-detach-result-v1"] = "playbill-workspace-detach-result-v1"
     instance_id: str
-    status: Literal["detached", "not_registered"]
+    #: ``would_detach`` answers a preview, which released nothing.
+    status: Literal["detached", "not_registered", "would_detach"]
     workspace_root: str | None = None
+    #: The host's worktree binding this was checked against; commit a preview
+    #: with ``at`` set to its digest.
+    coordinate: PlaybillStateCoordinateV1 | None = None
+
+
+class PlaybillHostWorkspaceAttachResultV1(BaseModel):
+    """One daemon host attached to a Git worktree, before or after its init.
+
+    An initialized host attaches when the worktree is in the ledger's own Git
+    object format and holds no part of the host's managed root; nothing is
+    rebuilt. ``would_attach`` answers a preview, which registered nothing.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-host-workspace-attach-result-v1"] = (
+        "playbill-host-workspace-attach-result-v1"
+    )
+    instance_id: str
+    status: Literal["attached", "already_attached", "would_attach"]
+    workspace_root: str
+    #: Whether Playbill is already initialized under the host.
+    initialized: bool
+    #: The host's worktree binding this was checked against, read where the
+    #: attach writes it; commit a preview with ``at`` set to its digest.
+    coordinate: PlaybillStateCoordinateV1 | None = None
 
 
 class PlaybillWorkspaceFloorStatus(BaseModel):

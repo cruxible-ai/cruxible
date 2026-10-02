@@ -760,6 +760,12 @@ def detached_history_reads() -> Iterator[None]:
         _DETACHED_READS.reset(token)
 
 
+def history_reads_detached() -> bool:
+    """Whether reads in this context must leave every derived index file as it is."""
+
+    return _DETACHED_READS.get()
+
+
 class AcceptedHistoryIndex:
     """Shared derived owner; no source mutation and no frozen compiler schema change."""
 

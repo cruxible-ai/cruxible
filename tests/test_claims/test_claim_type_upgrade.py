@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.contracts.claim_types import claim_type_digest
+from tests.support.store_snapshot import assert_writes_nothing
 from tests.test_claims.test_claim_type_v7_revisions import _backing_bytes, _V7World
 from tests.test_claims.test_identity_evidence_rules import (
     IDENTITY,
@@ -50,13 +51,16 @@ def test_the_upgrade_moves_v6_to_v7_replace_and_carries_claims_byte_identical(
     tree_before = world.tree()
     proposals_before = service_list_playbill_proposals(world.instance)
 
-    dry = _upgrade(world, dry_run=True)
+    # The upgrade carries every dependent Claim, so it previews by default, on
+    # the submission's own path, and writes nothing anywhere (R12).
+    dry = assert_writes_nothing([world.instance.root.parent], lambda: _upgrade(world))
     assert dry.status == "would_propose", dry  # type: ignore[attr-defined]
     assert dry.proposal_id is None  # type: ignore[attr-defined]
+    assert dry.carried_claims == 1  # type: ignore[attr-defined]
     assert world.tree() == tree_before
     assert service_list_playbill_proposals(world.instance) == proposals_before
 
-    result = _upgrade(world)
+    result = _upgrade(world, dry_run=False, at=dry.coordinate.git_oid)  # type: ignore[attr-defined]
     assert result.status == "proposed", result  # type: ignore[attr-defined]
     (entry,) = result.upgraded  # type: ignore[attr-defined]
     assert (
@@ -94,7 +98,7 @@ def test_the_upgrade_takes_v5_through_the_identity_conversion_and_can_keep_accum
 
     world.seed(_v5_type(_digest_rule(_digest(ORIGINAL))))
     world.say(b"status: ready")
-    result = _upgrade(world, revision_evidence="accumulate", claim_types=[PREDICATE])
+    result = _upgrade(world, revision_evidence="accumulate", claim_types=[PREDICATE], dry_run=False)
     assert result.status == "proposed", result  # type: ignore[attr-defined]
     (entry,) = result.upgraded  # type: ignore[attr-defined]
     assert (entry.from_format, entry.revision_evidence_after) == (

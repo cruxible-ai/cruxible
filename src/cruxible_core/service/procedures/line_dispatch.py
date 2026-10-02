@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from datetime import datetime, timedelta
 from functools import partial
 from types import SimpleNamespace
@@ -57,6 +57,7 @@ from cruxible_core.procedures.line_admission import (
     line_arm_boundary,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
+from cruxible_core.service.change_preview import change_scope
 from cruxible_core.service.procedures.line_triggers import service_check_line_trigger
 from cruxible_core.service.procedures.procedure_runs import (
     LineNeverArmed,
@@ -74,6 +75,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     require_run_permission,
     service_run_playbill_line,
 )
+from cruxible_core.storage.preview_fence import is_previewing
 
 _ARM_FIELDS = (
     "arm_id",
@@ -95,6 +97,11 @@ _IDLE_COVERAGE_INTERVAL = timedelta(minutes=1)
 
 
 def _positions(instance: PlaybillInstance) -> dict[str, Any]:
+    root = instance.root / instance.descriptor.storage.exhaust / "procedure-runs"
+    if is_previewing() and not root.is_dir():
+        # No run was ever journaled, so there is no position to start from, and
+        # a preview must not create the journal to read that it is empty.
+        return {}
     journal, _ = _journal(instance)
     return journal.index.positions(_stream(instance))
 
@@ -366,6 +373,7 @@ def _arm_view(
     data: dict[str, Any],
     *,
     outcome: LineArmOutcomeV1 | None = None,
+    coordinate: AcceptedCoordinate | None = None,
 ) -> LineArmV1:
     active = data["stops_at"] is None
     automatic = (
@@ -381,7 +389,9 @@ def _arm_view(
         (data["line_id"],),
     ).fetchone()[0]
     view = store.arm_view(data, pending_automatic=automatic, pending_explicit=total - automatic)
-    return view if outcome is None else view.model_copy(update={"outcome": outcome})
+    if outcome is None:
+        return view
+    return view.model_copy(update={"outcome": outcome, "coordinate": coordinate})
 
 
 def service_arm_line(
@@ -392,8 +402,13 @@ def service_arm_line(
     actor: GovernedActorContext,
     now: datetime,
     daemon_id: str,
+    dry_run: bool | None = None,
+    at: str | None = None,
 ) -> LineArmV1:
     """Arm the current Line version forward-only under the caller's credential.
+
+    ``dry_run`` previews the arm on this same path and records nothing; its
+    outcome reads ``would_arm`` or ``would_rearm`` (R12).
 
     The arm matches the live Triggers aimed at the Line now, pinned to their
     exact versions. Arming never catches up: matching starts at `now`, and any
@@ -406,15 +421,68 @@ def service_arm_line(
     """
 
     instance.require_writable()
+    with change_scope(
+        instance,
+        dry_run=dry_run,
+        at=at,
+        kind="direct",
+        operation="playbill.line.arm",
+        describe=f"arming Line {line}",
+    ) as mode:
+        return _previewed(
+            mode.previewing,
+            _arm_line(
+                instance,
+                line,
+                principal=principal,
+                actor=actor,
+                now=now,
+                daemon_id=daemon_id,
+                committing=mode.committing,
+            ),
+        )
+
+
+def _previewed(previewing: bool, view: LineArmV1) -> LineArmV1:
+    """A preview's arm view: the state the commit would leave, outcome ``would_*``."""
+
+    if not previewing or view.outcome not in _WOULD_OUTCOMES:
+        return view
+    return view.model_copy(update={"outcome": _WOULD_OUTCOMES[view.outcome]})
+
+
+_WOULD_OUTCOMES: dict[str | None, LineArmOutcomeV1] = {
+    "armed": "would_arm",
+    "rearmed": "would_rearm",
+    "disarmed": "would_disarm",
+}
+
+
+def _arm_line(
+    instance: PlaybillInstance,
+    line: str,
+    *,
+    principal: LineArmPrincipalV1,
+    actor: GovernedActorContext,
+    now: datetime,
+    daemon_id: str,
+    committing: Callable[[], AbstractContextManager[None]],
+) -> LineArmV1:
     coordinate = instance.accepted_coordinate()
     accepted = _accepted_line_by_reference(instance, coordinate=coordinate, reference=line)
+    evaluated = AcceptedCoordinate.from_internal(coordinate)
     # An arm admits on its own; one whose every admission would refuse for want
     # of a mandate is a silent stall, so it refuses here instead.
     require_line_mandate(instance, accepted, coordinate=coordinate, now=now)
     trigger_pins = line_trigger_pins(line_triggers(instance, accepted, coordinate=coordinate))
     identity = line_identity_digest(accepted.line.identity)
     store = LineDispatchStore(instance)
-    with line_arm_boundary(instance.root, identity), store.locked() as conn:
+    # The Line was read at `coordinate`. A commit pinned to a preview's
+    # coordinate confirms the LIVE accepted head under the activation lock and
+    # arms while holding it, so no Line revision can be accepted in between.
+    # Lock order: the Line's arm boundary, then the activation lock, then the
+    # dispatch store -- the order an automatic admission nests them in.
+    with line_arm_boundary(instance.root, identity), committing(), store.locked() as conn:
         current = _active_session(conn, identity)
         if current is not None and (
             current["armed_by"] == principal.model_dump(mode="json")
@@ -423,7 +491,7 @@ def service_arm_line(
             and current.get("trigger_pins") == trigger_pins
             and current["daemon_id"] == daemon_id
         ):
-            return _arm_view(store, conn, current, outcome="already_armed")
+            return _arm_view(store, conn, current, outcome="already_armed", coordinate=evaluated)
         if current is not None:
             _stop(
                 store,
@@ -448,7 +516,13 @@ def service_arm_line(
         data = _open_segment(
             store, conn, arm, instance=instance, actor=actor, now=now, daemon_id=daemon_id
         )
-        return _arm_view(store, conn, data, outcome="armed" if current is None else "rearmed")
+        return _arm_view(
+            store,
+            conn,
+            data,
+            outcome="armed" if current is None else "rearmed",
+            coordinate=evaluated,
+        )
 
 
 def service_disarm_line(
@@ -457,20 +531,45 @@ def service_disarm_line(
     *,
     actor: GovernedActorContext,
     now: datetime,
+    dry_run: bool | None = None,
+    at: str | None = None,
 ) -> LineArmV1:
     """Stop admitting new work; a run already admitted is not cancelled.
 
     Disarming a Line whose arm already stopped changes nothing and returns that
     arm with `already_disarmed`. A Line never armed has no arm to return.
+    ``dry_run`` previews it and records nothing (outcome ``would_disarm``).
     """
 
     instance.require_writable()
-    accepted = _accepted_line_by_reference(
-        instance, coordinate=instance.accepted_coordinate(), reference=line
-    )
+    with change_scope(
+        instance,
+        dry_run=dry_run,
+        at=at,
+        kind="direct",
+        operation="playbill.line.disarm",
+        describe=f"disarming Line {line}",
+    ) as mode:
+        return _previewed(
+            mode.previewing,
+            _disarm_line(instance, line, actor=actor, now=now, committing=mode.committing),
+        )
+
+
+def _disarm_line(
+    instance: PlaybillInstance,
+    line: str,
+    *,
+    actor: GovernedActorContext,
+    now: datetime,
+    committing: Callable[[], AbstractContextManager[None]],
+) -> LineArmV1:
+    coordinate = instance.accepted_coordinate()
+    accepted = _accepted_line_by_reference(instance, coordinate=coordinate, reference=line)
+    evaluated = AcceptedCoordinate.from_internal(coordinate)
     identity = line_identity_digest(accepted.line.identity)
     store = LineDispatchStore(instance)
-    with line_arm_boundary(instance.root, identity), store.locked() as conn:
+    with line_arm_boundary(instance.root, identity), committing(), store.locked() as conn:
         current = _active_session(conn, identity)
         if current is None:
             last = conn.execute(
@@ -479,11 +578,17 @@ def service_disarm_line(
             ).fetchone()
             if last is None:
                 raise LineNeverArmed(accepted.line.identity.name)
-            return _arm_view(store, conn, json.loads(last[0]), outcome="already_disarmed")
+            return _arm_view(
+                store,
+                conn,
+                json.loads(last[0]),
+                outcome="already_disarmed",
+                coordinate=evaluated,
+            )
         data = _stop(
             store, conn, current, reason="disarmed", detail="Disarmed.", actor=actor, now=now
         )
-        return _arm_view(store, conn, data, outcome="disarmed")
+        return _arm_view(store, conn, data, outcome="disarmed", coordinate=evaluated)
 
 
 def service_line_status(instance: PlaybillInstance, line: str) -> LineArmV1:

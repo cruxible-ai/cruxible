@@ -66,7 +66,7 @@ def test_cli_reports_the_new_proposal_without_hiding_its_source(monkeypatch) -> 
                 selector=selector, proposal_id=SOURCE_ID
             )
 
-        def readmit_playbill_proposal(self, instance_id, proposal_id):
+        def readmit_playbill_proposal(self, instance_id, proposal_id, **_control):
             assert (instance_id, proposal_id) == ("inst_test", SOURCE_ID)
             return _result()
 
@@ -248,7 +248,7 @@ def test_withdraw_cli_resolves_the_selector_and_reports_the_recorded_reason(
                 selector=selector, proposal_id=SOURCE_ID
             )
 
-        def withdraw_playbill_proposal(self, instance_id, proposal_id, *, reason):
+        def withdraw_playbill_proposal(self, instance_id, proposal_id, *, reason, **_control):
             assert (instance_id, proposal_id) == ("inst_test", SOURCE_ID)
             assert reason == "its change-set record exceeds the ledger blob ceiling"
             return _withdraw_result()
@@ -288,7 +288,7 @@ def test_withdraw_cli_says_when_the_answer_is_the_earlier_one(
                 selector=selector, proposal_id=SOURCE_ID
             )
 
-        def withdraw_playbill_proposal(self, _instance_id, _proposal_id, *, reason):
+        def withdraw_playbill_proposal(self, _instance_id, _proposal_id, *, reason, **_control):
             assert reason == "second thoughts"
             return _withdraw_result(already=True)
 

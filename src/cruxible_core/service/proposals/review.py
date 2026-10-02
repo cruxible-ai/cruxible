@@ -31,6 +31,7 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.documents import parse_document
 from cruxible_client.contracts.errors import ApprovalIntegrityError, ProposalIntegrityError
+from cruxible_client.contracts.proposal_models import ProposalResult
 from cruxible_client.contracts.semantic import SourceMapping, whole_body_mapping
 from cruxible_client.contracts.semantic_delta import semantic_field_delta
 from cruxible_client.contracts.types import PrincipalRecord
@@ -482,6 +483,8 @@ def service_review_playbill_proposal(
 
     inspection = service_inspect_playbill_proposal(instance, proposal_id=proposal_id)
     proposal = inspection.proposal
+    # An inspection of an admitted proposal always carries the admitted record.
+    assert isinstance(proposal, ProposalResult)
     candidate = proposal.candidate
     if candidate is None or proposal.evaluation.evaluated_tree_oid is None:
         raise ProposalIntegrityError("refused proposal has no reviewable candidate")

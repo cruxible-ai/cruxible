@@ -67,18 +67,97 @@ cruxible context show
 cruxible context clear
 ~~~
 
+## Previews
+
+Every operation that can change governed state, operational state or anything
+outside the daemon takes `--dry-run` (MCP and SDK: `dry_run`). A dry run runs
+the change's own checks and evaluation up to the commit and writes nothing
+anywhere: no proposal, ref, record, body, credential, registry row, journal
+entry or workspace file. It answers in the change's own result shape with a
+`would_*` status (`would_propose`, `would_block`, `would_decommission`,
+`would_revoke`, `would_publish`, ...), pinned to the coordinate it was
+evaluated at: the accepted head for a change to governed state, or, for a
+change to operational state (a runtime credential, a host's worktree binding,
+a page's block markers), a state digest of exactly the records it changes,
+which exists before `init` too.
+
+- A change the server derives across several artifacts previews unless asked
+  to commit: `kit add`, `kit remove`, `claim-type upgrade` and
+  `claim-type upgrade-evidence-rules`. Commit with `--commit`.
+- A change that cannot be undone previews unless asked to commit, and commits
+  only with the preview's coordinate: `instance decommission`,
+  `credential revoke`, `credential rotate` and `ledger set-mirror`. Commit with
+  `--commit --at OID`; without `--at` it refuses
+  `playbill.preview.confirmation_required`.
+- Everything else commits unless `--dry-run` is given.
+
+`--at OID` pins any commit to a preview: if that state moved since, the
+commit refuses `playbill.preview.state_moved` and changes nothing; preview
+again. The pin is checked where the change commits, under the lock its write
+holds, so state that moves after the first check is still refused. The write
+verbs (`set`, `retire`, `write`) take `--dry-run` and `--at` the same way,
+where `--at` pins each changed slot.
+
+A preview opens its instance behind the same guards. If opening it would first
+repair derived files a crash left behind, the preview refuses
+`playbill.preview.recovery_pending` instead of writing them; an ordinary read
+(`cruxible playbill orient`) reopens it, and the preview then runs.
+
+Which operations preview follows one principle (the maintainer's ruling):
+an operation previews when its effect is derived -- computed by the server
+from more than its input -- or when it cannot be undone or reaches outside the
+daemon and its effect is not already shown to the caller. An operation whose
+full effect is determined by its input and that writes nothing when refused is
+exempt. By that principle these are exempt:
+
+- `claim attest`: the statement the caller signs is the whole effect, and a
+  refused attestation writes nothing;
+- `body store`: an inert content-addressed put whose effect is its input;
+- `proposal approve`: records the caller's signed approval of an evaluation
+  already shown by `proposal inspect`;
+- `proposal activate`: its preview is the proposal's evaluation, already
+  shown; the commit-time `at` check covers the head moving under it;
+- `workspace floor-delivery on|off`: its effect is its input;
+- floor deliver-now: its result is fully determined by the accepted head (the
+  floor is a pure function of the accepted coordinate), it is idempotent, and
+  it writes only the derived, regenerable `.playbill/floor`.
+
+Exempt in v1 as well, by the maintainer's earlier scope ruling:
+
+- the exhaust paths -- `settle`, `predict`, `procedure run` and
+  `procedure measure`, and `line evaluate`, `line dispatch` and `line run` --
+  append observations to the instance's exhaust and need a separate
+  dry-run-execution feature;
+- client-local writes -- `context connect`, `context use`, `context clear`,
+  `kit build`, `kit pull` and `hook` -- change only the caller's own
+  configuration or output files;
+- `init` (genesis) and `server stop` / `server restart`, which have no
+  coordinate to preview against.
+
+`provider install --dry-run` is a labelled v1 exception: it validates and
+writes nothing, but it does not prepare the package, check deployment
+readiness or (for a package not yet prepared) evaluate its registration. Its
+outcome says so: `preview_scope: validation_only` and `not_run` naming those
+steps, with the coordinate it evaluated at.
+
 ## credential
 
 Manage runtime bearer credentials:
 
 ~~~text
-cruxible credential claim-bootstrap [--secret-file PATH] [--json]
-cruxible credential mint --principal-id ID --mode TIER [--key-dir DIR] [--label TEXT] [--json]
+cruxible credential claim-bootstrap [--secret-file PATH] [--dry-run] [--json]
+cruxible credential mint --principal-id ID --mode TIER [--key-dir DIR] [--label TEXT]
+  [--dry-run|--commit] [--at OID] [--json]
 cruxible credential list [--json]
-cruxible credential rotate CREDENTIAL_ID [--key-dir DIR]
-cruxible credential revoke CREDENTIAL_ID
-cruxible credential recover-admin [--state-root DIR] [--instance-id ID] [--json]
+cruxible credential rotate CREDENTIAL_ID [--key-dir DIR] [--dry-run|--commit] [--at OID] [--json]
+cruxible credential revoke CREDENTIAL_ID [--dry-run|--commit] [--at OID] [--json]
+cruxible credential recover-admin [--state-root DIR] [--instance-id ID] [--dry-run] [--json]
 ~~~
+
+The bootstrap secret is claimable once per host: each host on a daemon claims
+its own first ADMIN credential with it, and no host claims twice
+(`runtime_bootstrap.secret_already_claimed`). Revoking or rotating a credential
+cannot be undone, so both preview first; see [Previews](#previews).
 
 `recover-admin` is local-only: it opens the state root's credentials DB
 directly with the daemon stopped. It ignores a remembered CLI context and
@@ -442,11 +521,12 @@ it.
 ## playbill host
 
 ~~~text
-cruxible playbill host create [--instance-id ID] [--workspace DIR] [--replace]
+cruxible playbill host create [--instance-id ID] [--workspace DIR] [--replace] [--dry-run]
 cruxible playbill host show INSTANCE [--json]
 cruxible playbill workspace attach [--instance-id ID] [--replace] [--no-floor-delivery]
+  [--dry-run|--commit] [--at DIGEST]
 cruxible playbill workspace floor-delivery STATE [--instance-id ID] [--json]
-cruxible playbill workspace detach [--instance-id ID] [--json]
+cruxible playbill workspace detach [--instance-id ID] [--dry-run|--commit] [--at DIGEST] [--json]
 ~~~
 
 Allocates an empty daemon-owned host and remembers it. When the selected daemon
@@ -473,18 +553,26 @@ With auth on, `host create` is authorized by the daemon's runtime bootstrap
 secret, which is its unscoped operator credential. That authorization is
 repeatable, exactly as it is for `server status`, `server restart` and
 `server stop`: a daemon hosting several instances allocates each of them with
-the same secret, and `credential claim-bootstrap` -- which stays one-shot --
-does not revoke it. An instance-scoped credential cannot allocate a host on the
+the same secret, and `credential claim-bootstrap` -- claimable once per host,
+so each host claims its own first ADMIN credential with the same secret and no
+restart -- does not revoke it. An instance-scoped credential cannot allocate a host on the
 daemon that hosts it, and the refusal names the bootstrap secret as the
 credential to present.
 
 `host show` is a zero-authority inspection of workspace registration, exact
 compiler coordinate/revision, and write compatibility; the CLI adds the selected
 transport. The daemon-local managed root is visible only to an unscoped operator,
-not an instance-scoped credential. `workspace attach` is client-local and requires a Unix
-socket: it writes `.playbill/coverage.json` for an existing host only after the
-daemon proves that it registered the exact current Git worktree. A missing or
-different registration is a typed refusal and no config is written.
+not an instance-scoped credential. `workspace attach` requires a Unix socket, so
+the daemon can see the path it is asked to register. A host with no worktree
+registers this one, whether or not Playbill is already initialized under it: an
+initialized host attaches in place (nothing is rebuilt) when the worktree is in
+its ledger's Git object format and holds no part of its managed root, and it
+advertises the accepted ref into the worktree at once. A host already
+registered to this worktree just gets the client config. Either way
+`.playbill/coverage.json` is written only once the daemon holds the exact
+current worktree. A host registered to a different worktree is a typed refusal
+naming `workspace detach` as the repair, and no config is written. `host create
+--workspace` and `init --workspace` take the same attach path.
 
 `workspace detach` releases a host from the worktree it registers. The registry
 holds one host per worktree, so moving a worktree to a second host needs the
@@ -595,7 +683,7 @@ Stores exact bytes in inert CAS and prints their digest.
 ## playbill instance
 
 ~~~text
-cruxible playbill instance decommission --reason TEXT --yes
+cruxible playbill instance decommission --reason TEXT [--dry-run|--commit] [--at OID]
 ~~~
 
 Decommissioning is the terminal lifecycle state of one governed instance. It
@@ -607,15 +695,16 @@ and `search --mode orient` marks the orientation decommissioned.
 
 Nothing is deleted. Every accepted generation, receipt, and body stays exactly
 where it is, and archiving or erasing the directory afterwards is the operator's
-own step — no verb performs it, and the state cannot be reversed, so `--yes` is
-required.
+own step — no verb performs it, and the state cannot be reversed. So the command
+previews first and changes nothing; the confirmation is that preview's
+coordinate: `--commit --at OID` (see [Previews](#previews)).
 
 ## playbill ledger
 
 ~~~text
-cruxible playbill ledger set-mirror URL
+cruxible playbill ledger set-mirror URL [--dry-run|--commit] [--at OID]
 cruxible playbill ledger clone-url
-cruxible playbill ledger publish [--timeout 0..60] [--json]
+cruxible playbill ledger publish [--timeout 0..60] [--dry-run|--commit] [--at OID] [--json]
 ~~~
 
 The ledger is Git, so review is Git — but only for a reviewer who can reach the
@@ -722,7 +811,7 @@ the init body.
 ~~~text
 cruxible playbill provider list [--json]
 cruxible playbill provider install NAME[==VERSION] | WHEEL [--lock FILE]
-  [--dependency WHEEL]... [--extra NAME]... [--reverify] [--json]
+  [--dependency WHEEL]... [--extra NAME]... [--reverify] [--dry-run] [--json]
 ~~~
 
 Installation requires **ADMIN**. A package name resolves through the daemon's
@@ -760,11 +849,11 @@ and `POST /{instance}/playbill/providers/install`.
 ~~~text
 cruxible playbill kit build --id ID --version X.Y.Z --owns PREFIX. [--owns PREFIX.]...
   --out KIT_DIR [--json]
-cruxible playbill kit add KIT [--source TEXT] [--json]
-cruxible playbill kit push KIT REFERENCE [--json]
+cruxible playbill kit add KIT [--source TEXT] [--dry-run|--commit] [--at OID] [--json]
+cruxible playbill kit push KIT REFERENCE [--dry-run] [--json]
 cruxible playbill kit pull REFERENCE --out DIR [--layout] [--json]
 cruxible playbill kit status [--json]
-cruxible playbill kit remove ID [--json]
+cruxible playbill kit remove ID [--dry-run|--commit] [--at OID] [--json]
 ~~~
 
 `KIT` is a kit directory, an OCI image layout directory, or a registry
@@ -837,7 +926,7 @@ with the matching `CruxibleClient` methods.
 ## playbill document
 
 ~~~text
-cruxible playbill document propose --envelope FILE --name NAME
+cruxible playbill document propose --envelope FILE --name NAME [--dry-run|--commit] [--at OID]
 ~~~
 
 `document propose` is the only Document subcommand; Documents are read through
@@ -868,10 +957,11 @@ section nothing answers "what touches this package" from the object side.
 
 ~~~text
 cruxible playbill claim-type propose --template
-cruxible playbill claim-type propose --input FILE --name NAME
+cruxible playbill claim-type propose --input FILE --name NAME [--dry-run|--commit] [--at OID]
 cruxible playbill claim-type migrate REQUEST_FILE
-cruxible playbill claim-type upgrade-evidence-rules
-cruxible playbill claim-type upgrade [--claim-type P]... [--revision-evidence replace|accumulate] [--dry-run]
+cruxible playbill claim-type upgrade-evidence-rules [--dry-run|--commit] [--at OID]
+cruxible playbill claim-type upgrade [--claim-type P]... [--revision-evidence replace|accumulate]
+  [--dry-run|--commit] [--at OID]
 ~~~
 
 Read the accepted ClaimTypes with `cruxible playbill orient --section
@@ -917,7 +1007,9 @@ their Claims. A rule converts only when it keeps its meaning: every version of a
 named contract must be compatible with its predecessor, and two rules that did
 not overlap may not start matching the same evidence. It lists, per ClaimType,
 the accepted contract versions a converted rule newly admits, and leaves the
-rest unchanged with the reason. Approve and activate the proposal as usual.
+rest unchanged with the reason. The change set carries every dependent Claim, so
+both upgrades preview by default (see [Previews](#previews)); commit the preview
+with `--commit --at OID`, then approve and activate the proposal as usual.
 
 ClaimType v7 adds a `description`, `member_descriptions` for a literal enum, a
 `default_role` a write takes when it names none, an `evidence_requirement`
@@ -1343,8 +1435,8 @@ PRD-c1… rollout-healthy procedure_unit satisfied run=RUN-3f…
 
 ~~~text
 cruxible playbill line check LINE [--since TS] [--until TS] [--limit 100] [--cursor CURSOR] [--json]
-cruxible playbill line arm LINE [--json]
-cruxible playbill line disarm LINE [--json]
+cruxible playbill line arm LINE [--dry-run|--commit] [--at OID] [--json]
+cruxible playbill line disarm LINE [--dry-run|--commit] [--at OID] [--json]
 cruxible playbill line status LINE [--json]
 cruxible playbill line evaluate LINE --since TS --until TS [--limit 100] [--cursor CURSOR] [--json]
 cruxible playbill line dispatch LINE [--occurrence-id DIGEST] [--retry] [--limit 1] [--json]
@@ -1618,7 +1710,7 @@ to clear the row.
 cruxible playbill block repin SOURCE_ID BLOCK_ID [--claim ID]... [--query ID]...
   [--backing SHA256] [--params CANONICAL_JSON]... [--workspace-root DIR]
   [--evaluation-time TS] [--artifact ID]... [--currency-policy warn|require_current]
-  [--clear-claims] [--clear-queries] [--clear-artifacts]
+  [--clear-claims] [--clear-queries] [--clear-artifacts] [--dry-run]
 cruxible playbill block sync [PATH]... [--all] [--check]
   [--detach PATH]... [--workspace-root DIR]
 cruxible playbill block depublish SOURCE_ID BLOCK_ID [--json]
@@ -1653,8 +1745,9 @@ concrete. Prose outside every window is the author's own and stays citable.
 ### Declaring a projection block
 
 `block repin --claim ID --claim ID ...` is how a projection block is created.
-Write the marker pair by hand around the prose you want governed, then repin it
-naming every backing: the daemon re-reads and re-proves each Claim at the
+Write the marker pair by hand around the prose you want governed (see
+[Projection block markers](#projection-block-markers)), then repin it naming
+every backing: the daemon re-reads and re-proves each Claim at the
 accepted coordinate, stamps the marker, and registers the block with the
 instance. Up to 512 backings fit in one block
 (`MAX_PROJECTION_BACKINGS_PER_BLOCK`, inside a 128 KiB stamp), and a block that
@@ -1694,6 +1787,43 @@ projection -- the overlap the two-block-kinds law refuses. An intent carrying
 `insertion_target` refuses typed as
 `playbill.authoring.insertion_target_removed`, naming both roads above as the
 repair.
+
+On MCP the same adapter runs in the MCP server process:
+`cruxible_playbill_block_repin` takes the block and its page (`file`,
+workspace-relative, or `source`, its catalog id) and computes the stamp there,
+so an agent never builds one; `cruxible_playbill_block_sync` is `block sync`
+without `--detach`, a read that edits no page. Detaching is the write-tier
+`cruxible_playbill_block_detach` (`files`, `dry_run`, `at`): its preview
+reports what the edit would change and is pinned to the pages' bytes, and a
+commit with `at` refuses if a page changed since. `--dry-run` (MCP `dry_run`)
+on a repin computes and checks the stamp and writes nothing: no manifest, no
+page edit, no declaration.
+
+### Projection block markers
+
+A projection block is the byte range between one opening and one closing
+marker, each on its own line:
+
+~~~text
+<!-- playbill:block:BLOCK_ID -->
+...the governed prose...
+<!-- /playbill:block:BLOCK_ID -->
+~~~
+
+- `BLOCK_ID` matches `[a-z][a-z0-9_.-]{0,63}` and is unique within its page.
+- The opening above is the **bootstrap** form you write by hand. `repin`
+  replaces it with a stamped opening, by default the compact form
+  `<!-- playbill:block:BLOCK_ID:ref:HEX12 -->`, where `HEX12` is the first 12 hex
+  of the stamp's digest and the stamp itself is kept in
+  `.playbill/manifests/`; a block repinned without compaction carries the stamp
+  inline as `<!-- playbill:block:BLOCK_ID:STAMP -->` (unpadded base64url of the
+  canonical stamp JSON). Never edit a stamped opening by hand; repin it.
+- Each marker starts at column 0 and ends with a line feed (LF, not CRLF), and
+  the body ends with a line feed.
+- Markers inside a fenced code block (``` or ~~~) are text, not markers.
+- Blocks never nest or overlap, and every opening has its closing marker.
+- The page must be a source in `.playbill/sources.yaml` (or `sources.yaml`);
+  that catalog names the block's `source_id`, which a bootstrap marker cannot.
 
 ### Checking and detaching
 
@@ -2530,7 +2660,7 @@ ledger](#playbill-ledger) for what the mirror carries and how to get its URL.
 
 ~~~text
 cruxible playbill principal add PRINCIPAL_ID --key-dir DIR [--signer-key PATH]
-  [--mode governed_write] [--kind ordinary] [--name NAME] [--json]
+  [--mode governed_write] [--kind ordinary] [--name NAME] [--dry-run|--commit] [--at OID] [--json]
 cruxible playbill principal rotate ...
 cruxible playbill principal revoke ...
 cruxible playbill principal recover ...
@@ -2597,7 +2727,7 @@ with --help for its exact options.
 
 ### Compiler upgrade
 
-`cruxible playbill compiler upgrade --to DIGEST --name NAME` creates an admin-only
+`cruxible playbill compiler upgrade --to DIGEST --name NAME [--dry-run]` creates an admin-only
 proposal bound to the exact accepted head and target compiler. Review it, sign
 through `cruxible playbill proposal approve`, then use
 `cruxible playbill proposal activate`. Activation validates the full target

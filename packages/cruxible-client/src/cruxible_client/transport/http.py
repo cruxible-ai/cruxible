@@ -36,7 +36,10 @@ from cruxible_client.contracts.claim_type_upgrade import (
 from cruxible_client.contracts.errors import (
     PlaybillSinceRequestInvalid,
 )
-from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeResultV1
+from cruxible_client.contracts.evidence_rule_upgrade import (
+    EvidenceRuleUpgradeRequestV1,
+    EvidenceRuleUpgradeResultV1,
+)
 from cruxible_client.contracts.floor import PlaybillFloorDeltaV1
 from cruxible_client.contracts.get_reads import (
     PlaybillGetBatchRequestV1,
@@ -163,6 +166,17 @@ class _TransportGuard:
 
     def close(self) -> None:
         self._client.close()
+
+
+def _change_control(dry_run: bool | None, at: str | None) -> dict[str, Any]:
+    """The R12 change-control fields a change request carries, when set."""
+
+    body: dict[str, Any] = {}
+    if dry_run is not None:
+        body["dry_run"] = dry_run
+    if at is not None:
+        body["at"] = at
+    return body
 
 
 class CruxibleClient:
@@ -301,8 +315,10 @@ class CruxibleClient:
         *,
         instance_id: str | None = None,
         workspace_root: str | None = None,
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> contracts.PlaybillHostResult:
-        payload = {"instance_id": instance_id}
+        payload: dict[str, Any] = {"instance_id": instance_id, **_change_control(dry_run, at)}
         if workspace_root is not None:
             payload["workspace_root"] = workspace_root
         response = self._client.post(
@@ -321,22 +337,44 @@ class CruxibleClient:
         return self._parse_model(response, contracts.PlaybillBlockDeclareResultV1)
 
     def depublish_playbill_block(
-        self, instance_id: str, source_id: str, block_id: str
+        self,
+        instance_id: str,
+        source_id: str,
+        block_id: str,
+        *,
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> contracts.PlaybillBlockDepublishResultV1:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/blocks/depublish",
-            json={"source_id": source_id, "block_id": block_id},
+            json={"source_id": source_id, "block_id": block_id, **_change_control(dry_run, at)},
         )
         return self._parse_model(response, contracts.PlaybillBlockDepublishResultV1)
 
     def playbill_host_workspace_detach(
-        self, instance_id: str
+        self, instance_id: str, *, dry_run: bool | None = None, at: str | None = None
     ) -> contracts.PlaybillWorkspaceDetachResultV1:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/workspace-detach",
-            json={},
+            json=_change_control(dry_run, at),
         )
         return self._parse_model(response, contracts.PlaybillWorkspaceDetachResultV1)
+
+    def playbill_host_workspace_attach(
+        self,
+        instance_id: str,
+        *,
+        workspace_root: str,
+        dry_run: bool | None = None,
+        at: str | None = None,
+    ) -> contracts.PlaybillHostWorkspaceAttachResultV1:
+        """Attach the host to a Git worktree, initialized or not (local socket only)."""
+
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/workspace-attach",
+            json={"workspace_root": workspace_root, **_change_control(dry_run, at)},
+        )
+        return self._parse_model(response, contracts.PlaybillHostWorkspaceAttachResultV1)
 
     def playbill_host_workspace_registration(
         self, instance_id: str
@@ -374,11 +412,16 @@ class CruxibleClient:
         return self._parse_model(response, contracts.PlaybillHostInspectionV1)
 
     def claim_runtime_bootstrap(
-        self, instance_id: str, bootstrap_secret: str
+        self,
+        instance_id: str,
+        bootstrap_secret: str,
+        *,
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> contracts.RuntimeCredentialBootstrapResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/runtime/bootstrap/claim",
-            json={"bootstrap_secret": bootstrap_secret},
+            json={"bootstrap_secret": bootstrap_secret, **_change_control(dry_run, at)},
         )
         return self._parse_model(response, contracts.RuntimeCredentialBootstrapResult)
 
@@ -390,6 +433,8 @@ class CruxibleClient:
         permission_mode: contracts.RuntimeCredentialPermissionMode,
         label: str | None = None,
         principal_proof: RuntimeCredentialPrincipalProofV1 | None = None,
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> contracts.RuntimeCredentialResult:
         """Mint a credential that acts as ``principal_id``.
 
@@ -407,6 +452,7 @@ class CruxibleClient:
             body["label"] = label
         if principal_proof is not None:
             body["principal_proof"] = principal_proof.model_dump(mode="json")
+        body.update(_change_control(dry_run, at))
         response = self._client.post(f"/api/v1/{instance_id}/runtime/credentials", json=body)
         return self._parse_model(response, contracts.RuntimeCredentialResult)
 
@@ -415,10 +461,19 @@ class CruxibleClient:
         return self._parse_model(response, contracts.RuntimeCredentialListResult)
 
     def revoke_runtime_credential(
-        self, instance_id: str, credential_id: str
+        self,
+        instance_id: str,
+        credential_id: str,
+        *,
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> contracts.RuntimeCredentialResult:
+        """Revoke a credential. It cannot be undone: it previews unless ``dry_run`` is
+        false, and then commits only with ``at`` (the preview's coordinate)."""
+
         response = self._client.post(
-            f"/api/v1/{instance_id}/runtime/credentials/{credential_id}/revoke"
+            f"/api/v1/{instance_id}/runtime/credentials/{credential_id}/revoke",
+            json=_change_control(dry_run, at),
         )
         return self._parse_model(response, contracts.RuntimeCredentialResult)
 
@@ -428,16 +483,20 @@ class CruxibleClient:
         credential_id: str,
         *,
         principal_proof: RuntimeCredentialPrincipalProofV1 | None = None,
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> contracts.RuntimeCredentialResult:
-        """Replace a credential's token; a bound one needs its principal's authority."""
+        """Replace a credential's token; a bound one needs its principal's authority.
 
+        The old token is revoked, which cannot be undone: it previews unless
+        ``dry_run`` is false, and then commits only with ``at``.
+        """
+
+        body: dict[str, Any] = _change_control(dry_run, at)
+        if principal_proof is not None:
+            body["principal_proof"] = principal_proof.model_dump(mode="json")
         response = self._client.post(
-            f"/api/v1/{instance_id}/runtime/credentials/{credential_id}/rotate",
-            json=(
-                None
-                if principal_proof is None
-                else {"principal_proof": principal_proof.model_dump(mode="json")}
-            ),
+            f"/api/v1/{instance_id}/runtime/credentials/{credential_id}/rotate", json=body
         )
         return self._parse_model(response, contracts.RuntimeCredentialResult)
 
@@ -493,31 +552,47 @@ class CruxibleClient:
         return self._parse_model(response, contracts.PlaybillCasObjectResult)
 
     def decommission_playbill_instance(
-        self, instance_id: str, *, reason: str
+        self,
+        instance_id: str,
+        *,
+        reason: str,
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> contracts.PlaybillInstanceDecommissionResultV1:
+        """Decommission the instance. It cannot be undone: it previews unless
+        ``dry_run`` is false, and then commits only with ``at``."""
+
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/instance/decommission",
-            json={"reason": reason},
+            json={"reason": reason, **_change_control(dry_run, at)},
         )
         return self._parse_model(response, contracts.PlaybillInstanceDecommissionResultV1)
 
     def set_playbill_ledger_mirror(
-        self, instance_id: str, *, url: str
+        self, instance_id: str, *, url: str, dry_run: bool | None = None, at: str | None = None
     ) -> contracts.PlaybillLedgerMirrorV1:
+        """Bind a mirror and publish to it. A disclosure cannot be called back: it
+        previews unless ``dry_run`` is false, and then commits only with ``at``."""
+
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/ledger/mirror",
-            json={"url": url},
+            json={"url": url, **_change_control(dry_run, at)},
         )
         return self._parse_model(response, contracts.PlaybillLedgerMirrorV1)
 
     def publish_playbill_ledger(
-        self, instance_id: str, *, timeout: float = 60.0
+        self,
+        instance_id: str,
+        *,
+        timeout: float = 60.0,
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> contracts.PlaybillLedgerMirrorV1:
         if isinstance(timeout, bool) or not 0 <= timeout <= 60:
             raise ValueError("timeout must be between 0 and 60 seconds")
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/ledger/publish",
-            json={"timeout": timeout},
+            json={"timeout": timeout, **_change_control(dry_run, at)},
         )
         return self._parse_model(response, contracts.PlaybillLedgerMirrorV1)
 
@@ -570,9 +645,12 @@ class CruxibleClient:
         )
         return self._parse_model(response, ClaimTypeUpgradeResultV1)
 
-    def upgrade_playbill_evidence_rules(self, instance_id: str) -> EvidenceRuleUpgradeResultV1:
+    def upgrade_playbill_evidence_rules(
+        self, instance_id: str, request: EvidenceRuleUpgradeRequestV1
+    ) -> EvidenceRuleUpgradeResultV1:
         response = self._client.post(
-            f"/api/v1/{instance_id}/playbill/claim-types/evidence-rules/upgrade"
+            f"/api/v1/{instance_id}/playbill/claim-types/evidence-rules/upgrade",
+            json=request.model_dump(mode="json"),
         )
         return self._parse_model(response, EvidenceRuleUpgradeResultV1)
 
@@ -592,11 +670,14 @@ class CruxibleClient:
         proposal_name: str,
         source_compilation_digest: str | None = None,
         base: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> contracts.PlaybillProposalInspection:
         payload: dict[str, Any] = {
             "shell": dict(shell),
             "proposal_name": proposal_name,
             "source_compilation_digest": source_compilation_digest,
+            **_change_control(dry_run, at),
         }
         if base is not None:
             payload["base"] = (
@@ -614,6 +695,8 @@ class CruxibleClient:
         target: CompilerCoordinate,
         base: AcceptedCoordinate | contracts.PlaybillAcceptedCoordinate,
         proposal_name: str,
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> contracts.PlaybillProposalInspection:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/compiler/proposals",
@@ -621,6 +704,7 @@ class CruxibleClient:
                 "target": target.model_dump(mode="json"),
                 "base": base.model_dump(mode="json"),
                 "proposal_name": proposal_name,
+                **_change_control(dry_run, at),
             },
         )
         return self._parse_model(response, contracts.PlaybillProposalInspection)
@@ -632,10 +716,13 @@ class CruxibleClient:
         principal: Mapping[str, Any],
         proposal_name: str,
         base: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> contracts.PlaybillProposalInspection:
         payload: dict[str, Any] = {
             "principal": dict(principal),
             "proposal_name": proposal_name,
+            **_change_control(dry_run, at),
         }
         if base is not None:
             payload["base"] = (
@@ -737,10 +824,13 @@ class CruxibleClient:
         self,
         instance_id: str,
         proposal_id: str,
+        *,
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> contracts.PlaybillProposalReadmitResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/readmit",
-            json={"tag": "playbill-proposal-readmit-request-v1"},
+            json={"tag": "playbill-proposal-readmit-request-v1", **_change_control(dry_run, at)},
         )
         return self._parse_model(response, contracts.PlaybillProposalReadmitResult)
 
@@ -750,10 +840,16 @@ class CruxibleClient:
         proposal_id: str,
         *,
         reason: str,
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> contracts.PlaybillProposalWithdrawResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/withdraw",
-            json={"tag": "playbill-proposal-withdraw-request-v1", "reason": reason},
+            json={
+                "tag": "playbill-proposal-withdraw-request-v1",
+                "reason": reason,
+                **_change_control(dry_run, at),
+            },
         )
         return self._parse_model(response, contracts.PlaybillProposalWithdrawResult)
 
@@ -884,6 +980,8 @@ class CruxibleClient:
         bundle: Mapping[str, Any],
         source_name: str,
         proposal_name: str,
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> contracts.PlaybillProposalInspection:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/sources/proposals",
@@ -891,6 +989,7 @@ class CruxibleClient:
                 "bundle": dict(bundle),
                 "source_name": source_name,
                 "proposal_name": proposal_name,
+                **_change_control(dry_run, at),
             },
         )
         return self._parse_model(response, contracts.PlaybillProposalInspection)
@@ -923,12 +1022,17 @@ class CruxibleClient:
         claim_type: Mapping[str, Any],
         proposal_name: str,
         base: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> contracts.PlaybillProposalInspection:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/claim-types/proposals",
-            json=self._playbill_proposal_payload(
-                proposal_name=proposal_name, base=base, claim_type=dict(claim_type)
-            ),
+            json={
+                **self._playbill_proposal_payload(
+                    proposal_name=proposal_name, base=base, claim_type=dict(claim_type)
+                ),
+                **_change_control(dry_run, at),
+            },
         )
         return self._parse_model(response, contracts.PlaybillProposalInspection)
 
@@ -938,6 +1042,8 @@ class CruxibleClient:
         *,
         input: Mapping[str, Any],
         proposal_name: str,
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> contracts.PlaybillClaimTypeInputProposalResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/claim-types/proposals",
@@ -945,6 +1051,7 @@ class CruxibleClient:
                 "tag": "playbill-claim-type-input-propose-request-v1",
                 "input": dict(input),
                 "proposal_name": proposal_name,
+                **_change_control(dry_run, at),
             },
         )
         return self._parse_model(response, contracts.PlaybillClaimTypeInputProposalResult)
@@ -1452,12 +1559,22 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.LineTriggerCheckResultV1)
 
-    def arm_playbill_line(self, instance_id: str, line: str) -> contracts.LineArmV1:
-        response = self._client.post(f"/api/v1/{instance_id}/playbill/lines/{line}/arm")
+    def arm_playbill_line(
+        self, instance_id: str, line: str, *, dry_run: bool | None = None, at: str | None = None
+    ) -> contracts.LineArmV1:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/lines/{line}/arm",
+            json=_change_control(dry_run, at),
+        )
         return self._parse_model(response, contracts.LineArmV1)
 
-    def disarm_playbill_line(self, instance_id: str, line: str) -> contracts.LineArmV1:
-        response = self._client.post(f"/api/v1/{instance_id}/playbill/lines/{line}/disarm")
+    def disarm_playbill_line(
+        self, instance_id: str, line: str, *, dry_run: bool | None = None, at: str | None = None
+    ) -> contracts.LineArmV1:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/lines/{line}/disarm",
+            json=_change_control(dry_run, at),
+        )
         return self._parse_model(response, contracts.LineArmV1)
 
     def playbill_line_status(self, instance_id: str, line: str) -> contracts.LineArmV1:
@@ -1681,6 +1798,8 @@ class CruxibleClient:
         expected_latest_event_digest: str,
         reason: str,
         attribution_refs: tuple[str, ...] = (),
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> contracts.PlaybillCurationActionResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/curation/overrule",
@@ -1690,6 +1809,7 @@ class CruxibleClient:
                 "expected_latest_event_digest": expected_latest_event_digest,
                 "reason": reason,
                 "attribution_refs": list(attribution_refs),
+                **_change_control(dry_run, at),
             },
         )
         return self._parse_model(response, contracts.PlaybillCurationActionResult)
@@ -1704,6 +1824,8 @@ class CruxibleClient:
         accepted_proposal_id: str,
         accepted_changeset_digest: str,
         attribution_refs: tuple[str, ...] = (),
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> contracts.PlaybillCurationActionResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/curation/accept-fixed",
@@ -1715,6 +1837,7 @@ class CruxibleClient:
                 "accepted_proposal_id": accepted_proposal_id,
                 "accepted_changeset_digest": accepted_changeset_digest,
                 "attribution_refs": list(attribution_refs),
+                **_change_control(dry_run, at),
             },
         )
         return self._parse_model(response, contracts.PlaybillCurationActionResult)
@@ -1729,6 +1852,8 @@ class CruxibleClient:
         scope: Literal["item", "pattern", "instance"],
         until_generation: int | None = None,
         attribution_refs: tuple[str, ...] = (),
+        dry_run: bool | None = None,
+        at: str | None = None,
     ) -> contracts.PlaybillCurationActionResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/curation/suppress",
@@ -1740,6 +1865,7 @@ class CruxibleClient:
                 "scope": scope,
                 "until_generation": until_generation,
                 "attribution_refs": list(attribution_refs),
+                **_change_control(dry_run, at),
             },
         )
         return self._parse_model(response, contracts.PlaybillCurationActionResult)

@@ -143,7 +143,16 @@ def is_current_arm_principal_record(record: object) -> bool:
 #: What one arm or disarm call did. Arming an arm that already stands with the
 #: same credential, Line version and epoch, or disarming a stopped arm, changes
 #: nothing and says so.
-LineArmOutcomeV1 = Literal["armed", "rearmed", "already_armed", "disarmed", "already_disarmed"]
+LineArmOutcomeV1 = Literal[
+    "armed",
+    "rearmed",
+    "already_armed",
+    "disarmed",
+    "already_disarmed",
+    "would_arm",
+    "would_rearm",
+    "would_disarm",
+]
 
 
 class LineArmPrincipalV1(BaseModel):
@@ -203,6 +212,13 @@ class LineArmV1(BaseModel):
         description=(
             "What this arm or disarm call did; absent on a status read. "
             "`already_armed` and `already_disarmed` changed nothing."
+        ),
+    )
+    coordinate: AcceptedCoordinate | None = Field(
+        default=None,
+        description=(
+            "The accepted coordinate this arm or disarm call evaluated the Line at; "
+            "absent on a status read. Commit a preview with at=<its git_oid>."
         ),
     )
 

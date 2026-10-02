@@ -8,10 +8,12 @@ a caller may reach; Playbill bootstrap establishes governed state separately.
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import TypedDict
 
 from cruxible_client import contracts
+from cruxible_client.contracts.change_control import PlaybillStateCoordinateV1
 from cruxible_client.contracts.errors import (
     PlaybillObjectFormatConflict,
     PlaybillReseedRequired,
@@ -22,7 +24,7 @@ from cruxible_core.compiler.compiler import (
     PC_HR_ARTIFACT_CODEC_COMPILERS,
     current_compiler_coordinate,
 )
-from cruxible_core.errors import ConfigError
+from cruxible_core.errors import ConfigError, InstanceLocationRefusedError
 from cruxible_core.floor.workspace_advertisement import workspace_git_object_format
 from cruxible_core.runtime.admission import FLOOR_ADMISSION
 from cruxible_core.runtime.execution_policy import registered_isolated_executors
@@ -39,6 +41,8 @@ from cruxible_core.server.config import (
 )
 from cruxible_core.server.credentials import get_runtime_credential_store
 from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
+from cruxible_core.service.change_preview import state_change_scope
+from cruxible_core.storage.preview_fence import is_previewing
 
 
 class _HostCommon(TypedDict):
@@ -66,7 +70,21 @@ def _inspect_registered_host(instance_id: str) -> contracts.PlaybillHostInspecti
             f"Instance {instance_id!r} is not a governed daemon host; run "
             "`cruxible playbill host create` first"
         )
-    managed_root = Path(record.location).resolve(strict=False)
+    try:
+        managed_root = get_registry().instance_root(record)
+    except InstanceLocationRefusedError as exc:
+        return contracts.PlaybillHostInspectionV1(
+            instance_id=instance_id,
+            managed_root=record.location,
+            workspace_root=record.workspace_root,
+            compatibility="refused",
+            writable=False,
+            reason=contracts.PlaybillHostCompatibilityReasonV1(
+                code="location_outside_state_root",
+                detail=str(exc),
+                repair_commands=("cruxible server start --state-root <the root that holds it>",),
+            ),
+        )
     trust_root = get_registry().state_root / "trust" / f"{instance_id}.json"
     legacy_root = managed_root / ".cruxible"
     common: _HostCommon = {
@@ -181,55 +199,73 @@ def create_playbill_host(
     instance_id: str | None = None,
     workspace_root: str | None = None,
     workspace_attachment_authorized: bool = False,
+    dry_run: bool | None = None,
+    at: str | None = None,
 ) -> contracts.PlaybillHostResult:
-    """Allocate one empty daemon-owned host record for later Playbill bootstrap."""
+    """Allocate one empty daemon-owned host record for later Playbill bootstrap.
 
-    registry = get_registry()
-    selected = (instance_id or "").strip() or registry.generate_governed_instance_id()
-    # The daemon-wide scope gate runs FIRST. Allocating a host is not an access
-    # to the instance it allocates -- that instance does not exist yet -- so an
-    # instance-scoped credential reaching this route must be told the real
-    # boundary it crossed and the credential that clears it, rather than the
-    # cross-instance message it happened to trip on the way past.
-    require_unscoped_operator("cruxible_playbill_host_create")
-    check_permission("cruxible_playbill_host_create", instance_id=selected)
-    if workspace_root is not None and not workspace_attachment_authorized:
-        raise ConfigError(
-            "Workspace attachment requires a caller connected directly through the local "
-            "Unix socket"
-        )
-    if workspace_root is not None:
-        try:
-            workspace_git_object_format(Path(workspace_root))
-        except ValueError as exc:
-            raise ConfigError("Workspace attachment requires one local Git worktree") from exc
-        attached = registry.get_governed_instance_by_workspace_root(workspace_root)
-        if attached is not None and attached.instance_id != selected:
+    An existing host named again with a workspace is attached to it, initialized
+    or not (`attach_workspace`). ``dry_run`` registers nothing (R12); the
+    outcome is pinned to the host's registry row, which ``at`` carries back.
+    """
+
+    with state_change_scope(
+        dry_run=dry_run,
+        at=at,
+        kind="direct",
+        operation="playbill.host.create",
+        describe="allocating a Playbill host",
+    ) as change:
+        registry = get_registry()
+        selected = (instance_id or "").strip() or registry.generate_governed_instance_id()
+        # The daemon-wide scope gate runs FIRST. Allocating a host is not an
+        # access to the instance it allocates -- that instance does not exist
+        # yet -- so an instance-scoped credential reaching this route must be
+        # told the real boundary it crossed and the credential that clears it,
+        # rather than the cross-instance message it happened to trip on the way.
+        require_unscoped_operator("cruxible_playbill_host_create")
+        check_permission("cruxible_playbill_host_create", instance_id=selected)
+        if workspace_root is not None and not workspace_attachment_authorized:
             raise ConfigError(
-                f"Workspace {str(Path(workspace_root).expanduser().resolve())!r} is already "
-                f"attached to Playbill host {attached.instance_id!r}; release it with "
-                f"`cruxible playbill workspace detach --instance-id {attached.instance_id}` "
-                f"or choose another Git worktree before creating {selected!r}"
+                "Workspace attachment requires a caller connected directly through the local "
+                "Unix socket"
             )
-
-    existing = registry.get(selected)
-    if existing is not None:
-        if existing.backend != GOVERNED_DAEMON_BACKEND:
-            raise ConfigError(f"Instance '{selected}' is not a governed daemon host")
         if workspace_root is not None:
-            if Path(existing.location).exists() and existing.workspace_root is None:
+            try:
+                workspace_git_object_format(Path(workspace_root))
+            except ValueError as exc:
+                raise ConfigError("Workspace attachment requires one local Git worktree") from exc
+            attached = registry.get_governed_instance_by_workspace_root(workspace_root)
+            if attached is not None and attached.instance_id != selected:
                 raise ConfigError(
-                    f"Playbill host {selected!r} is already initialized without workspace "
-                    "attachment; archive/rebuild an attached host, record attachment before "
-                    "init, then re-seed"
+                    f"Workspace {str(Path(workspace_root).expanduser().resolve())!r} is already "
+                    f"attached to Playbill host {attached.instance_id!r}; release it with "
+                    f"`cruxible playbill workspace detach --instance-id {attached.instance_id}` "
+                    f"or choose another Git worktree before creating {selected!r}"
                 )
-            registry.attach_governed_workspace(selected, workspace_root)
-        return contracts.PlaybillHostResult(instance_id=selected, status="already_exists")
 
-    registered = registry.create_governed_instance_with_id(
-        selected,
-        workspace_root=workspace_root,
-    )
+        existing = registry.get(selected)
+        if existing is not None:
+            if existing.backend != GOVERNED_DAEMON_BACKEND:
+                raise ConfigError(f"Instance '{selected}' is not a governed daemon host")
+            if workspace_root is None:
+                change.observe(registry.host_state(selected))
+            else:
+                # The host's row is checked where the attach writes it, inside
+                # the attaching transaction, not read beforehand.
+                attach_workspace(selected, workspace_root, observe_host=change.observe)
+            return contracts.PlaybillHostResult(
+                instance_id=selected, status="already_exists", coordinate=change.coordinate
+            )
+        # Validation is shared: the preview answers from the same prepared row
+        # the commit inserts, so both refuse the same IDs and conflicts.
+        prepared = registry.prepare_governed_instance(selected, workspace_root=workspace_root)
+        if change.previewing:
+            change.observe(registry.host_state(selected))
+            return contracts.PlaybillHostResult(
+                instance_id=selected, status="would_create", coordinate=change.coordinate
+            )
+        registered = registry.create_governed_instance(prepared, observe=change.observe)
     if registered.record.instance_id != selected:
         raise ConfigError(
             f"Workspace {registered.record.workspace_root!r} is already attached to Playbill "
@@ -240,6 +276,7 @@ def create_playbill_host(
     return contracts.PlaybillHostResult(
         instance_id=selected,
         status="created" if registered.created else "already_exists",
+        coordinate=change.coordinate,
     )
 
 
@@ -266,6 +303,126 @@ def playbill_host_workspace_registration(
             if expose_workspace_path and record.workspace_root is not None
             else None
         ),
+    )
+
+
+def attach_workspace(
+    instance_id: str,
+    workspace_root: str,
+    *,
+    observe: Callable[[PlaybillStateCoordinateV1], None] | None = None,
+    observe_host: Callable[[PlaybillStateCoordinateV1], None] | None = None,
+) -> bool:
+    """Attach one host to a Git worktree, before or after its init; True when newly.
+
+    The one attach path. An initialized host attaches when the worktree is in
+    its ledger's Git object format (the advisory remote refuses across formats)
+    and holds no part of its managed root; nothing is rebuilt, and the open
+    instance starts advertising to the worktree at once. Inside a preview it
+    checks everything and registers nothing. ``observe`` sees the host's
+    binding where the attach writes it (or, previewing, as it reads it).
+    """
+
+    registry = get_registry()
+    record = registry.get(instance_id)
+    if record is None or record.backend != GOVERNED_DAEMON_BACKEND:
+        raise ConfigError(f"Instance '{instance_id}' is not a governed daemon host")
+    try:
+        resolved = Path(workspace_root).expanduser().resolve(strict=True)
+        workspace_format = workspace_git_object_format(resolved)
+    except (OSError, ValueError) as exc:
+        raise ConfigError("Workspace attachment requires one local Git worktree") from exc
+    other = registry.get_governed_instance_by_workspace_root(resolved)
+    if other is not None and other.instance_id != instance_id:
+        raise ConfigError(
+            f"Workspace {str(resolved)!r} is already attached to Playbill host "
+            f"{other.instance_id!r}; release it with `cruxible playbill workspace detach "
+            f"--instance-id {other.instance_id}` first"
+        )
+    if record.workspace_root is not None:
+        if Path(record.workspace_root) == resolved:
+            # Nothing is written, so a read outside a transaction pins it.
+            if observe is not None:
+                observe(registry.workspace_state(instance_id))
+            if observe_host is not None:
+                observe_host(registry.host_state(instance_id))
+            return False
+        raise ConfigError(
+            f"Playbill host {instance_id!r} is attached to {record.workspace_root}; release "
+            f"it with `cruxible playbill workspace detach --instance-id {instance_id}` first"
+        )
+    instance = get_playbill_manager().initialized(instance_id)
+    if instance is not None:
+        managed_root = registry.instance_root(record)
+        if managed_root == resolved or managed_root.is_relative_to(resolved):
+            raise ConfigError(
+                f"Workspace {str(resolved)!r} contains host {instance_id!r}'s managed root; "
+                "an agent workspace may hold no part of it"
+            )
+        ledger_format = instance.descriptor.git_object_format
+        if workspace_format != ledger_format:
+            raise PlaybillObjectFormatConflict(
+                f"{PlaybillObjectFormatConflict.error_code}: host {instance_id!r} keeps a "
+                f"{ledger_format} ledger and the worktree is {workspace_format}; repair: "
+                f"attach a worktree in {ledger_format}",
+                workspace_format=workspace_format,
+            )
+    if is_previewing():
+        if observe is not None:
+            observe(registry.workspace_state(instance_id))
+        if observe_host is not None:
+            observe_host(registry.host_state(instance_id))
+        return True
+    registry.attach_governed_workspace(
+        instance_id, resolved, observe=observe, observe_host=observe_host
+    )
+    get_playbill_manager().rebind_workspace(instance_id)
+    return True
+
+
+def playbill_host_workspace_attach(
+    instance_id: str,
+    *,
+    workspace_root: str,
+    workspace_attachment_authorized: bool = False,
+    dry_run: bool | None = None,
+    at: str | None = None,
+) -> contracts.PlaybillHostWorkspaceAttachResultV1:
+    """Attach a host to a Git worktree, including a host already initialized (Q16).
+
+    Local-socket callers only, as for detaching: the daemon must be able to see
+    the path it is asked to attach. ``dry_run`` registers nothing (R12); the
+    outcome is pinned to the host's binding, which ``at`` carries back.
+    """
+
+    check_permission("cruxible_playbill_host_workspace_attach", instance_id=instance_id)
+    if not workspace_attachment_authorized:
+        raise ConfigError(
+            "Workspace attachment requires a caller connected directly through the local "
+            "Unix socket"
+        )
+    with state_change_scope(
+        dry_run=dry_run,
+        at=at,
+        kind="direct",
+        operation="playbill.workspace.attach",
+        describe=f"attaching host {instance_id}",
+    ) as change:
+        # Opened behind the preview's guards: a cold open may not repair on disk.
+        instance = get_playbill_manager().initialized(instance_id)
+        attached = attach_workspace(instance_id, workspace_root, observe=change.observe)
+    return contracts.PlaybillHostWorkspaceAttachResultV1(
+        instance_id=instance_id,
+        status=(
+            "already_attached"
+            if not attached
+            else "would_attach"
+            if change.previewing
+            else "attached"
+        ),
+        workspace_root=str(Path(workspace_root).expanduser().resolve()),
+        initialized=instance is not None,
+        coordinate=change.coordinate,
     )
 
 
@@ -347,6 +504,8 @@ def playbill_host_workspace_detach(
     instance_id: str,
     *,
     workspace_attachment_authorized: bool = False,
+    dry_run: bool | None = None,
+    at: str | None = None,
 ) -> contracts.PlaybillWorkspaceDetachResultV1:
     """Release a workspace under floor admission from a thread caller."""
 
@@ -354,6 +513,8 @@ def playbill_host_workspace_detach(
         return _playbill_host_workspace_detach_admitted(
             instance_id,
             workspace_attachment_authorized=workspace_attachment_authorized,
+            dry_run=dry_run,
+            at=at,
         )
 
 
@@ -361,6 +522,8 @@ def _playbill_host_workspace_detach_admitted(
     instance_id: str,
     *,
     workspace_attachment_authorized: bool = False,
+    dry_run: bool | None = None,
+    at: str | None = None,
 ) -> contracts.PlaybillWorkspaceDetachResultV1:
     """Release one governed host from the Git worktree it is attached to.
 
@@ -394,24 +557,42 @@ def _playbill_host_workspace_detach_admitted(
             "Workspace detachment requires a caller connected directly through the local "
             "Unix socket"
         )
-    registry = get_registry()
-    record = registry.get(instance_id)
-    if record is None or record.backend != GOVERNED_DAEMON_BACKEND:
-        raise ConfigError(f"Instance '{instance_id}' is not a governed daemon host")
-    if record.workspace_root is None:
-        return contracts.PlaybillWorkspaceDetachResultV1(
-            instance_id=instance_id,
-            status="not_registered",
+    with state_change_scope(
+        dry_run=dry_run,
+        at=at,
+        kind="direct",
+        operation="playbill.workspace.detach",
+        describe=f"detaching host {instance_id}",
+    ) as change:
+        registry = get_registry()
+        record = registry.get(instance_id)
+        if record is None or record.backend != GOVERNED_DAEMON_BACKEND:
+            raise ConfigError(f"Instance '{instance_id}' is not a governed daemon host")
+        if record.workspace_root is None:
+            return contracts.PlaybillWorkspaceDetachResultV1(
+                instance_id=instance_id,
+                status="not_registered",
+            )
+        _refuse_detach_with_registered_blocks(instance_id)
+        if change.previewing:
+            change.observe(registry.workspace_state(instance_id))
+            return contracts.PlaybillWorkspaceDetachResultV1(
+                instance_id=instance_id,
+                status="would_detach",
+                workspace_root=record.workspace_root,
+                coordinate=change.coordinate,
+            )
+        detached = registry.detach_governed_workspace(
+            instance_id,
+            expected_workspace_root=record.workspace_root,
+            observe=change.observe,
         )
-    _refuse_detach_with_registered_blocks(instance_id)
-    detached = registry.detach_governed_workspace(
-        instance_id, expected_workspace_root=record.workspace_root
-    )
     assert detached.workspace_root is None
     return contracts.PlaybillWorkspaceDetachResultV1(
         instance_id=instance_id,
         status="detached",
         workspace_root=record.workspace_root,
+        coordinate=change.coordinate,
     )
 
 
@@ -545,7 +726,9 @@ def server_stop() -> contracts.ServerStopResult:
 
 
 __all__ = [
+    "attach_workspace",
     "create_playbill_host",
+    "playbill_host_workspace_attach",
     "set_playbill_floor_delivery",
     "deliver_playbill_floor_now",
     "playbill_host_workspace_detach",

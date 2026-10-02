@@ -575,6 +575,40 @@ class ProposalResult(_StrictProposalModel):
         return self
 
 
+class ProposalPreviewEvaluationV1(_StrictProposalModel):
+    """A submission's evaluation, from a preview: no proposal was admitted (R12)."""
+
+    tag: Literal["playbill-proposal-preview-evaluation-v1"] = (
+        "playbill-proposal-preview-evaluation-v1"
+    )
+    verdict: Literal["candidate", "refused"]
+    evaluated_base_oid: str
+    rebased: bool
+    candidate_digest: str | None = None
+    diagnostics: tuple[CompilerDiagnostic, ...] = ()
+
+    @field_validator("evaluated_base_oid")
+    @classmethod
+    def _oid(cls, value: str) -> str:
+        if not _OID_RE.fullmatch(value):
+            raise ValueError("proposal evaluation Git OID is malformed")
+        return value
+
+
+class ProposalPreviewV1(_StrictProposalModel):
+    """What a submission would admit: its evaluation and candidate, nothing written."""
+
+    tag: Literal["playbill-proposal-preview-v1"] = "playbill-proposal-preview-v1"
+    evaluation: ProposalPreviewEvaluationV1
+    candidate: CandidateRecordAnyVersion | None = None
+
+    @model_validator(mode="after")
+    def _preview_shape(self) -> "ProposalPreviewV1":
+        if (self.evaluation.verdict == "candidate") != (self.candidate is not None):
+            raise ValueError("proposal preview candidate shape differs from evaluation verdict")
+        return self
+
+
 class ProposalTransportProtocol(Protocol):
     def object_format(self) -> GitObjectFormat: ...
     def activation_lock(self) -> AbstractContextManager[None]: ...
@@ -608,6 +642,8 @@ class ProposalTransportProtocol(Protocol):
 
 __all__ = [
     "AuthenticatedActor",
+    "ProposalPreviewEvaluationV1",
+    "ProposalPreviewV1",
     "ProposalAdmissionRecord",
     "ProposalReadmissionLinkV1",
     "ProposalSettleSubmissionV1",

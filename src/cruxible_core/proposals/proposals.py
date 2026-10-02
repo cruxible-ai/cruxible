@@ -205,6 +205,8 @@ from cruxible_client.contracts.proposal_models import (
     ProposalAdmissionRecord,
     ProposalAdmissionRequest,
     ProposalEvaluationRecord,
+    ProposalPreviewEvaluationV1,
+    ProposalPreviewV1,
     ProposalReadmissionLinkV1,
     ProposalReceiveLimits,
     ProposalResult,
@@ -328,6 +330,7 @@ from cruxible_core.query.engine import (
     evaluate_claim_query,
     query_execution_receipt,
 )
+from cruxible_core.storage.preview_fence import refuse_write_while_previewing
 
 _DOCUMENT_PATH_RE = re.compile(r"^documents/[a-z][a-z0-9_.-]{0,255}\.json$")
 _APPROVAL_POLICY_PATH_RE = re.compile(r"^governance/approval-policy\.json$")
@@ -4646,6 +4649,14 @@ def evaluate_proposal_tree(
         )
 
 
+@dataclass(frozen=True)
+class _AdmissionEvaluation:
+    current: AcceptedProjectionCoordinate
+    validated_tree: Mapping[str, bytes]
+    is_rebase: bool
+    outcome: CandidateEvaluation
+
+
 class ProposalHeadMovedError(ProposalAdmissionError):
     """Accepted main moved between the coordinate a submission evaluated at and its publication.
 
@@ -4765,7 +4776,7 @@ class ProposalService:
         self.principal_registry_provider = principal_registry_provider
         self._active_principal_provider = active_principal_provider
 
-    def submit(
+    def _evaluate_admission(
         self,
         *,
         actor: AuthenticatedActor,
@@ -4775,50 +4786,18 @@ class ProposalService:
         authorize: Callable[
             [AcceptedProjectionCoordinate, Mapping[str, bytes]], Mapping[str, bytes] | None
         ]
-        | None = None,
-        prepared: PreparedEvaluationScope | None = None,
-        settle_submission: ProposalSettleSubmissionV1 | None = None,
-        expected_candidate: tuple[str, str] | None = None,
-        readmits: ProposalReadmissionLinkV1 | None = None,
-    ) -> ProposalResult:
-        """Admit one candidate tree under the actor's ref.
+        | None,
+        prepared: PreparedEvaluationScope | None,
+        settle_submission: ProposalSettleSubmissionV1 | None,
+        expected_candidate: tuple[str, str] | None,
+        readmits: ProposalReadmissionLinkV1 | None,
+    ) -> _AdmissionEvaluation:
+        """Everything a submission does before its first write: one shared path.
 
-        `authorize`, when given, is called with the exact current coordinate and
-        tree this submission evaluates against, after the actor is known to be
-        active there and before any ref moves or record is written. A caller
-        whose authority to propose lives in accepted state (a Procedure's
-        mandate) checks it there. That coordinate is then verified unchanged
-        under the activation lock immediately before the first ref moves, and
-        cannot change until the last record is written: the accepted authority
-        coordinate is verified atomically with first publication, and
-        contention raises `ProposalHeadMovedError` before any effect is
-        committed so the caller can evaluate again or refuse.
-
-        Only a Procedure terminal's callback returns a path-to-bytes mapping of
-        its computed Claim outputs. Those exact bytes may introduce derivation
-        provenance; ordinary callers and callbacks returning None may not.
-
-        `prepared` may reuse a same-call evaluation; it never replaces the
-        fresh authorization callback or the publication head check.
-
-        `expected_candidate`, when given, is ``(base_oid, candidate_digest)``:
-        the candidate the caller already evaluated at that accepted base. When
-        this submission evaluates at that same base, any other outcome raises
-        `ProposalCandidateMismatchError` before publication; at a head that has
-        since moved, the fresh evaluation stands on its own.
-
-        `settle_submission` is the settle terminal's alone, and is retained on
-        the admission. A `delegated` submission is evaluated under the named
-        mandate's delegated authority, so it carries no approval requirement and
-        only activation under the same mandate can reproduce it; a `fallback`
-        is evaluated as an ordinary proposal. No public door passes it.
-
-        `readmits` is the readmit service's alone, and is retained on the
-        admission: the stale proposal this one re-admits. The record refuses it
-        unless the request's `source_compilation_digest` is exactly its
-        operation digest. No public door passes it either.
+        `submit` publishes what this returns; `preview` reports it and writes
+        nothing. Both reach the same verdict on the same tree because both run
+        exactly this.
         """
-        self._require_writable()
         delegated_mandate_digest = (
             settle_submission.mandate_digest
             if settle_submission is not None and settle_submission.mode == "delegated"
@@ -4940,6 +4919,130 @@ class ProposalService:
             raise ProposalCandidateMismatchError(
                 "the evaluated candidate differs from the one this submission was bound to"
             )
+        return _AdmissionEvaluation(
+            current=current,
+            validated_tree=validated_tree,
+            is_rebase=is_rebase,
+            outcome=outcome,
+        )
+
+    def preview(
+        self,
+        *,
+        actor: AuthenticatedActor,
+        request: ProposalAdmissionRequest,
+        candidate_tree: Mapping[str, bytes],
+        timestamp: str,
+        readmits: ProposalReadmissionLinkV1 | None = None,
+    ) -> ProposalPreviewV1:
+        """Evaluate one candidate tree exactly as `submit` would, and write nothing.
+
+        The same admission checks, receive limits, rebase and evaluation run as
+        for a submission; what is skipped is everything from the first ref move
+        on (the commit, the records, the notes, publication and advertisement).
+        """
+        # A preview refuses exactly where the submission would.
+        self._require_writable()
+        evaluated = self._evaluate_admission(
+            actor=actor,
+            request=request,
+            candidate_tree=candidate_tree,
+            timestamp=timestamp,
+            authorize=None,
+            prepared=None,
+            settle_submission=None,
+            expected_candidate=None,
+            readmits=readmits,
+        )
+        candidate = evaluated.outcome.candidate
+        return ProposalPreviewV1(
+            evaluation=ProposalPreviewEvaluationV1(
+                verdict="candidate" if candidate is not None else "refused",
+                evaluated_base_oid=evaluated.current.git_oid,
+                rebased=evaluated.is_rebase,
+                candidate_digest=None if candidate is None else candidate.candidate_digest,
+                diagnostics=evaluated.outcome.diagnostics,
+            ),
+            candidate=candidate,
+        )
+
+    def submit(
+        self,
+        *,
+        actor: AuthenticatedActor,
+        request: ProposalAdmissionRequest,
+        candidate_tree: Mapping[str, bytes],
+        timestamp: str,
+        authorize: Callable[
+            [AcceptedProjectionCoordinate, Mapping[str, bytes]], Mapping[str, bytes] | None
+        ]
+        | None = None,
+        prepared: PreparedEvaluationScope | None = None,
+        settle_submission: ProposalSettleSubmissionV1 | None = None,
+        expected_candidate: tuple[str, str] | None = None,
+        readmits: ProposalReadmissionLinkV1 | None = None,
+        confirm_head: Callable[[str], None] | None = None,
+    ) -> ProposalResult:
+        """Admit one candidate tree under the actor's ref.
+
+        `authorize`, when given, is called with the exact current coordinate and
+        tree this submission evaluates against, after the actor is known to be
+        active there and before any ref moves or record is written. A caller
+        whose authority to propose lives in accepted state (a Procedure's
+        mandate) checks it there. That coordinate is then verified unchanged
+        under the activation lock immediately before the first ref moves, and
+        cannot change until the last record is written: the accepted authority
+        coordinate is verified atomically with first publication, and
+        contention raises `ProposalHeadMovedError` before any effect is
+        committed so the caller can evaluate again or refuse.
+
+        Only a Procedure terminal's callback returns a path-to-bytes mapping of
+        its computed Claim outputs. Those exact bytes may introduce derivation
+        provenance; ordinary callers and callbacks returning None may not.
+
+        `prepared` may reuse a same-call evaluation; it never replaces the
+        fresh authorization callback or the publication head check.
+
+        `expected_candidate`, when given, is ``(base_oid, candidate_digest)``:
+        the candidate the caller already evaluated at that accepted base. When
+        this submission evaluates at that same base, any other outcome raises
+        `ProposalCandidateMismatchError` before publication; at a head that has
+        since moved, the fresh evaluation stands on its own.
+
+        `settle_submission` is the settle terminal's alone, and is retained on
+        the admission. A `delegated` submission is evaluated under the named
+        mandate's delegated authority, so it carries no approval requirement and
+        only activation under the same mandate can reproduce it; a `fallback`
+        is evaluated as an ordinary proposal. No public door passes it.
+
+        `readmits` is the readmit service's alone, and is retained on the
+        admission: the stale proposal this one re-admits. The record refuses it
+        unless the request's `source_compilation_digest` is exactly its
+        operation digest. No public door passes it either.
+
+        `confirm_head`, when given, is called with the accepted head this
+        submission evaluated at, under the activation lock and after that head
+        is verified to still be main, before the first ref moves: a caller
+        pinned to the head its preview saw (R12 ``at``) refuses there, so a
+        head accepted after the caller's own check is never admitted against.
+        """
+        self._require_writable()
+        evaluated = self._evaluate_admission(
+            actor=actor,
+            request=request,
+            candidate_tree=candidate_tree,
+            timestamp=timestamp,
+            authorize=authorize,
+            prepared=prepared,
+            settle_submission=settle_submission,
+            expected_candidate=expected_candidate,
+            readmits=readmits,
+        )
+        refuse_write_while_previewing("proposal submission")
+        current = evaluated.current
+        validated_tree = evaluated.validated_tree
+        is_rebase = evaluated.is_rebase
+        outcome = evaluated.outcome
         # A refused proposal has no members to summarize, so it keeps the bare
         # subject the ledger has always written for it -- unless the author said
         # why they proposed it, which is still true of a set that did not pass.
@@ -4961,6 +5064,8 @@ class ProposalService:
                     "accepted main moved between evaluation and publication; evaluate again "
                     "at the current head"
                 )
+            if confirm_head is not None:
+                confirm_head(current.git_oid)
             existing = self.transport.read_proposal_ref(request.target_ref)
             # Finish retaining any complete prior active admission before reusing
             # its author slot, including a crash after admission but before pinning.
@@ -5117,6 +5222,7 @@ __all__ = [
     "ProposalHeadMovedError",
     "ProposalReceiveLimits",
     "ProposalWithdrawalRecordV1",
+    "ProposalPreviewV1",
     "ProposalResult",
     "ProposalService",
     "ProposalTransportProtocol",

@@ -431,3 +431,65 @@ def test_recover_admin_infers_the_one_instance_present_under_the_state_root(
 
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout)["credential"]["instance_id"] == instance_ids[1]
+
+
+def test_a_recover_admin_preview_refuses_where_the_recovery_would(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    """F-009: the dry run runs the recovery's own transaction, lock included."""
+
+    state_dir, _ = _seed_admin_state(tmp_path, monkeypatch)
+    lock_conn = sqlite3.connect(state_dir / "daemon" / "runtime_credentials.db")
+    lock_conn.execute("BEGIN IMMEDIATE")
+    try:
+        outcomes = [
+            runner.invoke(
+                cli, ["credential", "recover-admin", "--state-root", str(state_dir), *flag]
+            )
+            for flag in (["--dry-run"], [])
+        ]
+    finally:
+        lock_conn.rollback()
+        lock_conn.close()
+
+    for result in outcomes:
+        assert result.exit_code == 2, result.output
+        assert "Runtime credentials DB is locked" in result.output
+
+
+def test_a_recover_admin_preview_writes_nothing_and_its_coordinate_pins_the_commit(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    from tests.support.store_snapshot import assert_writes_nothing
+
+    state_dir, (instance_id,) = _seed_admin_state(tmp_path, monkeypatch)
+    command = ["credential", "recover-admin", "--state-root", str(state_dir), "--json"]
+
+    previewed = assert_writes_nothing(
+        [state_dir], lambda: runner.invoke(cli, [*command, "--dry-run"])
+    )
+    assert previewed.exit_code == 0, previewed.output
+    preview = json.loads(previewed.stdout)
+    assert (preview["status"], preview["token"]) == ("would_recover", None)
+    assert preview["credential"]["instance_id"] == instance_id
+    assert preview["coordinate"]["subject"] == f"runtime_credentials:{instance_id}/all"
+
+    # Another credential lands: the preview's coordinate no longer confirms.
+    get_runtime_credential_store().create_credential(
+        instance_id=instance_id, label="late", permission_mode=PermissionMode.ADMIN
+    )
+    stale = runner.invoke(cli, [*command, "--commit", "--at", preview["coordinate"]["digest"]])
+    assert stale.exit_code != 0
+    assert "playbill.preview.state_moved" in stale.output
+    assert _recovery_event_rows(state_dir) == []
+
+    fresh = json.loads(runner.invoke(cli, [*command, "--dry-run"]).stdout)
+    committed = runner.invoke(cli, [*command, "--commit", "--at", fresh["coordinate"]["digest"]])
+    assert committed.exit_code == 0, committed.output
+    payload = json.loads(committed.stdout)
+    assert payload["status"] == "recovered" and payload["token"].startswith("crt_")
+    assert len(_recovery_event_rows(state_dir)) == 1

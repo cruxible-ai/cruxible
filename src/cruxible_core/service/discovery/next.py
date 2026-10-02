@@ -86,6 +86,7 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, parse_datetime
 from cruxible_client.contracts.triggers import INTERNAL_ACTIONS
+from cruxible_client.contracts.validation_messages import validation_summary
 from cruxible_core.claims.claim_slots import classify_claim_slot
 from cruxible_core.compiler.compiler import (
     COMPILER_REVISION_LABELS,
@@ -555,7 +556,7 @@ def validate_playbill_next_request(
             error = PlaybillNextCursorMismatch
         else:
             error = PlaybillNextAcceptedStateInvalid
-        raise error(f"{error.code}: {exc}") from exc
+        raise error(f"{error.code}: {validation_summary(exc)}") from exc
 
 
 class PlaybillNextRepairV1(_StrictNextModel):
@@ -948,8 +949,9 @@ NextCallerSurface: TypeAlias = Literal["cli", "mcp", "sdk"]
 #: Every repair operation's served door: the tool that performs it. The tool's
 #: entry in ``TOOL_PERMISSIONS`` is the tier the repair needs on every surface,
 #: and an MCP caller must also advertise the tool. ``None`` is a repair with no
-#: served door to gate: a hand edit, or a client-local block stamp (`block
-#: repin` / `block sync` rewrite workspace files and write no governed state).
+#: served door to gate. Block repin and sync run in the client-side adapter on
+#: every surface (MCP included): repin declares the block at the instance, and
+#: sync reads its backings.
 _REPAIR_TOOLS: Mapping[str, str | None] = {
     "playbill.authoring.create": "cruxible_playbill_authoring_create",
     "playbill.authoring.bind": "cruxible_playbill_authoring_bind",
@@ -958,8 +960,8 @@ _REPAIR_TOOLS: Mapping[str, str | None] = {
     "playbill.write": "cruxible_playbill_write",
     "playbill.floor.export": "cruxible_playbill_floor_export",
     "playbill.block.depublish": "cruxible_playbill_block_depublish",
-    "playbill.block.repin": None,
-    "playbill.block.sync": None,
+    "playbill.block.repin": "cruxible_playbill_block_repin",
+    "playbill.block.sync": "cruxible_playbill_block_sync",
     "playbill.document.propose": "cruxible_playbill_propose_document",
     "playbill.proposal.readmit": "cruxible_playbill_proposal_readmit",
     "playbill.proposal.approve": "cruxible_playbill_approve",
@@ -1148,6 +1150,12 @@ def _mcp_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
             source_id=text("source_id"),
             block_id=text("block_id"),
         )
+    if operation == "playbill.block.repin" and text("source_id") and text("block_id"):
+        return _mcp_call(
+            "cruxible_playbill_block_repin", source=text("source_id"), block=text("block_id")
+        )
+    if operation == "playbill.block.sync" and values.get("all") is True:
+        return _mcp_call("cruxible_playbill_block_sync", all_sources=True)
     if operation == "playbill.floor.export":
         return _mcp_call("cruxible_playbill_floor_export", mode="write")
     if operation == "playbill.claim.retire" and text("claim_id"):

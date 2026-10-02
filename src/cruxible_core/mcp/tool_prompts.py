@@ -173,9 +173,19 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_authoring_status": (
         "Use when you need exactly what still separates an authored candidate from acceptance."
     ),
-    "cruxible_playbill_block_declare": (
-        "Use after stamping a projection block so the instance registers the marker; "
-        "`cruxible playbill block repin` does this for you."
+    "cruxible_playbill_block_repin": (
+        "Use to stamp a new projection block or refresh one: name the page (file or source) "
+        "and the block; this adapter reads the backings, rewrites the opening marker and "
+        "registers the block. The marker grammar is in docs/cli-reference.md, Projection "
+        "block markers."
+    ),
+    "cruxible_playbill_block_sync": (
+        "Use to check whether page blocks still match their backings; each stale block names "
+        "its repin. It edits no page."
+    ),
+    "cruxible_playbill_block_detach": (
+        "Use to take retired blocks' markers off pages, keeping the prose: preview with "
+        "dry_run, then commit with at set to the preview's coordinate digest."
     ),
     "cruxible_playbill_authoring_abandon_insertion": (
         "Use to release a publication expectation an instance already holds; nothing mints "

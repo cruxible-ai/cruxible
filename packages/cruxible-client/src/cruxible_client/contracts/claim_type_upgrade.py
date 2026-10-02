@@ -6,7 +6,9 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from cruxible_client.contracts.change_control import DryRun, PreviewAt
 from cruxible_client.contracts.claim_types import RevisionEvidence
+from cruxible_client.contracts.get_reads import PlaybillGetCoordinateV1
 
 
 class _Model(BaseModel):
@@ -27,8 +29,9 @@ class ClaimTypeUpgradeRequestV1(_Model):
     #: Predicates to upgrade; empty upgrades every live ClaimType before v7.
     claim_types: tuple[str, ...] = ()
     revision_evidence: RevisionEvidence = "replace"
-    #: Evaluate the change set and report it; propose nothing.
-    dry_run: bool = False
+    #: Previews by default: the change set carries every dependent Claim.
+    dry_run: DryRun = None
+    at: PreviewAt = None
 
     @field_validator("claim_types")
     @classmethod
@@ -73,6 +76,9 @@ class ClaimTypeUpgradeResultV1(_Model):
     refused: tuple[ClaimTypeUpgradeRefusalV1, ...] = ()
     carried_claims: int = Field(default=0, ge=0)
     detail: str | None = None
+    #: The accepted coordinate the change set was evaluated at; pass it as ``at``
+    #: to commit exactly this preview.
+    coordinate: PlaybillGetCoordinateV1 | None = None
 
 
 __all__ = [

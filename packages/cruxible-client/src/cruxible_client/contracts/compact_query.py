@@ -77,8 +77,7 @@ QueryFollowDirection = Literal["forward", "reverse"]
 QueryMode = Literal["inline", "named", "spec"]
 
 _FIELD_DESCRIPTION = (
-    "A short predicate name of the kind (adoption_state), a fully qualified predicate, "
-    "subject_id, or alias.field after follow."
+    "Predicate (short, e.g. adoption_state, or qualified), subject_id, or alias.field after follow."
 )
 
 

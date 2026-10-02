@@ -116,10 +116,17 @@ class PlaybillReseedRequired(PlaybillFormatError):
 
     error_code = "playbill.instance.reseed_required"
 
-    def __init__(self) -> None:
+    def __init__(self, *, found: str | None = None) -> None:
+        #: The pre-PC-HR file or directory that was found, when a layout (rather
+        #: than a compiler) is what requires the reseed.
+        self.found = found
         super().__init__(
             f"{self.error_code}: this instance's compiler selects the frozen compact "
             "artifact codec from before PC-HR; archive it and initialize a fresh instance"
+            if found is None
+            else f"{self.error_code}: found {found}, a file of the layout from before "
+            "PC-HR; archive it (or, if nothing there is yours, remove it) and initialize a "
+            "fresh instance"
         )
 
 

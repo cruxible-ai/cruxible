@@ -155,6 +155,8 @@ class KeyedAdmission:
         self._lock: threading.Lock = threading.Lock()
         self._entries: dict[str, _Entry] = {}
         self._owned: threading.local = threading.local()
+        #: The asyncio tasks inside ``admit`` for each key, waiting or holding.
+        self._admitting: dict[str, set[asyncio.Task[object]]] = {}
 
     # -- bookkeeping; every method runs with self._lock held only briefly ----------
 
@@ -227,6 +229,31 @@ class KeyedAdmission:
                 "floor admission for the same key is not re-entrant on its owning thread"
             )
 
+    def _enter_task(self, key: str, task: asyncio.Task[object] | None) -> None:
+        """Record ``task`` inside ``admit(key)``; refuse it if it already is."""
+
+        if task is None:
+            return
+        with self._lock:
+            tasks = self._admitting.get(key)
+            if tasks is None:
+                tasks = self._admitting[key] = set()
+            if task in tasks:
+                raise FloorAdmissionMisuse(
+                    "floor admission for the same key is not re-entrant in its owning task"
+                )
+            tasks.add(task)
+
+    def _leave_task(self, key: str, task: asyncio.Task[object] | None) -> None:
+        if task is None:
+            return
+        with self._lock:
+            tasks = self._admitting.get(key)
+            if tasks is not None:
+                tasks.discard(task)
+                if not tasks:
+                    del self._admitting[key]
+
     @contextmanager
     def _mark_held(self, key: str) -> Iterator[None]:
         """Track physical thread ownership, without propagating it into other workers."""
@@ -251,20 +278,27 @@ class KeyedAdmission:
         """
 
         self._check_reentrant(key)
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future[None] = loop.create_future()
-        waiter = self._enter(key, loop, future, None)
-        if waiter is not None:
-            try:
-                await future
-            except BaseException:
-                self._withdraw(key, waiter)
-                raise
-        ticket = _Ticket(self, key)
+        # Nested admission of the same key in one task would wait on itself
+        # forever; refuse it as ``hold`` refuses same-thread re-entry.
+        task = asyncio.current_task()
+        self._enter_task(key, task)
         try:
-            yield ticket
+            loop = asyncio.get_running_loop()
+            future: asyncio.Future[None] = loop.create_future()
+            waiter = self._enter(key, loop, future, None)
+            if waiter is not None:
+                try:
+                    await future
+                except BaseException:
+                    self._withdraw(key, waiter)
+                    raise
+            ticket = _Ticket(self, key)
+            try:
+                yield ticket
+            finally:
+                self._close(ticket)
         finally:
-            self._close(ticket)
+            self._leave_task(key, task)
 
     @contextmanager
     def hold(self, key: str) -> Iterator[None]:

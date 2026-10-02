@@ -124,6 +124,7 @@ from cruxible_core.proposals.settlement import (
     parse_change_set_record,
     semantic_root_for_record,
 )
+from cruxible_core.storage.preview_fence import refuse_write_while_previewing
 
 CHECKPOINT_DIRECTORY: Final = "checkpoints"
 CHECKPOINT_FILE: Final = "replay-checkpoint-v2.json"
@@ -508,6 +509,7 @@ def write_checkpoint(
     (activation and recovery); it lets the next reopen skip re-deriving it.
     """
 
+    refuse_write_while_previewing("replay checkpoint")
     written_at = written_at if written_at is not None else format_datetime(utc_now())
     if written_at is None:
         raise ReplayCheckpointError("failed to stamp a checkpoint write time")
@@ -541,6 +543,7 @@ def write_checkpoint(
 def discard_checkpoint(directory: Path) -> None:
     """Remove a checkpoint that failed verification; recovery falls back to genesis."""
 
+    refuse_write_while_previewing("replay checkpoint")
     target = checkpoint_path(directory)
     if target.is_symlink() or target.is_file():
         target.unlink(missing_ok=True)

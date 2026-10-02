@@ -73,7 +73,20 @@ def test_the_instance_still_ends_normally_after_a_refused_reason(
     refused = client.post(route, json={"reason": HOSTILE_REASONS["newline"]})
     assert refused.status_code == 422, refused.text
 
-    accepted = client.post(route, json={"reason": "superseded by a fresh host"})
+    # Decommissioning cannot be undone: it previews, then commits pinned to that
+    # preview's coordinate (R12).
+    preview = client.post(route, json={"reason": "superseded by a fresh host"})
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["status"] == "would_decommission"
+    assert "decommissioned" not in _descriptor(instance_id)
+    accepted = client.post(
+        route,
+        json={
+            "reason": "superseded by a fresh host",
+            "dry_run": False,
+            "at": preview.json()["coordinate"]["git_oid"],
+        },
+    )
 
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["reason"] == "superseded by a fresh host"
@@ -81,7 +94,7 @@ def test_the_instance_still_ends_normally_after_a_refused_reason(
         "superseded by a fresh host"
     )
     # And the terminal state is what refuses the second attempt, typed.
-    repeated = client.post(route, json={"reason": "again"})
+    repeated = client.post(route, json={"reason": "again", "dry_run": True})
     assert repeated.status_code == 400, repeated.text
     assert repeated.json()["error_code"] == "playbill.instance.decommissioned"
 
@@ -109,7 +122,7 @@ def test_the_cli_prints_the_typed_refusal_for_a_hostile_reason(
             "decommission",
             "--reason",
             HOSTILE_REASONS["escape"],
-            "--yes",
+            "--dry-run",
         ],
     )
 

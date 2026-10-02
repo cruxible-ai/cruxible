@@ -44,6 +44,8 @@ def test_playbill_tools_register_without_private_key_or_local_path_inputs(
         "bundle",
         "source_name",
         "proposal_name",
+        "dry_run",
+        "at",
     }
     serialized = str({name: tools[name].inputSchema for name in PLAYBILL_DOCUMENT_TOOLS})
     assert "private_key" not in serialized

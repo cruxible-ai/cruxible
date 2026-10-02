@@ -46,6 +46,7 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_core.authoring.id_prefixes import resolve_id_prefix
+from cruxible_core.storage.preview_fence import is_previewing
 
 AUTHORING_INTENT_EVENT_DIGEST_DOMAIN = "playbill-authoring-intent-event-v1"
 AUTHORING_INTENT_EVENT_V2_DIGEST_DOMAIN = "playbill-authoring-intent-event-v2"
@@ -524,11 +525,14 @@ class AuthoringIntentStore:
         if exhaust_root.is_symlink() or not exhaust_root.is_dir():
             raise AuthoringIntentStoreError("AuthoringIntent exhaust root is not trustworthy")
         self.root = exhaust_root.resolve(strict=True) / "authoring-intents"
-        if not read_only:
+        # A preview writes nothing (R12): a store no intent has been written to
+        # yet holds nothing to read, so its root is not made for one.
+        previewing = is_previewing() and not self.root.exists()
+        if not read_only and not previewing:
             self.root.mkdir(mode=0o700, exist_ok=True)
-        if self.root.is_symlink() or not self.root.is_dir():
+        if self.root.is_symlink() or (not previewing and not self.root.is_dir()):
             raise AuthoringIntentStoreError("AuthoringIntent root is not trustworthy")
-        if not read_only:
+        if not read_only and not previewing and not is_previewing():
             os.chmod(self.root, 0o700)
         self._lock_path = self.root / ".lock"
         self._crash_hook = crash_hook

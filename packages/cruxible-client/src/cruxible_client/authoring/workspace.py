@@ -132,13 +132,14 @@ class PlaybillWorkspaceAttachmentError(PlaybillWorkspaceError):
         self.requested_workspace = requested_workspace
         self.registered_workspace = registered_workspace
         self.repair_commands = (
-            f"cruxible playbill host create --instance-id {instance_id} "
-            f"--workspace {requested_workspace}",
+            f"cruxible playbill workspace detach --instance-id {instance_id}",
+            f"cruxible playbill workspace attach --instance-id {instance_id}",
         )
         super().__init__(
             f"{self.error_code}: host {instance_id!r} is not registered to workspace "
-            f"{requested_workspace!r} (registered={registered_workspace!r}); repair: "
-            f"{self.repair_commands[0]}"
+            f"{requested_workspace!r} (registered={registered_workspace!r}); repair: release "
+            f"the registered one with `{self.repair_commands[0]}`, then run "
+            f"`{self.repair_commands[1]}` from this worktree"
         )
 
 

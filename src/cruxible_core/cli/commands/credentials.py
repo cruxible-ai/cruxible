@@ -118,6 +118,17 @@ def _echo_credential_metadata(credential: contracts.RuntimeCredentialMetadata) -
         click.echo(f"Revoked at: {credential.revoked_at}")
 
 
+def _echo_preview(result: contracts.RuntimeCredentialResult, verb: str) -> bool:
+    """Print a preview's outcome and the commit that makes it; False for a commit."""
+
+    if not result.status.startswith("would_"):
+        return False
+    click.echo(f"Would {verb} credential {result.credential.credential_id}; nothing changed.")
+    _echo_credential_metadata(result.credential)
+    _common.echo_preview_next(result.status, result.coordinate)
+    return True
+
+
 def _echo_token_once(token: str, *, label: str) -> None:
     click.echo(f"{label}: {token}")
     click.echo("Save it now, for example: export CRUXIBLE_SERVER_BEARER_TOKEN=<token>")
@@ -133,20 +144,36 @@ def _echo_token_once(token: str, *, label: str) -> None:
         "CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET."
     ),
 )
+@_common.change_control_options
 @click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON.")
 @handle_errors
-def claim_bootstrap_cmd(secret_file: str | None, output_json: bool) -> None:
-    """Exchange the one-time bootstrap secret for the first ADMIN runtime token."""
+def claim_bootstrap_cmd(
+    secret_file: str | None, dry_run: bool | None, at: str | None, output_json: bool
+) -> None:
+    """Exchange the bootstrap secret for this host's first ADMIN runtime token.
+
+    The secret is claimable once per host: each host on the daemon claims its
+    own first ADMIN credential with it, with no restart in between.
+    """
     client, instance_id = _require_server_client("credential claim-bootstrap")
-    result = client.claim_runtime_bootstrap(instance_id, _read_bootstrap_secret(secret_file))
+    result = client.claim_runtime_bootstrap(
+        instance_id, _read_bootstrap_secret(secret_file), dry_run=dry_run, at=at
+    )
     if output_json:
         _common._emit_json(result.model_dump(mode="json"))
+        return
+    if result.status == "would_claim":
+        click.echo(
+            f"Would claim the bootstrap credential of {result.instance_id}; nothing claimed."
+        )
+        _common.echo_preview_next(result.status, result.coordinate)
         return
 
     click.echo("Bootstrap claimed.")
     click.echo(f"Credential ID: {result.credential_id}")
     click.echo(f"Instance ID: {result.instance_id}")
     click.echo(f"Permission mode: {result.permission_mode}")
+    assert result.token is not None  # a commit always issues one
     _echo_token_once(result.token, label="Admin token")
 
 
@@ -179,6 +206,7 @@ def claim_bootstrap_cmd(secret_file: str | None, output_json: bool) -> None:
         "upgrades, provider installs, ledger mirrors, daemon stop/restart)."
     ),
 )
+@_common.change_control_options
 @click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON.")
 @handle_errors
 def mint_cmd(
@@ -186,6 +214,8 @@ def mint_cmd(
     key_dir: str | None,
     label: str | None,
     permission_mode: str,
+    dry_run: bool | None,
+    at: str | None,
     output_json: bool,
 ) -> None:
     """Mint a bearer credential that acts as one principal.
@@ -213,6 +243,8 @@ def mint_cmd(
         permission_mode=mode,
         label=label,
         principal_proof=proof,
+        dry_run=dry_run,
+        at=at,
     )
     settings = (
         None
@@ -225,6 +257,8 @@ def mint_cmd(
             payload["token"] = None
             payload["settings_path"] = str(settings)
         _common._emit_json(payload)
+        return
+    if _echo_preview(result, "mint"):
         return
 
     click.echo("Credential minted.")
@@ -366,6 +400,7 @@ def _select_recovery_instance_id(
     show_default=True,
     help="Human-readable label for the recovered ADMIN credential.",
 )
+@_common.change_control_options
 @click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON.")
 @handle_errors
 def recover_admin_cmd(
@@ -373,6 +408,8 @@ def recover_admin_cmd(
     state_dir: str | None,
     instance_id: str | None,
     label: str,
+    dry_run: bool | None,
+    at: str | None,
     output_json: bool,
 ) -> None:
     """Recover an ADMIN token by local filesystem ownership of server state.
@@ -403,36 +440,63 @@ def recover_admin_cmd(
     )
     _common._echo_explicit_write_target(resolved_instance_id, resolved_state_root)
 
+    # A preview runs the recovery's own transaction -- the write lock, the
+    # schema and target checks, every insert -- and rolls it back (R12).
+    from cruxible_core.service.change_preview import state_change_scope
+
     store = RuntimeCredentialStore(db_path, initialize=False)
     try:
-        result = store.recover_admin_credential(
-            instance_id=resolved_instance_id,
-            label=label,
-            uid=uid,
-            hostname=socket.gethostname(),
-        )
+        with state_change_scope(
+            dry_run=dry_run,
+            at=at,
+            kind="direct",
+            operation="credential.recover-admin",
+            describe=f"recovering an ADMIN credential for {resolved_instance_id}",
+        ) as change:
+            recovered = store.recover_admin_credential(
+                instance_id=resolved_instance_id,
+                label=label,
+                uid=uid,
+                hostname=socket.gethostname(),
+                dry_run=change.previewing,
+                observe=change.observe,
+            )
     except RuntimeCredentialRecoveryBusyError as exc:
         raise click.UsageError(str(exc)) from exc
     except RuntimeCredentialRecoveryError as exc:
         raise click.UsageError(str(exc)) from exc
 
-    credential = _credential_metadata_from_record(result.record)
+    result = contracts.RuntimeCredentialResult(
+        status="would_recover" if change.previewing else "recovered",
+        credential=_credential_metadata_from_record(recovered.record),
+        token=None if change.previewing else recovered.token,
+        coordinate=change.coordinate,
+    )
     if output_json:
         _common._emit_json(
             {
-                "credential": credential.model_dump(mode="json"),
-                "token": result.token,
+                **result.model_dump(mode="json"),
                 "existing_credentials_revoked": False,
                 "next_step": (
-                    "Restart the daemon with auth enabled. Revoke old admin credentials "
+                    "Commit the preview with --commit --at <its coordinate digest>."
+                    if change.previewing
+                    else "Restart the daemon with auth enabled. Revoke old admin credentials "
                     "after recovery if desired."
                 ),
             }
         )
         return
 
+    if change.previewing:
+        click.echo(
+            f"Would mint one ADMIN credential for {resolved_instance_id} in {db_path}; "
+            "nothing was written."
+        )
+        _common.echo_preview_next(result.status, result.coordinate)
+        return
+    assert result.token is not None
     click.echo("Admin credential recovered.")
-    _echo_credential_metadata(credential)
+    _echo_credential_metadata(result.credential)
     _echo_token_once(result.token, label="Admin token")
     click.echo(
         "Existing admin credentials were not revoked. Restart the daemon with auth "
@@ -442,11 +506,22 @@ def recover_admin_cmd(
 
 @credential_group.command("revoke")
 @click.argument("credential_id")
+@_common.change_control_options
+@click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON.")
 @handle_errors
-def revoke_cmd(credential_id: str) -> None:
-    """Revoke a runtime bearer credential."""
+def revoke_cmd(credential_id: str, dry_run: bool | None, at: str | None, output_json: bool) -> None:
+    """Revoke a runtime bearer credential.
+
+    It cannot be undone, so it previews first; commit that preview with
+    ``--commit --at OID``.
+    """
     client, instance_id = _require_server_client("credential revoke")
-    result = client.revoke_runtime_credential(instance_id, credential_id)
+    result = client.revoke_runtime_credential(instance_id, credential_id, dry_run=dry_run, at=at)
+    if output_json:
+        _common._emit_json(result.model_dump(mode="json"))
+        return
+    if _echo_preview(result, "revoke"):
+        return
 
     click.echo("Credential revoked.")
     _echo_credential_metadata(result.credential)
@@ -463,13 +538,19 @@ def revoke_cmd(credential_id: str) -> None:
         "needed unless this request already acts as that principal."
     ),
 )
+@_common.change_control_options
+@click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON.")
 @handle_errors
-def rotate_cmd(credential_id: str, key_dir: str | None) -> None:
+def rotate_cmd(
+    credential_id: str, key_dir: str | None, dry_run: bool | None, at: str | None, output_json: bool
+) -> None:
     """Rotate a runtime bearer credential and print the replacement token once.
 
     A credential bound to a principal is replaced only with that principal's
     authority, exactly as minting one: this request acts as the principal, or
     `--key-dir` signs its consent. An admin may revoke it but never receives it.
+    The old token is revoked, which cannot be undone, so it previews first;
+    commit that preview with ``--commit --at OID``.
     """
     client, instance_id = _require_server_client("credential rotate")
     proof = None
@@ -490,12 +571,23 @@ def rotate_cmd(credential_id: str, key_dir: str | None) -> None:
             label=target.label,
             key_dir=Path(key_dir),
         )
-    result = client.rotate_runtime_credential(instance_id, credential_id, principal_proof=proof)
+    result = client.rotate_runtime_credential(
+        instance_id, credential_id, principal_proof=proof, dry_run=dry_run, at=at
+    )
     settings = (
         None
         if key_dir is None or not result.token
         else set_principal_settings_token(Path(key_dir), result.token)
     )
+    if output_json:
+        payload = result.model_dump(mode="json")
+        if settings is not None:
+            payload["token"] = None
+            payload["settings_path"] = str(settings)
+        _common._emit_json(payload)
+        return
+    if _echo_preview(result, "rotate"):
+        return
 
     click.echo("Credential rotated.")
     _echo_credential_metadata(result.credential)

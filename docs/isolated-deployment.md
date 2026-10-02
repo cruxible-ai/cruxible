@@ -104,7 +104,8 @@ daemon's own host, or through whatever supervises the process.
 
 ## Ending an instance
 
-`cruxible playbill instance decommission --reason "<why>" --yes` is terminal: it
+`cruxible playbill instance decommission --reason "<why>"` previews; committing it
+with `--commit --at OID` (the preview's coordinate) is terminal: it
 ends one instance's governed writes and cannot be undone. It is ADMIN-tiered and
 deletes NOTHING. Afterwards:
 

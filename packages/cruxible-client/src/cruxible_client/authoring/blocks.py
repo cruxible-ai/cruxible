@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import cast
@@ -640,8 +640,16 @@ def sync_projection_blocks(
     all_sources: bool = False,
     check: bool = False,
     detach_paths: Sequence[str | Path] = (),
+    observe_preimages: Callable[[Mapping[Path, bytes]], None] | None = None,
 ) -> PlaybillBlockSyncResultV1:
-    """Check all dependencies without authoring prose. Only explicit detach edits files."""
+    """Check all dependencies without authoring prose. Only explicit detach edits files.
+
+    ``observe_preimages``, when given, is called once with the exact bytes of
+    every page this call read, after every read and before any write. Each
+    detach then replaces a page only if it still holds exactly those bytes
+    (a whole-file compare-and-swap), so a caller that pins its commit to those
+    bytes (R12 ``at``) can raise here and nothing is written.
+    """
 
     root = Path(workspace).expanduser().resolve()
     try:
@@ -799,6 +807,8 @@ def sync_projection_blocks(
             items.append(_marker_error_item(root=root, path=path, content=content, error=exc))
             continue
         prepared.append((path, source_id, content, tuple(blocks)))
+    if observe_preimages is not None:
+        observe_preimages({path: content for path, _, content, _ in prepared})
     stamps = tuple(
         block.stamp for _, _, _, blocks in prepared for block in blocks if block.stamp is not None
     )
@@ -1066,6 +1076,7 @@ def repin_projection_block(
     coordinate: AcceptedCoordinate | None = None,
     body: bytes | None = None,
     compact: bool = True,
+    dry_run: bool = False,
 ) -> ProjectionBlockStampV2:
     """Repin one block, optionally installing explicitly supplied agent-authored body bytes.
 
@@ -1073,6 +1084,8 @@ def repin_projection_block(
     are retained before the page write. Use a reviewed exact-content package Claim
     for ledger recovery.
     The whole-file compare-and-swap preserves concurrent author edits.
+    ``dry_run`` computes and checks the stamp on this same path and stops before
+    the first write: no manifest, no page edit, no declaration (R12).
     """
 
     if evaluation_time.tzinfo is None or evaluation_time.utcoffset() is None:
@@ -1229,6 +1242,8 @@ def repin_projection_block(
         )
     except ProjectionMarkerError as exc:
         raise ProjectionRepinError("replacement does not reproduce the declared block") from exc
+    if dry_run:
+        return stamp
     retain_local_manifests(root, manifests)
     load_projection_manifests(root, replacement)
     try:

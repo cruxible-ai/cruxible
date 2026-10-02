@@ -26,7 +26,7 @@ def world(tmp_path, monkeypatch):
     instance, _ = seed_write_surface(tmp_path / "host")
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    registry = InstanceRegistry(tmp_path / "state" / "daemon" / "registry.db")
+    registry = InstanceRegistry(tmp_path / "state")
     registry.create_governed_instance_with_id(
         instance.descriptor.instance_id, workspace_root=workspace
     )
@@ -207,10 +207,10 @@ def test_registry_migration_is_idempotent_and_detach_clears_delivery(tmp_path):
             "CREATE TABLE registry_migrations (step TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
         )
         connection.execute("INSERT INTO registry_migrations VALUES ('operator-step','kept')")
-    registry = InstanceRegistry(database)
+    registry = InstanceRegistry(tmp_path)
     assert registry.get("inst_attached").floor_delivery
     registry.set_floor_delivery("inst_attached", False)
-    assert not InstanceRegistry(database).get("inst_attached").floor_delivery
+    assert not InstanceRegistry(tmp_path).get("inst_attached").floor_delivery
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     registry.create_governed_instance_with_id("inst_floor", workspace_root=workspace)
@@ -218,18 +218,26 @@ def test_registry_migration_is_idempotent_and_detach_clears_delivery(tmp_path):
     registry.set_floor_delivery("inst_floor", False)
     assert not registry.get("inst_floor").floor_delivery
     registry.set_floor_delivery("inst_floor", True)
-    registry = InstanceRegistry(registry.db_path)
+    registry = InstanceRegistry(registry.state_root)
     assert registry.get("inst_floor").floor_delivery
     with sqlite3.connect(database) as connection:
         assert connection.execute(
             "SELECT operator_column,floor_delivery FROM instances WHERE instance_id='inst_old'"
         ).fetchone() == ("kept", 0)
-        assert connection.execute("SELECT * FROM registry_migrations").fetchall() == [
-            ("operator-step", "kept")
+        # The operator's own step is kept; the chain records each of its own
+        # steps once, by id, beside it.
+        steps = [
+            row[0]
+            for row in connection.execute("SELECT step FROM registry_migrations ORDER BY rowid")
+        ]
+        assert steps == [
+            "operator-step",
+            "2026-10-01-relative-locations",
+            "2026-10-01-floor-delivery-column",
         ]
         columns = [row[1] for row in connection.execute("PRAGMA table_info(instances)")]
         assert columns.count("floor_delivery") == 1
-    registry = InstanceRegistry(database)
+    registry = InstanceRegistry(tmp_path)
     assert registry.get("inst_floor").floor_delivery
     assert not registry.detach_governed_workspace(
         "inst_floor", expected_workspace_root=workspace
@@ -515,7 +523,7 @@ def test_daemon_delivery_writes_the_local_indexes_the_client_writes(tmp_path, mo
     workspace = tmp_path / "workspace"
     _write(instance, _set(WI1, "measured", 3, evidence=report_evidence(workspace, "Count: 3")))
     _add_document(instance, "reports", NOTE.encode())
-    registry = InstanceRegistry(tmp_path / "state" / "daemon" / "registry.db")
+    registry = InstanceRegistry(tmp_path / "state")
     registry.create_governed_instance_with_id(
         instance.descriptor.instance_id, workspace_root=workspace
     )
@@ -559,7 +567,7 @@ def test_seeded_floor_trigger_delivers_after_accept_and_retirement_stops_it(tmp_
 
     instance, owner = initialize_local(tmp_path)
     workspace = tmp_path / "workspace"
-    registry = InstanceRegistry(tmp_path / "state/daemon/registry.db")
+    registry = InstanceRegistry(tmp_path / "state")
     registry.create_governed_instance_with_id(instance.descriptor.instance_id, workspace)
     monkeypatch.setattr(floor, "get_registry", lambda: registry)
     manager = SimpleNamespace(get=lambda _: instance)

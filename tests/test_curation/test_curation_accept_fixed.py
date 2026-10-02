@@ -40,6 +40,7 @@ from cruxible_core.service.discovery.curation import (
 from tests.core_support._candidate_support import submit_subject_candidate
 from tests.core_support._knowledge_loop_support import accept_proposal, subject_shell
 from tests.core_support._support import initialize_local
+from tests.support.store_snapshot import assert_writes_nothing
 
 NOW = datetime(2026, 8, 26, 18, tzinfo=UTC)
 
@@ -147,19 +148,30 @@ def test_accept_fixed_verifies_proposal_changeset_generation_and_member_intersec
     record = instance.accepted_history()[-1].record
     assert record is not None
     accepted_before_action = instance.accepted_coordinate()
+    request = PlaybillCurationAcceptFixedRequestV1(
+        item_id=observation.item_id,
+        expected_latest_event_digest=event.event_digest,
+        reason="the accepted runbook revision changed the evidenced document",
+        accepted_proposal_id=second.proposal.admission.proposal_id,
+        accepted_changeset_digest=record.changeset_digest,
+    )
+    # F-006: the ruling previews on its own path and appends nothing.
+    preview = assert_writes_nothing(
+        [tmp_path],
+        lambda: service_accept_fixed_playbill_curation(
+            instance,
+            request=request.model_copy(update={"dry_run": True}),
+            actor_context=_actor(),
+        ),
+    )
+    assert (preview.status, preview.item.status) == ("would_record", "open")
     result = service_accept_fixed_playbill_curation(
         instance,
-        request=PlaybillCurationAcceptFixedRequestV1(
-            item_id=observation.item_id,
-            expected_latest_event_digest=event.event_digest,
-            reason="the accepted runbook revision changed the evidenced document",
-            accepted_proposal_id=second.proposal.admission.proposal_id,
-            accepted_changeset_digest=record.changeset_digest,
-        ),
+        request=request.model_copy(update={"dry_run": False, "at": preview.coordinate.git_oid}),
         actor_context=_actor(),
     )
 
-    assert result.item.status == "accepted_fixed"
+    assert (result.status, result.item.status) == ("recorded", "accepted_fixed")
     assert result.item.resolved_at_generation == 2
     assert result.item.accepted_changeset_digest == record.changeset_digest
     assert instance.accepted_coordinate() == accepted_before_action
@@ -392,3 +404,66 @@ def test_dead_vocabulary_retirement_reads_changed_members_once_per_generation(
 
     assert set(resolutions) == {item.item_id, second_item.item_id}
     assert len(loaded_oids) == 2
+
+
+def test_a_head_accepted_before_the_append_refuses_a_pinned_ruling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F-002: a pinned ruling confirms the live head where it appends."""
+
+    from cruxible_core.errors import ChangeRefusedError
+    from cruxible_core.service.discovery.curation import (
+        PlaybillCurationOverruleRequestV1,
+        service_overrule_playbill_curation,
+    )
+    from tests.core_support._head_mover import move_head
+
+    instance, owner = initialize_local(tmp_path)
+    body = instance.store_document_body(b"status: ready\n")
+    accept_proposal(
+        instance,
+        owner,
+        service_propose_playbill_document(
+            instance,
+            shell=_document_shell(body.digest),
+            actor_id="owner",
+            proposal_name="runbook-initial",
+            timestamp="2026-08-26T18:00:00.000000Z",
+        ),
+    )
+    observation, event = _append_document_item(instance)
+    request = PlaybillCurationOverruleRequestV1(
+        item_id=observation.item_id,
+        expected_latest_event_digest=event.event_digest,
+        reason="inapplicable",
+        dry_run=True,
+    )
+    at = service_overrule_playbill_curation(
+        instance, request=request, actor_context=_actor()
+    ).coordinate.git_oid
+    from contextlib import contextmanager
+
+    from cruxible_core.service.discovery import curation
+
+    original = curation.change_scope
+    moved: list[str] = []
+
+    @contextmanager
+    def enter_then_move(*args, **kwargs):  # type: ignore[no-untyped-def]
+        # The acceptance lands after the entry check passed, before the append.
+        with original(*args, **kwargs) as mode:
+            if not moved:
+                moved.append(move_head(instance, owner, "moved-under-ruling"))
+            yield mode
+
+    monkeypatch.setattr(curation, "change_scope", enter_then_move)
+    with pytest.raises(ChangeRefusedError) as refused:
+        service_overrule_playbill_curation(
+            instance,
+            request=request.model_copy(update={"dry_run": False, "at": at}),
+            actor_context=_actor(),
+        )
+    assert moved and refused.value.error_code == "playbill.preview.state_moved"
+    monkeypatch.setattr(curation, "change_scope", original)
+    events = instance.review_operational_store().events(family="curation")
+    assert len(events) == 1

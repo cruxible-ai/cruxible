@@ -26,13 +26,13 @@ from cruxible_core.claims.claim_type_inputs import (
 from cruxible_core.governance.actor_context import TransportCapability
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.proposals.proposals import (
-    AuthenticatedActor,
     ProposalAdmissionRequest,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import (
     PlaybillAcceptedCoordinate,
     PlaybillProposalInspection,
+    admit_proposal,
 )
 from cruxible_core.service.proposals.proposal_names import canonical_playbill_proposal_name
 
@@ -92,28 +92,30 @@ def service_propose_playbill_claim_type(
     timestamp: str,
     base: PlaybillAcceptedCoordinate | None = None,
     capabilities: tuple[TransportCapability, ...] = ("propose",),
+    dry_run: bool | None = None,
+    at: str | None = None,
 ) -> PlaybillProposalInspection:
-    """Submit one ClaimType candidate through the generic proposal path."""
+    """Submit (or preview) one ClaimType candidate through the generic proposal path."""
 
     proposed_base = _resolve_coordinate(instance, base)
     candidate_tree = instance.immutable_tree_at(proposed_base.git_oid).fork()
     candidate_tree[claim_type_path(claim_type.predicate)] = render_claim_type(claim_type)
     ref_name = canonical_playbill_proposal_name(proposal_name, family="claim type")
-    result = instance.proposal_service().submit(
-        actor=AuthenticatedActor(actor_id=actor_id, capabilities=capabilities),
+    return admit_proposal(
+        instance,
+        dry_run=dry_run,
+        at=at,
+        operation="playbill.claim-type.propose",
+        describe=f"proposing ClaimType {claim_type.predicate}",
+        actor_id=actor_id,
+        proposed_base=proposed_base,
         request=ProposalAdmissionRequest(
             target_ref=f"refs/proposals/{actor_id}/{ref_name}",
             proposed_base_oid=proposed_base.git_oid,
         ),
         candidate_tree=candidate_tree,
         timestamp=timestamp,
-    )
-    return PlaybillProposalInspection(
-        proposal=result,
-        workspace_advertisement=result.workspace_advertisement,
-        accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
-            instance.accepted_coordinate()
-        ),
+        capabilities=capabilities,
     )
 
 
@@ -125,6 +127,8 @@ def service_propose_playbill_claim_type_input(
     proposal_name: str,
     timestamp: str,
     capabilities: tuple[TransportCapability, ...] = ("propose",),
+    dry_run: bool | None = None,
+    at: str | None = None,
 ) -> ClaimTypeInputProposalResultV1:
     """Lower and lint one tagless ClaimType input against one captured coordinate."""
 
@@ -136,21 +140,21 @@ def service_propose_playbill_claim_type_input(
     candidate_tree = tree.fork()
     candidate_tree[claim_type_path(claim_type.predicate)] = render_claim_type(claim_type)
     ref_name = canonical_playbill_proposal_name(proposal_name, family="claim type input")
-    result = instance.proposal_service().submit(
-        actor=AuthenticatedActor(actor_id=actor_id, capabilities=capabilities),
+    inspection = admit_proposal(
+        instance,
+        dry_run=dry_run,
+        at=at,
+        operation="playbill.claim-type.propose",
+        describe=f"proposing ClaimType {claim_type.predicate}",
+        actor_id=actor_id,
+        proposed_base=coordinate,
         request=ProposalAdmissionRequest(
             target_ref=f"refs/proposals/{actor_id}/{ref_name}",
             proposed_base_oid=coordinate.git_oid,
         ),
         candidate_tree=candidate_tree,
         timestamp=timestamp,
-    )
-    inspection = PlaybillProposalInspection(
-        proposal=result,
-        workspace_advertisement=result.workspace_advertisement,
-        accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
-            instance.accepted_coordinate()
-        ),
+        capabilities=capabilities,
     )
     return ClaimTypeInputProposalResultV1(
         proposal=inspection,
