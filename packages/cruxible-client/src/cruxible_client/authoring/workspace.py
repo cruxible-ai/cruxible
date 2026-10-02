@@ -28,7 +28,14 @@ from cruxible_client.authoring.blocks import (
     parse_projection_blocks,
     sync_projection_blocks,
 )
-from cruxible_client.authoring.floor_apply import apply_floor_delta, read_floor_manifest
+from cruxible_client.authoring.floor_apply import (
+    _DIRECTORY,
+    PlaybillFloorApplyError,
+    _directory,
+    _write_file,
+    apply_floor_delta,
+    read_floor_manifest,
+)
 from cruxible_client.authoring.projection_manifests import load_projection_manifests
 from cruxible_client.authoring.selectors import WorkspaceSources
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
@@ -270,36 +277,7 @@ def _atomic_write_workspace_config(path: Path, payload: Mapping[str, Any]) -> No
     if _contains_secret_field(payload):  # defensive: writer inputs are fixed below
         raise PlaybillWorkspaceError("coverage config writer refuses secret-bearing data")
     content = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8") + b"\n"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    workspace = path.parent.parent.resolve(strict=True)
-    if path.parent.resolve(strict=True).parent != workspace:
-        raise PlaybillWorkspaceError("coverage config directory escapes the workspace root")
-    temporary: Path | None = None
-    try:
-        with NamedTemporaryFile(
-            mode="wb",
-            prefix=".coverage.json.",
-            dir=path.parent,
-            delete=False,
-        ) as output:
-            temporary = Path(output.name)
-            output.write(content)
-            output.flush()
-            os.fsync(output.fileno())
-        os.replace(temporary, path)
-        temporary = None
-        descriptor = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-    except OSError as exc:
-        raise PlaybillWorkspaceError(
-            f"coverage config could not be written atomically: {exc}"
-        ) from exc
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
+    _write_workspace_local(path.parent.parent, _CONFIG_PATH.as_posix(), content, durable=True)
 
 
 def _planned_workspace_config(
@@ -892,15 +870,29 @@ def _workspace_locators(root: Path, sources: WorkspaceSources | None) -> dict[st
     return found
 
 
-def _write_floor_local(floor: Path, relative: str, text: str) -> None:
-    target = floor / relative
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if not target.resolve().is_relative_to(floor.resolve()):
-        raise PlaybillWorkspaceError(f"{relative} escapes the floor")
-    with NamedTemporaryFile("wb", dir=target.parent, delete=False) as stream:
-        stream.write(text.encode("utf-8"))
-        staged = Path(stream.name)
-    os.replace(staged, target)
+def _write_workspace_local(
+    workspace: Path, relative: str, content: bytes, *, durable: bool = False
+) -> None:
+    """Anchor the workspace and every output component without following links.
+
+    Keep directory creation, staging and replacement on floor_apply's held
+    descriptors: a workspace process swapping a parent must not redirect a
+    local join or coverage profile outside the workspace.
+    """
+
+    anchor = os.open(workspace.anchor, _DIRECTORY)
+    try:
+        with _directory(anchor, workspace.parts[1:], create=True) as directory:
+            assert directory is not None
+            _write_file(directory, relative, content, mode=0o600, durable=durable)
+    except (OSError, PlaybillFloorApplyError) as exc:
+        raise PlaybillWorkspaceError(f"{relative} could not be written atomically: {exc}") from exc
+    finally:
+        os.close(anchor)
+
+
+def _write_floor_local(workspace: Path, relative: str, text: str) -> None:
+    _write_workspace_local(workspace, f"{PLAYBILL_FLOOR_PATH}/{relative}", text.encode("utf-8"))
 
 
 def _rendered_blocks(root: Path, content: bytes) -> list[tuple[str, str]]:
@@ -957,6 +949,9 @@ def write_projection_index(workspace: str | Path) -> int | None:
     is no v5 floor.
     """
 
+    # Keep the supplied workspace path for no-follow output traversal. Resolving
+    # it again must not bless a replacement symlink after a caller's check.
+    output_root = Path(workspace).expanduser().absolute()
     root = _workspace_root(workspace)
     floor = _relative_destination(root, PLAYBILL_FLOOR_PATH)
     ledger = _sources_ledger(floor)
@@ -980,7 +975,7 @@ def write_projection_index(workspace: str | Path) -> int | None:
         "workspace catalog)"
     )
     _write_floor_local(
-        floor,
+        output_root,
         SOURCES_INDEX_PATH,
         "".join(f"{line}\n" for line in (sources_header, *("\t".join(row) for row in joined))),
     )
@@ -1012,7 +1007,7 @@ def write_projection_index(workspace: str | Path) -> int | None:
         "bound ref, changed gen  (written from the local workspace)"
     )
     _write_floor_local(
-        floor,
+        output_root,
         PROJECTIONS_INDEX_PATH,
         "".join(f"{line}\n" for line in (header, *("\t".join(row) for row in rows))),
     )

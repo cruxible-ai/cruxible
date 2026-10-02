@@ -135,18 +135,30 @@ def _read_at(directory: int, name: str) -> bytes:
         os.close(handle)
 
 
-def _write_file(root: int, path: str, content: bytes) -> None:
+def _write_file(
+    root: int,
+    path: str,
+    content: bytes,
+    *,
+    mode: int = 0o644,
+    durable: bool = False,
+) -> None:
     """Write ``path`` atomically: a staged file in its own directory, renamed over it."""
 
     parts, name = _split(path)
     with _directory(root, parts, create=True) as directory:
         assert directory is not None
         staged = f".floor-{secrets.token_hex(8)}.tmp"
-        handle = os.open(staged, _CREATE, 0o644, dir_fd=directory)
+        handle = os.open(staged, _CREATE, mode, dir_fd=directory)
         try:
             with os.fdopen(handle, "wb") as stream:
                 stream.write(content)
+                if durable:
+                    stream.flush()
+                    os.fsync(stream.fileno())
             os.replace(staged, name, src_dir_fd=directory, dst_dir_fd=directory)
+            if durable:
+                os.fsync(directory)
         except BaseException:
             try:
                 os.unlink(staged, dir_fd=directory)
