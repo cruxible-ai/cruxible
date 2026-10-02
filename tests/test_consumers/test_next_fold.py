@@ -11,6 +11,7 @@ from unittest.mock import patch
 import pytest
 
 from cruxible_client.contracts.triggers import CadenceScheduleV1
+from cruxible_core.consumers import floor
 from cruxible_core.consumers import next as folded
 from cruxible_core.consumers.next import NEXT_QUEUE, evidence, predictions, queue
 from cruxible_core.consumers.protocol import ConsumerWork
@@ -42,7 +43,7 @@ def _cadence(trigger: str, action: str, interval: timedelta) -> InternalTrigger:
 def test_one_kind_one_health_and_independent_part_cursors(tmp_path: Path) -> None:
     instance, _owner, _capture, _contract = fixed_world(tmp_path)
     drain(instance, now=EVALUATION_TIME)
-    assert [kind.name for kind in consumer_kinds()] == ["line", "next"]
+    assert [kind.name for kind in consumer_kinds()] == ["line", "next", "floor"]
     (health,) = consumer_health(instance, now=EVALUATION_TIME)
     assert (health.kind, health.consumer_id, health.state) == ("next", "consumer:next", "running")
     assert set(health.detail) == {"queue", "evidence", "prediction"}
@@ -213,12 +214,30 @@ def test_lost_part_state_lags_until_that_part_rebuilds(tmp_path: Path, part: str
     assert NEXT_QUEUE.health(instance, now=EVALUATION_TIME)[0].state == "running"
 
 
-def test_every_registered_internal_action_names_the_part_that_performs_it() -> None:
+def test_every_registered_internal_action_names_the_part_that_performs_it(tmp_path: Path) -> None:
     import sys
 
     from cruxible_client.contracts.triggers import INTERNAL_ACTIONS
 
+    kinds = {kind.name: kind for kind in consumer_kinds()}
     for spec in INTERNAL_ACTIONS.values():
-        assert (spec.consumer, spec.effect) == (NEXT_QUEUE.name, NEXT_QUEUE.effect_class)
-        part = folded._PARTS[spec.part]
-        assert sys.modules[type(part).__module__].ACTION is spec
+        kind = kinds[spec.consumer]
+        assert spec.effect == kind.effect_class
+        if kind is NEXT_QUEUE:
+            part = folded._PARTS[spec.part]
+            assert sys.modules[type(part).__module__].ACTION is spec
+        else:
+            assert kind is floor.FLOOR
+            assert (spec.name, spec.part) == ("floor.refresh", "deliver")
+            # Floor owns a work key directly, rather than a folded next part.
+            # Its journal lookup, due key and run must agree with the registry.
+            instance, _owner = seed_claims(tmp_path)
+            with patch.object(floor, "latest_sequence", return_value=1) as latest:
+                kind.match(instance, now=EVALUATION_TIME, daemon_id="daemon")
+                latest.assert_called_once_with(instance, action=spec.name)
+                (work,) = kind.due(instance, now=EVALUATION_TIME)
+            assert work.key == spec.part
+            manager = SimpleNamespace(get=lambda _id: instance)
+            with patch.object(floor, "refresh_floor") as refresh:
+                kind.run(manager, "instance", work, now=EVALUATION_TIME)
+                refresh.assert_called_once_with(instance, "instance", follow_fire=True)
