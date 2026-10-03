@@ -1156,6 +1156,8 @@ class ChangeSetDraft:
         Line can have several
         Triggers; retiring a Line needs its live Triggers retired or retargeted
         in the same set.
+
+        Next: ``.submit()`` to propose the changeset for review and acceptance.
         """
 
         payload = TriggerAuthoringPayloadV1(

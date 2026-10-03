@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
+from cruxible_client.contracts.triggers import parse_trigger
 from cruxible_core.compiler.projection_tree import TreeReadLimits
 from cruxible_core.proposals.proposals import ProposalReceiveLimits
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -35,10 +36,40 @@ def test_the_miniature_fixture_has_its_declared_composition(tmp_path: Path) -> N
         "documents/": MINIATURE.documents,
         "query-definitions/": MINIATURE.query_definitions,
         "capture-contracts/": 1,
+        "triggers/": 3,
         "claims/": MINIATURE.seed_claims + MINIATURE.generations * MINIATURE.claims_per_generation,
     }
     for prefix, expected in kinds.items():
         assert sum(1 for path in tree if path.startswith(prefix)) == expected, prefix
+    triggers = [
+        parse_trigger(content, path=path)
+        for path, content in tree.items()
+        if path.startswith("triggers/")
+    ]
+    assert {
+        trigger.identity.name: (
+            trigger.lifecycle.state,
+            trigger.target.model_dump(mode="json"),
+            trigger.schedule.model_dump(mode="json"),
+        )
+        for trigger in triggers
+    } == {
+        "evidence-sweep": (
+            "live",
+            {"kind": "action", "action": "evidence.sweep"},
+            {"kind": "cadence", "interval_seconds": 86400},
+        ),
+        "floor-refresh": (
+            "live",
+            {"kind": "action", "action": "floor.refresh"},
+            {"kind": "generation_accepted"},
+        ),
+        "prediction-anchor-retry": (
+            "live",
+            {"kind": "action", "action": "prediction.anchor_retry"},
+            {"kind": "cadence", "interval_seconds": 3600},
+        ),
+    }
     # Claims shard by the leading byte of their identity, so a real population
     # spreads over the shard space rather than piling into one directory.
     shards = {path.split("/")[1] for path in tree if path.startswith("claims/")}

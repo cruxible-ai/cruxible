@@ -197,10 +197,23 @@ def test_policy_read_is_a_real_http_behavior(
 
     policies = client.get(f"/api/v1/{instance_id}/playbill/orient", params={"section": "policies"})
     assert policies.status_code == 200, policies.text
-    assert [item["policy_kind"] for item in policies.json()["policies"]] == [
+    rows = policies.json()["policies"]
+    assert [item["policy_kind"] for item in rows] == [
         "approval_policy",
         "procedure_runtime_policy",
+        "trigger_schedule",
+        "trigger_schedule",
+        "trigger_schedule",
     ]
+    assert {item["declaring_artifact_identity"]: item["policy"] for item in rows[2:]} == {
+        "Trigger:evidence-sweep": {"kind": "cadence", "interval_seconds": 86400},
+        "Trigger:floor-refresh": {"kind": "generation_accepted"},
+        "Trigger:prediction-anchor-retry": {"kind": "cadence", "interval_seconds": 3600},
+    }
+    for item in rows[2:]:
+        assert item["placement"] == "embedded"
+        assert item["declaring_artifact_kind"] == "Trigger"
+        assert item["field_path"] == "/schedule"
 
 
 def test_friendly_change_set_duplicate_is_a_typed_http_400(

@@ -541,7 +541,10 @@ def test_an_internal_action_no_trigger_schedules_is_status_with_an_authoring_rep
     tmp_path: Path,
 ) -> None:
 
-    from cruxible_client.contracts.triggers import CadenceScheduleV1
+    from cruxible_client.contracts.triggers import (
+        CadenceScheduleV1,
+        GenerationAcceptedScheduleV1,
+    )
     from cruxible_core.triggers.journal import internal_triggers
     from tests.support.lines import action_trigger, successor, trigger_members
     from tests.test_indexes.test_resolution_contracts import _accept_tree
@@ -551,6 +554,7 @@ def test_an_internal_action_no_trigger_schedules_is_status_with_an_authoring_rep
     assert seeded.triggers.state == "scheduled" and _attention(seeded) == ()
     assert seeded.triggers.detail["scheduled"] == {
         "evidence.sweep": ["Trigger:evidence-sweep"],
+        "floor.refresh": ["Trigger:floor-refresh"],
         "prediction.anchor_retry": ["Trigger:prediction-anchor-retry"],
     }
 
@@ -570,14 +574,21 @@ def test_an_internal_action_no_trigger_schedules_is_status_with_an_authoring_rep
     )
     # The daemon's cadences are whatever the accepted Triggers say, per generation.
     assert [(item.action, item.schedule) for item in internal_triggers(instance)] == [
-        ("evidence.sweep", CadenceScheduleV1(interval_seconds=600))
+        ("evidence.sweep", CadenceScheduleV1(interval_seconds=600)),
+        ("floor.refresh", GenerationAcceptedScheduleV1()),
     ]
     unscheduled = _status(instance, _request(instance))
     facet = unscheduled.triggers
     assert facet.state == "unscheduled" and not unscheduled.blocking
+    assert facet.detail["scheduled"] == {
+        "evidence.sweep": ["Trigger:evidence-sweep"],
+        "floor.refresh": ["Trigger:floor-refresh"],
+    }
     assert facet.detail["unscheduled"] == ["prediction.anchor_retry"]
     assert facet.detail["message"] == "no trigger schedules prediction.anchor_retry"
     assert facet.repair is not None
+    assert facet.repair.target == "prediction.anchor_retry"
+    assert facet.repair.required_change == "author_a_trigger_aimed_at_the_unscheduled_action"
     assert (facet.repair.operation, facet.repair.arguments) == (
         "playbill.authoring.create",
         {"example": "trigger"},
@@ -597,3 +608,8 @@ def test_an_internal_action_no_trigger_schedules_is_status_with_an_authoring_rep
     )
     restored = _status(instance, _request(instance))
     assert restored.triggers.state == "scheduled" and _attention(restored) == ()
+    assert restored.triggers.detail["scheduled"] == {
+        "evidence.sweep": ["Trigger:evidence-sweep"],
+        "floor.refresh": ["Trigger:floor-refresh"],
+        "prediction.anchor_retry": ["Trigger:anchor-retry-often"],
+    }
