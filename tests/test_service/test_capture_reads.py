@@ -41,7 +41,7 @@ def test_capture_read_is_verified_bounded_and_does_not_refetch(tmp_path: Path) -
             request=CaptureReadRequest(capture_digest=result.envelope.commitment.digest),
             access=access,
         )
-    assert not_a_capture.value.error_code == "playbill.capture.not_a_capture"
+    assert not_a_capture.value.error_code == "cruxible.capture.not_a_capture"
     assert not_a_capture.value.http_status == 404
     # Missing content is explicit and never reconstructed by rereading the source.
     instance.body_store().erase(result.envelope.commitment.digest)
@@ -80,10 +80,10 @@ def test_an_exact_content_digest_refuses_naming_the_claim_whose_value_it_is(
         )
 
     error = refused.value
-    assert error.error_code == "playbill.capture.not_a_capture"
+    assert error.error_code == "cruxible.capture.not_a_capture"
     assert error.http_status == 404
     assert error.candidates == (ruling.claim_id,)
-    assert error.repair is not None and error.repair.operation == "playbill.get"
+    assert error.repair is not None and error.repair.operation == "cruxible.get"
     assert error.repair.arguments == {"ref": ruling.claim_id}
     assert "strict versioned validation" not in str(error)
     assert f"the exact content of Claim {ruling.claim_id}" in str(error)

@@ -141,7 +141,7 @@ def _repair_for_error(exc: CoreError) -> ServedRepair:
             },
         )
     if isinstance(exc, ProposalNotFoundError):
-        return RepairOperation(operation="playbill.proposal.list")
+        return RepairOperation(operation="cruxible.proposal.list")
     if isinstance(exc, BootstrapClaimRefusedError):
         return RepairOperation(
             operation=_BOOTSTRAP_REPAIR_OPERATIONS[exc.error_code],
@@ -191,8 +191,8 @@ def _status_for_error(exc: CoreError) -> int:
         return 403
     if isinstance(exc, ClaimAttestationStoreError):
         if exc.error_code in {
-            "playbill.claim_attestation.attestation_head_unknown",
-            "playbill.claim_attestation.idempotency_payload_mismatch",
+            "cruxible.claim_attestation.attestation_head_unknown",
+            "cruxible.claim_attestation.idempotency_payload_mismatch",
         }:
             return 400
         return 500

@@ -187,6 +187,6 @@ class ProposalNoteIndex:
     @staticmethod
     def _refuse(kind: str) -> None:
         raise ProposalIntegrityError(
-            "playbill.proposal.note_disagrees_with_evidence: the "
+            "cruxible.proposal.note_disagrees_with_evidence: the "
             f"{kind} note differs from the complete proposal evidence group"
         )

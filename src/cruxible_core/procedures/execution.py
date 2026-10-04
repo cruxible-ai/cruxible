@@ -3980,7 +3980,7 @@ class ProcedureExecutor:
                 node_id=node.node_id,
                 input_name=node.as_,
                 outcome="unavailable",
-                reason_code="playbill.acquisition.unavailable",
+                reason_code="cruxible.acquisition.unavailable",
                 detail=exc.refusal.message,
             )
             decision = apply_acquisition_result(
@@ -4183,7 +4183,7 @@ class ProcedureExecutor:
                     ProcedureNodeRefusalCode,
                     decision.reason_codes[0]
                     if decision.reason_codes
-                    else "playbill.acquisition.refused",
+                    else "cruxible.acquisition.refused",
                 ),
                 "The declared acquisition rule refuses this typed source result.",
                 node_id=node.node_id,

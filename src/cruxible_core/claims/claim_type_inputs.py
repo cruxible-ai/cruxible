@@ -65,7 +65,7 @@ class _StrictClaimTypeInputModel(BaseModel):
 class ClaimTypeInputValidationError(FormatError):
     """A decision-only ClaimType input violates its final artifact contract."""
 
-    error_code = "playbill.claim_type.input_invalid"
+    error_code = "cruxible.claim_type.input_invalid"
 
     def __init__(self, validation_error: ValidationError) -> None:
         details = []
@@ -203,9 +203,9 @@ class ClaimTypeInputRecord(_StrictClaimTypeInputModel):
 
 class ClaimTypeLintWarningV1(_StrictClaimTypeInputModel):
     code: Literal[
-        "playbill.claim_type.evidence_policy_admits_no_accepted_contract",
-        "playbill.claim_type.anticipated_source_contract_omitted",
-        "playbill.claim_type.attestation_threshold_disabled",
+        "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
+        "cruxible.claim_type.anticipated_source_contract_omitted",
+        "cruxible.claim_type.attestation_threshold_disabled",
     ]
     field_path: str
     source_id: str | None = None
@@ -373,19 +373,19 @@ def _digest_evidence_policy(
 class ClaimTypeInputReferenceError(FormatError):
     """An authored evidence rule names a contract that cannot be referenced."""
 
-    error_code = "playbill.claim_type.input_invalid"
+    error_code = "cruxible.claim_type.input_invalid"
 
 
 class ClaimTypeMemberDescriptionsStale(FormatError):
     """Member descriptions name values the edited enum no longer admits."""
 
-    error_code = "playbill.claim_type.member_descriptions_stale"
+    error_code = "cruxible.claim_type.member_descriptions_stale"
 
 
 class ClaimTypeDefaultRoleNotPermitted(FormatError):
     """The default role is not one of the edited ClaimType's authorable roles."""
 
-    error_code = "playbill.claim_type.default_role_not_permitted"
+    error_code = "cruxible.claim_type.default_role_not_permitted"
 
 
 def _v7_fields(value: ClaimTypeInputRecord, predecessor: ClaimType | None) -> dict[str, object]:
@@ -575,7 +575,7 @@ def lint_claim_type_input(
             if identity not in resolvable_identities:
                 warnings.append(
                     ClaimTypeLintWarningV1(
-                        code="playbill.claim_type.evidence_policy_admits_no_accepted_contract",
+                        code="cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
                         field_path=f"$.evidence_admission_policy.rules[{index}].capture_contracts",
                         contract_identity=identity,
                         replacement_rule_fragment={
@@ -592,7 +592,7 @@ def lint_claim_type_input(
             for digest in digests:
                 warnings.append(
                     ClaimTypeLintWarningV1(
-                        code="playbill.claim_type.evidence_policy_admits_no_accepted_contract",
+                        code="cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
                         field_path=(
                             f"$.evidence_admission_policy.rules[{index}].capture_contract_digests"
                         ),
@@ -612,7 +612,7 @@ def lint_claim_type_input(
         contract_digest = sorted(accepted_contracts)[0]
         warnings.append(
             ClaimTypeLintWarningV1(
-                code="playbill.claim_type.evidence_policy_admits_no_accepted_contract",
+                code="cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
                 field_path="$.evidence_admission_policy.rules",
                 contract_identity=accepted_contracts[contract_digest],
                 contract_digest=contract_digest,
@@ -626,7 +626,7 @@ def lint_claim_type_input(
             continue
         warnings.append(
             ClaimTypeLintWarningV1(
-                code="playbill.claim_type.anticipated_source_contract_omitted",
+                code="cruxible.claim_type.anticipated_source_contract_omitted",
                 field_path="$.evidence_admission_policy.rules",
                 source_id=source_id,
                 contract_identity=contract.identity.qualified,
@@ -644,7 +644,7 @@ def lint_claim_type_input(
         if rule.minimum_independent_control_components == 0:
             warnings.append(
                 ClaimTypeLintWarningV1(
-                    code="playbill.claim_type.attestation_threshold_disabled",
+                    code="cruxible.claim_type.attestation_threshold_disabled",
                     field_path=(
                         f"$.attestation_consequence_policy.rules[{index}]"
                         ".minimum_independent_control_components"

@@ -224,7 +224,7 @@ def service_upgrade_evidence_rules(
         dry_run=request.dry_run,
         at=request.at,
         kind="derived",
-        operation="playbill.claim-type.upgrade-evidence-rules",
+        operation="cruxible.claim-type.upgrade-evidence-rules",
         describe="the evidence-rule upgrade",
     ) as mode:
         return _upgrade(instance, mode, actor_id=actor_id, timestamp=timestamp)

@@ -721,7 +721,7 @@ def service_readmit_playbill_proposal(
         dry_run=dry_run,
         at=at,
         kind="direct",
-        operation="playbill.proposal.readmit",
+        operation="cruxible.proposal.readmit",
         describe=f"readmitting proposal {proposal_id}",
     ) as mode:
         return _readmit(instance, mode, proposal_id=proposal_id, actor_id=actor_id)
@@ -913,7 +913,7 @@ def service_withdraw_playbill_proposal(
         dry_run=dry_run,
         at=at,
         kind="direct",
-        operation="playbill.proposal.withdraw",
+        operation="cruxible.proposal.withdraw",
         describe=f"withdrawing proposal {proposal_id}",
     ) as mode:
         return _withdraw(

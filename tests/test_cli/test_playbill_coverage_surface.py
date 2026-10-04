@@ -564,7 +564,7 @@ def test_cli_coverage_status_renders_the_manifest_over_the_declared_scope(
     lines = status.strip().splitlines()
     assert lines[0] == "Cruxible coverage manifest: epoch 0, health complete, boundary complete"
     assert lines[1].startswith("instance ")
-    assert "watcher absent, access profile playbill.coverage.read" in lines
+    assert "watcher absent, access profile cruxible.coverage.read" in lines
     assert "scope 2 source(s):" in lines
     assert "  external:workspace.handbook" in lines
     assert "  external:workspace.notes" in lines

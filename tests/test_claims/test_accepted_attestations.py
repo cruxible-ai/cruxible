@@ -495,6 +495,6 @@ def test_current_claim_authoring_rejects_embedded_attestation_producer(tmp_path:
     )
     assert result.candidate is None
     assert any(
-        d.code == "playbill.claim.embedded_attestations_retired"
+        d.code == "cruxible.claim.embedded_attestations_retired"
         for d in result.evaluation.diagnostics
     )

@@ -440,31 +440,31 @@ def evaluate_trigger_law(
 
     if path != trigger_path(trigger.identity.name):
         return _refusal(
-            "playbill.trigger.path_mismatch", "Trigger identity/path disagreement.", path=path
+            "cruxible.trigger.path_mismatch", "Trigger identity/path disagreement.", path=path
         )
     if predecessor is None:
         if trigger.lifecycle.predecessor_digest is not None:
             return _refusal(
-                "playbill.trigger.invalid_genesis",
+                "cruxible.trigger.invalid_genesis",
                 "A new Trigger cannot name a predecessor.",
                 path=path,
             )
     else:
         if trigger.identity != predecessor.trigger.identity:
             return _refusal(
-                "playbill.trigger.stable_identity_changed",
+                "cruxible.trigger.stable_identity_changed",
                 "A Trigger successor must retain its stable identity.",
                 path=path,
             )
         if trigger.lifecycle.predecessor_digest != predecessor.artifact_digest:
             return _refusal(
-                "playbill.trigger.predecessor_mismatch",
+                "cruxible.trigger.predecessor_mismatch",
                 "A Trigger successor does not pin its exact predecessor.",
                 path=path,
             )
         if trigger.lifecycle.state == "live" and predecessor.trigger.lifecycle.state == "retired":
             return _refusal(
-                "playbill.trigger.revival_refused",
+                "cruxible.trigger.revival_refused",
                 "A retired Trigger cannot be revived; propose a new Trigger identity instead.",
                 path=path,
             )
@@ -474,7 +474,7 @@ def evaluate_trigger_law(
                 parse_cron(trigger.schedule.expression)
             except CronExpressionError as exc:
                 return _refusal(
-                    "playbill.trigger.cron_invalid",
+                    "cruxible.trigger.cron_invalid",
                     f"Cron schedule is not valid: {exc}. Use five UTC fields (minute hour "
                     "day-of-month month day-of-week) of numbers, ranges, steps or lists.",
                     path=path,
@@ -483,7 +483,7 @@ def evaluate_trigger_law(
             spec = actions.get(trigger.target.action)
             if spec is None:
                 return _refusal(
-                    "playbill.trigger.action_unknown",
+                    "cruxible.trigger.action_unknown",
                     f"Internal action {trigger.target.action!r} is not registered; a Trigger "
                     "may fire one of: " + ", ".join(sorted(actions)) + ".",
                     path=path,
@@ -493,7 +493,7 @@ def evaluate_trigger_law(
                 or isinstance(trigger.schedule, GenerationAcceptedSchedule)
             ):
                 return _refusal(
-                    "playbill.trigger.schedule_unsupported_for_action",
+                    "cruxible.trigger.schedule_unsupported_for_action",
                     f"Internal action {spec.name!r} takes cadence, cron or generation_accepted "
                     "in this "
                     f"version; a {trigger.schedule.kind} schedule for an internal action is "
@@ -504,7 +504,7 @@ def evaluate_trigger_law(
         else:
             if not target_line_live:
                 return _refusal(
-                    "playbill.trigger.target_line_unavailable",
+                    "cruxible.trigger.target_line_unavailable",
                     f"Trigger target {trigger.target.line.target.qualified!r} is not a live "
                     "accepted Line in this candidate; accept the Line first, or in this "
                     "ChangeSet.",
@@ -520,7 +520,7 @@ def evaluate_trigger_law(
                 else "a Capture event"
             )
             return _refusal(
-                "playbill.trigger.event_not_accepted",
+                "cruxible.trigger.event_not_accepted",
                 f"{target} needs {needed} as its input; this Trigger's schedule does not "
                 "fire on it.",
                 path=path,

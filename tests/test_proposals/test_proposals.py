@@ -258,7 +258,7 @@ def test_refusal_keeps_evidence_but_creates_no_candidate(tmp_path: Path) -> None
     assert result.evaluation.verdict == "refused"
     assert result.candidate is None
     assert [item.code for item in result.evaluation.diagnostics] == [
-        "playbill.document.body_missing"
+        "cruxible.document.body_missing"
     ]
     assert instance.inspect() == before
     exhaust = Path(instance.inspect().storage_directories["exhaust"])
@@ -271,7 +271,7 @@ def test_refusal_keeps_evidence_but_creates_no_candidate(tmp_path: Path) -> None
         match=(
             r"refused proposal has no approvable candidate; run "
             rf"`playbill proposal refusal {result.admission.proposal_id}` for refusal code "
-            r"playbill\.document\.body_missing"
+            r"cruxible\.document\.body_missing"
         ),
     ):
         _candidate_for_proposal(instance, result.admission.proposal_id)
@@ -602,7 +602,7 @@ def test_rebase_changes_candidate_identity_and_conflicts_are_typed(tmp_path: Pat
         rebased=True,
     )
     assert conflict.candidate is None
-    assert [item.code for item in conflict.diagnostics] == ["playbill.proposal.rebase_conflict"]
+    assert [item.code for item in conflict.diagnostics] == ["cruxible.proposal.rebase_conflict"]
 
     rebased_tree, conflicts = deterministic_rebase(
         base_tree=base_tree,

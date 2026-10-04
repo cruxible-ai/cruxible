@@ -103,8 +103,8 @@ def test_evidence_artifacts_share_acceptance_closure_and_projection(tmp_path: Pa
     }.issubset(kinds)
     schemas = {fact.schema_id for fact in projected.semantic_facts}
     assert {
-        "playbill.provider.identity",
-        "playbill.provider.keys",
-        "playbill.provider.provenance",
-        "playbill.source_acquisition_policy.policy",
+        "cruxible.provider.identity",
+        "cruxible.provider.keys",
+        "cruxible.provider.provenance",
+        "cruxible.source_acquisition_policy.policy",
     }.issubset(schemas)

@@ -42,18 +42,18 @@ def test_p2_b1_projects_only_governed_provider_runtime_and_interface_authority()
 
     schemas = {fact.schema_id for fact in projection.semantic_facts}
     assert {
-        "playbill.provider.runtime",
-        "playbill.provider.implementations",
-        "playbill.provider_interface.registration",
-        "playbill.provider_interface.vocabulary",
-        "playbill.provider_interface.classifier",
+        "cruxible.provider.runtime",
+        "cruxible.provider.implementations",
+        "cruxible.provider_interface.registration",
+        "cruxible.provider_interface.vocabulary",
+        "cruxible.provider_interface.classifier",
     } <= schemas
     graph = next(
-        fact for fact in projection.semantic_facts if fact.schema_id == "playbill.procedure.graph"
+        fact for fact in projection.semantic_facts if fact.schema_id == "cruxible.procedure.graph"
     )
     assert graph.fact_key == "graph_v4"
     projected_line = next(
-        fact for fact in projection.semantic_facts if fact.schema_id == "playbill.line.spec"
+        fact for fact in projection.semantic_facts if fact.schema_id == "cruxible.line.spec"
     )
     assert [
         item["node_id"] for item in projected_line.value["line"]["provider_implementation_closures"]

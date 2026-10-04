@@ -14,7 +14,7 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.projection_extensions import ProjectionFact
 from cruxible_client.contracts.source_references import ExternalSourceReference
 
-RELATION_RETIRED_CONFLICT_SCHEMA = "playbill.citation_relation.retired_conflict"
+RELATION_RETIRED_CONFLICT_SCHEMA = "cruxible.citation_relation.retired_conflict"
 
 _WITNESS_LIMIT = 8
 _RelationValue = TypeVar("_RelationValue")

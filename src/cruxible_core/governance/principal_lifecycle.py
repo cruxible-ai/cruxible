@@ -99,7 +99,7 @@ def evaluate_principal_lifecycle(
 
     if actor_id is None:
         return _refused(
-            "playbill.principal.actor_required",
+            "cruxible.principal.actor_required",
             "Principal lifecycle evaluation requires an authenticated actor.",
         )
     try:
@@ -110,11 +110,11 @@ def evaluate_principal_lifecycle(
             else None
         )
     except PrincipalIntegrityError as exc:
-        return _refused("playbill.principal.format_invalid", str(exc))
+        return _refused("cruxible.principal.format_invalid", str(exc))
     actor = _actor(principals, actor_id)
     if actor is None or actor.kind == "daemon":
         return _refused(
-            "playbill.principal.actor_unauthorized",
+            "cruxible.principal.actor_unauthorized",
             "Principal lifecycle actor is absent, revoked, or daemon-only at the parent root.",
         )
     action = _classify(previous, proposed, actor=actor)
@@ -122,7 +122,7 @@ def evaluate_principal_lifecycle(
         action = None
     if action is None:
         return _refused(
-            "playbill.principal.transition_unauthorized",
+            "cruxible.principal.transition_unauthorized",
             "Principal transition is outside registration, self-rotation, "
             "revocation, or recovery policy.",
         )
@@ -143,7 +143,7 @@ def evaluate_principal_lifecycle(
         )
     except ValueError:
         return _refused(
-            "playbill.principal.registry_invalid", "principal registry snapshot is invalid"
+            "cruxible.principal.registry_invalid", "principal registry snapshot is invalid"
         )
     try:
         approval_policy = parse_approval_policy(
@@ -152,7 +152,7 @@ def evaluate_principal_lifecycle(
         )
     except (KeyError, ApprovalPolicyFormatError) as exc:
         return _refused(
-            "playbill.principal.approval_policy_invalid",
+            "cruxible.principal.approval_policy_invalid",
             f"Accepted approval policy is unavailable or invalid: {exc}",
         )
     active_ordinary_count = sum(
@@ -165,7 +165,7 @@ def evaluate_principal_lifecycle(
         and active_ordinary_count < 2
     ):
         return _refused(
-            "playbill.principal.independent_approval_minimum",
+            "cruxible.principal.independent_approval_minimum",
             "independent_approval_required mode must keep at least two active ordinary "
             "principals; register a replacement ordinary principal in its own ChangeSet "
             "first, then "

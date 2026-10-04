@@ -24,7 +24,7 @@ from cruxible_core.service.authoring.documents import AcceptedCoordinate
 
 
 class SinceError(CruxibleError):
-    code = "playbill.since.refused"
+    code = "cruxible.since.refused"
 
     @property
     def error_code(self) -> str:
@@ -32,19 +32,19 @@ class SinceError(CruxibleError):
 
 
 class SinceGenerationUnknown(SinceError):
-    code = "playbill.since.generation_unknown"
+    code = "cruxible.since.generation_unknown"
 
 
 class SinceCursorCoordinateMismatch(SinceError):
-    code = "playbill.since.cursor_coordinate_mismatch"
+    code = "cruxible.since.cursor_coordinate_mismatch"
 
 
 class SinceRowExceedsBudget(SinceError):
-    code = "playbill.since.row_exceeds_budget"
+    code = "cruxible.since.row_exceeds_budget"
 
 
 class SinceAcceptedStateInvalid(SinceError):
-    code = "playbill.since.accepted_state_invalid"
+    code = "cruxible.since.accepted_state_invalid"
 
 
 def validate_playbill_since_request(

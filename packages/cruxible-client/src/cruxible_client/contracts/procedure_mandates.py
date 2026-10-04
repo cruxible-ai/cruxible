@@ -241,7 +241,7 @@ def evaluate_procedure_mandate_law(
 ) -> ProcedureMandateLawResult:
     if path != procedure_mandate_path(mandate.identity.name):
         return _law_refusal(
-            "playbill.procedure_mandate.path_mismatch",
+            "cruxible.procedure_mandate.path_mismatch",
             "ProcedureMandate identity/path disagreement.",
             path=path,
         )
@@ -249,7 +249,7 @@ def evaluate_procedure_mandate_law(
         mandate.procedure.artifact_digest != procedure.artifact_digest
     ):
         return _law_refusal(
-            "playbill.procedure_mandate.procedure_mismatch",
+            "cruxible.procedure_mandate.procedure_mismatch",
             "ProcedureMandate must pin the exact candidate Procedure artifact.",
             path=path,
         )
@@ -258,13 +258,13 @@ def evaluate_procedure_mandate_law(
     )
     if widenings:
         return _law_refusal(
-            "playbill.procedure_mandate.authority_ceiling_widens_procedure",
+            "cruxible.procedure_mandate.authority_ceiling_widens_procedure",
             _widen_message("authority_ceiling", widenings),
             path=path,
         )
     if predecessor is None and mandate.lifecycle.predecessor_digest is not None:
         return _law_refusal(
-            "playbill.procedure_mandate.predecessor_missing",
+            "cruxible.procedure_mandate.predecessor_missing",
             "A new ProcedureMandate cannot name a predecessor.",
             path=path,
         )
@@ -273,7 +273,7 @@ def evaluate_procedure_mandate_law(
         or mandate.lifecycle.predecessor_digest != predecessor.artifact_digest
     ):
         return _law_refusal(
-            "playbill.procedure_mandate.predecessor_mismatch",
+            "cruxible.procedure_mandate.predecessor_mismatch",
             "ProcedureMandate successor identity or predecessor differs.",
             path=path,
         )
@@ -308,7 +308,7 @@ def evaluate_procedure_mandate_v2_law(
 
     if path != procedure_mandate_path(mandate.identity.name):
         return _law_refusal(
-            "playbill.procedure_mandate.path_mismatch",
+            "cruxible.procedure_mandate.path_mismatch",
             "ProcedureMandate identity/path disagreement.",
             path=path,
         )
@@ -316,7 +316,7 @@ def evaluate_procedure_mandate_v2_law(
         mandate.procedure.artifact_digest != procedure.artifact_digest
     ):
         return _law_refusal(
-            "playbill.procedure_mandate.procedure_mismatch",
+            "cruxible.procedure_mandate.procedure_mismatch",
             "ProcedureMandate must pin the exact candidate Procedure artifact.",
             path=path,
         )
@@ -324,20 +324,20 @@ def evaluate_procedure_mandate_v2_law(
     widenings = _ceiling_widenings(mandate.resource_ceiling, definition.hard_caps)
     if widenings:
         return _law_refusal(
-            "playbill.procedure_mandate.resource_ceiling_widens_procedure",
+            "cruxible.procedure_mandate.resource_ceiling_widens_procedure",
             _widen_message("resource_ceiling", widenings),
             path=path,
         )
     # A settle grant over a Procedure that cannot settle is incoherent authority.
     if mandate.grants == "settle" and definition.terminal_capability < 3:
         return _law_refusal(
-            "playbill.procedure_mandate.grant_exceeds_procedure",
+            "cruxible.procedure_mandate.grant_exceeds_procedure",
             "A settle grant needs a Procedure whose terminal can settle.",
             path=path,
         )
     if predecessor is None and mandate.lifecycle.predecessor_digest is not None:
         return _law_refusal(
-            "playbill.procedure_mandate.predecessor_missing",
+            "cruxible.procedure_mandate.predecessor_missing",
             "A new ProcedureMandate cannot name a predecessor.",
             path=path,
         )
@@ -346,7 +346,7 @@ def evaluate_procedure_mandate_v2_law(
         or mandate.lifecycle.predecessor_digest != predecessor.artifact_digest
     ):
         return _law_refusal(
-            "playbill.procedure_mandate.predecessor_mismatch",
+            "cruxible.procedure_mandate.predecessor_mismatch",
             "ProcedureMandate successor identity or predecessor differs.",
             path=path,
         )
@@ -355,7 +355,7 @@ def evaluate_procedure_mandate_v2_law(
         claim_type = claim_types.get(item.claim_type.target)
         if claim_type is None or claim_type.artifact_digest != item.claim_type.artifact_digest:
             return _law_refusal(
-                "playbill.procedure_mandate.scope_claim_type_unresolved",
+                "cruxible.procedure_mandate.scope_claim_type_unresolved",
                 f"Scope ClaimType {item.claim_type.target.qualified} is not accepted at the "
                 "pinned digest.",
                 path=path,
@@ -363,7 +363,7 @@ def evaluate_procedure_mandate_v2_law(
         if item.binding_subject_role == "object":
             if claim_type.object_kind != "subject":
                 return _law_refusal(
-                    "playbill.procedure_mandate.binding_role_unavailable",
+                    "cruxible.procedure_mandate.binding_role_unavailable",
                     f"ClaimType {claim_type.identity.qualified} has no object Subject to bind.",
                     path=path,
                 )
@@ -377,7 +377,7 @@ def evaluate_procedure_mandate_v2_law(
             or condition_query.artifact_digest != condition.query.artifact_digest
         ):
             return _law_refusal(
-                "playbill.procedure_mandate.condition_query_unresolved",
+                "cruxible.procedure_mandate.condition_query_unresolved",
                 "The condition query is not accepted at the pinned digest.",
                 path=path,
             )
@@ -387,7 +387,7 @@ def evaluate_procedure_mandate_v2_law(
         entry_kinds = set(getattr(condition_query.query.entry, "subject_kinds", ()))
         if not binding_kinds <= entry_kinds:
             return _law_refusal(
-                "playbill.procedure_mandate.condition_subject_kinds_uncovered",
+                "cruxible.procedure_mandate.condition_subject_kinds_uncovered",
                 "The condition query must enter at every Subject kind a scoped change can bind: "
                 f"missing {', '.join(sorted(binding_kinds - entry_kinds))}.",
                 path=path,
@@ -782,7 +782,7 @@ def condition_query_refusal(
     ]
     if any(item is not None and fails_open(item) for item in filters):
         return (
-            "playbill.procedure_mandate.condition_fails_open",
+            "cruxible.procedure_mandate.condition_fails_open",
             "A condition query may not use negation: an absent fact would grant authority.",
         )
     entry = query.entry
@@ -793,7 +793,7 @@ def condition_query_refusal(
         or query.result_binding != entry.binding
     ):
         return (
-            "playbill.procedure_mandate.condition_not_target_bound",
+            "cruxible.procedure_mandate.condition_not_target_bound",
             "A condition query must enter at its binding parameter and return that entry.",
         )
     declared = {item.name: item for item in query.parameters}
@@ -802,13 +802,13 @@ def condition_query_refusal(
         name for name, item in declared.items() if item.required or name in fixed
     }:
         return (
-            "playbill.procedure_mandate.condition_parameters_mismatch",
+            "cruxible.procedure_mandate.condition_parameters_mismatch",
             "Core binds exactly the binding parameter; the mandate fixes every other one.",
         )
     projected = set() if query.projection is None else {f.name for f in query.projection.fields}
     if not set(condition.required_fields) <= projected:
         return (
-            "playbill.procedure_mandate.condition_fields_unprojected",
+            "cruxible.procedure_mandate.condition_fields_unprojected",
             "Every required field must be a projected field of the condition query.",
         )
     return None

@@ -286,7 +286,7 @@ def test_procedure_law_resolves_direct_pins_by_digest_and_never_by_order() -> No
         providers={},
         provider_interfaces={interface.artifact_digest: interface},
     )
-    assert refused.diagnostics[0].code == ("playbill.procedure.provider_runtime_manifest_required")
+    assert refused.diagnostics[0].code == ("cruxible.procedure.provider_runtime_manifest_required")
 
 
 def test_repeat_body_provider_has_the_same_explicit_pin_block() -> None:
@@ -381,7 +381,7 @@ def test_line_v2_closure_round_trip_no_tie_break_and_v1_refusal() -> None:
         },
         predecessor=None,
     )
-    assert refused.diagnostics[0].code == ("playbill.line.provider_closure_successor_required")
+    assert refused.diagnostics[0].code == ("cruxible.line.provider_closure_successor_required")
 
     payload = line.model_dump(mode="json")
     extra = line.provider_implementation_closures[0].model_copy(
@@ -414,7 +414,7 @@ def test_line_v2_wrong_implementation_refuses_without_order_selection() -> None:
         providers={provider.artifact_digest: provider},
         provider_interfaces={interface.artifact_digest: interface},
     )
-    assert result.diagnostics[0].code == ("playbill.line.provider_implementation_unavailable")
+    assert result.diagnostics[0].code == ("cruxible.line.provider_implementation_unavailable")
 
 
 def test_real_proposal_path_closes_interface_provider_procedure_and_line(

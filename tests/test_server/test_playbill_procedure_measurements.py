@@ -80,7 +80,7 @@ def test_measure_and_readings_routes_serve_a_real_run_and_typed_refusals(
     assert refused.status_code == 400, refused.text
     envelope = refused.json()
     assert envelope["error_code"] == "measurement_not_declared"
-    assert envelope["repair"]["operation"] == "playbill.procedure.readings"
+    assert envelope["repair"]["operation"] == "cruxible.procedure.readings"
 
     listed = client.post(
         f"/api/v1/{instance_id}/playbill/procedures/{name}/readings",

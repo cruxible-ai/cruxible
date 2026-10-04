@@ -117,7 +117,7 @@ def _context(actor_id: str = "reader") -> ConsumptionContextV1:
             operation_id="op-consume",
             timestamp=NOW,
         ),
-        access_profile_id="playbill.coverage.read",
+        access_profile_id="cruxible.coverage.read",
     )
 
 

@@ -27,7 +27,7 @@ def test_capture_read_permission_and_request_validation(
     assert stored.status_code == 200, stored.text
     refused = http.post(route, json={"capture_digest": stored.json()["digest"]})
     assert refused.status_code == 404, refused.text
-    assert refused.json()["error_code"] == "playbill.capture.not_a_capture"
+    assert refused.json()["error_code"] == "cruxible.capture.not_a_capture"
     monkeypatch.setenv("CRUXIBLE_MODE", "read_only")
     reset_permissions()
     try:

@@ -145,7 +145,7 @@ def test_two_distinct_refused_proposals_cluster_by_claim_type_and_code(
     assert len(clusters) == 1
     assert clusters[0].subject.qualified == "ClaimType:project.work_item.status"
     assert clusters[0].detail == {
-        "diagnostic_code": "playbill.claim.literal_schema_invalid",
+        "diagnostic_code": "cruxible.claim.literal_schema_invalid",
         "refusal_direction": "payload_side",
     }
     attempts = [ref for ref in clusters[0].latest_evidence_refs if ref.kind == "proposal_attempt"]
@@ -176,7 +176,7 @@ def test_claim_type_refusals_are_labeled_schema_side(tmp_path: Path) -> None:
             timestamp="2026-08-26T17:00:00.000000Z",
         )
         assert result.evaluation.diagnostics[0].code == (
-            "playbill.claim_type.freshness_horizon_invalid"
+            "cruxible.claim_type.freshness_horizon_invalid"
         )
 
     result = service_list_playbill_curation(
@@ -197,7 +197,7 @@ def test_claim_type_refusals_are_labeled_schema_side(tmp_path: Path) -> None:
     schema = next(
         item
         for item in result.items
-        if item.detail.get("diagnostic_code") == "playbill.claim_type.freshness_horizon_invalid"
+        if item.detail.get("diagnostic_code") == "cruxible.claim_type.freshness_horizon_invalid"
     )
     assert schema.subject.qualified == "ClaimType:project.work_item.status"
     assert schema.detail["refusal_direction"] == "schema_side"

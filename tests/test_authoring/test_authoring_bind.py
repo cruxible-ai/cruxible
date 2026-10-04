@@ -64,7 +64,7 @@ def test_ambiguous_anchor_names_all_overlapping_candidate_offsets() -> None:
 
     assert caught.value.observed_occurrence_count == 2
     assert caught.value.candidate_byte_offsets == (0, 1)
-    assert "playbill.authoring.anchor_ambiguous" in str(caught.value)
+    assert "cruxible.authoring.anchor_ambiguous" in str(caught.value)
     assert "--occurrence" in str(caught.value)
 
 
@@ -74,7 +74,7 @@ def test_missing_anchor_is_not_reported_as_ambiguity() -> None:
 
     assert caught.value.observed_occurrence_count == 0
     assert caught.value.candidate_byte_offsets == ()
-    assert "playbill.authoring.anchor_not_found" in str(caught.value)
+    assert "cruxible.authoring.anchor_not_found" in str(caught.value)
     assert "anchor not found in file" in str(caught.value)
     assert "--occurrence" not in str(caught.value)
 

@@ -103,7 +103,7 @@ def test_a_decommissioned_instance_refuses_writes_typed_and_keeps_serving_reads(
     assert instance.is_decommissioned
     with pytest.raises(InstanceDecommissioned) as refused:
         _submit(instance)
-    assert refused.value.error_code == "playbill.instance.decommissioned"
+    assert refused.value.error_code == "cruxible.instance.decommissioned"
     assert refused.value.reason == "superseded by a fresh host"
     assert "nothing" in str(refused.value)
     assert refused.value.repair_commands
@@ -401,7 +401,7 @@ def test_every_governed_write_door_refuses_a_decommissioned_instance(
     _name, call = door
     with pytest.raises(InstanceDecommissioned) as refused:
         call(instance)  # type: ignore[operator]
-    assert refused.value.error_code == "playbill.instance.decommissioned"
+    assert refused.value.error_code == "cruxible.instance.decommissioned"
 
 
 def test_a_second_open_handle_cannot_restamp_the_terminal_state(tmp_path: Path) -> None:

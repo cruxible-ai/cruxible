@@ -96,7 +96,7 @@ def test_the_instance_still_ends_normally_after_a_refused_reason(
     # And the terminal state is what refuses the second attempt, typed.
     repeated = client.post(route, json={"reason": "again", "dry_run": True})
     assert repeated.status_code == 400, repeated.text
-    assert repeated.json()["error_code"] == "playbill.instance.decommissioned"
+    assert repeated.json()["error_code"] == "cruxible.instance.decommissioned"
 
 
 def test_the_cli_prints_the_typed_refusal_for_a_hostile_reason(

@@ -1208,7 +1208,7 @@ class ClaimTypeSuccessionDependent(_StrictAuthoringModel):
 
     `invalidation` parses and always refuses. It is the standalone route's
     deprecated spelling of `retire`, answered there with a
-    `playbill.claim_type.invalidation_deprecated` warning; change-set lowering
+    `cruxible.claim_type.invalidation_deprecated` warning; change-set lowering
     has no warning channel, so admitting it would coerce a deprecated word
     silently. The word is carried here only so an author who knows the
     standalone vocabulary gets a typed refusal naming the operator route
@@ -2622,8 +2622,8 @@ class PublicationPrepareWarning(_StrictAuthoringModel):
     tag: Literal["playbill-publication-prepare-warning-v1"] = (
         "playbill-publication-prepare-warning-v1"
     )
-    code: Literal["playbill.authoring.publication_citation_anchor_collision"] = (
-        "playbill.authoring.publication_citation_anchor_collision"
+    code: Literal["cruxible.authoring.publication_citation_anchor_collision"] = (
+        "cruxible.authoring.publication_citation_anchor_collision"
     )
     source_id: str
     citation_ids: tuple[str, ...] = Field(min_length=1)
@@ -2965,7 +2965,7 @@ class BlockDetachResult(_StrictAuthoringModel):
     """Retired blocks' markers removed from pages, bodies kept; or (preview) which would be.
 
     ``coordinate`` digests the named pages' bytes as this call read them; a
-    commit carrying ``at`` refuses ``playbill.preview.state_moved`` if any page
+    commit carrying ``at`` refuses ``cruxible.preview.state_moved`` if any page
     changed since its preview.
     """
 

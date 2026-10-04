@@ -382,7 +382,7 @@ def _procedure_track_records(
 
     records: dict[str, list[ProjectionFact]] = {}
     with instance.bind_accepted_projection(coordinate) as projection:
-        for fact in projection.typed.facts("playbill.procedure.track_record"):
+        for fact in projection.typed.facts("cruxible.procedure.track_record"):
             records.setdefault(fact.subject_identity, []).append(fact)
     return {
         identity: tuple(sorted(facts, key=lambda item: item.fact_key.encode("utf-8")))

@@ -186,14 +186,14 @@ def test_a_copied_pre_migration_root_never_writes_the_original(
     client = _serve_root(monkeypatch, copy)
     with pytest.raises(InstanceLocationRefusedError) as refused:
         get_playbill_manager().get(_INSTANCE)
-    assert refused.value.error_code == "playbill.host.location_outside_state_root"
+    assert refused.value.error_code == "cruxible.host.location_outside_state_root"
     assert str(original / "instances" / _INSTANCE) in str(refused.value)
     stored = client.post(
         f"/api/v1/{_INSTANCE}/playbill/bodies",
         json={"content_base64": "aGVsbG8="},
     )
     assert stored.status_code == 409, stored.text
-    assert stored.json()["error_code"] == "playbill.host.location_outside_state_root"
+    assert stored.json()["error_code"] == "cruxible.host.location_outside_state_root"
     status = client.get("/api/v1/server/info")
     assert status.status_code == 200, status.text
     (host,) = status.json()["hosts"]

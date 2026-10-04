@@ -60,7 +60,7 @@ def test_removed_brief_refuses_before_cold_or_checkpointed_replay(
     with pytest.raises(InstanceIncompatiblePrereleaseContent) as refusal:
         PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
 
-    assert refusal.value.error_code == "playbill.instance.incompatible_prerelease_content"
+    assert refusal.value.error_code == "cruxible.instance.incompatible_prerelease_content"
     assert refusal.value.artifact_class == "knowledge.brief"
 
 

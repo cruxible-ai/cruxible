@@ -169,13 +169,13 @@ def test_claim_type_v2_generation_projects_and_replays_after_restart(tmp_path: P
         claim_type_digest(exact_claim_type).tagged,
     )
     assert {
-        "playbill.claim_type.attestation_coverage",
-        "playbill.claim_type.governance",
-        "playbill.claim_type.history",
-        "playbill.claim_type.identity",
-        "playbill.claim_type.policies",
-        "playbill.claim_type.provenance",
-        "playbill.claim_type.references",
+        "cruxible.claim_type.attestation_coverage",
+        "cruxible.claim_type.governance",
+        "cruxible.claim_type.history",
+        "cruxible.claim_type.identity",
+        "cruxible.claim_type.policies",
+        "cruxible.claim_type.provenance",
+        "cruxible.claim_type.references",
     } == schemas
 
 

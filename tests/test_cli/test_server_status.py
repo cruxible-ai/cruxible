@@ -99,7 +99,7 @@ def test_cli_renders_daemon_contract_mismatch(
     assert result.exit_code == 1
     assert result.exception is not None
     assert not isinstance(result.exception, IncompatibleDaemonVersion)
-    assert "playbill.sdk.daemon_version_incompatible" in result.stderr
+    assert "cruxible.sdk.daemon_version_incompatible" in result.stderr
     assert "client_version=" in result.stderr
     assert "daemon_version=9.9.9" in result.stderr
     assert "client_snapshot_digest=sha256:" in result.stderr

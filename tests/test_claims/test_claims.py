@@ -315,7 +315,7 @@ def test_claim_v3_preserves_all_legacy_v1_backing_read_and_evidence_laws(
 
 def test_unknown_claim_wire_has_a_typed_format_refusal() -> None:
     claim_id = "CLM-0123456789abcdef0123456789abcdef"
-    with pytest.raises(ClaimUnsupportedFormatError, match="playbill.claim.format_unsupported"):
+    with pytest.raises(ClaimUnsupportedFormatError, match="cruxible.claim.format_unsupported"):
         parse_claim(
             b'{"artifact_format":"playbill-claim-v999"}\n',
             path=claim_path(claim_id),
@@ -443,7 +443,7 @@ def test_v2_claim_successor_preserves_the_base_accepted_authority_change_shape(
         timestamp=TIMESTAMP,
     )
     assert evaluated.candidate is not None
-    assert "playbill.claim.authority_change_unsupported" not in {
+    assert "cruxible.claim.authority_change_unsupported" not in {
         item.code for item in evaluated.evaluation.diagnostics
     }
 

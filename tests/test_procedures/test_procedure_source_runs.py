@@ -581,7 +581,7 @@ def test_the_sdk_authors_a_source_node_on_v4_and_refuses_it_on_v3(tmp_path: Path
                 activation_policy="drain",
             ),
         )
-    assert excinfo.value.code == "playbill.sdk.procedure_capability_not_served"
+    assert excinfo.value.code == "cruxible.sdk.procedure_capability_not_served"
     assert served_node_kinds(4) - served_node_kinds(3) == {"source"}
 
 
@@ -1422,7 +1422,7 @@ def test_a_procedure_pinning_an_absent_policy_is_refused_at_acceptance(tmp_path:
     evaluation = inspection.proposal.evaluation
     assert evaluation.verdict == "refused"
     unresolved = [
-        item for item in evaluation.diagnostics if item.code == "playbill.change_set.unresolved_pin"
+        item for item in evaluation.diagnostics if item.code == "cruxible.change_set.unresolved_pin"
     ]
     assert len(unresolved) == 1
     detail = json.loads(unresolved[0].message)["pins"]
@@ -1774,5 +1774,5 @@ def test_a_line_over_a_source_procedure_must_name_an_acquisition_policy(
     ).intent
     with pytest.raises(lowering.AuthoringLoweringError) as refused:
         lowering.lower_authoring(instance, intent=intent, actor_id=actor.actor_id)
-    assert refused.value.code == "playbill.authoring.line_acquisition_policy_required"
+    assert refused.value.code == "cruxible.authoring.line_acquisition_policy_required"
     assert refused.value.offending_element == "acquisition_policy_name"

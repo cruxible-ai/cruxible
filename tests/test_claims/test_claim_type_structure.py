@@ -75,7 +75,7 @@ def test_claim_type_structural_diagnostics_are_explicitly_local_only() -> None:
     invalid = check_claim_type_structure({**_literal(), "literal_schema": None})
     assert invalid.status == "invalid"
     assert invalid.coverage == "local_only"
-    assert [item.code for item in invalid.diagnostics] == ["playbill.claim_type.structure_invalid"]
+    assert [item.code for item in invalid.diagnostics] == ["cruxible.claim_type.structure_invalid"]
     assert all(item.subject is None for item in invalid.diagnostics)
 
 

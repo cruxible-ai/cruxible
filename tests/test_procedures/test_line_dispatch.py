@@ -974,7 +974,7 @@ def test_arming_a_line_that_can_propose_refuses_up_front_without_a_mandate(tmp_p
             now=READ_TIME,
             daemon_id="first",
         )
-    assert refused.value.code == "playbill.line.mandate_required"
+    assert refused.value.code == "cruxible.line.mandate_required"
     assert refused.value.repair.arguments == {"example": "procedure-mandate"}
     with LineDispatchStore(instance).locked() as conn:
         assert conn.execute("SELECT count(*) FROM sessions").fetchone()[0] == 0

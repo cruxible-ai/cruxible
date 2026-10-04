@@ -172,7 +172,7 @@ class ProcedureBlueprint:
                 ),
                 errors=(
                     CompositionDiagnostic(
-                        code="playbill.source.context_required",
+                        code="cruxible.source.context_required",
                         message="Supply world=cx.world() for backend source compilation.",
                     ),
                 ),

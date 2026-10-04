@@ -413,7 +413,7 @@ def service_arm_line(
     The arm matches the live Triggers aimed at the Line now, pinned to their
     exact versions. Arming never catches up: matching starts at `now`, and any
     work already pending stays for explicit dispatch. A Line that can propose
-    or settle refuses to arm (`playbill.line.mandate_required`) while no
+    or settle refuses to arm (`cruxible.line.mandate_required`) while no
     current mandate covers its Procedure. Arming a Line already armed by this
     caller, at the current version, epoch and Triggers, on this daemon changes
     nothing and reports `already_armed`. Rearming with any of those different
@@ -426,7 +426,7 @@ def service_arm_line(
         dry_run=dry_run,
         at=at,
         kind="direct",
-        operation="playbill.line.arm",
+        operation="cruxible.line.arm",
         describe=f"arming Line {line}",
     ) as mode:
         return _previewed(
@@ -547,7 +547,7 @@ def service_disarm_line(
         dry_run=dry_run,
         at=at,
         kind="direct",
-        operation="playbill.line.disarm",
+        operation="cruxible.line.disarm",
         describe=f"disarming Line {line}",
     ) as mode:
         return _previewed(

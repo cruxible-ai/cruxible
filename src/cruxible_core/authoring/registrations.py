@@ -182,7 +182,7 @@ def _declaration_path(root: Path, source_id: str, block_id: str) -> Path:
     # still made here rather than assumed: this function names a file.
     if not _SAFE_SEGMENT.fullmatch(source_id) or not _SAFE_SEGMENT.fullmatch(block_id):
         raise FormatError(
-            "playbill.block.declaration_identity_invalid: a block declaration is addressed "
+            "cruxible.block.declaration_identity_invalid: a block declaration is addressed "
             "by a source id and a block id in the marker grammar's own alphabet"
         )
     return root / source_id / f"{block_id}.json"
@@ -294,7 +294,7 @@ def release_projection_block_declaration(
         return False
     except OSError as exc:
         raise FormatError(
-            "playbill.block.declaration_unreleasable: the block declaration store cannot "
+            "cruxible.block.declaration_unreleasable: the block declaration store cannot "
             f"be written: {exc}"
         ) from exc
     return True

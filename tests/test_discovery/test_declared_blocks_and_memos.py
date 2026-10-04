@@ -495,7 +495,7 @@ def test_an_unregistered_marker_is_reported_whatever_its_id_spells(
         assert row.severity == "warning"
         assert row.subject_identity == f"corpus.runbook#{block_id}"
         assert row.detail == {"source_id": "corpus.runbook", "block_id": block_id}
-        assert row.repair.operation == "playbill.block.repin"
+        assert row.repair.operation == "cruxible.block.repin"
         assert row.repair.required_change == "remove_or_register_projection_block"
 
 
@@ -959,6 +959,6 @@ def test_a_head_accepted_before_the_release_refuses_a_pinned_depublish(
             dry_run=False,
             at=at,
         )
-    assert moved and refused.value.error_code == "playbill.preview.state_moved"
+    assert moved and refused.value.error_code == "cruxible.preview.state_moved"
     monkeypatch.setattr(publications, "projection_block_declarations", original)
     assert ("corpus.runbook", "held-rows") in (registered_projection_blocks(instance) or {})

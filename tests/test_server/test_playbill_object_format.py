@@ -148,7 +148,7 @@ def test_a_format_contradicting_the_workspace_refuses_before_writing_state(
         )
 
     assert isinstance(refused.value, BootstrapError)
-    assert refused.value.error_code == "playbill.init.object_format_conflict"
+    assert refused.value.error_code == "cruxible.init.object_format_conflict"
     assert refused.value.workspace_format == "sha256"
     assert "repair:" in str(refused.value)
     assert refused.value.repair_commands
@@ -164,7 +164,7 @@ def test_the_object_format_conflict_is_typed_on_the_wire_and_in_the_client() -> 
 
     status, body = error_to_response(
         ObjectFormatConflict(
-            "playbill.init.object_format_conflict: the requested Git object format differs "
+            "cruxible.init.object_format_conflict: the requested Git object format differs "
             "from the attached workspace's 'sha256'; repair: omit --object-format",
             workspace_format="sha256",
         )
@@ -172,7 +172,7 @@ def test_the_object_format_conflict_is_typed_on_the_wire_and_in_the_client() -> 
 
     assert status == 409
     assert body.error_type == "ObjectFormatConflict"
-    assert body.error_code == "playbill.init.object_format_conflict"
+    assert body.error_code == "cruxible.init.object_format_conflict"
     reconstructed = response_to_error(status, body)
     assert isinstance(reconstructed, ClientRefusal)
     assert reconstructed.workspace_format == "sha256"

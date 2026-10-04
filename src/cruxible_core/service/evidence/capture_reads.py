@@ -33,7 +33,7 @@ from cruxible_core.storage.cas import BodyAccessContext
 
 
 class CaptureReadInvalid(FormatError):
-    code = "playbill.capture.invalid"
+    code = "cruxible.capture.invalid"
     http_status = 400
 
 
@@ -71,7 +71,7 @@ def _not_a_capture(
     owners = [*claims, *documents][:_MAX_OWNERS]
     if claims:
         what = f"the exact content of Claim {claims[0]}"
-        repair = RepairOperation(operation="playbill.get", arguments={"ref": claims[0]})
+        repair = RepairOperation(operation="cruxible.get", arguments={"ref": claims[0]})
         line = (
             f"Read it with get on the Claim ({claims[0]}), which shows the value as text; "
             'detail="evidence" names the Captures behind it'
@@ -79,18 +79,18 @@ def _not_a_capture(
     elif documents:
         what = f"the body of {documents[0]}"
         repair = RepairOperation(
-            operation="playbill.get", arguments={"ref": documents[0], "detail": "body"}
+            operation="cruxible.get", arguments={"ref": documents[0], "detail": "body"}
         )
         line = f'Read it with get on {documents[0]} with detail="body"'
     else:
         what = "stored bytes that are not a Capture envelope"
-        repair = RepairOperation(operation="playbill.orient")
+        repair = RepairOperation(operation="cruxible.orient")
         line = (
             'Pass a Capture\'s digest; get on a Claim with detail="proof" carries the full '
             "digests of the Captures behind it"
         )
     return ReadRefusalError(
-        "playbill.capture.not_a_capture",
+        "cruxible.capture.not_a_capture",
         f"{digest} is not a Capture: it is {what}",
         http_status=404,
         candidates=owners,
@@ -124,12 +124,12 @@ def _full_capture_digest(
     if isinstance(resolution, CaptureHandleAmbiguous):
         matches = resolution.candidates
         raise ReadRefusalError(
-            "playbill.capture.ref_ambiguous",
+            "cruxible.capture.ref_ambiguous",
             f"{value!r} is a prefix of {len(matches)} Captures",
             http_status=409,
             candidates=matches[:_MAX_PREFIX_CANDIDATES],
             repair=RepairOperation(
-                operation="playbill.capture.read", arguments={"capture_digest": matches[0]}
+                operation="cruxible.capture.read", arguments={"capture_digest": matches[0]}
             ),
             repair_line="Pass one of them in full",
             context={"capture_digest": value},
@@ -137,10 +137,10 @@ def _full_capture_digest(
     if isinstance(resolution, CaptureHandleExhausted):
         raise capture_handle_exhausted(value, field="capture_digest")
     raise ReadRefusalError(
-        "playbill.capture.not_found",
+        "cruxible.capture.not_found",
         f"no Capture this instance holds has a digest starting with {hex_digits}",
         http_status=404,
-        repair=RepairOperation(operation="playbill.orient", arguments={"section": "captures"}),
+        repair=RepairOperation(operation="cruxible.orient", arguments={"section": "captures"}),
         repair_line='Run orient(section="captures") to list them, or pass a full digest',
         context={"capture_digest": value},
     )
@@ -150,10 +150,10 @@ def capture_handle_exhausted(value: str, *, field: str) -> ReadRefusalError:
     """A read refusal for a handle the bounded lookup could not resolve uniquely."""
 
     return ReadRefusalError(
-        "playbill.capture.ref_scan_exhausted",
+        "cruxible.capture.ref_scan_exhausted",
         f"{value!r} was not resolved: more Captures share its prefix than one lookup examines",
         http_status=409,
-        repair=RepairOperation(operation="playbill.orient", arguments={"section": "captures"}),
+        repair=RepairOperation(operation="cruxible.orient", arguments={"section": "captures"}),
         repair_line="Pass a longer handle, or the full sha256 digest",
         context={field: value},
     )
@@ -198,7 +198,7 @@ def verify_accepted_capture(
 
     Answers why it is unavailable when its bytes, its contract at the coordinate
     or its committed body are missing; raises ``CaptureReadInvalid`` when it is
-    present but does not verify, and ``playbill.capture.not_a_capture`` when the
+    present but does not verify, and ``cruxible.capture.not_a_capture`` when the
     bytes are not a Capture envelope at all.
     """
 

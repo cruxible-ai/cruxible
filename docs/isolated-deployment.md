@@ -112,7 +112,7 @@ deletes NOTHING. Afterwards:
 - every governed write door -- proposals, approvals, activation, curation
   rulings, Claim attestations, predictions and settlements, Procedure binds and
   Procedure/Line runs -- refuses with the typed
-  `playbill.instance.decommissioned` error carrying the recorded reason;
+  `cruxible.instance.decommissioned` error carrying the recorded reason;
 - reads keep serving at the accepted coordinate, and `orient` and `next` report
   the terminal state so an agent is told why the instance is closed;
 - every byte stays where it is, and the record lives in the canonical descriptor

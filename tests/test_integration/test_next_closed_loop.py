@@ -143,40 +143,40 @@ ClosedLoopKey = tuple[str, str | None]
 
 EXPECTED_OPERATIONS = {
     # A contest is resolved by retiring all but one contender in one write.
-    "claim_conflicted": "playbill.write",
+    "claim_conflicted": "cruxible.write",
     # Stating a Claim again on new evidence is the default-profile set verb.
-    "claim_uncovered": "playbill.set",
-    "claim_stale_evidence": "playbill.set",
-    "citation_drifted": "playbill.set",
-    "citation_source_unobserved": "playbill.set",
-    "evidence_expiring": "playbill.set",
-    "floor_invalid": "playbill.floor.export",
-    "projection_dirty": "playbill.block.repin",
+    "claim_uncovered": "cruxible.set",
+    "claim_stale_evidence": "cruxible.set",
+    "citation_drifted": "cruxible.set",
+    "citation_source_unobserved": "cruxible.set",
+    "evidence_expiring": "cruxible.set",
+    "floor_invalid": "cruxible.floor.export",
+    "projection_dirty": "cruxible.block.repin",
     # Nothing renders a block, so no sync converges one: a drifted block is
     # answered by a repin over the list the author still means to hold. The one
     # exception is a held list with nothing left in it -- every member retired
     # or overturned -- where the registration itself is what has to go.
-    "projection_backing_stale": frozenset({"playbill.block.repin", "playbill.block.depublish"}),
+    "projection_backing_stale": frozenset({"cruxible.block.repin", "cruxible.block.depublish"}),
     # A marker the page has lost is repaired by releasing the registration that
     # demands it; a marker the page has mangled is repaired by restoring it.
-    "projection_marker_invalid": frozenset({"playbill.block.repin", "playbill.block.depublish"}),
-    "claim_dependency_stale": "playbill.authoring.create",
-    "claim_attestation_threshold_met": "playbill.set",
-    "claim_contradicting_evidence_available": "playbill.authoring.create",
-    "claim_new_evidence_supporting": "playbill.authoring.create",
-    "claim_new_evidence_unreviewed": "playbill.authoring.create",
-    "document_modified": "playbill.document.propose",
+    "projection_marker_invalid": frozenset({"cruxible.block.repin", "cruxible.block.depublish"}),
+    "claim_dependency_stale": "cruxible.authoring.create",
+    "claim_attestation_threshold_met": "cruxible.set",
+    "claim_contradicting_evidence_available": "cruxible.authoring.create",
+    "claim_new_evidence_supporting": "cruxible.authoring.create",
+    "claim_new_evidence_unreviewed": "cruxible.authoring.create",
+    "document_modified": "cruxible.document.propose",
     # Restoring a bound file, or fixing its catalog locator, is a workspace edit.
     "workspace_binding_missing": "hand_edit",
-    "unregistered_projection_block": "playbill.block.repin",
-    "proposal_stale": "playbill.proposal.readmit",
-    "proposal_awaiting_approval": "playbill.proposal.approve",
-    "mandate_expiring": "playbill.authoring.create",
+    "unregistered_projection_block": "cruxible.block.repin",
+    "proposal_stale": "cruxible.proposal.readmit",
+    "proposal_awaiting_approval": "cruxible.proposal.approve",
+    "mandate_expiring": "cruxible.authoring.create",
     # A stopped arm is resumed by rearming under authority that still holds.
-    "consumer_stalled": "playbill.line.arm",
+    "consumer_stalled": "cruxible.line.arm",
     # Restoring a Capture's bytes, or recapturing, is off the daemon's served verbs.
     "evidence_unavailable": "hand_edit",
-    "prediction_settleable": "playbill.settle",
+    "prediction_settleable": "cruxible.settle",
     # Restoring an anchor's material is off the served verbs, like a Capture's.
     "prediction_window_unbindable": "hand_edit",
 }
@@ -184,13 +184,13 @@ EXPECTED_OPERATIONS = {
 
 def _expected_operation(key: ClosedLoopKey) -> str:
     if key == ("citation_drifted", "gone"):
-        return "playbill.claim.retire"
+        return "cruxible.claim.retire"
     if key == ("projection_marker_invalid", "registered_marker_missing"):
-        return "playbill.block.depublish"
+        return "cruxible.block.depublish"
     if key[0] == "projection_marker_invalid":
-        return "playbill.block.repin"
+        return "cruxible.block.repin"
     if key[0] == "projection_backing_stale":
-        return "playbill.block.depublish" if key[1] == "exhausted" else "playbill.block.repin"
+        return "cruxible.block.depublish" if key[1] == "exhausted" else "cruxible.block.repin"
     expected = EXPECTED_OPERATIONS[key[0]]
     assert isinstance(expected, str)
     return expected
@@ -1018,7 +1018,7 @@ def _projection_marker_missing(root: Path, monkeypatch: pytest.MonkeyPatch) -> N
         ("projection_marker_invalid", "registered_marker_missing"),
         request,
     )
-    assert row.repair.operation == "playbill.block.depublish"
+    assert row.repair.operation == "cruxible.block.depublish"
     assert row.repair.required_change == "depublish_or_restore_the_registered_block"
 
 

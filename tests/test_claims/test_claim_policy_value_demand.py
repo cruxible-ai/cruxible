@@ -189,5 +189,5 @@ def test_freeze_builds_complete_parent_candidate_views_once_and_preserves_cross_
         assert len(entries[path]) == 2  # Two governing types share the single view pair.
         assert all(entry["candidate_result"]["verdict"] == expected for entry in entries[path])
     assert {item.code for item in diagnostics} == (
-        {"playbill.claim_policy.freeze_active"} if expected == "refused" else set()
+        {"cruxible.claim_policy.freeze_active"} if expected == "refused" else set()
     )

@@ -271,7 +271,7 @@ def test_a_false_condition_falls_back_to_an_ordinary_proposal(tmp_path: Path) ->
     assert state.status == "succeeded", state.terminal
     egress = _egress(state)
     assert egress.settle_outcome == "proposed" and egress.accepted_git_oid is None
-    assert "playbill.settle.condition_false" in (egress.fallback_reason or "")
+    assert "cruxible.settle.condition_false" in (egress.fallback_reason or "")
     assert egress.proposal_id is not None
     assert instance.accepted_coordinate() == base
 
@@ -459,7 +459,7 @@ def test_a_fallback_accepted_by_ordinary_review_is_still_reported_as_proposed(
     assert instance.accepted_history()[-1].record.mandate_digest is None
     assert first == second and second.outcome == "proposed"  # type: ignore[attr-defined]
     assert second.accepted_git_oid is None  # type: ignore[attr-defined]
-    assert "playbill.settle.condition_false" in _fallback_codes(second)
+    assert "cruxible.settle.condition_false" in _fallback_codes(second)
 
 
 def test_a_crashed_fallback_recovers_its_proposal_as_proposed(tmp_path: Path, monkeypatch) -> None:
@@ -506,7 +506,7 @@ def test_a_crashed_fallback_recovers_its_proposal_as_proposed(tmp_path: Path, mo
     (egress,) = service_get_playbill_procedure_run(instance, run_id=run_id).terminal_egress
     assert egress.settle_outcome == "proposed" and egress.accepted_git_oid is None
     assert egress.proposal_id == admitted.proposal_id
-    assert "playbill.settle.condition_false" in _fallback_codes(egress)
+    assert "cruxible.settle.condition_false" in _fallback_codes(egress)
 
 
 def test_a_settled_delivery_finds_its_generation_without_walking_history(

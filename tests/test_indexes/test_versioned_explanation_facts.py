@@ -35,7 +35,7 @@ def _explanations(instance, coordinate) -> dict[str, list[dict[str, object]]]:
             (
                 fact
                 for fact in view.facts
-                if str(fact["schema_id"]).startswith("playbill.subject.")
+                if str(fact["schema_id"]).startswith("cruxible.subject.")
                 and "attestation" in str(fact["schema_id"])
             ),
             key=lambda fact: json.dumps(fact, sort_keys=True),

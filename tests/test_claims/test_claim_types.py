@@ -362,7 +362,7 @@ def test_claim_type_v3_horizon_proposal_uses_the_frozen_refusal_code(tmp_path: P
     )
 
     assert result.evaluation.diagnostics[0].code == (
-        "playbill.claim_type.freshness_horizon_invalid"
+        "cruxible.claim_type.freshness_horizon_invalid"
     )
 
 
@@ -665,6 +665,6 @@ def test_current_admission_refuses_producer_allowlist_in_historical_format(tmp_p
     )
     assert proposal.candidate is None
     assert any(
-        d.code == "playbill.claim_type.producer_authorization_forbidden"
+        d.code == "cruxible.claim_type.producer_authorization_forbidden"
         for d in proposal.evaluation.diagnostics
     )

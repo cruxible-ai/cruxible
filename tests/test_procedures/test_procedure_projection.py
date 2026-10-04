@@ -64,16 +64,16 @@ def test_pc_d_projects_procedure_graph_line_and_exact_source_mappings() -> None:
     )
     schemas = {fact.schema_id for fact in projection.semantic_facts}
     assert {
-        "playbill.line.source_mapping",
-        "playbill.line.spec",
-        "playbill.procedure.definition",
-        "playbill.procedure.graph",
-        "playbill.procedure.source_mapping",
+        "cruxible.line.source_mapping",
+        "cruxible.line.spec",
+        "cruxible.procedure.definition",
+        "cruxible.procedure.graph",
+        "cruxible.procedure.source_mapping",
     } <= schemas
     source_mappings = tuple(
         fact
         for fact in projection.semantic_facts
-        if fact.schema_id == "playbill.procedure.source_mapping"
+        if fact.schema_id == "cruxible.procedure.source_mapping"
     )
     assert {fact.fact_key for fact in source_mappings} == {
         "unit",
@@ -101,7 +101,7 @@ def test_procedure_semantic_identity_is_stable_across_exact_coordinates() -> Non
     assert current_compiler_coordinate() == GOVERNED_TRIGGERS_COMPILER
     assert (
         projection_registry_for_compiler(PC_HR_COMPILER).supports(
-            "playbill.provider.runtime",
+            "cruxible.provider.runtime",
             1,
             classification="semantic",
         )
@@ -109,7 +109,7 @@ def test_procedure_semantic_identity_is_stable_across_exact_coordinates() -> Non
     )
     assert (
         projection_registry_for_compiler(P2_B1_COMPILER).supports(
-            "playbill.provider.runtime",
+            "cruxible.provider.runtime",
             1,
             classification="semantic",
         )
@@ -117,7 +117,7 @@ def test_procedure_semantic_identity_is_stable_across_exact_coordinates() -> Non
     )
     assert (
         projection_registry_for_compiler(P2_C_COMPILER).supports(
-            "playbill.procedure_mandate.authority",
+            "cruxible.procedure_mandate.authority",
             1,
             classification="semantic",
         )
@@ -125,7 +125,7 @@ def test_procedure_semantic_identity_is_stable_across_exact_coordinates() -> Non
     )
     assert (
         projection_registry_for_compiler(PC_C_COMPILER).supports(
-            "playbill.procedure.definition",
+            "cruxible.procedure.definition",
             1,
             classification="semantic",
         )
@@ -133,7 +133,7 @@ def test_procedure_semantic_identity_is_stable_across_exact_coordinates() -> Non
     )
     assert (
         projection_registry_for_compiler(PC_D_COMPILER).supports(
-            "playbill.procedure.definition",
+            "cruxible.procedure.definition",
             1,
             classification="semantic",
         )
@@ -141,7 +141,7 @@ def test_procedure_semantic_identity_is_stable_across_exact_coordinates() -> Non
     )
     assert (
         projection_registry_for_compiler(PC_E1_COMPILER).supports(
-            "playbill.procedure.resolution_activation",
+            "cruxible.procedure.resolution_activation",
             1,
             classification="semantic",
         )

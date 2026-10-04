@@ -149,4 +149,4 @@ def test_removal_refusal_does_not_read_unneeded_referent_history(
         rebased=False,
     )
     assert result.candidate is None
-    assert [item.code for item in result.diagnostics] == ["playbill.subject.removal_unsupported"]
+    assert [item.code for item in result.diagnostics] == ["cruxible.subject.removal_unsupported"]

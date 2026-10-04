@@ -147,7 +147,7 @@ def test_wrong_operational_references_refuse_with_the_nearest_valid_ones(line_wo
 
     with pytest.raises(ReadRefusalError) as typo:
         _get(instance, f"Line:{line.identity.name}x")
-    assert typo.value.error_code == "playbill.get.ref_not_found"
+    assert typo.value.error_code == "cruxible.get.ref_not_found"
     assert f"Line:{line.identity.name}" in typo.value.candidates
 
     with pytest.raises(ReadRefusalError) as mandate:
@@ -156,13 +156,13 @@ def test_wrong_operational_references_refuse_with_the_nearest_valid_ones(line_wo
 
     with pytest.raises(ReadRefusalError) as nothing:
         _get(instance, "CAP-" + "f" * 12)
-    assert nothing.value.error_code == "playbill.get.ref_not_found"
+    assert nothing.value.error_code == "cruxible.get.ref_not_found"
     assert nothing.value.repair is not None
     assert nothing.value.repair.arguments == {"section": "captures"}
 
     with pytest.raises(ReadRefusalError) as malformed:
         _get(instance, "CAP-12")
-    assert malformed.value.error_code == "playbill.get.ref_malformed"
+    assert malformed.value.error_code == "cruxible.get.ref_malformed"
 
 
 @pytest.fixture(scope="module")

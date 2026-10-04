@@ -7,7 +7,7 @@ the change's own outcome shape with a ``would_*`` status, pinned to the
 accepted ``coordinate`` it was evaluated at.
 
 ``at`` carries that coordinate back. A commit carrying it refuses
-``playbill.preview.state_moved`` when accepted state moved since the preview;
+``cruxible.preview.state_moved`` when accepted state moved since the preview;
 the check runs again where the change commits, under the lock its write holds.
 A change to state outside the accepted ledger (a runtime credential, a host's
 worktree binding, a page's projection markers) answers instead with a
@@ -71,7 +71,7 @@ DRY_RUN_DESCRIPTION = (
 AT_DESCRIPTION = (
     "The coordinate a preview answered with: its git oid, or for a change to operational "
     "state its state digest (either may be shortened to a unique prefix of 12+ hex "
-    "characters). A commit carrying it refuses playbill.preview.state_moved if that state "
+    "characters). A commit carrying it refuses cruxible.preview.state_moved if that state "
     "moved since. Required to commit a change that cannot be undone."
 )
 
@@ -87,9 +87,9 @@ PreviewAt = Annotated[
 ChangeKind = Literal["direct", "derived", "irreversible"]
 
 ChangeRefusalCode = Literal[
-    "playbill.preview.state_moved",
-    "playbill.preview.confirmation_required",
-    "playbill.preview.recovery_pending",
+    "cruxible.preview.state_moved",
+    "cruxible.preview.confirmation_required",
+    "cruxible.preview.recovery_pending",
 ]
 
 
@@ -99,7 +99,7 @@ class StateCoordinate(BaseModel):
     ``subject`` names the records (``runtime_credential:<id>``,
     ``host_workspace:<instance>``, ...) and ``digest`` is the sha256 of their
     canonical JSON. A commit carrying ``at`` recomputes it where it writes and
-    refuses ``playbill.preview.state_moved`` when it differs.
+    refuses ``cruxible.preview.state_moved`` when it differs.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)

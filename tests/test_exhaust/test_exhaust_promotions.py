@@ -212,7 +212,7 @@ def test_only_accepted_promotion_produces_canonical_track_record_fact(tmp_path) 
 
     assert len(facts) == 1
     assert facts[0].subject_identity == accepted_procedure.procedure.identity.qualified
-    assert facts[0].schema_id == "playbill.procedure.track_record"
+    assert facts[0].schema_id == "cruxible.procedure.track_record"
     assert facts[0].value["promotion_digest"] == {"$digest": accepted.artifact_digest}
     assert facts[0].value["output"] == output
 
@@ -345,7 +345,7 @@ def test_promotion_passes_proposal_replay_and_projects_canonical_output(
     promotion_coordinate = instance.accepted_coordinate()
     with instance.bind_accepted_projection(promotion_coordinate) as handle:
         facts = handle.typed.facts(
-            "playbill.procedure.track_record",
+            "cruxible.procedure.track_record",
             identity=accepted_procedure.procedure.identity.qualified,
         )
     assert len(facts) == 1
@@ -419,7 +419,7 @@ def test_promotion_passes_proposal_replay_and_projects_canonical_output(
     )
     assert updates == [frozenset({"documents/unrelated.json"})]
     with instance.bind_accepted_projection(instance.accepted_coordinate()) as handle:
-        facts = handle.typed.facts("playbill.procedure.track_record")
+        facts = handle.typed.facts("cruxible.procedure.track_record")
         assert len(facts) == 1
         assert facts[0].value == projected
         expected_rows = _rows(handle.index_path)

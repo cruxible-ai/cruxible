@@ -34,12 +34,12 @@ def is_canonical_principal_id(value: str) -> bool:
 #: Why an actor cannot author on an instance. The same codes a refused write
 #: carries, so `whoami` predicts exactly the refusal authoring would return.
 AuthoringRefusalCode = Literal[
-    "playbill.identity.credential_unbound",
-    "playbill.identity.principal_unconfigured",
-    "playbill.identity.principal_absent",
-    "playbill.identity.principal_revoked",
-    "playbill.identity.permission_insufficient",
-    "playbill.instance.decommissioned",
+    "cruxible.identity.credential_unbound",
+    "cruxible.identity.principal_unconfigured",
+    "cruxible.identity.principal_absent",
+    "cruxible.identity.principal_revoked",
+    "cruxible.identity.permission_insufficient",
+    "cruxible.instance.decommissioned",
 ]
 
 

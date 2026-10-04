@@ -45,7 +45,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 class QueryNameError(SdkError):
     """A query names a field, operator or value the World's vocabulary does not hold."""
 
-    code = "playbill.sdk.query_name_refused"
+    code = "cruxible.sdk.query_name_refused"
 
     def __init__(self, message: str, *, nearest: Sequence[str] = ()) -> None:
         self.nearest = tuple(nearest)

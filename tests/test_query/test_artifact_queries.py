@@ -458,7 +458,7 @@ def test_query_pin_resolution_refuses_missing_or_different_vocabulary(tmp_path, 
     result = coordinator.preflight(intent.intent_id, actor=actor)
     assert result.verdict == "refused"
     assert result.frontier.diagnostics[0].code == (
-        "playbill.authoring.query_pin_mismatch"
+        "cruxible.authoring.query_pin_mismatch"
         if failure == "explicit_mismatch"
-        else "playbill.authoring.claim_type_missing"
+        else "cruxible.authoring.claim_type_missing"
     )

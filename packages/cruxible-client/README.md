@@ -451,7 +451,7 @@ known kind is added in the same change set.
 **Conditions and effects:** Accepts in the same call when the approval policy
 and the caller's tier allow it; otherwise the outcome is `awaiting_approval` with
 the eligible approvers and the approve call. `dry_run` runs every check and
-writes nothing. By default the write refuses `playbill.write.slot_changed` when
+writes nothing. By default the write refuses `cruxible.write.slot_changed` when
 the field moved since this context's coordinate; after that refusal the context
 has seen the new value, so setting again replaces it. A refusal raises
 `WriteRefusalError` carrying the outcome. Each change carries its `verdict`; a
@@ -698,7 +698,7 @@ get(ref: str | TypedRef, *, detail: GetDetail = "summary", range: tuple[int, int
 
 Reads one thing by reference; the daemon resolves the reference directly (never through search). `ref` is a typed Subject/ClaimType/Claim/Procedure/Query/Source ref (read at its coordinate) or any string an agent sees: `CLM-...` or a unique prefix, `kind/id`, a predicate (full or a unique leaf), `ClaimType:`/`Document:`/`Procedure:`/`query:`/`CaptureContract:<name>`, an artifact path, a proposal id or prefix, or an operational reference (`Line:<name>` or the Line identity digest `next` names, `CAP-<12+ hex>`/`Capture:<digest>`, `ResolutionContract:<name>`, `Mandate:<name>`, `ProcedureRun:<run_id>` or `RUN-<12+ hex>`; their cards live in `cruxible_client.contracts.operational_reads`), or a governance reference: `Principal:<id>`, `ApprovalPolicy:instance`, `ProviderInterface:<name>`. A Claim summary is a `ClaimView`; other summaries are the values-first card (`GetSubjectCard`, `GetClaimTypeCard`, ...) from `cruxible_client.contracts.get_reads`; other details carry their payload (`GetEvidence`, whose `value` is the Claim's whole value; `GetHistory`, newest first, with every page read; `GetBody`, whose `body_digest` names the whole body even when `range` reads part of it; the explain dict for `why`, on a Claim, Subject or Document; and for `proof` a `ClaimViewRecord` on a Claim or the envelope dict otherwise). A summary card cuts a string value over 500 characters to `{value, truncated: true, length}`. The card's `coordinate` is the full accepted coordinate: the SDK asks the daemon for it (`full_coordinate`), where MCP and CLI summaries carry only the 12-hex git oid prefix and generation.
 
-**Conditions and effects:** An unknown or ambiguous reference refuses with `playbill.get.ref_not_found` or `playbill.get.ref_ambiguous` and the nearest names; a detail that does not apply to the kind refuses naming the ones that do. A Document body over 64 KiB needs `range`. Inspect `kind` before using `value`.
+**Conditions and effects:** An unknown or ambiguous reference refuses with `cruxible.get.ref_not_found` or `cruxible.get.ref_ambiguous` and the nearest names; a detail that does not apply to the kind refuses naming the ones that do. A Document body over 64 KiB needs `range`. Inspect `kind` before using `value`.
 
 | Parameter | Default | Meaning |
 |---|---|---|

@@ -603,7 +603,7 @@ def service_add_kit(
         dry_run=request.dry_run,
         at=request.at,
         kind="derived",
-        operation="playbill.kit.add",
+        operation="cruxible.kit.add",
         describe=f"installing kit {request.bundle.manifest.kit_id}",
     ) as mode:
         return _add_kit(instance, mode, request, actor_id=actor_id, timestamp=timestamp)
@@ -704,7 +704,7 @@ def service_remove_kit(
         dry_run=request.dry_run,
         at=request.at,
         kind="derived",
-        operation="playbill.kit.remove",
+        operation="cruxible.kit.remove",
         describe=f"removing kit {request.kit_id}",
     ) as mode:
         return _remove_kit(instance, mode, request, actor_id=actor_id, timestamp=timestamp)
@@ -727,9 +727,9 @@ def _remove_kit(
         )
         named = ", ".join(installed) if installed else "none"
         raise RequestRefusedError(
-            "playbill.kit.not_installed",
+            "cruxible.kit.not_installed",
             f"kit {request.kit_id!r} is not installed; installed: {named}",
-            repair=RepairOperation(operation="playbill.kit.status"),
+            repair=RepairOperation(operation="cruxible.kit.status"),
         )
     shell, receipt = found
     diff = _Diff()

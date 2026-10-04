@@ -497,7 +497,7 @@ def evaluate_claim_admission_candidate(
     for requirement in policy.corroboration_requirements:
         result = results_by_id.get(requirement.requirement_id)
         if result is None or result.query_definition_digest != requirement.query_definition_digest:
-            refusal_codes.add("playbill.claim.corroboration_query_unresolved")
+            refusal_codes.add("cruxible.claim.corroboration_query_unresolved")
             continue
         expected_satisfied = (
             result.query_verdict == "completed" and result.observed_count >= requirement.min_count
@@ -505,16 +505,16 @@ def evaluate_claim_admission_candidate(
         if result.satisfied != expected_satisfied:
             raise ValueError("corroboration result satisfaction does not reproduce")
         elif result.query_verdict == "refused":
-            refusal_codes.add("playbill.claim.corroboration_query_refused")
+            refusal_codes.add("cruxible.claim.corroboration_query_refused")
         elif not result.satisfied:
-            refusal_codes.add("playbill.claim.corroboration_insufficient")
+            refusal_codes.add("cruxible.claim.corroboration_insufficient")
     if policy_predicates - declared:
-        refusal_codes.add("playbill.claim_policy.unknown_predicate")
+        refusal_codes.add("cruxible.claim_policy.unknown_predicate")
 
     for freeze in policy.freeze_requirements:
         parent = context.parent_values.get(freeze.while_predicate, ())
         if len(parent) > 1:
-            refusal_codes.add("playbill.claim_policy.ambiguous_single_value")
+            refusal_codes.add("cruxible.claim_policy.ambiguous_single_value")
             continue
         active = bool(parent) and parent[0] in freeze.while_values
         changed = any(
@@ -523,7 +523,7 @@ def evaluate_claim_admission_candidate(
             for predicate in freeze.frozen_predicates
         )
         if active and changed:
-            refusal_codes.add("playbill.claim_policy.freeze_active")
+            refusal_codes.add("cruxible.claim_policy.freeze_active")
 
     codes = tuple(sorted(refusal_codes, key=lambda item: item.encode("utf-8")))
     return ClaimAdmissionCandidateResult(
@@ -653,7 +653,7 @@ def evaluate_claim_evidence_admission_trace(
     if evidence.capture_claims_semantic_authority:
         result = ClaimEvidenceAdmissionResult(
             verdict="refused",
-            refusal_code="playbill.evidence.capture_cannot_grant_semantic_authority",
+            refusal_code="cruxible.evidence.capture_cannot_grant_semantic_authority",
         )
         return ClaimEvidenceAdmissionTrace(result=result, closest_rule_id=closest_rule_id)
     matches = [
@@ -670,9 +670,9 @@ def evaluate_claim_evidence_admission_trace(
         result = ClaimEvidenceAdmissionResult(
             verdict="refused",
             refusal_code=(
-                "playbill.evidence.admission_ambiguous"
+                "cruxible.evidence.admission_ambiguous"
                 if matches
-                else "playbill.evidence.undeclared_contract_kind"
+                else "cruxible.evidence.undeclared_contract_kind"
             ),
         )
         return ClaimEvidenceAdmissionTrace(result=result, closest_rule_id=closest_rule_id)
@@ -680,22 +680,22 @@ def evaluate_claim_evidence_admission_trace(
     if not evidence.source_subject_bound:
         result = ClaimEvidenceAdmissionResult(
             verdict="refused",
-            refusal_code="playbill.evidence.subject_binding_failed",
+            refusal_code="cruxible.evidence.subject_binding_failed",
         )
         return ClaimEvidenceAdmissionTrace(result=result, closest_rule_id=closest_rule_id)
     if not _attestation_satisfied(rule.attestation_requirement, evidence.attestation_grade):
         result = ClaimEvidenceAdmissionResult(
             verdict="refused",
-            refusal_code="playbill.evidence.attestation_grade_missing",
+            refusal_code="cruxible.evidence.attestation_grade_missing",
         )
         return ClaimEvidenceAdmissionTrace(result=result, closest_rule_id=closest_rule_id)
     if not _derivation_satisfied(rule, evidence):
         result = ClaimEvidenceAdmissionResult(
             verdict="refused",
             refusal_code=(
-                "playbill.evidence.derivation_incomplete"
+                "cruxible.evidence.derivation_incomplete"
                 if rule.admission == "derivational"
-                else "playbill.evidence.reducer_not_allowed"
+                else "cruxible.evidence.reducer_not_allowed"
             ),
         )
         return ClaimEvidenceAdmissionTrace(result=result, closest_rule_id=closest_rule_id)

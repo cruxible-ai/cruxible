@@ -113,7 +113,7 @@ def test_principal_proposal_refuses_a_public_key_duplicated_from_the_registry(
 
     assert result.candidate is None
     assert tuple(item.code for item in result.evaluation.diagnostics) == (
-        "playbill.principal.registry_invalid",
+        "cruxible.principal.registry_invalid",
     )
 
 
@@ -344,7 +344,7 @@ def test_owner_registration_and_revocation_make_old_reviewer_key_inactive(
     )
     assert recovery_attempt.candidate is None
     assert recovery_attempt.evaluation.diagnostics[0].code == (
-        "playbill.principal.transition_unauthorized"
+        "cruxible.principal.transition_unauthorized"
     )
     instance = _settle_transition(
         instance,
@@ -524,7 +524,7 @@ def test_revoked_key_needs_fresh_material_and_principal_kind_stays_immutable(
     )
     assert role_change.candidate is None
     assert role_change.evaluation.diagnostics[0].code == (
-        "playbill.principal.transition_unauthorized"
+        "cruxible.principal.transition_unauthorized"
     )
 
     recovery_escalation = _replacement_key(
@@ -541,7 +541,7 @@ def test_revoked_key_needs_fresh_material_and_principal_kind_stays_immutable(
     )
     assert role_escalation.candidate is None
     assert role_escalation.evaluation.diagnostics[0].code == (
-        "playbill.principal.transition_unauthorized"
+        "cruxible.principal.transition_unauthorized"
     )
 
     swapped_key = _replacement_key(
@@ -557,7 +557,7 @@ def test_revoked_key_needs_fresh_material_and_principal_kind_stays_immutable(
     )
     assert swapped_revocation.candidate is None
     assert swapped_revocation.evaluation.diagnostics[0].code == (
-        "playbill.principal.transition_unauthorized"
+        "cruxible.principal.transition_unauthorized"
     )
 
     revoked = third.principal.model_copy(update={"status": "revoked"})
@@ -578,7 +578,7 @@ def test_revoked_key_needs_fresh_material_and_principal_kind_stays_immutable(
     same_key_rearm = propose("rearm-revoked-key", third.principal)
     assert same_key_rearm.candidate is None
     assert same_key_rearm.evaluation.diagnostics[0].code == (
-        "playbill.principal.transition_unauthorized"
+        "cruxible.principal.transition_unauthorized"
     )
 
     fresh_third = _replacement_key(

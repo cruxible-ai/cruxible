@@ -78,7 +78,7 @@ def test_projection_value_normalization_is_closed_and_explicit() -> None:
 def test_duplicate_extension_fact_refuses_at_registry_boundary() -> None:
     registry = subject_extension_registry()
     fact = ProjectionFact(
-        schema_id="playbill.subject.identity",
+        schema_id="cruxible.subject.identity",
         schema_version=1,
         subject_identity="one",
         fact_key="value",

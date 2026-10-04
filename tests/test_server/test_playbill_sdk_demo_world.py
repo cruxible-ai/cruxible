@@ -277,7 +277,7 @@ def test_empty_evidence_policy_is_candidate_through_cli_and_sdk(
     assert sdk_proposal.status().verdict == "candidate"
     assert cli_proposal["lint"]["warnings"]
     assert {warning["code"] for warning in cli_proposal["lint"]["warnings"]} == {
-        "playbill.claim_type.evidence_policy_admits_no_accepted_contract"
+        "cruxible.claim_type.evidence_policy_admits_no_accepted_contract"
     }
     assert list(sdk_proposal.warnings) == cli_proposal["lint"]["warnings"]
 
@@ -452,7 +452,7 @@ def test_sdk_cold_claim_delivers_source_lint_without_refusing_preflight(
     assert not intent.refused
     assert intent.lint is not None
     assert intent.warnings == tuple(intent.lint.warnings)
-    assert intent.warnings[0]["code"] == ("playbill.claim_type.anticipated_source_contract_omitted")
+    assert intent.warnings[0]["code"] == ("cruxible.claim_type.anticipated_source_contract_omitted")
     assert intent.warnings[0]["source_id"] == "corpus.vuln-response-runbook"
     assert intent._preflight is not None
     response = intent._preflight.model_dump(mode="json")
@@ -567,7 +567,7 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
     diagnostic = next(
         item
         for item in missing_revision.diagnostics
-        if item.code == "playbill.authoring.claim_predecessor_not_found"
+        if item.code == "cruxible.authoring.claim_predecessor_not_found"
     )
     assert diagnostic.offending_element == "revises"
     assert diagnostic.call_site is not None
@@ -599,12 +599,12 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
     }
     # The repair is the set verb that restates the Claim on the redrifted source:
     # the door on every profile (full is a superset), and the tool its tier gate names.
-    assert drift.repair.operation == "playbill.set"
+    assert drift.repair.operation == "cruxible.set"
     assert drift.repair.required_change == "adjudicate_citation_drift"
     assert drift.repair.arguments["source_id"] == "corpus.vuln-response-runbook"
     assert drift.repair.arguments["claim_id"] == claim_id
     assert drift.repair.command is not None
-    assert drift.repair.command.startswith("playbill.set(")
+    assert drift.repair.command.startswith("cx.set(")
     runbook.write_text(original_runbook, encoding="utf-8")
     reverted = pb.next(expiring_within=Duration.days(count=7))
     assert not any(item.reason == "citation_drifted" for item in reverted.items)
@@ -661,7 +661,7 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
     assert response.status_code == 200, response.text
     assert response.json()["verdict"] == "passed"
     assert not any(
-        item["code"] == "playbill.authoring.existing_claim_dispositions_incomplete"
+        item["code"] == "cruxible.authoring.existing_claim_dispositions_incomplete"
         for item in response.json()["frontier"]["diagnostics"]
     )
 
@@ -693,7 +693,7 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
 
     successor = _claim_proof(transport, instance_id, claim_id)
     facts = {fact["schema_id"]: fact["value"] for fact in successor.facts}
-    assert facts["playbill.claim.statement"]["object"]["value"] == 72
+    assert facts["cruxible.claim.statement"]["object"]["value"] == 72
     assert successor.envelope["predecessor_digest"] is not None
     assert successor.envelope["identity"] == predecessor.envelope["identity"]
 

@@ -371,7 +371,7 @@ def test_unsatisfiable_type_does_not_gate_another_type_and_can_retire(
         pytest.param(
             "done",
             "refused",
-            ["playbill.claim_policy.freeze_active"],
+            ["cruxible.claim_policy.freeze_active"],
             id="active-freeze-refuses",
         ),
         pytest.param("ready", "candidate", [], id="inactive-freeze-admits"),
@@ -452,7 +452,7 @@ def test_insufficient_refusal_persists_its_account(tmp_path: Path) -> None:
 
     assert result.evaluation.verdict == "refused"
     assert [item.code for item in result.evaluation.diagnostics] == [
-        "playbill.claim.corroboration_insufficient"
+        "cruxible.claim.corroboration_insufficient"
     ]
     account = result.evaluation.claim_admission_accounts[0]
     assert account.corroboration_results[0].observed_count == 1
@@ -473,11 +473,11 @@ def test_query_refusal_is_persisted_through_the_real_proposal_surface(tmp_path: 
 
     assert result.evaluation.verdict == "refused"
     assert [item.code for item in result.evaluation.diagnostics] == [
-        "playbill.claim.corroboration_query_refused"
+        "cruxible.claim.corroboration_query_refused"
     ]
     corroboration = result.evaluation.claim_admission_accounts[0].corroboration_results[0]
     assert corroboration.query_verdict == "refused"
-    assert corroboration.query_refusal_code == "playbill.query.parameter_missing"
+    assert corroboration.query_refusal_code == "cruxible.query.parameter_missing"
 
 
 def test_same_candidate_query_definition_cannot_corroborate_its_claim(tmp_path: Path) -> None:
@@ -496,7 +496,7 @@ def test_same_candidate_query_definition_cannot_corroborate_its_claim(tmp_path: 
 
     assert result.evaluation.verdict == "refused"
     assert [item.code for item in result.evaluation.diagnostics] == [
-        "playbill.claim.corroboration_query_unresolved"
+        "cruxible.claim.corroboration_query_unresolved"
     ]
     assert result.evaluation.claim_admission_accounts[0].corroboration_results == ()
 
@@ -532,7 +532,7 @@ def test_retired_query_definition_does_not_resolve_for_corroboration(tmp_path: P
 
     assert result.evaluation.verdict == "refused"
     assert [item.code for item in result.evaluation.diagnostics] == [
-        "playbill.claim.corroboration_query_unresolved"
+        "cruxible.claim.corroboration_query_unresolved"
     ]
 
 

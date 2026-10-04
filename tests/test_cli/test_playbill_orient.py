@@ -102,7 +102,7 @@ def test_orient_refuses_a_wrong_kind_with_the_nearest_names(
     refused = CliRunner().invoke(cli, ["playbill", "orient", "--kind", "project.work_itm"])
 
     assert refused.exit_code != 0
-    assert "playbill.orient.kind_not_found" in refused.output
+    assert "cruxible.orient.kind_not_found" in refused.output
     assert KIND in refused.output
 
 

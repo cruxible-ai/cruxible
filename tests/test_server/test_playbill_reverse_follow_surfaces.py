@@ -232,12 +232,12 @@ def test_every_surface_pages_reverse_rows_and_refuses_a_wrong_predicate(
             ["playbill", "query", SUBJECT_KIND, "--follow-in", "project.batch.state:batch"],
         )
         assert invoked.exit_code != 0
-        assert "playbill.query.follow_not_incoming" in invoked.output
+        assert "cruxible.query.follow_not_incoming" in invoked.output
         assert DELIVERS in invoked.output
         return
     with pytest.raises(ReadRefusalError) as refused:
         page(None, wrong)
-    assert refused.value.error_code == "playbill.query.follow_not_incoming"
+    assert refused.value.error_code == "cruxible.query.follow_not_incoming"
     assert DELIVERS in refused.value.candidates
     assert refused.value.field_path == "follow[0].field"
 

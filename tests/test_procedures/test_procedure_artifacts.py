@@ -226,7 +226,7 @@ def test_layout_only_successor_changes_no_registered_semantic_member() -> None:
     )
 
     assert result.verdict == "refused"
-    assert result.diagnostics[0].code == "playbill.proposal.non_singleton_scope"
+    assert result.diagnostics[0].code == "cruxible.proposal.non_singleton_scope"
     assert result.diagnostics[0].message == ("The proposal changes no registered semantic member.")
 
 

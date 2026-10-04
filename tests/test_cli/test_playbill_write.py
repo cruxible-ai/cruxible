@@ -101,7 +101,7 @@ def test_a_number_given_as_text_is_read_by_the_field_type(served: _ServiceClient
     assert payload["changes"][0]["after"] == 3
     # The field admits only captured evidence: the write lands uncovered and says so.
     assert payload["changes"][0]["verdict"] == "uncovered"
-    assert payload["warnings"][0]["code"] == "playbill.write.verdict_not_supported"
+    assert payload["warnings"][0]["code"] == "cruxible.write.verdict_not_supported"
     assert "--capture" in payload["next"]
 
 
@@ -111,7 +111,7 @@ def test_a_refused_set_prints_its_code_nearest_names_and_repair_and_exits_1(
     result = _run("set", WI1, "status", "dne", "--because", "x")
     assert result.exit_code == 1
     assert "refused (generation" in result.output
-    assert "playbill.write.value_not_member (change 0)" in result.output
+    assert "cruxible.write.value_not_member (change 0)" in result.output
     assert "nearest: done" in result.output
     assert "repair: Use one of: blocked, done, ready" in result.output
 
@@ -142,7 +142,7 @@ def test_expect_compares_the_value_on_set_and_retire(served: _ServiceClient) -> 
     assert both.exit_code != 0 and "not both" in both.output
     stale = _run("set", WI1, "status", "done", "--because", "x", "--expect", "blocked")
     assert stale.exit_code == 1
-    assert "playbill.write.slot_changed (change 0)" in stale.output
+    assert "cruxible.write.slot_changed (change 0)" in stale.output
     assert "holds 'ready', not 'blocked' as expected" in stale.output
     assert served.requests[-1].expect == "blocked"
     done = _run("set", WI1, "status", "done", "--because", "x", "--expect", "ready")
@@ -170,7 +170,7 @@ def test_add_puts_one_more_value_in_a_many_valued_field(served: _ServiceClient) 
     assert again.exit_code == 0 and "already live" in again.output
     absent = _run("add", WI1, "governs", f"{KIND}/wi-2", "--because", "Again.", "--expect-absent")
     assert absent.exit_code == 1
-    assert "playbill.write.value_already_present (change 0)" in absent.output
+    assert "cruxible.write.value_already_present (change 0)" in absent.output
 
     preview = _run("add", WI1, "governs", f"{KIND}/wi-3", "--because", "x", "--dry-run", "--json")
     assert preview.exit_code == 0, preview.output
@@ -182,7 +182,7 @@ def test_add_puts_one_more_value_in_a_many_valued_field(served: _ServiceClient) 
     assert served.requests[-1].accept == "never" and served.requests[-1].at == at
 
     single = _run("add", WI1, "status", "done", "--because", "x")
-    assert single.exit_code == 1 and "playbill.write.field_is_single" in single.output
+    assert single.exit_code == 1 and "cruxible.write.field_is_single" in single.output
     # Captured-only field: the repair is the add command itself, with --capture.
     labels = _run("add", WI1, "labels", "urgent", "--because", "x", "--json")
     assert labels.exit_code == 0, labels.output
@@ -203,7 +203,7 @@ def test_add_puts_one_more_value_in_a_many_valued_field(served: _ServiceClient) 
     )
     assert both.exit_code != 0 and "not both" in both.output
     role = _run("add", WI1, "governs", f"{KIND}/wi-3", "--because", "x", "--role", "observation")
-    assert role.exit_code == 1 and "playbill.write.role_not_permitted" in role.output
+    assert role.exit_code == 1 and "cruxible.write.role_not_permitted" in role.output
 
 
 def test_retire_takes_a_claim_id_or_a_subject_and_field(served: _ServiceClient) -> None:
@@ -289,7 +289,7 @@ changes:
     orphan = tmp_path / "orphan.yaml"
     orphan.write_text("because: x\nchanges:\n  - {op: set, field: status, value: done}\n")
     refused = _run("write", str(orphan))
-    assert refused.exit_code == 1 and "playbill.write.subject_required" in refused.output
+    assert refused.exit_code == 1 and "cruxible.write.subject_required" in refused.output
 
 
 def test_capture_handles_and_contract_evidence_on_set_and_add(
@@ -348,7 +348,7 @@ def test_capture_handles_and_contract_evidence_on_set_and_add(
         REPORTS.identity.name,
     )
     assert missing.exit_code == 1
-    assert "playbill.write.contract_capture_not_found" in missing.output
+    assert "cruxible.write.contract_capture_not_found" in missing.output
     both = _run(
         "set",
         WI1,

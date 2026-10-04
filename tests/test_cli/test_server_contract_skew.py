@@ -143,7 +143,7 @@ def test_reads_and_authoring_still_refuse_contract_skew(daemon, command: tuple[s
         ],
     )
     assert result.exit_code == 1, result.output
-    assert "playbill.sdk.daemon_version_incompatible" in result.stderr
+    assert "cruxible.sdk.daemon_version_incompatible" in result.stderr
     assert daemon == ["/version"]
 
 
@@ -182,7 +182,7 @@ def test_scoped_status_keeps_lifecycle_facts_without_unchecked_instance_reads(da
     if as_json:
         payload = json.loads(result.stdout)
         assert payload["instance_status"] == "needs_matching_client"
-        assert payload["code"] == "playbill.sdk.daemon_version_incompatible"
+        assert payload["code"] == "cruxible.sdk.daemon_version_incompatible"
         assert payload["version"] == __version__
         assert payload["transport"] == "http://daemon.invalid"
         assert payload["instance_id"] == "inst_scoped"

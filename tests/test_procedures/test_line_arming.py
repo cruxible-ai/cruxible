@@ -831,9 +831,9 @@ def test_status_disarm_and_unknown_lines_refuse_with_codes_that_name_the_line(tm
 
     with pytest.raises(LineNeverArmed) as never:
         service_line_status(instance, name)
-    assert never.value.error_code == "playbill.line.never_armed"
+    assert never.value.error_code == "cruxible.line.never_armed"
     assert repr(name) in str(never.value)
-    assert never.value.repair.operation == "playbill.line.arm"
+    assert never.value.repair.operation == "cruxible.line.arm"
 
     with pytest.raises(LineNeverArmed):
         service_disarm_line(instance, name, actor=_actor(instance), now=READ_TIME)
@@ -1391,7 +1391,7 @@ def test_an_old_format_arm_is_stopped_on_recovery_never_rolled_over_as_the_opera
         if health.state == "stopped"
     ]
     assert stopped.detail["stop_reason"] == "arm_requires_rearm"
-    assert stopped.repair is not None and stopped.repair.operation == "playbill.line.arm"
+    assert stopped.repair is not None and stopped.repair.operation == "cruxible.line.arm"
 
 
 def test_an_old_format_claimed_arm_admits_nothing_even_with_its_principal_revoked(
@@ -1491,7 +1491,7 @@ def test_an_arm_preview_answers_with_its_coordinate_and_a_stale_one_refuses(tmp_
     stale = ("0" if head[0] != "0" else "1") * len(head)
     with pytest.raises(ChangeRefusedError) as moved:
         arm(dry_run=False, at=stale)
-    assert moved.value.error_code == "playbill.preview.state_moved"
+    assert moved.value.error_code == "cruxible.preview.state_moved"
     armed = arm(dry_run=False, at=preview.coordinate.git_oid)
     assert (armed.outcome, armed.coordinate) == ("armed", preview.coordinate)
     assert service_line_status(instance, line.identity.name).coordinate is None
@@ -1572,7 +1572,7 @@ def test_a_revision_accepted_mid_arm_refuses_a_pinned_arm_and_disarm(tmp_path, m
             dry_run=False,
             at=at,
         )
-    assert moved.value.error_code == "playbill.preview.state_moved"
+    assert moved.value.error_code == "cruxible.preview.state_moved"
     assert not dispatch_root(instance).exists() or (
         service_line_status_or_none(instance, line.identity.name) is None
     )

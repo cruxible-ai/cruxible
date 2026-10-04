@@ -269,7 +269,7 @@ def test_unsupported_or_invalid_source_refuses_at_location(body, code):
     source = "def example(request):\n" + textwrap.indent(body, "    ")
     with pytest.raises(SourceCompileError) as caught:
         compile(source)
-    assert caught.value.diagnostic.code == "playbill.source." + code
+    assert caught.value.diagnostic.code == "cruxible.source." + code
     assert caught.value.diagnostic.span.line >= 40
     assert caught.value.diagnostic.span.filename == "example.py"
 
@@ -545,7 +545,7 @@ def test_checked_source_refuses_silent_mistakes_without_rewriting_history(body, 
     verify_source_graph(accepted(historical).procedure)
     with pytest.raises(SourceCompileError) as error:
         compile_source(source.model_copy(update={"rules": "cruxible.procedure-source.v2"}), **args)
-    assert error.value.diagnostic.code == "playbill.source." + code
+    assert error.value.diagnostic.code == "cruxible.source." + code
     assert error.value.diagnostic.span.filename == "checks.py"
     assert error.value.diagnostic.span.line >= 91
     assert (

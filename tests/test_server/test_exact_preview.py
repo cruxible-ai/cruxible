@@ -179,7 +179,7 @@ def test_a_principal_change_previews_writes_nothing_and_commits_pinned(
             "at": at,
         },
     )
-    _refused(stale, 409, "playbill.preview.state_moved")
+    _refused(stale, 409, "cruxible.preview.state_moved")
 
 
 def test_a_head_accepted_after_the_pin_check_refuses_at_publication(
@@ -210,7 +210,7 @@ def test_a_head_accepted_after_the_pin_check_refuses_at_publication(
     refused = client.post(url, json={**body, "dry_run": False, "at": at})
 
     assert moved == [True]
-    _refused(refused, 409, "playbill.preview.state_moved")
+    _refused(refused, 409, "cruxible.preview.state_moved")
     assert not [
         entry
         for entry in _ok(client.get(_api(instance_id, "/playbill/proposals")))["entries"]
@@ -239,7 +239,7 @@ def test_a_head_accepted_before_the_stamp_refuses_a_pinned_decommission(
     _refused(
         client.post(url, json={"reason": "end", "dry_run": False, "at": at}),
         409,
-        "playbill.preview.state_moved",
+        "cruxible.preview.state_moved",
     )
     assert get_playbill_manager().get(instance_id).descriptor.decommissioned is None
 
@@ -285,8 +285,8 @@ def test_a_cold_preview_opens_without_writing_or_refuses_a_repair_by_name(
     ):
         refused = assert_writes_nothing([tmp_path], attempt)
         assert refused.status_code == 409, refused.text
-        assert refused.json()["error_code"] == "playbill.preview.recovery_pending"
-        assert refused.json()["repair"]["operation"] == "playbill.orient"
+        assert refused.json()["error_code"] == "cruxible.preview.recovery_pending"
+        assert refused.json()["repair"]["operation"] == "cruxible.orient"
     assert not serving.exists()
 
     # An ordinary read reopens (and repairs) it; the preview then runs.
@@ -432,7 +432,7 @@ def test_a_head_accepted_before_the_record_refuses_a_pinned_withdrawal(
     monkeypatch.setattr(ProposalEvidenceStore, "read_withdrawal", original)
 
     assert moved == [True]
-    _refused(refused, 409, "playbill.preview.state_moved")
+    _refused(refused, 409, "cruxible.preview.state_moved")
     status = _ok(client.get(f"{base}"))
     assert status.get("withdrawal") is None, status
 
@@ -453,7 +453,7 @@ def test_decommissioning_previews_by_default_and_commits_only_with_its_coordinat
 
     assert preview["status"] == "would_decommission"
     unconfirmed = client.post(url, json={"reason": "end of trial", "dry_run": False})
-    _refused(unconfirmed, 400, "playbill.preview.confirmation_required")
+    _refused(unconfirmed, 400, "cruxible.preview.confirmation_required")
     done = _ok(
         client.post(
             url,
@@ -487,7 +487,7 @@ def test_binding_and_publishing_a_ledger_mirror_preview_and_write_nothing(
     _refused(
         client.post(url, json={"url": str(remote), "dry_run": False}),
         400,
-        "playbill.preview.confirmation_required",
+        "cruxible.preview.confirmation_required",
     )
     _ok(
         client.post(
@@ -594,11 +594,11 @@ def test_attach_and_detach_are_pinned_to_the_hosts_binding(
     get_playbill_manager().get(instance_id).settled_workspace_advertisement()
     with pytest.raises(ChangeRefusedError) as moved:
         detach(dry_run=False, at=detach_preview.coordinate.digest)
-    assert moved.value.error_code == "playbill.preview.state_moved"
+    assert moved.value.error_code == "cruxible.preview.state_moved"
     assert get_registry().get(instance_id).workspace_root == str(second)  # type: ignore[union-attr]
     with pytest.raises(ChangeRefusedError) as stale_attach:
         attach(second, dry_run=False, at=preview.coordinate.digest)
-    assert stale_attach.value.error_code == "playbill.preview.state_moved"
+    assert stale_attach.value.error_code == "cruxible.preview.state_moved"
 
 
 def test_a_detach_under_a_host_create_preview_refuses_the_reattach(
@@ -647,7 +647,7 @@ def test_a_detach_under_a_host_create_preview_refuses_the_reattach(
     with pytest.raises(ChangeRefusedError) as moved:
         create(dry_run=False, at=preview.coordinate.digest)
     monkeypatch.setattr(host_api, "attach_workspace", original)
-    assert detached and moved.value.error_code == "playbill.preview.state_moved"
+    assert detached and moved.value.error_code == "cruxible.preview.state_moved"
     assert get_registry().get(instance_id).workspace_root is None  # type: ignore[union-attr]
 
     fresh = create(dry_run=True)
@@ -800,7 +800,7 @@ def test_bootstrap_claims_once_per_host_and_previews_claim_nothing(
             headers=_bearer(_SECRET),
         ),
         409,
-        "playbill.preview.state_moved",
+        "cruxible.preview.state_moved",
     )
     fresh = _ok(
         client.post(
@@ -910,7 +910,7 @@ def test_credential_changes_preview_and_irreversible_ones_need_the_coordinate(
     _refused(
         client.post(revoke_url, json={"dry_run": False}, headers=_bearer(admin)),
         400,
-        "playbill.preview.confirmation_required",
+        "cruxible.preview.confirmation_required",
     )
     revoked = _ok(
         client.post(
@@ -1010,7 +1010,7 @@ def test_bootstrap_and_recovery_credentials_revoke_and_rotate_before_init(
             headers=_bearer(rotated["token"]),
         ),
         409,
-        "playbill.preview.state_moved",
+        "cruxible.preview.state_moved",
     )
 
     replacement_url = _api(instance_id, f"/runtime/credentials/{replacement}/revoke")

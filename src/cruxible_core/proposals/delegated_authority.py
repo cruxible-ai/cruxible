@@ -50,7 +50,7 @@ class SettleTarget:
 
 
 def _issue(code: str, message: str) -> tuple[str, str]:
-    return f"playbill.settle.{code}", message
+    return f"cruxible.settle.{code}", message
 
 
 def _mandate_by_digest(tree: Mapping[str, bytes], digest: str) -> ProcedureMandate | None:

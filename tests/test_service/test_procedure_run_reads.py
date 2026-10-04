@@ -132,13 +132,13 @@ def test_run_references_refuse_with_a_repair_and_read_live(run_world) -> None:  
 
     with pytest.raises(ReadRefusalError) as missing:
         _get(instance, "RUN-" + "0" * 12)
-    assert missing.value.error_code == "playbill.get.ref_not_found"
+    assert missing.value.error_code == "cruxible.get.ref_not_found"
     assert missing.value.repair is not None
     assert missing.value.repair.arguments == {"section": "runs"}
 
     with pytest.raises(ReadRefusalError) as malformed:
         _get(instance, "ProcedureRun:RUN-12")
-    assert malformed.value.error_code == "playbill.get.ref_malformed"
+    assert malformed.value.error_code == "cruxible.get.ref_malformed"
 
     # A run has no history: read beside an older at, it is live and says so.
     first = instance.accepted_history()[0].oid

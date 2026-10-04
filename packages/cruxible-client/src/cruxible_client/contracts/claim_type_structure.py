@@ -170,7 +170,7 @@ def check_claim_type_structure(value: object) -> ClaimTypeStructuralCheck:
             status="invalid",
             diagnostics=(
                 CompilerDiagnostic(
-                    code="playbill.claim_type.structure_invalid",
+                    code="cruxible.claim_type.structure_invalid",
                     severity="error",
                     message=("Local ClaimType structure is invalid at: " + ", ".join(locations)),
                 ),

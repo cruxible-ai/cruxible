@@ -260,7 +260,7 @@ def test_compare_and_append_allows_one_concurrent_writer(tmp_path: Path) -> None
     assert len(events) == 1
     assert len(errors) == 1
     assert "changed concurrently" in str(errors[0])
-    assert errors[0].code == "playbill.curation.concurrent_change"
+    assert errors[0].code == "cruxible.curation.concurrent_change"
     assert len(store.events()) == 2
 
 

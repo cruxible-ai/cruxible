@@ -69,7 +69,7 @@ _MANIFEST_KEY = floor_path_key(FLOOR_MANIFEST_PATH)
 class FloorApplyError(CruxibleError, ValueError):
     """A floor delta failed verification, or the floor changed under it."""
 
-    error_code = "playbill.floor.apply_refused"
+    error_code = "cruxible.floor.apply_refused"
 
 
 # -- descriptor-anchored access ----------------------------------------------------

@@ -72,17 +72,17 @@ def test_accepted_document_emits_composable_exact_proof_facts_without_body_leaka
         facts = _facts(view)
 
     assert {
-        "playbill.document.attestation_coverage",
-        "playbill.document.governance",
-        "playbill.document.history",
-        "playbill.document.provenance",
+        "cruxible.document.attestation_coverage",
+        "cruxible.document.governance",
+        "cruxible.document.history",
+        "cruxible.document.provenance",
     }.issubset(facts)
-    governance = facts["playbill.document.governance"]
+    governance = facts["cruxible.document.governance"]
     assert governance["law_identifier"] == "playbill.document.v1"  # type: ignore[index]
     assert governance["required_tier"] == "graph_write"  # type: ignore[index]
     assert governance["activation_policy"] == "snapshot"  # type: ignore[index]
 
-    coverage = facts["playbill.document.attestation_coverage"]
+    coverage = facts["cruxible.document.attestation_coverage"]
     binding = coverage["coverage_binding"]  # type: ignore[index]
     assert binding["coverage"] == "containing_change_set"
     assert "exact_subject" not in str(coverage)
@@ -113,7 +113,7 @@ def test_accepted_document_emits_composable_exact_proof_facts_without_body_leaka
     assert proof["changeset_digest"]["$digest"] == stored.changeset_digest
     assert proof["candidate_digest"]["$digest"] == stored.candidate_digest
 
-    provenance = facts["playbill.document.provenance"]
+    provenance = facts["cruxible.document.provenance"]
     assert provenance["actor_id"] == "owner"  # type: ignore[index]
     assert provenance["source_compilation_digest"] == {  # type: ignore[index]
         "$digest": "sha256:" + "77" * 32

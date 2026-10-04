@@ -258,7 +258,7 @@ def test_subject_claim_object_requires_matching_type_and_existing_allowed_subjec
     missing_diagnostic = next(
         item
         for item in missing_result.frontier.diagnostics
-        if item.code == "playbill.authoring.object_subject_not_found"
+        if item.code == "cruxible.authoring.object_subject_not_found"
     )
     assert missing_diagnostic.offending_element == "statement.object.address"
     assert missing_diagnostic.repairs[0].kind == "propose_subject"
@@ -273,7 +273,7 @@ def test_subject_claim_object_requires_matching_type_and_existing_allowed_subjec
     literal_diagnostic = next(
         item
         for item in literal_result.frontier.diagnostics
-        if item.code == "playbill.claim.object_kind_mismatch"
+        if item.code == "cruxible.claim.object_kind_mismatch"
     )
     assert literal_diagnostic.repairs[0].replacement == {"required_object_kind": "subject"}
 
@@ -330,7 +330,7 @@ def test_claim_object_kind_mismatch_is_a_typed_preflight_refusal(tmp_path: Path)
     diagnostic = next(
         item
         for item in result.frontier.diagnostics
-        if item.code == "playbill.claim.object_kind_mismatch"
+        if item.code == "cruxible.claim.object_kind_mismatch"
     )
     assert diagnostic.offending_element == "statement.object"
     assert diagnostic.repairs[0].kind == "replace_object"
@@ -511,8 +511,8 @@ def test_preflight_returns_independent_refusals_in_one_frontier(tmp_path: Path) 
     codes = {item.code for item in result.frontier.diagnostics}
     # The publication road is gone, so the refusal is no longer "this target
     # needs a self-source body" -- it is that no target is authored at all.
-    assert "playbill.authoring.insertion_target_removed" in codes
-    assert "playbill.authoring.working_selection_ambiguous" in codes
+    assert "cruxible.authoring.insertion_target_removed" in codes
+    assert "cruxible.authoring.working_selection_ambiguous" in codes
     assert result.verdict == "refused"
     assert result.frontier.frontier_complete is True
     assert all(
@@ -552,7 +552,7 @@ def test_preflight_refuses_an_actor_absent_from_the_principal_registry(
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     actor = AuthenticatedActor(actor_id="unregistered-writer")
     # Create refuses such an actor before any work...
-    with pytest.raises(PrincipalRefusedError, match="playbill.identity.principal_absent"):
+    with pytest.raises(PrincipalRefusedError, match="cruxible.identity.principal_absent"):
         coordinator.create(
             actor=actor, payload=_self_source_payload(), canonical_timestamp=TIMESTAMP
         )
@@ -570,6 +570,6 @@ def test_preflight_refuses_an_actor_absent_from_the_principal_registry(
     diagnostic = next(
         item
         for item in result.frontier.diagnostics
-        if item.code == "playbill.proposal.creator_principal_invalid"
+        if item.code == "cruxible.proposal.creator_principal_invalid"
     )
     assert "active Principal" in diagnostic.message

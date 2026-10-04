@@ -277,11 +277,11 @@ def _principal_claim_refusal(request: Request) -> PrincipalRefusedError | None:
     if raw is None or is_canonical_principal_id(raw.strip()):
         return None
     return PrincipalRefusedError(
-        "playbill.identity.principal_claim_invalid",
+        "cruxible.identity.principal_claim_invalid",
         f"the configured principal ID {raw.strip()!r} is not a canonical lowercase "
         "identifier (a letter, then up to 127 of a-z 0-9 . _ -); repair: set "
         f"{PRINCIPAL_ID_ENV} or --principal-id to a registered principal ID",
-        repair=RepairOperation(operation="playbill.orient", arguments={"section": "principals"}),
+        repair=RepairOperation(operation="cruxible.orient", arguments={"section": "principals"}),
     )
 
 
@@ -544,13 +544,13 @@ async def token_auth_middleware(
             return _identity_refusal_response(
                 request,
                 PrincipalRefusedError(
-                    "playbill.identity.principal_claim_mismatch",
+                    "cruxible.identity.principal_claim_mismatch",
                     f"the configured principal ID {claimed!r} is not the principal this "
                     "bearer credential acts as "
                     f"({resolved_context.principal_id or 'none'}); repair: unset "
                     f"{PRINCIPAL_ID_ENV} (or --principal-id), or use the credential "
                     "minted for that principal",
-                    repair=RepairOperation(operation="playbill.whoami"),
+                    repair=RepairOperation(operation="cruxible.whoami"),
                 ),
             )
         # The runtime bootstrap operator acts as no principal; a claim sent

@@ -1269,7 +1269,7 @@ class TypedStateReader:
     def facts(
         self, schema_id: str | None = None, *, identity: str | None = None
     ) -> tuple[Any, ...]:
-        if schema_id in ("playbill.procedure.track_record", "playbill.line.track_record"):
+        if schema_id in ("cruxible.procedure.track_record", "cruxible.line.track_record"):
             sql = "SELECT DISTINCT p.path FROM promotion_subjects s JOIN exhaust_promotions p ON p.identity=s.promotion_identity WHERE s.record_kind=?"
             values = [schema_id.split(".")[1]]
             if identity is not None:
@@ -1291,7 +1291,7 @@ class TypedStateReader:
             rows = () if envelope is None else (envelope,)
         else:
             kind = None
-            if schema_id is not None and schema_id.startswith("playbill."):
+            if schema_id is not None and schema_id.startswith("cruxible."):
                 family = schema_id.split(".")[1].replace("_", "-")
                 if family in OWNER_BY_KIND:
                     kind = family

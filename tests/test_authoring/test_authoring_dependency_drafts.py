@@ -121,7 +121,7 @@ def test_missing_cold_dependencies_refuse_with_specific_repairs(tmp_path: Path) 
     first = coordinator.preflight(subject_missing.intent_id, actor=actor)
     second = coordinator.preflight(claim_type_missing.intent_id, actor=actor)
 
-    assert first.frontier.diagnostics[0].code == ("playbill.authoring.dependency_subject_required")
+    assert first.frontier.diagnostics[0].code == ("cruxible.authoring.dependency_subject_required")
     assert second.frontier.diagnostics[0].code == (
-        "playbill.authoring.dependency_claim_type_required"
+        "cruxible.authoring.dependency_claim_type_required"
     )

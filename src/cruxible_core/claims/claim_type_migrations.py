@@ -177,9 +177,9 @@ class ClaimTypeMigrationDispositionV1(_StrictMigrationModel):
 
 
 class ClaimTypeMigrationWarningV1(_StrictMigrationModel):
-    code: Literal["playbill.claim_type.invalidation_deprecated"]
+    code: Literal["cruxible.claim_type.invalidation_deprecated"]
     field_path: str
-    repair_operation: Literal["playbill.claim_type.migrate"] = "playbill.claim_type.migrate"
+    repair_operation: Literal["cruxible.claim_type.migrate"] = "cruxible.claim_type.migrate"
 
 
 class ClaimTypeMigrationResultV1(_StrictMigrationModel):
@@ -274,19 +274,19 @@ ClaimTypeMigrationResponse: TypeAlias = (
 
 
 class ClaimTypeMigrationError(FormatError):
-    code = "playbill.claim_type.migration_invalid"
+    code = "cruxible.claim_type.migration_invalid"
 
 
 class ClaimTypeMigrationDependentSetMismatch(ClaimTypeMigrationError):
-    code = "playbill.claim_type.migration_dependent_set_mismatch"
+    code = "cruxible.claim_type.migration_dependent_set_mismatch"
 
 
 class ClaimTypeMigrationDependentInvalid(ClaimTypeMigrationError):
-    code = "playbill.claim_type.migration_dependent_invalid"
+    code = "cruxible.claim_type.migration_dependent_invalid"
 
 
 class ClaimTypeMigrationIncomplete(ClaimTypeMigrationError):
-    code = "playbill.claim_type.migration_incomplete"
+    code = "cruxible.claim_type.migration_incomplete"
 
 
 def _current_generation_timestamp(instance: PlaybillInstance) -> str:
@@ -320,7 +320,7 @@ def _invalidation_warnings(
 ) -> tuple[ClaimTypeMigrationWarningV1, ...]:
     return tuple(
         ClaimTypeMigrationWarningV1(
-            code="playbill.claim_type.invalidation_deprecated",
+            code="cruxible.claim_type.invalidation_deprecated",
             field_path=f"$.dependents[{index}].disposition",
         )
         for index, item in enumerate(dependents)
@@ -618,7 +618,7 @@ def _canonical_successor_bytes(
         if current.lifecycle.state == "live" and disposition == "retire":
             if claim_retirement_reason is None:
                 raise ClaimTypeMigrationDependentInvalid(
-                    "playbill.claim.retirement_reason_required: live Claim retirement "
+                    "cruxible.claim.retirement_reason_required: live Claim retirement "
                     "requires claim_retirement_reason"
                 )
             if supplied is not None:
@@ -1191,7 +1191,7 @@ def _service_migrate_claim_type_v1(
         path, claim = current_dependents[disposition.claim_id]
         if claim.lifecycle.state == "live" and disposition.disposition == "retire":
             raise ClaimTypeMigrationDependentInvalid(
-                "playbill.claim.retirement_reason_required: use "
+                "cruxible.claim.retirement_reason_required: use "
                 "playbill-claim-type-migration-request-v3"
             )
         candidate_tree[path] = render_claim(

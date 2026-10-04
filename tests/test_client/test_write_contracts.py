@@ -90,7 +90,7 @@ def test_outcome_omits_empty_fields_and_says_when_it_refused() -> None:
         {
             "status": "would_refuse",
             "coordinate": {"git_oid": "a" * 12, "generation": 3},
-            "refusal": {"code": "playbill.write.unknown_field", "message": "no field"},
+            "refusal": {"code": "cruxible.write.unknown_field", "message": "no field"},
         }
     )
     assert outcome.refused
@@ -100,13 +100,13 @@ def test_outcome_omits_empty_fields_and_says_when_it_refused() -> None:
 
 def test_write_refusal_error_carries_its_repair() -> None:
     error = WriteRefusalError(
-        "playbill.write.value_not_member",
+        "cruxible.write.value_not_member",
         "'dne' is not a member",
         change=0,
         candidates=("done",),
         repair_line="Use one of: blocked, done, ready",
     )
-    assert error.error_code == "playbill.write.value_not_member"
+    assert error.error_code == "cruxible.write.value_not_member"
     assert "nearest: done" in str(error) and "Use one of" in str(error)
     assert error.context == {
         "change": 0,
@@ -203,7 +203,7 @@ def test_a_warning_is_one_flat_variant_per_code() -> None:
     adapter = TypeAdapter(WriteWarning)
     verdict = adapter.validate_python(
         {
-            "code": "playbill.write.verdict_not_supported",
+            "code": "cruxible.write.verdict_not_supported",
             "change": 0,
             "verdict": "uncovered",
             "message": "m",
@@ -212,7 +212,7 @@ def test_a_warning_is_one_flat_variant_per_code() -> None:
     assert isinstance(verdict, VerdictNotSupportedWarning)
     newer = adapter.validate_python(
         {
-            "code": "playbill.write.newer_capture_not_citable",
+            "code": "cruxible.write.newer_capture_not_citable",
             "change": 0,
             "capture": "CAP-0123456789ab",
             "message": "m",
@@ -221,29 +221,29 @@ def test_a_warning_is_one_flat_variant_per_code() -> None:
     assert isinstance(newer, NewerCaptureNotCitableWarning)
     invalid = [
         # An R05 warning without the verdict it is about.
-        {"code": "playbill.write.verdict_not_supported", "change": 0, "message": "m"},
+        {"code": "cruxible.write.verdict_not_supported", "change": 0, "message": "m"},
         # An uncitable-Capture warning with a verdict and no Capture.
         {
-            "code": "playbill.write.newer_capture_not_citable",
+            "code": "cruxible.write.newer_capture_not_citable",
             "change": 0,
             "verdict": "uncovered",
             "message": "m",
         },
         # Each variant forbids the other's field.
         {
-            "code": "playbill.write.verdict_not_supported",
+            "code": "cruxible.write.verdict_not_supported",
             "change": 0,
             "verdict": "uncovered",
             "capture": "CAP-0123456789ab",
             "message": "m",
         },
         {
-            "code": "playbill.write.newer_capture_not_citable",
+            "code": "cruxible.write.newer_capture_not_citable",
             "change": 0,
             "capture": "sha256:" + "0" * 64,
             "message": "m",
         },
-        {"code": "playbill.write.something_else", "change": 0, "message": "m"},
+        {"code": "cruxible.write.something_else", "change": 0, "message": "m"},
     ]
     for payload in invalid:
         with pytest.raises(ValidationError):
@@ -264,8 +264,8 @@ def test_the_outcome_schema_discriminates_warnings_by_code() -> None:
     items = schema["properties"]["warnings"]["items"]
     assert items["discriminator"]["propertyName"] == "code"
     assert set(items["discriminator"]["mapping"]) == {
-        "playbill.write.verdict_not_supported",
-        "playbill.write.newer_capture_not_citable",
+        "cruxible.write.verdict_not_supported",
+        "cruxible.write.newer_capture_not_citable",
     }
     verdict = defs["VerdictNotSupportedWarning"]
     newer = defs["NewerCaptureNotCitableWarning"]

@@ -18,6 +18,7 @@ from cruxible_client.contracts.claim_verdicts import (
     EvidenceCurrency,
     EvidenceRelativeClaimVerdictV1,
 )
+from cruxible_client.contracts.diagnostics import normalize_code
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifactAny,
     procedure_artifact_digest,
@@ -126,8 +127,8 @@ class QueryRefusal(_StrictQueryEngineModel):
     @field_validator("code")
     @classmethod
     def _code(cls, value: str) -> str:
-        if not value.startswith("playbill.query."):
-            raise ValueError("a query refusal code must be playbill.query dot-namespaced")
+        if not normalize_code(value).startswith("cruxible.query."):
+            raise ValueError("a query refusal code must be cruxible.query dot-namespaced")
         return value
 
 

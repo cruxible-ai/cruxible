@@ -78,7 +78,7 @@ def _claim_payload() -> dict[str, Any]:
 
 def test_authoring_input_error_preserves_published_exception_compatibility() -> None:
     error = AuthoringInputError(
-        code="playbill.authoring.input_invalid",
+        code="cruxible.authoring.input_invalid",
         field_path="$.statement.subject",
         message="subject is invalid",
         repair="choose a listed subject",
@@ -133,7 +133,7 @@ def test_client_speaks_frozen_compile_and_submit_requests() -> None:
 
 def test_client_preserves_advisory_lint_outside_the_preflight_certificate() -> None:
     warning = {
-        "code": "playbill.claim_type.anticipated_source_contract_omitted",
+        "code": "cruxible.claim_type.anticipated_source_contract_omitted",
         "field_path": "$.evidence_admission_policy.rules",
         "source_id": "corpus.runbook",
         "contract_identity": "CaptureContract:playbill.foreign-source.corpus.runbook",

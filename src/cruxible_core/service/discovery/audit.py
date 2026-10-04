@@ -103,7 +103,7 @@ _AUDIT_VISIBILITY_POLICY = QueryEvaluationPolicy(
 
 
 class AuditError(CruxibleError):
-    code = "playbill.audit.invalid"
+    code = "cruxible.audit.invalid"
 
     @property
     def error_code(self) -> str:
@@ -114,23 +114,23 @@ class AuditError(CruxibleError):
 
 
 class AuditCoordinateNotAccepted(AuditError):
-    code = "playbill.audit.coordinate_not_accepted"
+    code = "cruxible.audit.coordinate_not_accepted"
 
 
 class AuditCursorInvalid(AuditError):
-    code = "playbill.audit.cursor_invalid"
+    code = "cruxible.audit.cursor_invalid"
 
 
 class AuditAccessProfileInvalid(AuditError):
-    code = "playbill.audit.access_profile_invalid"
+    code = "cruxible.audit.access_profile_invalid"
 
 
 class AuditBudgetInvalid(AuditError):
-    code = "playbill.audit.budget_invalid"
+    code = "cruxible.audit.budget_invalid"
 
 
 class AuditOperationalStoreInvalid(AuditError):
-    code = "playbill.audit.operational_store_invalid"
+    code = "cruxible.audit.operational_store_invalid"
 
 
 class _StrictAuditServiceModel(BaseModel):

@@ -107,7 +107,7 @@ def service_upgrade_claim_types(
         dry_run=request.dry_run,
         at=request.at,
         kind="derived",
-        operation="playbill.claim-type.upgrade",
+        operation="cruxible.claim-type.upgrade",
         describe="the ClaimType v7 upgrade",
     ) as mode:
         return _upgrade(instance, mode, request=request, actor_id=actor_id, timestamp=timestamp)

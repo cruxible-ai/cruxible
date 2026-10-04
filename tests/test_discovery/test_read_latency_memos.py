@@ -469,7 +469,7 @@ def test_a_defective_coverage_scan_reports_one_row_naming_its_cause(
         assert row.detail["unobserved_cause"] == "source_scan_incomplete"
         assert row.detail["source_scan_notes"] == list(notes)
         assert row.detail["collapsed_citation_count"] == citations(healthy)
-        assert row.repair.operation == "playbill.authoring.bind"
+        assert row.repair.operation == "cruxible.authoring.bind"
 
     # A note about one dropped item is not a whole-source defect: those
     # citations each keep their own row, because the scan can still speak to

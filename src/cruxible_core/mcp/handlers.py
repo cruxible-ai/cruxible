@@ -1576,7 +1576,7 @@ def handle_playbill_block_detach(
         dry_run=dry_run,
         at=at,
         kind="direct",
-        operation="playbill.block.detach",
+        operation="cruxible.block.detach",
         describe="detaching retired projection blocks",
     ) as change:
         synced = sync_projection_blocks(

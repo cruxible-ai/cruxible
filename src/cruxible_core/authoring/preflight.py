@@ -97,10 +97,10 @@ class ComputedPreflight:
     evaluation: CandidateEvaluation | None
 
 
-_log = structlog.get_logger("cruxible.playbill.authoring.preflight")
+_log = structlog.get_logger("cruxible.authoring.preflight")
 
-CHANGE_SET_RECORD_TOO_LARGE = "playbill.authoring.change_set_record_too_large"
-COMPILE_BUDGET_EXCEEDED = "playbill.authoring.compile_budget_exceeded"
+CHANGE_SET_RECORD_TOO_LARGE = "cruxible.authoring.change_set_record_too_large"
+COMPILE_BUDGET_EXCEEDED = "cruxible.authoring.compile_budget_exceeded"
 
 _PAYLOAD_PATH_PART_RE = re.compile(r"([^.\[\]]+)|\[([0-9]+)\]")
 
@@ -264,7 +264,7 @@ def _slot_diagnostics(
             )
             diagnostics.append(
                 _diagnostic(
-                    code="playbill.authoring.slot_membership_changed",
+                    code="cruxible.authoring.slot_membership_changed",
                     stage="reference_assertion",
                     offending_element=expectation.payload_path,
                     message=(
@@ -314,7 +314,7 @@ def _reference_diagnostics(
         except (KeyError, TypeError, ValueError):
             diagnostics.append(
                 _diagnostic(
-                    code="playbill.authoring.reference_payload_mismatch",
+                    code="cruxible.authoring.reference_payload_mismatch",
                     stage="reference_assertion",
                     offending_element=expectation.payload_path,
                     message="The reference assertion does not describe its emitted payload path.",
@@ -343,7 +343,7 @@ def _reference_diagnostics(
         ):
             diagnostics.append(
                 _diagnostic(
-                    code="playbill.authoring.reference_payload_mismatch",
+                    code="cruxible.authoring.reference_payload_mismatch",
                     stage="reference_assertion",
                     offending_element=expectation.payload_path,
                     message="The emitted value differs from the asserted typed reference.",
@@ -371,7 +371,7 @@ def _reference_diagnostics(
         except (OSError, CruxibleError, ValueError):
             diagnostics.append(
                 _diagnostic(
-                    code="playbill.authoring.reference_coordinate_unavailable",
+                    code="cruxible.authoring.reference_coordinate_unavailable",
                     stage="reference_assertion",
                     offending_element=expectation.payload_path,
                     message=(
@@ -389,7 +389,7 @@ def _reference_diagnostics(
         if minted_content is None:
             diagnostics.append(
                 _diagnostic(
-                    code="playbill.authoring.reference_absent_at_minted_coordinate",
+                    code="cruxible.authoring.reference_absent_at_minted_coordinate",
                     stage="reference_assertion",
                     offending_element=expectation.payload_path,
                     message=(
@@ -411,7 +411,7 @@ def _reference_diagnostics(
         ):
             diagnostics.append(
                 _diagnostic(
-                    code="playbill.authoring.reference_payload_mismatch",
+                    code="cruxible.authoring.reference_payload_mismatch",
                     stage="reference_assertion",
                     offending_element=expectation.payload_path,
                     message="The existing Capture names another exact CaptureContract.",
@@ -440,7 +440,7 @@ def _reference_diagnostics(
             )
             diagnostics.append(
                 _diagnostic(
-                    code="playbill.authoring.reference_stale",
+                    code="cruxible.authoring.reference_stale",
                     stage="reference_assertion",
                     offending_element=expectation.payload_path,
                     message="The typed reference has a newer accepted successor.",
@@ -480,14 +480,14 @@ def _reference_diagnostics(
                 ):
                     successors.append(candidate_path)
         if len(successors) > 1:
-            code = "playbill.authoring.reference_successor_ambiguous"
+            code = "cruxible.authoring.reference_successor_ambiguous"
             message = (
                 "More than one accepted artifact claims to succeed this reference. "
                 "Name the intended successor explicitly: read the candidates with "
                 "playbill get, then re-create the intent against one of them."
             )
         else:
-            code = "playbill.authoring.reference_retired"
+            code = "cruxible.authoring.reference_retired"
             message = (
                 "The typed reference has no live successor at the intent base. "
                 "Choose a live target with playbill orient or query, then re-create "
@@ -672,7 +672,7 @@ def _claim_surface_diagnostics(
         # and its bound registration still folds; nothing may carry one in.
         diagnostics.append(
             _diagnostic(
-                code="playbill.authoring.insertion_target_removed",
+                code="cruxible.authoring.insertion_target_removed",
                 stage="source_binding",
                 offending_element=f"{prefix}insertion_target",
                 message=(
@@ -701,7 +701,7 @@ def _claim_surface_diagnostics(
         if count > 1 and payload.source.selector.selected_occurrence is None:
             diagnostics.append(
                 _diagnostic(
-                    code="playbill.authoring.working_selection_ambiguous",
+                    code="cruxible.authoring.working_selection_ambiguous",
                     stage="source_binding",
                     offending_element=f"{prefix}source.selector.selected_occurrence",
                     message=(
@@ -977,7 +977,7 @@ def compute_preflight(
                 except ProposalAdmissionError as exc:
                     diagnostics.append(
                         _diagnostic(
-                            code="playbill.authoring.proposal_receive_refused",
+                            code="cruxible.authoring.proposal_receive_refused",
                             stage="proposal_receive",
                             offending_element="payload",
                             message=str(exc),
@@ -993,7 +993,7 @@ def compute_preflight(
                     blocked.append(
                         BlockedCheck(
                             check="proposal_evaluation",
-                            blocked_by=("playbill.authoring.proposal_receive_refused",),
+                            blocked_by=("cruxible.authoring.proposal_receive_refused",),
                             reason=(
                                 "The candidate tree must pass bounded receive before "
                                 "semantic laws run."
@@ -1096,7 +1096,7 @@ def compute_preflight(
                     detail=str(raised),
                 )
                 refusal = AuthoringLoweringError(
-                    code="playbill.authoring.lowering_invalid",
+                    code="cruxible.authoring.lowering_invalid",
                     offending_element="payload",
                     message=f"The payload could not be lowered: {raised}",
                     repairs=(
@@ -1197,7 +1197,7 @@ def compute_preflight(
         frontier_complete = False
         ordered_diagnostics = ordered_diagnostics[: MAX_DIAGNOSTICS - 1]
         budget = _diagnostic(
-            code="playbill.authoring.diagnostic_budget_exhausted",
+            code="cruxible.authoring.diagnostic_budget_exhausted",
             stage="frontier",
             offending_element="payload",
             message=(

@@ -71,7 +71,7 @@ def test_candidate_compilation_binds_type_and_rejects_wrong_range():
             terminal_capability=2,
         )
 
-    assert failure.value.diagnostic.code == "playbill.source.contract_value_invalid"
+    assert failure.value.diagnostic.code == "cruxible.source.contract_value_invalid"
 
 
 def test_candidate_binding_rejects_unrelated_evidence_and_preserves_copy_role():

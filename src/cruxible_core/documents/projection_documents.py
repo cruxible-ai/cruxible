@@ -29,7 +29,7 @@ from cruxible_core.indexes.projection import (
 )
 from cruxible_core.storage.cas import BodyAccessContext, BodyProjectionProtocol
 
-_PROTECTED_DOCUMENT_SCHEMAS = frozenset({"playbill.document.source_mapping"})
+_PROTECTED_DOCUMENT_SCHEMAS = frozenset({"cruxible.document.source_mapping"})
 
 
 class _StrictDocumentProjectionModel(BaseModel):

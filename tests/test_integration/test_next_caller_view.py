@@ -35,7 +35,7 @@ def _conflict_with_uncovered_member() -> PlaybillNextItemV1:
         related_identities=(_CLAIM,),
         detail={"contender_count": 2, "predicate": "owner", "qualifier": None},
         repair=PlaybillNextRepairV1(
-            operation="playbill.authoring.create",
+            operation="cruxible.authoring.create",
             target=_SUBJECT,
             required_change="revise_claims_into_distinct_qualifiers",
             arguments={"claim_ids": [_CLAIM]},
@@ -48,7 +48,7 @@ def _conflict_with_uncovered_member() -> PlaybillNextItemV1:
         related_identities=(_SUBJECT,),
         detail={"currency": "current", "predicate": "owner", "verdict": "uncovered"},
         repair=PlaybillNextRepairV1(
-            operation="playbill.authoring.bind",
+            operation="cruxible.authoring.bind",
             target=_CLAIM,
             required_change="add_admissible_evidence",
             arguments={"claim_id": "CLM-0001"},
@@ -101,7 +101,7 @@ def _approval_row() -> PlaybillNextItemV1:
         related_identities=(_CLAIM,),
         detail={"signer_id": "reviewer"},
         repair=PlaybillNextRepairV1(
-            operation="playbill.proposal.approve",
+            operation="cruxible.proposal.approve",
             target="PRP-0001",
             required_change="review_and_approve_the_candidate_with_your_signing_key",
             arguments={"proposal_id": "PRP-0001", "signer_id": "reviewer"},
@@ -120,7 +120,7 @@ def test_an_approval_row_withholds_its_repair_from_a_caller_who_cannot_approve()
         assert kept.repair is None
         assert kept.repair_requires is not None
         assert kept.repair_requires.model_dump(mode="json", exclude={"tag"}) == {
-            "operation": "playbill.proposal.approve",
+            "operation": "cruxible.proposal.approve",
             "tool": "cruxible_playbill_approve",
             "tier": "graph_write",
             "because": ["tier"],
@@ -178,7 +178,7 @@ def _line_arm_row() -> PlaybillNextItemV1:
         subject_identity="Line:hourly",
         detail={},
         repair=PlaybillNextRepairV1(
-            operation="playbill.line.arm",
+            operation="cruxible.line.arm",
             target="Line:hourly",
             required_change="arm_the_line",
             arguments={"line": "hourly"},
@@ -194,9 +194,9 @@ def test_sdk_rows_render_sdk_calls_not_cli_commands() -> None:
     commands = {
         item.repair.operation: item.repair.command for item in kept if item.repair is not None
     }
-    assert commands["playbill.line.arm"] == 'playbill.arm_line("hourly")'
-    assert commands["playbill.proposal.approve"] == (
-        'playbill.proposal("PRP-0001").approve(reviewed=playbill.proposal("PRP-0001").review())'
+    assert commands["cruxible.line.arm"] == 'cx.arm_line("hourly")'
+    assert commands["cruxible.proposal.approve"] == (
+        'cx.proposal("PRP-0001").approve(reviewed=cx.proposal("PRP-0001").review())'
     )
     for command in commands.values():
         assert command is None or not command.startswith("cruxible ")
@@ -290,7 +290,7 @@ def _unreviewed_capture_row(subject: str) -> PlaybillNextItemV1:
         subject_identity=subject,
         detail={"claim_id": "CLM-0001", "capture_digest": "sha256:" + "c" * 64},
         repair=PlaybillNextRepairV1(
-            operation="playbill.authoring.create",
+            operation="cruxible.authoring.create",
             target=subject,
             required_change="adjudicate_unreviewed_evidence",
             arguments={"claim_id": "CLM-0001", "capture_digest": "sha256:" + "c" * 64},
@@ -305,7 +305,7 @@ def _supporting_capture_row(subject: str) -> PlaybillNextItemV1:
         subject_identity=subject,
         detail={"claim_id": "CLM-0001", "capture_digest": "sha256:" + "d" * 64},
         repair=PlaybillNextRepairV1(
-            operation="playbill.authoring.create",
+            operation="cruxible.authoring.create",
             target=subject,
             required_change="cite_supporting_evidence",
             arguments={"claim_id": "CLM-0001", "capture_digest": "sha256:" + "d" * 64},
@@ -373,14 +373,14 @@ def test_supporting_evidence_folded_into_a_conflict_is_rendered_for_the_caller(
 
 
 _SDK_REPAIRS: tuple[tuple[str, dict[str, object]], ...] = (
-    ("playbill.line.arm", {"line": "hourly"}),
-    ("playbill.line.dispatch", {"line": "hourly", "limit": 3}),
-    ("playbill.settle", {"prediction_id": "RSC-0001"}),
-    ("playbill.authoring.create", {"example": "procedure-mandate"}),
-    ("playbill.proposal.approve", {"proposal_id": "PRP-0001", "signer_id": "reviewer"}),
-    ("playbill.claim.retire", {"claim_id": "CLM-0001"}),
-    ("playbill.block.repin", {"source_id": "SRC-1", "block_id": "b1", "claim_id": "CLM-0001"}),
-    ("playbill.block.sync", {"all": True}),
+    ("cruxible.line.arm", {"line": "hourly"}),
+    ("cruxible.line.dispatch", {"line": "hourly", "limit": 3}),
+    ("cruxible.settle", {"prediction_id": "RSC-0001"}),
+    ("cruxible.authoring.create", {"example": "procedure-mandate"}),
+    ("cruxible.proposal.approve", {"proposal_id": "PRP-0001", "signer_id": "reviewer"}),
+    ("cruxible.claim.retire", {"claim_id": "CLM-0001"}),
+    ("cruxible.block.repin", {"source_id": "SRC-1", "block_id": "b1", "claim_id": "CLM-0001"}),
+    ("cruxible.block.sync", {"all": True}),
 )
 
 
@@ -419,8 +419,8 @@ def test_the_sdk_block_sync_repair_runs_as_written() -> None:
         block=SimpleNamespace(sync=lambda *paths, **options: calls.append(options))
     )
 
-    command = _repair_command("playbill.block.sync", arguments={"all": True}, surface="sdk")
-    eval(str(command), {"__builtins__": {}}, {"playbill": playbill})  # noqa: S307
+    command = _repair_command("cruxible.block.sync", arguments={"all": True}, surface="sdk")
+    eval(str(command), {"__builtins__": {}}, {"cx": playbill})  # noqa: S307
 
     assert calls == [{"all": True}]
 

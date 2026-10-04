@@ -174,7 +174,7 @@ _VOLATILE_ACTOR_FIELDS = ("timestamp", "operation_id", "request_id")
 class ProcedureMeasurementRefused(ProcedureSurfaceError):
     """A closed, repair-carrying measurement refusal (a request fault, never daemon)."""
 
-    code = "playbill.procedure.measurement.refused"
+    code = "cruxible.procedure.measurement.refused"
 
     def __init__(
         self,

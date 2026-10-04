@@ -36,7 +36,7 @@ _CANDIDATE: TypeAdapter[CandidateRecordAnyVersion] = TypeAdapter(CandidateRecord
 class ApprovalReviewMismatch(SdkError):
     """A local approval binding failed; no replacement candidate is auto-reviewed."""
 
-    code = "playbill.sdk.approval_review_mismatch"
+    code = "cruxible.sdk.approval_review_mismatch"
     repair = (
         "Review this proposal again and explicitly approve that review with the configured signer."
     )

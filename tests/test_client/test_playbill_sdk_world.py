@@ -189,7 +189,7 @@ class _WorldClient:
             ),
             facts=[
                 {
-                    "schema_id": "playbill.claim.statement",
+                    "schema_id": "cruxible.claim.statement",
                     "value": {
                         "subject": {
                             "artifact_path": "subjects/sec.vulnerability/cve-2026-69247.json"
@@ -201,11 +201,11 @@ class _WorldClient:
                     },
                 },
                 {
-                    "schema_id": "playbill.claim.lifecycle",
+                    "schema_id": "cruxible.claim.lifecycle",
                     "value": {"lifecycle": {"state": "live"}},
                 },
                 {
-                    "schema_id": "playbill.claim.current_verdict",
+                    "schema_id": "cruxible.claim.current_verdict",
                     "value": {"verdict": "supported"},
                 },
             ],
@@ -820,7 +820,7 @@ def test_a_role_the_claim_type_does_not_permit_refuses_at_its_keyword(
         "normative",
         ("observation",),
     )
-    assert error.code == "playbill.sdk.claim_role_not_permitted"
+    assert error.code == "cruxible.sdk.claim_role_not_permitted"
     assert error.call_site is not None and error.call_site.expression == "role"
     assert "permitted roles: observation" in str(error)
     assert len(client.claim_type_reads) == reads_before

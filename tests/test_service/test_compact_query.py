@@ -128,25 +128,25 @@ def test_contains_without_kind_searches_every_live_claim_value(instance: Any) ->
 @pytest.mark.parametrize(
     ("fields", "code", "nearest"),
     [
-        ({"kind": "project.work_itme"}, "playbill.query.unknown_kind", SUBJECT_KIND),
+        ({"kind": "project.work_itme"}, "cruxible.query.unknown_kind", SUBJECT_KIND),
         (
             {"kind": SUBJECT_KIND, "where": [{"field": "stauts", "eq": "ready"}]},
-            "playbill.query.unknown_field",
+            "cruxible.query.unknown_field",
             "status",
         ),
         (
             {"kind": SUBJECT_KIND, "where": [{"field": "status", "eq": "redy"}]},
-            "playbill.query.unknown_member",
+            "cruxible.query.unknown_member",
             "ready",
         ),
         (
             {"kind": SUBJECT_KIND, "where": [{"field": "status", "lt": "ready"}]},
-            "playbill.query.operator_not_applicable",
+            "cruxible.query.operator_not_applicable",
             "eq",
         ),
         (
             {"kind": SUBJECT_KIND, "select": ["statsu"]},
-            "playbill.query.unknown_field",
+            "cruxible.query.unknown_field",
             "status",
         ),
     ],
@@ -169,17 +169,17 @@ def test_an_unaccepted_at_refuses_with_the_shared_read_code(instance: Any) -> No
     with pytest.raises(ReadRefusalError) as refused:
         _query(instance, kind=SUBJECT_KIND, at="0" * 40)
 
-    assert refused.value.error_code == "playbill.read.coordinate_not_accepted"
+    assert refused.value.error_code == "cruxible.read.coordinate_not_accepted"
     assert refused.value.http_status == 404
     assert refused.value.context["field_path"] == "at"
 
 
 def test_exactly_one_mode(instance: Any) -> None:
-    with pytest.raises(ReadRefusalError, match="playbill.query.mode_invalid"):
+    with pytest.raises(ReadRefusalError, match="cruxible.query.mode_invalid"):
         _query(instance, kind=SUBJECT_KIND, name=QUERY_NAME)
-    with pytest.raises(ReadRefusalError, match="playbill.query.mode_invalid"):
+    with pytest.raises(ReadRefusalError, match="cruxible.query.mode_invalid"):
         _query(instance)
-    with pytest.raises(ReadRefusalError, match="playbill.query.mode_invalid"):
+    with pytest.raises(ReadRefusalError, match="cruxible.query.mode_invalid"):
         _query(instance, name=QUERY_NAME, select=["status"])
 
 
@@ -219,7 +219,7 @@ def test_claim_type_rows_name_capture_contracts_never_digests(instance: Any) -> 
     narrowed = _query(instance, kind="ClaimType", select=["predicate", "evidence"])
     assert set(narrowed.rows[0]) == {"predicate", "evidence"}
 
-    with pytest.raises(ReadRefusalError, match="playbill.query.unknown_field"):
+    with pytest.raises(ReadRefusalError, match="cruxible.query.unknown_field"):
         _query(instance, kind="ClaimType", where=[{"field": "predicat", "eq": "x"}])
 
 
@@ -235,11 +235,11 @@ def test_named_query_runs_as_run_query_does(instance: Any) -> None:
 
     with pytest.raises(ReadRefusalError) as missing:
         _query(instance, name="project.work_itmes")
-    assert missing.value.error_code == "playbill.query.name_not_found"
+    assert missing.value.error_code == "cruxible.query.name_not_found"
     assert missing.value.http_status == 404
     assert QUERY_NAME in missing.value.candidates
 
-    with pytest.raises(ReadRefusalError, match="playbill.query.parameter_undeclared"):
+    with pytest.raises(ReadRefusalError, match="cruxible.query.parameter_undeclared"):
         _query(instance, name=QUERY_NAME, params={"stray": "x"})
 
 
@@ -376,7 +376,7 @@ def test_a_filter_naming_a_missing_subject_refuses(instance: Any) -> None:
     with pytest.raises(ReadRefusalError) as refused:
         _query(instance, kind=SUBJECT_KIND, where=[{"field": "subject_id", "eq": "wi-44"}])
 
-    assert refused.value.error_code == "playbill.query.unknown_ref"
+    assert refused.value.error_code == "cruxible.query.unknown_ref"
     assert "wi-42" in refused.value.candidates or "wi-43" in refused.value.candidates
     assert _ids(
         _query(instance, kind=SUBJECT_KIND, where=[{"field": "subject_id", "in": ["wi-43"]}])
@@ -387,7 +387,7 @@ def test_a_definition_filter_naming_an_unknown_namespace_refuses(instance: Any) 
     with pytest.raises(ReadRefusalError) as refused:
         _query(instance, kind="ClaimType", where=[{"field": "namespace", "eq": "project.work_itm"}])
 
-    assert refused.value.error_code == "playbill.query.unknown_ref"
+    assert refused.value.error_code == "cruxible.query.unknown_ref"
     assert SUBJECT_KIND in refused.value.candidates
 
 
@@ -553,7 +553,7 @@ def test_a_cursor_pins_an_evaluation_time_before_1970(instance: Any) -> None:
 def test_an_instant_outside_the_utc_range_refuses_typed(instance: Any, outside: datetime) -> None:
     with pytest.raises(ReadRefusalError) as refused:
         _query(instance, kind=SUBJECT_KIND, limit=1, evaluation_time=outside)
-    assert refused.value.error_code == "playbill.query.evaluation_time_invalid"
+    assert refused.value.error_code == "cruxible.query.evaluation_time_invalid"
 
 
 def test_a_cursor_pins_the_last_utc_instant(instance: Any) -> None:
@@ -718,7 +718,7 @@ def test_every_shown_field_name_resolves_back_to_its_predicate() -> None:
     # No last-segment form: `severity` is not project.work_item.severity.
     with pytest.raises(ReadRefusalError) as refused:
         vocabulary.resolve_field((kind,), "severity", field_path="where[0].field")
-    assert refused.value.error_code == "playbill.query.unknown_field"
+    assert refused.value.error_code == "cruxible.query.unknown_field"
     assert "sec.vuln.severity" in refused.value.candidates
 
 
@@ -790,7 +790,7 @@ def test_two_columns_never_share_a_row_key() -> None:
     # neither has another name: refuse rather than serve one over the other.
     with pytest.raises(ReadRefusalError) as refused:
         _columns(follow=[{"field": "parent", "as": "flags"}], select=["value.flags", "flags"])
-    assert refused.value.error_code == "playbill.query.column_collision"
+    assert refused.value.error_code == "cruxible.query.column_collision"
 
 
 def test_spec_mode_clips_path_budgets_at_execution_not_in_the_spec(

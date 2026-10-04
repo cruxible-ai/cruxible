@@ -147,13 +147,13 @@ def test_attention_reuses_a_next_item_that_already_surfaces_the_upgrade(
 @pytest.mark.parametrize(
     ("caller", "code"),
     [
-        (None, "playbill.identity.credential_unbound"),
-        (OrientCaller("stranger", "admin"), "playbill.identity.principal_absent"),
+        (None, "cruxible.identity.credential_unbound"),
+        (OrientCaller("stranger", "admin"), "cruxible.identity.principal_absent"),
         (
             OrientCaller("operator", "admin", configured=False),
-            "playbill.identity.principal_unconfigured",
+            "cruxible.identity.principal_unconfigured",
         ),
-        (OrientCaller("owner", "read_only"), "playbill.identity.permission_insufficient"),
+        (OrientCaller("owner", "read_only"), "cruxible.identity.permission_insufficient"),
     ],
 )
 def test_you_cannot_author_without_an_active_principal_and_says_why(
@@ -222,17 +222,17 @@ def test_a_wrong_kind_is_refused_with_the_nearest_kinds(seeded) -> None:  # type
     with pytest.raises(ReadRefusalError) as refused:
         service_playbill_orient(seeded, kind="project.work_itm")
 
-    assert refused.value.error_code == "playbill.orient.kind_not_found"
+    assert refused.value.error_code == "cruxible.orient.kind_not_found"
     assert refused.value.http_status == 404
     assert refused.value.candidates == (SUBJECT_KIND,)
-    assert refused.value.repair is not None and refused.value.repair.operation == "playbill.orient"
+    assert refused.value.repair is not None and refused.value.repair.operation == "cruxible.orient"
     assert SUBJECT_KIND in str(refused.value)
 
 
 def test_kind_and_section_are_one_view_each(seeded) -> None:  # type: ignore[no-untyped-def]
     with pytest.raises(ReadRefusalError, match="not both") as both:
         service_playbill_orient(seeded, kind=SUBJECT_KIND, section="queries")
-    assert both.value.error_code == "playbill.orient.request_invalid"
+    assert both.value.error_code == "cruxible.orient.request_invalid"
     with pytest.raises(ReadRefusalError, match="takes no cursor"):
         service_playbill_orient(seeded, kind=SUBJECT_KIND, cursor="c")
 
@@ -295,7 +295,7 @@ def test_an_unaccepted_at_refuses_with_the_shared_read_code(seeded) -> None:  # 
     with pytest.raises(ReadRefusalError) as refused:
         service_playbill_orient(seeded, at="0" * 40)
 
-    assert refused.value.error_code == "playbill.read.coordinate_not_accepted"
+    assert refused.value.error_code == "cruxible.read.coordinate_not_accepted"
     assert refused.value.http_status == 404
 
 
@@ -473,7 +473,7 @@ def test_a_decommissioned_instance_cannot_be_authored_even_by_an_active_writer(o
     assert you is not None and you.can_author is False
     assert you.actor == "owner" and you.principal == "owner"
     assert you.authoring_refusal is not None
-    assert you.authoring_refusal.code == "playbill.instance.decommissioned"
+    assert you.authoring_refusal.code == "cruxible.instance.decommissioned"
     assert "migrated to a new host" in you.authoring_refusal.detail
 
 

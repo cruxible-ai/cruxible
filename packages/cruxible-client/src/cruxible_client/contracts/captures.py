@@ -701,7 +701,7 @@ def evaluate_capture_contract_law(
         return CaptureContractLawResult(
             verdict="refused",
             diagnostics=(
-                _diagnostic("playbill.capture_contract.path_mismatch", str(exc), path=path),
+                _diagnostic("cruxible.capture_contract.path_mismatch", str(exc), path=path),
             ),
         )
     if (
@@ -712,7 +712,7 @@ def evaluate_capture_contract_law(
             verdict="refused",
             diagnostics=(
                 _diagnostic(
-                    "playbill.capture_contract.coordinator_profile_mismatch",
+                    "cruxible.capture_contract.coordinator_profile_mismatch",
                     "The coordinator self-source identity is reserved for its exact "
                     "retained profile.",
                     path=path,
@@ -724,7 +724,7 @@ def evaluate_capture_contract_law(
             verdict="refused",
             diagnostics=(
                 _diagnostic(
-                    "playbill.capture_contract.predecessor_missing",
+                    "cruxible.capture_contract.predecessor_missing",
                     "A new CaptureContract cannot name a predecessor.",
                     path=path,
                 ),
@@ -736,7 +736,7 @@ def evaluate_capture_contract_law(
                 verdict="refused",
                 diagnostics=(
                     _diagnostic(
-                        "playbill.capture_contract.identity_changed",
+                        "cruxible.capture_contract.identity_changed",
                         "A CaptureContract successor must preserve stable identity.",
                         path=path,
                     ),
@@ -747,7 +747,7 @@ def evaluate_capture_contract_law(
                 verdict="refused",
                 diagnostics=(
                     _diagnostic(
-                        "playbill.capture_contract.predecessor_mismatch",
+                        "cruxible.capture_contract.predecessor_mismatch",
                         "A CaptureContract successor must pin the exact predecessor digest.",
                         path=path,
                     ),
@@ -759,7 +759,7 @@ def evaluate_capture_contract_law(
                     verdict="refused",
                     diagnostics=(
                         _diagnostic(
-                            "playbill.capture_contract.revival_refused",
+                            "cruxible.capture_contract.revival_refused",
                             "A retired CaptureContract cannot be revived; propose a new "
                             "contract identity instead.",
                             path=path,
@@ -772,7 +772,7 @@ def evaluate_capture_contract_law(
                     verdict="refused",
                     diagnostics=(
                         _diagnostic(
-                            "playbill.capture_contract.incompatible_successor",
+                            "cruxible.capture_contract.incompatible_successor",
                             f"A CaptureContract successor changes {broken!r} incompatibly. "
                             "Evidence captured under every version of a contract is admitted "
                             "alike, so a breaking change is a new contract identity: propose it "
@@ -804,7 +804,7 @@ def evaluate_capture_contract_law(
             verdict="refused",
             diagnostics=(
                 _diagnostic(
-                    "playbill.capture_contract.component_registry_unresolved",
+                    "cruxible.capture_contract.component_registry_unresolved",
                     "A Capture component identifier/digest is absent from the compiler registry.",
                     path=path,
                 ),
@@ -822,7 +822,7 @@ def evaluate_capture_contract_law(
             verdict="refused",
             diagnostics=(
                 _diagnostic(
-                    "playbill.capture_contract.rule_registry_unresolved",
+                    "cruxible.capture_contract.rule_registry_unresolved",
                     "Replay, provenance, and source-subject rules require exact governed pins.",
                     path=path,
                 ),
@@ -835,7 +835,7 @@ def evaluate_capture_contract_law(
             verdict="refused",
             diagnostics=(
                 _diagnostic(
-                    "playbill.capture_contract.external_schema_missing",
+                    "cruxible.capture_contract.external_schema_missing",
                     "External CaptureContracts require coordinate and selector schema pins.",
                     path=path,
                 ),
@@ -847,7 +847,7 @@ def evaluate_capture_contract_law(
             verdict="refused",
             diagnostics=(
                 _diagnostic(
-                    "playbill.capture_contract.erasure_rule_unresolved",
+                    "cruxible.capture_contract.erasure_rule_unresolved",
                     "Authorized erasure requires an exact governed erasure-rule pin.",
                     path=path,
                 ),

@@ -152,7 +152,7 @@ def test_cli_curation_list_enriches_a_real_catalog_and_declared_block_for_text_a
                     "at": COORDINATE.model_dump(mode="json"),
                     "access_profile": {
                         "tag": "playbill-coverage-access-profile-v1",
-                        "profile_id": "playbill.coverage.read",
+                        "profile_id": "cruxible.coverage.read",
                         "permitted_access_classes": ["instance", "public"],
                         "disclose_restricted_existence": True,
                     },

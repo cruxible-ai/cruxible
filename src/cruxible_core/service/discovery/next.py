@@ -213,7 +213,7 @@ class _StrictNextModel(BaseModel):
 
 
 class NextError(CruxibleError):
-    code = "playbill.next.refused"
+    code = "cruxible.next.refused"
 
     @property
     def error_code(self) -> str:
@@ -221,25 +221,25 @@ class NextError(CruxibleError):
 
 
 class NextAccessProfileInvalid(NextError):
-    code = "playbill.next.access_profile_invalid"
+    code = "cruxible.next.access_profile_invalid"
 
 
 class NextWorkspaceObservationInvalid(NextError):
-    code = "playbill.next.workspace_observation_invalid"
+    code = "cruxible.next.workspace_observation_invalid"
 
 
 class NextCoordinateNotAccepted(NextError):
-    code = "playbill.next.coordinate_not_accepted"
+    code = "cruxible.next.coordinate_not_accepted"
 
 
 class NextAcceptedStateInvalid(NextError):
-    code = "playbill.next.accepted_state_invalid"
+    code = "cruxible.next.accepted_state_invalid"
 
 
 class NextCursorMismatch(NextError):
     """A page cursor that does not continue the queue this request reads."""
 
-    code = "playbill.next.cursor_mismatch"
+    code = "cruxible.next.cursor_mismatch"
 
 
 class NextDriftObservation(_StrictNextModel):
@@ -872,22 +872,22 @@ class PlaybillNextResultV2(PlaybillNextResultV1):
 
 
 _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
-    "playbill.authoring.create": "playbill authoring create",
-    "playbill.authoring.bind": "playbill authoring bind",
-    "playbill.claim.retire": "playbill retire",
-    "playbill.set": "playbill set",
-    "playbill.write": "playbill write",
-    "playbill.floor.export": "playbill floor export",
-    "playbill.block.depublish": "playbill block depublish",
-    "playbill.block.repin": "playbill block repin",
-    "playbill.block.sync": "playbill block sync",
-    "playbill.document.propose": "playbill document propose",
-    "playbill.proposal.readmit": "playbill proposal readmit",
-    "playbill.proposal.approve": "playbill proposal approve",
-    "playbill.compiler.upgrade": "playbill compiler upgrade",
-    "playbill.line.arm": "playbill line arm",
-    "playbill.line.dispatch": "playbill line dispatch",
-    "playbill.settle": "playbill settle",
+    "cruxible.authoring.create": "playbill authoring create",
+    "cruxible.authoring.bind": "playbill authoring bind",
+    "cruxible.claim.retire": "playbill retire",
+    "cruxible.set": "playbill set",
+    "cruxible.write": "playbill write",
+    "cruxible.floor.export": "playbill floor export",
+    "cruxible.block.depublish": "playbill block depublish",
+    "cruxible.block.repin": "playbill block repin",
+    "cruxible.block.sync": "playbill block sync",
+    "cruxible.document.propose": "playbill document propose",
+    "cruxible.proposal.readmit": "playbill proposal readmit",
+    "cruxible.proposal.approve": "playbill proposal approve",
+    "cruxible.compiler.upgrade": "playbill compiler upgrade",
+    "cruxible.line.arm": "playbill line arm",
+    "cruxible.line.dispatch": "playbill line dispatch",
+    "cruxible.settle": "playbill settle",
 }
 
 # Each of these needs a local file. The queue knows the path only if the row
@@ -896,9 +896,9 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
 # `PAYLOAD_FILE` left in the line is not a hint, it is an unrunnable command
 # presented as a runnable one, which is the one thing `command` must never be.
 _REPAIR_COMMAND_OPERANDS: Mapping[str, tuple[str, ...]] = {
-    "playbill.authoring.create": ("PAYLOAD_FILE",),
-    "playbill.authoring.bind": ("--payload-file", "PAYLOAD_FILE"),
-    "playbill.document.propose": ("--envelope", "ENVELOPE_FILE"),
+    "cruxible.authoring.create": ("PAYLOAD_FILE",),
+    "cruxible.authoring.bind": ("--payload-file", "PAYLOAD_FILE"),
+    "cruxible.document.propose": ("--envelope", "ENVELOPE_FILE"),
 }
 _REPAIR_COMMAND_PLACEHOLDERS: Mapping[str, str] = {
     "PAYLOAD_FILE": "payload_file",
@@ -941,28 +941,28 @@ NextCallerSurface: TypeAlias = Literal["cli", "mcp", "sdk"]
 #: every surface (MCP included): repin declares the block at the instance, and
 #: sync reads its backings.
 _REPAIR_TOOLS: Mapping[str, str | None] = {
-    "playbill.authoring.create": "cruxible_playbill_authoring_create",
-    "playbill.authoring.bind": "cruxible_playbill_authoring_bind",
-    "playbill.claim.retire": "cruxible_playbill_retire",
-    "playbill.set": "cruxible_playbill_set",
-    "playbill.write": "cruxible_playbill_write",
-    "playbill.floor.export": "cruxible_playbill_floor_export",
-    "playbill.block.depublish": "cruxible_playbill_block_depublish",
-    "playbill.block.repin": "cruxible_playbill_block_repin",
-    "playbill.block.sync": "cruxible_playbill_block_sync",
-    "playbill.document.propose": "cruxible_playbill_propose_document",
-    "playbill.proposal.readmit": "cruxible_playbill_proposal_readmit",
-    "playbill.proposal.approve": "cruxible_playbill_approve",
-    "playbill.compiler.upgrade": "cruxible_playbill_compiler_upgrade",
-    "playbill.line.arm": "cruxible_playbill_line_arm",
-    "playbill.line.dispatch": "cruxible_playbill_line_dispatch",
-    "playbill.settle": "cruxible_playbill_settle",
+    "cruxible.authoring.create": "cruxible_playbill_authoring_create",
+    "cruxible.authoring.bind": "cruxible_playbill_authoring_bind",
+    "cruxible.claim.retire": "cruxible_playbill_retire",
+    "cruxible.set": "cruxible_playbill_set",
+    "cruxible.write": "cruxible_playbill_write",
+    "cruxible.floor.export": "cruxible_playbill_floor_export",
+    "cruxible.block.depublish": "cruxible_playbill_block_depublish",
+    "cruxible.block.repin": "cruxible_playbill_block_repin",
+    "cruxible.block.sync": "cruxible_playbill_block_sync",
+    "cruxible.document.propose": "cruxible_playbill_propose_document",
+    "cruxible.proposal.readmit": "cruxible_playbill_proposal_readmit",
+    "cruxible.proposal.approve": "cruxible_playbill_approve",
+    "cruxible.compiler.upgrade": "cruxible_playbill_compiler_upgrade",
+    "cruxible.line.arm": "cruxible_playbill_line_arm",
+    "cruxible.line.dispatch": "cruxible_playbill_line_dispatch",
+    "cruxible.settle": "cruxible_playbill_settle",
     "hand_edit": None,
 }
 _GOVERNED_WRITE_RUNG = 1
 #: Repairs whose served door writes nothing and so never meets the principal
 #: boundary; every other served repair is refused to a caller that cannot author.
-_AUTHORING_FREE_REPAIRS = frozenset({"playbill.floor.export"})
+_AUTHORING_FREE_REPAIRS = frozenset({"cruxible.floor.export"})
 
 
 def _tool_rung(tool: str) -> int:
@@ -978,7 +978,7 @@ _MAX_CONTEST_OPTIONS = 8
 
 
 def _restated_set(values: Mapping[str, object]) -> dict[str, object] | None:
-    """The set call a `playbill.set` repair names, from its arguments, or None."""
+    """The set call a `cruxible.set` repair names, from its arguments, or None."""
 
     subject, field, value = values.get("subject"), values.get("field"), values.get("value")
     if not isinstance(subject, str) or not isinstance(field, str):
@@ -1087,7 +1087,7 @@ def _restating_repair(
             arguments=dict(arguments),
         )
     return PlaybillNextRepairV1(
-        operation="playbill.set",
+        operation="cruxible.set",
         target=target,
         required_change=required_change,
         arguments={**arguments, **set_arguments},
@@ -1112,47 +1112,47 @@ def _mcp_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         value = values.get(key)
         return value if isinstance(value, str) and value else None
 
-    if operation == "playbill.line.arm" and text("line"):
+    if operation == "cruxible.line.arm" and text("line"):
         return _mcp_call("cruxible_playbill_line_arm", line=text("line"))
-    if operation == "playbill.line.dispatch" and text("line"):
+    if operation == "cruxible.line.dispatch" and text("line"):
         limit = values.get("limit")
         request = {"limit": limit} if isinstance(limit, int) and limit > 1 else {}
         return _mcp_call("cruxible_playbill_line_dispatch", line=text("line"), request=request)
-    if operation == "playbill.settle" and text("prediction_id"):
+    if operation == "cruxible.settle" and text("prediction_id"):
         # The observation is the settler's to choose: its Claim ID is the one
         # argument left to add.
         return _mcp_call("cruxible_playbill_settle", prediction_id=text("prediction_id"))
-    if operation == "playbill.authoring.create" and text("example") and not text("payload_file"):
+    if operation == "cruxible.authoring.create" and text("example") and not text("payload_file"):
         return _mcp_call("cruxible_playbill_authoring_example", name=text("example"))
-    if operation == "playbill.proposal.readmit" and text("proposal_id"):
+    if operation == "cruxible.proposal.readmit" and text("proposal_id"):
         return _mcp_call("cruxible_playbill_proposal_readmit", proposal_id=text("proposal_id"))
-    if operation == "playbill.proposal.approve" and text("proposal_id") and text("signer_id"):
+    if operation == "cruxible.proposal.approve" and text("proposal_id") and text("signer_id"):
         return _mcp_call(
             "cruxible_playbill_approve",
             proposal_id=text("proposal_id"),
             signer_id=text("signer_id"),
         )
-    if operation == "playbill.block.depublish" and text("source_id") and text("block_id"):
+    if operation == "cruxible.block.depublish" and text("source_id") and text("block_id"):
         return _mcp_call(
             "cruxible_playbill_block_depublish",
             source_id=text("source_id"),
             block_id=text("block_id"),
         )
-    if operation == "playbill.block.repin" and text("source_id") and text("block_id"):
+    if operation == "cruxible.block.repin" and text("source_id") and text("block_id"):
         return _mcp_call(
             "cruxible_playbill_block_repin", source=text("source_id"), block=text("block_id")
         )
-    if operation == "playbill.block.sync" and values.get("all") is True:
+    if operation == "cruxible.block.sync" and values.get("all") is True:
         return _mcp_call("cruxible_playbill_block_sync", all_sources=True)
-    if operation == "playbill.floor.export":
+    if operation == "cruxible.floor.export":
         return _mcp_call("cruxible_playbill_floor_export", mode="write")
-    if operation == "playbill.claim.retire" and text("claim_id"):
+    if operation == "cruxible.claim.retire" and text("claim_id"):
         # Why it ends is the retirer's to say: `because` is the argument left to add.
         return _mcp_call("cruxible_playbill_retire", target=text("claim_id"))
-    if operation == "playbill.set" and (restated := _restated_set(values)) is not None:
+    if operation == "cruxible.set" and (restated := _restated_set(values)) is not None:
         # `because` (and the file evidence a recapture needs) is the caller's to add.
         return _mcp_call("cruxible_playbill_set", **restated)
-    if operation == "playbill.write" and (changes := _write_changes(values)):
+    if operation == "cruxible.write" and (changes := _write_changes(values)):
         return _mcp_call("cruxible_playbill_write", changes=changes)
     return None
 
@@ -1205,32 +1205,32 @@ def _sdk_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
         value = values.get(key)
         return value if isinstance(value, str) and value else None
 
-    if operation == "playbill.line.arm" and (line := text("line")):
-        return _sdk_call("playbill.arm_line", line)
-    if operation == "playbill.line.dispatch" and (line := text("line")):
+    if operation == "cruxible.line.arm" and (line := text("line")):
+        return _sdk_call("cx.arm_line", line)
+    if operation == "cruxible.line.dispatch" and (line := text("line")):
         limit = values.get("limit")
         if isinstance(limit, int) and limit > 1:
-            return _sdk_call("playbill.dispatch_line", line, limit=limit)
-        return _sdk_call("playbill.dispatch_line", line)
-    if operation == "playbill.settle" and (prediction := text("prediction_id")):
-        return _sdk_call("playbill.settle", prediction)
-    if operation == "playbill.authoring.create" and not text("payload_file"):
+            return _sdk_call("cx.dispatch_line", line, limit=limit)
+        return _sdk_call("cx.dispatch_line", line)
+    if operation == "cruxible.settle" and (prediction := text("prediction_id")):
+        return _sdk_call("cx.settle", prediction)
+    if operation == "cruxible.authoring.create" and not text("payload_file"):
         example = text("example")
         return None if example is None else _sdk_call("authoring_example", example)
-    if operation == "playbill.proposal.approve" and (proposal := text("proposal_id")):
-        handle = _sdk_call("playbill.proposal", proposal)
+    if operation == "cruxible.proposal.approve" and (proposal := text("proposal_id")):
+        handle = _sdk_call("cx.proposal", proposal)
         return f"{handle}.approve(reviewed={handle}.review())"
-    if operation == "playbill.claim.retire" and (claim := text("claim_id")):
-        return _sdk_call("playbill.retire", claim)
-    if operation == "playbill.set" and (restated := _restated_set(values)) is not None:
+    if operation == "cruxible.claim.retire" and (claim := text("claim_id")):
+        return _sdk_call("cx.retire", claim)
+    if operation == "cruxible.set" and (restated := _restated_set(values)) is not None:
         subject, field, value = (restated.pop(key) for key in ("subject", "field", "value"))
-        return _sdk_call("playbill.set", subject, field, value, **restated)
-    if operation == "playbill.write":
+        return _sdk_call("cx.set", subject, field, value, **restated)
+    if operation == "cruxible.write":
         changes = _write_changes(values)
         if len(changes) == 1 and changes[0].get("op") == "retire":
-            return _sdk_call("playbill.retire", changes[0]["target"])
+            return _sdk_call("cx.retire", changes[0]["target"])
         return None
-    if operation == "playbill.block.repin" and (source := text("source_id")):
+    if operation == "cruxible.block.repin" and (source := text("source_id")):
         block = text("block_id")
         if block is None:
             return None
@@ -1240,10 +1240,10 @@ def _sdk_repair_call(operation: NextRepairOperation, *, arguments: object) -> st
             value.removeprefix("Claim:") for value in named if isinstance(value, str) and value
         ]
         if claims:
-            return _sdk_call("playbill.block.repin", source, block, claims=claims)
-        return _sdk_call("playbill.block.repin", source, block)
-    if operation == "playbill.block.sync" and values.get("all") is True:
-        return _sdk_call("playbill.block.sync", all=True)
+            return _sdk_call("cx.block.repin", source, block, claims=claims)
+        return _sdk_call("cx.block.repin", source, block)
+    if operation == "cruxible.block.sync" and values.get("all") is True:
+        return _sdk_call("cx.block.sync", all=True)
     return None
 
 
@@ -1263,7 +1263,7 @@ def _repair_command(
         return _sdk_repair_call(operation, arguments=arguments)
     parts = ["cruxible", _REPAIR_COMMAND_PATHS[operation]]
     values = arguments if isinstance(arguments, Mapping) else {}
-    if operation == "playbill.block.repin":
+    if operation == "cruxible.block.repin":
         source_id = values.get("source_id")
         block_id = values.get("block_id")
         if isinstance(source_id, str) and isinstance(block_id, str):
@@ -1278,39 +1278,39 @@ def _repair_command(
             for value in claims:
                 if isinstance(value, str) and value:
                     parts.extend(["--claim", shlex.quote(value.removeprefix("Claim:"))])
-    elif operation == "playbill.block.depublish":
+    elif operation == "cruxible.block.depublish":
         source_id = values.get("source_id")
         block_id = values.get("block_id")
         if isinstance(source_id, str) and isinstance(block_id, str):
             parts.extend([shlex.quote(source_id), shlex.quote(block_id)])
         else:
             return None
-    elif operation == "playbill.block.sync":
+    elif operation == "cruxible.block.sync":
         if values.get("all") is True:
             parts.append("--all")
         else:
             return None
-    elif operation == "playbill.authoring.create" and not values.get("payload_file"):
+    elif operation == "cruxible.authoring.create" and not values.get("payload_file"):
         # With no payload in hand the runnable step is the template that
         # starts one; a bare `authoring create` refuses as a usage error.
         example = values.get("example")
         if isinstance(example, str) and example:
             parts.extend(["--example", shlex.quote(example)])
-    elif operation == "playbill.compiler.upgrade":
+    elif operation == "cruxible.compiler.upgrade":
         target = values.get("to")
         name = values.get("name")
         if not isinstance(target, str) or not isinstance(name, str):
             return None
         parts.extend(["--to", shlex.quote(target), "--name", shlex.quote(name)])
-    elif operation in {"playbill.line.arm", "playbill.line.dispatch"}:
+    elif operation in {"cruxible.line.arm", "cruxible.line.dispatch"}:
         line = values.get("line")
         limit = values.get("limit")
         if not isinstance(line, str) or not line:
             return None
         parts.append(shlex.quote(line))
-        if operation == "playbill.line.dispatch" and isinstance(limit, int) and limit > 1:
+        if operation == "cruxible.line.dispatch" and isinstance(limit, int) and limit > 1:
             parts.extend(["--limit", str(limit)])
-    elif operation == "playbill.settle":
+    elif operation == "cruxible.settle":
         # The daemon resolves the exact contract and window from the bound
         # window id; the observation is the settler's to choose, so its Claim
         # ID is the one operand left to add (`--observation CLM-...`).
@@ -1318,12 +1318,12 @@ def _repair_command(
         if not isinstance(prediction_id, str) or not prediction_id:
             return None
         parts.append(shlex.quote(prediction_id))
-    elif operation == "playbill.proposal.readmit":
+    elif operation == "cruxible.proposal.readmit":
         proposal_id = values.get("proposal_id")
         if not isinstance(proposal_id, str):
             return None
         parts.append(shlex.quote(proposal_id))
-    elif operation == "playbill.proposal.approve":
+    elif operation == "cruxible.proposal.approve":
         # The signing key stays in the signer's client custody; the daemon
         # never learns its path, so `--key` is the one operand left to add.
         proposal_id = values.get("proposal_id")
@@ -1331,7 +1331,7 @@ def _repair_command(
         if not isinstance(proposal_id, str) or not isinstance(signer_id, str):
             return None
         parts.extend([shlex.quote(proposal_id), "--signer-id", shlex.quote(signer_id)])
-    elif operation == "playbill.set":
+    elif operation == "cruxible.set":
         restated = _restated_set(values)
         if restated is None:
             return None
@@ -1344,12 +1344,12 @@ def _repair_command(
         evidence = restated.get("evidence")
         if isinstance(evidence, Mapping) and isinstance(evidence.get("capture"), str):
             parts.extend(["--capture", shlex.quote(str(evidence["capture"]))])
-    elif operation == "playbill.write":
+    elif operation == "cruxible.write":
         changes = _write_changes(values)
         if len(changes) != 1 or changes[0].get("op") != "retire":
             return None
         return f"cruxible playbill retire {shlex.quote(str(changes[0]['target']))}"
-    elif operation == "playbill.claim.retire":
+    elif operation == "cruxible.claim.retire":
         # Why it ends is the retirer's to say: `--because` is the operand left to add.
         claim_id = values.get("claim_id")
         if not isinstance(claim_id, str) or not claim_id:
@@ -1392,7 +1392,7 @@ def _item(
     command = _repair_command(repair.operation, arguments=repair.arguments, surface=surface)
     example = (
         _ATTESTATION_REPAIR_EXAMPLES.get(repair.required_change)
-        if repair.operation == "playbill.authoring.create"
+        if repair.operation == "cruxible.authoring.create"
         else None
     )
     if example is not None and isinstance(repair.arguments, Mapping):
@@ -2378,7 +2378,7 @@ def _claim_attestation_threshold_items(
                     # other threshold is resolved by stating it again.
                     repair=(
                         PlaybillNextRepairV1(
-                            operation="playbill.claim.retire",
+                            operation="cruxible.claim.retire",
                             target=claim.identity.qualified,
                             required_change="resolve_attestation_threshold",
                             arguments={
@@ -2388,7 +2388,7 @@ def _claim_attestation_threshold_items(
                         )
                         if rule.stance == "contradict"
                         else _restating_repair(
-                            "playbill.authoring.create",
+                            "cruxible.authoring.create",
                             target=claim.identity.qualified,
                             required_change="resolve_attestation_threshold",
                             arguments={
@@ -2494,7 +2494,7 @@ def _claim_items(
                 # A contest wider than the row's bound keeps the authoring door.
                 repair=(
                     PlaybillNextRepairV1(
-                        operation="playbill.write",
+                        operation="cruxible.write",
                         target=subject,
                         required_change="revise_claims_into_distinct_qualifiers",
                         arguments={
@@ -2514,7 +2514,7 @@ def _claim_items(
                     )
                     if len(identities) <= _MAX_CONTEST_OPTIONS
                     else PlaybillNextRepairV1(
-                        operation="playbill.authoring.create",
+                        operation="cruxible.authoring.create",
                         target=subject,
                         required_change="revise_claims_into_distinct_qualifiers",
                         arguments=arguments,
@@ -2569,7 +2569,7 @@ def _claim_items(
                             "verdict": verdict.verdict,
                         },
                         repair=_restating_repair(
-                            "playbill.authoring.bind",
+                            "cruxible.authoring.bind",
                             target=claim.identity.qualified,
                             required_change="recapture_expired_evidence",
                             arguments={"claim_id": claim.identity.name},
@@ -2617,7 +2617,7 @@ def _claim_items(
                                 "predicate": claim.statement.predicate,
                             },
                             repair=_restating_repair(
-                                "playbill.authoring.bind",
+                                "cruxible.authoring.bind",
                                 target=claim.identity.qualified,
                                 required_change="recapture_expiring_evidence",
                                 arguments={"claim_id": claim.identity.name},
@@ -2653,7 +2653,7 @@ def _claim_items(
                         ),
                     },
                     repair=_restating_repair(
-                        "playbill.authoring.bind",
+                        "cruxible.authoring.bind",
                         target=claim.identity.qualified,
                         required_change="add_admissible_evidence",
                         arguments={"claim_id": claim.identity.name},
@@ -3185,7 +3185,7 @@ def _claim_attestation_door_items(
                     # Each door example revises the Claim citing this Capture as
                     # evidence: the `set` of its field with capture evidence.
                     repair=_restating_repair(
-                        "playbill.authoring.create",
+                        "cruxible.authoring.create",
                         target=statement.claim_identity.qualified,
                         required_change=required_change,
                         arguments={
@@ -3321,7 +3321,7 @@ def _claim_dependency_items(
                 related_identities=related,
                 detail={"stale_inputs": stale_inputs},
                 repair=PlaybillNextRepairV1(
-                    operation="playbill.authoring.create",
+                    operation="cruxible.authoring.create",
                     target=identity,
                     required_change="reauthor_claim_from_current_inputs",
                     arguments={"claim_id": identity.removeprefix("Claim:")},
@@ -3493,7 +3493,7 @@ def _citation_unobserved_item(
             **collapsed_detail,
         },
         repair=_restating_repair(
-            "playbill.authoring.bind",
+            "cruxible.authoring.bind",
             target=commitment.claim_identity,
             required_change="observe_cited_source",
             arguments={
@@ -3572,7 +3572,7 @@ def _citation_drift_item(
         detail=detail,
         repair=(
             PlaybillNextRepairV1(
-                operation="playbill.claim.retire",
+                operation="cruxible.claim.retire",
                 target=commitment.claim_identity,
                 required_change="retire_claim_with_attribution",
                 arguments={
@@ -3582,7 +3582,7 @@ def _citation_drift_item(
             )
             if gone
             else _restating_repair(
-                "playbill.authoring.bind",
+                "cruxible.authoring.bind",
                 target=commitment.claim_identity,
                 required_change="adjudicate_citation_drift",
                 arguments={
@@ -3631,7 +3631,7 @@ def _workspace_items(
                         "reported_status": status,
                     },
                     repair=PlaybillNextRepairV1(
-                        operation="playbill.floor.export",
+                        operation="cruxible.floor.export",
                         target=instance.descriptor.instance_id,
                         required_change="replace_installed_floor",
                         arguments={},
@@ -3863,7 +3863,7 @@ def _prediction_items(
                     "anchor_event": event,
                 },
                 repair=PlaybillNextRepairV1(
-                    operation="playbill.settle",
+                    operation="cruxible.settle",
                     target=subject,
                     required_change=(
                         "settle_with_the_claim_id_of_an_accepted_observation_in_its_window"
@@ -3974,7 +3974,7 @@ def _compiler_health(instance: PlaybillInstance) -> PlaybillNextHealthV1:
         return PlaybillNextHealthV1(state="no_upgrade_path", detail=detail)
     revision = COMPILER_REVISION_LABELS.get(running) or running.rule_digest.removeprefix("sha256:")
     upgrade = PlaybillNextRepairV1(
-        operation="playbill.compiler.upgrade",
+        operation="cruxible.compiler.upgrade",
         target=instance.descriptor.instance_id,
         required_change="propose_approve_and_activate_the_compiler_upgrade",
         arguments={"to": running.rule_digest, "name": f"upgrade-to-{revision[:64]}"},
@@ -4057,7 +4057,7 @@ def _line_dispatch_health(
         return PlaybillNextHealthV1(state="waiting", detail=detail)
     _oldest, line_id, due = min(due_lines)
     dispatch = PlaybillNextRepairV1(
-        operation="playbill.line.dispatch",
+        operation="cruxible.line.dispatch",
         target=line_id,
         required_change="dispatch_the_due_line_occurrences",
         arguments={"line": line_id, "limit": min(due, _LINE_DISPATCH_LIMIT)},
@@ -4117,7 +4117,7 @@ def _triggers_health(
         message="; ".join(f"no trigger schedules {action}" for action in unscheduled),
     )
     author = PlaybillNextRepairV1(
-        operation="playbill.authoring.create",
+        operation="cruxible.authoring.create",
         target=unscheduled[0],
         required_change=(
             "author_a_trigger_aimed_at_the_unscheduled_action"
@@ -4282,7 +4282,7 @@ def _floor_health(
         "reported_status": status,
     }
     export = PlaybillNextRepairV1(
-        operation="playbill.floor.export",
+        operation="cruxible.floor.export",
         target=instance.descriptor.instance_id,
         required_change="replace_installed_floor",
         arguments={},
@@ -4364,7 +4364,7 @@ def _document_items(
                     "observed_source_digest": source.observed_source_digest,
                 },
                 repair=PlaybillNextRepairV1(
-                    operation="playbill.document.propose",
+                    operation="cruxible.document.propose",
                     target=identity,
                     required_change="repropose_modified_document",
                     arguments={
@@ -4437,7 +4437,7 @@ def _proposal_items(
                 related_identities=(proposal.target_ref,),
                 detail=detail,
                 repair=PlaybillNextRepairV1(
-                    operation="playbill.proposal.readmit",
+                    operation="cruxible.proposal.readmit",
                     target=proposal.proposal_id,
                     required_change=required_change,
                     arguments={"proposal_id": proposal.proposal_id},
@@ -4489,7 +4489,7 @@ def _approval_items(
                 "target_ref": proposal.target_ref,
             },
             repair=PlaybillNextRepairV1(
-                operation="playbill.proposal.approve",
+                operation="cruxible.proposal.approve",
                 target=proposal.proposal_id,
                 required_change="review_and_approve_the_candidate_with_your_signing_key",
                 arguments={
@@ -4559,7 +4559,7 @@ def _mandate_items(
                         "expires_at": format_datetime(mandate.expires_at),
                     },
                     repair=PlaybillNextRepairV1(
-                        operation="playbill.authoring.create",
+                        operation="cruxible.authoring.create",
                         target=identity,
                         required_change="author_a_successor_mandate_or_retire_it",
                         arguments={
@@ -4629,7 +4629,7 @@ def _projection_marker_invalid_item(
     target = f"{source_id}#{block_id}" if block_id is not None else source_id
     detail: dict[str, str] = {
         "source_id": source_id,
-        "error_code": "playbill.projection.marker_invalid",
+        "error_code": "cruxible.projection.marker_invalid",
         "marker_status": marker_status,
     }
     arguments = {"source_id": source_id}
@@ -4649,9 +4649,9 @@ def _projection_marker_invalid_item(
         detail=detail,
         repair=PlaybillNextRepairV1(
             operation=(
-                "playbill.block.depublish"
+                "cruxible.block.depublish"
                 if marker_status == "registered_marker_missing"
-                else "playbill.block.repin"
+                else "cruxible.block.repin"
             ),
             target=target,
             required_change=(
@@ -4765,7 +4765,7 @@ def _projection_items(
                         # it. Removing the marker is the other road, and the
                         # required change still names both.
                         repair=PlaybillNextRepairV1(
-                            operation="playbill.block.repin",
+                            operation="cruxible.block.repin",
                             target=target,
                             required_change="remove_or_register_projection_block",
                             arguments={
@@ -4821,7 +4821,7 @@ def _projection_items(
                             "currency_policy": marker.stamp.currency_policy,
                         },
                         repair=PlaybillNextRepairV1(
-                            operation="playbill.block.repin",
+                            operation="cruxible.block.repin",
                             target=target,
                             required_change="restore_dependency_check_then_review_and_repin",
                             arguments=arguments,
@@ -4842,7 +4842,7 @@ def _projection_items(
                             "observed_body_digest": marker.observed_body_digest,
                         },
                         repair=PlaybillNextRepairV1(
-                            operation="playbill.block.repin",
+                            operation="cruxible.block.repin",
                             target=target,
                             required_change="verify_alignment_then_repin_or_edit",
                             arguments=arguments,
@@ -4887,14 +4887,14 @@ def _projection_items(
                         # the marker leaves the page.
                         repair=(
                             PlaybillNextRepairV1(
-                                operation="playbill.block.depublish",
+                                operation="cruxible.block.depublish",
                                 target=target,
                                 required_change=f"depublish_{change}_backing_block",
                                 arguments=arguments,
                             )
                             if exhausted
                             else PlaybillNextRepairV1(
-                                operation="playbill.block.repin",
+                                operation="cruxible.block.repin",
                                 target=target,
                                 required_change=f"drop_the_{change}_backing_then_repin",
                                 arguments={
@@ -4930,7 +4930,7 @@ def _projection_items(
                         # member that moved is answered by reading the prose
                         # against the new state and re-stamping the list.
                         repair=PlaybillNextRepairV1(
-                            operation="playbill.block.repin",
+                            operation="cruxible.block.repin",
                             target=target,
                             required_change="review_block_supersede_prose_then_repin",
                             arguments=arguments,
@@ -4961,7 +4961,7 @@ class _CallerView:
 
     def _required_rung(self, repair: PlaybillNextRepairV1, tool: str) -> int:
         static = _tool_rung(tool)
-        if repair.operation != "playbill.line.dispatch":
+        if repair.operation != "cruxible.line.dispatch":
             return static
         # A Line dispatch's tier is the Line's own: an observe-only Line
         # dispatches at read, one whose runs propose or settle at governed write.

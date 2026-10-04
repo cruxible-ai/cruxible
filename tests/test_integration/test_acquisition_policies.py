@@ -163,7 +163,7 @@ def test_bounded_window_and_current_replay_are_reverified(tmp_path: Path) -> Non
         evaluation_time=NOW + timedelta(seconds=31),
     )
     assert replay_refusal.verdict == "refused"
-    assert "playbill.acquisition.replay_unavailable" in {
+    assert "cruxible.acquisition.replay_unavailable" in {
         reason for item in replay_refusal.decisions for reason in item.reason_codes
     }
     replayable_risk = risk.model_copy(update={"current_replay_available": True})
@@ -174,7 +174,7 @@ def test_bounded_window_and_current_replay_are_reverified(tmp_path: Path) -> Non
         evaluation_time=NOW + timedelta(seconds=31),
     )
     assert skew_refusal.verdict == "refused"
-    assert "playbill.acquisition.cross_source_skew" in {
+    assert "cruxible.acquisition.cross_source_skew" in {
         reason for item in skew_refusal.decisions for reason in item.reason_codes
     }
 
@@ -223,7 +223,7 @@ def test_declared_snapshot_requires_registered_components_and_exact_group(tmp_pa
         predecessor=None,
     )
     assert refused.diagnostics[0].code == (
-        "playbill.acquisition_policy.snapshot_registry_unresolved"
+        "cruxible.acquisition_policy.snapshot_registry_unresolved"
     )
 
     orders = _candidate(tmp_path, name="orders").model_copy(
@@ -248,6 +248,6 @@ def test_declared_snapshot_requires_registered_components_and_exact_group(tmp_pa
         evaluation_time=NOW + timedelta(seconds=2),
     )
     assert mismatched.verdict == "refused"
-    assert "playbill.acquisition.snapshot_group_unproved" in {
+    assert "cruxible.acquisition.snapshot_group_unproved" in {
         reason for item in mismatched.decisions for reason in item.reason_codes
     }

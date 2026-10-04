@@ -92,10 +92,10 @@ def test_get_serves_cards_details_and_coded_refusals(
 
     assert missing.status_code == 404, missing.text
     refusal = missing.json()
-    assert refusal["error_code"] == "playbill.get.ref_not_found"
+    assert refusal["error_code"] == "cruxible.get.ref_not_found"
     assert refusal["context"]["candidates"] == ["Document:design"]
     assert refusal["repair"] == {
-        "operation": "playbill.get",
+        "operation": "cruxible.get",
         "arguments": {"ref": "Document:design"},
     }
     assert "nearest: Document:design" in refusal["message"]
@@ -105,7 +105,7 @@ def test_get_serves_cards_details_and_coded_refusals(
     assert why.status_code == 200, why.text
     assert why.json()["why"]["source_mapping"] is not None
     assert unsupported.status_code == 400, unsupported.text
-    assert unsupported.json()["error_code"] == "playbill.get.detail_unsupported"
+    assert unsupported.json()["error_code"] == "cruxible.get.detail_unsupported"
     assert unsupported.json()["context"]["allowed"] == [
         "summary",
         "why",

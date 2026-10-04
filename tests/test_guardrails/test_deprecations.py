@@ -50,7 +50,7 @@ def test_removed_050_surfaces_are_absent_from_code_and_registry() -> None:
         "legacy outcome record functions",
         "legacy outcome profile functions",
         "ProcedureTransitionResult.warnings string list",
-        "playbill.claim.propose.legacy_wire_deprecated",
+        "cruxible.claim.propose.legacy_wire_deprecated",
     }
     assert {notice.surface for notice in DEPRECATION_REGISTRY} & removed_050_surfaces == set()
 

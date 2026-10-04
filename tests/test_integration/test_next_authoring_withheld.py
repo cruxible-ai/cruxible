@@ -28,7 +28,7 @@ from tests.test_integration.test_next_caller_view import (
 )
 
 UNBOUND = AuthoringRefusal(
-    code="playbill.identity.credential_unbound",
+    code="cruxible.identity.credential_unbound",
     detail="this bearer credential (manager) acts as no principal; repair: mint one",
     repair=RepairOperation(
         operation="credential.mint", arguments={"unbound_credential_id": "cred-1"}
@@ -77,7 +77,7 @@ def test_the_identity_gate_joins_the_tier_and_profile_gates() -> None:
     assert kept.repair_requires is not None
     assert kept.repair_requires.because == ("tier", "profile", "authoring")
     dumped = kept.repair_requires.model_dump(mode="json")
-    assert dumped["authoring_refusal"]["code"] == "playbill.identity.credential_unbound"
+    assert dumped["authoring_refusal"]["code"] == "cruxible.identity.credential_unbound"
     # The served model reads it back.
     served = contracts.NextRepairRequirement.model_validate(dumped)
     assert served.authoring_refusal is not None
@@ -95,7 +95,7 @@ def test_a_caller_that_can_author_keeps_every_repair_it_has_the_tier_for() -> No
 
 def test_a_repair_that_writes_nothing_is_never_withheld_for_authoring() -> None:
     floor = PlaybillNextRepairV1.model_construct(
-        operation="playbill.floor.export", target="Instance:x", required_change="x", arguments={}
+        operation="cruxible.floor.export", target="Instance:x", required_change="x", arguments={}
     )
 
     assert _view().requirement(floor) is None
@@ -103,7 +103,7 @@ def test_a_repair_that_writes_nothing_is_never_withheld_for_authoring() -> None:
 
 def test_the_requirement_names_the_refusal_exactly_when_authoring_gates_it() -> None:
     base: dict[str, Any] = {
-        "operation": "playbill.set",
+        "operation": "cruxible.set",
         "tool": "cruxible_playbill_set",
         "tier": "governed_write",
     }
@@ -120,7 +120,7 @@ def test_the_cli_hint_leads_with_the_identity_repair() -> None:
 
     requires = contracts.NextRepairRequirement.model_validate(
         PlaybillNextRepairRequirementV1(
-            operation="playbill.set",
+            operation="cruxible.set",
             tool="cruxible_playbill_set",
             tier="governed_write",
             because=("tier", "authoring"),
@@ -131,17 +131,17 @@ def test_the_cli_hint_leads_with_the_identity_repair() -> None:
     hint = _next_requirement_hint(requires)
 
     assert hint.startswith("cruxible_playbill_set needs a caller that can author")
-    assert "playbill.identity.credential_unbound" in hint and "mint one" in hint
+    assert "cruxible.identity.credential_unbound" in hint and "mint one" in hint
     assert hint.endswith("and the governed_write tier")
 
 
 @pytest.mark.parametrize(
     ("code", "passed"),
     [
-        ("playbill.identity.credential_unbound", True),
-        ("playbill.identity.principal_absent", True),
+        ("cruxible.identity.credential_unbound", True),
+        ("cruxible.identity.principal_absent", True),
         # The tier is next's own gate; whoami's tier refusal is not repeated.
-        ("playbill.identity.permission_insufficient", False),
+        ("cruxible.identity.permission_insufficient", False),
     ],
 )
 def test_the_runtime_passes_whoamis_refusal_less_the_tier(

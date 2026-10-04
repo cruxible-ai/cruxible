@@ -163,7 +163,7 @@ def _assert_refusal(
             actor_id="owner",
             recorded_at=RECORDED_AT,
         )
-    assert error.value.error_code == f"playbill.claim_attestation.{code}"
+    assert error.value.error_code == f"cruxible.claim_attestation.{code}"
 
 
 def test_served_append_verifies_and_duplicate_is_an_identical_read(
@@ -205,7 +205,7 @@ def test_served_append_refuses_actor_relay_before_store_disclosure(tmp_path: Pat
             recorded_at=RECORDED_AT,
         )
 
-    assert error.value.error_code == "playbill.claim_attestation.actor_signer_mismatch"
+    assert error.value.error_code == "cruxible.claim_attestation.actor_signer_mismatch"
 
 
 def test_served_append_refuses_an_invalid_signature_with_exact_code(tmp_path: Path) -> None:
@@ -714,7 +714,7 @@ def test_next_v2_reads_one_exact_evidence_head_while_v1_stays_legacy(
     assert rows[0].detail["lineage_status"] == "proven"
     # The door example revises the Claim citing the Capture: the set verb, on
     # every profile, with the Capture as evidence.
-    assert rows[0].repair.operation == "playbill.set"
+    assert rows[0].repair.operation == "cruxible.set"
     assert rows[0].repair.arguments["claim_id"] == claim_id
     assert rows[0].repair.command.endswith(f"--capture {capture.capture_digest}")
 

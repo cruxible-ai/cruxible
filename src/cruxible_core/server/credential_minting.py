@@ -159,7 +159,7 @@ def _principal_authority(
             "principals hold credentials; repair: mint for an ordinary principal "
             "(`cruxible playbill orient --section principals`)",
             repair=RepairOperation(
-                operation="playbill.orient", arguments={"section": "principals"}
+                operation="cruxible.orient", arguments={"section": "principals"}
             ),
         )
     if principal_proof is not None:

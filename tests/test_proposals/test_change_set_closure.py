@@ -191,7 +191,7 @@ def test_three_way_rebase_drops_noop_and_reports_all_exact_conflict_digests() ->
 
     assert tuple(item.path for item in result.conflicts) == ("documents/a.json",)
     conflict = result.conflicts[0]
-    assert conflict.code == "playbill.rebase.member_conflict"
+    assert conflict.code == "cruxible.rebase.member_conflict"
     assert conflict.old_parent_digest is not None
     assert conflict.proposed_digest is not None
     assert conflict.new_parent_digest is not None
@@ -253,7 +253,7 @@ def test_multi_member_malformed_artifact_is_a_typed_refusal(tmp_path: Path) -> N
     assert evaluation.candidate is None
     # The refusal is the ClaimType kind's own, which the one evaluator now states
     # for a malformed member wherever it appears -- alone or beside others.
-    assert [item.code for item in evaluation.diagnostics] == ["playbill.claim_type.format_invalid"]
+    assert [item.code for item in evaluation.diagnostics] == ["cruxible.claim_type.format_invalid"]
 
 
 def test_claim_type_rebase_reports_exact_conflict_evidence_and_no_candidate(
@@ -293,7 +293,7 @@ def test_claim_type_rebase_reports_exact_conflict_evidence_and_no_candidate(
     )
 
     assert evaluation.candidate is None
-    assert [item.code for item in evaluation.diagnostics] == ["playbill.rebase.member_conflict"]
+    assert [item.code for item in evaluation.diagnostics] == ["cruxible.rebase.member_conflict"]
     assert "old_parent_digest" in evaluation.diagnostics[0].message
     assert "new_parent_digest" in evaluation.diagnostics[0].message
     assert "proposed_digest" in evaluation.diagnostics[0].message

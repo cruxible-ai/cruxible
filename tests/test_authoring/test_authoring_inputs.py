@@ -156,7 +156,7 @@ def test_existing_capture_input_requires_an_explicit_admitted_citation_role() ->
     with pytest.raises(AuthoringInputError) as raised:
         lower_authoring_input(input_value)
 
-    assert raised.value.code == "playbill.authoring.existing_capture_not_admitted"
+    assert raised.value.code == "cruxible.authoring.existing_capture_not_admitted"
     assert raised.value.field_path == "input.citation_role"
 
 
@@ -176,7 +176,7 @@ def test_friendly_change_set_sorts_members_and_typed_refuses_duplicate_identity(
         lower_authoring_input(
             ChangeSetInput(kind="change_set", members=(query, query)),
         )
-    assert raised.value.code == "playbill.authoring.change_set_duplicate_identity"
+    assert raised.value.code == "cruxible.authoring.change_set_duplicate_identity"
     assert raised.value.field_path == "input.members"
 
 
@@ -195,7 +195,7 @@ def test_input_compile_typed_refuses_a_terminal_v3_claim_with_v2_backing(
 
     assert result.verdict == "refused"
     assert [item.code for item in result.frontier.diagnostics] == [
-        "playbill.authoring.claim_terminal"
+        "cruxible.authoring.claim_terminal"
     ]
 
 
@@ -354,7 +354,7 @@ def test_claim_type_example_is_tagless_and_source_intent_is_lint_only(
     assert "identity" not in json.loads(encoded)
     assert "evidence_freshness" not in json.loads(encoded)
     assert lint.warnings[0].code == (
-        "playbill.claim_type.evidence_policy_admits_no_accepted_contract"
+        "cruxible.claim_type.evidence_policy_admits_no_accepted_contract"
     )
 
     source_intent = ClaimTypeInputRecord.model_validate(
@@ -430,7 +430,7 @@ def test_dead_direct_self_asserted_profile_remains_an_unresolved_contract(
     )
 
     assert [item.code for item in lint.warnings] == [
-        "playbill.claim_type.evidence_policy_admits_no_accepted_contract"
+        "cruxible.claim_type.evidence_policy_admits_no_accepted_contract"
     ]
 
 
@@ -594,7 +594,7 @@ def test_empty_claim_type_policy_warns_when_an_accepted_capture_contract_exists(
 
     assert len(lint.warnings) == 1
     warning = lint.warnings[0]
-    assert warning.code == "playbill.claim_type.evidence_policy_admits_no_accepted_contract"
+    assert warning.code == "cruxible.claim_type.evidence_policy_admits_no_accepted_contract"
     assert warning.field_path == "$.evidence_admission_policy.rules"
     assert warning.replacement_rule_fragment["capture_contract_digests"] == [
         warning.contract_digest
@@ -622,7 +622,7 @@ def test_claim_type_source_intent_produces_an_actionable_per_source_warning(
     source_warning = next(
         item
         for item in lint.warnings
-        if item.code == "playbill.claim_type.anticipated_source_contract_omitted"
+        if item.code == "cruxible.claim_type.anticipated_source_contract_omitted"
     )
     assert source_warning.source_id == "corpus.runbook"
     assert source_warning.contract_identity.endswith("corpus.runbook")
@@ -681,11 +681,11 @@ def test_a_procedure_input_names_its_acquisition_policy_and_lowering_owns_the_di
 
     assert result.verdict == "refused"
     diagnostics = {item.code for item in result.frontier.diagnostics}
-    assert "playbill.authoring.artifact_reference_unresolved" in diagnostics
+    assert "cruxible.authoring.artifact_reference_unresolved" in diagnostics
     offending = {
         item.offending_element
         for item in result.frontier.diagnostics
-        if item.code == "playbill.authoring.artifact_reference_unresolved"
+        if item.code == "cruxible.authoring.artifact_reference_unresolved"
     }
     assert offending == {"acquisition_policy"}
 
@@ -718,7 +718,7 @@ def test_a_zero_attestation_threshold_lints_as_a_disabled_rule(tmp_path: Path) -
     )
 
     (warning,) = result.lint.warnings
-    assert warning.code == "playbill.claim_type.attestation_threshold_disabled"
+    assert warning.code == "cruxible.claim_type.attestation_threshold_disabled"
     assert warning.field_path == (
         "$.attestation_consequence_policy.rules[0].minimum_independent_control_components"
     )

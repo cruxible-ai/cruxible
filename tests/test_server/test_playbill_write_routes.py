@@ -72,7 +72,7 @@ def test_expect_travels_on_every_write_route(
         "set",
         {"subject": WI1, "field": "status", "value": "done", "because": "x", "expect": "blocked"},
     )
-    assert stale["refusal"]["code"] == "playbill.write.slot_changed", stale
+    assert stale["refusal"]["code"] == "cruxible.write.slot_changed", stale
     assert stale["refusal"]["field_path"] == "changes[0].expect"
     added = post(
         "write",
@@ -131,7 +131,7 @@ def test_the_write_route_takes_a_default_subject(
         f"{base}/write",
         json={"because": "x", "changes": [{"op": "set", "field": "status", "value": "done"}]},
     ).json()
-    assert orphan["refusal"]["code"] == "playbill.write.subject_required", orphan
+    assert orphan["refusal"]["code"] == "cruxible.write.subject_required", orphan
 
 
 def test_capture_handles_and_contract_evidence_over_http(
@@ -209,7 +209,7 @@ def test_a_refused_write_is_an_outcome_and_a_malformed_one_is_a_422(
     assert refused.status_code == 200, refused.text
     body = refused.json()
     assert body["status"] == "would_refuse"
-    assert body["refusal"]["code"] == "playbill.write.value_not_member"
+    assert body["refusal"]["code"] == "cruxible.write.value_not_member"
     assert "blocked, done, ready" in body["refusal"]["message"]
 
     malformed = client.post(f"{base}/write", json={"because": "x", "changes": []})
@@ -286,7 +286,7 @@ def test_a_cold_write_preview_opens_its_instance_behind_the_guards(
             [tmp_path], lambda: client.post(f"{base}/set", json=body, headers=headers)
         )
         assert refused.status_code == 409, refused.text
-        assert refused.json()["error_code"] == "playbill.preview.recovery_pending"
+        assert refused.json()["error_code"] == "cruxible.preview.recovery_pending"
         assert not serving.exists()
         client.get(f"{base}/head")  # an ordinary read repairs it
         assert serving.exists()

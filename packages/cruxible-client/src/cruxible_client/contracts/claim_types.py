@@ -627,7 +627,7 @@ def _v7_law_refusal(claim_type: ClaimType, *, path: str) -> CompilerDiagnostic |
     role = claim_type.default_role
     if role is not None and (role == "derivation" or role not in claim_type.permitted_roles):
         return _diagnostic(
-            "playbill.claim_type.default_role_not_permitted",
+            "cruxible.claim_type.default_role_not_permitted",
             f"default_role {role!r} must be one of the permitted roles "
             f"({', '.join(claim_type.permitted_roles)}) and cannot be derivation.",
             path=path,
@@ -642,7 +642,7 @@ def _v7_law_refusal(claim_type: ClaimType, *, path: str) -> CompilerDiagnostic |
         )
         if not declared:
             return _diagnostic(
-                "playbill.claim_type.evidence_requirement_unsatisfiable",
+                "cruxible.claim_type.evidence_requirement_unsatisfiable",
                 "evidence_requirement 'captured' needs an evidence rule naming a declared "
                 "CaptureContract; every rule names only the Claim's own words.",
                 path=path,
@@ -651,7 +651,7 @@ def _v7_law_refusal(claim_type: ClaimType, *, path: str) -> CompilerDiagnostic |
         claim_type.resolution_policy.required_basis_kinds
     ).issubset({"origin_only"}):
         return _diagnostic(
-            "playbill.claim_type.evidence_requirement_unsatisfiable",
+            "cruxible.claim_type.evidence_requirement_unsatisfiable",
             "evidence_requirement 'none' supports a Claim on its origin alone, so "
             "resolution_policy.required_basis_kinds may name only origin_only.",
             path=path,
@@ -673,7 +673,7 @@ def evaluate_claim_type_law(
     except ClaimTypeFormatError as exc:
         return ClaimTypeLawResult(
             verdict="refused",
-            diagnostics=(_diagnostic("playbill.claim_type.path_mismatch", str(exc), path=path),),
+            diagnostics=(_diagnostic("cruxible.claim_type.path_mismatch", str(exc), path=path),),
         )
     if claim_type.artifact_format == "playbill-claim-type-v7":
         refusal = _v7_law_refusal(claim_type, path=path)
@@ -687,7 +687,7 @@ def evaluate_claim_type_law(
                     verdict="refused",
                     diagnostics=(
                         _diagnostic(
-                            "playbill.claim_type.pin_unresolved",
+                            "cruxible.claim_type.pin_unresolved",
                             "A ClaimType pin does not resolve at the accepted parent coordinate.",
                             path=path,
                         ),
@@ -700,7 +700,7 @@ def evaluate_claim_type_law(
                 verdict="refused",
                 diagnostics=(
                     _diagnostic(
-                        "playbill.claim_type.unexpected_predecessor",
+                        "cruxible.claim_type.unexpected_predecessor",
                         "A new ClaimType must begin live without a predecessor.",
                         path=path,
                     ),
@@ -713,7 +713,7 @@ def evaluate_claim_type_law(
                 verdict="refused",
                 diagnostics=(
                     _diagnostic(
-                        "playbill.claim_type.predecessor_identity_mismatch",
+                        "cruxible.claim_type.predecessor_identity_mismatch",
                         "The live predecessor has a different ClaimType identity.",
                         path=path,
                     ),
@@ -724,7 +724,7 @@ def evaluate_claim_type_law(
                 verdict="refused",
                 diagnostics=(
                     _diagnostic(
-                        "playbill.claim_type.stale_predecessor",
+                        "cruxible.claim_type.stale_predecessor",
                         "The ClaimType does not name the exact live predecessor digest.",
                         path=path,
                     ),
@@ -735,7 +735,7 @@ def evaluate_claim_type_law(
                 verdict="refused",
                 diagnostics=(
                     _diagnostic(
-                        "playbill.claim_type.lifecycle_invalid",
+                        "cruxible.claim_type.lifecycle_invalid",
                         "A retired ClaimType cannot be revived or revised.",
                         path=path,
                     ),
@@ -746,7 +746,7 @@ def evaluate_claim_type_law(
                 verdict="refused",
                 diagnostics=(
                     _diagnostic(
-                        "playbill.claim_type.no_semantic_change",
+                        "cruxible.claim_type.no_semantic_change",
                         "ClaimType succession must produce a new artifact digest.",
                         path=path,
                     ),

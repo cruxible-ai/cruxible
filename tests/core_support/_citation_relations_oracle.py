@@ -24,9 +24,9 @@ from cruxible_core.evidence.citation_relations import (
     external_source_relation_subject,
 )
 
-RELATION_USE_SCHEMA = "playbill.citation_relation.use"
-RELATION_SOURCE_USE_SCHEMA = "playbill.citation_relation.source_use"
-RELATION_EXTERNAL_USE_SCHEMA = "playbill.citation_relation.external_use"
+RELATION_USE_SCHEMA = "cruxible.citation_relation.use"
+RELATION_SOURCE_USE_SCHEMA = "cruxible.citation_relation.source_use"
+RELATION_EXTERNAL_USE_SCHEMA = "cruxible.citation_relation.external_use"
 _ACCESS = BodyAccessContext(principal_id="citation-parity-test", can_read_body=True)
 
 

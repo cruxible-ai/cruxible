@@ -47,8 +47,8 @@ def test_every_registered_refusal_resolves_without_prose_parsing() -> None:
 def test_every_runnable_repair_names_a_command_the_cli_actually_serves() -> None:
     """A repair naming a command that does not exist is worse than none."""
 
-    leaves = _cli_leaves(CLI_COMMANDS)
-    assert "playbill.line.run" in leaves  # the map really is the served inventory
+    leaves = {"cruxible." + leaf.removeprefix("playbill.") for leaf in _cli_leaves(CLI_COMMANDS)}
+    assert "cruxible.line.run" in leaves  # the map really is the served inventory
     for code, repair in RUNNABLE_REFUSAL_REPAIRS.items():
         assert code in ALL_SERVED_REFUSAL_CODES, code
         assert isinstance(repair, RepairOperation)

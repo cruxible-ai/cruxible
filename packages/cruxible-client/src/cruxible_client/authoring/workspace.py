@@ -119,7 +119,7 @@ class WorkspaceError(CruxibleError, ValueError):
 class WorkspaceAttachmentError(WorkspaceError):
     """Daemon registration and the requested client workspace disagree."""
 
-    error_code = "playbill.workspace.registration_disagrees"
+    error_code = "cruxible.workspace.registration_disagrees"
 
     def __init__(
         self,

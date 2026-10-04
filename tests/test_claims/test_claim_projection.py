@@ -53,7 +53,7 @@ def test_provisional_and_rebuilt_canonical_claim_facts_match(tmp_path: Path) -> 
     )
     assert canonical.envelope["artifact_digest"] == provisional.envelope.artifact_digest
     statement_fact = next(
-        fact.value for fact in provisional.facts if fact.schema_id == "playbill.claim.statement"
+        fact.value for fact in provisional.facts if fact.schema_id == "cruxible.claim.statement"
     )
     assert canonical.statement.subject.model_dump(mode="json") == statement_fact["subject"]
     assert canonical.statement.predicate == statement_fact["predicate"]
@@ -70,10 +70,10 @@ def test_provisional_and_rebuilt_canonical_claim_facts_match(tmp_path: Path) -> 
     }
     assert {key: canonical_facts[key] for key in provisional_facts} == provisional_facts
     assert {
-        "playbill.claim.attestation_coverage",
-        "playbill.claim.current_verdict",
-        "playbill.claim.evidence_basis",
-        "playbill.claim.governance",
-        "playbill.claim.history",
-        "playbill.claim.provenance",
+        "cruxible.claim.attestation_coverage",
+        "cruxible.claim.current_verdict",
+        "cruxible.claim.evidence_basis",
+        "cruxible.claim.governance",
+        "cruxible.claim.history",
+        "cruxible.claim.provenance",
     }.issubset({key[0] for key in canonical_facts})

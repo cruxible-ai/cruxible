@@ -216,14 +216,14 @@ def _refresh_floor_admitted(
         AcceptedCoordinate.from_internal(head).model_dump(mode="json")
     ):
         raise RequestRefusedError(
-            "playbill.floor.delivery_head_only",
+            "cruxible.floor.delivery_head_only",
             "Daemon floor delivery owns this workspace's floor and writes only the "
             "current accepted head; at names a different coordinate. To read an older "
             "coordinate, use get or query with at. To write a pinned floor, turn daemon "
             "delivery off: cruxible playbill workspace floor-delivery off "
             f"--instance-id {instance_id}.",
             repair=RepairOperation(
-                operation="playbill.workspace.floor-delivery",
+                operation="cruxible.workspace.floor-delivery",
                 arguments={"state": "off", "instance_id": instance_id},
             ),
         )
@@ -378,7 +378,7 @@ class FloorConsumers:
                     "outcome": None if outcome is None else outcome.model_dump(mode="json"),
                 },
                 repair=ConsumerRepair(
-                    operation="playbill.floor.export",
+                    operation="cruxible.floor.export",
                     required_change="repair_the_workspace_floor_then_write_it",
                     arguments={"mode": "write"},
                 )

@@ -265,7 +265,7 @@ class _Compiler:
     ) -> NoReturn:
         raise SourceCompileError(
             SourceDiagnostic(
-                code="playbill.source." + code, message=message, span=self.span(node), hint=hint
+                code="cruxible.source." + code, message=message, span=self.span(node), hint=hint
             )
         )
 
@@ -1604,7 +1604,7 @@ def _compile_source(
     except SyntaxError as exc:
         raise SourceCompileError(
             SourceDiagnostic(
-                code="playbill.source.invalid_python",
+                code="cruxible.source.invalid_python",
                 message=exc.msg,
                 span=SourceSpan(
                     filename=program.filename,
@@ -1727,7 +1727,7 @@ def compile_source(
     except (ValueError, FormatError) as exc:
         raise SourceCompileError(
             SourceDiagnostic(
-                code="playbill.source.contract_or_graph_invalid",
+                code="cruxible.source.contract_or_graph_invalid",
                 message=str(exc),
                 span=SourceSpan(
                     filename=program.filename,

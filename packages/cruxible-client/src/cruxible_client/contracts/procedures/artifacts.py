@@ -390,21 +390,21 @@ def evaluate_procedure_law(
 
     if path != procedure_path(procedure.identity.name):
         return _refusal(
-            "playbill.procedure.path_mismatch",
+            "cruxible.procedure.path_mismatch",
             "Procedure identity/path disagreement.",
             path=path,
         )
     if predecessor is None:
         if procedure.lifecycle.predecessor_digest is not None:
             return _refusal(
-                "playbill.procedure.predecessor_missing",
+                "cruxible.procedure.predecessor_missing",
                 "A new Procedure cannot name a predecessor.",
                 path=path,
             )
     else:
         if procedure.identity != predecessor.procedure.identity:
             return _refusal(
-                "playbill.procedure.stable_identity_changed",
+                "cruxible.procedure.stable_identity_changed",
                 "A Procedure successor must retain stable identity.",
                 path=path,
             )
@@ -412,13 +412,13 @@ def evaluate_procedure_law(
             procedure, ProcedureArtifactV1
         ):
             return _refusal(
-                "playbill.procedure.wire_downgrade",
+                "cruxible.procedure.wire_downgrade",
                 "A v2 Procedure lineage cannot be succeeded by the legacy v1 wire.",
                 path=path,
             )
         if procedure.lifecycle.predecessor_digest != predecessor.artifact_digest:
             return _refusal(
-                "playbill.procedure.predecessor_mismatch",
+                "cruxible.procedure.predecessor_mismatch",
                 "Procedure successor does not pin its exact predecessor.",
                 path=path,
             )
@@ -435,7 +435,7 @@ def evaluate_procedure_law(
             and procedure.lifecycle.state == predecessor.procedure.lifecycle.state
         ):
             return _refusal(
-                "playbill.proposal.non_singleton_scope",
+                "cruxible.proposal.non_singleton_scope",
                 "The proposal changes no registered semantic member.",
                 path=path,
             )
@@ -483,14 +483,14 @@ def _evaluate_graph_v4_provider_pins(
             or accepted_interface.registration.interface_digest != interface_digest
         ):
             return (
-                "playbill.procedure.provider_interface_pin_mismatch",
+                "cruxible.procedure.provider_interface_pin_mismatch",
                 f"Provider occurrence {occurrence_id!r} does not bind its exact interface.",
             )
         if int(definition.graph_format) >= 5:
             try:
                 check_provider_node_contract(occurrence, accepted_interface, procedure)
             except (ValueError, KeyError) as exc:
-                return ("playbill.procedure.provider_interface_pin_mismatch", str(exc))
+                return ("cruxible.procedure.provider_interface_pin_mismatch", str(exc))
         provider_binding = getattr(occurrence, "provider")
         if isinstance(provider_binding, ProcedurePinSlotRef):
             continue
@@ -500,7 +500,7 @@ def _evaluate_graph_v4_provider_pins(
             or not isinstance(accepted_provider.provider, ProviderV2)
         ):
             return (
-                "playbill.procedure.provider_runtime_manifest_required",
+                "cruxible.procedure.provider_runtime_manifest_required",
                 f"Provider occurrence {occurrence_id!r} requires an accepted Provider v2.",
             )
         implementation_digest = getattr(occurrence, "implementation_digest")
@@ -513,12 +513,12 @@ def _evaluate_graph_v4_provider_pins(
         )
         if not matches:
             return (
-                "playbill.procedure.provider_implementation_unavailable",
+                "cruxible.procedure.provider_implementation_unavailable",
                 f"Provider occurrence {occurrence_id!r} implementation is unavailable.",
             )
         if len(matches) != 1:
             return (
-                "playbill.procedure.provider_implementation_ambiguous",
+                "cruxible.procedure.provider_implementation_ambiguous",
                 f"Provider occurrence {occurrence_id!r} implementation is ambiguous.",
             )
     return None

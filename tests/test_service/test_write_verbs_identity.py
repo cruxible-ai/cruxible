@@ -56,9 +56,9 @@ _ADD = {"op": "add", "subject": WI1, "field": "governs", "value": f"{KIND}/wi-2"
     ("actor_id", "code", "operation"),
     [
         # The implicit local operator names no principal: configure one.
-        ("operator", "playbill.identity.principal_unconfigured", "playbill.orient"),
+        ("operator", "cruxible.identity.principal_unconfigured", "cruxible.orient"),
         # A configured principal ID nobody registered: an owner adds it.
-        ("ghost", "playbill.identity.principal_absent", "playbill.principal.add"),
+        ("ghost", "cruxible.identity.principal_absent", "cruxible.principal.add"),
     ],
 )
 @pytest.mark.parametrize(
@@ -105,7 +105,7 @@ def test_an_already_live_value_is_refused_not_answered_accepted(
     for options in ({}, {"dry_run": True}):
         with pytest.raises(PrincipalRefusedError) as refused:
             service_playbill_write(instance, request=_request(_SET, **options), caller=_as("ghost"))
-        assert refused.value.error_code == "playbill.identity.principal_absent"
+        assert refused.value.error_code == "cruxible.identity.principal_absent"
 
 
 def test_a_retire_is_gated_like_a_set(instance: PlaybillInstance) -> None:
@@ -119,7 +119,7 @@ def test_a_retire_is_gated_like_a_set(instance: PlaybillInstance) -> None:
                 request=_request({"op": "retire", "target": change.claim}, dry_run=dry_run),
                 caller=_as("operator"),
             )
-        assert refused.value.error_code == "playbill.identity.principal_unconfigured"
+        assert refused.value.error_code == "cruxible.identity.principal_unconfigured"
 
 
 def test_an_active_principal_still_writes_and_previews(instance: PlaybillInstance) -> None:
@@ -199,7 +199,7 @@ def test_the_runtime_refuses_an_unbound_credential_with_the_mint_repair(
             )
         else:
             playbill_api.playbill_write(instance_id, request=_request(_SET, dry_run=dry_run))
-    assert refused.value.error_code == "playbill.identity.credential_unbound"
+    assert refused.value.error_code == "cruxible.identity.credential_unbound"
     assert refused.value.repair is not None
     assert refused.value.repair.operation == "credential.mint"  # type: ignore[union-attr]
     assert refused.value.repair.arguments == {"unbound_credential_id": "cred-unbound"}  # type: ignore[union-attr]

@@ -341,7 +341,7 @@ def accepted_artifact_explanation_facts(
     ]
     return (
         ProjectionFact(
-            schema_id=f"playbill.{artifact_family}.governance",
+            schema_id=f"cruxible.{artifact_family}.governance",
             schema_version=1,
             subject_identity=subject_identity,
             fact_key="accepted_governance",
@@ -358,7 +358,7 @@ def accepted_artifact_explanation_facts(
             },
         ),
         ProjectionFact(
-            schema_id=f"playbill.{artifact_family}.provenance",
+            schema_id=f"cruxible.{artifact_family}.provenance",
             schema_version=1,
             subject_identity=subject_identity,
             fact_key="accepted_source",
@@ -375,7 +375,7 @@ def accepted_artifact_explanation_facts(
             },
         ),
         ProjectionFact(
-            schema_id=f"playbill.{artifact_family}.attestation_coverage",
+            schema_id=f"cruxible.{artifact_family}.attestation_coverage",
             schema_version=1,
             subject_identity=subject_identity,
             fact_key="accepted_approvals",
@@ -386,7 +386,7 @@ def accepted_artifact_explanation_facts(
             },
         ),
         ProjectionFact(
-            schema_id=f"playbill.{artifact_family}.history",
+            schema_id=f"cruxible.{artifact_family}.history",
             schema_version=1,
             subject_identity=subject_identity,
             fact_key="ledger_history",

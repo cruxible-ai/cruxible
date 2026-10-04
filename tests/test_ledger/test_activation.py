@@ -289,7 +289,7 @@ def test_prebuild_is_unserved_until_winning_cas_then_switches_atomically(
         )
         assert view is not None
         metadata = next(
-            fact for fact in view.facts if fact.schema_id == "playbill.document.metadata"
+            fact for fact in view.facts if fact.schema_id == "cruxible.document.metadata"
         )
         assert metadata.value["title"] == "Accepted design"
 

@@ -456,7 +456,7 @@ def test_v3_invalidation_normalizes_to_attributed_retirement_with_warning(
     assert result.dependents[0].disposition == "retire"
     assert result.dependents[0].claim_retirement_reason == "was-wrong"
     assert [warning.code for warning in result.warnings] == [
-        "playbill.claim_type.invalidation_deprecated"
+        "cruxible.claim_type.invalidation_deprecated"
     ]
     tree_oid = result.proposal.proposal.evaluation.evaluated_tree_oid
     assert tree_oid is not None
@@ -508,7 +508,7 @@ def test_shape_changing_affects_package_migration_accepts_exact_retirement_tombs
     assert isinstance(result, ClaimTypeMigrationResultV3)
     assert result.dependents[0].disposition == "retire"
     assert [warning.code for warning in result.warnings] == (
-        [] if disposition == "retire" else ["playbill.claim_type.invalidation_deprecated"]
+        [] if disposition == "retire" else ["cruxible.claim_type.invalidation_deprecated"]
     )
     proposal = result.proposal.proposal
     assert proposal.candidate is not None
@@ -561,7 +561,7 @@ def test_shape_changing_migration_does_not_exempt_a_live_successor(tmp_path: Pat
     instance, _claim_id, _owner = _accepted_affects_package_world(tmp_path)
     with pytest.raises(
         ClaimTypeMigrationIncomplete,
-        match="playbill.claim.object_kind_mismatch",
+        match="cruxible.claim.object_kind_mismatch",
     ):
         service_migrate_claim_type(
             instance,
@@ -1412,8 +1412,8 @@ def test_migration_surfaces_nonblocking_policy_and_source_lint(
 
     assert result.lint is not None
     assert {warning.code for warning in result.lint.warnings} == {
-        "playbill.claim_type.evidence_policy_admits_no_accepted_contract",
-        "playbill.claim_type.anticipated_source_contract_omitted",
+        "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
+        "cruxible.claim_type.anticipated_source_contract_omitted",
     }
 
 

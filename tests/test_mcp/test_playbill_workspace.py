@@ -263,7 +263,7 @@ def test_library_mode_activate_checks_an_attached_workspace(
     assert result.block_sync.items[0].reason == "block_backing_changed"
     assert result.block_sync.items[0].currency_policy == "require_current"
     assert result.block_sync.items[0].repair is not None
-    assert result.block_sync.items[0].repair.operation == "playbill.block.repin"
+    assert result.block_sync.items[0].repair.operation == "cruxible.block.repin"
     assert [request.stamps for request in checked] == [(stamp,)]
     assert result.block_sync.has_refusals is True
     assert result.block_sync.changed_file_count == 0

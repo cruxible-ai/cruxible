@@ -85,7 +85,7 @@ def test_claim_type_pin_that_does_not_resolve_at_the_base_is_refused(tmp_path: P
 
     assert refused.proposal.candidate is None
     assert [item.code for item in refused.proposal.evaluation.diagnostics] == [
-        "playbill.change_set.unresolved_pin"
+        "cruxible.change_set.unresolved_pin"
     ]
 
 

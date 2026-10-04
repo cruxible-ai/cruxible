@@ -91,13 +91,13 @@ def _repair(state: str, line: str) -> ConsumerRepair | None:
     # that stopped draining shows its refusal when dispatched.
     if state == "stopped":
         return ConsumerRepair(
-            operation="playbill.line.arm",
+            operation="cruxible.line.arm",
             required_change="rearm_the_line_under_a_current_credential_and_version",
             arguments={"line": line.removeprefix("Line:")},
         )
     if state == "stalled":
         return ConsumerRepair(
-            operation="playbill.line.dispatch",
+            operation="cruxible.line.dispatch",
             required_change="dispatch_the_line_to_read_why_its_work_is_blocked",
             arguments={"line": line.removeprefix("Line:")},
         )

@@ -328,7 +328,7 @@ def test_line_trigger_change_advances_epoch_but_rebinding_does_not() -> None:
         interface_digests=dict(interfaces),
         predecessor=prior,
     )
-    assert result.diagnostics[0].code == "playbill.line.occurrence_epoch_mismatch"
+    assert result.diagnostics[0].code == "cruxible.line.occurrence_epoch_mismatch"
 
 
 @pytest.mark.parametrize(
@@ -392,7 +392,7 @@ def test_line_refuses_noncanonical_epsilon_and_rung_above_procedure_cap() -> Non
         interface_digests=dict(interfaces),
         predecessor=None,
     )
-    assert result.diagnostics[0].code == "playbill.line.rung_exceeds_procedure_cap"
+    assert result.diagnostics[0].code == "cruxible.line.rung_exceeds_procedure_cap"
 
 
 def test_a_served_line_interprets_its_result_budget() -> None:
@@ -452,7 +452,7 @@ def test_a_v6_line_advances_its_epoch_exactly_when_its_accepted_event_changes() 
     assert verdict(rebound).verdict == "accepted"
     assert (
         verdict(rebound.model_copy(update={"occurrence_epoch": 2})).diagnostics[0].code
-        == "playbill.line.occurrence_epoch_mismatch"
+        == "cruxible.line.occurrence_epoch_mismatch"
     )
     # A v6 lineage is never succeeded by a Line that embeds its trigger.
     from cruxible_client.contracts.procedures.line_specs import LineSpecV5
@@ -467,7 +467,7 @@ def test_a_v6_line_advances_its_epoch_exactly_when_its_accepted_event_changes() 
             "lifecycle": ArtifactLifecycle(predecessor_digest=prior.artifact_digest),
         }
     )
-    assert verdict(downgraded).diagnostics[0].code == "playbill.line.wire_downgrade"
+    assert verdict(downgraded).diagnostics[0].code == "cruxible.line.wire_downgrade"
     selector = CaptureEventSelector(
         capture_contract_identity=ArtifactIdentity(kind="CaptureContract", name="anchor"),
         capture_contract_digest=_digest("anchor"),
@@ -506,5 +506,5 @@ def test_a_v6_line_instantiates_an_earlier_graph_without_provider_closures() -> 
         verdict(line.model_copy(update={"provider_implementation_closures": closures}))
         .diagnostics[0]
         .code
-        == "playbill.line.graph_v4_required"
+        == "cruxible.line.graph_v4_required"
     )

@@ -135,7 +135,7 @@ class CoverageError(CruxibleError):
 class CoverageCommitmentMaterializationCorrupt(CoverageError):
     """Retained exact bytes exist but do not reproduce their commitment."""
 
-    error_code = "playbill.coverage.commitment_materialization_corrupt"
+    error_code = "cruxible.coverage.commitment_materialization_corrupt"
 
 
 class _StrictCoverageModel(BaseModel):

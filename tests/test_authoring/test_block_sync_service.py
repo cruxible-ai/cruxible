@@ -477,7 +477,7 @@ def test_a_moved_statement_reaches_next_and_sync_without_either_rewriting_the_pa
     # There is no syncable spelling of this repair any more. Nothing renders the
     # prose, so the only answer is to read the block against the state that
     # moved under it and re-declare the list it still means.
-    assert stale_row.repair.operation == "playbill.block.repin"
+    assert stale_row.repair.operation == "cruxible.block.repin"
     assert stale_row.repair.command == (
         f"cruxible playbill block repin repo.work-items {original_stamp.block_id}"
     )
@@ -566,7 +566,7 @@ def test_a_moved_statement_reaches_next_and_sync_without_either_rewriting_the_pa
     assert ambiguous_sync.items[0].outcome == "unchecked"
     assert ambiguous_sync.items[0].reason == "block_successor_ambiguous"
     assert ambiguous_sync.items[0].repair == RepairOperation(
-        operation="playbill.block.repin",
+        operation="cruxible.block.repin",
         arguments={
             "source_id": "repo.work-items",
             "block_id": original_stamp.block_id,
@@ -797,7 +797,7 @@ def test_a_hand_edited_body_is_reported_without_mutating_it(tmp_path: Path) -> N
     assert dirty_item.outcome == "dirty"
     assert dirty_item.reason == "block_locally_modified"
     assert dirty_item.repair == RepairOperation(
-        operation="playbill.block.repin",
+        operation="cruxible.block.repin",
         arguments={"source_id": "repo.work-items", "block_id": stamp.block_id},
     )
     assert dirty_item.detail["last_synced_body_digest"] == stamp.body_digest

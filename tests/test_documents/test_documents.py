@@ -158,7 +158,7 @@ def test_document_acceptance_requires_exact_body_and_predecessor(tmp_path: Path)
         predecessor=None,
     )
     assert refusal.verdict == "refused"
-    assert [item.code for item in refusal.diagnostics] == ["playbill.document.body_missing"]
+    assert [item.code for item in refusal.diagnostics] == ["cruxible.document.body_missing"]
 
     predecessor = AcceptedDocument(
         path="documents/playbill-design.json",
@@ -189,7 +189,7 @@ def test_document_acceptance_requires_exact_body_and_predecessor(tmp_path: Path)
         predecessor=predecessor,
     )
     assert [item.code for item in stale_result.diagnostics] == [
-        "playbill.document.stale_predecessor"
+        "cruxible.document.stale_predecessor"
     ]
 
 
@@ -209,7 +209,7 @@ def test_corrupt_cas_object_refuses_document_binding(tmp_path: Path) -> None:
         predecessor=None,
     )
     assert result.verdict == "refused"
-    assert result.diagnostics[0].code == "playbill.document.body_missing"
+    assert result.diagnostics[0].code == "cruxible.document.body_missing"
 
 
 def test_cas_reads_refuse_a_symlinked_digest_shard(tmp_path: Path) -> None:

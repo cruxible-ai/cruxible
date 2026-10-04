@@ -191,7 +191,7 @@ def test_cli_claim_type_propose_delivers_nonblocking_source_lint(
     }
     payload.write_text(json.dumps(values))
     warning = {
-        "code": "playbill.claim_type.anticipated_source_contract_omitted",
+        "code": "cruxible.claim_type.anticipated_source_contract_omitted",
         "field_path": "$.evidence_admission_policy.rules",
         "source_id": "corpus.runbook",
         "contract_identity": "CaptureContract:playbill.foreign-source.corpus.runbook",
@@ -339,7 +339,7 @@ def test_cli_claim_type_migration_delivers_nonblocking_source_lint(
         )
     )
     warning = {
-        "code": "playbill.claim_type.evidence_policy_admits_no_accepted_contract",
+        "code": "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
         "field_path": "$.evidence_admission_policy.rules",
         "source_id": None,
         "contract_identity": "CaptureContract:available",
@@ -928,7 +928,7 @@ def test_cli_create_flow_a_stub_reports_bind_refusal_from_served_route(
         reset_permissions()
 
     assert result.exit_code == 1
-    assert "playbill.authoring.working_selection_requires_bind" in result.stderr
+    assert "cruxible.authoring.working_selection_requires_bind" in result.stderr
     assert "Run playbill authoring bind" in result.stderr
     assert "internal server error" not in result.stderr
 
@@ -1059,7 +1059,7 @@ def test_cli_bind_ambiguity_reports_candidate_offsets_without_calling_daemon(
     )
 
     assert result.exit_code == 1
-    assert "playbill.authoring.anchor_ambiguous" in result.output
+    assert "cruxible.authoring.anchor_ambiguous" in result.output
     assert '"candidate_byte_offsets":[0,1]' in result.output
     assert "--occurrence" in result.output
 
@@ -1096,7 +1096,7 @@ def test_cli_bind_missing_anchor_has_no_occurrence_repair_hint(
     )
 
     assert result.exit_code == 1
-    assert "playbill.authoring.anchor_not_found" in result.output
+    assert "cruxible.authoring.anchor_not_found" in result.output
     assert "anchor not found in file" in result.output
     assert '"observed_occurrence_count":0' in result.output
     assert '"candidate_byte_offsets":[]' in result.output
@@ -1229,5 +1229,5 @@ def test_cli_bind_declared_block_refuses_every_role(
     # Every role refuses inside a stamped block: a copy of projection bytes
     # attests them into concrete exactly as evidence would.
     assert result.exit_code == 1
-    assert "playbill.projection.evidence_from_projection" in result.output
+    assert "cruxible.projection.evidence_from_projection" in result.output
     assert calls == []

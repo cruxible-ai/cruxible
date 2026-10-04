@@ -288,13 +288,13 @@ def evaluate_acquisition_policy_law(
 ) -> SourceAcquisitionPolicyLawResult:
     if path != acquisition_policy_path(policy.identity.name):
         return _law_refusal(
-            "playbill.acquisition_policy.path_mismatch",
+            "cruxible.acquisition_policy.path_mismatch",
             "SourceAcquisitionPolicy identity/path disagreement.",
             path=path,
         )
     if predecessor is None and policy.lifecycle.predecessor_digest is not None:
         return _law_refusal(
-            "playbill.acquisition_policy.predecessor_missing",
+            "cruxible.acquisition_policy.predecessor_missing",
             "A new SourceAcquisitionPolicy cannot name a predecessor.",
             path=path,
         )
@@ -303,7 +303,7 @@ def evaluate_acquisition_policy_law(
             policy.lifecycle.predecessor_digest != predecessor.artifact_digest
         ):
             return _law_refusal(
-                "playbill.acquisition_policy.predecessor_mismatch",
+                "cruxible.acquisition_policy.predecessor_mismatch",
                 "SourceAcquisitionPolicy successor identity or predecessor differs.",
                 path=path,
             )
@@ -323,7 +323,7 @@ def evaluate_acquisition_policy_law(
         )
         if not resolved:
             return _law_refusal(
-                "playbill.acquisition_policy.snapshot_registry_unresolved",
+                "cruxible.acquisition_policy.snapshot_registry_unresolved",
                 "Declared snapshot coherence requires registered exact grammar and "
                 "proof-adapter pins.",
                 path=path,
@@ -496,7 +496,7 @@ def select_sources(
                     rule,
                     rule.on_unavailable,
                     considered=considered,
-                    reason="playbill.acquisition.unavailable",
+                    reason="cruxible.acquisition.unavailable",
                     default_authorized=rule.input_name in default_authorizations,
                 )
             )
@@ -508,25 +508,25 @@ def select_sources(
             if replayability not in rule.permitted_replayability or (
                 replayability == "exact" and not candidate.current_replay_available
             ):
-                failure = (rule.on_unavailable, "playbill.acquisition.replay_unavailable")
+                failure = (rule.on_unavailable, "cruxible.acquisition.replay_unavailable")
                 continue
             if rule.max_age is not None and evaluation_time - candidate.envelope.observed_at > (
                 timedelta(microseconds=rule.max_age.microseconds)
             ):
-                failure = (rule.on_stale, "playbill.acquisition.stale")
+                failure = (rule.on_stale, "cruxible.acquisition.stale")
                 continue
             if (
                 candidate.selected_bytes > candidate.selection_budget.max_bytes
                 or candidate.selected_rows > candidate.selection_budget.max_rows
                 or candidate.selected_items > candidate.selection_budget.max_items
             ):
-                failure = (rule.on_oversized, "playbill.acquisition.oversized")
+                failure = (rule.on_oversized, "cruxible.acquisition.oversized")
                 continue
             eligible.append(candidate)
         if not eligible:
             behavior, reason = failure or (
                 rule.on_unavailable,
-                "playbill.acquisition.unavailable",
+                "cruxible.acquisition.unavailable",
             )
             decisions.append(
                 _behavior_decision(
@@ -548,7 +548,7 @@ def select_sources(
                     input_name=rule.input_name,
                     disposition="refused",
                     considered_capture_digests=considered,
-                    reason_codes=("playbill.acquisition.conflict",),
+                    reason_codes=("cruxible.acquisition.conflict",),
                 )
             )
             continue
@@ -561,7 +561,7 @@ def select_sources(
                 considered_capture_digests=considered,
                 selected_capture_digests=tuple(item.capture_digest for item in chosen),
                 selected_cursors=tuple(item.landing_event.cursor for item in chosen),
-                reason_codes=("playbill.acquisition.conflict_preserved",) if conflict else (),
+                reason_codes=("cruxible.acquisition.conflict_preserved",) if conflict else (),
             )
         )
     coherence_proof: str | None = None
@@ -573,7 +573,7 @@ def select_sources(
                 AcquisitionInputDecision(
                     input_name="coherence",
                     disposition="refused",
-                    reason_codes=("playbill.acquisition.cross_source_skew",),
+                    reason_codes=("cruxible.acquisition.cross_source_skew",),
                 )
             )
     if isinstance(policy.coherence, DeclaredSnapshotGroupCoherence) and selected:
@@ -584,7 +584,7 @@ def select_sources(
                 AcquisitionInputDecision(
                     input_name="coherence",
                     disposition="refused",
-                    reason_codes=("playbill.acquisition.snapshot_group_unproved",),
+                    reason_codes=("cruxible.acquisition.snapshot_group_unproved",),
                 )
             )
         else:

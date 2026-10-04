@@ -78,7 +78,7 @@ class ClaimAttestationRefusal(FormatError):
     """One typed, stable refusal from the attestation door."""
 
     def __init__(self, suffix: str, message: str) -> None:
-        self.error_code = f"playbill.claim_attestation.{suffix}"
+        self.error_code = f"cruxible.claim_attestation.{suffix}"
         super().__init__(f"{self.error_code}: {message}")
 
 

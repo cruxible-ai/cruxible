@@ -95,7 +95,7 @@ def query_not_found(name: str, *, nearest: Iterable[str]) -> ReadRefusalError:
     """A named QueryDefinition that accepted state does not hold: a coded 404."""
 
     return ReadRefusalError(
-        "playbill.query.name_not_found",
+        "cruxible.query.name_not_found",
         f"no accepted QueryDefinition is named {name!r}",
         http_status=404,
         candidates=nearest,
@@ -197,7 +197,7 @@ class QueryVocabulary:
         if kind in self.kinds:
             return kind
         raise query_refusal(
-            "playbill.query.unknown_kind",
+            "cruxible.query.unknown_kind",
             f"no accepted Subject kind is named {kind!r}",
             nearest=nearest(kind, (*self.kinds, "ClaimType", "Procedure")),
             repair="use one of the listed kinds; orient names every kind",
@@ -248,7 +248,7 @@ class QueryVocabulary:
         label = owner or " / ".join(kinds)
         if found:
             raise query_refusal(
-                "playbill.query.ambiguous_field",
+                "cruxible.query.ambiguous_field",
                 f"{name!r} names {len(found)} predicates of {label}",
                 nearest=tuple(sorted(found))[:NEAREST_LIMIT],
                 repair="name the predicate in full",
@@ -262,7 +262,7 @@ class QueryVocabulary:
         else:
             message = f"{label} has no field {name!r}"
         raise query_refusal(
-            "playbill.query.unknown_field",
+            "cruxible.query.unknown_field",
             message,
             nearest=suggestions,
             repair=f"use a predicate of {label} (orient kind={label} lists them) or subject_id",
@@ -311,7 +311,7 @@ def _refuse_value(
     info_label: str, value: object, expected: str, *, field_path: str, example: str
 ) -> ReadRefusalError:
     return query_refusal(
-        "playbill.query.value_type_mismatch",
+        "cruxible.query.value_type_mismatch",
         f"{value!r} is not a {expected} value for {info_label}",
         repair=f"pass a {expected}, for example {example}",
         field_path=field_path,
@@ -384,7 +384,7 @@ def check_value(
             raise _refuse_value(label, value, "string", field_path=field_path, example='"text"')
         if value_type == "enum" and value not in info.members:
             raise query_refusal(
-                "playbill.query.unknown_member",
+                "cruxible.query.unknown_member",
                 f"{value!r} is not a member of {label}",
                 nearest=tuple(info.members),
                 repair=f"use one of: {', '.join(info.members)}",
@@ -437,7 +437,7 @@ def check_value(
         kind = ref.split("/", 1)[0]
         if info.object_kinds and kind not in info.object_kinds:
             raise query_refusal(
-                "playbill.query.value_type_mismatch",
+                "cruxible.query.value_type_mismatch",
                 f"{label} names Subjects of {', '.join(info.object_kinds)}, not {kind!r}",
                 nearest=info.object_kinds,
                 repair="pass kind/id of an admitted kind",
@@ -459,7 +459,7 @@ def check_operator(
         return
     type_name = "subject_id" if isinstance(info, str) else info.value_type
     raise query_refusal(
-        "playbill.query.operator_not_applicable",
+        "cruxible.query.operator_not_applicable",
         f"{operator!r} does not apply to {label} ({type_name})",
         nearest=tuple(sorted(admitted)),
         repair=f"use one of: {', '.join(sorted(admitted))}",

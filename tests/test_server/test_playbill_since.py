@@ -89,15 +89,15 @@ def test_http_since_refuses_oversized_limits(
     assert response.json() == {
         "error_type": "SinceRequestInvalid",
         "message": (
-            "playbill.since.request_invalid: request field $.max_rows is invalid: "
+            "cruxible.since.request_invalid: request field $.max_rows is invalid: "
             "Input should be less than or equal to 1000"
         ),
-        "error_code": "playbill.since.request_invalid",
+        "error_code": "cruxible.since.request_invalid",
         "errors": ["body.max_rows: Input should be less than or equal to 1000"],
         "context": {"field_path": "$.max_rows"},
         "repair": {
             "hand_edit": {
-                "target": "refusal/playbill.since.request_invalid",
+                "target": "refusal/cruxible.since.request_invalid",
                 "required_change": "read_the_refusal_details_and_revise_the_named_artifact",
             }
         },
@@ -127,7 +127,7 @@ def test_http_since_reports_every_invalid_field(
     )
     assert response.status_code == 400
     payload = response.json()
-    assert payload["error_code"] == "playbill.since.request_invalid"
+    assert payload["error_code"] == "cruxible.since.request_invalid"
     assert payload["context"]["field_path"] == "$.generation"
     assert len(payload["errors"]) == 3
     assert any("max_rows" in item for item in payload["errors"])
@@ -145,7 +145,7 @@ def test_http_since_unknown_generation_is_a_typed_400(
     assert response.status_code == 400, response.text
     payload = response.json()
     assert payload["error_type"] == "SinceGenerationUnknown"
-    assert payload["error_code"] == "playbill.since.generation_unknown"
+    assert payload["error_code"] == "cruxible.since.generation_unknown"
 
 
 @pytest.mark.parametrize(
@@ -185,7 +185,7 @@ def test_http_since_adversarial_bodies_are_typed_400(
     response = client.post(f"/api/v1/{instance_id}/playbill/since", json=body)
     assert response.status_code == 400, response.text
     payload = response.json()
-    assert payload["error_code"] == "playbill.since.request_invalid"
+    assert payload["error_code"] == "cruxible.since.request_invalid"
     assert payload["context"]["field_path"].startswith(expected_path_prefix)
     assert "Traceback" not in response.text
 
@@ -198,4 +198,4 @@ def test_http_since_non_object_bodies_are_typed_400(
     client, instance_id, _private_key = playbill_http
     response = client.post(f"/api/v1/{instance_id}/playbill/since", json=body)
     assert response.status_code == 400, response.text
-    assert response.json()["error_code"] == "playbill.since.request_invalid"
+    assert response.json()["error_code"] == "cruxible.since.request_invalid"

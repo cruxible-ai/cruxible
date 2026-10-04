@@ -227,7 +227,7 @@ def evaluate_subject_law(
     except SubjectFormatError as exc:
         return SubjectLawResult(
             verdict="refused",
-            diagnostics=(_diagnostic("playbill.subject.path_mismatch", str(exc), path=path),),
+            diagnostics=(_diagnostic("cruxible.subject.path_mismatch", str(exc), path=path),),
         )
 
     digest = subject_digest(shell).tagged
@@ -237,7 +237,7 @@ def evaluate_subject_law(
                 verdict="refused",
                 diagnostics=(
                     _diagnostic(
-                        "playbill.subject.unexpected_predecessor",
+                        "cruxible.subject.unexpected_predecessor",
                         "A new Subject must begin live without a predecessor.",
                         path=path,
                     ),
@@ -250,7 +250,7 @@ def evaluate_subject_law(
                 verdict="refused",
                 diagnostics=(
                     _diagnostic(
-                        "playbill.subject.predecessor_identity_mismatch",
+                        "cruxible.subject.predecessor_identity_mismatch",
                         "The live predecessor has a different Subject identity.",
                         path=path,
                     ),
@@ -261,7 +261,7 @@ def evaluate_subject_law(
                 verdict="refused",
                 diagnostics=(
                     _diagnostic(
-                        "playbill.subject.stale_predecessor",
+                        "cruxible.subject.stale_predecessor",
                         "The proposed Subject does not name the exact live predecessor digest.",
                         path=path,
                     ),
@@ -272,7 +272,7 @@ def evaluate_subject_law(
                 verdict="refused",
                 diagnostics=(
                     _diagnostic(
-                        "playbill.subject.lifecycle_invalid",
+                        "cruxible.subject.lifecycle_invalid",
                         "A retired Subject cannot be revived or revised.",
                         path=path,
                     ),
@@ -283,7 +283,7 @@ def evaluate_subject_law(
                 verdict="refused",
                 diagnostics=(
                     _diagnostic(
-                        "playbill.subject.no_semantic_change",
+                        "cruxible.subject.no_semantic_change",
                         "Subject succession must produce a new artifact digest.",
                         path=path,
                     ),

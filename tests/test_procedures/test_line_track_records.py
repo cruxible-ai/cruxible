@@ -265,7 +265,7 @@ def _accepted_promotion(output: object):
 
 def test_the_runtime_projection_registry_declares_the_line_grain() -> None:
     registry = runtime_extension_registry()
-    assert registry.supports("playbill.line.track_record", 1, classification="semantic")
+    assert registry.supports("cruxible.line.track_record", 1, classification="semantic")
 
 
 def test_a_promotion_that_declares_no_line_track_record_emits_no_line_fact() -> None:
@@ -439,7 +439,7 @@ def test_an_accepted_promotion_projects_its_line_track_record_through_the_floor(
     floor = service_export_playbill_floor(instance, include=("discovery",))
     assert "procedures/orders-triage.card.json" in floor
     with instance.bind_accepted_projection(instance.accepted_coordinate()) as handle:
-        facts = handle.typed.facts("playbill.line.track_record")
+        facts = handle.typed.facts("cruxible.line.track_record")
     assert len(facts) == 1
     record = LineTrackRecordV1.model_validate(facts[0].value["track_record"])
     assert record.line_id == "orders-triage"

@@ -456,7 +456,7 @@ def _claim_from_public_view(view: api.ClaimViewRecord) -> ClaimArtifactAny:
         (
             fact.get("value")
             for fact in view.facts
-            if fact.get("schema_id") == "playbill.claim.statement"
+            if fact.get("schema_id") == "cruxible.claim.statement"
         ),
         None,
     )
@@ -464,7 +464,7 @@ def _claim_from_public_view(view: api.ClaimViewRecord) -> ClaimArtifactAny:
         (
             fact.get("value")
             for fact in view.facts
-            if fact.get("schema_id") == "playbill.claim.backing"
+            if fact.get("schema_id") == "cruxible.claim.backing"
         ),
         None,
     )
@@ -472,7 +472,7 @@ def _claim_from_public_view(view: api.ClaimViewRecord) -> ClaimArtifactAny:
         (
             fact.get("value")
             for fact in view.facts
-            if fact.get("schema_id") == "playbill.claim.lifecycle"
+            if fact.get("schema_id") == "cruxible.claim.lifecycle"
         ),
         None,
     )
@@ -686,7 +686,7 @@ class ClaimDraft(_IntentDraft):
 
         del derivation
         raise CapabilityNotServed(
-            code="playbill.sdk.derivation_carry_not_served",
+            code="cruxible.sdk.derivation_carry_not_served",
             capability="derivation_carry",
             repair=("Remove derived_by() or use a separately approved derivation-carry contract."),
         )
@@ -2434,9 +2434,9 @@ class Cruxible:
             for fact in view.facts
             if isinstance(fact, Mapping)
         }
-        statement = facts.get("playbill.claim.statement")
-        lifecycle = facts.get("playbill.claim.lifecycle")
-        verdict = facts.get("playbill.claim.current_verdict")
+        statement = facts.get("cruxible.claim.statement")
+        lifecycle = facts.get("cruxible.claim.lifecycle")
+        verdict = facts.get("cruxible.claim.current_verdict")
         if not isinstance(statement, Mapping):
             raise ValueError(f"accepted Claim {identity} carries no statement fact")
         item = statement.get("object")
@@ -3032,12 +3032,12 @@ class Cruxible:
         if not outcome.refused:
             return outcome
         refusal = outcome.refusal
-        if refusal is not None and refusal.code == "playbill.write.slot_changed" and pinned:
+        if refusal is not None and refusal.code == "cruxible.write.slot_changed" and pinned:
             # The refusal showed the value the slot holds now; setting again
             # replaces that value, which is its repair.
             self._observe_read(_coordinate(pinned), expected=None)
         raise WriteRefusalError(
-            "playbill.write.refused" if refusal is None else refusal.code,
+            "cruxible.write.refused" if refusal is None else refusal.code,
             "the write refused" if refusal is None else refusal.message,
             change=None if refusal is None else refusal.change,
             candidates=() if refusal is None else refusal.candidates,
@@ -3730,7 +3730,7 @@ class Cruxible:
         )
         if unsupported:
             raise CapabilityNotServed(
-                code="playbill.sdk.procedure_capability_not_served",
+                code="cruxible.sdk.procedure_capability_not_served",
                 capability=f"procedure nodes {unsupported}",
                 repair=(
                     "Use only state_tap, transform, project, guard, repeat, and halt nodes "

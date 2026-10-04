@@ -73,7 +73,7 @@ class ProjectionIndependentEvidenceForbidden(CruxibleError):
     it without a round trip.
     """
 
-    code = "playbill.projection.evidence_from_projection"
+    code = "cruxible.projection.evidence_from_projection"
 
     def __init__(
         self,
@@ -95,14 +95,14 @@ class ProjectionIndependentEvidenceForbidden(CruxibleError):
 
 
 class ProjectionRepinError(CruxibleError):
-    code = "playbill.projection.repin_refused"
+    code = "cruxible.projection.repin_refused"
 
     def __init__(self, message: str) -> None:
         super().__init__(f"{self.code}: {message}")
 
 
 class ProjectionSyncError(CruxibleError):
-    code = "playbill.projection.sync_refused"
+    code = "cruxible.projection.sync_refused"
 
     def __init__(self, message: str) -> None:
         super().__init__(f"{self.code}: {message}")
@@ -185,7 +185,7 @@ def _claim_backing(
         (
             item.get("value")
             for item in facts
-            if isinstance(item, Mapping) and item.get("schema_id") == "playbill.claim.statement"
+            if isinstance(item, Mapping) and item.get("schema_id") == "cruxible.claim.statement"
         ),
         None,
     )
@@ -193,7 +193,7 @@ def _claim_backing(
         (
             item.get("value")
             for item in facts
-            if isinstance(item, Mapping) and item.get("schema_id") == "playbill.claim.lifecycle"
+            if isinstance(item, Mapping) and item.get("schema_id") == "cruxible.claim.lifecycle"
         ),
         None,
     )
@@ -579,7 +579,7 @@ def _sync_item_from_read_refusal(
                 if isinstance(b, ProjectionClaimBacking) and b.identity.qualified not in retired
             ]
             repair = RepairOperation(
-                operation="playbill.block.repin",
+                operation="cruxible.block.repin",
                 arguments={
                     "source_id": source_id,
                     "block_id": block_id,
@@ -588,7 +588,7 @@ def _sync_item_from_read_refusal(
             )
         else:
             repair = RepairOperation(
-                operation="playbill.block.sync", arguments={"paths": [path], "detach": True}
+                operation="cruxible.block.sync", arguments={"paths": [path], "detach": True}
             )
     elif reason == "block_successor_ambiguous":
         candidates = getattr(read, "successor_candidates", ())
@@ -596,7 +596,7 @@ def _sync_item_from_read_refusal(
             candidate.model_dump(mode="json") for candidate in candidates
         ]
         repair = RepairOperation(
-            operation="playbill.block.repin",
+            operation="cruxible.block.repin",
             arguments={
                 "source_id": source_id,
                 "block_id": block_id,
@@ -854,7 +854,7 @@ def sync_projection_blocks(
                         outcome="dirty",
                         reason="block_locally_modified",
                         repair=RepairOperation(
-                            operation="playbill.block.repin",
+                            operation="cruxible.block.repin",
                             arguments={"source_id": source_id, "block_id": block.block_id},
                         ),
                         detail={
@@ -964,7 +964,7 @@ def sync_projection_blocks(
                     outcome="stale",
                     reason="block_backing_changed",
                     repair=RepairOperation(
-                        operation="playbill.block.repin",
+                        operation="cruxible.block.repin",
                         arguments={"source_id": source_id, "block_id": block.block_id},
                     ),
                     detail={

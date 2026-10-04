@@ -383,7 +383,7 @@ def test_pre_pc_hr_nested_instance_requires_reseed(host_client: TestClient) -> N
     registered = get_registry().create_governed_instance_with_id("inst_legacy_nested")
     (Path(registered.record.location) / ".cruxible/playbill-v1").mkdir(parents=True)
 
-    with pytest.raises(ReseedRequired, match="playbill.instance.reseed_required"):
+    with pytest.raises(ReseedRequired, match="cruxible.instance.reseed_required"):
         get_playbill_manager().get("inst_legacy_nested")
 
 

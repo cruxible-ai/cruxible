@@ -31,14 +31,14 @@ was selected, and entering one workspace never retargets another.
 acts as; the CLI, SDK (`Cruxible.connect(principal_id=...)`) and MCP server all
 send it with every request. The daemon checks that it names a registered, active
 principal on the instance before any write and attributes the work to it; an
-unregistered or revoked ID is refused on writes (`playbill.identity.principal_absent`
+unregistered or revoked ID is refused on writes (`cruxible.identity.principal_absent`
 / `principal_revoked`) with the command that repairs it. Reads stay open, so an
 agent can read (and `whoami` explains its standing) while its registration
 awaits activation. With daemon auth off the principal ID is a
 claim of identity, not authentication: every process of the same OS user is
 equally trusted and could claim any principal. With auth on the bearer
 credential decides who acts, and a principal ID that disagrees with it is refused
-(`playbill.identity.principal_claim_mismatch`). Approvals are unaffected either
+(`cruxible.identity.principal_claim_mismatch`). Approvals are unaffected either
 way: they are signed with the principal's private key.
 
 `CRUXIBLE_CLIENT_TIMEOUT_S` (default 180) bounds how long a client waits for a
@@ -88,11 +88,11 @@ which exists before `init` too.
   only with the preview's coordinate: `instance decommission`,
   `credential revoke`, `credential rotate` and `ledger set-mirror`. Commit with
   `--commit --at OID`; without `--at` it refuses
-  `playbill.preview.confirmation_required`.
+  `cruxible.preview.confirmation_required`.
 - Everything else commits unless `--dry-run` is given.
 
 `--at OID` pins any commit to a preview: if that state moved since, the
-commit refuses `playbill.preview.state_moved` and changes nothing; preview
+commit refuses `cruxible.preview.state_moved` and changes nothing; preview
 again. The pin is checked where the change commits, under the lock its write
 holds, so state that moves after the first check is still refused. The write
 verbs (`set`, `retire`, `write`) take `--dry-run` and `--at` the same way,
@@ -100,7 +100,7 @@ where `--at` pins each changed slot.
 
 A preview opens its instance behind the same guards. If opening it would first
 repair derived files a crash left behind, the preview refuses
-`playbill.preview.recovery_pending` instead of writing them; an ordinary read
+`cruxible.preview.recovery_pending` instead of writing them; an ordinary read
 (`cruxible playbill orient`) reopens it, and the preview then runs.
 
 Which operations preview follows one principle (the maintainer's ruling):
@@ -169,7 +169,7 @@ target; otherwise pass `--instance-id`.
 These credentials authorize transport operations. Each one acts as exactly one
 Cruxible principal, stored with the credential; the label is a description and
 never decides who acts. `credential mint` refuses unless that principal is
-registered and active (`playbill.identity.principal_absent` /
+registered and active (`cruxible.identity.principal_absent` /
 `principal_revoked`) and ordinary (a recovery principal never holds one:
 `runtime_credential.principal_not_ordinary`), and it needs the principal's own authority, not just an
 admin credential: either the request already acts as that principal, or
@@ -181,7 +181,7 @@ off, where a bearer credential authenticates nothing, minting is refused
 nothing is stored, so the state root is never silently latched into requiring
 auth. Revoking a principal
 revokes every credential that acts as it: the next request with one is refused
-with `playbill.identity.principal_revoked` and the rows are marked revoked.
+with `cruxible.identity.principal_revoked` and the rows are marked revoked.
 Rotation keeps the principal, tier and label, so rotating a bound credential
 needs the same authority minting it would: the request acts as that principal,
 or `credential rotate --key-dir DIR` signs its consent. Any admin may revoke a
@@ -191,7 +191,7 @@ The bootstrap claim and `recover-admin` mint unbound operator credentials: they
 carry transport authority (host, init, credentials, daemon lifecycle) but act as
 no principal, so they cannot author or perform any other instance write --
 body store, ledger mirror binding and publication, attestation recovery
-included (`playbill.identity.credential_unbound`).
+included (`cruxible.identity.credential_unbound`).
 `playbill init` under such a credential designates the owner it names.
 Credentials minted before credentials named a principal are migrated as
 unbound, never rebound from their label; repair each by minting a bound one with
@@ -420,9 +420,9 @@ configuration. Internal actions are registered in code (`evidence.sweep`,
 `prediction.anchor_retry`, `floor.refresh`); a Trigger aimed at one takes a
 `cadence`, `cron`, or `generation_accepted` schedule. Capture-landing and
 window-close schedules for internal actions are
-not supported yet (`playbill.trigger.schedule_unsupported_for_action`), and an
+not supported yet (`cruxible.trigger.schedule_unsupported_for_action`), and an
 action name that is not registered is refused at acceptance
-(`playbill.trigger.action_unknown`). A new
+(`cruxible.trigger.action_unknown`). A new
 instance is initialized with `evidence-sweep` (daily) and
 `prediction-anchor-retry` (hourly); change a schedule, add a Trigger, or retire
 one through an ordinary proposal. `playbill next` reports unscheduled findings
@@ -501,7 +501,7 @@ successor plus an entry per dependent it dispositions, and a Claim retirement
 writes the retired Claim plus its live closure. So 5,957 is the largest set of
 1:1 members the record can hold, `max_changed_members` sits under it, and a set
 carrying either of those kinds settles at however many entries it lowers to. An intent over the bound is refused at
-preflight, typed `playbill.authoring.change_set_record_too_large`, naming the
+preflight, typed `cruxible.authoring.change_set_record_too_large`, naming the
 entry count that fits: on the projected count before anything is lowered when
 that already exceeds the bound, and on the exact lowered count -- still before
 the compile -- when it does not.
@@ -604,7 +604,7 @@ Makes you the owner under `--principal-id` (default: the configured
 auth-off daemon the init request claims that principal, so no bootstrap secret
 is needed; set `CRUXIBLE_PRINCIPAL_ID` to it afterwards so later commands act as
 the owner. An init whose caller is not one of the owner principals it names is
-refused with `playbill.identity.init_owner_mismatch`.
+refused with `cruxible.identity.init_owner_mismatch`.
 
 Generates a client-held ordinary key outside the workspace and bootstraps the
 ledger with its public principal record. A missing `--key-dir` is created with
@@ -641,7 +641,7 @@ SHA-1 is the default because common Git viewers do not recognize a SHA-256
 repository, and a ledger nobody can open is not evidence anyone can read
 (maintainer ruling, 2026-09-03). An explicit `--object-format` that contradicts
 the attached workspace refuses with the typed
-`playbill.init.object_format_conflict` before any state is written; instances
+`cruxible.init.object_format_conflict` before any state is written; instances
 already initialized keep their pinned format forever. The
 equivalent request field is `git_object_format` on the HTTP/SDK init body and on
 MCP `cruxible_playbill_init`.
@@ -665,9 +665,9 @@ CAPTURE_DIGEST is the full digest, the `CAP-<12 hex>` handle `get --detail
 evidence` and Capture cards print, or a `sha256:` prefix of 12+ hex; a handle
 or prefix must name one Capture, resolved exactly as the write verbs resolve
 `--capture`: one accepted Claims cite, or one the instance holds that verifies
-(`playbill.capture.ref_ambiguous` lists the candidates,
-`playbill.capture.not_found` points at `orient --section captures`, and
-`playbill.capture.ref_scan_exhausted` asks for a longer handle when more share
+(`cruxible.capture.ref_ambiguous` lists the candidates,
+`cruxible.capture.not_found` points at `orient --section captures`, and
+`cruxible.capture.ref_scan_exhausted` asks for a longer handle when more share
 the prefix than one bounded lookup examines).
 Uses body-read permission and never refetches the external source. The SDK equivalent
 is `cx.capture(digest)`; its `.ref` can be passed to Claim authoring as `supported_by`.
@@ -689,7 +689,7 @@ cruxible playbill instance decommission --reason TEXT [--dry-run|--commit] [--at
 Decommissioning is the terminal lifecycle state of one governed instance. It
 stamps the reason, instant, and actor on the instance descriptor, so a daemon
 restart replays the same state. Every further governed write refuses with the
-typed `playbill.instance.decommissioned` error naming the reason and the repair;
+typed `cruxible.instance.decommissioned` error naming the reason and the repair;
 reads keep serving at the accepted coordinate, `next` reports the terminal state,
 and `search --mode orient` marks the orientation decommissioned.
 
@@ -800,7 +800,7 @@ because Git refuses a push between repositories with different hash algorithms.
 is reported at once rather than at the next governed write. It stays bound
 either way: a remote that is temporarily unreachable is not a wrong remote.
 `clone-url` prints the URL a reviewer clones and refuses with the typed
-`playbill.ledger.mirror_unset` when the instance publishes nowhere; the same
+`cruxible.ledger.mirror_unset` when the instance publishes nowhere; the same
 value rides `playbill orient --json` as `mirror_url`, so an agent
 that has just oriented already has it. The equivalent surfaces are
 `POST`/`GET /{instance}/playbill/ledger/mirror` and the `mirror_url` field on
@@ -913,7 +913,7 @@ A kit carries definitions only, so it never needs a Provider installed first.
 `status` lists installed kits and the kit paths edited locally. `remove`
 proposes retiring what a kit owns (never what it only carries); the dependency
 closure refuses it while live Claims depend on those definitions. Removing a kit
-that is not installed refuses with `playbill.kit.not_installed`, naming the
+that is not installed refuses with `cruxible.kit.not_installed`, naming the
 installed kits.
 
 MCP: `cruxible_playbill_kit_build`, `cruxible_playbill_kit_status`,
@@ -1160,7 +1160,7 @@ order -- definitions, then successions, then Claims, then retirements -- so a
 Claim member after a succession is lowered under the successor vocabulary and is
 never one of its dependents. A set cannot define a ClaimType and succeed it:
 both members author the same artifact path, and the set refuses
-`playbill.authoring.change_set_member_path_collision`. The
+`cruxible.authoring.change_set_member_path_collision`. The
 `successor` is a whole ClaimType naming its predecessor by identity and pinning
 that predecessor's exact digest; `dependents` is the exact closure computed over
 the staged tree. Each dependent takes `successor` (carry it, re-pinned),
@@ -1447,7 +1447,7 @@ cruxible playbill line run LINE --evaluation-time TS [--trigger TRIGGER]
 A Line is authored like any other definition: a `line` input (alone or as a
 change-set member) names its Procedure and `parameters` -- the Procedure's
 input record, which lowering checks against the Procedure's input contract,
-refusing `playbill.authoring.line_parameters_refused` with the expected
+refusing `cruxible.authoring.line_parameters_refused` with the expected
 fields. It names an `acquisition_policy` (an `acquisition_policy` input) only
 when the Procedure has Source nodes. `authoring create --example line` prints a
 Line over the `--example procedure` Procedure, and `--example
@@ -1466,7 +1466,7 @@ UTC, always: a schedule names no timezone, so an instant never depends on a
 host's timezone database. Convert local times first (09:00 New York in winter
 is 14:00 UTC); a schedule that supplies a `timezone` is refused with that
 reason. The Trigger law refuses an expression outside this grammar
-(`playbill.trigger.cron_invalid`). A Line can
+(`cruxible.trigger.cron_invalid`). A Line can
 have several Triggers; one with none runs only when run explicitly, and `run`
 of a Line with Triggers names the Trigger it fires on (`--trigger`). Retiring
 a Line with live Triggers aimed at it refuses unless they are retired or
@@ -1528,7 +1528,7 @@ after the Line changed rebinds the arm from now (`outcome: rearmed`).
 Line is armed, how many pending occurrences it will admit on its own
 (`pending_automatic`) and how many await explicit dispatch
 (`pending_explicit`), and why an arm stopped; a Line never armed refuses with
-`playbill.line.never_armed`. Idle coverage is checkpointed at
+`cruxible.line.never_armed`. Idle coverage is checkpointed at
 one-minute intervals; event progress and partial scans are retained
 immediately. Each armed Line is drained by at most one worker at a time, so a
 slow Procedure never delays matching or another Line.
@@ -1580,7 +1580,7 @@ protects, and refuses the run if that file exists but cannot be read as one.
 A Line whose runs can propose or settle needs a current accepted
 ProcedureMandate over its exact Procedure; without one each run refuses
 `line_mandate_required`, and `arm` refuses up front with
-`playbill.line.mandate_required`, both naming `authoring create --example
+`cruxible.line.mandate_required`, both naming `authoring create --example
 procedure-mandate`. An observe-only Line -- one whose Procedure's terminals, or
 whose `max_authority`, stop at observe -- needs no mandate. A mandate whose
 `resource_ceiling` exceeds the Procedure's hard caps is refused naming each
@@ -1738,7 +1738,7 @@ moved under it. This is the road for "this table reflects these Claims".
 
 Evidence never comes from a projection window. A citation of any role and any
 origin whose span lies inside a stamped block refuses --
-`playbill.projection.evidence_from_projection`, at the daemon, not only in the
+`cruxible.projection.evidence_from_projection`, at the daemon, not only in the
 SDK -- because a block that was both kinds would let a page attest itself into
 concrete. Prose outside every window is the author's own and stays citable.
 
@@ -1785,7 +1785,7 @@ was that road and it is gone: it minted a block whose one backing was the
 publishing Claim itself, which is a source block projected as its own
 projection -- the overlap the two-block-kinds law refuses. An intent carrying
 `insertion_target` refuses typed as
-`playbill.authoring.insertion_target_removed`, naming both roads above as the
+`cruxible.authoring.insertion_target_removed`, naming both roads above as the
 repair.
 
 On MCP the same adapter runs in the MCP server process:
@@ -2012,7 +2012,7 @@ cursor carries the evaluation time, coordinate, attestation head and delta base
 of the page that minted it, so later pages read the same queue even as the
 clock moves. `result_digest` names the whole queue on every page. If the queue
 has moved since the cursor's first page, or a delta's base has been forgotten,
-the request is refused with `playbill.next.cursor_mismatch`. The repair is to
+the request is refused with `cruxible.next.cursor_mismatch`. The repair is to
 run `cruxible playbill next` again without a cursor.
 
 `--brief` prints one line per row: severity, reason, subject, and the repair
@@ -2080,7 +2080,7 @@ observation produced by the client-side workspace scanner. The daemon does not
 read workspace files. The queue is paged (default 25 items, at most 200); a cut
 page has `truncated: true` and a `next_cursor` for `--cursor`, which continues
 only while accepted state and the queue itself are unchanged; otherwise it is
-refused as `playbill.list.cursor_stale`. The lifecycle commands append attributed
+refused as `cruxible.list.cursor_stale`. The lifecycle commands append attributed
 operational events; they do not create governed proposals or mutate accepted
 knowledge.
 
@@ -2136,7 +2136,7 @@ unique among the verified Captures the instance holds, cited or not; ambiguous
 or unknown handles refuse with the nearest handles). `--evidence-contract NAME` cites the newest verified Capture of
 that CaptureContract about SUBJECT, cited or not: one an accepted Claim on
 SUBJECT cites, or whose own source names SUBJECT; with none it refuses
-`playbill.write.contract_capture_not_found`. Only a Capture committed as exact
+`cruxible.write.contract_capture_not_found`. Only a Capture committed as exact
 bytes can back a Claim: when the newest is a canonical value (as the external
 record reader commits records) it refuses `contract_capture_not_citable`
 naming it, or cites an older exact-bytes Capture with a
@@ -2146,8 +2146,8 @@ before the write is lowered, and the change prints the Capture as
 tier allow it; otherwise it prints the eligible approvers and the approve
 command. `--no-accept` only proposes. `--dry-run` runs every check and writes
 nothing; pass its coordinate back as `--at` to refuse
-(`playbill.write.slot_changed`) if the field moved since. `--expect VALUE` is
-the compare-and-set by value: it refuses `playbill.write.slot_changed`, showing
+(`cruxible.write.slot_changed`) if the field moved since. `--expect VALUE` is
+the compare-and-set by value: it refuses `cruxible.write.slot_changed`, showing
 what the field holds, unless it holds exactly VALUE (repeat `--expect` for every
 value of a many-valued field); `--expect-absent` expects the field to hold
 nothing. Both compose with `--at`. Each change prints
@@ -2156,7 +2156,7 @@ prints a warning with its repair.
 
 `add` puts one more VALUE in a many-valued FIELD, beside the values already
 there; a value already live is answered as done, and `--expect-absent` refuses
-it instead (`playbill.write.value_already_present`). `retire` ends one live
+it instead (`cruxible.write.value_already_present`). `retire` ends one live
 Claim, named by ID or by SUBJECT FIELD when that field holds one value; the
 Claims that depend on it retire with it; `--expect` compares the field's values
 as on `set`. `write` applies a
@@ -2167,7 +2167,7 @@ FILE (YAML or JSON) of changes as one change set: `{"because": ..., "changes":
 two adds on one field land in one change set. A top-level `"subject"` is the
 Subject of every change that names none (a retire's target may then be
 `{"field": ...}`); a change's own subject overrides it, and a change with
-neither refuses `playbill.write.subject_required`. `--schema` prints what FILE
+neither refuses `cruxible.write.subject_required`. `--schema` prints what FILE
 holds. A refusal prints its code, the nearest valid names and the repair, and
 exits 1.
 
@@ -2247,7 +2247,7 @@ CaptureContracts by digest, attention says so and suggests
 horizon and live Claim count, the predicates of other kinds that point at it
 (`incoming`, full names: follow one backwards with `query KIND --follow-in
 PREDICATE:alias`), plus up to five sample Subject IDs. A kind that
-does not exist is refused as `playbill.orient.kind_not_found` with the nearest
+does not exist is refused as `cruxible.orient.kind_not_found` with the nearest
 kinds. `--section` pages one artifact family as compact rows; follow
 `next_cursor` with `--cursor` while `truncated` is true. `--section runs` lists
 Procedure runs, newest admission first, each with its Procedure, status,
@@ -2524,11 +2524,11 @@ degrades to the original output plus, where a channel exists, one
 The parked hook writes one actionable code to stderr only when its own adapter
 input is malformed:
 
-- `playbill.coverage_hook.instance_id_missing`: add `instance_id` to
+- `cruxible.coverage_hook.instance_id_missing`: add `instance_id` to
   `.playbill/coverage.json`, or select one with the CLI context/environment.
-- `playbill.coverage_hook.rule_tag_invalid`: use the exact-path or path-prefix
+- `cruxible.coverage_hook.rule_tag_invalid`: use the exact-path or path-prefix
   rule tags shown in the integration README.
-- `playbill.coverage_hook.tool_response_invalid`: the Grep hook must receive its
+- `cruxible.coverage_hook.tool_response_invalid`: the Grep hook must receive its
   structured response object; fix the harness envelope rather than parsing text.
 
 The workspace config's `instance_id` is the hook's selected instance. General
@@ -2563,28 +2563,28 @@ whether a credential authenticates it (with auth off the ID is a claim, not
 authentication), its effective permission mode, accepted principal-registration
 status, and current coordinate. It also says whether this actor can author and,
 if not, why: `can_author` and `authoring_refusal` carry exactly the code, detail
-and repair authoring would return (`playbill.identity.principal_unconfigured`,
+and repair authoring would return (`cruxible.identity.principal_unconfigured`,
 `principal_absent`, `principal_revoked`, `credential_unbound`,
-`permission_insufficient`, or `playbill.instance.decommissioned`). Authoring
+`permission_insufficient`, or `cruxible.instance.decommissioned`). Authoring
 refuses such an actor at `authoring create`, before any payload is compiled or
 preflighted, rather than at proposal evaluation
-(`playbill.proposal.creator_principal_invalid`).
+(`cruxible.proposal.creator_principal_invalid`).
 `proposal list` prints a labeled `COORDINATE_TIME` column and deterministically
 separates current open candidates from accepted, refused, and stale terminal
 evidence so retries do not depend on remembered IDs. It returns one page
 (default 50, at most 500); a cut page has `truncated: true` and a `next_cursor`
 for `--cursor`, which keeps reading the first page's accepted coordinate. A
 proposal admitted or withdrawn between pages changes the listing, and the
-cursor is then refused as `playbill.list.cursor_stale`: list again without it. Proposal actions accept a
+cursor is then refused as `cruxible.list.cursor_stale`: list again without it. Proposal actions accept a
 full digest, a unique digest prefix (`sha256:` plus at least 8 hex characters),
 or a target ref whose current Git target
 names exactly one admission; unknown and historical ambiguous selectors are
 typed refusals that point back to `proposal list`.
 `proposal readmit` replays a stale proposal's authored content through the current
 governed rebase and returns a fresh, idempotent proposal without changing the old
-proposal evidence. It refuses `playbill.proposal.readmit_already_accepted` when
+proposal evidence. It refuses `cruxible.proposal.readmit_already_accepted` when
 the change is in accepted state -- the proposal itself was accepted, or its
-readmission was (`context.accepted_as`) -- and `playbill.proposal.readmit_not_stale`
+readmission was (`context.accepted_as`) -- and `cruxible.proposal.readmit_not_stale`
 for an open or refused proposal. A stale generated ClaimType dependency-closure migration is not
 byte-rebased because its dependent inventory may have changed; rerun ClaimType
 migration preflight and submit at the current head instead.

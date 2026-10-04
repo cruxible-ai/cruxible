@@ -149,7 +149,7 @@ def test_failed_target_stalls_until_head_or_registration_changes(world, monkeypa
         refresh_floor(instance, instance.descriptor.instance_id)
     health = FLOOR.health(instance, now=NOW)
     assert health[0].state == "stalled"
-    assert health[0].repair.operation == "playbill.floor.export"
+    assert health[0].repair.operation == "cruxible.floor.export"
     assert _consumer_stalled_items(health)[0].reason == "consumer_stalled"
     for _ in range(3):
         FLOOR.match(instance, now=NOW, daemon_id="daemon")
@@ -500,8 +500,8 @@ def test_deliver_now_refuses_a_pinned_coordinate_with_a_runnable_repair(world, m
     assert "floor-delivery off" in str(refused.value)
     status, envelope = error_to_response(refused.value)
     assert status == 400
-    assert envelope.error_code == "playbill.floor.delivery_head_only"
-    assert envelope.repair.operation == "playbill.workspace.floor-delivery"
+    assert envelope.error_code == "cruxible.floor.delivery_head_only"
+    assert envelope.repair.operation == "cruxible.workspace.floor-delivery"
     assert envelope.repair.arguments == {"state": "off", "instance_id": instance_id}
     client_error = response_to_error(status, envelope)
     assert client_error.error_code == envelope.error_code
@@ -628,4 +628,4 @@ def test_fifo_local_input_stalls_delivery_promptly_and_releases_admission(world,
     assert floor_outcomes(instance)[0].status == "failed"
     health = FLOOR.health(instance, now=NOW)
     assert health[0].state == "stalled"
-    assert health[0].repair.operation == "playbill.floor.export"
+    assert health[0].repair.operation == "cruxible.floor.export"

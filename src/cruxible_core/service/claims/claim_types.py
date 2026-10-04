@@ -105,7 +105,7 @@ def service_propose_playbill_claim_type(
         instance,
         dry_run=dry_run,
         at=at,
-        operation="playbill.claim-type.propose",
+        operation="cruxible.claim-type.propose",
         describe=f"proposing ClaimType {claim_type.predicate}",
         actor_id=actor_id,
         proposed_base=proposed_base,
@@ -144,7 +144,7 @@ def service_propose_playbill_claim_type_input(
         instance,
         dry_run=dry_run,
         at=at,
-        operation="playbill.claim-type.propose",
+        operation="cruxible.claim-type.propose",
         describe=f"proposing ClaimType {claim_type.predicate}",
         actor_id=actor_id,
         proposed_base=coordinate,
@@ -195,13 +195,13 @@ def nearest_names(value: str, names: Iterable[str], *, limit: int = 5) -> tuple[
 class ClaimTypeNotFoundError(ClaimNotFoundError):
     """No accepted ClaimType has this predicate; names the nearest declared ones."""
 
-    error_code = "playbill.claim_type_not_found"
+    error_code = "cruxible.claim_type_not_found"
 
     def __init__(self, predicate: str, *, nearest: tuple[str, ...]) -> None:
         self.predicate = predicate
         self.nearest = nearest
         self.repair = RepairOperation(
-            operation="playbill.orient", arguments={"section": "claim_types"}
+            operation="cruxible.orient", arguments={"section": "claim_types"}
         )
         hint = f"; nearest: {', '.join(nearest)}" if nearest else ""
         super().__init__(

@@ -73,7 +73,7 @@ def test_a_missing_or_stale_floor_names_the_export_until_it_is_current(
     )
     assert status.floor.state == reported
     assert status.floor.repair is not None
-    assert status.floor.repair.operation == "playbill.floor.export"
+    assert status.floor.repair.operation == "cruxible.floor.export"
     assert _attention(status) == (("floor", status.floor),)
 
     current = _status(
@@ -588,7 +588,7 @@ def test_an_internal_action_no_trigger_schedules_is_status_with_an_authoring_rep
     assert facet.repair.target == "prediction.anchor_retry"
     assert facet.repair.required_change == "author_a_trigger_aimed_at_the_unscheduled_action"
     assert (facet.repair.operation, facet.repair.arguments) == (
-        "playbill.authoring.create",
+        "cruxible.authoring.create",
         {"example": "trigger"},
     )
     assert _attention(unscheduled) == (("triggers", facet),)

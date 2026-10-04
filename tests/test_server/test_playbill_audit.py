@@ -67,6 +67,6 @@ def test_http_audit_maps_invalid_profile_and_budget_to_typed_refusals(
     budget_response = client.post(f"/api/v1/{instance_id}/playbill/audit", json=invalid_budget)
 
     assert profile_response.status_code == 400, profile_response.text
-    assert profile_response.json()["error_code"] == "playbill.audit.access_profile_invalid"
+    assert profile_response.json()["error_code"] == "cruxible.audit.access_profile_invalid"
     assert budget_response.status_code == 400, budget_response.text
-    assert budget_response.json()["error_code"] == "playbill.audit.budget_invalid"
+    assert budget_response.json()["error_code"] == "cruxible.audit.budget_invalid"

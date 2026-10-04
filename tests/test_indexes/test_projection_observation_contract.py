@@ -123,26 +123,26 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "prediction_window_unbindable",
     }
     assert set(get_args(NextRepairOperation)) == {
-        "playbill.authoring.create",
-        "playbill.authoring.bind",
-        "playbill.claim.retire",
+        "cruxible.authoring.create",
+        "cruxible.authoring.bind",
+        "cruxible.claim.retire",
         # The write verbs: a row that asks for a Claim stated again, or a
         # contest resolved, names the default-profile door that does it.
-        "playbill.set",
-        "playbill.write",
-        "playbill.floor.export",
+        "cruxible.set",
+        "cruxible.write",
+        "cruxible.floor.export",
         # A row that names a change a verb performs must name the verb. Two
         # projection rows used to answer `hand_edit` with "depublish this
         # block", which is a served command.
-        "playbill.block.depublish",
-        "playbill.block.repin",
-        "playbill.block.sync",
-        "playbill.document.propose",
-        "playbill.proposal.readmit",
-        "playbill.proposal.approve",
-        "playbill.compiler.upgrade",
-        "playbill.line.arm",
-        "playbill.line.dispatch",
-        "playbill.settle",
+        "cruxible.block.depublish",
+        "cruxible.block.repin",
+        "cruxible.block.sync",
+        "cruxible.document.propose",
+        "cruxible.proposal.readmit",
+        "cruxible.proposal.approve",
+        "cruxible.compiler.upgrade",
+        "cruxible.line.arm",
+        "cruxible.line.dispatch",
+        "cruxible.settle",
         "hand_edit",
     }

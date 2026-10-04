@@ -220,7 +220,7 @@ def test_two_distinct_current_principals_emit_one_deterministic_queue_row(
     assert retry == first
     assert len(first) == 1
     row = first[0]
-    assert row.repair.operation == "playbill.set"
+    assert row.repair.operation == "cruxible.set"
     assert row.repair.required_change == "resolve_attestation_threshold"
     assert row.detail["independent_control_component_count"] == 2
     assert row.detail["attestation_digests"] == [

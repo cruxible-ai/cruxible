@@ -213,7 +213,7 @@ class EvidenceRecaptureOperationV1(_StrictClaimServiceModel):
     tag: Literal["playbill-evidence-recapture-operation-v1"] = (
         "playbill-evidence-recapture-operation-v1"
     )
-    operation: Literal["playbill.authoring.bind"] = "playbill.authoring.bind"
+    operation: Literal["cruxible.authoring.bind"] = "cruxible.authoring.bind"
     claim_identity: str
     capture_contract_identity: str
     logical_source: str
@@ -288,7 +288,7 @@ def _claim_from_view(
         (
             fact.get("value")
             for fact in view.facts
-            if fact.get("schema_id") == "playbill.claim.statement"
+            if fact.get("schema_id") == "cruxible.claim.statement"
         ),
         None,
     )
@@ -296,7 +296,7 @@ def _claim_from_view(
         (
             fact.get("value")
             for fact in view.facts
-            if fact.get("schema_id") == "playbill.claim.backing"
+            if fact.get("schema_id") == "cruxible.claim.backing"
         ),
         None,
     )
@@ -304,7 +304,7 @@ def _claim_from_view(
         (
             fact.get("value")
             for fact in view.facts
-            if fact.get("schema_id") == "playbill.claim.lifecycle"
+            if fact.get("schema_id") == "cruxible.claim.lifecycle"
         ),
         None,
     )
@@ -935,7 +935,7 @@ def service_explain_playbill_claim(
             context = capture_context.get(expiration.capture_digest)
             if context is None:
                 raise ProposalIntegrityError(
-                    "playbill.claim.evidence_freshness_invalid: expiration has no Claim citation"
+                    "cruxible.claim.evidence_freshness_invalid: expiration has no Claim citation"
                 )
             citation_ids, contract_identity, logical_source = context
             freshness.append(
@@ -978,7 +978,7 @@ def service_explain_playbill_claim(
         )
     if not isinstance(law, ClaimLawEvidenceV1):
         raise ProposalIntegrityError(
-            "playbill.claim.evidence_freshness_invalid: v2 law evidence produced a v1 verdict"
+            "cruxible.claim.evidence_freshness_invalid: v2 law evidence produced a v1 verdict"
         )
     return PlaybillClaimExplanationV2(
         coordinate=public_coordinate,

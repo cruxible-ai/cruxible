@@ -53,7 +53,7 @@ _KIT_FORMS = (
 class KitSourceError(ConfigError):
     """A kit source names no kit this client can read (a typed refusal, not a crash)."""
 
-    error_code = "playbill.kit.source_invalid"
+    error_code = "cruxible.kit.source_invalid"
 
     def __init__(self, detail: str) -> None:
         super().__init__(f"{self.error_code}: {detail}; a kit is {_KIT_FORMS}")

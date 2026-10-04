@@ -10,7 +10,7 @@ uses its separate interface × implementation × measured-bucket dimensions.
 Only an accepted promotion contributes, and only through the promotion law that
 already verified the exact record range.
 
-This module is deliberately not re-exported from ``playbill.exhaust``: it reads
+This module is deliberately not re-exported from ``cruxible.exhaust``: it reads
 the Procedure/LineSpec artifact families, which already depend on the journal
 records, so re-exporting it would close an import cycle.  Import it by path.
 """
@@ -614,7 +614,7 @@ def line_track_record_facts(
     dimension_key = line_track_record_dimension_key(record.dimensions)
     return (
         ProjectionFact(
-            schema_id="playbill.line.track_record",
+            schema_id="cruxible.line.track_record",
             schema_version=1,
             subject_identity=line_pin.target.qualified,
             fact_key=f"{promotion.identity.name}.epoch-{record.occurrence_epoch}.{dimension_key}",

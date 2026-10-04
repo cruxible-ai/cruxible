@@ -122,11 +122,11 @@ class _RepinClient:
             envelope={"identity": f"Claim:{name}"},
             facts=[
                 {
-                    "schema_id": "playbill.claim.statement",
+                    "schema_id": "cruxible.claim.statement",
                     "value": statement.model_dump(mode="json"),
                 },
                 {
-                    "schema_id": "playbill.claim.lifecycle",
+                    "schema_id": "cruxible.claim.lifecycle",
                     "value": {"lifecycle": {"state": "live"}},
                 },
             ],
@@ -184,7 +184,7 @@ class _RepinClient:
                     ),
                     "evaluated_at": NOW,
                     "budgets": {"max_results": 10, "max_traversal_depth": 0},
-                    "refusal": {"code": "playbill.query.refused", "message": "Refused fixture"}
+                    "refusal": {"code": "cruxible.query.refused", "message": "Refused fixture"}
                     if self.query_verdict == "refused"
                     else None,
                     "verdict": self.query_verdict,

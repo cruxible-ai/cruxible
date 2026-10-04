@@ -242,7 +242,7 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
         for view in batch.claims:
             claim = _claim_from_view(view)
             facts = {item["schema_id"]: item["value"] for item in view.facts}
-            verdict = facts.get("playbill.claim.current_verdict")
+            verdict = facts.get("cruxible.claim.current_verdict")
             if (
                 not isinstance(verdict, dict)
                 or "verdict" not in verdict

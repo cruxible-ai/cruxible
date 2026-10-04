@@ -271,7 +271,7 @@ def test_a_body_over_the_cap_refuses_with_the_range_repair(
 
     refused = _refusal(instance, "Document:design", detail="body")
 
-    assert refused.error_code == "playbill.get.body_too_large"
+    assert refused.error_code == "cruxible.get.body_too_large"
     assert refused.repair is not None
     assert refused.repair.arguments == {
         "ref": "Document:design",
@@ -282,7 +282,7 @@ def test_a_body_over_the_cap_refuses_with_the_range_repair(
     beyond = _refusal(
         instance, "Document:design", detail="body", range=ByteRange(start=999, end=1000)
     )
-    assert beyond.error_code == "playbill.get.range_out_of_bounds"
+    assert beyond.error_code == "cruxible.get.range_out_of_bounds"
 
 
 def test_wrong_names_refuse_with_the_nearest_names(world: dict[str, Any]) -> None:
@@ -293,7 +293,7 @@ def test_wrong_names_refuse_with_the_nearest_names(world: dict[str, Any]) -> Non
     kind = _refusal(instance, "project.work_iten/wi-42")
     unknown = _refusal(instance, "no_such_thing_anywhere")
 
-    assert subject.error_code == "playbill.get.ref_not_found"
+    assert subject.error_code == "cruxible.get.ref_not_found"
     assert subject.http_status == 404
     assert "project.work_item/wi-42" in subject.candidates
     assert predicate.candidates[0] == f"ClaimType:{PREDICATE}"
@@ -301,13 +301,13 @@ def test_wrong_names_refuse_with_the_nearest_names(world: dict[str, Any]) -> Non
     # A typo in a short name still finds the predicate by its last segment.
     assert f"ClaimType:{PREDICATE}" in _refusal(instance, "statu").candidates
     assert unknown.candidates == () and unknown.repair is not None
-    assert unknown.repair.operation == "playbill.orient"
+    assert unknown.repair.operation == "cruxible.orient"
 
 
 def test_an_ambiguous_name_refuses_listing_every_candidate(world: dict[str, Any]) -> None:
     refused = _refusal(world["instance"], "status")
 
-    assert refused.error_code == "playbill.get.ref_ambiguous"
+    assert refused.error_code == "cruxible.get.ref_ambiguous"
     assert refused.http_status == 409
     assert set(refused.candidates) == {f"ClaimType:{PREDICATE}", "Document:status"}
 
@@ -317,7 +317,7 @@ def test_a_detail_that_does_not_apply_refuses_naming_the_ones_that_do(
 ) -> None:
     refused = _refusal(world["instance"], "Document:design", detail="evidence")
 
-    assert refused.error_code == "playbill.get.detail_unsupported"
+    assert refused.error_code == "cruxible.get.detail_unsupported"
     assert refused.context["allowed"] == ["summary", "why", "history", "proof", "body"]
 
 
@@ -341,7 +341,7 @@ def test_at_reads_an_earlier_generation_by_git_oid(world: dict[str, Any]) -> Non
     earlier = _get(instance, "Document:design", at=None)
     assert earlier.coordinate.git_oid == instance.accepted_coordinate().git_oid[:12]
     refused = _refusal(instance, "Document:design", at=before.git_oid)
-    assert refused.error_code == "playbill.get.ref_not_found"
+    assert refused.error_code == "cruxible.get.ref_not_found"
     at_before = _get(
         instance,
         _SUBJECT,
@@ -349,7 +349,7 @@ def test_at_reads_an_earlier_generation_by_git_oid(world: dict[str, Any]) -> Non
     )
     assert at_before.coordinate.git_oid == before.git_oid[:12]
     bogus = _refusal(instance, _SUBJECT, at="0" * 40)
-    assert bogus.error_code == "playbill.read.coordinate_not_accepted"
+    assert bogus.error_code == "cruxible.read.coordinate_not_accepted"
 
 
 def test_flags_come_from_the_verdict_and_slot_status() -> None:
@@ -739,7 +739,7 @@ def test_an_empty_document_reads_as_an_empty_body(tmp_path: Path) -> None:
     for read in (whole, ranged):
         assert read is not None and read.size == 0
         assert read.text == "" and read.range is None
-    assert beyond.error_code == "playbill.get.range_out_of_bounds"
+    assert beyond.error_code == "cruxible.get.range_out_of_bounds"
 
 
 def test_a_proposal_is_read_only_at_the_current_head(world: dict[str, Any]) -> None:
@@ -749,7 +749,7 @@ def test_a_proposal_is_read_only_at_the_current_head(world: dict[str, Any]) -> N
     refused = _refusal(instance, proposal, at=before.git_oid)
     at_head = _get(instance, proposal, at=head.git_oid, detail="proof")
 
-    assert refused.error_code == "playbill.get.historical_read_unsupported"
+    assert refused.error_code == "cruxible.get.historical_read_unsupported"
     assert refused.repair is not None and refused.repair.arguments == {
         "ref": f"Proposal:{proposal}"
     }

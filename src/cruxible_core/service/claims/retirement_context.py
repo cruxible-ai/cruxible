@@ -124,7 +124,7 @@ def claim_retirement_context(
             ]
     except (CruxibleError, ValueError, ValidationError) as exc:
         raise ProposalIntegrityError(
-            "playbill.claim.retirement_context_invalid: citation relation projection is invalid"
+            "cruxible.claim.retirement_context_invalid: citation relation projection is invalid"
         ) from exc
     if not accepted:
         return None

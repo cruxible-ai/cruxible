@@ -76,7 +76,7 @@ PlaybillCurationObservationOmissionReason: TypeAlias = Literal[
 
 
 class CurationError(CruxibleError):
-    code = "playbill.curation.refused"
+    code = "cruxible.curation.refused"
 
     @property
     def error_code(self) -> str:
@@ -84,27 +84,27 @@ class CurationError(CruxibleError):
 
 
 class CurationCoordinateNotAccepted(CurationError):
-    code = "playbill.curation.coordinate_not_accepted"
+    code = "cruxible.curation.coordinate_not_accepted"
 
 
 class CurationItemNotFound(CurationError):
-    code = "playbill.curation.item_not_found"
+    code = "cruxible.curation.item_not_found"
 
 
 class CurationItemAlreadyResolved(CurationError):
-    code = "playbill.curation.item_already_resolved"
+    code = "cruxible.curation.item_already_resolved"
 
 
 class CurationSuppressionInvalid(CurationError):
-    code = "playbill.curation.suppression_invalid"
+    code = "cruxible.curation.suppression_invalid"
 
 
 class CurationResolvingProposalInvalid(CurationError):
-    code = "playbill.curation.resolving_proposal_invalid"
+    code = "cruxible.curation.resolving_proposal_invalid"
 
 
 class CurationResolvingChangeUnrelated(CurationError):
-    code = "playbill.curation.resolving_change_unrelated"
+    code = "cruxible.curation.resolving_change_unrelated"
 
 
 class _StrictCurationModel(BaseModel):
@@ -964,7 +964,7 @@ def service_overrule_playbill_curation(
             coordinate=coordinate,
             generation=generation,
             actor_context=actor_context,
-            operation="playbill.curation.overrule",
+            operation="cruxible.curation.overrule",
         )
 
 
@@ -1002,7 +1002,7 @@ def service_suppress_playbill_curation(
             coordinate=coordinate,
             generation=generation,
             actor_context=actor_context,
-            operation="playbill.curation.suppress",
+            operation="cruxible.curation.suppress",
         )
 
 
@@ -1153,7 +1153,7 @@ def service_accept_fixed_playbill_curation(
             coordinate=coordinate,
             generation=generation,
             actor_context=actor_context,
-            operation="playbill.curation.accept-fixed",
+            operation="cruxible.curation.accept-fixed",
         )
 
 

@@ -456,12 +456,12 @@ def verify_claim_verdict_freshness(
     if rule.max_evidence_age is None:
         if isinstance(result, ClaimVerdictResult):
             raise ValueError(
-                "playbill.claim.evidence_freshness_invalid: v2 verdict has no freshness rule"
+                "cruxible.claim.evidence_freshness_invalid: v2 verdict has no freshness rule"
             )
         return
     if not isinstance(result, ClaimVerdictResult):
         raise ValueError(
-            "playbill.claim.evidence_freshness_invalid: freshness rule requires a v2 verdict"
+            "cruxible.claim.evidence_freshness_invalid: freshness rule requires a v2 verdict"
         )
     expected = tuple(
         EvidenceFreshnessExpiration(
@@ -475,7 +475,7 @@ def verify_claim_verdict_freshness(
     )
     if result.freshness_expirations != expected:
         raise ValueError(
-            "playbill.claim.evidence_freshness_invalid: expiration vector does not reproduce"
+            "cruxible.claim.evidence_freshness_invalid: expiration vector does not reproduce"
         )
 
 

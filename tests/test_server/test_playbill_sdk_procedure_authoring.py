@@ -50,7 +50,7 @@ def test_sdk_concrete_procedure_prepares_submits_and_runs(
         missing = draft.prepare()
         assert missing.refused
         assert any(
-            item.code == "playbill.authoring.artifact_reference_unresolved"
+            item.code == "cruxible.authoring.artifact_reference_unresolved"
             for item in missing.diagnostics
         )
         query = QueryDefinition(
@@ -113,9 +113,9 @@ def test_sdk_reports_missing_or_duplicate_carried_contracts(duplicate: bool) -> 
     with pytest.raises(AuthoringInputError) as error:
         Cruxible.procedure(object(), definition=invalid)
     assert error.value.code == (
-        "playbill.authoring.carried_contract_duplicate"
+        "cruxible.authoring.carried_contract_duplicate"
         if duplicate
-        else "playbill.authoring.carried_contract_unresolved"
+        else "cruxible.authoring.carried_contract_unresolved"
     )
 
 
@@ -164,7 +164,7 @@ def test_sdk_never_reinterprets_exact_pins_as_authoring_references(
     intent = pb.procedure(definition=invalid).prepare()
     assert intent.refused
     assert any(
-        item.code == "playbill.authoring.caller_artifact_digest_forbidden"
+        item.code == "cruxible.authoring.caller_artifact_digest_forbidden"
         for item in intent.diagnostics
     )
 
@@ -214,6 +214,6 @@ def test_sdk_capture_terminal_prepares_but_cannot_continue(
     else:
         assert intent.refused
         assert any(
-            item.code == "playbill.authoring.procedure_definition_invalid"
+            item.code == "cruxible.authoring.procedure_definition_invalid"
             for item in intent.diagnostics
         ), intent.diagnostics

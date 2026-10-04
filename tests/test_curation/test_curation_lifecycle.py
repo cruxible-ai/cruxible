@@ -201,7 +201,7 @@ def test_changed_detector_laws_quarantine_old_items_without_bricking_curation(
         _legacy_observation(
             pattern_kind="playbill.curation.admission_failure_cluster.v1",
             subject=ArtifactIdentity(kind="ClaimType", name="project.work_item.priority"),
-            detail={"diagnostic_code": "playbill.claim.literal_schema_invalid"},
+            detail={"diagnostic_code": "cruxible.claim.literal_schema_invalid"},
             old_law={
                 "minimum_distinct_durable_attempts": 2,
                 "discriminator": "diagnostic_code",

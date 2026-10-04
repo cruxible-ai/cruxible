@@ -311,7 +311,7 @@ def test_activation_renders_malformed_proposal_id_as_typed_refusal(
             self, _instance_id: str, _proposal_id: str
         ) -> contracts.ActivationReceipt:
             raise ProposalActivationRequestInvalid(
-                "playbill.proposal.activation_request_invalid: proposal_id must be a "
+                "cruxible.proposal.activation_request_invalid: proposal_id must be a "
                 "canonical sha256 digest"
             )
 
@@ -324,7 +324,7 @@ def test_activation_renders_malformed_proposal_id_as_typed_refusal(
 
     assert result.exit_code == 1
     assert "ProposalActivationRequestInvalid" in result.output
-    assert "playbill.proposal.activation_request_invalid" in result.output
+    assert "cruxible.proposal.activation_request_invalid" in result.output
 
 
 def test_floor_symlink_may_not_escape_the_workspace(

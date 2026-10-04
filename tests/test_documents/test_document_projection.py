@@ -148,8 +148,8 @@ def test_document_compiler_emits_reproducible_facts_and_protected_exact_span(
         assert denied.coordinate_kind == "canonical"
         assert denied.coordinate == accepted
         assert handle.list_documents(access=BodyAccessContext(principal_id="reader")) == (denied,)
-        assert "playbill.document.source_mapping" not in {fact.schema_id for fact in denied.facts}
-        mapping = _fact(allowed, "playbill.document.source_mapping")
+        assert "cruxible.document.source_mapping" not in {fact.schema_id for fact in denied.facts}
+        mapping = _fact(allowed, "cruxible.document.source_mapping")
         assert mapping == {
             "spans": [
                 {
@@ -166,10 +166,10 @@ def test_document_compiler_emits_reproducible_facts_and_protected_exact_span(
             },
             "tag": "playbill-source-mapping-v1",
         }
-        subject = _fact(allowed, "playbill.document.subject")
+        subject = _fact(allowed, "cruxible.document.subject")
         assert subject["body_digest"] == {"$digest": metadata.digest}  # type: ignore[index]
         assert subject["input_digest"]["$digest"].startswith("sha256:")  # type: ignore[index]
-        references = _fact(allowed, "playbill.document.references")
+        references = _fact(allowed, "cruxible.document.references")
         assert references["links"][0]["target_identity"] == (  # type: ignore[index]
             "document:implementation-program"
         )
@@ -255,11 +255,11 @@ def test_whole_document_subject_survives_line_movement_while_byte_span_changes(
         assert view is not None
         views.append(view)
 
-    first_subject = _fact(views[0], "playbill.document.subject")["address"]  # type: ignore[index]
-    second_subject = _fact(views[1], "playbill.document.subject")["address"]  # type: ignore[index]
+    first_subject = _fact(views[0], "cruxible.document.subject")["address"]  # type: ignore[index]
+    second_subject = _fact(views[1], "cruxible.document.subject")["address"]  # type: ignore[index]
     assert first_subject == second_subject
-    first_mapping = _fact(views[0], "playbill.document.source_mapping")
-    second_mapping = _fact(views[1], "playbill.document.source_mapping")
+    first_mapping = _fact(views[0], "cruxible.document.source_mapping")
+    second_mapping = _fact(views[1], "cruxible.document.source_mapping")
     assert first_mapping != second_mapping
     assert first_mapping["spans"][0]["end_byte"] == len("# Café\n".encode())  # type: ignore[index]
     assert second_mapping["spans"][0]["end_byte"] == len("\n\n# Café\n".encode())  # type: ignore[index]

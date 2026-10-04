@@ -36,11 +36,11 @@ def test_a_settled_terminal_prints_the_generation_it_accepted(capsys) -> None:
 def test_a_fallen_back_settle_prints_its_proposal_and_why(capsys) -> None:
     out = _echo(
         capsys,
-        _settle(settle_outcome="proposed", fallback_reason="playbill.settle.condition_false"),
+        _settle(settle_outcome="proposed", fallback_reason="cruxible.settle.condition_false"),
     )
     assert out == (
         f"Proposal settle: {PROPOSAL} candidate {CANDIDATE} "
-        "(settle fell back: playbill.settle.condition_false)\n"
+        "(settle fell back: cruxible.settle.condition_false)\n"
     )
 
 

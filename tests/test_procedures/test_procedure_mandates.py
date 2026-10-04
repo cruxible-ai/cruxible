@@ -106,7 +106,7 @@ def test_procedure_mandate_law_checks_exact_procedure_and_ceiling() -> None:
         procedure=procedure,
     )
     assert refused.diagnostics[0].code == (
-        "playbill.procedure_mandate.authority_ceiling_widens_procedure"
+        "cruxible.procedure_mandate.authority_ceiling_widens_procedure"
     )
 
 
@@ -258,7 +258,7 @@ def test_procedure_and_mandate_successors_are_one_changeset_relation(tmp_path) -
         actor_id="owner",
     )
     assert tuple(item.code for item in unpaired.diagnostics) == (
-        "playbill.procedure_mandate.successor_pair_required",
+        "cruxible.procedure_mandate.successor_pair_required",
     )
 
     mandate_only = evaluate_proposal_tree(
@@ -275,7 +275,7 @@ def test_procedure_and_mandate_successors_are_one_changeset_relation(tmp_path) -
         actor_id="owner",
     )
     assert tuple(item.code for item in mandate_only.diagnostics) == (
-        "playbill.procedure_mandate.successor_pair_required",
+        "cruxible.procedure_mandate.successor_pair_required",
     )
 
 

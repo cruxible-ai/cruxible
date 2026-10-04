@@ -107,4 +107,4 @@ def test_interface_law_reproduces_fixture_catalog_and_exact_succession() -> None
         predecessor=accepted,
         conformance_fixtures={},
     )
-    assert missing.diagnostics[0].code == "playbill.provider_interface.bucket_fixture_missing"
+    assert missing.diagnostics[0].code == "cruxible.provider_interface.bucket_fixture_missing"

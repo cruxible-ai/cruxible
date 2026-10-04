@@ -181,7 +181,7 @@ def test_existing_capture_submits_through_real_proposal_and_retry_is_idempotent(
     assert repeated.status.state == "accepted"
     assert repeated.status.proposal_id is None
     assert retry_lowered.resolved_authoring["outcome"] == (
-        "playbill.authoring.existing_capture_already_associated"
+        "cruxible.authoring.existing_capture_already_associated"
     )
     assert retry.last_preflight is None
     assert coordinator.submit(retry.intent_id, actor=actor) == repeated
@@ -243,7 +243,7 @@ def test_direct_selection_cite_existing_submits_on_its_claim_and_refuses_cross_c
     ).intent
     evidence_refusal = coordinator.preflight(evidence_intent.intent_id, actor=actor)
     assert evidence_refusal.frontier.diagnostics[0].code == (
-        "playbill.authoring.existing_capture_not_admitted"
+        "cruxible.authoring.existing_capture_not_admitted"
     )
     assert evidence_refusal.frontier.diagnostics[0].offending_element == "citation_role"
 
@@ -265,7 +265,7 @@ def test_direct_selection_cite_existing_submits_on_its_claim_and_refuses_cross_c
     ).intent
     cross_refusal = cross_coordinator.preflight(cross.intent_id, actor=actor)
     assert cross_refusal.frontier.diagnostics[0].code == (
-        "playbill.claim.self_source_capture_unbound"
+        "cruxible.claim.self_source_capture_unbound"
     )
     assert cross_refusal.frontier.diagnostics[0].offending_element == "source.capture_digest"
 
@@ -315,15 +315,15 @@ def test_raw_proposal_rechecks_claim_bound_capture_scope_after_lowering_is_bypas
     )
 
     assert {item.code for item in result.evaluation.diagnostics} == {
-        "playbill.claim.self_source_capture_unbound"
+        "cruxible.claim.self_source_capture_unbound"
     }
 
 
 @pytest.mark.parametrize(
     ("grade", "expected_code"),
     [
-        ("derived", "playbill.authoring.capture_not_shareable"),
-        ("observed", "playbill.authoring.existing_capture_not_admitted"),
+        ("derived", "cruxible.authoring.capture_not_shareable"),
+        ("observed", "cruxible.authoring.existing_capture_not_admitted"),
     ],
 )
 def test_existing_capture_shareability_and_admission_refusals_are_reachable(
@@ -418,7 +418,7 @@ def test_claim_bound_capture_cannot_be_reused_by_another_claim(tmp_path: Path) -
     ).intent
 
     refusal = coordinator.preflight(intent.intent_id, actor=actor)
-    assert refusal.frontier.diagnostics[0].code == ("playbill.claim.self_source_capture_unbound")
+    assert refusal.frontier.diagnostics[0].code == ("cruxible.claim.self_source_capture_unbound")
     assert refusal.frontier.diagnostics[0].offending_element == "source.capture_digest"
 
 
@@ -446,9 +446,9 @@ def test_missing_invalid_and_unaccepted_contract_captures_refuse_at_the_source_p
     )
     digests.append(orphan.capture_digest)
     expected = [
-        "playbill.authoring.existing_capture_not_found",
-        "playbill.authoring.existing_capture_invalid",
-        "playbill.authoring.capture_contract_unresolved",
+        "cruxible.authoring.existing_capture_not_found",
+        "cruxible.authoring.existing_capture_invalid",
+        "cruxible.authoring.capture_contract_unresolved",
     ]
 
     for index, (capture_digest, code) in enumerate(zip(digests, expected, strict=True)):

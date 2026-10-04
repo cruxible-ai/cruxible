@@ -117,18 +117,18 @@ def test_the_role_is_inferred_when_only_one_is_permitted_and_required_otherwise(
     assert _write(instance, _set(WI1, "title", "Tidy the CLI")).status == "accepted"
     refused = _write(instance, _set(WI1, "priority", "high"))
     assert refused.status == "refused"
-    assert _refusal(refused).code == "playbill.write.role_required"
+    assert _refusal(refused).code == "cruxible.write.role_required"
     assert set(_refusal(refused).candidates) == {"normative", "observation"}
     assert _write(instance, _set(WI1, "priority", "high", role="normative")).status == "accepted"
     wrong = _write(instance, _set(WI1, "title", "x", role="normative"))
-    assert _refusal(wrong).code == "playbill.write.role_not_permitted"
+    assert _refusal(wrong).code == "cruxible.write.role_not_permitted"
     assert _refusal(wrong).candidates == ("observation",)
 
 
 def test_a_wrong_enum_member_refuses_listing_the_members(instance: PlaybillInstance) -> None:
     refused = _write(instance, _set(WI1, "status", "dne"))
     refusal = _refusal(refused)
-    assert refusal.code == "playbill.write.value_not_member"
+    assert refusal.code == "cruxible.write.value_not_member"
     assert "blocked, done, ready" in refusal.message
     assert refusal.candidates == ("done",)
     assert refusal.change == 0 and refusal.field_path == "changes[0].value"
@@ -160,19 +160,19 @@ def test_the_claim_law_names_the_enum_members_too(instance: PlaybillInstance) ->
 
 def test_wrong_names_refuse_with_the_nearest_names(instance: PlaybillInstance) -> None:
     field = _refusal(_write(instance, _set(WI1, "stauts", "done")))
-    assert field.code == "playbill.write.unknown_field" and "status" in field.candidates
+    assert field.code == "cruxible.write.unknown_field" and "status" in field.candidates
     assert field.field_path == "changes[0].field"
     kind = _refusal(_write(instance, _set("project.work_itme/wi-1", "status", "done")))
-    assert kind.code == "playbill.write.unknown_kind" and KIND in kind.candidates
+    assert kind.code == "cruxible.write.unknown_kind" and KIND in kind.candidates
     full = _write(instance, _set(WI1, f"{KIND}.status", "done"))
     assert full.status == "accepted" and full.changes[0].field == "status"
 
 
 def test_set_and_add_respect_the_field_cardinality(instance: PlaybillInstance) -> None:
     many = _refusal(_write(instance, _set(WI1, "governs", WI2)))
-    assert many.code == "playbill.write.field_is_many"
+    assert many.code == "cruxible.write.field_is_many"
     single = _refusal(_write(instance, _add(WI1, "status", "done")))
-    assert single.code == "playbill.write.field_is_single"
+    assert single.code == "cruxible.write.field_is_single"
 
 
 # -- add ----------------------------------------------------------------------
@@ -254,15 +254,15 @@ def test_without_the_filled_dispositions_the_same_adds_refuse(
     monkeypatch.setattr(write_verbs, "_with_dispositions", lambda member, _claims: member)
     outcome = _write(instance, _add(WI1, "governs", WI2), _add(WI1, "governs", WI3))
     assert outcome.status == "refused"
-    assert _refusal(outcome).code == "playbill.authoring.existing_claim_dispositions_incomplete"
+    assert _refusal(outcome).code == "cruxible.authoring.existing_claim_dispositions_incomplete"
 
 
 def test_a_relation_value_never_creates_the_subject_it_names(instance: PlaybillInstance) -> None:
     refusal = _refusal(_write(instance, _add(WI1, "governs", f"{KIND}/wi-9")))
-    assert refusal.code == "playbill.write.value_subject_not_found"
+    assert refusal.code == "cruxible.write.value_subject_not_found"
     assert refusal.candidates  # the nearest existing work items
     kind = _refusal(_write(instance, _add(WI1, "governs", "other.kind/x")))
-    assert kind.code == "playbill.write.value_kind_not_admitted"
+    assert kind.code == "cruxible.write.value_kind_not_admitted"
     # A Subject this same write adds may be named.
     linked = _write(
         instance, _set(f"{KIND}/wi-9", "title", "New item"), _add(WI1, "governs", f"{KIND}/wi-9")
@@ -334,7 +334,7 @@ def test_exact_content_takes_the_text_as_value_and_as_its_own_evidence(
     mismatch = _write(
         instance, _set(WI1, "ruling", "Again.", evidence={"kind": "self", "self": "Again.\n"})
     )
-    assert _refusal(mismatch).code == "playbill.write.exact_content_evidence_mismatch"
+    assert _refusal(mismatch).code == "cruxible.write.exact_content_evidence_mismatch"
 
 
 # -- evidence ---------------------------------------------------------------------
@@ -350,7 +350,7 @@ def test_self_evidence_a_field_does_not_admit_lands_uncovered_and_says_so(
     (change,) = outcome.changes
     assert change.verdict == "uncovered"
     (warning,) = outcome.warnings
-    assert warning.code == "playbill.write.verdict_not_supported"
+    assert warning.code == "cruxible.write.verdict_not_supported"
     assert (warning.change, warning.claim, warning.verdict) == (0, change.claim, "uncovered")
     assert warning.admitted_contracts == (REPORTS.identity.name,)
     assert warning.used_contract == COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name
@@ -504,14 +504,14 @@ def test_a_captured_claim_type_refuses_own_words_naming_its_contracts(
     assert write_verbs.requires_captured_evidence(CLAIM_TYPES[-1]) is False
     _move_to_v7(instance, "measured", evidence_requirement="captured")
     refusal = _refusal(_write(instance, _set(WI1, "measured", 3)))
-    assert refusal.code == "playbill.write.evidence_required"
+    assert refusal.code == "cruxible.write.evidence_required"
     assert refusal.candidates == (REPORTS.identity.name,)
     assert "evidence_requirement 'captured'" in refusal.message
     captured = _write(
         instance,
         _set(WI1, "measured", 3, evidence={"kind": "capture", "capture": "sha256:" + "a" * 64}),
     )
-    assert _refusal(captured).code != "playbill.write.evidence_required"
+    assert _refusal(captured).code != "cruxible.write.evidence_required"
 
 
 def test_a_none_claim_type_is_supported_by_the_writers_words_without_a_warning(
@@ -528,7 +528,7 @@ def test_default_role_implies_the_role_and_an_explicit_role_overrides_it(
     instance: PlaybillInstance,
 ) -> None:
     refused = _refusal(_write(instance, _set(WI1, "priority", "high")))
-    assert refused.code == "playbill.write.role_required"
+    assert refused.code == "cruxible.write.role_required"
     assert refused.repair is not None and "default_role" in refused.repair
     _move_to_v7(instance, "priority", default_role="observation")
     implied = _write(instance, _set(WI1, "priority", "high"))
@@ -582,7 +582,7 @@ def test_a_capture_handle_resolves_to_its_digest_before_lowering(
             _set(WI3, "measured", 3, evidence={"kind": "capture", "capture": "CAP-" + "f" * 12}),
         )
     )
-    assert unknown.code == "playbill.write.capture_not_found"
+    assert unknown.code == "cruxible.write.capture_not_found"
     assert unknown.field_path == "changes[0].evidence.capture"
     assert 1 <= len(unknown.candidates) <= 8
     assert all(item.startswith("CAP-") for item in unknown.candidates)
@@ -658,7 +658,7 @@ def test_a_capture_handle_names_a_capture_no_accepted_claim_cites_yet(
             _set(WI3, "measured", 3, evidence={"kind": "capture", "capture": capture_handle(body)}),
         )
     )
-    assert stray.code == "playbill.write.capture_not_found"
+    assert stray.code == "cruxible.write.capture_not_found"
     assert capture_handle(body) not in stray.candidates
 
 
@@ -844,7 +844,7 @@ def test_contract_evidence_finds_an_uncited_capture_whose_source_names_the_subje
     other = _refusal(
         _write(instance, _set(WI2, "recorded_status", "ready") | {"evidence": by_contract})
     )
-    assert other.code == "playbill.write.contract_capture_not_found"
+    assert other.code == "cruxible.write.contract_capture_not_found"
 
 
 def test_a_newest_capture_no_claim_can_cite_is_named_not_skipped(
@@ -863,7 +863,7 @@ def test_a_newest_capture_no_claim_can_cite_is_named_not_skipped(
     only = _refusal(
         _write(instance, _set(WI1, "recorded_status", "ready") | {"evidence": by_contract})
     )
-    assert only.code == "playbill.write.contract_capture_not_citable"
+    assert only.code == "cruxible.write.contract_capture_not_citable"
     assert only.candidates == (capture_handle(canonical),)
     assert capture_handle(canonical) in only.message and "canonical value" in only.message
     assert only.repair is not None and "exact bytes" in only.repair
@@ -877,9 +877,9 @@ def test_a_newest_capture_no_claim_can_cite_is_named_not_skipped(
     assert outcome.status == "accepted", outcome
     assert outcome.changes[0].capture == capture_handle(older)
     (note,) = [
-        item for item in outcome.warnings if item.code != "playbill.write.verdict_not_supported"
+        item for item in outcome.warnings if item.code != "cruxible.write.verdict_not_supported"
     ]
-    assert note.code == "playbill.write.newer_capture_not_citable"
+    assert note.code == "cruxible.write.newer_capture_not_citable"
     assert (note.change, note.capture) == (0, capture_handle(canonical))  # type: ignore[union-attr]
     assert "verdict" not in note.model_dump(mode="json")
     assert capture_handle(older) in note.message and "canonical value" in note.message
@@ -889,7 +889,7 @@ def test_a_newest_capture_no_claim_can_cite_is_named_not_skipped(
         instance, _set(WI1, "recorded_status", "done") | {"evidence": by_contract}, dry_run=True
     )
     assert preview.status == "would_accept", preview
-    assert "playbill.write.newer_capture_not_citable" in {item.code for item in preview.warnings}
+    assert "cruxible.write.newer_capture_not_citable" in {item.code for item in preview.warnings}
 
 
 def test_a_handle_matching_more_captures_than_the_verification_budget_refuses(
@@ -913,7 +913,7 @@ def test_a_handle_matching_more_captures_than_the_verification_budget_refuses(
     monkeypatch.setattr(capture_reads, "CAPTURE_HANDLE_MAX_VERIFIED", 1)
     with pytest.raises(WriteRefusalError) as caught:
         planner.capture_by_handle("CAP-", index=0, path="changes[0].evidence.capture")
-    assert caught.value.error_code == "playbill.write.capture_scan_exhausted"
+    assert caught.value.error_code == "cruxible.write.capture_scan_exhausted"
     assert "longer handle" in (caught.value.repair_line or "")
 
 
@@ -935,7 +935,7 @@ def test_a_handle_in_a_crowded_shard_stops_at_the_work_limit(
             _set(WI1, "measured", 3, evidence={"kind": "capture", "capture": "CAP-abffffffffff"}),
         )
     )
-    assert refusal.code == "playbill.write.capture_scan_exhausted"
+    assert refusal.code == "cruxible.write.capture_scan_exhausted"
     scan = instance.body_store().scan("abffffffffff", budget=500, nearest=8)
     assert not scan.complete and scan.examined <= 500 and len(scan.nearest) <= 8
 
@@ -965,7 +965,7 @@ def test_an_ambiguous_capture_handle_refuses_with_the_longer_handles(
             _set(WI1, "measured", 3, evidence={"kind": "capture", "capture": "CAP-" + "a" * 12}),
         )
     )
-    assert refusal.code == "playbill.write.capture_ambiguous"
+    assert refusal.code == "cruxible.write.capture_ambiguous"
     assert refusal.candidates == ("CAP-" + "a" * 12 + "0", "CAP-" + "a" * 12 + "1")
 
 
@@ -997,7 +997,7 @@ def test_contract_evidence_cites_the_newest_capture_about_the_subject(
 
     # wi-2 has no Capture under the contract: refused, with a repair.
     none = _refusal(_write(instance, _add(WI2, "labels", "counted") | {"evidence": by_contract}))
-    assert none.code == "playbill.write.contract_capture_not_found"
+    assert none.code == "cruxible.write.contract_capture_not_found"
     assert none.field_path == "changes[0].evidence.contract"
     assert none.repair is not None and "CAP-" in none.repair
     typo = _refusal(
@@ -1007,7 +1007,7 @@ def test_contract_evidence_cites_the_newest_capture_about_the_subject(
             | {"evidence": {"kind": "contract", "contract": "repo.reprots"}},
         )
     )
-    assert typo.code == "playbill.write.unknown_contract"
+    assert typo.code == "cruxible.write.unknown_contract"
     # Self-source Captures are bound to their own Claim, so they are never picked.
     self_source = {
         "kind": "contract",
@@ -1017,7 +1017,7 @@ def test_contract_evidence_cites_the_newest_capture_about_the_subject(
     refused = _refusal(
         _write(instance, _set(WI2, "priority", "high", role="normative", evidence=self_source))
     )
-    assert refused.code == "playbill.write.contract_capture_not_found"
+    assert refused.code == "cruxible.write.contract_capture_not_found"
 
 
 def test_file_evidence_must_be_observed_by_the_writer(instance: PlaybillInstance) -> None:
@@ -1027,7 +1027,7 @@ def test_file_evidence_must_be_observed_by_the_writer(instance: PlaybillInstance
             _set(WI1, "title", "x", evidence={"kind": "file", "file": "notes.md#Title"}),
         )
     )
-    assert unobserved.code == "playbill.write.file_evidence_unobserved"
+    assert unobserved.code == "cruxible.write.file_evidence_unobserved"
 
 
 def test_explicit_self_evidence_backs_the_value(instance: PlaybillInstance) -> None:
@@ -1053,7 +1053,7 @@ def test_a_set_refuses_when_its_slot_moved_since_the_read_coordinate(
 
     stale = _write(instance, _set(WI1, "status", "done"), at=read_at)
     refusal = _refusal(stale)
-    assert refusal.code == "playbill.write.slot_changed"
+    assert refusal.code == "cruxible.write.slot_changed"
     assert "'blocked'" in refusal.message and "owner" in refusal.message
     assert f"generation {other.coordinate.generation}" in refusal.message
     assert refusal.candidates == (first.changes[0].claim,)
@@ -1063,7 +1063,7 @@ def test_a_set_refuses_when_its_slot_moved_since_the_read_coordinate(
     assert contended.status == "accepted", contended
     assert contended.changes[0].contenders_created == (first.changes[0].claim,)
     contested = _refusal(_write(instance, _set(WI1, "status", "ready")))
-    assert contested.code == "playbill.write.slot_contested"
+    assert contested.code == "cruxible.write.slot_contested"
     assert len(contested.candidates) == 2
 
 
@@ -1098,7 +1098,7 @@ def test_a_competing_set_between_planning_and_submit_refuses_leaving_nothing_to_
     outcome = _write(instance, _set(subject, "status", "done"), **options)
     assert interleaved[0] is not None and interleaved[0].status == "accepted"
     refusal = _refusal(outcome)
-    assert refusal.code == "playbill.write.slot_changed", refusal
+    assert refusal.code == "cruxible.write.slot_changed", refusal
     assert "'blocked'" in refusal.message
     assert outcome.proposal is None
     assert _values(instance, subject, "status") == ["blocked"]
@@ -1146,7 +1146,7 @@ def test_a_contender_joining_the_slot_before_admission_refuses_the_retire_unprop
     options = {"at": read_at} if pinned else {}
     outcome = _write(instance, _RETIRE_BY_SLOT, **options)
     assert landed
-    assert _refusal(outcome).code == "playbill.write.slot_changed", outcome
+    assert _refusal(outcome).code == "cruxible.write.slot_changed", outcome
     assert outcome.proposal is None
     assert _values(instance, WI1, "status") == ["blocked", "ready"]
     assert ready in _live_status_claims(instance)
@@ -1178,7 +1178,7 @@ def test_a_contender_between_preflight_and_admission_publishes_nothing(
     options = {"at": read_at} if pinned else {}
     outcome = _write(instance, _RETIRE_BY_SLOT, **options)
     assert landed
-    assert _refusal(outcome).code == "playbill.write.slot_changed", outcome
+    assert _refusal(outcome).code == "cruxible.write.slot_changed", outcome
     assert outcome.proposal is None
     assert _values(instance, WI1, "status") == ["blocked", "ready"]
     assert ready in _live_status_claims(instance)
@@ -1215,7 +1215,7 @@ def test_a_contender_after_admission_makes_the_writes_own_activation_refuse(
     monkeypatch.setattr(documents, "service_activate_playbill_proposal", activating)
     outcome = _write(instance, _RETIRE_BY_SLOT)
     assert landed
-    assert _refusal(outcome).code == "playbill.write.slot_changed", outcome
+    assert _refusal(outcome).code == "cruxible.write.slot_changed", outcome
     assert _values(instance, WI1, "status") == ["blocked", "ready"]
     assert ready in _live_status_claims(instance)
 
@@ -1270,11 +1270,11 @@ def test_retire_by_claim_id_or_by_slot(instance: PlaybillInstance) -> None:
     assert _values(instance, WI1, "status") == [] and _values(instance, WI1, "title") == []
 
     again = _refusal(_write(instance, {"op": "retire", "target": status}))
-    assert again.code == "playbill.write.claim_not_live"
+    assert again.code == "cruxible.write.claim_not_live"
     empty = _refusal(
         _write(instance, {"op": "retire", "target": {"subject": WI1, "field": "title"}})
     )
-    assert empty.code == "playbill.write.slot_empty"
+    assert empty.code == "cruxible.write.slot_empty"
 
 
 def test_retire_names_the_values_of_an_ambiguous_many_valued_slot(
@@ -1284,7 +1284,7 @@ def test_retire_names_the_values_of_an_ambiguous_many_valued_slot(
     refusal = _refusal(
         _write(instance, {"op": "retire", "target": {"subject": WI1, "field": "governs"}})
     )
-    assert refusal.code == "playbill.write.slot_ambiguous" and len(refusal.candidates) == 2
+    assert refusal.code == "cruxible.write.slot_ambiguous" and len(refusal.candidates) == 2
 
 
 def test_one_write_may_retire_one_contender_and_replace_the_other(
@@ -1311,7 +1311,7 @@ def test_one_write_may_retire_one_contender_and_replace_the_other(
         {"op": "retire", "target": fresh.changes[0].claim},
         {"op": "retire", "target": {"subject": WI1, "field": "status"}},
     )
-    assert _refusal(twice).code == "playbill.write.claim_changed_twice"
+    assert _refusal(twice).code == "cruxible.write.claim_changed_twice"
 
 
 # -- expect: compare-and-set by value ------------------------------------------------
@@ -1324,14 +1324,14 @@ def test_set_with_expect_replaces_only_the_value_it_expected(instance: PlaybillI
 
     refused = _write(instance, _set(WI1, "status", "done", expect="blocked"))
     refusal = _refusal(refused)
-    assert refusal.code == "playbill.write.slot_changed"
+    assert refusal.code == "cruxible.write.slot_changed"
     assert refusal.field_path == "changes[0].expect"
     assert "holds 'ready', not 'blocked' as expected" in refusal.message
     assert refusal.candidates == (first.changes[0].claim,)
     assert refusal.repair is not None and '"ready"' in refusal.repair
     assert instance.accepted_coordinate().git_oid == head
     assert _refusal(_write(instance, _set(WI1, "status", "done", expect=[]))).code == (
-        "playbill.write.slot_changed"
+        "cruxible.write.slot_changed"
     )
 
     replaced = _write(instance, _set(WI1, "status", "done", expect="ready"))
@@ -1340,18 +1340,18 @@ def test_set_with_expect_replaces_only_the_value_it_expected(instance: PlaybillI
     assert _values(instance, WI1, "status") == ["done"]
 
     empty = _refusal(_write(instance, _set(WI2, "status", "done", expect="ready")))
-    assert empty.code == "playbill.write.slot_changed" and "holds no value" in empty.message
+    assert empty.code == "cruxible.write.slot_changed" and "holds no value" in empty.message
 
 
 def test_expect_is_checked_like_a_value_before_it_is_compared(instance: PlaybillInstance) -> None:
     member = _refusal(_write(instance, _set(WI1, "status", "done", expect="dne")))
-    assert member.code == "playbill.write.value_not_member"
+    assert member.code == "cruxible.write.value_not_member"
     assert member.field_path == "changes[0].expect"
     # The CLI's text spelling of an integer is read by the field's type.
     assert _write(instance, _set(WI1, "measured", 3)).status == "accepted"
     assert _write(instance, _set(WI1, "measured", 4, expect="3")).status == "accepted"
     wrong = _refusal(_write(instance, _set(WI1, "measured", 5, expect="3")))
-    assert wrong.code == "playbill.write.slot_changed" and "holds 4" in wrong.message
+    assert wrong.code == "cruxible.write.slot_changed" and "holds 4" in wrong.message
 
 
 def test_retire_with_expect_compares_every_live_value_of_the_slot(
@@ -1360,7 +1360,7 @@ def test_retire_with_expect_compares_every_live_value_of_the_slot(
     links = _write(instance, _add(WI1, "governs", WI2), _add(WI1, "governs", WI3))
     by_value = {item.after: item.claim for item in links.changes}
     partial = _refusal(_write(instance, {"op": "retire", "target": by_value[WI2], "expect": [WI2]}))
-    assert partial.code == "playbill.write.slot_changed"
+    assert partial.code == "cruxible.write.slot_changed"
     assert set(partial.candidates) == set(by_value.values())
     retired = _write(instance, {"op": "retire", "target": by_value[WI2], "expect": [WI3, WI2]})
     assert retired.status == "accepted", retired
@@ -1369,7 +1369,7 @@ def test_retire_with_expect_compares_every_live_value_of_the_slot(
     _write(instance, _set(WI1, "title", "Old"))
     slot = {"subject": WI1, "field": "title"}
     stale = _refusal(_write(instance, {"op": "retire", "target": slot, "expect": "New"}))
-    assert stale.code == "playbill.write.slot_changed" and "holds 'Old'" in stale.message
+    assert stale.code == "cruxible.write.slot_changed" and "holds 'Old'" in stale.message
     ended = _write(instance, {"op": "retire", "target": slot, "expect": "Old"})
     assert ended.status == "accepted", ended
 
@@ -1380,7 +1380,7 @@ def test_add_with_expect_absent_refuses_what_would_be_already_done(
     first = _write(instance, {**_add(WI1, "governs", WI2), "expect_absent": True})
     assert first.status == "accepted", first
     again = _refusal(_write(instance, {**_add(WI1, "governs", WI2), "expect_absent": True}))
-    assert again.code == "playbill.write.value_already_present"
+    assert again.code == "cruxible.write.value_already_present"
     assert again.candidates == (first.changes[0].claim,)
     assert again.field_path == "changes[0].expect_absent"
     # Without it, the same add is answered as done.
@@ -1398,7 +1398,7 @@ def test_expect_composes_with_the_read_coordinate(instance: PlaybillInstance) ->
     # read coordinate still refuses the slot that moved.
     _write(instance, _set(WI1, "status", "ready"), because="Back again.")
     moved = _refusal(_write(instance, _set(WI1, "status", "done", expect="ready"), at=read_at))
-    assert moved.code == "playbill.write.slot_changed" and "after your read" in moved.message
+    assert moved.code == "cruxible.write.slot_changed" and "after your read" in moved.message
 
 
 def test_a_contender_after_the_expect_check_still_refuses_at_admission(
@@ -1420,7 +1420,7 @@ def test_a_contender_after_the_expect_check_still_refuses_at_admission(
     outcome = _write(instance, _set(WI1, "status", "done", expect="ready"))
     assert landed
     refusal = _refusal(outcome)
-    assert refusal.code == "playbill.write.slot_changed", refusal
+    assert refusal.code == "cruxible.write.slot_changed", refusal
     assert outcome.proposal is None
     assert _values(instance, WI1, "status") == ["blocked", "ready"]
     assert ready in _live_status_claims(instance)
@@ -1456,10 +1456,10 @@ def test_a_change_with_no_subject_and_no_default_refuses_by_name(
             instance, _set(WI1, "status", "ready"), {"op": "add", "field": "governs", "value": WI2}
         )
     )
-    assert refusal.code == "playbill.write.subject_required"
+    assert refusal.code == "cruxible.write.subject_required"
     assert (refusal.change, refusal.field_path) == (1, "changes[1].subject")
     retire = _refusal(_write(instance, {"op": "retire", "target": {"field": "title"}}))
-    assert retire.code == "playbill.write.subject_required"
+    assert retire.code == "cruxible.write.subject_required"
     assert retire.field_path == "changes[0].target.subject"
     assert _write(
         instance, {"op": "retire", "target": {"field": "title"}}, dry_run=True
@@ -1546,7 +1546,7 @@ def test_a_dry_run_leaves_a_cold_or_behind_history_index_as_it_found_it(
     assert preview.status == "would_accept", preview
     assert _snapshot(instance) == before
     stale = _write(instance, _set(WI1, "status", "done"), at=read_at, dry_run=True)
-    assert _refusal(stale).code == "playbill.write.slot_changed"
+    assert _refusal(stale).code == "cruxible.write.slot_changed"
     assert _snapshot(instance) == before
 
 
@@ -1557,7 +1557,7 @@ def test_a_dry_run_reports_a_refusal_found_only_by_preflight(
     before = _snapshot(instance)
     preview = _write(instance, _add(WI1, "governs", WI2), _add(WI1, "governs", WI3), dry_run=True)
     assert preview.status == "would_refuse"
-    assert _refusal(preview).code == "playbill.authoring.existing_claim_dispositions_incomplete"
+    assert _refusal(preview).code == "cruxible.authoring.existing_claim_dispositions_incomplete"
     assert _snapshot(instance) == before
 
 
@@ -1631,7 +1631,7 @@ def test_accept_never_and_a_tier_without_activation_stop_at_the_proposal(
 def test_an_unaccepted_read_coordinate_refuses_as_an_outcome(instance: PlaybillInstance) -> None:
     outcome = _write(instance, _set(WI1, "status", "ready"), at="f" * 40)
     assert outcome.status == "refused"
-    assert _refusal(outcome).code == "playbill.read.coordinate_not_accepted"
+    assert _refusal(outcome).code == "cruxible.read.coordinate_not_accepted"
 
 
 def test_a_contest_row_offers_one_keep_option_per_contender_and_picks_none(
@@ -1666,7 +1666,7 @@ def test_a_contest_row_offers_one_keep_option_per_contender_and_picks_none(
 
     (row,) = conflict_rows()
     repair = row.repair
-    assert repair.operation == "playbill.write"
+    assert repair.operation == "cruxible.write"
     assert repair.command is None  # no single command: the choice is the caller's
     assert "changes" not in repair.arguments
     options = {item["keep"]: item["changes"] for item in repair.arguments["options"]}

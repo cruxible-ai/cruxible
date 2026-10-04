@@ -183,7 +183,7 @@ def test_workspace_drift_is_verified_against_the_accepted_citation(
     drift = next(item for item in result.items if item.reason == "citation_drifted")
     assert drift.related_identities == (citation.citation_id,)
     # The drift repair restates the value through the typed write verb.
-    assert drift.repair.operation == "playbill.set"
+    assert drift.repair.operation == "cruxible.set"
 
     workspace = request.workspace_observation
     assert workspace is not None
@@ -378,7 +378,7 @@ def test_unknown_access_profile_value_has_the_frozen_refusal() -> None:
             }
         )
 
-    assert raised.value.code == "playbill.next.access_profile_invalid"
+    assert raised.value.code == "cruxible.next.access_profile_invalid"
 
 
 def test_document_modified_names_a_reproposal_that_clears_the_row(tmp_path: Path) -> None:
@@ -433,7 +433,7 @@ def test_document_modified_names_a_reproposal_that_clears_the_row(tmp_path: Path
 
     row = next(item for item in queued(changed).items if item.reason == "document_modified")
     assert row.severity == "warning"
-    assert row.repair.operation == "playbill.document.propose"
+    assert row.repair.operation == "cruxible.document.propose"
     assert row.repair.required_change == "repropose_modified_document"
     assert all(item.reason != "document_modified" for item in queued(body.digest).items)
     public_only = CoverageAccessProfile(

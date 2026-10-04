@@ -591,7 +591,7 @@ def service_prepare_playbill_approval(
         and signer_id == creator_principal_id
     ):
         raise ApprovalIntegrityError(
-            "playbill.approval.creator_forbidden: independent_approval_required mode needs "
+            "cruxible.approval.creator_forbidden: independent_approval_required mode needs "
             "an active ordinary approver other than the candidate creator; after that "
             "eligible signer approves, run playbill proposal activate"
         )

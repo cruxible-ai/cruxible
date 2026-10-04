@@ -31,11 +31,11 @@ DEFAULT_INSERTION_TOMBSTONE_HORIZON = timedelta(days=30)
 class InsertionProtocolError(CruxibleError):
     """An insertion transition is invalid at the durable expectation state."""
 
-    code = "playbill.authoring.publication_transition_invalid"
+    code = "cruxible.authoring.publication_transition_invalid"
 
 
 class PublicationTerminalStateRefused(InsertionProtocolError):
-    code = "playbill.authoring.publication_terminal_state"
+    code = "cruxible.authoring.publication_terminal_state"
 
 
 def _raise(error: type[InsertionProtocolError], message: str) -> NoReturn:

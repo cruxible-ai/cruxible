@@ -73,14 +73,14 @@ def test_http_actor_relay_and_malformed_request_are_typed(
         json=request.model_dump(mode="json"),
     )
     assert relay.status_code == 400
-    assert relay.json()["error_code"] == "playbill.claim_attestation.actor_signer_mismatch"
+    assert relay.json()["error_code"] == "cruxible.claim_attestation.actor_signer_mismatch"
 
     malformed = client.post(
         f"/api/v1/{instance.descriptor.instance_id}/playbill/claim-attestations",
         json={"tag": "playbill-claim-attestation-append-request-v1"},
     )
     assert malformed.status_code == 400
-    assert malformed.json()["error_code"] == "playbill.claim_attestation.request_invalid"
+    assert malformed.json()["error_code"] == "cruxible.claim_attestation.request_invalid"
     assert malformed.json()["errors"][0].startswith("body.attestation:")
 
 
@@ -167,12 +167,12 @@ def test_claim_attestation_store_error_http_mapping_is_typed(
 ) -> None:
     actual, response = error_to_response(
         ClaimAttestationStoreError(
-            f"playbill.claim_attestation.{code}",
+            f"cruxible.claim_attestation.{code}",
             "mapped refusal",
         )
     )
     assert actual == status
-    assert response.error_code == f"playbill.claim_attestation.{code}"
+    assert response.error_code == f"cruxible.claim_attestation.{code}"
 
 
 def test_http_next_maps_unknown_attestation_head_to_typed_400(
@@ -195,7 +195,7 @@ def test_http_next_maps_unknown_attestation_head_to_typed_400(
     )
 
     assert response.status_code == 400, response.text
-    assert response.json()["error_code"] == ("playbill.claim_attestation.attestation_head_unknown")
+    assert response.json()["error_code"] == ("cruxible.claim_attestation.attestation_head_unknown")
 
 
 def test_http_next_passes_the_authenticated_caller_not_a_request_field(

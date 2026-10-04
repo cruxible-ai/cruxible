@@ -183,8 +183,8 @@ def test_minting_for_an_unregistered_principal_names_principal_add(
     )
 
     assert refused.status_code == 403  # type: ignore[attr-defined]
-    assert refused.json()["error_code"] == "playbill.identity.principal_absent"  # type: ignore[attr-defined]
-    assert refused.json()["repair"]["operation"] == "playbill.principal.add"  # type: ignore[attr-defined]
+    assert refused.json()["error_code"] == "cruxible.identity.principal_absent"  # type: ignore[attr-defined]
+    assert refused.json()["repair"]["operation"] == "cruxible.principal.add"  # type: ignore[attr-defined]
 
 
 def test_an_unbound_credential_keeps_transport_authority_but_cannot_author(
@@ -211,7 +211,7 @@ def test_an_unbound_credential_keeps_transport_authority_but_cannot_author(
     assert who["actor_id_source"] == "unbound_credential"
     assert who["principal_registration_status"] is None
     assert refused.status_code == 403, refused.text
-    assert refused.json()["error_code"] == "playbill.identity.credential_unbound"
+    assert refused.json()["error_code"] == "cruxible.identity.credential_unbound"
     assert "cruxible credential mint --principal-id ID --key-dir DIR" in refused.json()["message"]
 
 
@@ -283,7 +283,7 @@ def test_a_recovery_principal_never_holds_a_credential(
     body = refused.json()  # type: ignore[attr-defined]
     assert body["error_code"] == "runtime_credential.principal_not_ordinary"
     assert body["repair"] == {
-        "operation": "playbill.orient",
+        "operation": "cruxible.orient",
         "arguments": {"section": "principals"},
     }
 
@@ -316,7 +316,7 @@ def test_revoking_a_principal_revokes_its_credentials(
     )
 
     assert refused.status_code == 403
-    assert refused.json()["error_code"] == "playbill.identity.principal_revoked"
+    assert refused.json()["error_code"] == "cruxible.identity.principal_revoked"
     (record,) = [
         item
         for item in get_runtime_credential_store().list_for_instance(instance_id)
@@ -542,7 +542,7 @@ def test_an_unbound_credential_is_refused_on_every_instance_write(
             headers={"Authorization": f"Bearer {unbound}"},
         )
         assert refused.status_code == 403, (path, refused.text)
-        assert refused.json()["error_code"] == "playbill.identity.credential_unbound", path
+        assert refused.json()["error_code"] == "cruxible.identity.credential_unbound", path
     mirror = client.get(
         f"/api/v1/{instance_id}/playbill/ledger/clone-url",
         headers={"Authorization": f"Bearer {unbound}"},
@@ -562,7 +562,7 @@ def test_an_unregistered_claim_is_refused_on_every_instance_write(
             f"/api/v1/{instance_id}{path}", json=body, headers={PRINCIPAL_ID_HEADER: "mallory"}
         )
         assert refused.status_code == 403, (path, refused.text)
-        assert refused.json()["error_code"] == "playbill.identity.principal_absent", path
+        assert refused.json()["error_code"] == "cruxible.identity.principal_absent", path
 
 
 #: Doors that take the request's actor through ``_write_actor_context`` (runs,
@@ -600,7 +600,7 @@ def test_an_unbound_credential_gets_the_typed_refusal_at_every_actor_door(
 
     assert refused.status_code == 403, (path, refused.text)
     answer = refused.json()
-    assert answer["error_code"] == "playbill.identity.credential_unbound", path
+    assert answer["error_code"] == "cruxible.identity.credential_unbound", path
     assert answer["repair"] == {
         "operation": "credential.mint",
         "arguments": {"unbound_credential_id": unbound.record.credential_id},
@@ -613,7 +613,7 @@ def test_an_unbound_credential_gets_the_typed_refusal_at_every_actor_door(
 
     sdk_error = response_to_error(403, ErrorResponse.model_validate(answer))
     assert not isinstance(sdk_error, ClientAuthenticationError)
-    assert getattr(sdk_error, "error_code", None) == "playbill.identity.credential_unbound"
+    assert getattr(sdk_error, "error_code", None) == "cruxible.identity.credential_unbound"
     assert getattr(sdk_error, "repair").operation == "credential.mint"
 
 
@@ -647,6 +647,6 @@ def test_every_actor_boundary_refuses_an_unbound_credential_typed(
     ):
         with pytest.raises(PrincipalRefusedError) as refused:
             boundary("inst")
-        assert refused.value.error_code == "playbill.identity.credential_unbound"
+        assert refused.value.error_code == "cruxible.identity.credential_unbound"
         assert refused.value.repair is not None
         assert refused.value.repair.arguments == {"unbound_credential_id": "cred-unbound"}  # type: ignore[union-attr]

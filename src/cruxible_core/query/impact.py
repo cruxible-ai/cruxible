@@ -53,12 +53,12 @@ DEPENDENCY_IMPACT_RECEIPT_DIGEST_DOMAIN = "playbill-dependency-impact-v1"
 
 DEPENDENT_KINDS: tuple[str, ...] = ("Claim", "LineSpec", "Procedure", "QueryDefinition")
 
-SOURCE_SUPERSEDED = "playbill.impact.source_superseded"
-SOURCE_CONTRADICTED = "playbill.impact.source_contradicted"
-SOURCE_UNRESOLVED = "playbill.impact.source_unresolved"
-SOURCE_UNCOVERED = "playbill.impact.source_uncovered"
-SOURCE_EXPIRED = "playbill.impact.source_expired"
-SOURCE_CURRENCY_STALE = "playbill.impact.source_currency_stale"
+SOURCE_SUPERSEDED = "cruxible.impact.source_superseded"
+SOURCE_CONTRADICTED = "cruxible.impact.source_contradicted"
+SOURCE_UNRESOLVED = "cruxible.impact.source_unresolved"
+SOURCE_UNCOVERED = "cruxible.impact.source_uncovered"
+SOURCE_EXPIRED = "cruxible.impact.source_expired"
+SOURCE_CURRENCY_STALE = "cruxible.impact.source_currency_stale"
 
 _VERDICT_REASONS: Mapping[str, str] = {
     "contradicted": SOURCE_CONTRADICTED,

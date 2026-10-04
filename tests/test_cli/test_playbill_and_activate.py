@@ -53,7 +53,7 @@ class _SubmitClient:
                 "frontier": {
                     "diagnostics": [
                         {
-                            "code": "playbill.claim.subject_unresolved",
+                            "code": "cruxible.claim.subject_unresolved",
                             "message": "The requested Subject\n does not exist.",
                         }
                     ],
@@ -131,7 +131,7 @@ def test_refused_brief_prints_the_typed_reason_on_one_line(
 
     assert result.exit_code == 0, result.output
     assert (
-        "reason: playbill.claim.subject_unresolved: The requested Subject does not exist."
+        "reason: cruxible.claim.subject_unresolved: The requested Subject does not exist."
         in result.output
     )
     assert (

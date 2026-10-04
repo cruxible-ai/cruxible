@@ -75,10 +75,10 @@ def test_client_preserves_typed_malformed_activation_refusal() -> None:
             json={
                 "error_type": "ProposalActivationRequestInvalid",
                 "message": (
-                    "playbill.proposal.activation_request_invalid: proposal_id must be "
+                    "cruxible.proposal.activation_request_invalid: proposal_id must be "
                     "a canonical sha256 digest"
                 ),
-                "error_code": "playbill.proposal.activation_request_invalid",
+                "error_code": "cruxible.proposal.activation_request_invalid",
                 "errors": [],
                 "context": {},
             },

@@ -93,7 +93,7 @@ def test_runtime_since_maps_request_validation_to_one_typed_refusal(
     with pytest.raises(SinceRequestInvalid) as raised:
         playbill_api.playbill_since("inst_since", request=request)
 
-    assert raised.value.error_code == "playbill.since.request_invalid"
+    assert raised.value.error_code == "cruxible.since.request_invalid"
     assert raised.value.field_path == field_path
     assert isinstance(raised.value.__cause__, ValidationError)
 
@@ -364,4 +364,4 @@ def test_non_changeset_accepted_source_is_rejected() -> None:
             head_generation=1,
             access_profile=CoverageAccessProfile(profile_id="since-test"),
         )
-    assert getattr(raised.value, "code") == "playbill.since.accepted_state_invalid"
+    assert getattr(raised.value, "code") == "cruxible.since.accepted_state_invalid"

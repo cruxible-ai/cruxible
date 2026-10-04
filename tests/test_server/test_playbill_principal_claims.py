@@ -88,9 +88,9 @@ def test_init_names_the_owner_mismatch_and_the_command_that_repairs_it(
 
     assert refused.status_code == 403  # type: ignore[attr-defined]
     body = refused.json()  # type: ignore[attr-defined]
-    assert body["error_code"] == "playbill.identity.init_owner_mismatch"
+    assert body["error_code"] == "cruxible.identity.init_owner_mismatch"
     assert "cruxible playbill init --principal-id ID --key-dir DIR" in body["message"]
-    assert body["repair"]["operation"] == "playbill.init"
+    assert body["repair"]["operation"] == "cruxible.init"
 
 
 def test_an_unregistered_claim_reads_but_is_refused_every_write(
@@ -119,10 +119,10 @@ def test_an_unregistered_claim_reads_but_is_refused_every_write(
     for refused in (withdrawn, created):
         assert refused.status_code == 403  # type: ignore[attr-defined]
         body = refused.json()  # type: ignore[attr-defined]
-        assert body["error_code"] == "playbill.identity.principal_absent"
+        assert body["error_code"] == "cruxible.identity.principal_absent"
         assert "cruxible playbill principal add mallory --key-dir DIR" in body["message"]
         assert body["repair"] == {
-            "operation": "playbill.principal.add",
+            "operation": "cruxible.principal.add",
             "arguments": {"principal_id": "mallory"},
         }
 
@@ -137,7 +137,7 @@ def test_a_malformed_claim_is_refused_before_it_names_anyone(
     )
 
     assert refused.status_code == 400
-    assert refused.json()["error_code"] == "playbill.identity.principal_claim_invalid"
+    assert refused.json()["error_code"] == "cruxible.identity.principal_claim_invalid"
 
 
 def test_with_auth_on_a_claim_may_only_repeat_the_credentials_principal(
@@ -156,7 +156,7 @@ def test_with_auth_on_a_claim_may_only_repeat_the_credentials_principal(
     refused = client.get(f"/api/v1/{INSTANCE}/playbill/whoami", headers=headers)
 
     assert refused.status_code == 401
-    assert refused.json()["error_code"] == "playbill.identity.principal_claim_mismatch"
+    assert refused.json()["error_code"] == "cruxible.identity.principal_claim_mismatch"
 
 
 def test_the_client_sends_its_configured_principal_and_refuses_a_malformed_one(
@@ -200,7 +200,7 @@ def test_whoami_says_whether_the_actor_can_author_and_create_refuses_with_the_sa
 
     assert anonymous["can_author"] is False
     refusal = anonymous["authoring_refusal"]
-    assert refusal["code"] == "playbill.identity.principal_unconfigured"
+    assert refusal["code"] == "cruxible.identity.principal_unconfigured"
     assert "CRUXIBLE_PRINCIPAL_ID" in refusal["detail"]
     assert "active principals: alice" in refusal["detail"]
     assert refused.status_code == 403  # type: ignore[attr-defined]
@@ -233,7 +233,7 @@ def test_a_read_only_credential_is_told_it_cannot_author_and_how_to_get_the_tier
     ).json()
 
     assert who["can_author"] is False
-    assert who["authoring_refusal"]["code"] == "playbill.identity.permission_insufficient"
+    assert who["authoring_refusal"]["code"] == "cruxible.identity.permission_insufficient"
     assert who["authoring_refusal"]["repair"] == {
         "operation": "credential.mint",
         "arguments": {"principal_id": "alice", "permission_mode": "governed_write"},
@@ -265,7 +265,7 @@ def test_authoring_create_refuses_a_non_principal_before_any_work(
             canonical_timestamp="2026-09-29T00:00:00.000000Z",
         )
 
-    assert refused.value.error_code == "playbill.identity.principal_absent"
+    assert refused.value.error_code == "cruxible.identity.principal_absent"
     assert "cruxible playbill principal add mallory --key-dir DIR" in str(refused.value)
 
 
@@ -293,7 +293,7 @@ def test_an_unregistered_claim_reads_orient_and_every_operational_section(
     assert base.status_code == 200, base.text
     you = base.json()["you"]
     assert you["can_author"] is False
-    assert you["authoring_refusal"]["code"] == "playbill.identity.principal_absent"
+    assert you["authoring_refusal"]["code"] == "cruxible.identity.principal_absent"
     for section in _OPERATIONAL_SECTIONS:
         page = client.get(
             f"/api/v1/{INSTANCE}/playbill/orient", params={"section": section}, headers=mallory
@@ -307,14 +307,14 @@ def test_an_unregistered_claim_reads_orient_and_every_operational_section(
     [
         (
             {PRINCIPAL_ID_HEADER: "mallory"},
-            "playbill.identity.principal_absent",
-            {"operation": "playbill.principal.add", "arguments": {"principal_id": "mallory"}},
+            "cruxible.identity.principal_absent",
+            {"operation": "cruxible.principal.add", "arguments": {"principal_id": "mallory"}},
         ),
         (
             {},
-            "playbill.identity.principal_unconfigured",
+            "cruxible.identity.principal_unconfigured",
             {
-                "operation": "playbill.orient",
+                "operation": "cruxible.orient",
                 "arguments": {"section": "principals", "configure": "CRUXIBLE_PRINCIPAL_ID"},
             },
         ),

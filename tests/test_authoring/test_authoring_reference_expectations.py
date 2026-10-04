@@ -118,7 +118,7 @@ def test_stale_ref_names_the_successor_coordinate_and_retry_converges(tmp_path: 
     diagnostic = next(
         item
         for item in refusal.frontier.diagnostics
-        if item.code == "playbill.authoring.reference_stale"
+        if item.code == "cruxible.authoring.reference_stale"
     )
     replacement = diagnostic.repairs[0].replacement
     assert isinstance(replacement, dict)

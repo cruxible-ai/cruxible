@@ -246,7 +246,7 @@ def test_write_tool_outputs_declare_each_warning_variant(
         defs = schema.get("$defs", {})
         verdict = defs["VerdictNotSupportedWarning"]
         newer = defs["NewerCaptureNotCitableWarning"]
-        assert verdict["properties"]["code"]["const"] == "playbill.write.verdict_not_supported"
-        assert newer["properties"]["code"]["const"] == "playbill.write.newer_capture_not_citable"
+        assert verdict["properties"]["code"]["const"] == "cruxible.write.verdict_not_supported"
+        assert newer["properties"]["code"]["const"] == "cruxible.write.newer_capture_not_citable"
         assert "verdict" in verdict["required"] and "capture" not in verdict["properties"]
         assert "capture" in newer["required"] and "verdict" not in newer["properties"]

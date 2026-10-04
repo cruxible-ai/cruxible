@@ -135,11 +135,11 @@ def test_admission_refuses_freeze_bypass_and_unknown_predicate() -> None:
         }
     )
     frozen = evaluate_claim_admission_candidate(_review_policy(), frozen_context)
-    assert frozen.refusal_codes == ("playbill.claim_policy.freeze_active",)
+    assert frozen.refusal_codes == ("cruxible.claim_policy.freeze_active",)
 
     unknown = frozen_context.model_copy(update={"declared_predicates": ("review.status",)})
     refused = evaluate_claim_admission_candidate(_review_policy(), unknown)
-    assert "playbill.claim_policy.unknown_predicate" in refused.refusal_codes
+    assert "cruxible.claim_policy.unknown_predicate" in refused.refusal_codes
 
 
 def test_retained_freeze_exception_must_name_an_existing_transition() -> None:
@@ -187,19 +187,19 @@ def test_evidence_admission_is_conjunctive_and_never_grants_claim_authority() ->
         _evidence_policy(),
         _evidence(evidence_kind="source.other"),
     )
-    assert undeclared.refusal_code == "playbill.evidence.undeclared_contract_kind"
+    assert undeclared.refusal_code == "cruxible.evidence.undeclared_contract_kind"
 
     reducer = evaluate_claim_evidence_admission(
         _evidence_policy(),
         _evidence(reducer_digest=DIGEST_B),
     )
-    assert reducer.refusal_code == "playbill.evidence.reducer_not_allowed"
+    assert reducer.refusal_code == "cruxible.evidence.reducer_not_allowed"
 
     laundering = evaluate_claim_evidence_admission(
         _evidence_policy(),
         _evidence(capture_claims_semantic_authority=True),
     )
-    assert laundering.refusal_code == ("playbill.evidence.capture_cannot_grant_semantic_authority")
+    assert laundering.refusal_code == ("cruxible.evidence.capture_cannot_grant_semantic_authority")
 
 
 def test_evidence_admission_trace_chooses_the_closest_contract_rule_deterministically() -> None:
@@ -225,7 +225,7 @@ def test_evidence_admission_trace_chooses_the_closest_contract_rule_deterministi
         },
     )
 
-    assert trace.result.refusal_code == "playbill.evidence.attestation_grade_missing"
+    assert trace.result.refusal_code == "cruxible.evidence.attestation_grade_missing"
     assert trace.closest_rule_id == "direct-provider-observation"
 
     no_contract = evaluate_claim_evidence_admission_trace(
@@ -346,7 +346,7 @@ def test_current_derivation_policy_requires_provenance_without_authorizing_produ
             input_claim_artifact_digests=(DIGEST_A,),
         ).model_copy(update=missing)
         assert evaluate_claim_evidence_admission(policy, evidence).refusal_code == (
-            "playbill.evidence.derivation_incomplete"
+            "cruxible.evidence.derivation_incomplete"
         )
     with pytest.raises(ValidationError, match="Extra inputs"):
         ClaimEvidenceAdmissionRuleV2.model_validate(
@@ -365,5 +365,5 @@ def test_current_derivation_policy_requires_provenance_without_authorizing_produ
                 input_claim_artifact_digests=(DIGEST_A,),
             ),
         ).refusal_code
-        == "playbill.evidence.reducer_not_allowed"
+        == "cruxible.evidence.reducer_not_allowed"
     )

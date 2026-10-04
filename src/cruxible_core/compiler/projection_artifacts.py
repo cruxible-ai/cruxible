@@ -447,7 +447,7 @@ def _claim_static_facts(
     facts.extend(
         (
             ProjectionFact(
-                schema_id="playbill.claim.identity",
+                schema_id="cruxible.claim.identity",
                 schema_version=1,
                 subject_identity=identity,
                 fact_key="lineage",
@@ -460,21 +460,21 @@ def _claim_static_facts(
                 },
             ),
             ProjectionFact(
-                schema_id="playbill.claim.statement",
+                schema_id="cruxible.claim.statement",
                 schema_version=1,
                 subject_identity=identity,
                 fact_key="proposition",
                 value=claim.statement.model_dump(mode="json"),
             ),
             ProjectionFact(
-                schema_id="playbill.claim.backing",
+                schema_id="cruxible.claim.backing",
                 schema_version=1,
                 subject_identity=identity,
                 fact_key="evidence",
                 value=claim.backing.model_dump(mode="json"),
             ),
             ProjectionFact(
-                schema_id="playbill.claim.lifecycle",
+                schema_id="cruxible.claim.lifecycle",
                 schema_version=1,
                 subject_identity=identity,
                 fact_key="accepted_revision",
@@ -493,7 +493,7 @@ def _claim_static_facts(
     for index, source_mapping in enumerate(claim.backing.source_mappings):
         facts.append(
             ProjectionFact(
-                schema_id="playbill.claim.source_mapping",
+                schema_id="cruxible.claim.source_mapping",
                 schema_version=1,
                 subject_identity=identity,
                 fact_key=f"source_{index:04d}",
@@ -839,7 +839,7 @@ def parse_projection_tree(
                 semantic_facts.extend(
                     (
                         ProjectionFact(
-                            schema_id="playbill.document.subject",
+                            schema_id="cruxible.document.subject",
                             schema_version=1,
                             subject_identity=document.identity,
                             fact_key="whole_document",
@@ -851,7 +851,7 @@ def parse_projection_tree(
                             },
                         ),
                         ProjectionFact(
-                            schema_id="playbill.document.metadata",
+                            schema_id="cruxible.document.metadata",
                             schema_version=1,
                             subject_identity=document.identity,
                             fact_key="metadata",
@@ -864,7 +864,7 @@ def parse_projection_tree(
                             },
                         ),
                         ProjectionFact(
-                            schema_id="playbill.document.references",
+                            schema_id="cruxible.document.references",
                             schema_version=1,
                             subject_identity=document.identity,
                             fact_key="declared",
@@ -874,7 +874,7 @@ def parse_projection_tree(
                             },
                         ),
                         ProjectionFact(
-                            schema_id="playbill.document.source_mapping",
+                            schema_id="cruxible.document.source_mapping",
                             schema_version=1,
                             subject_identity=document.identity,
                             fact_key="whole_body",
@@ -887,7 +887,7 @@ def parse_projection_tree(
                     )
                 )
                 if coordinate is not None and registry.supports(
-                    "playbill.document.attestation_coverage",
+                    "cruxible.document.attestation_coverage",
                     1,
                     classification="semantic",
                 ):
@@ -950,7 +950,7 @@ def parse_projection_tree(
                 semantic_facts.extend(
                     (
                         ProjectionFact(
-                            schema_id="playbill.subject.identity",
+                            schema_id="cruxible.subject.identity",
                             schema_version=1,
                             subject_identity=identity,
                             fact_key="stable_referent",
@@ -966,7 +966,7 @@ def parse_projection_tree(
                             },
                         ),
                         ProjectionFact(
-                            schema_id="playbill.subject.lifecycle",
+                            schema_id="cruxible.subject.lifecycle",
                             schema_version=1,
                             subject_identity=identity,
                             fact_key="accepted_shell",
@@ -975,7 +975,7 @@ def parse_projection_tree(
                             },
                         ),
                         ProjectionFact(
-                            schema_id="playbill.subject.references",
+                            schema_id="cruxible.subject.references",
                             schema_version=1,
                             subject_identity=identity,
                             fact_key="declared",
@@ -986,7 +986,7 @@ def parse_projection_tree(
                     )
                 )
                 if coordinate is not None and registry.supports(
-                    "playbill.subject.attestation_coverage",
+                    "cruxible.subject.attestation_coverage",
                     1,
                     classification="semantic",
                 ):
@@ -1076,7 +1076,7 @@ def parse_projection_tree(
                 semantic_facts.extend(
                     (
                         ProjectionFact(
-                            schema_id="playbill.claim_type.identity",
+                            schema_id="cruxible.claim_type.identity",
                             schema_version=1,
                             subject_identity=identity,
                             fact_key="predicate_contract",
@@ -1091,7 +1091,7 @@ def parse_projection_tree(
                             },
                         ),
                         ProjectionFact(
-                            schema_id="playbill.claim_type.policies",
+                            schema_id="cruxible.claim_type.policies",
                             schema_version=1,
                             subject_identity=identity,
                             fact_key="complete_policy",
@@ -1104,7 +1104,7 @@ def parse_projection_tree(
                             },
                         ),
                         ProjectionFact(
-                            schema_id="playbill.claim_type.references",
+                            schema_id="cruxible.claim_type.references",
                             schema_version=1,
                             subject_identity=identity,
                             fact_key="declared",
@@ -1116,7 +1116,7 @@ def parse_projection_tree(
                     )
                 )
                 if coordinate is not None and registry.supports(
-                    "playbill.claim_type.attestation_coverage",
+                    "cruxible.claim_type.attestation_coverage",
                     1,
                     classification="semantic",
                 ):
@@ -1194,7 +1194,7 @@ def parse_projection_tree(
                 semantic_facts.extend(
                     (
                         ProjectionFact(
-                            schema_id="playbill.provider.identity",
+                            schema_id="cruxible.provider.identity",
                             schema_version=1,
                             subject_identity=identity,
                             fact_key="provider",
@@ -1208,7 +1208,7 @@ def parse_projection_tree(
                             },
                         ),
                         ProjectionFact(
-                            schema_id="playbill.provider.keys",
+                            schema_id="cruxible.provider.keys",
                             schema_version=1,
                             subject_identity=identity,
                             fact_key="verification",
@@ -1219,7 +1219,7 @@ def parse_projection_tree(
                             },
                         ),
                         ProjectionFact(
-                            schema_id="playbill.provider.provenance",
+                            schema_id="cruxible.provider.provenance",
                             schema_version=1,
                             subject_identity=identity,
                             fact_key="control",
@@ -1237,7 +1237,7 @@ def parse_projection_tree(
                     semantic_facts.extend(
                         (
                             ProjectionFact(
-                                schema_id="playbill.provider.runtime",
+                                schema_id="cruxible.provider.runtime",
                                 schema_version=1,
                                 subject_identity=identity,
                                 fact_key="runtime_artifact",
@@ -1253,7 +1253,7 @@ def parse_projection_tree(
                                 },
                             ),
                             ProjectionFact(
-                                schema_id="playbill.provider.implementations",
+                                schema_id="cruxible.provider.implementations",
                                 schema_version=1,
                                 subject_identity=identity,
                                 fact_key="normalized",
@@ -1330,7 +1330,7 @@ def parse_projection_tree(
                 semantic_facts.extend(
                     (
                         ProjectionFact(
-                            schema_id="playbill.provider_interface.registration",
+                            schema_id="cruxible.provider_interface.registration",
                             schema_version=1,
                             subject_identity=identity,
                             fact_key="registration",
@@ -1342,7 +1342,7 @@ def parse_projection_tree(
                             },
                         ),
                         ProjectionFact(
-                            schema_id="playbill.provider_interface.vocabulary",
+                            schema_id="cruxible.provider_interface.vocabulary",
                             schema_version=1,
                             subject_identity=identity,
                             fact_key="vocabulary",
@@ -1352,7 +1352,7 @@ def parse_projection_tree(
                             },
                         ),
                         ProjectionFact(
-                            schema_id="playbill.provider_interface.classifier",
+                            schema_id="cruxible.provider_interface.classifier",
                             schema_version=1,
                             subject_identity=identity,
                             fact_key="classifier",
@@ -1414,7 +1414,7 @@ def parse_projection_tree(
                 )
                 semantic_facts.append(
                     ProjectionFact(
-                        schema_id="playbill.source_acquisition_policy.policy",
+                        schema_id="cruxible.source_acquisition_policy.policy",
                         schema_version=1,
                         subject_identity=identity,
                         fact_key="complete_policy",
@@ -1487,7 +1487,7 @@ def parse_projection_tree(
                 )
                 semantic_facts.append(
                     ProjectionFact(
-                        schema_id="playbill.procedure_mandate.authority",
+                        schema_id="cruxible.procedure_mandate.authority",
                         schema_version=1,
                         subject_identity=identity,
                         fact_key="finite_grant",
@@ -1662,7 +1662,7 @@ def parse_projection_tree(
                 semantic_facts.extend(
                     (
                         ProjectionFact(
-                            schema_id="playbill.procedure.definition",
+                            schema_id="cruxible.procedure.definition",
                             schema_version=1,
                             subject_identity=identity,
                             fact_key="definition",
@@ -1682,7 +1682,7 @@ def parse_projection_tree(
                             },
                         ),
                         ProjectionFact(
-                            schema_id="playbill.procedure.graph",
+                            schema_id="cruxible.procedure.graph",
                             schema_version=1,
                             subject_identity=identity,
                             fact_key=graph_fact_key,
@@ -1712,7 +1712,7 @@ def parse_projection_tree(
                         ),
                         *(
                             ProjectionFact(
-                                schema_id="playbill.procedure.source_mapping",
+                                schema_id="cruxible.procedure.source_mapping",
                                 schema_version=1,
                                 subject_identity=identity,
                                 fact_key=fact_key,
@@ -1723,7 +1723,7 @@ def parse_projection_tree(
                     )
                 )
                 if coordinate is not None and registry.supports(
-                    "playbill.procedure.resolution_activation",
+                    "cruxible.procedure.resolution_activation",
                     1,
                     classification="semantic",
                 ):
@@ -1757,7 +1757,7 @@ def parse_projection_tree(
                         )
                         semantic_facts.extend(
                             ProjectionFact(
-                                schema_id="playbill.procedure.resolution_activation",
+                                schema_id="cruxible.procedure.resolution_activation",
                                 schema_version=1,
                                 subject_identity=identity,
                                 fact_key=activation.measurement_name,
@@ -1770,7 +1770,7 @@ def parse_projection_tree(
                             "Procedure measurement activation lacks its accepting coordinate"
                         )
                 if coordinate is not None and registry.supports(
-                    "playbill.procedure.attestation_coverage",
+                    "cruxible.procedure.attestation_coverage",
                     1,
                     classification="semantic",
                 ):
@@ -1889,7 +1889,7 @@ def parse_projection_tree(
                 semantic_facts.extend(
                     (
                         ProjectionFact(
-                            schema_id="playbill.line.spec",
+                            schema_id="cruxible.line.spec",
                             schema_version=1,
                             subject_identity=identity,
                             fact_key="instantiation",
@@ -1901,7 +1901,7 @@ def parse_projection_tree(
                             },
                         ),
                         ProjectionFact(
-                            schema_id="playbill.line.source_mapping",
+                            schema_id="cruxible.line.source_mapping",
                             schema_version=1,
                             subject_identity=identity,
                             fact_key="line",
@@ -1914,7 +1914,7 @@ def parse_projection_tree(
                     )
                 )
                 if coordinate is not None and registry.supports(
-                    "playbill.line.attestation_coverage",
+                    "cruxible.line.attestation_coverage",
                     1,
                     classification="semantic",
                 ):
@@ -1995,7 +1995,7 @@ def parse_projection_tree(
                 semantic_facts.extend(
                     (
                         ProjectionFact(
-                            schema_id="playbill.query_definition.definition",
+                            schema_id="cruxible.query_definition.definition",
                             schema_version=1,
                             subject_identity=identity,
                             fact_key="declaration",
@@ -2012,7 +2012,7 @@ def parse_projection_tree(
                             },
                         ),
                         ProjectionFact(
-                            schema_id="playbill.query_definition.policy",
+                            schema_id="cruxible.query_definition.policy",
                             schema_version=1,
                             subject_identity=identity,
                             fact_key="evaluation",
@@ -2027,7 +2027,7 @@ def parse_projection_tree(
                             },
                         ),
                         ProjectionFact(
-                            schema_id="playbill.query_definition.references",
+                            schema_id="cruxible.query_definition.references",
                             schema_version=1,
                             subject_identity=identity,
                             fact_key="declared",
@@ -2039,7 +2039,7 @@ def parse_projection_tree(
                     )
                 )
                 if coordinate is not None and registry.supports(
-                    "playbill.query_definition.attestation_coverage",
+                    "cruxible.query_definition.attestation_coverage",
                     1,
                     classification="semantic",
                 ):
@@ -2101,7 +2101,7 @@ def parse_projection_tree(
                 )
                 semantic_facts.append(
                     ProjectionFact(
-                        schema_id="playbill.exhaust_promotion.basis",
+                        schema_id="cruxible.exhaust_promotion.basis",
                         schema_version=1,
                         subject_identity=identity,
                         fact_key="verified_range",
@@ -2113,7 +2113,7 @@ def parse_projection_tree(
                     )
                 )
                 if coordinate is not None and registry.supports(
-                    "playbill.procedure.track_record",
+                    "cruxible.procedure.track_record",
                     1,
                     classification="semantic",
                 ):
@@ -2157,7 +2157,7 @@ def parse_projection_tree(
                         procedure_track_record_facts(accepted_promotion, output=output)
                     )
                     if registry.supports(
-                        "playbill.line.track_record",
+                        "cruxible.line.track_record",
                         1,
                         classification="semantic",
                     ):
@@ -2223,7 +2223,7 @@ def parse_projection_tree(
                 semantic_facts.extend(
                     (
                         ProjectionFact(
-                            schema_id="playbill.capture_contract.contract",
+                            schema_id="cruxible.capture_contract.contract",
                             schema_version=1,
                             subject_identity=identity,
                             fact_key="evidence_contract",
@@ -2237,7 +2237,7 @@ def parse_projection_tree(
                             },
                         ),
                         ProjectionFact(
-                            schema_id="playbill.capture_contract.references",
+                            schema_id="cruxible.capture_contract.references",
                             schema_version=1,
                             subject_identity=identity,
                             fact_key="declared",
@@ -2309,7 +2309,7 @@ def parse_projection_tree(
                 )
                 semantic_facts.extend(static_facts)
                 if coordinate is not None and registry.supports(
-                    "playbill.claim.current_verdict",
+                    "cruxible.claim.current_verdict",
                     1,
                     classification="semantic",
                 ):
@@ -2340,7 +2340,7 @@ def parse_projection_tree(
                         )
                     law_evidence = parse_claim_law_evidence(raw_claim_evidence)
                     for index, fact in enumerate(explanation_facts):
-                        if fact.schema_id != "playbill.claim.attestation_coverage":
+                        if fact.schema_id != "cruxible.claim.attestation_coverage":
                             continue
                         if not isinstance(fact.value, dict):
                             raise ProjectionFormatError(
@@ -2360,7 +2360,7 @@ def parse_projection_tree(
                     semantic_facts.extend(
                         (
                             ProjectionFact(
-                                schema_id="playbill.claim.current_verdict",
+                                schema_id="cruxible.claim.current_verdict",
                                 schema_version=1,
                                 subject_identity=identity,
                                 fact_key="accepted_evaluation",
@@ -2369,7 +2369,7 @@ def parse_projection_tree(
                                 ).model_dump(mode="json"),
                             ),
                             ProjectionFact(
-                                schema_id="playbill.claim.evidence_basis",
+                                schema_id="cruxible.claim.evidence_basis",
                                 schema_version=1,
                                 subject_identity=identity,
                                 fact_key="accepted_evaluation",

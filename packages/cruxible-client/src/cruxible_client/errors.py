@@ -286,7 +286,7 @@ def response_to_error(status: int, body: ErrorResponse) -> CoreError:
     elif body.error_type == "ReadRefusalError":
         # A read verb's coded refusal keeps its code, candidates and repair line.
         exc = ReadRefusalError.from_served(
-            code=body.error_code or "playbill.read.refused",
+            code=body.error_code or "cruxible.read.refused",
             message=body.message,
             http_status=status,
             context=context,

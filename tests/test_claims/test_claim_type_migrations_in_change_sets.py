@@ -432,7 +432,7 @@ def test_a_carry_of_an_out_of_enum_value_refuses(tmp_path: Path) -> None:
     result = coordinator.preflight(intent.intent_id, actor=actor)
     assert result.verdict == "refused"
     codes = {item.code for item in result.frontier.diagnostics}
-    assert codes == {"playbill.claim.literal_schema_invalid"}, codes
+    assert codes == {"cruxible.claim.literal_schema_invalid"}, codes
 
 
 def test_an_enum_narrowing_carries_what_fits_and_re_authors_what_does_not(
@@ -504,7 +504,7 @@ def test_an_incomplete_closure_refuses_with_its_exact_required_dependents(
     with pytest.raises(AuthoringLoweringError) as raised:
         lower_authoring(instance, intent=intent, actor_id="owner")
     error = raised.value
-    assert error.code == "playbill.authoring.claim_type_succession_closure_incomplete"
+    assert error.code == "cruxible.authoring.claim_type_succession_closure_incomplete"
     replacement = error.repairs[0].replacement
     assert isinstance(replacement, dict)
     required = replacement["required_dependents"]
@@ -550,7 +550,7 @@ def test_object_kind_change_refuses_a_carried_live_claim(tmp_path: Path) -> None
     with pytest.raises(AuthoringLoweringError) as raised:
         lower_authoring(instance, intent=intent, actor_id="owner")
     error = raised.value
-    assert error.code == "playbill.authoring.claim_type_succession_object_kind_change"
+    assert error.code == "cruxible.authoring.claim_type_succession_object_kind_change"
     assert error.offending_element == "members[0].dependents[0].disposition"
     replacement = error.repairs[0].replacement
     assert isinstance(replacement, dict)
@@ -588,7 +588,7 @@ def test_a_re_author_that_names_no_sibling_refuses_naming_the_claim_it_needs(
     with pytest.raises(AuthoringLoweringError) as raised:
         lower_authoring(instance, intent=intent, actor_id="owner")
     error = raised.value
-    assert error.code == "playbill.authoring.claim_type_succession_re_author_invalid"
+    assert error.code == "cruxible.authoring.claim_type_succession_re_author_invalid"
     assert error.offending_element == "members[0].dependents[0].successor_claim_id"
     replacement = error.repairs[0].replacement
     assert isinstance(replacement, dict)
@@ -637,7 +637,7 @@ def test_a_re_author_sibling_under_another_type_refuses_with_both_indices(
     with pytest.raises(AuthoringLoweringError) as raised:
         lower_authoring(instance, intent=intent, actor_id="owner")
     error = raised.value
-    assert error.code == "playbill.authoring.claim_type_succession_re_author_invalid"
+    assert error.code == "cruxible.authoring.claim_type_succession_re_author_invalid"
     replacement = error.repairs[0].replacement
     assert isinstance(replacement, dict)
     assert replacement["reason"] == "predicate_mismatch"
@@ -718,7 +718,7 @@ def test_a_set_cannot_define_a_claim_type_and_succeed_it(tmp_path: Path) -> None
     with pytest.raises(AuthoringLoweringError) as raised:
         lower_authoring(instance, intent=intent, actor_id="owner")
     error = raised.value
-    assert error.code == "playbill.authoring.change_set_member_path_collision"
+    assert error.code == "cruxible.authoring.change_set_member_path_collision"
     replacement = error.repairs[0].replacement
     assert isinstance(replacement, dict)
     assert replacement["path"] == claim_type_path("project.work_item.owner")
@@ -800,7 +800,7 @@ def test_a_successor_admitting_no_accepted_contract_lints_on_both_roads(
     assert operator.lint is not None
     expected = [warning.model_dump(mode="json") for warning in operator.lint.warnings]
     assert {str(warning["code"]) for warning in expected} == {
-        "playbill.claim_type.evidence_policy_admits_no_accepted_contract"
+        "cruxible.claim_type.evidence_policy_admits_no_accepted_contract"
     }
 
     intent = coordinator.create(
@@ -851,7 +851,7 @@ def test_the_deprecated_invalidation_word_refuses_typed(tmp_path: Path) -> None:
     with pytest.raises(AuthoringLoweringError) as raised:
         lower_authoring(instance, intent=intent, actor_id="owner")
     error = raised.value
-    assert error.code == "playbill.authoring.claim_type_succession_disposition_deprecated"
+    assert error.code == "cruxible.authoring.claim_type_succession_disposition_deprecated"
     assert error.offending_element == "members[0].dependents[0].disposition"
     repair = error.repairs[0]
     assert repair.kind == "replace_disposition"
@@ -877,7 +877,7 @@ def test_the_deprecated_invalidation_word_refuses_typed(tmp_path: Path) -> None:
         actor=actor,
     )
     assert {warning.code for warning in standalone.warnings} == {
-        "playbill.claim_type.invalidation_deprecated"
+        "cruxible.claim_type.invalidation_deprecated"
     }
 
 
@@ -917,7 +917,7 @@ def test_a_dependent_this_set_also_retires_refuses_naming_both_members(
     with pytest.raises(AuthoringLoweringError) as raised:
         lower_authoring(instance, intent=intent, actor_id="owner")
     error = raised.value
-    assert error.code == "playbill.authoring.change_set_member_path_collision"
+    assert error.code == "cruxible.authoring.change_set_member_path_collision"
     succession_index = positions[authoring_member_identity(succession)]
     assert error.offending_element == f"members[{succession_index}].dependents"
     replacement = error.repairs[0].replacement
@@ -968,7 +968,7 @@ def test_a_re_author_sibling_that_moves_the_subject_refuses(tmp_path: Path) -> N
     with pytest.raises(AuthoringLoweringError) as raised:
         lower_authoring(instance, intent=intent, actor_id="owner")
     error = raised.value
-    assert error.code == "playbill.authoring.claim_type_succession_re_author_invalid"
+    assert error.code == "cruxible.authoring.claim_type_succession_re_author_invalid"
     sibling = positions[authoring_member_identity(moved)]
     assert error.offending_element == f"members[{sibling}].statement.subject"
     replacement = error.repairs[0].replacement
@@ -1031,7 +1031,7 @@ def test_a_machine_applying_the_re_author_repair_lands_the_set(tmp_path: Path) -
         try:
             lowered = lower_authoring(instance, intent=intent, actor_id="owner")
         except AuthoringLoweringError as error:
-            assert error.code == "playbill.authoring.claim_type_succession_re_author_invalid"
+            assert error.code == "cruxible.authoring.claim_type_succession_re_author_invalid"
             replacement = error.repairs[0].replacement
             assert isinstance(replacement, dict)
             assert replacement["reason"] == "identity_mismatch"
@@ -1283,7 +1283,7 @@ def test_a_succession_over_the_record_ceiling_refuses_before_it_is_lowered(
     diagnostic = next(
         item
         for item in result.frontier.diagnostics
-        if item.code == "playbill.authoring.change_set_record_too_large"
+        if item.code == "cruxible.authoring.change_set_record_too_large"
     )
     assert "projects to at least 21 record entries" in diagnostic.message
     assert diagnostic.repairs[0].replacement == {
@@ -1321,7 +1321,7 @@ def test_an_oversized_closure_refusal_keeps_its_code_and_names_what_is_missing(
         lower_authoring(instance, intent=intent, actor_id="owner")
 
     error = raised.value
-    assert error.code == "playbill.authoring.claim_type_succession_closure_incomplete"
+    assert error.code == "cruxible.authoring.claim_type_succession_closure_incomplete"
     replacement = error.repairs[0].replacement
     assert isinstance(replacement, dict)
     assert replacement["missing"] == owed[1:]
@@ -1334,8 +1334,8 @@ def test_an_oversized_closure_refusal_keeps_its_code_and_names_what_is_missing(
     # Preflight reports the same coded refusal, not lowering_invalid.
     result = coordinator.preflight(intent.intent_id, actor=AuthenticatedActor(actor_id="owner"))
     codes = [item.code for item in result.frontier.diagnostics]
-    assert "playbill.authoring.claim_type_succession_closure_incomplete" in codes
-    assert "playbill.authoring.lowering_invalid" not in codes
+    assert "cruxible.authoring.claim_type_succession_closure_incomplete" in codes
+    assert "cruxible.authoring.lowering_invalid" not in codes
 
 
 def test_carry_all_fills_the_closure_server_side_including_retired_claims(

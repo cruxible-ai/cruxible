@@ -261,13 +261,13 @@ class PlaybillInstanceManager:
             return PlaybillInstance.open(managed_root, trust_root=trust)
         except PreviewWriteRefused as exc:
             raise ChangeRefusedError(
-                "playbill.preview.recovery_pending",
+                "cruxible.preview.recovery_pending",
                 f"previewing first needs instance {instance_id} reopened, and reopening it "
                 f"would repair derived files on disk ({exc.door}), which a preview may not "
                 "write; run an ordinary read (`cruxible playbill orient`) to reopen it, then "
                 "preview again",
-                operation="playbill.orient",
-                repair=RepairOperation(operation="playbill.orient", arguments={}),
+                operation="cruxible.orient",
+                repair=RepairOperation(operation="cruxible.orient", arguments={}),
             ) from exc
 
     def initialized(self, instance_id: str) -> PlaybillInstance | None:

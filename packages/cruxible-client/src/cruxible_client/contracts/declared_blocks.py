@@ -386,7 +386,7 @@ class ProjectionMarkerSummary(_StrictDeclaredBlockModel):
 
 
 class ProjectionMarkerError(CruxibleError):
-    code = "playbill.projection.marker_invalid"
+    code = "cruxible.projection.marker_invalid"
 
     def __init__(self, message: str) -> None:
         super().__init__(f"{self.code}: {message}")
@@ -453,7 +453,7 @@ def read_projection_source(path: Path) -> bytes:
 
 
 class ProjectionBootstrapUnstampedError(ProjectionMarkerError):
-    code = "playbill.projection.bootstrap_unstamped"
+    code = "cruxible.projection.bootstrap_unstamped"
 
 
 @dataclass(frozen=True)

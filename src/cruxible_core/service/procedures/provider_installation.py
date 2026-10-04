@@ -422,7 +422,7 @@ def service_install_provider(
         dry_run=request.dry_run,
         at=request.at,
         kind="direct",
-        operation="playbill.provider.install",
+        operation="cruxible.provider.install",
         describe=f"installing provider {request.package or 'wheel'}",
     ) as mode:
         if mode.previewing:

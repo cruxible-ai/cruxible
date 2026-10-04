@@ -31,13 +31,13 @@ T = TypeVar("T")
 class ListCursorMismatch(FormatError):
     """A list cursor that does not continue the list this request reads."""
 
-    error_code = "playbill.list.cursor_mismatch"
+    error_code = "cruxible.list.cursor_mismatch"
 
 
 class ListCursorStale(ListCursorMismatch):
     """A list cursor whose listing changed after its first page."""
 
-    error_code = "playbill.list.cursor_stale"
+    error_code = "cruxible.list.cursor_stale"
 
 
 @dataclass(frozen=True)

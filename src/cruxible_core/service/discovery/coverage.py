@@ -88,7 +88,7 @@ from cruxible_core.service.authoring.documents import AcceptedCoordinate
 from cruxible_core.service.proposals.publications import bound_publication_registrations
 from cruxible_core.storage.cas import BodyAccessContext
 
-COVERAGE_ACCESS_PROFILE_ID = "playbill.coverage.read"
+COVERAGE_ACCESS_PROFILE_ID = "cruxible.coverage.read"
 COVERAGE_PRINCIPAL = "playbill-coverage"
 COVERAGE_EVIDENCE_ACCESS_CLASS: SourceAccessClass = "instance"
 

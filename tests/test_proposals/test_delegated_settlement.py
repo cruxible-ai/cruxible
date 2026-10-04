@@ -195,21 +195,21 @@ def test_a_false_condition_grants_nothing(tmp_path) -> None:
     instance, mandate = _world(tmp_path, only_subject="someone-else")
     refused = _settle(instance, mandate)
     assert refused.candidate is None
-    assert "playbill.settle.condition_false" in _codes(refused)
+    assert "cruxible.settle.condition_false" in _codes(refused)
 
 
 def test_an_uncovered_change_kind_grants_nothing(tmp_path) -> None:
     instance, mandate = _world(tmp_path, change_kinds=("revise",))
     refused = _settle(instance, mandate)
     assert refused.candidate is None
-    assert "playbill.settle.scope_uncovered" in _codes(refused)
+    assert "cruxible.settle.scope_uncovered" in _codes(refused)
 
 
 def test_an_unknown_mandate_digest_grants_nothing(tmp_path) -> None:
     instance, mandate = _world(tmp_path)
     refused = _settle(instance, mandate, digest="sha256:" + "e" * 64)
     assert refused.candidate is None
-    assert _codes(refused) == {"playbill.settle.mandate_unresolved"}
+    assert _codes(refused) == {"cruxible.settle.mandate_unresolved"}
 
 
 def test_a_settled_generation_publishes_without_approvals_and_replays(

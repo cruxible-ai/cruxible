@@ -266,7 +266,7 @@ def test_new_contending_sibling_is_visible_to_the_same_typed_refusal(
     )
     result, _counts, _index = _compare_lowering(monkeypatch, instance, intent)
     assert isinstance(result, lowering.AuthoringLoweringError)
-    assert result.code == "playbill.authoring.existing_claim_dispositions_incomplete"
+    assert result.code == "cruxible.authoring.existing_claim_dispositions_incomplete"
     assert result.repairs[0].replacement["sibling_members"]
 
 

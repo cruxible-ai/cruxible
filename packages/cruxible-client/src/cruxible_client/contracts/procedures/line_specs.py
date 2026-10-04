@@ -689,11 +689,11 @@ def evaluate_line_spec_law(
 ) -> LineSpecLawResult:
     if path != line_spec_path(line.identity.name):
         return _refusal(
-            "playbill.line.path_mismatch", "Line identity/path disagreement.", path=path
+            "cruxible.line.path_mismatch", "Line identity/path disagreement.", path=path
         )
     if line.procedure.artifact_digest != procedure.artifact_digest:
         return _refusal(
-            "playbill.line.procedure_pin_mismatch",
+            "cruxible.line.procedure_pin_mismatch",
             "LineSpec does not pin the supplied accepted Procedure.",
             path=path,
         )
@@ -704,17 +704,17 @@ def evaluate_line_spec_law(
             interface_digests=interface_digests,
         )
     except ProcedurePinClosureError as exc:
-        return _refusal("playbill.line.slot_closure_failed", str(exc), path=path)
+        return _refusal("cruxible.line.slot_closure_failed", str(exc), path=path)
     definition = procedure.procedure.definition
     if isinstance(line, LineSpecV4 | LineSpecV5 | LineSpec) and line.trigger_input is not None:
         try:
             trigger_capture_source(line, procedure)
         except ValueError as exc:
-            return _refusal("playbill.line.trigger_input_mismatch", str(exc), path=path)
+            return _refusal("cruxible.line.trigger_input_mismatch", str(exc), path=path)
     if isinstance(definition, ProcedureDefinitionV4):
         if not line_has_provider_closures(line):
             return _refusal(
-                "playbill.line.provider_closure_successor_required",
+                "cruxible.line.provider_closure_successor_required",
                 "A graph-v4 Procedure requires a playbill-line-v2 closure.",
                 path=path,
             )
@@ -734,13 +734,13 @@ def evaluate_line_spec_law(
         # A v6 Line serves every Procedure a Line could: an earlier graph has
         # no Provider occurrence to close, so it carries no closures.
         return _refusal(
-            "playbill.line.graph_v4_required",
+            "cruxible.line.graph_v4_required",
             "Provider implementation closures must instantiate a graph-v4 Procedure.",
             path=path,
         )
     if line_requested_rung(line) > definition.terminal_capability:
         return _refusal(
-            "playbill.line.rung_exceeds_procedure_cap",
+            "cruxible.line.rung_exceeds_procedure_cap",
             "The Line's max_authority exceeds what its Procedure's terminals can do.",
             path=path,
         )
@@ -757,7 +757,7 @@ def evaluate_line_spec_law(
         value = _budget_int(line.budgets, key)
         if value is None or value < 0 or value > hard_cap:
             return _refusal(
-                "playbill.line.budget_exceeds_procedure_cap",
+                "cruxible.line.budget_exceeds_procedure_cap",
                 f"LineSpec budget {key!r} is missing, invalid, or exceeds the Procedure cap.",
                 path=path,
             )
@@ -766,21 +766,21 @@ def evaluate_line_spec_law(
     )
     if needs_acquisition and line.acquisition_policy is None:
         return _refusal(
-            "playbill.line.acquisition_policy_missing",
+            "cruxible.line.acquisition_policy_missing",
             "Source and exhaust paths require an exact SourceAcquisitionPolicy pin.",
             path=path,
         )
     if predecessor is None:
         if line.lifecycle.predecessor_digest is not None or line.occurrence_epoch != 1:
             return _refusal(
-                "playbill.line.invalid_genesis",
+                "cruxible.line.invalid_genesis",
                 "Line genesis requires epoch 1 and no predecessor digest.",
                 path=path,
             )
     else:
         if line.identity != predecessor.line.identity:
             return _refusal(
-                "playbill.line.stable_identity_changed",
+                "cruxible.line.stable_identity_changed",
                 "Line successor must retain stable identity.",
                 path=path,
             )
@@ -788,13 +788,13 @@ def evaluate_line_spec_law(
             line_has_provider_closures(predecessor.line) and not line_has_provider_closures(line)
         ) or (isinstance(predecessor.line, LineSpec) and not isinstance(line, LineSpec)):
             return _refusal(
-                "playbill.line.wire_downgrade",
+                "cruxible.line.wire_downgrade",
                 "A Line lineage cannot be succeeded by an earlier Line wire.",
                 path=path,
             )
         if line.lifecycle.predecessor_digest != predecessor.artifact_digest:
             return _refusal(
-                "playbill.line.predecessor_mismatch",
+                "cruxible.line.predecessor_mismatch",
                 "Line successor does not pin its exact predecessor.",
                 path=path,
             )
@@ -802,7 +802,7 @@ def evaluate_line_spec_law(
         expected_epoch = predecessor.line.occurrence_epoch + (1 if trigger_changed else 0)
         if line.occurrence_epoch != expected_epoch:
             return _refusal(
-                "playbill.line.occurrence_epoch_mismatch",
+                "cruxible.line.occurrence_epoch_mismatch",
                 "Line occurrence epoch must advance exactly when trigger semantics change.",
                 path=path,
             )
@@ -863,7 +863,7 @@ def _verify_provider_implementation_closures(
     )
     if tuple(occurrence_coordinates) != closure_coordinates:
         return (
-            "playbill.line.provider_implementation_closure_incomplete",
+            "cruxible.line.provider_implementation_closure_incomplete",
             "Line Provider closures must cover every slot-filled "
             "Source/Provider occurrence exactly.",
         )
@@ -882,38 +882,38 @@ def _verify_provider_implementation_closures(
         else:
             if not isinstance(provider_binding, ProcedurePinSlotRef):
                 return (
-                    "playbill.line.provider_interface_pin_mismatch",
+                    "cruxible.line.provider_interface_pin_mismatch",
                     f"Provider occurrence {node_id!r} has an unsupported binding.",
                 )
             provider_pin = bindings.get(provider_binding.slot_name)
             slot_name = provider_binding.slot_name
             if closure is None or closure.slot_name != slot_name:
                 return (
-                    "playbill.line.provider_implementation_closure_incomplete",
+                    "cruxible.line.provider_implementation_closure_incomplete",
                     f"Provider occurrence {node_id!r} lacks its exact slot closure.",
                 )
             implementation_digest = closure.implementation_digest
         if provider_pin is None:
             return (
-                "playbill.line.provider_implementation_unavailable",
+                "cruxible.line.provider_implementation_unavailable",
                 f"Provider occurrence {node_id!r} has no exact Provider pin.",
             )
         accepted_provider = providers.get(provider_pin.artifact_digest)
         if accepted_provider is None or not isinstance(accepted_provider.provider, ProviderV2):
             return (
-                "playbill.line.provider_runtime_manifest_required",
+                "cruxible.line.provider_runtime_manifest_required",
                 f"Provider occurrence {node_id!r} does not bind an accepted Provider v2.",
             )
         accepted_interface = provider_interfaces.get(interface_pin.artifact_digest)
         if accepted_interface is None:
             return (
-                "playbill.line.provider_interface_pin_mismatch",
+                "cruxible.line.provider_interface_pin_mismatch",
                 f"Provider occurrence {node_id!r} lacks its accepted interface registration.",
             )
         registration = accepted_interface.registration
         if registration.interface_digest != interface_digest:
             return (
-                "playbill.line.provider_interface_pin_mismatch",
+                "cruxible.line.provider_interface_pin_mismatch",
                 f"Provider occurrence {node_id!r} interface digest does not reproduce.",
             )
         matches = tuple(
@@ -925,12 +925,12 @@ def _verify_provider_implementation_closures(
         )
         if not matches:
             return (
-                "playbill.line.provider_implementation_unavailable",
+                "cruxible.line.provider_implementation_unavailable",
                 f"Provider occurrence {node_id!r} implementation is unavailable.",
             )
         if len(matches) != 1:
             return (
-                "playbill.line.provider_implementation_ambiguous",
+                "cruxible.line.provider_implementation_ambiguous",
                 f"Provider occurrence {node_id!r} implementation is ambiguous.",
             )
         record = matches[0]
@@ -941,7 +941,7 @@ def _verify_provider_implementation_closures(
         )
         if len(manifest_matches) != 1:
             return (
-                "playbill.line.provider_implementation_ambiguous",
+                "cruxible.line.provider_implementation_ambiguous",
                 f"Provider occurrence {node_id!r} manifest row is not singular.",
             )
         manifest = manifest_matches[0]
@@ -966,7 +966,7 @@ def _verify_provider_implementation_closures(
             }
             if any(getattr(closure, key) != value for key, value in expected.items()):
                 return (
-                    "playbill.line.provider_implementation_pin_mismatch",
+                    "cruxible.line.provider_implementation_pin_mismatch",
                     f"Provider occurrence {node_id!r} closure does not reproduce exact pins.",
                 )
     return None

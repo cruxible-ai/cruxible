@@ -53,7 +53,7 @@ def test_values_match_full_views_and_slot_statuses(tmp_path: Path, monkeypatch) 
     for row in result.values:
         view = expected[row.claim_id]
         statement = next(
-            f["value"] for f in view.facts if f["schema_id"] == "playbill.claim.statement"
+            f["value"] for f in view.facts if f["schema_id"] == "cruxible.claim.statement"
         )
         assert row.value == statement["object"]["value"]
         assert row.predicate == statement["predicate"]
@@ -61,7 +61,7 @@ def test_values_match_full_views_and_slot_statuses(tmp_path: Path, monkeypatch) 
         assert row.status == statuses[row.claim_id]
         # The same verdict the full view reports as its current verdict.
         current = next(
-            f["value"] for f in view.facts if f["schema_id"] == "playbill.claim.current_verdict"
+            f["value"] for f in view.facts if f["schema_id"] == "cruxible.claim.current_verdict"
         )
         assert row.verdict == current["verdict"]
 

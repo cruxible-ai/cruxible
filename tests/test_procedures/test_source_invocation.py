@@ -81,4 +81,4 @@ def test_short_circuit_and_require_prove_child_success():
 def test_child_data_is_never_available_without_the_required_proof(after, code):
     with pytest.raises(SourceCompileError) as caught:
         compile(program(after), bindings={"child": binding()})
-    assert caught.value.diagnostic.code == "playbill.source." + code
+    assert caught.value.diagnostic.code == "cruxible.source." + code

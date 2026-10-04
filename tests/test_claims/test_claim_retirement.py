@@ -276,7 +276,7 @@ def test_root_only_retirement_records_its_reason_and_is_terminal(
 
     again = submit_retirement(instance, retirement_member(instance, claim_id, dependents=()))
     assert again.status.proposal_id is None
-    assert "playbill.authoring.claim_terminal" in refusal_codes(again)
+    assert "cruxible.authoring.claim_terminal" in refusal_codes(again)
 
 
 def test_effective_until_is_caller_supplied_or_preserved_without_clock_substitution(
@@ -440,7 +440,7 @@ def test_transitive_dual_edge_closure_freezes_inputs_and_advances_only_claim_pin
         promotion_verifier=instance.proposal_service().promotion_verifier,
     )
     assert statement_result.candidate is None
-    assert "playbill.claim.retirement_delta_invalid" in {
+    assert "cruxible.claim.retirement_delta_invalid" in {
         item.code for item in statement_result.diagnostics
     }
 
@@ -464,7 +464,7 @@ def test_transitive_dual_edge_closure_freezes_inputs_and_advances_only_claim_pin
         promotion_verifier=instance.proposal_service().promotion_verifier,
     )
     assert backing_result.candidate is None
-    assert "playbill.claim.retirement_delta_invalid" in {
+    assert "cruxible.claim.retirement_delta_invalid" in {
         item.code for item in backing_result.diagnostics
     }
 
@@ -529,7 +529,7 @@ def test_transitive_dual_edge_closure_freezes_inputs_and_advances_only_claim_pin
         promotion_verifier=instance.proposal_service().promotion_verifier,
     )
     assert missing_target.candidate is None
-    assert "playbill.change_set.unresolved_pin" in {
+    assert "cruxible.change_set.unresolved_pin" in {
         item.code for item in missing_target.diagnostics
     }
 
@@ -567,7 +567,7 @@ def test_transitive_dual_edge_closure_freezes_inputs_and_advances_only_claim_pin
         promotion_verifier=instance.proposal_service().promotion_verifier,
     )
     assert skipped_hop.candidate is None
-    assert "playbill.claim.retirement_pin_delta_invalid" in {
+    assert "cruxible.claim.retirement_pin_delta_invalid" in {
         item.code for item in skipped_hop.diagnostics
     }
 
@@ -575,11 +575,11 @@ def test_transitive_dual_edge_closure_freezes_inputs_and_advances_only_claim_pin
         instance, retirement_member(instance, root_id, dependents=dependents[:-1])
     )
     assert incomplete.status.proposal_id is None
-    assert "playbill.authoring.claim_retirement_closure_incomplete" in refusal_codes(incomplete)
+    assert "cruxible.authoring.claim_retirement_closure_incomplete" in refusal_codes(incomplete)
 
     activate_submitted(instance, owner, result)
     terminal = submit_retirement(instance, retirement_member(instance, root_id, dependents=()))
-    assert "playbill.authoring.claim_terminal" in refusal_codes(terminal)
+    assert "cruxible.authoring.claim_terminal" in refusal_codes(terminal)
 
 
 @pytest.mark.parametrize("leaf_retirement", ["attributed-v3", "legacy-v2"])
@@ -641,7 +641,7 @@ def test_live_target_successor_cannot_advance_a_retiring_dependent_pin(tmp_path:
     )
     with pytest.raises(
         ClaimTypeMigrationIncomplete,
-        match="playbill.claim.retirement_pin_delta_invalid",
+        match="cruxible.claim.retirement_pin_delta_invalid",
     ):
         service_migrate_claim_type(
             instance,
@@ -674,7 +674,7 @@ def test_retire_refuses_an_extra_dependent(tmp_path: Path) -> None:
         ),
     )
     assert refused.status.proposal_id is None
-    assert "playbill.authoring.claim_retirement_closure_incomplete" in refusal_codes(refused)
+    assert "cruxible.authoring.claim_retirement_closure_incomplete" in refusal_codes(refused)
 
 
 def test_retire_refuses_a_live_non_claim_dependent(tmp_path: Path) -> None:
@@ -717,5 +717,5 @@ def test_retire_refuses_a_live_non_claim_dependent(tmp_path: Path) -> None:
         retirement_inventory(instance, claim_id)
     refused = submit_retirement(instance, retirement_member(instance, claim_id, dependents=()))
     assert refused.status.proposal_id is None
-    assert "playbill.authoring.claim_retirement_closure_unsupported" in refusal_codes(refused)
+    assert "cruxible.authoring.claim_retirement_closure_unsupported" in refusal_codes(refused)
     assert query.identity.qualified in refusal_messages(refused)

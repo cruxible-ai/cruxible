@@ -76,7 +76,7 @@ def test_http_raw_intent_cannot_assert_procedure_execution(playbill_http):
     )
     assert compiled.status_code == 200, compiled.text
     assert compiled.json()["verdict"] == "refused"
-    assert "playbill.authoring.derivation_requires_execution" in {
+    assert "cruxible.authoring.derivation_requires_execution" in {
         item["code"] for item in compiled.json()["frontier"]["diagnostics"]
     }
     submitted = client.post(
@@ -218,7 +218,7 @@ def test_http_compile_renders_a_lowering_fault_typed_instead_of_a_bare_500(
     (diagnostic,) = [
         item
         for item in body["frontier"]["diagnostics"]
-        if item["code"] == "playbill.authoring.lowering_invalid"
+        if item["code"] == "cruxible.authoring.lowering_invalid"
     ]
     assert "cannot carry locators" in diagnostic["message"]
     assert diagnostic["repairs"][0]["kind"] == "revise_payload"
@@ -275,7 +275,7 @@ def test_http_create_flow_a_stub_surfaces_the_bind_refusal(
 
     assert response.status_code == 400
     assert response.json()["message"] == (
-        "playbill.authoring.working_selection_requires_bind at input.source: "
+        "cruxible.authoring.working_selection_requires_bind at input.source: "
         "create and compile cannot observe local working-source bytes. "
         "Repair: Run playbill authoring bind with this input and the selected local file."
     )
@@ -326,7 +326,7 @@ def test_http_unused_procedure_contract_is_a_typed_preflight_refusal(
         result = response.json()
         assert result["verdict"] == "refused"
         diagnostic = result["frontier"]["diagnostics"][0]
-        assert diagnostic["code"] == "playbill.authoring.procedure_definition_invalid"
+        assert diagnostic["code"] == "cruxible.authoring.procedure_definition_invalid"
         assert diagnostic["stage"] == "lowering"
         assert diagnostic["offending_element"] == "owned_contracts"
         assert "Contract:unused-contract" in diagnostic["message"]
@@ -365,7 +365,7 @@ def test_http_unsorted_owned_contracts_use_the_typed_artifact_validation_refusal
     result = response.json()
     assert result["verdict"] == "refused"
     diagnostic = result["frontier"]["diagnostics"][0]
-    assert diagnostic["code"] == "playbill.authoring.procedure_definition_invalid"
+    assert diagnostic["code"] == "cruxible.authoring.procedure_definition_invalid"
     assert diagnostic["stage"] == "lowering"
     assert diagnostic["offending_element"] == "procedure"
     assert "owned Contracts must be canonically byte-sorted" in diagnostic["message"]
@@ -508,7 +508,7 @@ def test_http_claim_type_lowering_returns_typed_nested_validation_refusal(
     assert response.status_code == 400, response.text
     body = response.json()
     assert body["error_type"] == "ClaimTypeInputValidationError"
-    assert body["error_code"] == "playbill.claim_type.input_invalid"
+    assert body["error_code"] == "cruxible.claim_type.input_invalid"
     assert "$.rules[0].allowed_reducer_digests" in body["message"]
     assert "Extra inputs are not permitted" in body["message"]
 
@@ -553,7 +553,7 @@ def test_http_claim_type_input_proposal_delivers_actionable_source_lint(
     assert response.status_code == 200, response.text
     warnings = response.json()["lint"]["warnings"]
     assert len(warnings) == 1
-    assert warnings[0]["code"] == "playbill.claim_type.anticipated_source_contract_omitted"
+    assert warnings[0]["code"] == "cruxible.claim_type.anticipated_source_contract_omitted"
     assert warnings[0]["source_id"] == "corpus.runbook"
 
 
@@ -565,7 +565,7 @@ def test_http_claim_type_routes_preserve_optional_lint_payload(
 ) -> None:  # type: ignore[no-untyped-def]
     client, instance_id, _private_key = playbill_http
     warning = {
-        "code": "playbill.claim_type.evidence_policy_admits_no_accepted_contract",
+        "code": "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
         "field_path": "$.evidence_admission_policy.rules",
         "source_id": None,
         "contract_identity": "CaptureContract:available",
@@ -799,4 +799,4 @@ def test_http_list_routes_bound_their_page_size(
     assert policies.json()["truncated"] is True
     assert oversized.status_code == 422
     assert foreign.status_code == 400
-    assert foreign.json()["error_code"] == "playbill.list.cursor_mismatch"
+    assert foreign.json()["error_code"] == "cruxible.list.cursor_mismatch"

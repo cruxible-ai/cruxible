@@ -67,7 +67,7 @@ _AT_REPAIR = (
 
 def _not_accepted(message: str, candidates: Iterable[str] = ()) -> ReadRefusalError:
     return ReadRefusalError(
-        "playbill.read.coordinate_not_accepted",
+        "cruxible.read.coordinate_not_accepted",
         f"at does not name an accepted generation of this instance ({message})",
         http_status=404,
         candidates=candidates,
@@ -92,7 +92,7 @@ def _oid_for_generation(instance: PlaybillInstance, at: str) -> str:
             return generation.oid
     newest = [f"{item.sequence}" for item in reversed(history)][:_MAX_OID_CANDIDATES]
     raise ReadRefusalError(
-        "playbill.read.coordinate_not_accepted",
+        "cruxible.read.coordinate_not_accepted",
         f"at does not name an accepted generation of this instance (no generation {sequence}; "
         f"the head is generation {history[-1].sequence if history else 0})",
         http_status=404,
@@ -114,7 +114,7 @@ def _oid_for(instance: PlaybillInstance, at: str) -> str:
     if not _OID_PREFIX.fullmatch(at):
         if len(at) < OID_PREFIX_MIN and re.fullmatch(r"[0-9a-f]+", at):
             raise ReadRefusalError(
-                "playbill.read.coordinate_prefix_too_short",
+                "cruxible.read.coordinate_prefix_too_short",
                 f"at {at!r} is {len(at)} hex characters; a git-oid prefix needs at least "
                 f"{OID_PREFIX_MIN}",
                 repair_line=f"Pass the {OID_PREFIX_MIN}-character coordinate a read printed",
@@ -125,7 +125,7 @@ def _oid_for(instance: PlaybillInstance, at: str) -> str:
     matches = [oid for oid in oids if oid.startswith(at)]
     if len(matches) > 1:
         raise ReadRefusalError(
-            "playbill.read.coordinate_ambiguous",
+            "cruxible.read.coordinate_ambiguous",
             f"at {at!r} is a prefix of {len(matches)} accepted generations' git oids",
             http_status=409,
             candidates=matches[:_MAX_OID_CANDIDATES],

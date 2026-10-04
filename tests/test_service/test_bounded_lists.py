@@ -102,7 +102,7 @@ def test_withdrawing_an_unseen_proposal_between_pages_makes_the_cursor_stale(
 
     with pytest.raises(ListCursorStale, match="listing changed") as caught:
         service_list_playbill_proposals(instance, status="open", limit=1, cursor=first.next_cursor)
-    assert caught.value.error_code == "playbill.list.cursor_stale"
+    assert caught.value.error_code == "cruxible.list.cursor_stale"
 
 
 def test_policy_pages_walk_the_whole_inventory(tmp_path: Path) -> None:
@@ -214,7 +214,7 @@ def test_a_curation_cursor_refuses_once_the_queue_changes(tmp_path: Path) -> Non
 
     with pytest.raises(ListCursorStale, match="listing changed") as caught:
         _curation(instance, limit=1, cursor=cursor)
-    assert caught.value.error_code == "playbill.list.cursor_stale"
+    assert caught.value.error_code == "cruxible.list.cursor_stale"
 
 
 def test_a_curation_cursor_refuses_once_accepted_state_moves(tmp_path: Path) -> None:

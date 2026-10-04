@@ -58,7 +58,7 @@ def test_client_posts_the_frozen_migration_request_unchanged() -> None:
 
 def test_client_preserves_migration_lint_without_changing_candidate_fields() -> None:
     warning = {
-        "code": "playbill.claim_type.anticipated_source_contract_omitted",
+        "code": "cruxible.claim_type.anticipated_source_contract_omitted",
         "field_path": "$.evidence_admission_policy.rules",
         "source_id": "corpus.runbook",
         "contract_identity": "CaptureContract:playbill.foreign-source.corpus.runbook",
@@ -95,9 +95,9 @@ def test_client_preserves_migration_lint_without_changing_candidate_fields() -> 
 
 def test_client_parses_v3_attributed_retirement_result_and_warning() -> None:
     warning = {
-        "code": "playbill.claim_type.invalidation_deprecated",
+        "code": "cruxible.claim_type.invalidation_deprecated",
         "field_path": "$.dependents[0].disposition",
-        "repair_operation": "playbill.claim_type.migrate",
+        "repair_operation": "cruxible.claim_type.migrate",
     }
 
     def handler(_request: httpx.Request) -> httpx.Response:
@@ -140,7 +140,7 @@ def test_client_parses_v3_attributed_retirement_result_and_warning() -> None:
 
 def test_client_preserves_expert_claim_type_proposal_lint() -> None:
     warning = {
-        "code": "playbill.claim_type.evidence_policy_admits_no_accepted_contract",
+        "code": "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
         "field_path": "$.evidence_admission_policy.rules",
         "source_id": None,
         "contract_identity": "CaptureContract:available",

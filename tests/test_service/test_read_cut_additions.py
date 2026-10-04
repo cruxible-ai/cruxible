@@ -228,7 +228,7 @@ def test_status_and_claims_refuse_outside_a_compact_kind_query(world: PlaybillIn
     ):
         with pytest.raises(ReadRefusalError) as refused:
             _query(world, **fields)
-        assert refused.value.error_code == "playbill.query.mode_invalid", fields
+        assert refused.value.error_code == "cruxible.query.mode_invalid", fields
 
 
 def test_query_cursors_are_short_and_continue_the_same_listing(world: PlaybillInstance) -> None:

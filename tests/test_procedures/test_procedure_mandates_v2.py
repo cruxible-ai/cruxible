@@ -278,26 +278,26 @@ def test_law_accepts_an_exact_fail_closed_condition() -> None:
 )
 def test_law_refuses_a_condition_that_an_absent_fact_would_satisfy(where) -> None:
     query = _accepted_query(_query(where=where))
-    assert _code(_law(_settle(query), query)) == ("playbill.procedure_mandate.condition_fails_open")
+    assert _code(_law(_settle(query), query)) == ("cruxible.procedure_mandate.condition_fails_open")
 
 
 def test_law_refuses_unbound_unpinned_or_unprojected_conditions() -> None:
     query = _accepted_query(_query())
     other = _accepted_query(_query(entry_parameter="environment"))
     assert _code(_law(_settle(other), other)) == (
-        "playbill.procedure_mandate.condition_not_target_bound"
+        "cruxible.procedure_mandate.condition_not_target_bound"
     )
     assert _code(_law(_settle(query), other)) == (
-        "playbill.procedure_mandate.condition_query_unresolved"
+        "cruxible.procedure_mandate.condition_query_unresolved"
     )
     assert _code(_law(_settle(query, required_fields=("owner",)), query)) == (
-        "playbill.procedure_mandate.condition_fields_unprojected"
+        "cruxible.procedure_mandate.condition_fields_unprojected"
     )
     unfixed = _settle(query).model_copy(
         update={"condition": _settle(query).condition.model_copy(update={"fixed_parameters": {}})}
     )
     assert _code(_law(unfixed, query)) == (
-        "playbill.procedure_mandate.condition_parameters_mismatch"
+        "cruxible.procedure_mandate.condition_parameters_mismatch"
     )
 
 
@@ -316,7 +316,7 @@ def test_law_refuses_scope_the_condition_cannot_bind() -> None:
         }
     )
     assert _code(_law(wrong_digest, query)) == (
-        "playbill.procedure_mandate.scope_claim_type_unresolved"
+        "cruxible.procedure_mandate.scope_claim_type_unresolved"
     )
     object_bound = _settle(query).model_copy(
         update={
@@ -332,7 +332,7 @@ def test_law_refuses_scope_the_condition_cannot_bind() -> None:
         }
     )
     assert _code(_law(object_bound, query)) == (
-        "playbill.procedure_mandate.binding_role_unavailable"
+        "cruxible.procedure_mandate.binding_role_unavailable"
     )
 
 
@@ -533,7 +533,7 @@ def test_a_fail_open_condition_refuses_during_proposal_evaluation(tmp_path) -> N
             procedure_mandate_path(pinned.identity.name): render_procedure_mandate(pinned),
         },
     )
-    assert "playbill.procedure_mandate.condition_fails_open" in {
+    assert "cruxible.procedure_mandate.condition_fails_open" in {
         item.code for item in refused.diagnostics
     }
 
@@ -678,4 +678,4 @@ def test_settle_authoring_names_its_scope_and_condition_and_lowering_pins_them(t
     )
     with pytest.raises(AuthoringLoweringError) as refused:
         _render_procedure_mandate_member(missing, tree=grown)
-    assert refused.value.code == "playbill.authoring.procedure_mandate_condition_query_missing"
+    assert refused.value.code == "cruxible.authoring.procedure_mandate_condition_query_missing"

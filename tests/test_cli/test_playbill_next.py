@@ -24,7 +24,7 @@ HEALTHY_STATUS = {
 }
 
 AUTHOR = {
-    "operation": "playbill.authoring.create",
+    "operation": "cruxible.authoring.create",
     "target": "Claim:c",
     "required_change": "author_the_claim",
 }
@@ -289,7 +289,7 @@ def test_cli_next_prints_status_that_needs_attention_above_the_rows(
         "floor": {
             "state": "stale",
             "repair": {
-                "operation": "playbill.floor.export",
+                "operation": "cruxible.floor.export",
                 "target": "inst_next",
                 "required_change": "replace_installed_floor",
                 "command": "cruxible playbill floor export --force --json",
@@ -346,7 +346,7 @@ def _rows() -> list[dict[str, object]]:
             "subject_identity": "Block:docs/runbook.md#b",
             "detail": {"block_id": "b", "rendered": "a long rendered body"},
             "repair": {
-                "operation": "playbill.block.sync",
+                "operation": "cruxible.block.sync",
                 "target": "docs/runbook.md",
                 "required_change": "resync_projection",
                 "arguments": {"all": True},
@@ -461,7 +461,7 @@ def test_cli_next_default_names_each_rows_repair_and_findings(
 
     assert output.splitlines() == [
         "Status: ledger mirror behind  next=push_the_ledger_mirror",
-        "repair  projection_dirty  Block:docs/runbook.md#b  next=playbill.block.sync",
+        "repair  projection_dirty  Block:docs/runbook.md#b  next=cruxible.block.sync",
         "  repair: cruxible playbill block sync --all",
         "  also: warning  projection_backing_stale  Block:docs/runbook.md#b",
         "warning  claim_conflicted  Claim:c  next=hand_edit",
@@ -507,7 +507,7 @@ def test_cli_next_keeps_a_row_whose_repair_is_withheld_and_names_what_it_needs(
         "detail": {"state": "stopped"},
         "repair": None,
         "repair_requires": {
-            "operation": "playbill.line.arm",
+            "operation": "cruxible.line.arm",
             "tool": "cruxible_playbill_line_arm",
             "tier": "governed_write",
             "because": ["tier"],

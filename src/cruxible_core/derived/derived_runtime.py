@@ -22,7 +22,7 @@ V = TypeVar("V")
 class BuildCapacityError(CoreError):
     """The bounded queue cannot admit another synchronous derived-state build."""
 
-    error_code = "playbill.derived.capacity"
+    error_code = "cruxible.derived.capacity"
 
 
 class BoundedCache(Generic[V]):

@@ -154,7 +154,7 @@ def test_readmit_cleanly_rebases_and_response_loss_retry_returns_one_admission(
             actor_id="owner",
         )
     assert open_refusal.value.status == "open"
-    assert open_refusal.value.error_code == "playbill.proposal.readmit_not_stale"
+    assert open_refusal.value.error_code == "cruxible.proposal.readmit_not_stale"
 
 
 def test_readmit_returns_a_typed_refused_proposal_when_content_no_longer_preflights(
@@ -311,7 +311,7 @@ def test_readmit_refuses_an_accepted_proposal_as_accepted_not_as_unstale(
         service_readmit_playbill_proposal(instance, proposal_id=proposal_id, actor_id="owner")
 
     assert refusal.value.accepted_as is None
-    assert refusal.value.error_code == "playbill.proposal.readmit_already_accepted"
+    assert refusal.value.error_code == "cruxible.proposal.readmit_already_accepted"
     assert "was accepted" in str(refusal.value)
 
 

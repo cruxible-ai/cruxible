@@ -316,7 +316,7 @@ def test_independent_mode_refuses_revocation_below_two_ordinaries(tmp_path: Path
 
     assert refused.candidate is None
     (diagnostic,) = refused.evaluation.diagnostics
-    assert diagnostic.code == "playbill.principal.independent_approval_minimum"
+    assert diagnostic.code == "cruxible.principal.independent_approval_minimum"
     assert (
         "register a replacement ordinary principal in its own ChangeSet first, then revoke"
         in diagnostic.message
@@ -345,7 +345,7 @@ def test_independent_mode_refuses_revocation_below_two_ordinaries(tmp_path: Path
     )
     assert combined.candidate is None
     assert {item.code for item in combined.evaluation.diagnostics} == {
-        "playbill.proposal.unregistered_semantic_kind"
+        "cruxible.proposal.unregistered_semantic_kind"
     }
 
     registration = service_propose_playbill_principal_change(
@@ -473,7 +473,7 @@ def test_malformed_policy_is_a_typed_refusal_and_does_not_poison_inventory(
 
     assert refused.candidate is None
     assert tuple(item.code for item in refused.evaluation.diagnostics) == (
-        "playbill.approval_policy.format_invalid",
+        "cruxible.approval_policy.format_invalid",
     )
     listed = service_list_playbill_proposals(instance)
     matching = tuple(

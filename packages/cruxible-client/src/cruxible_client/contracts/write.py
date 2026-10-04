@@ -90,7 +90,7 @@ value of the field as a list (``[]`` when it must hold none)."""
 
 _EXPECT_DESCRIPTION = (
     "Compare-and-set: the field's value as you read it (list every live value if "
-    "many-valued; [] for none); otherwise playbill.write.slot_changed shows it."
+    "many-valued; [] for none); otherwise cruxible.write.slot_changed shows it."
 )
 
 WriteRole = Literal["normative", "observation", "environment_binding"]
@@ -263,7 +263,7 @@ class AddChange(_StrictWriteModel):
     expect_absent: bool = Field(
         default=False,
         description=(
-            "Refuse playbill.write.value_already_present when the value is already "
+            "Refuse cruxible.write.value_already_present when the value is already "
             "live, instead of answering it as already done."
         ),
     )
@@ -456,7 +456,7 @@ class VerdictNotSupportedWarning(_StrictWriteModel):
     evidence, and becomes the outcome's ``next``.
     """
 
-    code: Literal["playbill.write.verdict_not_supported"] = "playbill.write.verdict_not_supported"
+    code: Literal["cruxible.write.verdict_not_supported"] = "cruxible.write.verdict_not_supported"
     change: int
     claim: str | None = Field(default=None, exclude_if=_omit_none)
     verdict: str
@@ -474,8 +474,8 @@ class NewerCaptureNotCitableWarning(_StrictWriteModel):
     ``capture`` instead.
     """
 
-    code: Literal["playbill.write.newer_capture_not_citable"] = (
-        "playbill.write.newer_capture_not_citable"
+    code: Literal["cruxible.write.newer_capture_not_citable"] = (
+        "cruxible.write.newer_capture_not_citable"
     )
     change: int
     capture: str = Field(

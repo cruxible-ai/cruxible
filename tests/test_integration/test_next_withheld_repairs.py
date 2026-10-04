@@ -71,7 +71,7 @@ def test_the_default_mcp_profile_keeps_a_stopped_arm_row_and_names_what_it_needs
     assert row.repair is None
     assert row.repair_requires is not None
     assert row.repair_requires.model_dump(mode="json", exclude={"tag"}) == {
-        "operation": "playbill.line.arm",
+        "operation": "cruxible.line.arm",
         "tool": "cruxible_playbill_line_arm",
         "tier": "governed_write",
         "profile": "full",

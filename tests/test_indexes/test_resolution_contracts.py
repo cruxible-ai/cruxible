@@ -549,7 +549,7 @@ def test_derived_activation_remains_bound_to_its_accepting_generation(tmp_path) 
 
     with instance.bind_accepted_projection(instance.accepted_coordinate()) as handle:
         rows = handle.typed.facts(
-            "playbill.procedure.resolution_activation",
+            "cruxible.procedure.resolution_activation",
             identity=procedure.identity.qualified,
         )
     assert len(rows) == 3

@@ -41,7 +41,7 @@ PRINCIPAL_KEY_PATH_ENV = "CRUXIBLE_PRINCIPAL_KEY_PATH"
 
 
 class LocalClaimAttestationKeyUnavailable(SigningKeyError):
-    error_code = "playbill.claim_attestation.local_signing_key_unavailable"
+    error_code = "cruxible.claim_attestation.local_signing_key_unavailable"
 
 
 class ClaimAttestationSigner(Protocol):
@@ -270,9 +270,9 @@ def _claim_from_public_view(view: Any) -> ClaimArtifactAny:
     facts = {item.get("schema_id"): item.get("value") for item in view.facts}
     identity = view.envelope.get("identity")
     artifact_format = view.envelope.get("format_tag")
-    statement = facts.get("playbill.claim.statement")
-    backing = facts.get("playbill.claim.backing")
-    lifecycle = facts.get("playbill.claim.lifecycle")
+    statement = facts.get("cruxible.claim.statement")
+    backing = facts.get("cruxible.claim.backing")
+    lifecycle = facts.get("cruxible.claim.lifecycle")
     if not (
         isinstance(identity, str)
         and isinstance(artifact_format, str)

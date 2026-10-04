@@ -13,7 +13,7 @@ What the verbs decide for the caller:
 - a field resolves by the shared naming rule (``field_names``), so the names
   ``orient`` advertises are the names a write takes;
 - ``set`` on a single-value field revises the live Claim, and refuses
-  ``playbill.write.slot_changed`` when the slot moved since the caller's read
+  ``cruxible.write.slot_changed`` when the slot moved since the caller's read
   coordinate (decision a);
 - the default evidence is the writer's ``because`` as self evidence (decision
   b); for an exact-content field the value is its own evidence, byte for byte;
@@ -241,7 +241,7 @@ def _render_commit(surface: ReadSurface, git_oid: str) -> str:
 def requires_captured_evidence(claim_type: ClaimType) -> bool:
     """Whether a ClaimType refuses a write backed only by the writer's own words.
 
-    Decision b refuses such a write with ``playbill.write.evidence_required``: a
+    Decision b refuses such a write with ``cruxible.write.evidence_required``: a
     v7 ClaimType whose ``evidence_requirement`` is ``captured``. Under ``self``
     (every earlier ClaimType) a policy that merely does not admit self evidence
     lets the write land ``uncovered``, with a warning (R05); under ``none`` the
@@ -283,7 +283,7 @@ def _with_default_subject(request: WriteRequest) -> WriteRequest:
     """Give every change that names no Subject the write's own ``subject``.
 
     A change's own subject overrides the default. A change with neither
-    refuses ``playbill.write.subject_required`` before anything is planned.
+    refuses ``cruxible.write.subject_required`` before anything is planned.
     """
 
     changes: list[SetChange | AddChange | RetireChange] = []
@@ -305,7 +305,7 @@ def _with_default_subject(request: WriteRequest) -> WriteRequest:
 def _default_subject(request: WriteRequest, *, index: int, path: str) -> str:
     if request.subject is None:
         raise _refuse(
-            "playbill.write.subject_required",
+            "cruxible.write.subject_required",
             f"change {index} names no Subject, and the write has no default subject",
             change=index,
             repair=(
@@ -544,7 +544,7 @@ class _Planner:
         value = live_ids[claim_id].value if claim_id in live_ids else None
         state = f"now holds {value!r} as {claim_id}" if claim_id in live_ids else "was retired"
         raise _refuse(
-            "playbill.write.slot_changed",
+            "cruxible.write.slot_changed",
             (
                 f"{subject} {field_name} changed after your read: it {state}, "
                 f"accepted in generation {generation_number} by {actor or 'unknown'}"
@@ -580,7 +580,7 @@ class _Planner:
                     "a Subject as kind/id" if info.claim_type.object_kind == "subject" else "text"
                 )
                 raise _refuse(
-                    "playbill.write.value_type_mismatch",
+                    "cruxible.write.value_type_mismatch",
                     f"{field_name} takes {taken}, so expect {item!r} can never match it",
                     change=index,
                     repair=f"Pass expect as {taken}",
@@ -625,7 +625,7 @@ class _Planner:
         spelled = expected[0] if isinstance(expect, str | int | float | bool) else expected
         repair_value: object = None if not current else current[0] if len(current) == 1 else current
         raise _refuse(
-            "playbill.write.slot_changed",
+            "cruxible.write.slot_changed",
             f"{label} {now}, not {spelled!r} as expected",
             change=index,
             candidates=tuple(item.claim_id for item in live),
@@ -642,7 +642,7 @@ class _Planner:
         kind, _, subject_id = subject.partition("/")
         if kind not in self.vocabulary.kinds:
             raise _refuse(
-                "playbill.write.unknown_kind",
+                "cruxible.write.unknown_kind",
                 f"no accepted Subject kind is named {kind!r}",
                 change=index,
                 candidates=nearest(kind, self.vocabulary.kinds),
@@ -659,7 +659,7 @@ class _Planner:
         shown = [self.vocabulary.field_name(info, (kind,)) for info in applicable[kind].values()]
         if found:
             raise _refuse(
-                "playbill.write.ambiguous_field",
+                "cruxible.write.ambiguous_field",
                 f"{name!r} names more than one field of {kind}",
                 change=index,
                 candidates=found,
@@ -672,7 +672,7 @@ class _Planner:
             else f"{kind} has no field {name!r}"
         )
         raise _refuse(
-            "playbill.write.unknown_field",
+            "cruxible.write.unknown_field",
             message,
             change=index,
             candidates=nearest(name, (*shown, *applicable[kind])),
@@ -695,7 +695,7 @@ class _Planner:
         if requested is not None:
             if requested not in permitted:
                 raise _refuse(
-                    "playbill.write.role_not_permitted",
+                    "cruxible.write.role_not_permitted",
                     f"{field_name} does not permit role {requested!r}",
                     change=index,
                     candidates=permitted,
@@ -708,7 +708,7 @@ class _Planner:
         if len(permitted) == 1:
             return permitted[0]
         raise _refuse(
-            "playbill.write.role_required",
+            "cruxible.write.role_required",
             f"{field_name} permits {len(permitted)} roles and declares no default_role, "
             "so the role is not implied",
             change=index,
@@ -736,7 +736,7 @@ class _Planner:
         if isinstance(value, float):
             if not value.is_integer():
                 raise _refuse(
-                    "playbill.write.value_type_mismatch",
+                    "cruxible.write.value_type_mismatch",
                     f"{value!r} is a fractional number, which accepted values cannot hold",
                     change=index,
                     repair="Pass an integer, or a string when the field takes one",
@@ -747,7 +747,7 @@ class _Planner:
             if value not in info.members:
                 spelled = ", ".join(info.members)
                 raise _refuse(
-                    "playbill.write.value_not_member",
+                    "cruxible.write.value_not_member",
                     f"{value!r} is not a member of {field_name}; its members are: {spelled}",
                     change=index,
                     candidates=nearest(str(value), info.members) or info.members,
@@ -763,7 +763,7 @@ class _Planner:
         if violated is not None:
             expected = info.value_type if info.value_type != "json" else "value"
             raise _refuse(
-                "playbill.write.value_type_mismatch",
+                "cruxible.write.value_type_mismatch",
                 f"{_brief(value)} is not a valid {expected} for {field_name}: {violated}",
                 change=index,
                 repair=f"Pass a {expected} that the field's schema admits ({violated})",
@@ -773,7 +773,7 @@ class _Planner:
             return LiteralClaimObject(value=value)
         except (CanonicalEncodingError, ValueError) as exc:
             raise _refuse(
-                "playbill.write.value_type_mismatch",
+                "cruxible.write.value_type_mismatch",
                 f"{value!r} cannot be stored: {exc}",
                 change=index,
                 field_path=path,
@@ -794,7 +794,7 @@ class _Planner:
         kind, _, subject_id = str(value).partition("/") if isinstance(value, str) else ("", "", "")
         if not kind or not subject_id:
             raise _refuse(
-                "playbill.write.value_type_mismatch",
+                "cruxible.write.value_type_mismatch",
                 f"{field_name} takes a Subject as kind/id, not {value!r}",
                 change=index,
                 repair=f"Pass a Subject of kind {' or '.join(allowed)} as kind/id",
@@ -802,7 +802,7 @@ class _Planner:
             )
         if kind not in allowed:
             raise _refuse(
-                "playbill.write.value_kind_not_admitted",
+                "cruxible.write.value_kind_not_admitted",
                 f"{field_name} takes a Subject of kind {', '.join(allowed)}, not {kind!r}",
                 change=index,
                 candidates=allowed,
@@ -813,7 +813,7 @@ class _Planner:
             target = subject_path(kind, subject_id)
         except (CruxibleError, ValueError) as exc:
             raise _refuse(
-                "playbill.write.value_type_mismatch",
+                "cruxible.write.value_type_mismatch",
                 f"{value!r} is not a Subject reference: {exc}",
                 change=index,
                 field_path=path,
@@ -822,7 +822,7 @@ class _Planner:
             with self.instance.bind_accepted_projection(self.head) as projection:
                 known = subjects_of_kind(projection.typed.connection, kind).values()
             raise _refuse(
-                "playbill.write.value_subject_not_found",
+                "cruxible.write.value_subject_not_found",
                 f"{field_name} names Subject {value!r}, which does not exist; a value "
                 "never creates the Subject it names",
                 change=index,
@@ -854,7 +854,7 @@ class _Planner:
         if isinstance(evidence, FileEvidence):
             if evidence.observation is None:
                 raise _refuse(
-                    "playbill.write.file_evidence_unobserved",
+                    "cruxible.write.file_evidence_unobserved",
                     f"file evidence {evidence.file!r} was not read on the writer's side; "
                     "the daemon never reads workspace files",
                     change=index,
@@ -868,7 +868,7 @@ class _Planner:
         if exact is not None:
             if isinstance(evidence, SelfEvidence) and evidence.self.encode("utf-8") != exact:
                 raise _refuse(
-                    "playbill.write.exact_content_evidence_mismatch",
+                    "cruxible.write.exact_content_evidence_mismatch",
                     f"{field_name} is exact content, so its self evidence is the value itself; "
                     "the evidence given differs from the value",
                     change=index,
@@ -889,7 +889,7 @@ class _Planner:
                     if name not in _OWN_WORDS_CONTRACTS
                 )
             raise _refuse(
-                "playbill.write.evidence_required",
+                "cruxible.write.evidence_required",
                 f"{field_name} declares evidence_requirement 'captured' "
                 f"({', '.join(admitted)}); your own words cannot back it",
                 change=index,
@@ -1009,7 +1009,7 @@ class _Planner:
                 else f"more than {CAPTURE_HANDLE_MAX_VERIFIED} Captures under it to verify"
             )
             raise _refuse(
-                "playbill.write.capture_scan_exhausted",
+                "cruxible.write.capture_scan_exhausted",
                 f"{handle} was not resolved: the body store holds {what}",
                 change=index,
                 repair="Pass a longer handle, or the full sha256 digest",
@@ -1017,7 +1017,7 @@ class _Planner:
             )
         if isinstance(resolution, CaptureHandleAmbiguous):
             raise _refuse(
-                "playbill.write.capture_ambiguous",
+                "cruxible.write.capture_ambiguous",
                 f"{handle} is the prefix of more than one Capture",
                 change=index,
                 candidates=_distinct_handles(resolution.candidates, at_least=len(hex_prefix) + 1),
@@ -1025,7 +1025,7 @@ class _Planner:
                 field_path=path,
             )
         raise _refuse(
-            "playbill.write.capture_not_found",
+            "cruxible.write.capture_not_found",
             f"no Capture this instance holds has the handle {handle}",
             change=index,
             candidates=_distinct_handles(
@@ -1066,7 +1066,7 @@ class _Planner:
             ]
             if bare not in known:
                 raise _refuse(
-                    "playbill.write.unknown_contract",
+                    "cruxible.write.unknown_contract",
                     f"no accepted CaptureContract is named {bare!r}",
                     change=index,
                     candidates=nearest(bare, known),
@@ -1092,7 +1092,7 @@ class _Planner:
         )
         if not inventory.complete:
             raise _refuse(
-                "playbill.write.capture_scan_exhausted",
+                "cruxible.write.capture_scan_exhausted",
                 f"the newest Capture of {bare} about {subject} was not found: the body "
                 "store holds more objects than one lookup examines",
                 change=index,
@@ -1153,7 +1153,7 @@ class _Planner:
             return item.digest
         if uncitable is not None:
             raise _refuse(
-                "playbill.write.contract_capture_not_citable",
+                "cruxible.write.contract_capture_not_citable",
                 f"the newest Capture of {bare} about {subject}, "
                 f"{capture_handle(uncitable.digest)}, is committed as "
                 f"{_commitment_kind(uncitable)}, which no Claim can cite: a Claim maps a "
@@ -1164,7 +1164,7 @@ class _Planner:
                 field_path=path,
             )
         raise _refuse(
-            "playbill.write.contract_capture_not_found",
+            "cruxible.write.contract_capture_not_found",
             f"no verified Capture of {bare} is about {subject}",
             change=index,
             repair=(
@@ -1189,7 +1189,7 @@ class _Planner:
         label = f"{subject} {name}"
         if isinstance(change, SetChange) and claim_type.cardinality == "many":
             raise _refuse(
-                "playbill.write.field_is_many",
+                "cruxible.write.field_is_many",
                 f"{name} holds many values, so set has nothing to replace",
                 change=index,
                 repair="Use add to add a value, or retire one first",
@@ -1197,7 +1197,7 @@ class _Planner:
             )
         if isinstance(change, AddChange) and claim_type.cardinality == "one":
             raise _refuse(
-                "playbill.write.field_is_single",
+                "cruxible.write.field_is_single",
                 f"{name} holds one value, so add would contend with it",
                 change=index,
                 repair="Use set to replace the value (contend: true to contest it)",
@@ -1210,7 +1210,7 @@ class _Planner:
         if claim_type.object_kind == "exact_content":
             if not isinstance(change.value, str) or not change.value:
                 raise _refuse(
-                    "playbill.write.value_type_mismatch",
+                    "cruxible.write.value_type_mismatch",
                     f"{name} is exact content, so its value is text",
                     change=index,
                     repair="Pass the text itself as the value",
@@ -1238,7 +1238,7 @@ class _Planner:
         if not self.subject_exists(path) and path not in self.plan.subjects:
             if kind not in claim_type.allowed_subject_kinds:  # pragma: no cover - resolve_field
                 raise _refuse(
-                    "playbill.write.unknown_kind",
+                    "cruxible.write.unknown_kind",
                     f"{name} does not apply to Subjects of kind {kind!r}",
                     change=index,
                 )
@@ -1274,7 +1274,7 @@ class _Planner:
                 remaining = [item for item in live if item.claim_id not in self._retiring()]
                 if len(remaining) > 1:
                     raise _refuse(
-                        "playbill.write.slot_contested",
+                        "cruxible.write.slot_contested",
                         f"{label} holds {len(remaining)} competing values, so set cannot "
                         "tell which to replace",
                         change=index,
@@ -1301,7 +1301,7 @@ class _Planner:
             )
             if present is not None and change.expect_absent:
                 raise _refuse(
-                    "playbill.write.value_already_present",
+                    "cruxible.write.value_already_present",
                     f"{label} already holds {summary_value(present.value)!r} as "
                     f"{present.claim_id}, and the add expected it absent",
                     change=index,
@@ -1417,7 +1417,7 @@ class _Planner:
             )
             if not live:
                 raise _refuse(
-                    "playbill.write.slot_empty",
+                    "cruxible.write.slot_empty",
                     f"{owner} {name} holds no live value to retire",
                     change=index,
                     repair=f"Read it first: {_render_get(self.request.surface, owner)}",
@@ -1425,7 +1425,7 @@ class _Planner:
                 )
             if len(live) > 1:
                 raise _refuse(
-                    "playbill.write.slot_ambiguous",
+                    "cruxible.write.slot_ambiguous",
                     f"{owner} {name} holds {len(live)} values; name the one to retire",
                     change=index,
                     candidates=tuple(item.claim_id for item in live),
@@ -1437,7 +1437,7 @@ class _Planner:
         content = self.instance.blob_at(self.head.git_oid, claim_path(claim_id))
         if content is None:
             raise _refuse(
-                "playbill.write.claim_not_found",
+                "cruxible.write.claim_not_found",
                 f"no accepted Claim {claim_id}",
                 change=index,
                 repair="Name a live Claim; get on the Subject lists its Claim IDs",
@@ -1446,7 +1446,7 @@ class _Planner:
         claim = parse_claim(content, path=claim_path(claim_id))
         if claim.lifecycle.state != "live":
             raise _refuse(
-                "playbill.write.claim_not_live",
+                "cruxible.write.claim_not_live",
                 f"{claim_id} is already {claim.lifecycle.state}",
                 change=index,
                 repair="Leave it out; there is nothing left to retire",
@@ -1470,7 +1470,7 @@ class _Planner:
                 if location is not None and location.sequence > self.read_sequence():
                     actor = history.generation(location.sequence).actor_id
                     raise _refuse(
-                        "playbill.write.slot_changed",
+                        "cruxible.write.slot_changed",
                         f"{claim_id} changed after your read: revised in generation "
                         f"{location.sequence} by {actor or 'unknown'}",
                         change=index,
@@ -1485,7 +1485,7 @@ class _Planner:
         if change.expect is not None:
             if retired_info is None:
                 raise _refuse(
-                    "playbill.write.unknown_field",
+                    "cruxible.write.unknown_field",
                     f"{claim_id} states {claim.statement.predicate}, which no live ClaimType "
                     "defines, so its values cannot be compared",
                     change=index,
@@ -1518,7 +1518,7 @@ class _Planner:
             )
         except ClaimRetireError as exc:
             raise _refuse(
-                "playbill.write.retirement_closure_unsupported",
+                "cruxible.write.retirement_closure_unsupported",
                 f"{claim_id} cannot be retired here: {exc}",
                 change=index,
                 repair="Retire what depends on it through its own governed change first",
@@ -1579,7 +1579,7 @@ class _Planner:
                     continue
                 if claim in touched:
                     raise _refuse(
-                        "playbill.write.claim_changed_twice",
+                        "cruxible.write.claim_changed_twice",
                         f"changes {touched[claim]} and {index} both change {claim}",
                         change=index,
                         repair="Keep one change per Claim in a write",
@@ -1588,7 +1588,7 @@ class _Planner:
             if isinstance(change, SetChange) and planned.slot is not None:
                 if planned.slot in slots:
                     raise _refuse(
-                        "playbill.write.slot_set_twice",
+                        "cruxible.write.slot_set_twice",
                         f"changes {slots[planned.slot]} and {index} both set "
                         f"{planned.outcome['subject']} {planned.outcome['field']}",
                         change=index,
@@ -1648,7 +1648,7 @@ def _lower(plan: _Plan, *, because: str, planned_at: AcceptedProjectionCoordinat
         identity = authoring_member_identity(member)
         if identity in by_identity:
             raise _refuse(
-                "playbill.write.duplicate_change",
+                "cruxible.write.duplicate_change",
                 f"change {index} repeats change {by_identity[identity][0]}",
                 change=index,
                 repair="Leave the repeated change out",
@@ -2206,7 +2206,7 @@ def _service_write(
             _preflight_refusal(intent.last_preflight, lowered)
             if status.state == "preflight_refused" and intent.last_preflight is not None
             else WriteRefusal(
-                code="playbill.write.head_moved",
+                code="cruxible.write.head_moved",
                 message="Accepted state moved while this write was being submitted.",
                 repair="Run the same write again; it is checked against the new head",
             )
@@ -2275,7 +2275,7 @@ def _service_write(
             coordinate=compact_coordinate(instance, instance.accepted_coordinate()),
             refusal=_slot_moved(instance, planned_at=head, read_at=read_at, request=request)
             or WriteRefusal(
-                code="playbill.write.head_moved",
+                code="cruxible.write.head_moved",
                 message="Another change was accepted first, so this one was not activated.",
                 repair="Run the same write again; it is checked against the new head",
             ),

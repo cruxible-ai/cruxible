@@ -344,63 +344,63 @@ class ProcedureSurfaceError(CruxibleError):
     instead of a class name.
     """
 
-    code = "playbill.procedure.refused"
+    code = "cruxible.procedure.refused"
     error_code: str | None = None
     http_status = 400
 
 
 class ProcedureNotFound(ProcedureSurfaceError):
-    code = "playbill.procedure.not_found"
+    code = "cruxible.procedure.not_found"
     http_status = 404
 
 
 class ProcedureRetired(ProcedureSurfaceError):
-    code = "playbill.procedure.retired"
+    code = "cruxible.procedure.retired"
 
 
 class ProcedureBindingSetMismatch(ProcedureSurfaceError):
-    code = "playbill.procedure.binding_set_mismatch"
+    code = "cruxible.procedure.binding_set_mismatch"
 
 
 class ProcedureBindingTargetNotFound(ProcedureSurfaceError):
-    code = "playbill.procedure.binding_target_not_found"
+    code = "cruxible.procedure.binding_target_not_found"
 
 
 class ProcedureBindingRoleMismatch(ProcedureSurfaceError):
-    code = "playbill.procedure.binding_role_mismatch"
+    code = "cruxible.procedure.binding_role_mismatch"
 
 
 class ProcedureBindingKindMismatch(ProcedureSurfaceError):
-    code = "playbill.procedure.binding_kind_mismatch"
+    code = "cruxible.procedure.binding_kind_mismatch"
 
 
 class ProcedureBindingInterfaceMismatch(ProcedureSurfaceError):
-    code = "playbill.procedure.binding_interface_mismatch"
+    code = "cruxible.procedure.binding_interface_mismatch"
 
 
 class ProcedureBindingStaleCoordinate(ProcedureSurfaceError):
-    code = "playbill.procedure.binding_stale_coordinate"
+    code = "cruxible.procedure.binding_stale_coordinate"
 
 
 class ProcedureBindingGraphV4LineClosureRequired(ProcedureSurfaceError):
-    code = "playbill.procedure.binding.graph_v4_line_closure_required"
+    code = "cruxible.procedure.binding.graph_v4_line_closure_required"
 
 
 class ProcedureRunNotCurrent(ProcedureSurfaceError):
-    code = "playbill.procedure.run.not_current"
+    code = "cruxible.procedure.run.not_current"
 
 
 class ProcedureRunNotFound(ProcedureSurfaceError):
-    code = "playbill.procedure.run.not_found"
+    code = "cruxible.procedure.run.not_found"
     http_status = 404
 
 
 class ProcedureRunRecoveryRequired(ProcedureSurfaceError):
-    code = "playbill.procedure.run.recovery_required"
+    code = "cruxible.procedure.run.recovery_required"
 
 
 class LineRunNotAccepted(ProcedureSurfaceError):
-    code = "playbill.line.run.line_not_accepted"
+    code = "cruxible.line.run.line_not_accepted"
     error_code = "line_not_accepted"
     http_status = 404
 
@@ -408,8 +408,8 @@ class LineRunNotAccepted(ProcedureSurfaceError):
 class LineNeverArmed(ProcedureSurfaceError):
     """A Line status read found no arm, current or past."""
 
-    code = "playbill.line.never_armed"
-    error_code = "playbill.line.never_armed"
+    code = "cruxible.line.never_armed"
+    error_code = "cruxible.line.never_armed"
     http_status = 404
 
     def __init__(self, line: str) -> None:
@@ -417,13 +417,13 @@ class LineNeverArmed(ProcedureSurfaceError):
             f"{self.code}: Line {line!r} has never been armed; arm it with "
             f"`cruxible playbill line arm {line}`"
         )
-        self.repair = RepairOperation(operation="playbill.line.arm", arguments={"line": line})
+        self.repair = RepairOperation(operation="cruxible.line.arm", arguments={"line": line})
 
 
 class LineMandateRequired(ProcedureSurfaceError):
     """Arming a Line that can propose or settle when no mandate covers it."""
 
-    code = "playbill.line.mandate_required"
+    code = "cruxible.line.mandate_required"
     error_code = "line_mandate_required"
     http_status = 409
 
@@ -511,19 +511,19 @@ def require_line_mandate(
 
 
 class LineRunIdentityMismatch(ProcedureSurfaceError):
-    code = "playbill.line.run.line_identity_mismatch"
+    code = "cruxible.line.run.line_identity_mismatch"
     error_code = "line_identity_mismatch"
 
 
 class LineRunEvaluationInstantSkewed(ProcedureSurfaceError):
-    code = "playbill.line.run.evaluation_instant_skewed"
+    code = "cruxible.line.run.evaluation_instant_skewed"
     error_code = "evaluation_instant_skewed"
 
 
 class SourceAcquisitionPolicyRequired(ProcedureSurfaceError):
     """A Source run found no single accepted policy governing its inputs."""
 
-    code = "playbill.procedure.run.source_acquisition_policy_required"
+    code = "cruxible.procedure.run.source_acquisition_policy_required"
     error_code = "source_acquisition_policy_required"
 
     def __init__(self, message: str, *, details: object | None = None) -> None:
@@ -540,7 +540,7 @@ class PinnedAcquisitionPolicyUnresolved(ProcedureSurfaceError):
     accepted tree -- the same guard, and the same code, the Line lane keeps.
     """
 
-    code = "playbill.procedure.run.artifact_binding_mismatch"
+    code = "cruxible.procedure.run.artifact_binding_mismatch"
     error_code = "artifact_binding_mismatch"
 
     def __init__(self, message: str, *, details: object | None = None) -> None:
@@ -1831,7 +1831,7 @@ def _plan_selection_decision(
                 AcquisitionInputDecision(
                     input_name="coherence",
                     disposition="refused",
-                    reason_codes=("playbill.acquisition.coherence_unsupported",),
+                    reason_codes=("cruxible.acquisition.coherence_unsupported",),
                 ),
             ),
         )
@@ -3312,7 +3312,7 @@ def _plan_direct_external_run(
                     "Served Source runs support independent coherence only; use a compatible "
                     "runtime or deliberately accept an independent policy."
                     if any(
-                        "playbill.acquisition.coherence_unsupported" in item.reason_codes
+                        "cruxible.acquisition.coherence_unsupported" in item.reason_codes
                         for item in selection.decisions
                     )
                     else "Widen the accepted policy rule or repair the Source binding."
@@ -4429,7 +4429,7 @@ def _run_playbill_line(
                     "Served Source runs support independent coherence only; use a compatible "
                     "runtime or deliberately accept an independent policy."
                     if any(
-                        "playbill.acquisition.coherence_unsupported" in item.reason_codes
+                        "cruxible.acquisition.coherence_unsupported" in item.reason_codes
                         for item in selection.decisions
                     )
                     else "Widen the accepted policy rule or repair the Source binding."

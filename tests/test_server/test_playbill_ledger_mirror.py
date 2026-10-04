@@ -25,7 +25,7 @@ def test_clone_url_refuses_typed_before_a_mirror_is_bound(
     response = client.get(f"/api/v1/{instance_id}/playbill/ledger/mirror")
 
     assert response.status_code == 400, response.text
-    assert "playbill.ledger.mirror_unset" in response.text
+    assert "cruxible.ledger.mirror_unset" in response.text
     assert "set-mirror" in response.text
 
 
@@ -74,7 +74,7 @@ def test_a_credential_bearing_url_never_reaches_the_descriptor(
     )
 
     assert response.status_code == 400, response.text
-    assert "playbill.ledger.mirror_url_invalid" in response.text
+    assert "cruxible.ledger.mirror_url_invalid" in response.text
     assert client.get(f"/api/v1/{instance_id}/playbill/ledger/mirror").status_code == 400
 
 
@@ -160,5 +160,5 @@ def test_init_refuses_a_malformed_mirror_before_any_state_exists(
     )
 
     assert refused.status_code == 400, refused.text
-    assert "playbill.ledger.mirror_url_invalid" in refused.text
+    assert "cruxible.ledger.mirror_url_invalid" in refused.text
     assert not (managed / "instance.json").exists()

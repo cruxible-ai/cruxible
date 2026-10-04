@@ -78,5 +78,5 @@ def test_mcp_since_maps_request_validation_to_the_typed_refusal() -> None:
             cursor=None,
         )
 
-    assert raised.value.error_code == "playbill.since.request_invalid"
+    assert raised.value.error_code == "cruxible.since.request_invalid"
     assert raised.value.field_path == "$.access_profile"

@@ -172,7 +172,7 @@ def test_http_admits_a_null_parameter_and_the_definition_decides(
         json={"name": BY_STATUS, "params": {"undeclared": None}},
     )
     assert refused.status_code == 400
-    assert refused.json()["error_code"] == "playbill.query.parameter_undeclared"
+    assert refused.json()["error_code"] == "cruxible.query.parameter_undeclared"
 
 
 def test_mcp_admits_a_null_parameter(

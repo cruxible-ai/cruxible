@@ -2048,7 +2048,7 @@ def test_an_unaccepted_line_identity_refuses_before_any_authority_read(
             daemon_clock=_DAEMON_CLOCK,
         )
 
-    assert caught.value.code == "playbill.line.run.line_not_accepted"
+    assert caught.value.code == "cruxible.line.run.line_not_accepted"
 
 
 def test_a_degraded_provider_lane_refuses_typed_without_granting_authority(

@@ -106,7 +106,7 @@ def test_the_cli_prints_a_line_card_as_values(world, monkeypatch, tmp_path) -> N
 
     missing = CliRunner().invoke(cli, [*prefix, "playbill", "get", "Line:nope"])
     assert missing.exit_code != 0
-    assert "playbill.get.ref_not_found" in missing.output
+    assert "cruxible.get.ref_not_found" in missing.output
 
 
 def test_the_mcp_tool_answers_a_line_card_by_its_identity_digest(world, monkeypatch) -> None:  # type: ignore[no-untyped-def]

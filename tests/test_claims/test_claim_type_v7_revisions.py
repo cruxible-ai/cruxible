@@ -322,7 +322,7 @@ def test_under_accumulate_dropping_backing_is_still_refused(world: _V7World) -> 
     world.seed(v7_type(revision_evidence="accumulate"))
     claim_id = world.say(b"status: ready")
     refused = world.refusals(_dropping(world, claim_id, b"status: done"), name="drop")
-    assert "playbill.claim.required_backing_dropped" in refused
+    assert "cruxible.claim.required_backing_dropped" in refused
 
 
 def test_under_replace_a_surplus_contract_pin_is_refused(world: _V7World) -> None:
@@ -348,7 +348,7 @@ def test_under_replace_a_surplus_contract_pin_is_refused(world: _V7World) -> Non
         )
     )
     tree[path] = render_claim(claim.model_copy(update={"pins": pins}))
-    assert "playbill.claim.capture_contract_pin_unbacked" in world.refusals(tree, name="surplus")
+    assert "cruxible.claim.capture_contract_pin_unbacked" in world.refusals(tree, name="surplus")
 
 
 def test_a_recited_capture_still_counts_as_inherited(world: _V7World) -> None:
@@ -378,7 +378,7 @@ def test_a_recited_capture_still_counts_as_inherited(world: _V7World) -> None:
 def test_captured_refuses_own_words_in_the_law_and_accepts_a_capture(world: _V7World) -> None:
     world.seed(v7_type(evidence_requirement="captured"))
     tree, _path = world.author(_own_words(b"status: ready\n"), citation_role=None)
-    assert "playbill.claim.captured_evidence_required" in world.refusals(tree, name="own")
+    assert "cruxible.claim.captured_evidence_required" in world.refusals(tree, name="own")
     world.say(b"status: ready")
 
 

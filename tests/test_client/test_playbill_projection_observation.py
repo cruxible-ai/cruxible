@@ -97,7 +97,7 @@ class _CoverageClient:
         coordinate = COORDINATE.model_dump(mode="json")
         profile: dict[str, object] = {
             **PROFILE,
-            "profile_id": "playbill.coverage.read",
+            "profile_id": "cruxible.coverage.read",
         }
         if self.mode == "partial":
             span["health"] = "partial"

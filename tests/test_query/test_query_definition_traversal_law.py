@@ -41,7 +41,7 @@ def test_a_traversal_over_a_literal_predicate_is_refused_naming_the_claim_type()
     )
 
     assert diagnostic is not None
-    assert diagnostic.code == "playbill.query_definition.traversal_object_not_subject"
+    assert diagnostic.code == "cruxible.query_definition.traversal_object_not_subject"
     assert "object_kind='subject'" in diagnostic.message
     assert claim_type.predicate in diagnostic.message
     assert diagnostic.subject is not None
@@ -131,4 +131,4 @@ def test_the_refusal_reaches_the_proposal_as_a_member_diagnostic() -> None:
     # The member evaluator returns exactly this as its refusal set, so a
     # proposal carrying such a definition is refused rather than accepted.
     assert diagnostic.severity == "error"
-    assert diagnostic.code.startswith("playbill.query_definition.")
+    assert diagnostic.code.startswith("cruxible.query_definition.")

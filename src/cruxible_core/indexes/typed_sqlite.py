@@ -414,7 +414,7 @@ def replace_rows(
             artifact_codec=codec,
         )
     for fact in parsed.semantic_facts:
-        if fact.schema_id not in ("playbill.procedure.track_record", "playbill.line.track_record"):
+        if fact.schema_id not in ("cruxible.procedure.track_record", "cruxible.line.track_record"):
             continue
         value = fact.value
         assert isinstance(value, dict)

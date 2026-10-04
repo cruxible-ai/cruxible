@@ -318,16 +318,16 @@ def _not_found(
     section: str | None = None,
 ) -> ReadRefusalError:
     if candidates:
-        repair = RepairOperation(operation="playbill.get", arguments={"ref": candidates[0]})
+        repair = RepairOperation(operation="cruxible.get", arguments={"ref": candidates[0]})
         line = f"Run {_render_get(surface, candidates[0])}"
     elif section is not None:
-        repair = RepairOperation(operation="playbill.orient", arguments={"section": section})
+        repair = RepairOperation(operation="cruxible.orient", arguments={"section": section})
         line = f'Run orient(section="{section}") to list them, then get one of its rows'
     else:
-        repair = RepairOperation(operation="playbill.orient")
+        repair = RepairOperation(operation="cruxible.orient")
         line = "Run orient to see what exists, then get one of its names"
     return ReadRefusalError(
-        "playbill.get.ref_not_found",
+        "cruxible.get.ref_not_found",
         f"no accepted {what} {ref!r}",
         http_status=404,
         candidates=candidates,
@@ -339,11 +339,11 @@ def _not_found(
 
 def _ambiguous(ref: str, candidates: Sequence[str]) -> ReadRefusalError:
     return ReadRefusalError(
-        "playbill.get.ref_ambiguous",
+        "cruxible.get.ref_ambiguous",
         f"{ref!r} names {len(candidates)} artifacts",
         http_status=409,
         candidates=candidates[:_MAX_CANDIDATES],
-        repair=RepairOperation(operation="playbill.get", arguments={"ref": candidates[0]}),
+        repair=RepairOperation(operation="cruxible.get", arguments={"ref": candidates[0]}),
         repair_line="Name one of them exactly",
         context={"ref": ref},
     )
@@ -458,10 +458,10 @@ def _resolve_run(
 
     if not _RUN_PREFIX.fullmatch(value):
         raise ReadRefusalError(
-            "playbill.get.ref_malformed",
+            "cruxible.get.ref_malformed",
             f"{ref!r} is not a Procedure run id",
             candidates=(),
-            repair=RepairOperation(operation="playbill.orient", arguments={"section": "runs"}),
+            repair=RepairOperation(operation="cruxible.orient", arguments={"section": "runs"}),
             repair_line="Pass RUN- plus at least 12 lowercase hex of the run id",
             context={"ref": ref},
         )
@@ -529,10 +529,10 @@ def _resolve_capture(
     hex_digits = capture_hex(value)
     if hex_digits is None:
         raise ReadRefusalError(
-            "playbill.get.ref_malformed",
+            "cruxible.get.ref_malformed",
             f"{ref!r} is not a Capture reference",
             candidates=(),
-            repair=RepairOperation(operation="playbill.orient", arguments={"section": "captures"}),
+            repair=RepairOperation(operation="cruxible.orient", arguments={"section": "captures"}),
             repair_line=(
                 "Pass CAP- plus at least 12 lowercase hex of the digest, or Capture:sha256:<64 hex>"
             ),
@@ -587,11 +587,11 @@ def _resolve_typed(
         if match is not None and not any(item.startswith(match["kind"] + "/") for item in names):
             kinds = nearest(match["kind"], {item.split("/", 1)[0] for item in names})
             raise ReadRefusalError(
-                "playbill.get.ref_not_found",
+                "cruxible.get.ref_not_found",
                 f"no accepted Subject has kind {match['kind']!r} ({ref!r})",
                 http_status=404,
                 candidates=kinds,
-                repair=RepairOperation(operation="playbill.orient"),
+                repair=RepairOperation(operation="cruxible.orient"),
                 repair_line="Use one of these Subject kinds; orient lists every kind",
                 context={"ref": ref},
             )
@@ -630,10 +630,10 @@ def _resolve_claim(projection: Any, name: str, *, ref: str, surface: ReadSurface
         return ResolvedRef("claim", identity, name, row.path)
     if not _CLAIM_PREFIX.fullmatch(name):
         raise ReadRefusalError(
-            "playbill.get.ref_malformed",
+            "cruxible.get.ref_malformed",
             f"{ref!r} is not a Claim id or a unique CLM- prefix",
             candidates=(),
-            repair=RepairOperation(operation="playbill.orient"),
+            repair=RepairOperation(operation="cruxible.orient"),
             repair_line="Pass CLM- plus 32 lowercase hex, or a unique prefix of at least 4 hex",
             context={"ref": ref},
         )
@@ -1201,11 +1201,11 @@ def _live_interface(
         if item.entry.identity == resolved.identity:
             return item
     raise ReadRefusalError(
-        "playbill.get.ref_not_found",
+        "cruxible.get.ref_not_found",
         f"{resolved.display} is retired; no live provider interface carries that name",
         http_status=404,
         candidates=(),
-        repair=RepairOperation(operation="playbill.orient", arguments={"section": "interfaces"}),
+        repair=RepairOperation(operation="cruxible.orient", arguments={"section": "interfaces"}),
         repair_line='Run orient(section="interfaces") to list the live interfaces',
         context={"ref": resolved.display},
     )
@@ -1273,7 +1273,7 @@ def _procedure_card(
         inputs["slots"] = [slot.slot_name for slot in definition.pin_slots]
     with instance.bind_accepted_projection(coordinate) as projection:
         promoted = projection.typed.facts(
-            "playbill.procedure.track_record", identity=resolved.identity
+            "cruxible.procedure.track_record", identity=resolved.identity
         )
     return GetProcedureCard(
         procedure=_name(resolved.identity),
@@ -1291,7 +1291,7 @@ def _procedure_card(
 
 
 def _track_record_entry(fact: ProjectionFact) -> GetProcedureTrackRecord:
-    """One ``playbill.procedure.track_record`` fact, as the Procedure card shows it."""
+    """One ``cruxible.procedure.track_record`` fact, as the Procedure card shows it."""
 
     value = cast(Mapping[str, Any], fact.value)
 
@@ -1800,11 +1800,11 @@ def _body(
                 "then read the following ranges"
             )
             raise ReadRefusalError(
-                "playbill.get.body_too_large",
+                "cruxible.get.body_too_large",
                 f"{resolved.display} is {size} bytes, over the {GET_BODY_DEFAULT_MAX_BYTES}-byte "
                 "whole-body cap",
                 repair=RepairOperation(
-                    operation="playbill.get",
+                    operation="cruxible.get",
                     arguments={"ref": resolved.display, "detail": "body", "range": window},
                 ),
                 repair_line=line,
@@ -1819,9 +1819,9 @@ def _body(
             if size:
                 arguments["range"] = f"0:{size}"
             raise ReadRefusalError(
-                "playbill.get.range_out_of_bounds",
+                "cruxible.get.range_out_of_bounds",
                 f"range starts at {requested.start} but {resolved.display} is {size} bytes",
-                repair=RepairOperation(operation="playbill.get", arguments=arguments),
+                repair=RepairOperation(operation="cruxible.get", arguments=arguments),
                 repair_line=(
                     f"Pass a range inside 0:{size}" if size else "Omit range; the body is empty"
                 ),
@@ -2019,11 +2019,11 @@ def service_playbill_get(
         head = instance.accepted_coordinate()
         if request.at is not None and coordinate.git_oid != head.git_oid:
             raise ReadRefusalError(
-                "playbill.get.historical_read_unsupported",
+                "cruxible.get.historical_read_unsupported",
                 f"{resolved.display} is operational state, readable only at the current "
                 "head, not at an earlier accepted generation",
                 repair=RepairOperation(
-                    operation="playbill.get", arguments={"ref": resolved.display}
+                    operation="cruxible.get", arguments={"ref": resolved.display}
                 ),
                 repair_line="Omit at to read the proposal as of the current head",
                 context={"ref": resolved.display, "kind": resolved.kind},
@@ -2032,11 +2032,11 @@ def service_playbill_get(
     allowed = GET_DETAILS_BY_KIND[resolved.kind]
     if request.detail not in allowed:
         raise ReadRefusalError(
-            "playbill.get.detail_unsupported",
+            "cruxible.get.detail_unsupported",
             f'detail="{request.detail}" does not apply to a {resolved.kind.replace("_", " ")}; '
             f"it takes {', '.join(allowed)}",
             repair=RepairOperation(
-                operation="playbill.get", arguments={"ref": resolved.display, "detail": "summary"}
+                operation="cruxible.get", arguments={"ref": resolved.display, "detail": "summary"}
             ),
             repair_line=f"Run {_render_get(request.surface, resolved.display)}",
             context={"ref": resolved.display, "kind": resolved.kind, "allowed": list(allowed)},

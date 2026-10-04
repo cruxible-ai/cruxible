@@ -200,14 +200,14 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
 # every served refusal producer -- core service, client authoring, CLI -- reads
 # the same one instead of re-inventing prose at its own boundary.
 RUNNABLE_REFUSAL_REPAIRS: Mapping[str, RepairOperation] = {
-    "binding_required": RepairOperation(operation="playbill.procedure.bind"),
+    "binding_required": RepairOperation(operation="cruxible.procedure.bind"),
     "line_mandate_required": RepairOperation(
-        operation="playbill.authoring.create",
+        operation="cruxible.authoring.create",
         arguments={"example": "procedure-mandate"},
     ),
     # Nothing renews a mandate: its successor, or its retirement, is authored.
     "mandate_expiring": RepairOperation(
-        operation="playbill.authoring.create",
+        operation="cruxible.authoring.create",
         arguments={"example": "procedure-mandate"},
     ),
     # Nothing renders a block, so no sync converges one; what `block sync --all`
@@ -216,76 +216,76 @@ RUNNABLE_REFUSAL_REPAIRS: Mapping[str, RepairOperation] = {
     # itself, with its arguments; this fallback is the runnable command for a
     # caller that knows only the code.
     "block_backing_changed": RepairOperation(
-        operation="playbill.block.sync", arguments={"all": True}
+        operation="cruxible.block.sync", arguments={"all": True}
     ),
     "block_backing_overturned": RepairOperation(
-        operation="playbill.block.sync", arguments={"all": True}
+        operation="cruxible.block.sync", arguments={"all": True}
     ),
     "block_backing_missing": RepairOperation(
-        operation="playbill.block.sync", arguments={"all": True}
+        operation="cruxible.block.sync", arguments={"all": True}
     ),
     # A retired member cannot be un-retired, so the block either stops holding
     # it or the marker leaves the page. The producer names `sync --detach PATH`
     # with the path it knows; this fallback names the sweep that finds them.
     "block_backing_retired": RepairOperation(
-        operation="playbill.block.sync", arguments={"all": True}
+        operation="cruxible.block.sync", arguments={"all": True}
     ),
     "block_concurrent_edit": RepairOperation(
-        operation="playbill.block.sync", arguments={"all": True}
+        operation="cruxible.block.sync", arguments={"all": True}
     ),
     # The prose moved away from what the stamp committed. The author wrote it, so
     # the repair is to re-read the block against its backings and re-stamp it;
     # the producer names that repin with its source and block.
     "block_locally_modified": RepairOperation(
-        operation="playbill.block.sync", arguments={"all": True}
+        operation="cruxible.block.sync", arguments={"all": True}
     ),
-    "block_successor_ambiguous": RepairOperation(operation="playbill.block.repin"),
-    "block_sync_failed": RepairOperation(operation="playbill.block.sync", arguments={"all": True}),
+    "block_successor_ambiguous": RepairOperation(operation="cruxible.block.repin"),
+    "block_sync_failed": RepairOperation(operation="cruxible.block.sync", arguments={"all": True}),
     "projection_backing_stale": RepairOperation(
-        operation="playbill.block.sync", arguments={"all": True}
+        operation="cruxible.block.sync", arguments={"all": True}
     ),
-    "projection_dirty": RepairOperation(operation="playbill.block.sync", arguments={"all": True}),
+    "projection_dirty": RepairOperation(operation="cruxible.block.sync", arguments={"all": True}),
     # A Source run needs an accepted SourceAcquisitionPolicy covering exactly
     # its declared source inputs; authoring one is the repair, so the runnable
     # command is the authoring create the caller would run next.
     "source_acquisition_policy_required": RepairOperation(
-        operation="playbill.authoring.create",
+        operation="cruxible.authoring.create",
         arguments={"example": "source-acquisition-policy"},
     ),
     # The policy is accepted but its rule denies a declared input. Authoring a
     # successor policy is the repair; the run itself is not retryable as-is.
     "source_acquisition_refused": RepairOperation(
-        operation="playbill.authoring.create",
+        operation="cruxible.authoring.create",
         arguments={"example": "source-acquisition-policy"},
     ),
     # Measurement doors. A declaration, run, or subject that does not fit is
     # repaired by inspecting what stands (the readings door is read-only) or
     # by re-running the evaluation once the named fault is corrected.
-    "measurement_not_declared": RepairOperation(operation="playbill.procedure.readings"),
-    "measurement_run_mismatch": RepairOperation(operation="playbill.procedure.readings"),
-    "measurement_subject_absent": RepairOperation(operation="playbill.procedure.readings"),
-    "measurement_subject_mismatch": RepairOperation(operation="playbill.procedure.readings"),
-    "measurement_basis_unsupported": RepairOperation(operation="playbill.procedure.readings"),
-    "measurement_reading_conflict": RepairOperation(operation="playbill.procedure.readings"),
-    "measurement_resolution_conflict": RepairOperation(operation="playbill.procedure.measure"),
-    "occurrence_not_due": RepairOperation(operation="playbill.line.run"),
-    "occurrence_id_mismatch": RepairOperation(operation="playbill.line.run"),
-    "evaluation_instant_skewed": RepairOperation(operation="playbill.line.run"),
-    "line_identity_mismatch": RepairOperation(operation="playbill.line.run"),
-    "document_modified": RepairOperation(operation="playbill.document.propose"),
+    "measurement_not_declared": RepairOperation(operation="cruxible.procedure.readings"),
+    "measurement_run_mismatch": RepairOperation(operation="cruxible.procedure.readings"),
+    "measurement_subject_absent": RepairOperation(operation="cruxible.procedure.readings"),
+    "measurement_subject_mismatch": RepairOperation(operation="cruxible.procedure.readings"),
+    "measurement_basis_unsupported": RepairOperation(operation="cruxible.procedure.readings"),
+    "measurement_reading_conflict": RepairOperation(operation="cruxible.procedure.readings"),
+    "measurement_resolution_conflict": RepairOperation(operation="cruxible.procedure.measure"),
+    "occurrence_not_due": RepairOperation(operation="cruxible.line.run"),
+    "occurrence_id_mismatch": RepairOperation(operation="cruxible.line.run"),
+    "evaluation_instant_skewed": RepairOperation(operation="cruxible.line.run"),
+    "line_identity_mismatch": RepairOperation(operation="cruxible.line.run"),
+    "document_modified": RepairOperation(operation="cruxible.document.propose"),
     # A next page cursor names the whole queue it continues; once that queue
     # moves, the repair is to read page one again.
-    "playbill.next.cursor_mismatch": RepairOperation(operation="playbill.next"),
+    "cruxible.next.cursor_mismatch": RepairOperation(operation="cruxible.next"),
     "workspace_binding_invalid": RepairOperation(
-        operation="playbill.host.create",
+        operation="cruxible.host.create",
         arguments={"workspace": ".", "replace": True},
     ),
     "workspace_instance_mismatch": RepairOperation(
-        operation="playbill.host.create",
+        operation="cruxible.host.create",
         arguments={"workspace": ".", "replace": True},
     ),
     "workspace_not_attached": RepairOperation(
-        operation="playbill.host.create", arguments={"workspace": "."}
+        operation="cruxible.host.create", arguments={"workspace": "."}
     ),
 }
 

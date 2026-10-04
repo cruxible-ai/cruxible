@@ -693,7 +693,7 @@ def test_competing_exact_content_follows_conflict_behavior_as_literals_do(
 
     Two supported, competing exact-content Claims answer a one-cardinality read
     exactly as two literals do: ``refuse_on_conflict`` refuses with the engine's
-    ``playbill.query.claim_conflict``, and ``surface_conflicts`` answers no value
+    ``cruxible.query.claim_conflict``, and ``surface_conflicts`` answers no value
     with the ``contested`` flag. Neither shows both texts.
     """
 
@@ -712,7 +712,7 @@ def test_competing_exact_content_follows_conflict_behavior_as_literals_do(
 
     assert exact == literal
     if conflict_behavior == "refuse_on_conflict":
-        assert exact == ("refused", "playbill.query.claim_conflict")
+        assert exact == ("refused", "cruxible.query.claim_conflict")
     else:
         assert exact == [(None, ["contested"])]
 
@@ -784,7 +784,7 @@ def test_a_short_unknown_or_ambiguous_at_refuses_with_a_coded_read_refusal(
         return refused.value
 
     short = refusal(too_short_prefix(head.oid))
-    assert short.error_code == "playbill.read.coordinate_prefix_too_short"
+    assert short.error_code == "cruxible.read.coordinate_prefix_too_short"
     assert short.http_status == 400 and "at least 12" in str(short)
 
     # One hex digit off: nothing starts with it, and a full accepted oid is named.
@@ -792,13 +792,13 @@ def test_a_short_unknown_or_ambiguous_at_refuses_with_a_coded_read_refusal(
     # with eleven digits.
     typo = head.oid[:11] + ("a" if head.oid[11] != "a" else "b")
     unknown = refusal(typo)
-    assert unknown.error_code == "playbill.read.coordinate_not_accepted"
+    assert unknown.error_code == "cruxible.read.coordinate_not_accepted"
     assert unknown.http_status == 404
     assert head.oid in unknown.candidates
 
     unrelated = refusal("0" * 12)
     accepted = {generation.oid for generation in instance.accepted_history()}
-    assert unrelated.error_code == "playbill.read.coordinate_not_accepted"
+    assert unrelated.error_code == "cruxible.read.coordinate_not_accepted"
     assert 0 < len(unrelated.candidates) <= 5
     assert set(unrelated.candidates) <= accepted
 
@@ -809,7 +809,7 @@ def test_a_short_unknown_or_ambiguous_at_refuses_with_a_coded_read_refusal(
     real = instance.accepted_history()
     monkeypatch.setattr(instance, "accepted_history", lambda: (*real, twin))
     ambiguous = refusal(head.oid[:12])
-    assert ambiguous.error_code == "playbill.read.coordinate_ambiguous"
+    assert ambiguous.error_code == "cruxible.read.coordinate_ambiguous"
     assert ambiguous.http_status == 409
     assert set(ambiguous.candidates) == {head.oid, twin_oid}
     assert ambiguous.context["matches"] == 2
@@ -844,7 +844,7 @@ def test_an_all_digit_at_of_eleven_or_fewer_characters_is_a_generation(
     for spelled in ("9" * 8, "0" * 8 + "9", "9" * 11):
         with pytest.raises(ReadRefusalError) as refused:
             resolve_read_coordinate(instance, spelled)
-        assert refused.value.error_code == "playbill.read.coordinate_not_accepted"
+        assert refused.value.error_code == "cruxible.read.coordinate_not_accepted"
         assert "no generation" in str(refused.value), spelled
         assert refused.value.http_status == 404
     # Never "too short", and never an oid, even where an accepted oid starts
@@ -857,12 +857,12 @@ def test_an_all_digit_at_of_eleven_or_fewer_characters_is_a_generation(
     )
     with pytest.raises(ReadRefusalError) as refused:
         resolve_read_coordinate(instance, "12345678")
-    assert refused.value.error_code == "playbill.read.coordinate_not_accepted"
+    assert refused.value.error_code == "cruxible.read.coordinate_not_accepted"
     assert "no generation 12345678" in str(refused.value)
     # Twelve digits are an oid prefix, matched against accepted oids.
     with pytest.raises(ReadRefusalError) as refused:
         resolve_read_coordinate(instance, "9" * 12)
-    assert refused.value.error_code == "playbill.read.coordinate_not_accepted"
+    assert refused.value.error_code == "cruxible.read.coordinate_not_accepted"
     assert "no accepted git oid starts with" in str(refused.value)
 
 
@@ -871,7 +871,7 @@ def test_overlong_oid_is_not_misreported_as_too_short(instance: Any) -> None:
 
     with pytest.raises(ReadRefusalError) as refused:
         service_playbill_orient(instance, at="a" * 65)
-    assert refused.value.error_code == "playbill.read.coordinate_not_accepted"
+    assert refused.value.error_code == "cruxible.read.coordinate_not_accepted"
 
 
 def test_an_oid_outside_accepted_history_cannot_resolve(
@@ -888,4 +888,4 @@ def test_an_oid_outside_accepted_history_cannot_resolve(
     for at in (head.oid, head.oid[:12]):
         with pytest.raises(ReadRefusalError) as refused:
             resolve_read_coordinate(instance, at)
-        assert refused.value.error_code == "playbill.read.coordinate_not_accepted"
+        assert refused.value.error_code == "cruxible.read.coordinate_not_accepted"

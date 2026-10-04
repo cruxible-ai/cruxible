@@ -112,10 +112,10 @@ class RequestRefusedError(DataValidationError):
 class ChangeRefusedError(RequestRefusedError):
     """A change refused by its preview pin (rule R12), with the preview as repair.
 
-    ``playbill.preview.state_moved`` (409): the commit carried the coordinate of
-    a preview and that state has moved since. ``playbill.preview.
+    ``cruxible.preview.state_moved`` (409): the commit carried the coordinate of
+    a preview and that state has moved since. ``cruxible.preview.
     confirmation_required`` (400): a change that cannot be undone commits only
-    with the coordinate of its preview. ``playbill.preview.recovery_pending``
+    with the coordinate of its preview. ``cruxible.preview.recovery_pending``
     (409): previewing would first have to open the instance and repair derived
     files on disk, which a preview may not write; an ordinary read repairs them,
     and the preview then runs.
@@ -124,16 +124,16 @@ class ChangeRefusedError(RequestRefusedError):
     def __init__(
         self,
         error_code: Literal[
-            "playbill.preview.state_moved",
-            "playbill.preview.confirmation_required",
-            "playbill.preview.recovery_pending",
+            "cruxible.preview.state_moved",
+            "cruxible.preview.confirmation_required",
+            "cruxible.preview.recovery_pending",
         ],
         message: str,
         *,
         operation: str,
         repair: RepairOperation | None = None,
     ) -> None:
-        self.http_status = 400 if error_code == "playbill.preview.confirmation_required" else 409
+        self.http_status = 400 if error_code == "cruxible.preview.confirmation_required" else 409
         super().__init__(
             error_code,
             message,
@@ -229,7 +229,7 @@ class InstanceLocationRefusedError(CoreError):
     the instance instead: only an instance under this state root is served.
     """
 
-    error_code = "playbill.host.location_outside_state_root"
+    error_code = "cruxible.host.location_outside_state_root"
 
     def __init__(self, *, instance_id: str, location: str, state_root: str) -> None:
         self.instance_id = instance_id
@@ -305,14 +305,14 @@ class BootstrapClaimRefusedError(AuthenticationError):
 
 
 PrincipalRefusalCode = Literal[
-    "playbill.identity.principal_claim_invalid",
-    "playbill.identity.principal_claim_mismatch",
-    "playbill.identity.principal_absent",
-    "playbill.identity.principal_revoked",
-    "playbill.identity.principal_unconfigured",
-    "playbill.identity.init_owner_mismatch",
-    "playbill.identity.credential_unbound",
-    "playbill.identity.permission_insufficient",
+    "cruxible.identity.principal_claim_invalid",
+    "cruxible.identity.principal_claim_mismatch",
+    "cruxible.identity.principal_absent",
+    "cruxible.identity.principal_revoked",
+    "cruxible.identity.principal_unconfigured",
+    "cruxible.identity.init_owner_mismatch",
+    "cruxible.identity.credential_unbound",
+    "cruxible.identity.permission_insufficient",
     "runtime_credential.auth_off",
     "runtime_bootstrap.operator_mac_invalid",
     "runtime_bootstrap.operator_mac_stale",
@@ -327,8 +327,8 @@ PrincipalRefusalCode = Literal[
 #: contradicting its credential is unauthenticated, and a well-formed identity
 #: that may not act here is forbidden.
 _PRINCIPAL_REFUSAL_STATUS: dict[str, int] = {
-    "playbill.identity.principal_claim_invalid": 400,
-    "playbill.identity.principal_claim_mismatch": 401,
+    "cruxible.identity.principal_claim_invalid": 400,
+    "cruxible.identity.principal_claim_mismatch": 401,
     "runtime_credential.principal_proof_replayed": 409,
     "runtime_credential.auth_off": 409,
     "runtime_bootstrap.operator_mac_invalid": 401,

@@ -217,9 +217,9 @@ rather than the accepted ones. A sibling Claim is never a dependent. It lowers
 after the succession, under the SUCCESSOR vocabulary, and lands as an ordinary
 member of the same generation. Defining a ClaimType and succeeding it in one set
 is not expressible either -- both members author the same artifact path, so the
-set refuses `playbill.authoring.change_set_member_path_collision` naming the two.
+set refuses `cruxible.authoring.change_set_member_path_collision` naming the two.
 An inexact closure refuses
-`playbill.authoring.claim_type_succession_closure_incomplete`, whose repair
+`cruxible.authoring.claim_type_succession_closure_incomplete`, whose repair
 names every required dependent by identity -- a dependent carries no digest of
 its own, so the digest each required row also reports is a read, not something
 to copy back. Four dispositions, spelled
@@ -234,7 +234,7 @@ by the SDK helpers `carry`, `rescind`, `retire` and `re_author`:
 
 The standalone route knows a fourth word, `invalidation`, deprecated there and
 answered with a warning. A change set parses it and always refuses typed --
-`playbill.authoring.claim_type_succession_disposition_deprecated`, whose repair
+`cruxible.authoring.claim_type_succession_disposition_deprecated`, whose repair
 names both roads -- because lowering has no warning channel, so admitting the
 word would coerce it silently. Say `retire` with a reason, or take the
 succession to `cruxible playbill claim-type migrate`.
@@ -248,7 +248,7 @@ says the same thing again, it does not say it about something else. The sibling
 is named once, by `successor_claim_id` -- the Claim ID it revises, which is the
 dependent's own, and what `re_author(claim)` writes. A sibling that does not exist, lowers under
 another ClaimType, or revises another Claim refuses
-`playbill.authoring.claim_type_succession_re_author_invalid`, naming both member
+`cruxible.authoring.claim_type_succession_re_author_invalid`, naming both member
 indices and the Claim ID the dependent requires.
 
 A successor that changes `object_kind` refuses `carry` for any live Claim
@@ -261,7 +261,7 @@ successor with a stricter policy is re-graded under that policy, not refused, so
 the succession lands and the re-grading is visible in the dependent's admission
 accounts afterwards. A successor whose policy admits no accepted capture
 contract is linted on both roads: preflight carries the same
-`playbill.claim_type.evidence_policy_admits_no_accepted_contract` warning
+`cruxible.claim_type.evidence_policy_admits_no_accepted_contract` warning
 `cruxible playbill claim-type migrate` reports, in the result's `lint`, as a
 warning rather than a refusal.
 

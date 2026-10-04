@@ -434,7 +434,7 @@ def test_a_claim_type_that_does_not_admit_the_capture_refuses_through_shared_low
 
     refusal = _refusal(state)
     assert refusal.code == "proposal_lowering_refused", refusal
-    assert refusal.details["code"] == "playbill.authoring.existing_capture_not_admitted"
+    assert refusal.details["code"] == "cruxible.authoring.existing_capture_not_admitted"
     assert refusal.details["offending_element"] == "members[0].source.capture_digest"
     assert _proposal_refs(instance) == []
 

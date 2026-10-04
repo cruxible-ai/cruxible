@@ -441,7 +441,7 @@ def test_sdk_declared_block_refuses_every_citation_role_inside_it(
 
     with pytest.raises(ProjectionIndependentEvidenceForbidden) as evidence_refusal:
         pb.claim(supported_by=selection, copied_from=None, **common)
-    assert evidence_refusal.value.code == "playbill.projection.evidence_from_projection"
+    assert evidence_refusal.value.code == "cruxible.projection.evidence_from_projection"
     with pytest.raises(ProjectionIndependentEvidenceForbidden):
         pb.claim(supported_by=None, copied_from=selection, **common)
 
@@ -889,7 +889,7 @@ def test_address_shaped_string_on_an_exact_content_type_defers_to_the_daemon(
 
     The SDK cannot author an ExactContentClaimObject, so it builds the literal
     shape and lets the daemon answer with the typed
-    `playbill.claim.object_kind_mismatch` refusal
+    `cruxible.claim.object_kind_mismatch` refusal
     (tests/test_authoring/test_authoring_preflight.py::
     test_claim_object_kind_mismatch_is_a_typed_preflight_refusal).
     """
@@ -1153,7 +1153,7 @@ def test_claim_view_mints_capture_refs_from_typed_admission_accounts(tmp_path: P
                 envelope={"identity": "Claim:CLM-typed", "revision": 2},
                 facts=[
                     {
-                        "schema_id": "playbill.claim.statement",
+                        "schema_id": "cruxible.claim.statement",
                         "value": {
                             "subject": {"artifact_path": "subjects/secops.policy/a.json"},
                             "predicate": "secops.policy.patch_sla",
@@ -1163,11 +1163,11 @@ def test_claim_view_mints_capture_refs_from_typed_admission_accounts(tmp_path: P
                         },
                     },
                     {
-                        "schema_id": "playbill.claim.lifecycle",
+                        "schema_id": "cruxible.claim.lifecycle",
                         "value": {"lifecycle": {"state": "live"}},
                     },
                     {
-                        "schema_id": "playbill.claim.current_verdict",
+                        "schema_id": "cruxible.claim.current_verdict",
                         "value": {"verdict": "supported"},
                     },
                 ],
@@ -1354,7 +1354,7 @@ def test_refusal_diagnostic_maps_exact_payload_path_to_the_call_expression(
                 frontier={
                     "diagnostics": [
                         {
-                            "code": "playbill.test.role_refused",
+                            "code": "cruxible.test.role_refused",
                             "stage": "admission",
                             "offending_element": "statement.role",
                             "message": "role is not admitted",
@@ -1488,7 +1488,7 @@ def test_exact_content_on_a_literal_predicate_refuses_before_the_wire(
             **_OBJECT_KIND_CLAIM_DEFAULTS,  # type: ignore[arg-type]
         )
 
-    assert refused.value.code == "playbill.sdk.exact_content_claim_type_mismatch"
+    assert refused.value.code == "cruxible.sdk.exact_content_claim_type_mismatch"
     assert "docs.plain" in str(refused.value)
     assert "literal" in str(refused.value)
 

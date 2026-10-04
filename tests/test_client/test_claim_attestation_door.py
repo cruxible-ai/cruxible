@@ -115,16 +115,16 @@ def test_environment_key_custody_refuses_unsafe_paths(
 
     with pytest.raises(
         LocalClaimAttestationKeyUnavailable,
-        match="playbill.claim_attestation.local_signing_key_unavailable|forbidden|match|absolute|permissions",
+        match="cruxible.claim_attestation.local_signing_key_unavailable|forbidden|match|absolute|permissions",
     ) as error:
         local_attestation_signer_from_environment(
             client,
             instance.descriptor.instance_id,
             workspace_root=workspace,
         )
-    assert error.value.error_code == "playbill.claim_attestation.local_signing_key_unavailable"
+    assert error.value.error_code == "cruxible.claim_attestation.local_signing_key_unavailable"
     if failure == "daemon_state":
         assert str(error.value) == (
-            "playbill.claim_attestation.local_signing_key_unavailable: "
+            "cruxible.claim_attestation.local_signing_key_unavailable: "
             "client ClaimAttestationV1 key is inside a forbidden root"
         )

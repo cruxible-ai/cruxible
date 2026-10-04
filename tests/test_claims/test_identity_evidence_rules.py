@@ -192,7 +192,7 @@ def test_the_revision_4_law_refuses_breaking_successors_and_revival_but_not_reti
     assert law(_successor(ORIGINAL), accepted) is None
     assert (
         law(_successor(ORIGINAL, epistemic_grade="predicted"), accepted)
-        == "playbill.capture_contract.incompatible_successor"
+        == "cruxible.capture_contract.incompatible_successor"
     )
     retired = ORIGINAL.model_copy(
         update={
@@ -207,7 +207,7 @@ def test_the_revision_4_law_refuses_breaking_successors_and_revival_but_not_reti
     retired_version = AcceptedCaptureContract(
         path=CONTRACT_PATH, contract=retired, artifact_digest=_digest(retired)
     )
-    assert law(revived, retired_version) == "playbill.capture_contract.revival_refused"
+    assert law(revived, retired_version) == "cruxible.capture_contract.revival_refused"
     # The historical revision-3 law keeps accepting what it always accepted.
     assert (
         evaluate_capture_contract_law(
@@ -409,7 +409,7 @@ def test_a_breaking_contract_change_is_refused_as_a_successor(world: _World) -> 
     world.seed(_v6_type())
     tree = world.tree()
     tree[CONTRACT_PATH] = render_capture_contract(_successor(ORIGINAL, epistemic_grade="predicted"))
-    assert "playbill.capture_contract.incompatible_successor" in world.refusals(
+    assert "cruxible.capture_contract.incompatible_successor" in world.refusals(
         tree, name="break-contract"
     )
 
@@ -426,7 +426,7 @@ def test_retiring_a_contract_an_identity_rule_names_is_refused(world: _World) ->
             }
         )
     )
-    assert "playbill.capture_contract.dependents_not_settled" in world.refusals(
+    assert "cruxible.capture_contract.dependents_not_settled" in world.refusals(
         tree, name="retire-contract"
     )
 
@@ -437,7 +437,7 @@ def test_an_exact_digest_rule_makes_a_successor_loud_until_it_moves_too(world: _
     improved = _successor(ORIGINAL)
     tree = world.tree()
     tree[CONTRACT_PATH] = render_capture_contract(improved)
-    assert "playbill.capture_contract.dependents_not_settled" in world.refusals(
+    assert "cruxible.capture_contract.dependents_not_settled" in world.refusals(
         tree, name="strand-exact-rule"
     )
 
@@ -548,7 +548,7 @@ def test_moving_a_query_a_claim_type_corroborates_through_needs_the_claim_type_t
     )
     tree = world.tree()
     tree[query_definition_path(query.identity.name)] = render_query_definition(revised)
-    assert "playbill.query_definition.corroboration_dependents_not_settled" in world.refusals(
+    assert "cruxible.query_definition.corroboration_dependents_not_settled" in world.refusals(
         tree, name="move-query"
     )
 
@@ -625,7 +625,7 @@ def test_a_provenance_pin_must_name_the_identity_its_version_belongs_to(world: _
     )
     tree = world.tree()
     tree[path] = render_claim(forged)
-    assert "playbill.claim.capture_contract_pin_unresolved" in world.refusals(
+    assert "cruxible.claim.capture_contract_pin_unresolved" in world.refusals(
         tree, name="forged-provenance"
     )
 
@@ -948,4 +948,4 @@ def test_the_upgrade_previews_by_default_and_commits_only_at_its_coordinate(
             actor_id="owner",
             timestamp=world.timestamp(),
         )
-    assert moved.value.error_code == "playbill.preview.state_moved"
+    assert moved.value.error_code == "cruxible.preview.state_moved"

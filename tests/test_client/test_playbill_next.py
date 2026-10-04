@@ -155,7 +155,7 @@ def test_client_parses_v2_delta_removal_classification() -> None:
 def test_client_parses_typed_rows_findings_and_status() -> None:
     item_id = "sha256:" + "6" * 64
     runnable = {
-        "operation": "playbill.block.sync",
+        "operation": "cruxible.block.sync",
         "target": "docs/runbook.md",
         "required_change": "resync_projection",
         "arguments": {"all": True},
@@ -175,7 +175,7 @@ def test_client_parses_typed_rows_findings_and_status() -> None:
                 "state": "stale",
                 "detail": {"reported_status": "stale"},
                 "repair": {
-                    "operation": "playbill.floor.export",
+                    "operation": "cruxible.floor.export",
                     "target": "inst",
                     "required_change": "replace_installed_floor",
                     "arguments": {},
@@ -234,7 +234,7 @@ def test_client_parses_typed_rows_findings_and_status() -> None:
     assert result.status.held == 2
     assert result.status.floor.state == "stale"
     assert result.status.floor.repair is not None
-    assert result.status.floor.repair.operation == "playbill.floor.export"
+    assert result.status.floor.repair.operation == "cruxible.floor.export"
     assert result.status.instance.repair is None
     # A row standing alone keeps its bytes: empty findings stay off the wire.
     assert "findings" not in _item(item_id)
@@ -250,7 +250,7 @@ def test_client_parses_typed_rows_findings_and_status() -> None:
     [
         {"reason": "not_a_reason"},
         {"severity": "urgent"},
-        {"repair": HAND_EDIT | {"operation": "playbill.unknown"}},
+        {"repair": HAND_EDIT | {"operation": "cruxible.unknown"}},
         {"item_id": "not-a-digest"},
         {"unexpected": True},
     ],

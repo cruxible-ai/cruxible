@@ -143,7 +143,7 @@ def service_read_claim_batch(
             statement = next(
                 fact["value"]
                 for fact in public.facts
-                if fact["schema_id"] == "playbill.claim.statement"
+                if fact["schema_id"] == "cruxible.claim.statement"
             )
             if isinstance(statement, dict):
                 wanted.add(claim_type_path(str(statement["predicate"])))

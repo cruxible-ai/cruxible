@@ -615,7 +615,7 @@ def test_hook_reports_missing_instance_id_without_changing_stdout(
     emitted, stderr = _run_hook_with_diagnostic(workspace, payload)
 
     assert emitted == {}
-    assert stderr == "playbill.coverage_hook.instance_id_missing\n"
+    assert stderr == "cruxible.coverage_hook.instance_id_missing\n"
 
 
 def test_hook_uses_the_workspace_config_instance_id(
@@ -669,7 +669,7 @@ def test_hook_reports_invalid_rule_tag_without_changing_stdout(tmp_path: Path) -
     emitted, stderr = _run_hook_with_diagnostic(workspace, payload)
 
     assert emitted == {}
-    assert stderr == "playbill.coverage_hook.rule_tag_invalid\n"
+    assert stderr == "cruxible.coverage_hook.rule_tag_invalid\n"
 
 
 def test_hook_reports_non_object_tool_response_without_changing_stdout(tmp_path: Path) -> None:
@@ -681,7 +681,7 @@ def test_hook_reports_non_object_tool_response_without_changing_stdout(tmp_path:
     )
 
     assert emitted == {}
-    assert stderr == "playbill.coverage_hook.tool_response_invalid\n"
+    assert stderr == "cruxible.coverage_hook.tool_response_invalid\n"
 
 
 @pytest.mark.parametrize("tool_name", ["Read", "Edit", "Write"])

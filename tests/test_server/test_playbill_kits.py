@@ -613,7 +613,7 @@ def test_removing_a_kit_that_is_not_installed_is_refused_naming_the_installed_on
     with pytest.raises(RequestRefusedError) as refused:
         playbill_api.playbill_kit_remove(consumer.instance_id, KitRemoveRequest(kit_id="nokit"))
 
-    assert refused.value.error_code == "playbill.kit.not_installed"
+    assert refused.value.error_code == "cruxible.kit.not_installed"
     assert "installed: acme" in str(refused.value)
 
 
@@ -1162,7 +1162,7 @@ def test_a_kit_install_and_removal_preview_by_default_and_write_nothing(
                 bundle=release, source="test", dry_run=False, at=preview.coordinate.git_oid
             ),
         )
-    assert moved.value.error_code == "playbill.preview.state_moved"
+    assert moved.value.error_code == "cruxible.preview.state_moved"
 
     removal = assert_writes_nothing(
         [tmp_path],

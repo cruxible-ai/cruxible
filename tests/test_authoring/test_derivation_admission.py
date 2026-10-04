@@ -64,7 +64,7 @@ from tests.test_procedures.test_procedure_source_runs import (
 )
 
 TIMESTAMP = "2026-09-12T12:00:00.000000Z"
-REFUSAL = "playbill.authoring.derivation_requires_execution"
+REFUSAL = "cruxible.authoring.derivation_requires_execution"
 
 
 @pytest.fixture

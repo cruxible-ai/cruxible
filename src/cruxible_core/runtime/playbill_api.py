@@ -510,13 +510,13 @@ def playbill_init(
     if actor_id is not None and actor_id not in ordinary:
         owners = ", ".join(sorted(ordinary)) or "none"
         raise PrincipalRefusedError(
-            "playbill.identity.init_owner_mismatch",
+            "cruxible.identity.init_owner_mismatch",
             f"init makes the process that runs it an owner, but this process acts as "
             f"{actor_id!r} and the owner principals named are: {owners}; repair: "
             "`cruxible playbill init --principal-id ID --key-dir DIR` makes you the owner "
             "under ID (with daemon auth off no bootstrap secret is needed)",
             repair=RepairOperation(
-                operation="playbill.init",
+                operation="cruxible.init",
                 arguments={"principal_id": actor_id},
             ),
         )
@@ -593,7 +593,7 @@ def playbill_instance_decommission(
             dry_run=dry_run,
             at=at,
             kind="irreversible",
-            operation="playbill.instance.decommission",
+            operation="cruxible.instance.decommission",
             describe=f"decommissioning instance {instance_id}",
         ) as mode:
             record = instance.decommission(
@@ -678,7 +678,7 @@ def playbill_ledger_set_mirror(
             dry_run=dry_run,
             at=at,
             kind="irreversible",
-            operation="playbill.ledger.set-mirror",
+            operation="cruxible.ledger.set-mirror",
             describe=f"binding ledger mirror {url}",
         ) as mode:
             state = instance.set_ledger_mirror(url, confirm_head=mode.confirm_head)
@@ -715,7 +715,7 @@ def playbill_ledger_publish(
             dry_run=dry_run,
             at=at,
             kind="direct",
-            operation="playbill.ledger.publish",
+            operation="cruxible.ledger.publish",
             describe="publishing the ledger",
         ) as mode:
             if mode.previewing:
@@ -2192,7 +2192,7 @@ def _caller_authoring_refusal(instance_id: str) -> AuthoringRefusal | None:
         refusal = playbill_whoami(instance_id).authoring_refusal
     except AuthenticationError:
         return None
-    if refusal is None or refusal.code == "playbill.identity.permission_insufficient":
+    if refusal is None or refusal.code == "cruxible.identity.permission_insufficient":
         return None
     return refusal
 

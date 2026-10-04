@@ -61,7 +61,7 @@ class PlaybillExplainUnsupportedDetail(_StrictExplainModel):
     subject: SemanticAddress
     coordinate: AcceptedCoordinate
     requested_detail: Literal["proof"] = "proof"
-    code: Literal["playbill.explain.detail_unsupported"] = "playbill.explain.detail_unsupported"
+    code: Literal["cruxible.explain.detail_unsupported"] = "cruxible.explain.detail_unsupported"
     message: str = "Complete proof-bundle retrieval is deferred beyond PB-E."
     supported_details: tuple[Literal["summary", "evidence"], ...] = (
         "summary",
@@ -234,7 +234,7 @@ def service_explain_playbill_subject(
         )
         projected: PlaybillDocumentView | PlaybillSubjectView = projected_document
         family = "document"
-        source_schema = "playbill.document.source_mapping"
+        source_schema = "cruxible.document.source_mapping"
     elif kind == "subject":
         subject_shell = parse_subject(content, path=subject.artifact_path)
         projected = service_get_playbill_subject(
@@ -247,10 +247,10 @@ def service_explain_playbill_subject(
     else:
         raise SubjectNotFoundError(subject.artifact_path)
     facts = _facts(projected)
-    governance = _required_object(facts, f"playbill.{family}.governance")
-    provenance = _required_object(facts, f"playbill.{family}.provenance")
-    coverage = _required_object(facts, f"playbill.{family}.attestation_coverage")
-    history = _required_object(facts, f"playbill.{family}.history")
+    governance = _required_object(facts, f"cruxible.{family}.governance")
+    provenance = _required_object(facts, f"cruxible.{family}.provenance")
+    coverage = _required_object(facts, f"cruxible.{family}.attestation_coverage")
+    history = _required_object(facts, f"cruxible.{family}.history")
     source = facts.get(source_schema) if source_schema is not None else None
     if source is not None and not isinstance(source, dict):
         raise ProjectionIntegrityError("Document source mapping has an invalid shape")

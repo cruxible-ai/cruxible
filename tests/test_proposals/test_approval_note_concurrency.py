@@ -5,7 +5,7 @@ of any one file, so writing it is a read-modify-write over the evidence store.
 Serializing only the Git call left the render outside the lock: A could render
 `[A]`, B render `[A, B]` and write, and A then force-write `[A]` -- store two,
 Git one. Activation compares the two and refuses
-`playbill.proposal.note_disagrees_with_evidence`, so a benign second approval,
+`cruxible.proposal.note_disagrees_with_evidence`, so a benign second approval,
 which is exactly what an independent-approval instance exists to produce, could
 wedge a proposal with a tamper refusal whose named repairs do not clear it.
 """

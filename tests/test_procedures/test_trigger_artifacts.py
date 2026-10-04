@@ -135,14 +135,14 @@ def test_the_trigger_law_judges_targets_actions_and_accepted_events() -> None:
         CaptureLandingSchedule(event=SELECTOR),
     ):
         refused = _law(action_trigger("sweep", action="evidence.sweep", schedule=schedule))
-        assert _code(refused) == "playbill.trigger.schedule_unsupported_for_action"
+        assert _code(refused) == "cruxible.trigger.schedule_unsupported_for_action"
         assert "not supported yet" in refused.diagnostics[0].message
 
     landing = line_trigger(
         "on-landing", line="triage", schedule=CaptureLandingSchedule(event=SELECTOR)
     )
     assert (
-        _code(_law(landing, target_line_live=False)) == "playbill.trigger.target_line_unavailable"
+        _code(_law(landing, target_line_live=False)) == "cruxible.trigger.target_line_unavailable"
     )
     assert _law(landing, target_line_live=True).verdict == "accepted"
     # A Line that binds its triggering Capture accepts exactly its declared event.
@@ -157,12 +157,12 @@ def test_the_trigger_law_judges_targets_actions_and_accepted_events() -> None:
                 target_line_input=CaptureEventInput(event=other),
             )
         )
-        == "playbill.trigger.event_not_accepted"
+        == "cruxible.trigger.event_not_accepted"
     )
     ticking = line_trigger("hourly", line="triage", schedule=CadenceSchedule(interval_seconds=60))
     assert (
         _code(_law(ticking, target_line_live=True, target_line_input=exact))
-        == "playbill.trigger.event_not_accepted"
+        == "cruxible.trigger.event_not_accepted"
     )
     event_window = line_trigger(
         "window",
@@ -188,18 +188,18 @@ def test_an_action_is_held_to_its_declared_input_by_the_line_event_rule() -> Non
     actions = {**INTERNAL_ACTIONS, needs_capture.name: needs_capture}
     ticking = action_trigger("probe", action="test.on_capture", interval_seconds=60)
     refused = _law(ticking, actions=actions)
-    assert _code(refused) == "playbill.trigger.event_not_accepted"
+    assert _code(refused) == "cruxible.trigger.event_not_accepted"
     assert "needs a Capture event" in refused.diagnostics[0].message
     fires_on_event = action_trigger(
         "probe", action="test.on_capture", schedule=CaptureLandingSchedule(event=SELECTOR)
     )
     assert (
         _code(_law(fires_on_event, actions=actions))
-        == "playbill.trigger.schedule_unsupported_for_action"
+        == "cruxible.trigger.schedule_unsupported_for_action"
     )
     assert schedule_satisfies_input(fires_on_event.schedule, needs_capture.input)
     # Without the entry, the name is simply unknown.
-    assert _code(_law(ticking)) == "playbill.trigger.action_unknown"
+    assert _code(_law(ticking)) == "cruxible.trigger.action_unknown"
     # Needing no input, an action is satisfied by every schedule kind.
     assert all(
         schedule_satisfies_input(item, NoTriggerInput())
@@ -225,7 +225,7 @@ def test_the_trigger_law_refuses_a_cron_schedule_the_grammar_does_not_admit() ->
         ("0 0 30 2 *", "never fires"),
     ):
         refused = _law(nightly(expression))
-        assert _code(refused) == "playbill.trigger.cron_invalid"
+        assert _code(refused) == "cruxible.trigger.cron_invalid"
         assert reason in refused.diagnostics[0].message
     # A cron tick carries no Capture, so a Line that binds one refuses it.
     assert (
@@ -236,7 +236,7 @@ def test_the_trigger_law_refuses_a_cron_schedule_the_grammar_does_not_admit() ->
                 target_line_input=CaptureEventInput(event=SELECTOR),
             )
         )
-        == "playbill.trigger.event_not_accepted"
+        == "cruxible.trigger.event_not_accepted"
     )
 
 
@@ -256,7 +256,7 @@ def test_the_trigger_law_holds_succession_and_never_revives() -> None:
                 target_line_live=True,
             )
         )
-        == "playbill.trigger.invalid_genesis"
+        == "cruxible.trigger.invalid_genesis"
     )
     changed = successor(first, schedule=CadenceSchedule(interval_seconds=60))
     assert _law(changed, predecessor=_accepted(first), target_line_live=True).verdict == "accepted"
@@ -270,7 +270,7 @@ def test_the_trigger_law_holds_succession_and_never_revives() -> None:
                 target_line_live=True,
             )
         )
-        == "playbill.trigger.predecessor_mismatch"
+        == "cruxible.trigger.predecessor_mismatch"
     )
     retired = successor(first, state="retired")
     # A retiring Trigger sets nothing off: the Line it named may already be gone.
@@ -278,7 +278,7 @@ def test_the_trigger_law_holds_succession_and_never_revives() -> None:
     revived = successor(retired)
     assert (
         _code(_law(revived, predecessor=_accepted(retired), target_line_live=True))
-        == "playbill.trigger.revival_refused"
+        == "cruxible.trigger.revival_refused"
     )
 
 
@@ -354,17 +354,17 @@ def test_proposals_hold_triggers_to_the_line_they_aim_at_and_lines_to_their_trig
     instance, owner, line = _line_world(tmp_path)
     stray = line_trigger("stray", line="absent-line", schedule=CadenceSchedule(interval_seconds=60))
     assert _refused(_submit(instance, trigger_members(stray), "stray")) == (
-        "playbill.trigger.target_line_unavailable",
+        "cruxible.trigger.target_line_unavailable",
     )
     unknown = action_trigger("mystery", action="mystery.action", interval_seconds=60)
     assert _refused(_submit(instance, trigger_members(unknown), "unknown")) == (
-        "playbill.trigger.action_unknown",
+        "cruxible.trigger.action_unknown",
     )
     landing_sweep = action_trigger(
         "landing-sweep", action="evidence.sweep", schedule=CaptureLandingSchedule(event=SELECTOR)
     )
     assert _refused(_submit(instance, trigger_members(landing_sweep), "landing-sweep")) == (
-        "playbill.trigger.schedule_unsupported_for_action",
+        "cruxible.trigger.schedule_unsupported_for_action",
     )
 
     hourly = line_trigger(
@@ -390,7 +390,7 @@ def test_proposals_hold_triggers_to_the_line_they_aim_at_and_lines_to_their_trig
     refused = _submit(
         instance, {line_spec_path(line.identity.name): render_line_spec(retired_line)}, "retire"
     )
-    assert _refused(refused) == ("playbill.line.triggers_not_settled",)
+    assert _refused(refused) == ("cruxible.line.triggers_not_settled",)
     message = refused.evaluation.diagnostics[0].message
     assert "Trigger:hourly" in message and "Trigger:on-landing" in message
     # Retiring one of the two is still not enough; retiring both in the set is.
@@ -402,7 +402,7 @@ def test_proposals_hold_triggers_to_the_line_they_aim_at_and_lines_to_their_trig
         },
         "retire-half",
     )
-    assert _refused(half) == ("playbill.line.triggers_not_settled",)
+    assert _refused(half) == ("cruxible.line.triggers_not_settled",)
     whole = _submit(
         instance,
         {
@@ -426,7 +426,7 @@ def test_proposals_hold_triggers_to_the_line_they_aim_at_and_lines_to_their_trig
         candidate_tree=tree,
         timestamp="2026-09-30T10:06:00.000000Z",
     )
-    assert _refused(removed) == ("playbill.trigger.removal_unsupported",)
+    assert _refused(removed) == ("cruxible.trigger.removal_unsupported",)
 
 
 def test_new_instances_start_with_the_default_internal_triggers(tmp_path):
@@ -536,7 +536,7 @@ def test_triggers_are_authored_lowered_and_read_like_other_definitions(tmp_path)
     assert authored.line == line.identity and authored.lifecycle.predecessor_digest is None
     with pytest.raises(AuthoringLoweringError) as missing:
         _render_trigger_member(payload.model_copy(update={"line_name": "absent"}), tree=tree)
-    assert missing.value.code == "playbill.authoring.trigger_line_missing"
+    assert missing.value.code == "cruxible.authoring.trigger_line_missing"
 
     tree[path] = content
     _accept_tree(instance, owner, tree, timestamp="2026-09-30T10:02:00.000000Z", proposal_name="a")
@@ -608,9 +608,9 @@ def test_generation_schedule_uses_the_existing_target_input_law() -> None:
                 target_line_input=CaptureEventInput(event=SELECTOR),
             )
         )
-        == "playbill.trigger.event_not_accepted"
+        == "cruxible.trigger.event_not_accepted"
     )
     capture_action = action_trigger(
         "floor", action="floor.refresh", schedule=CaptureLandingSchedule(event=SELECTOR)
     )
-    assert _code(_law(capture_action)) == "playbill.trigger.schedule_unsupported_for_action"
+    assert _code(_law(capture_action)) == "cruxible.trigger.schedule_unsupported_for_action"

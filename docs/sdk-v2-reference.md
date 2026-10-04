@@ -379,7 +379,7 @@ Produces a structured report without executing the body. `world` supplies an
 explicit pinned ontology/definition context; it is not a captured live dataset.
 No provider is called and no accepted state is written. A supplied World may
 perform normal schema reads. Without a World, preview reports
-`playbill.source.context_required` and remains unready; dependency compilation
+`cruxible.source.context_required` and remains unready; dependency compilation
 and identity resolution belong to the backend, including for pure Procedures.
 
 `ready_for_prepare` is false when required source, contract, or binding checks
@@ -1091,7 +1091,7 @@ Keep existing `step`, `code`, and `message`. Source diagnostics add:
 `preview()` reports static diagnostics. `build()` raises the existing
 `ProcedureCompositionError` with that preview on a static failure. Normal
 transport, authorization, and governed refusal handling stays as specified in
-the base SDK. Source diagnostic codes use the `playbill.source.*` namespace,
+the base SDK. Source diagnostic codes use the `cruxible.source.*` namespace,
 including unsupported syntax, binding, contract, availability, and context errors.
 
 ## Source identity and review

@@ -294,7 +294,7 @@ def test_evaluation_time_reproduces_currency_without_rewriting_evidence() -> Non
             )
         }
     )
-    with pytest.raises(ValueError, match="playbill.claim.evidence_freshness_invalid"):
+    with pytest.raises(ValueError, match="cruxible.claim.evidence_freshness_invalid"):
         verify_claim_verdict_freshness(forged, rule=rule, captures=(evidence,))
 
 

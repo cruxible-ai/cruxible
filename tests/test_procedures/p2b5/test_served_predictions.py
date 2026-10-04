@@ -663,7 +663,7 @@ def test_retained_terminal_settles_exact_investigation_and_replays(
         outcome="settled" if settled else "proposed",
         procedure_mandate_digest="sha256:" + "d" * 64,
         accepted_git_oid="e" * 40 if settled else None,
-        fallback_reason=None if settled else "playbill.settle.condition_false",
+        fallback_reason=None if settled else "cruxible.settle.condition_false",
     )
     terminal = writer.append(
         stream=stream,

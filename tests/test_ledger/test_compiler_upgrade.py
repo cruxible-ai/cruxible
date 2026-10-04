@@ -112,10 +112,10 @@ def test_upgrade_preserves_historical_coordinates_and_reopens(
 @pytest.mark.parametrize(
     ("target", "code"),
     [
-        (RESOLUTION_COMPILER, "playbill.compiler_upgrade.already_current"),
+        (RESOLUTION_COMPILER, "cruxible.compiler_upgrade.already_current"),
         (
             CompilerCoordinate(rule_digest="sha256:" + "ff" * 32),
-            "playbill.compiler_upgrade.unsupported_transition",
+            "cruxible.compiler_upgrade.unsupported_transition",
         ),
     ],
 )
@@ -291,7 +291,7 @@ def test_changed_base_and_mixed_proposal_refuse_upgrade(tmp_path, monkeypatch):
             actor_id="owner",
         )
         assert result.candidate is None
-        assert any(d.code == "playbill.compiler_upgrade.invalid" for d in result.diagnostics)
+        assert any(d.code == "cruxible.compiler_upgrade.invalid" for d in result.diagnostics)
 
 
 def test_upgrade_stale_candidate_cannot_cross_another_acceptance(tmp_path, monkeypatch):
@@ -564,7 +564,7 @@ def test_the_governed_triggers_upgrade_waits_for_every_embedded_trigger_line_to_
     refused = propose(instance, GOVERNED_TRIGGERS_COMPILER)
     assert refused.candidate is None
     (diagnostic,) = refused.evaluation.diagnostics
-    assert diagnostic.code == "playbill.compiler_upgrade.invalid"
+    assert diagnostic.code == "cruxible.compiler_upgrade.invalid"
     assert "Line:embedded-line" in diagnostic.message
 
     retired = embedded.model_copy(

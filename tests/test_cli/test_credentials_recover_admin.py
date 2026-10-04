@@ -484,7 +484,7 @@ def test_a_recover_admin_preview_writes_nothing_and_its_coordinate_pins_the_comm
     )
     stale = runner.invoke(cli, [*command, "--commit", "--at", preview["coordinate"]["digest"]])
     assert stale.exit_code != 0
-    assert "playbill.preview.state_moved" in stale.output
+    assert "cruxible.preview.state_moved" in stale.output
     assert _recovery_event_rows(state_dir) == []
 
     fresh = json.loads(runner.invoke(cli, [*command, "--dry-run"]).stdout)

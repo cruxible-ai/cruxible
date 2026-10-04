@@ -274,7 +274,7 @@ def test_one_malformed_member_refuses_the_whole_intent_at_its_index(tmp_path: Pa
     offending = {(item.code, item.offending_element) for item in diagnostic.frontier.diagnostics}
     assert offending == {
         (
-            "playbill.authoring.claim_type_not_found",
+            "cruxible.authoring.claim_type_not_found",
             f"members[{index}].statement.predicate",
         )
     }
@@ -315,7 +315,7 @@ def test_a_member_reads_a_sibling_definition_only_when_the_set_carries_it(
     ).intent
     with pytest.raises(AuthoringLoweringError) as refusal:
         lower_authoring(instance, intent=missing, actor_id=actor.actor_id)
-    assert refusal.value.code == "playbill.authoring.referent_not_found"
+    assert refusal.value.code == "cruxible.authoring.referent_not_found"
     assert refusal.value.offending_element.startswith("members[")
 
 
@@ -343,7 +343,7 @@ def test_two_members_on_one_path_and_one_slot_name_their_member_indices(
     ).intent
     with pytest.raises(AuthoringLoweringError) as collision:
         lower_authoring(instance, intent=collided, actor_id=actor.actor_id)
-    assert collision.value.code == "playbill.authoring.change_set_member_path_collision"
+    assert collision.value.code == "cruxible.authoring.change_set_member_path_collision"
     assert collision.value.repairs[0].replacement == {
         "members": [0, 1],
         "path": claim_path(accepted_claim_id),
@@ -361,7 +361,7 @@ def test_two_members_on_one_path_and_one_slot_name_their_member_indices(
     ).intent
     with pytest.raises(AuthoringLoweringError) as slot:
         lower_authoring(instance, intent=siblings, actor_id=actor.actor_id)
-    assert slot.value.code == "playbill.authoring.existing_claim_dispositions_incomplete"
+    assert slot.value.code == "cruxible.authoring.existing_claim_dispositions_incomplete"
     assert slot.value.offending_element.startswith("members[")
     replacement = slot.value.repairs[0].replacement
     assert isinstance(replacement, dict)
@@ -442,7 +442,7 @@ def test_a_retirement_member_refuses_an_incomplete_closure(tmp_path: Path) -> No
     ).intent
     with pytest.raises(AuthoringLoweringError) as refusal:
         lower_authoring(instance, intent=intent, actor_id=actor.actor_id)
-    assert refusal.value.code == "playbill.authoring.claim_retirement_closure_incomplete"
+    assert refusal.value.code == "cruxible.authoring.claim_retirement_closure_incomplete"
     assert refusal.value.offending_element.endswith(".dependents")
 
 
@@ -478,7 +478,7 @@ def test_the_changed_member_ceiling_is_an_operator_knob_that_ignores_cards(
     refused = coordinator.preflight(intent.intent_id, actor=actor)
     assert refused.verdict == "refused"
     assert {item.code for item in refused.frontier.diagnostics} == {
-        "playbill.authoring.proposal_receive_refused"
+        "cruxible.authoring.proposal_receive_refused"
     }
 
 
@@ -618,7 +618,7 @@ def test_an_indexed_member_reference_expectation_resolves_and_refuses(
     assert not [
         item
         for item in resolved.frontier.diagnostics
-        if item.code.startswith("playbill.authoring.reference_")
+        if item.code.startswith("cruxible.authoring.reference_")
     ]
 
     misaddressed = coordinator.create(
@@ -638,10 +638,10 @@ def test_an_indexed_member_reference_expectation_resolves_and_refuses(
     assert {
         (item.code, item.offending_element)
         for item in refused.frontier.diagnostics
-        if item.code.startswith("playbill.authoring.reference_")
+        if item.code.startswith("cruxible.authoring.reference_")
     } == {
         (
-            "playbill.authoring.reference_payload_mismatch",
+            "cruxible.authoring.reference_payload_mismatch",
             f"members[{index}].statement.subject",
         )
     }
@@ -793,7 +793,7 @@ def test_compiler_stage_refusals_are_addressed_to_the_offending_member(
             "claim_type_succession",
             (claim_type_member, SubjectAuthoringPayload(subject=_shell("wi-2"))),
             claim_type_member,
-            "playbill.claim_type.stale_predecessor",
+            "cruxible.claim_type.stale_predecessor",
             claim_type_path("project.work_item.status"),
             "",
         ),
@@ -801,7 +801,7 @@ def test_compiler_stage_refusals_are_addressed_to_the_offending_member(
             "subject_succession",
             (subject_member, SubjectAuthoringPayload(subject=_shell("wi-2"))),
             subject_member,
-            "playbill.subject.stale_predecessor",
+            "cruxible.subject.stale_predecessor",
             subject_path(SUBJECT_KIND, "wi-42"),
             "",
         ),
@@ -809,7 +809,7 @@ def test_compiler_stage_refusals_are_addressed_to_the_offending_member(
             "permitted_roles",
             (role_type_member, role_claim_member),
             role_claim_member,
-            "playbill.claim.role_not_permitted",
+            "cruxible.claim.role_not_permitted",
             "",
             "role",
         ),
@@ -817,7 +817,7 @@ def test_compiler_stage_refusals_are_addressed_to_the_offending_member(
             "literal_schema",
             (schema_claim_member, SubjectAuthoringPayload(subject=_shell("wi-2"))),
             schema_claim_member,
-            "playbill.claim.literal_schema_invalid",
+            "cruxible.claim.literal_schema_invalid",
             "",
             "object",
         ),
@@ -870,7 +870,7 @@ def test_a_singular_intent_is_never_re_addressed_to_a_member(
     ).intent
 
     offending = _refused_diagnostics(coordinator, intent.intent_id, actor)
-    diagnostic = offending["playbill.claim.literal_schema_invalid"]
+    diagnostic = offending["cruxible.claim.literal_schema_invalid"]
     # Its own statement field is addressed as authored; the artifact path rides along.
     assert diagnostic.offending_element == "statement.object"
     assert _repair_replacement(diagnostic) == {
@@ -898,16 +898,16 @@ def test_a_dependency_draft_that_carries_a_succession_still_refuses_typed(
 
     Before this batch a dependency draft that named a predecessor, or that was
     born retired, was refused at authoring as
-    `playbill.authoring.dependency_not_one_claim` on the grounds that a
+    `cruxible.authoring.dependency_not_one_claim` on the grounds that a
     succession meant a second change. A change set IS one change, so the staged
     tree decides instead and the draft is installed. What refuses it now is the
     ordinary compiler law on the artifact it wrote, and this pins both codes
     for a succession carried inside a set:
 
     - a draft naming a predecessor for a Subject that has none accepted refuses
-      `playbill.subject.unexpected_predecessor`, addressed to the member that
+      `cruxible.subject.unexpected_predecessor`, addressed to the member that
       installed the draft;
-    - a born-retired draft refuses `playbill.change_set.unresolved_pin`, which
+    - a born-retired draft refuses `cruxible.change_set.unresolved_pin`, which
       the compiler raises against the whole candidate rather than one artifact,
       so it stays addressed at `payload`.
 
@@ -935,7 +935,7 @@ def test_a_dependency_draft_that_carries_a_succession_still_refuses_typed(
     ).intent
     offending = _refused_diagnostics(coordinator, intent.intent_id, actor)
     draft_path = subject_path(SUBJECT_KIND, "wi-succession")
-    diagnostic = offending["playbill.subject.unexpected_predecessor"]
+    diagnostic = offending["cruxible.subject.unexpected_predecessor"]
     assert diagnostic.stage == "proposal_evaluation"
     assert diagnostic.offending_element == f"members[{index}].{draft_path}"
     assert _repair_replacement(diagnostic) == {
@@ -956,7 +956,7 @@ def test_a_dependency_draft_that_carries_a_succession_still_refuses_typed(
         canonical_timestamp=TIMESTAMP,
     ).intent
     pinned = _refused_diagnostics(coordinator, born_retired.intent_id, actor)
-    unresolved = pinned["playbill.change_set.unresolved_pin"]
+    unresolved = pinned["cruxible.change_set.unresolved_pin"]
     assert unresolved.stage == "proposal_evaluation"
     assert unresolved.offending_element == "payload"
     assert _repair_replacement(unresolved) == {"offending_element": "payload"}
@@ -1306,7 +1306,7 @@ def test_a_thousand_member_change_set_refuses_before_it_is_compiled(
     diagnostic = next(
         item
         for item in result.frontier.diagnostics
-        if item.code == "playbill.authoring.change_set_record_too_large"
+        if item.code == "cruxible.authoring.change_set_record_too_large"
     )
     # The refusal names the measured limit, in members and in bytes, and the
     # size this set would have written.
@@ -1322,7 +1322,7 @@ def test_a_thousand_member_change_set_refuses_before_it_is_compiled(
         "projected_change_set_record_bytes": limits.projected_change_set_record_bytes(1_000),
     }
     assert [item.blocked_by for item in result.frontier.blocked_checks] == [
-        ("playbill.authoring.change_set_record_too_large",)
+        ("cruxible.authoring.change_set_record_too_large",)
     ]
 
 
@@ -1355,7 +1355,7 @@ def test_a_set_at_the_record_ceiling_still_compiles(tmp_path: Path) -> None:
 
     assert refused.verdict == "refused"
     assert {item.code for item in refused.frontier.diagnostics} == {
-        "playbill.authoring.change_set_record_too_large"
+        "cruxible.authoring.change_set_record_too_large"
     }
 
 
@@ -1406,7 +1406,7 @@ def test_a_set_of_retirements_at_the_old_ceiling_refuses(
     diagnostic = next(
         item
         for item in result.frontier.diagnostics
-        if item.code == "playbill.authoring.change_set_record_too_large"
+        if item.code == "cruxible.authoring.change_set_record_too_large"
     )
     assert "projects to at least 582 record entries" in diagnostic.message
     assert str(limits.max_change_set_members) in diagnostic.message
@@ -1455,7 +1455,7 @@ def test_a_set_that_lowers_to_more_entries_than_it_authors_refuses_before_evalua
     diagnostic = next(
         item
         for item in result.frontier.diagnostics
-        if item.code == "playbill.authoring.change_set_record_too_large"
+        if item.code == "cruxible.authoring.change_set_record_too_large"
     )
     # Four: two Claim cards and the two Subject drafts that carry them.
     assert "lowers to 4 record entries" in diagnostic.message
@@ -1467,7 +1467,7 @@ def test_a_set_that_lowers_to_more_entries_than_it_authors_refuses_before_evalua
         "projected_change_set_record_bytes": 4 * per_member,
     }
     assert [item.blocked_by for item in result.frontier.blocked_checks] == [
-        ("playbill.authoring.change_set_record_too_large",)
+        ("cruxible.authoring.change_set_record_too_large",)
     ]
 
 
@@ -1504,7 +1504,7 @@ def test_a_compile_that_exhausts_memory_refuses_typed_instead_of_propagating(
     diagnostic = next(
         item
         for item in result.frontier.diagnostics
-        if item.code == "playbill.authoring.compile_budget_exceeded"
+        if item.code == "cruxible.authoring.compile_budget_exceeded"
     )
     assert diagnostic.owner == "daemon"
     assert str(ProposalReceiveLimits().max_change_set_members) in diagnostic.message
@@ -1544,7 +1544,7 @@ def test_a_revision_that_moves_the_subject_refuses_by_name(tmp_path: Path) -> No
     diagnostic = next(
         item
         for item in result.frontier.diagnostics
-        if item.code == "playbill.claim.revision_subject_moved"
+        if item.code == "cruxible.claim.revision_subject_moved"
     )
     assert "wi-42" in diagnostic.message, diagnostic.message
     assert "wi-9" in diagnostic.message, diagnostic.message
@@ -1579,7 +1579,7 @@ def test_a_revision_that_moves_the_predicate_refuses_by_name(tmp_path: Path) -> 
     diagnostic = next(
         item
         for item in result.frontier.diagnostics
-        if item.code == "playbill.claim.revision_predicate_moved"
+        if item.code == "cruxible.claim.revision_predicate_moved"
     )
     assert "project.work_item.status" in diagnostic.message, diagnostic.message
     assert "project.work_item.owner" in diagnostic.message, diagnostic.message

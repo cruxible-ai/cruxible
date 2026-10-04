@@ -244,7 +244,7 @@ def service_propose_playbill_document(
         instance,
         dry_run=dry_run,
         at=at,
-        operation="playbill.document.propose",
+        operation="cruxible.document.propose",
         describe=f"proposing Document {shell.document_id}",
         actor_id=actor_id,
         proposed_base=proposed_base,
@@ -279,7 +279,7 @@ def service_propose_playbill_principal_change(
         instance,
         dry_run=dry_run,
         at=at,
-        operation="playbill.principal.add",
+        operation="cruxible.principal.add",
         describe=f"the change to principal {principal.principal_id}",
         actor_id=actor_id,
         proposed_base=proposed_base,
@@ -383,7 +383,7 @@ def service_submit_playbill_approval(
         and attestation.signer_id == proposal.admission.actor_id
     ):
         raise ApprovalIntegrityError(
-            "playbill.approval.creator_forbidden: ordinary candidate creator cannot approve; "
+            "cruxible.approval.creator_forbidden: ordinary candidate creator cannot approve; "
             "after an eligible signer approves, run playbill proposal activate"
         )
     verified = verify_approval(
@@ -485,7 +485,7 @@ def _reconcile_proposal_notes(
                         continue
                     if stored is not None:
                         raise ProposalIntegrityError(
-                            "playbill.proposal.note_disagrees_with_evidence: "
+                            "cruxible.proposal.note_disagrees_with_evidence: "
                             f"the {kind} note on this review commit differs from the "
                             "proposal evidence the daemon persisted; re-read the proposal "
                             "with `playbill proposal review --json` and settle from that, "
@@ -650,8 +650,8 @@ def service_dereference_playbill_document(
     at: AcceptedCoordinate | None = None,
 ) -> PlaybillBodyRead:
     document = service_get_playbill_document(instance, identity=identity, access=access, at=at)
-    subject = _fact_value(document, "playbill.document.subject", "whole_document")
-    metadata = _fact_value(document, "playbill.document.metadata", "metadata")
+    subject = _fact_value(document, "cruxible.document.subject", "whole_document")
+    metadata = _fact_value(document, "cruxible.document.metadata", "metadata")
     if not isinstance(subject, dict) or not isinstance(metadata, dict):
         raise ProposalIntegrityError("Document projection facts have invalid public shapes")
     body_value = subject.get("body_digest")
@@ -734,30 +734,30 @@ def _compiler_upgrade_refusal(
     current_digest = current.compiler.rule_digest
     if value.target.rule_digest == current_digest:
         return RequestRefusedError(
-            "playbill.compiler_upgrade.already_current",
+            "cruxible.compiler_upgrade.already_current",
             f"the accepted state already runs compiler {current_digest}",
             repair=hand_edit_repair(
-                "playbill.compiler_upgrade.already_current",
+                "cruxible.compiler_upgrade.already_current",
                 required_change="Nothing to upgrade; no proposal is needed.",
             ),
         )
     if not upgrade_base_matches(value, current):
         return RequestRefusedError(
-            "playbill.compiler_upgrade.stale_base",
+            "cruxible.compiler_upgrade.stale_base",
             "the upgrade names a base that is not the current accepted coordinate",
             repair=hand_edit_repair(
-                "playbill.compiler_upgrade.stale_base",
+                "cruxible.compiler_upgrade.stale_base",
                 required_change="Propose against the current accepted coordinate.",
             ),
         )
     targets = supported_upgrade_targets(current.compiler)
     named = ", ".join(targets) if targets else "none"
     return RequestRefusedError(
-        "playbill.compiler_upgrade.unsupported_transition",
+        "cruxible.compiler_upgrade.unsupported_transition",
         f"no forward edge from compiler {current_digest} to {value.target.rule_digest}; "
         f"supported targets: {named}",
         repair=hand_edit_repair(
-            "playbill.compiler_upgrade.unsupported_transition",
+            "cruxible.compiler_upgrade.unsupported_transition",
             required_change=f"Target one supported compiler: {named}.",
         ),
     )
@@ -811,7 +811,7 @@ def service_propose_compiler_upgrade(
         instance,
         dry_run=dry_run,
         at=preview_at,
-        operation="playbill.compiler.upgrade",
+        operation="cruxible.compiler.upgrade",
         describe=f"the compiler upgrade to {target.rule_digest}",
         actor_id=actor_id,
         proposed_base=at,

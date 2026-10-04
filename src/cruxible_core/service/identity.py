@@ -66,33 +66,33 @@ def principal_refusal(
         active = active_principal_ids(instance)
         named = ", ".join(active) if active else "none yet"
         return PrincipalRefusedError(
-            "playbill.identity.principal_unconfigured",
+            "cruxible.identity.principal_unconfigured",
             "this process names no principal, and the local operator identity "
             f"'{LOCAL_OPERATOR_ACTOR_ID}' is not a registered principal on {instance_id}; "
             "repair: set CRUXIBLE_PRINCIPAL_ID (or pass --principal-id) to your "
             f"registered principal ID (active principals: {named})",
             repair=RepairOperation(
-                operation="playbill.orient",
+                operation="cruxible.orient",
                 arguments={"section": "principals", "configure": "CRUXIBLE_PRINCIPAL_ID"},
             ),
         )
     if standing == "revoked":
         return PrincipalRefusedError(
-            "playbill.identity.principal_revoked",
+            "cruxible.identity.principal_revoked",
             f"principal {principal_id!r} was revoked on {instance_id}; repair: act as an "
             "active principal (`cruxible playbill orient --section principals`)",
             repair=RepairOperation(
-                operation="playbill.orient",
+                operation="cruxible.orient",
                 arguments={"section": "principals", "revoked_principal_id": principal_id},
             ),
         )
     return PrincipalRefusedError(
-        "playbill.identity.principal_absent",
+        "cruxible.identity.principal_absent",
         f"principal {principal_id!r} is not registered on {instance_id}; repair: an "
         f"owner runs `cruxible playbill principal add {principal_id} --key-dir DIR`, "
         "then this process acts with the settings it writes",
         repair=RepairOperation(
-            operation="playbill.principal.add",
+            operation="cruxible.principal.add",
             arguments={"principal_id": principal_id},
         ),
     )
@@ -105,7 +105,7 @@ def credential_unbound_refusal(
 
     who = "request" if credential_label is None else f"bearer credential ({credential_label})"
     return PrincipalRefusedError(
-        "playbill.identity.credential_unbound",
+        "cruxible.identity.credential_unbound",
         f"this {who} acts as no principal, so it cannot "
         "author or attribute governed work; repair: mint one bound to your principal with "
         "its key: `cruxible credential mint --principal-id ID --key-dir DIR --mode "
@@ -121,7 +121,7 @@ def require_authoring_principal(instance: PlaybillInstance, actor_id: str) -> No
     """Refuse an authoring draft whose actor is not an active principal, before any work.
 
     Proposal evaluation refuses the same actor later
-    (``playbill.proposal.creator_principal_invalid``); refusing at create saves
+    (``cruxible.proposal.creator_principal_invalid``); refusing at create saves
     the caller from building and preflighting a payload that can never land.
     """
 
@@ -150,13 +150,13 @@ def authoring_refusal(
     terminal = instance.descriptor.decommissioned
     if terminal is not None:
         return AuthoringRefusal(
-            code="playbill.instance.decommissioned",
+            code="cruxible.instance.decommissioned",
             detail=(
                 f"the instance was decommissioned at {terminal.decommissioned_at} "
                 f"({terminal.reason}); every write is refused"
             ),
             repair=hand_edit_repair(
-                "playbill.instance.decommissioned",
+                "cruxible.instance.decommissioned",
                 required_change=(
                     "author on another instance; a decommissioned one accepts no writes"
                 ),
@@ -170,7 +170,7 @@ def authoring_refusal(
         refusal = principal_refusal(instance, actor_id, configured=configured)
     if refusal is None and permission_mode < PermissionMode.GOVERNED_WRITE:
         refusal = PrincipalRefusedError(
-            "playbill.identity.permission_insufficient",
+            "cruxible.identity.permission_insufficient",
             f"this request runs at {permission_mode.name.lower()}, and authoring needs "
             "governed_write; repair: mint a governed_write credential for your principal: "
             f"`cruxible credential mint --principal-id {actor_id} --key-dir DIR --mode "

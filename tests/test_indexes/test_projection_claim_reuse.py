@@ -57,7 +57,7 @@ def test_full_reconstruction_is_repeatable_and_detached(tmp_path):
     repeated = _parse(instance)
     _assert_same_rows_and_digest(tmp_path, cold, repeated)
     value = next(
-        f.value for f in repeated[0].semantic_facts if f.schema_id == "playbill.claim.backing"
+        f.value for f in repeated[0].semantic_facts if f.schema_id == "cruxible.claim.backing"
     )
     assert isinstance(value, dict)
     value.clear()
@@ -122,10 +122,10 @@ def test_warm_static_facts_still_require_current_registry_declarations(tmp_path)
             d
             for kind in ("semantic", "presentation")
             for d in registry.declarations(kind)
-            if d.schema_id != "playbill.claim.statement"
+            if d.schema_id != "cruxible.claim.statement"
         ],
         artifact_kinds=registry._artifact_kinds,
     )
     for _ in range(2):
-        with pytest.raises(ProjectionFormatError, match="undeclared.*playbill.claim.statement"):
+        with pytest.raises(ProjectionFormatError, match="undeclared.*cruxible.claim.statement"):
             _parse(instance, registry=without_statement)

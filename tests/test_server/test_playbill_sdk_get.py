@@ -92,7 +92,7 @@ def test_get_resolves_strings_and_typed_refs_directly(
     proof = pb.get(claim_id, detail="proof")
     assert isinstance(proof.value, ClaimViewRecord)
 
-    with pytest.raises(CoreError, match="playbill.get.ref_not_found"):
+    with pytest.raises(CoreError, match="cruxible.get.ref_not_found"):
         pb.get("project.work_item/wi-4")
 
 
@@ -378,13 +378,13 @@ def test_the_compact_coordinate_passes_back_as_at_on_every_surface(
     too_short = too_short_prefix(compact)
     short = client.post(get_url, json={"ref": ref, "at": too_short})
     assert short.status_code == 400, short.text
-    assert short.json()["error_code"] == "playbill.read.coordinate_prefix_too_short"
+    assert short.json()["error_code"] == "cruxible.read.coordinate_prefix_too_short"
     short_orient = client.get(f"/api/v1/{instance_id}/playbill/orient", params={"at": too_short})
-    assert short_orient.json()["error_code"] == "playbill.read.coordinate_prefix_too_short"
+    assert short_orient.json()["error_code"] == "cruxible.read.coordinate_prefix_too_short"
     short_query = client.post(
         f"/api/v1/{instance_id}/playbill/query", json={"kind": "ClaimType", "at": too_short}
     )
-    assert short_query.json()["error_code"] == "playbill.read.coordinate_prefix_too_short"
+    assert short_query.json()["error_code"] == "cruxible.read.coordinate_prefix_too_short"
 
     # SDK and MCP.
     pb = _sdk(client, instance_id, tmp_path)

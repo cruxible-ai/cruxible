@@ -330,28 +330,28 @@ NextReason: TypeAlias = Literal[
 ]
 NextSeverity: TypeAlias = Literal["blocking", "repair", "warning"]
 NextRepairOperation: TypeAlias = Literal[
-    "playbill.authoring.create",
-    "playbill.authoring.bind",
-    "playbill.claim.retire",
-    "playbill.set",
-    "playbill.write",
-    "playbill.floor.export",
-    "playbill.block.depublish",
-    "playbill.block.repin",
-    "playbill.block.sync",
-    "playbill.document.propose",
-    "playbill.proposal.readmit",
-    "playbill.proposal.approve",
-    "playbill.compiler.upgrade",
-    "playbill.line.arm",
-    "playbill.line.dispatch",
-    "playbill.settle",
+    "cruxible.authoring.create",
+    "cruxible.authoring.bind",
+    "cruxible.claim.retire",
+    "cruxible.set",
+    "cruxible.write",
+    "cruxible.floor.export",
+    "cruxible.block.depublish",
+    "cruxible.block.repin",
+    "cruxible.block.sync",
+    "cruxible.document.propose",
+    "cruxible.proposal.readmit",
+    "cruxible.proposal.approve",
+    "cruxible.compiler.upgrade",
+    "cruxible.line.arm",
+    "cruxible.line.dispatch",
+    "cruxible.settle",
     "hand_edit",
 ]
 # The next queue's own refusals that carry a declared repair. A page cursor
 # names the whole queue it continues; once that queue moves, re-reading page
 # one is the repair.
-NextRefusalCode: TypeAlias = Literal["playbill.next.cursor_mismatch"]
+NextRefusalCode: TypeAlias = Literal["cruxible.next.cursor_mismatch"]
 #: Rows per next page when the request names none, and the most one page carries.
 NEXT_DEFAULT_LIMIT = 100
 NEXT_MAX_LIMIT = 1000

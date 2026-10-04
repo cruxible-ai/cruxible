@@ -158,7 +158,7 @@ def _payload(
     authoring: DirectClaimAuthoringV1,
 ) -> ClaimAuthoringPayloadV1 | ClaimAuthoringPayloadV2:
     if authoring.retire:
-        raise ValueError("retirement fixtures must use playbill.claim.retire")
+        raise ValueError("retirement fixtures must use cruxible.claim.retire")
     if authoring.dependency_subject_shells or authoring.dependency_claim_types:
         raise ValueError("one-Claim dependency drafts accept only the Claim's direct dependencies")
     statement = authoring.statement

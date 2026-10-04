@@ -413,7 +413,7 @@ def test_coverage_commands_are_reads_and_stay_out_of_the_mutating_inventory(
                     "watcher_health": "absent",
                     "access_profile": {
                         "tag": "playbill-coverage-access-profile-v1",
-                        "profile_id": "playbill.coverage.read",
+                        "profile_id": "cruxible.coverage.read",
                         "permitted_access_classes": ["instance", "public"],
                         "disclose_restricted_existence": True,
                     },
@@ -658,7 +658,7 @@ def test_workspace_attach_refuses_a_different_registration_without_writing(
     )
 
     assert result.exit_code == 1
-    assert "playbill.workspace.registration_disagrees" in result.output
+    assert "cruxible.workspace.registration_disagrees" in result.output
     assert "cruxible playbill workspace detach --instance-id inst_other" in result.output
     assert not (workspace / ".playbill" / "coverage.json").exists()
 

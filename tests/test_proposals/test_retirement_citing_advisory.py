@@ -89,7 +89,7 @@ def test_citing_another_claims_coordinator_capture_is_refused_at_evaluation(
     assert result.evaluation.verdict == "refused"
     assert result.candidate is None
     assert [item.code for item in result.evaluation.diagnostics] == [
-        "playbill.claim.self_source_capture_unbound"
+        "cruxible.claim.self_source_capture_unbound"
     ]
 
 

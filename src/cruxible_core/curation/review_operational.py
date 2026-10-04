@@ -44,7 +44,7 @@ _UNCHECKED_PARTITION_HEAD = object()
 class ReviewOperationalStoreError(CruxibleError):
     """Operational state is corrupt, unsafe, or concurrently changed."""
 
-    code = "playbill.curation.operational_store_invalid"
+    code = "cruxible.curation.operational_store_invalid"
 
     @property
     def error_code(self) -> str:
@@ -57,7 +57,7 @@ class ReviewOperationalStoreError(CruxibleError):
 class ReviewOperationalConcurrentChangeError(CruxibleError):
     """The caller's expected operational partition head is no longer current."""
 
-    code = "playbill.curation.concurrent_change"
+    code = "cruxible.curation.concurrent_change"
 
     @property
     def error_code(self) -> str:

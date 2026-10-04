@@ -378,7 +378,7 @@ def evaluate_document_law(
         return DocumentLawResult(
             verdict="refused",
             diagnostics=(
-                _diagnostic("playbill.document.identity_path_mismatch", str(exc), path=path),
+                _diagnostic("cruxible.document.identity_path_mismatch", str(exc), path=path),
             ),
         )
 
@@ -391,7 +391,7 @@ def evaluate_document_law(
             verdict="refused",
             diagnostics=(
                 _diagnostic(
-                    "playbill.document.body_missing",
+                    "cruxible.document.body_missing",
                     "The exact content-addressed Document body is unavailable.",
                     path=path,
                 ),
@@ -405,7 +405,7 @@ def evaluate_document_law(
                 verdict="refused",
                 diagnostics=(
                     _diagnostic(
-                        "playbill.document.unexpected_predecessor",
+                        "cruxible.document.unexpected_predecessor",
                         "A new Document must begin at revision 1 without a predecessor.",
                         path=path,
                     ),
@@ -417,7 +417,7 @@ def evaluate_document_law(
                 verdict="refused",
                 diagnostics=(
                     _diagnostic(
-                        "playbill.document.predecessor_identity_mismatch",
+                        "cruxible.document.predecessor_identity_mismatch",
                         "The live predecessor has a different Document identity.",
                         path=path,
                     ),
@@ -428,7 +428,7 @@ def evaluate_document_law(
                 verdict="refused",
                 diagnostics=(
                     _diagnostic(
-                        "playbill.document.stale_predecessor",
+                        "cruxible.document.stale_predecessor",
                         "The proposed Document does not name the exact live predecessor digest.",
                         path=path,
                     ),
@@ -439,7 +439,7 @@ def evaluate_document_law(
                 verdict="refused",
                 diagnostics=(
                     _diagnostic(
-                        "playbill.document.revision_mismatch",
+                        "cruxible.document.revision_mismatch",
                         "Document supersession must advance the predecessor revision by one.",
                         path=path,
                     ),
@@ -450,7 +450,7 @@ def evaluate_document_law(
                 verdict="refused",
                 diagnostics=(
                     _diagnostic(
-                        "playbill.document.no_semantic_change",
+                        "cruxible.document.no_semantic_change",
                         "Document supersession must produce a new envelope digest.",
                         path=path,
                     ),

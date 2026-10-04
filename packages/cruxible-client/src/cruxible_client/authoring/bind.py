@@ -25,7 +25,7 @@ class AuthoringBindError(CruxibleError):
 class AuthoringBindAnchorNotFoundError(AuthoringBindError):
     """The requested anchor was absent from the selected file."""
 
-    code = "playbill.authoring.anchor_not_found"
+    code = "cruxible.authoring.anchor_not_found"
 
     def __init__(self) -> None:
         self.observed_occurrence_count = 0
@@ -46,7 +46,7 @@ class AuthoringBindAnchorNotFoundError(AuthoringBindError):
 class AuthoringBindAmbiguityError(AuthoringBindError):
     """The requested anchor identified multiple byte occurrences."""
 
-    code = "playbill.authoring.anchor_ambiguous"
+    code = "cruxible.authoring.anchor_ambiguous"
 
     def __init__(self, offsets: tuple[int, ...]) -> None:
         self.observed_occurrence_count = len(offsets)

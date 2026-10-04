@@ -91,11 +91,11 @@ AUTHORING_REBASE_DOMAIN = "playbill-authoring-rebase-v1"
 
 
 class AuthoringIntentRebaseError(CruxibleError):
-    code = "playbill.authoring.intent_rebase_not_allowed"
+    code = "cruxible.authoring.intent_rebase_not_allowed"
 
 
 class AuthoringIntentRebaseSubmitted(AuthoringIntentRebaseError):
-    code = "playbill.authoring.intent_rebase_submitted"
+    code = "cruxible.authoring.intent_rebase_submitted"
 
 
 class AuthoringProgramStampError(CruxibleError):
@@ -107,12 +107,12 @@ class AuthoringProgramStampError(CruxibleError):
 def _validate_program_stamp(program_stamp: AuthoringProgramStamp) -> None:
     if program_stamp.sdk_contract_snapshot_digest != AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST:
         raise AuthoringProgramStampError(
-            "playbill.authoring.program_stamp_contract_mismatch",
+            "cruxible.authoring.program_stamp_contract_mismatch",
             "the SDK contract snapshot is not the daemon's exact frozen snapshot",
         )
     if program_stamp.sdk_version != AUTHORING_SDK_VERSION:
         raise AuthoringProgramStampError(
-            "playbill.authoring.program_stamp_version_incompatible",
+            "cruxible.authoring.program_stamp_version_incompatible",
             "the SDK version is not compatible with this daemon",
         )
 
@@ -257,7 +257,7 @@ class AuthoringIntentCoordinator:
             _validate_program_stamp(program_stamp)
             if reference_expectations is None:
                 raise AuthoringProgramStampError(
-                    "playbill.authoring.program_stamp_contract_mismatch",
+                    "cruxible.authoring.program_stamp_contract_mismatch",
                     "a v3 program stamp requires the v2 reference-assertion envelope",
                 )
         intent = self._draft_intent(
@@ -1146,7 +1146,7 @@ class AuthoringIntentCoordinator:
             _validate_program_stamp(program_stamp)
             if reference_expectations is None:
                 raise AuthoringProgramStampError(
-                    "playbill.authoring.program_stamp_contract_mismatch",
+                    "cruxible.authoring.program_stamp_contract_mismatch",
                     "a v3 program stamp requires the v2 reference-assertion envelope",
                 )
         payload_digest = authoring_payload_digest(payload)

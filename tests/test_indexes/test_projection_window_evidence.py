@@ -62,8 +62,8 @@ from tests.test_claims.test_claim_citations import (
 
 SOURCE_ID = "repo.work-items"
 TIMESTAMP = "2026-08-21T12:00:00.000000Z"
-EVIDENCE_CODE = "playbill.projection.evidence_from_projection"
-UNVERIFIABLE_CODE = "playbill.projection.window_unverifiable"
+EVIDENCE_CODE = "cruxible.projection.evidence_from_projection"
+UNVERIFIABLE_CODE = "cruxible.projection.window_unverifiable"
 
 PROSE = b"status: ready\n"
 BLOCK_BODY = b"projected: the block says the work is ready\n"

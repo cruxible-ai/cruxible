@@ -67,7 +67,7 @@ def test_a_stale_set_refuses_then_setting_again_replaces_the_value_it_showed(
     )
     with pytest.raises(WriteRefusalError) as caught:
         pb.set(WI1, "status", "done", because="Stale.")
-    assert caught.value.error_code == "playbill.write.slot_changed"
+    assert caught.value.error_code == "cruxible.write.slot_changed"
     assert "'blocked'" in str(caught.value)
     again = pb.set(WI1, "status", "done", because="Seen it; replacing.")
     assert again.status == "accepted"
@@ -79,7 +79,7 @@ def test_a_refusal_raises_a_typed_error_carrying_the_outcome(pb: Cruxible) -> No
     with pytest.raises(WriteRefusalError) as caught:
         pb.set(WI1, "status", "dne", because="x")
     error = caught.value
-    assert error.error_code == "playbill.write.value_not_member"
+    assert error.error_code == "cruxible.write.value_not_member"
     assert error.candidates == ("done",)
     assert "blocked, done, ready" in str(error)
     assert isinstance(error.outcome, WriteOutcome) and error.outcome.status == "refused"
@@ -114,7 +114,7 @@ def test_expect_compares_by_value_on_set_retire_and_a_batch(
     )
     with pytest.raises(WriteRefusalError) as caught:
         pb.set(WI1, "status", "done", because="Stale.", expect="ready", at=None)
-    assert caught.value.error_code == "playbill.write.slot_changed"
+    assert caught.value.error_code == "cruxible.write.slot_changed"
     assert "holds 'blocked'" in str(caught.value)
     replaced = pb.set(WI1, "status", "done", because="Seen.", expect="blocked", at=None)
     assert replaced.status == "accepted" and replaced.changes[0].before == "blocked"
@@ -127,7 +127,7 @@ def test_expect_compares_by_value_on_set_retire_and_a_batch(
     assert linked.status == "accepted", linked
     with pytest.raises(WriteRefusalError) as present:
         pb.changes(because="Again.").add(WI1, "governs", f"{KIND}/wi-2", expect_absent=True).write()
-    assert present.value.error_code == "playbill.write.value_already_present"
+    assert present.value.error_code == "cruxible.write.value_already_present"
     ended = pb.retire(SlotRef(subject=WI1, field="status"), because="Withdrawn.", expect="done")
     assert ended.status == "accepted", ended
     batch = pb.changes(because="Unlinked.").retire(
@@ -150,7 +150,7 @@ def test_a_batch_names_its_subject_once(pb: Cruxible) -> None:
         batch.set(WI1, "status", "ready", subject=WI1)  # type: ignore[call-overload]
     with pytest.raises(WriteRefusalError) as caught:
         pb.changes(because="No subject.").set("status", "ready").write()
-    assert caught.value.error_code == "playbill.write.subject_required"
+    assert caught.value.error_code == "cruxible.write.subject_required"
     with pytest.raises(ValueError, match="write batch"):
         pb.changes(rationale="x", subject=WI1)  # type: ignore[call-overload]
 
@@ -195,7 +195,7 @@ def test_capture_handles_and_contract_evidence_from_the_sdk(
             because="x",
             evidence=CaptureEvidence(capture="CAP-" + "0" * 12),
         )
-    assert caught.value.error_code == "playbill.write.capture_not_found"
+    assert caught.value.error_code == "cruxible.write.capture_not_found"
 
 
 def test_retire_dry_run_and_proposal_accept(pb: Cruxible) -> None:
@@ -224,7 +224,7 @@ def test_world_writes_keep_references_valid_after_their_own_write(
     assert item.add(governs=world.project.work_item["wi-2"], because="Linked.").status == "accepted"
     with pytest.raises(WriteRefusalError) as present:
         item.add(governs=world.project.work_item["wi-2"], because="Again.", expect_absent=True)
-    assert present.value.error_code == "playbill.write.value_already_present"
+    assert present.value.error_code == "cruxible.write.value_already_present"
     assert (
         item.add(governs=world.project.work_item["wi-2"], because="Again.").changes[0].already_live
     )
@@ -239,7 +239,7 @@ def test_world_writes_keep_references_valid_after_their_own_write(
     other.set(WI1, "status", "blocked", because="Someone else.")
     with pytest.raises(WriteRefusalError) as caught:
         item.set(status="ready", because="Stale.")
-    assert caught.value.error_code == "playbill.write.slot_changed"
+    assert caught.value.error_code == "cruxible.write.slot_changed"
     # An untouched slot still writes from the same World.
     assert world.project.work_item["wi-3"].set(status="ready", because="x").status == "accepted"
 

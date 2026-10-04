@@ -133,12 +133,12 @@ agent's tool call.
 
 Three adapter diagnostics may appear on stderr, without changing stdout:
 
-- `playbill.coverage_hook.instance_id_missing` — set `instance_id` in
+- `cruxible.coverage_hook.instance_id_missing` — set `instance_id` in
   `.playbill/coverage.json` or select an ambient CLI instance.
-- `playbill.coverage_hook.rule_tag_invalid` — replace the rule tag with
+- `cruxible.coverage_hook.rule_tag_invalid` — replace the rule tag with
   `playbill-coverage-exact-path-rule-v1` or
   `playbill-coverage-path-prefix-rule-v1` and keep the matching fields above.
-- `playbill.coverage_hook.tool_response_invalid` — configure the Grep hook to
+- `cruxible.coverage_hook.tool_response_invalid` — configure the Grep hook to
   pass the structured PostToolUse `tool_response` object, not rendered text.
 
 Only Grep needs a structured response to carry annotations. Unstructured Read,

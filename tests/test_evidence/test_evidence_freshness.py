@@ -182,7 +182,7 @@ def test_v3_freshness_succeeds_service_wires_and_next_queue(tmp_path: Path) -> N
     assert isinstance(explanation, PlaybillClaimExplanationV3)
     assert isinstance(explanation.law_evidence, ClaimLawEvidence)
     assert explanation.freshness[0].state == "expired"
-    assert explanation.freshness[0].recapture_operation.operation == "playbill.authoring.bind"
+    assert explanation.freshness[0].recapture_operation.operation == "cruxible.authoring.bind"
 
     expiring = service_playbill_next(
         instance,

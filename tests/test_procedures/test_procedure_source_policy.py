@@ -57,7 +57,7 @@ def test_source_refuses_capture_excluded_by_accepted_replayability(
     assert invoker.spawn_calls == 1  # The real result is graded after observation.
     assert state.status == "node_refused", state.terminal
     assert state.terminal is not None
-    assert state.terminal.code == "playbill.acquisition.unavailable"
+    assert state.terminal.code == "cruxible.acquisition.unavailable"
     assert state.result is None
     assert state.source_observations[0].source_read_receipt is not None
     assert state.source_observations[0].capture_digest is None
@@ -96,7 +96,7 @@ def test_source_refuses_unsupported_coherence_before_read_or_provider(
     assert state.run_id is None
     assert state.terminal is not None
     assert state.terminal.code == "source_acquisition_refused"
-    assert "playbill.acquisition.coherence_unsupported" in str(state.terminal.details)
+    assert "cruxible.acquisition.coherence_unsupported" in str(state.terminal.details)
     if lane == "direct":
         assert not (instance.root / instance.descriptor.storage.exhaust / "procedure-runs").exists()
     else:
@@ -195,9 +195,9 @@ def test_acquired_eligibility_applies_declared_failure_and_default_authority(
     assert acquired.acquisition is not None
     assert decision.considered_capture_digests == (acquired.acquisition.capture_digest,)
     assert decision.reason_codes == (
-        "playbill.acquisition.unavailable"
+        "cruxible.acquisition.unavailable"
         if reason == "replayability"
-        else "playbill.acquisition.stale",
+        else "cruxible.acquisition.stale",
     )
 
 

@@ -671,9 +671,9 @@ def test_query_definition_law_refuses_path_pin_and_predecessor_drift() -> None:
     codes.append(unresolved.diagnostics[0].code)
 
     assert codes == [
-        "playbill.query_definition.path_mismatch",
-        "playbill.query_definition.unexpected_predecessor",
-        "playbill.query_definition.pin_unresolved",
+        "cruxible.query_definition.path_mismatch",
+        "cruxible.query_definition.unexpected_predecessor",
+        "cruxible.query_definition.pin_unresolved",
     ]
     assert all(
         item.subject == SemanticAddress.whole_artifact(QUERY_PATH)
@@ -707,14 +707,14 @@ def test_query_definition_successor_law_binds_the_exact_live_predecessor() -> No
         path=QUERY_PATH,
         predecessor=predecessor,
     )
-    assert stale.diagnostics[0].code == "playbill.query_definition.stale_predecessor"
+    assert stale.diagnostics[0].code == "cruxible.query_definition.stale_predecessor"
 
     resubmitted = evaluate_query_definition_law(
         original,
         path=QUERY_PATH,
         predecessor=predecessor,
     )
-    assert resubmitted.diagnostics[0].code == "playbill.query_definition.no_semantic_change"
+    assert resubmitted.diagnostics[0].code == "cruxible.query_definition.no_semantic_change"
 
     other_identity = evaluate_query_definition_law(
         successor,
@@ -726,7 +726,7 @@ def test_query_definition_successor_law_binds_the_exact_live_predecessor() -> No
         ),
     )
     assert other_identity.diagnostics[0].code == (
-        "playbill.query_definition.predecessor_identity_mismatch"
+        "cruxible.query_definition.predecessor_identity_mismatch"
     )
 
     retired = accepted_query(
@@ -748,7 +748,7 @@ def test_query_definition_successor_law_binds_the_exact_live_predecessor() -> No
         path=QUERY_PATH,
         predecessor=retired,
     )
-    assert revived.diagnostics[0].code == "playbill.query_definition.lifecycle_invalid"
+    assert revived.diagnostics[0].code == "cruxible.query_definition.lifecycle_invalid"
 
     reauthorized = evaluate_query_definition_law(
         active_work_query(
@@ -886,24 +886,24 @@ def test_query_definition_projects_its_declaration_policy_and_references() -> No
     )
     facts = {fact.schema_id: fact for fact in projection.semantic_facts}
     assert {
-        "playbill.query_definition.definition",
-        "playbill.query_definition.policy",
-        "playbill.query_definition.references",
+        "cruxible.query_definition.definition",
+        "cruxible.query_definition.policy",
+        "cruxible.query_definition.references",
     } <= set(facts)
-    declaration = facts["playbill.query_definition.definition"].value
+    declaration = facts["cruxible.query_definition.definition"].value
     assert isinstance(declaration, dict)
     assert declaration["address"] == SemanticAddress.whole_artifact(QUERY_PATH).model_dump(
         mode="json"
     )
     assert declaration["referenced_predicates"] == [REVIEWER_PREDICATE, STATUS_PREDICATE]
     assert declaration["subject_kinds"] == ["project.person", "project.work_item"]
-    policy = facts["playbill.query_definition.policy"].value
+    policy = facts["cruxible.query_definition.policy"].value
     assert isinstance(policy, dict)
     assert policy["result_cardinality"] == "many"
     assert policy["evaluation_policy"] == query.evaluation_policy.model_dump(mode="json")
     assert (
         projection_registry_for_compiler(PC_D_COMPILER).supports(
-            "playbill.query_definition.definition",
+            "cruxible.query_definition.definition",
             1,
             classification="semantic",
         )

@@ -75,7 +75,7 @@ def test_read_capture_refuses_an_unknown_or_ambiguous_prefix(
         service_read_playbill_capture(
             instance, request=CaptureReadRequest(capture_digest="CAP-" + "0" * 12), access=_ACCESS
         )
-    assert unknown.value.error_code == "playbill.capture.not_found"
+    assert unknown.value.error_code == "cruxible.capture.not_found"
     assert unknown.value.http_status == 404
     assert unknown.value.repair is not None
     assert unknown.value.repair.arguments == {"section": "captures"}
@@ -88,7 +88,7 @@ def test_read_capture_refuses_an_unknown_or_ambiguous_prefix(
         service_read_playbill_capture(
             instance, request=CaptureReadRequest(capture_digest="CAP-" + "1" * 12), access=_ACCESS
         )
-    assert ambiguous.value.error_code == "playbill.capture.ref_ambiguous"
+    assert ambiguous.value.error_code == "cruxible.capture.ref_ambiguous"
     assert ambiguous.value.http_status == 409
     assert tuple(ambiguous.value.candidates) == twins
 
@@ -117,7 +117,7 @@ def test_a_handle_the_bounded_lookup_cannot_settle_refuses_in_every_read(
     ):
         with pytest.raises(ReadRefusalError) as refused:
             read()
-        assert refused.value.error_code == "playbill.capture.ref_scan_exhausted"
+        assert refused.value.error_code == "cruxible.capture.ref_scan_exhausted"
         assert refused.value.http_status == 409
         assert "longer handle" in str(refused.value.context["repair_line"])
     assert _get(instance, f"Capture:{capture_digest}").ref == f"Capture:{capture_digest}"
@@ -157,7 +157,7 @@ def test_a_generation_number_reads_the_same_generation_as_its_oid(world) -> None
 
     with pytest.raises(ReadRefusalError) as missing:
         _get(instance, contract.identity.qualified, at=str(history[-1].sequence + 5))
-    assert missing.value.error_code == "playbill.read.coordinate_not_accepted"
+    assert missing.value.error_code == "cruxible.read.coordinate_not_accepted"
     assert str(history[-1].sequence) in missing.value.candidates
 
 
@@ -205,11 +205,11 @@ def test_the_cli_passes_a_generation_and_a_capture_handle(
     class _Stub:
         def get(self, instance_id: str, *, request: GetRequest) -> Any:
             requests.append(request)
-            raise ReadRefusalError("playbill.get.ref_not_found", "stub", http_status=404)
+            raise ReadRefusalError("cruxible.get.ref_not_found", "stub", http_status=404)
 
         def read_capture(self, instance_id: str, request: CaptureReadRequest) -> Any:
             requests.append(request)
-            raise ReadRefusalError("playbill.capture.not_found", "stub", http_status=404)
+            raise ReadRefusalError("cruxible.capture.not_found", "stub", http_status=404)
 
     monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: _Stub())

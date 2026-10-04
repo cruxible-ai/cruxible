@@ -9,9 +9,9 @@ previews or commits, and pins the call to the accepted coordinate it runs at:
   (``detached_history_reads``) and every fenced write door closed
   (``previewing``) -- so the change's own code runs up to its commit and stops
   there, writing nothing anywhere;
-- a commit carrying ``at`` refuses ``playbill.preview.state_moved`` when the
+- a commit carrying ``at`` refuses ``cruxible.preview.state_moved`` when the
   accepted head is no longer the one the preview saw, and a change that cannot
-  be undone refuses ``playbill.preview.confirmation_required`` without ``at``.
+  be undone refuses ``cruxible.preview.confirmation_required`` without ``at``.
 
 The pin is checked twice: once on entry, to refuse early, and again where the
 change commits, under that commit's own lock, so state that moves in between is
@@ -34,7 +34,7 @@ verdict on the same tree.
 A preview starts its guards before anything is opened: ``change_entry`` wraps
 the instance load at the call's door, so a cold open runs behind the fence and
 the recovery repairs an open would write are refused
-(``playbill.preview.recovery_pending``) instead of written.
+(``cruxible.preview.recovery_pending``) instead of written.
 """
 
 from __future__ import annotations
@@ -145,7 +145,7 @@ class StateChange:
 
     The write path calls ``observe`` with the subject's state, read inside the
     write's own transaction or lock: a preview records it as its coordinate, and
-    a commit carrying ``at`` refuses ``playbill.preview.state_moved`` when it
+    a commit carrying ``at`` refuses ``cruxible.preview.state_moved`` when it
     differs.
     """
 
@@ -162,7 +162,7 @@ class StateChange:
             return
         if not coordinate.digest.startswith(self.at):
             raise ChangeRefusedError(
-                "playbill.preview.state_moved",
+                "cruxible.preview.state_moved",
                 f"{self._describe} was previewed at {self.at}, but {coordinate.subject} is "
                 f"now at {coordinate.digest[:12]}; preview it again",
                 operation=self._operation,
@@ -239,7 +239,7 @@ def _pin(
     if at is None:
         if kind == "irreversible":
             raise ChangeRefusedError(
-                "playbill.preview.confirmation_required",
+                "cruxible.preview.confirmation_required",
                 f"{describe} cannot be undone, so it commits only with the coordinate of "
                 "its preview; preview it (dry_run), then commit with at=<that coordinate>",
                 operation=operation,
@@ -247,7 +247,7 @@ def _pin(
         return
     if head_oid is None or not head_oid.startswith(at):
         raise ChangeRefusedError(
-            "playbill.preview.state_moved",
+            "cruxible.preview.state_moved",
             f"{describe} was previewed at {at}, but accepted state is now at "
             f"{'nothing' if head_oid is None else head_oid[:12]}; preview it again",
             operation=operation,
@@ -309,7 +309,7 @@ def state_change_scope(
 
     Like ``change_scope``, but pinned to the state the change writes
     (``StateChange.observe``), which exists before genesis too. A change that
-    cannot be undone refuses ``playbill.preview.confirmation_required`` on
+    cannot be undone refuses ``cruxible.preview.confirmation_required`` on
     entry when it would commit without ``at``.
     """
 

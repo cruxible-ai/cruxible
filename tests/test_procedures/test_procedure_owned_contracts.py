@@ -478,7 +478,7 @@ def test_procedure_v2_lineage_cannot_drop_its_owned_contract_closure() -> None:
         predecessor=v2,
     )
     assert result.verdict == "refused"
-    assert result.diagnostics[0].code == "playbill.procedure.wire_downgrade"
+    assert result.diagnostics[0].code == "cruxible.procedure.wire_downgrade"
 
 
 @pytest.mark.parametrize(

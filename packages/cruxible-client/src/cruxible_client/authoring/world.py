@@ -95,7 +95,7 @@ def _write_value(value: object) -> Any:
 class WorldStructureError(SdkError):
     """The world cannot answer this name at the shape it was asked for."""
 
-    code = "playbill.sdk.world_structure_refused"
+    code = "cruxible.sdk.world_structure_refused"
 
 
 class Names(tuple[str, ...]):
@@ -516,7 +516,7 @@ class WorldSubject(SubjectRef):
         """Add one more value to many-valued fields of this Subject, by leaf.
 
         A value already there is answered as done; ``expect_absent=True`` refuses
-        it instead (``playbill.write.value_already_present``).
+        it instead (``cruxible.write.value_already_present``).
 
         Next: ``outcome.next`` for what is still needed.
         """

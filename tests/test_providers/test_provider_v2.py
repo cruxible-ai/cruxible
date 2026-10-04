@@ -168,7 +168,7 @@ def test_provider_v1_to_v2_succession_and_effect_parity() -> None:
             mutation_registration.registration.interface_id: mutation_registration,
         },
     )
-    assert refused.diagnostics[0].code == "playbill.provider.effect_declaration_mismatch"
+    assert refused.diagnostics[0].code == "cruxible.provider.effect_declaration_mismatch"
 
     unpinned = successor.model_copy(update={"pins": ()})
     refused = evaluate_provider_law(
@@ -177,4 +177,4 @@ def test_provider_v1_to_v2_succession_and_effect_parity() -> None:
         predecessor=predecessor,
         interface_registrations={registration.registration.identity.qualified: registration},
     )
-    assert refused.diagnostics[0].code == "playbill.provider.interface_pin_missing"
+    assert refused.diagnostics[0].code == "cruxible.provider.interface_pin_missing"

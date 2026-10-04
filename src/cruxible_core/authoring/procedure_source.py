@@ -113,7 +113,7 @@ def resolve_source(
     def fail(message: str) -> NoReturn:
         raise SourceCompileError(
             SourceDiagnostic(
-                code="playbill.source.binding_required",
+                code="cruxible.source.binding_required",
                 message=message,
                 span=SourceSpan(
                     filename=request.filename,

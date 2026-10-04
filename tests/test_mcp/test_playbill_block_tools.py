@@ -183,7 +183,7 @@ def test_a_page_edited_after_the_preview_refuses_the_pinned_detach(
         handlers.handle_playbill_block_detach(
             "inst_block_sync", files=["corpus/runbook.md"], at=preview.coordinate.digest
         )
-    assert moved.value.error_code == "playbill.preview.state_moved"
+    assert moved.value.error_code == "cruxible.preview.state_moved"
     assert page.read_bytes() == edited
 
 
@@ -252,5 +252,5 @@ def test_a_page_edited_at_the_adapter_read_refuses_the_pinned_detach(
         handlers.handle_playbill_block_detach(
             "inst_block_sync", files=["corpus/runbook.md"], at=preview.coordinate.digest
         )
-    assert moved.value.error_code == "playbill.preview.state_moved"
+    assert moved.value.error_code == "cruxible.preview.state_moved"
     assert page.read_bytes() == edited[0]

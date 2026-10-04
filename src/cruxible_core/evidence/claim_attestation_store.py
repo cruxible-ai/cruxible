@@ -58,7 +58,7 @@ class ClaimAttestationStoreError(CruxibleError):
 
 
 def _error(suffix: str, message: str) -> ClaimAttestationStoreError:
-    return ClaimAttestationStoreError(f"playbill.claim_attestation.{suffix}", message)
+    return ClaimAttestationStoreError(f"cruxible.claim_attestation.{suffix}", message)
 
 
 def _render(value: BaseModel) -> bytes:

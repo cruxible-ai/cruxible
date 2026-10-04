@@ -254,7 +254,7 @@ def test_measurements_are_projected_from_the_typed_field_not_annotations() -> No
     fact = next(
         item
         for item in projection.semantic_facts
-        if item.schema_id == "playbill.procedure.definition"
+        if item.schema_id == "cruxible.procedure.definition"
     )
 
     assert fact.value["measurements"] == [definition.measurements[0].model_dump(mode="json")]

@@ -73,23 +73,23 @@ def _codes(instance: object, base: dict[str, bytes], proposed: dict[str, bytes])
 def test_an_empty_change_set_is_refused_as_it_always_was(tmp_path: Path) -> None:
     instance, _owner = initialize_local(tmp_path)
     base = instance.tree_at(instance.accepted_coordinate().git_oid)
-    assert _codes(instance, base, dict(base)) == ["playbill.proposal.non_singleton_scope"]
+    assert _codes(instance, base, dict(base)) == ["cruxible.proposal.non_singleton_scope"]
 
 
 def test_a_path_no_member_kind_claims_is_refused_as_unregistered(tmp_path: Path) -> None:
     instance, _owner = initialize_local(tmp_path)
     base = instance.tree_at(instance.accepted_coordinate().git_oid)
     assert _codes(instance, base, {**base, "notes/loose.yaml": b"{}\n"}) == [
-        "playbill.proposal.unregistered_semantic_kind"
+        "cruxible.proposal.unregistered_semantic_kind"
     ]
 
 
 @pytest.mark.parametrize(
     ("path", "code"),
     [
-        (DOCUMENT_PATH, "playbill.document.removal_unsupported"),
-        (SUBJECT_PATH, "playbill.subject.removal_unsupported"),
-        (CLAIM_TYPE_PATH, "playbill.change_set.delete_unsupported"),
+        (DOCUMENT_PATH, "cruxible.document.removal_unsupported"),
+        (SUBJECT_PATH, "cruxible.subject.removal_unsupported"),
+        (CLAIM_TYPE_PATH, "cruxible.change_set.delete_unsupported"),
     ],
 )
 def test_a_removal_is_refused_by_the_kind_that_owns_the_path(
@@ -120,7 +120,7 @@ def test_a_principal_removal_is_refused_by_the_principal_law(tmp_path: Path) -> 
     base = instance.tree_at(instance.accepted_coordinate().git_oid)
     assert PRINCIPAL_PATH in base
     proposed = {key: value for key, value in base.items() if key != PRINCIPAL_PATH}
-    assert _codes(instance, base, proposed) == ["playbill.principal.removal_unsupported"]
+    assert _codes(instance, base, proposed) == ["cruxible.principal.removal_unsupported"]
 
 
 def test_a_principal_change_bundled_with_an_artifact_is_not_recognized(tmp_path: Path) -> None:
@@ -144,7 +144,7 @@ def test_a_principal_change_bundled_with_an_artifact_is_not_recognized(tmp_path:
         PRINCIPAL_PATH: canonical_bytes(rotated) + b"\n",
     }
     codes = _codes(instance, base, proposed)
-    assert "playbill.proposal.unregistered_semantic_kind" in codes
+    assert "cruxible.proposal.unregistered_semantic_kind" in codes
 
 
 def test_a_malformed_member_is_a_format_refusal_not_an_escaping_parse_error(
@@ -163,10 +163,10 @@ def test_a_malformed_member_is_a_format_refusal_not_an_escaping_parse_error(
     instance, _owner = initialize_local(tmp_path)
     base = instance.tree_at(instance.accepted_coordinate().git_oid)
     expected = {
-        DOCUMENT_PATH: "playbill.document.format_invalid",
-        SUBJECT_PATH: "playbill.subject.format_invalid",
-        CLAIM_TYPE_PATH: "playbill.claim_type.format_invalid",
-        "providers/dispatch.json": "playbill.proposal.member_format_invalid",
+        DOCUMENT_PATH: "cruxible.document.format_invalid",
+        SUBJECT_PATH: "cruxible.subject.format_invalid",
+        CLAIM_TYPE_PATH: "cruxible.claim_type.format_invalid",
+        "providers/dispatch.json": "cruxible.proposal.member_format_invalid",
     }
     for path, code in expected.items():
         assert _codes(instance, base, {**base, path: b"not-json\n"}) == [code]

@@ -44,10 +44,10 @@ ProcedureAcquisitionOutcomeV1 = Literal[
     "refused",
 ]
 
-ACQUISITION_UNAVAILABLE = "playbill.acquisition.unavailable"
-ACQUISITION_STALE = "playbill.acquisition.stale"
-ACQUISITION_OVERSIZED = "playbill.acquisition.oversized"
-ACQUISITION_REFUSED = "playbill.acquisition.refused"
+ACQUISITION_UNAVAILABLE = "cruxible.acquisition.unavailable"
+ACQUISITION_STALE = "cruxible.acquisition.stale"
+ACQUISITION_OVERSIZED = "cruxible.acquisition.oversized"
+ACQUISITION_REFUSED = "cruxible.acquisition.refused"
 
 _OUTCOME_REASONS: dict[ProcedureAcquisitionOutcomeV1, str] = {
     "unavailable": ACQUISITION_UNAVAILABLE,

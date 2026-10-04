@@ -468,7 +468,7 @@ def test_accepted_activation_skips_sync_for_an_unattached_workspace(tmp_path: Pa
     assert item.outcome == "skipped"
     assert item.reason == "workspace_not_attached"
     assert item.repair == RepairOperation(
-        operation="playbill.host.create", arguments={"workspace": "."}
+        operation="cruxible.host.create", arguments={"workspace": "."}
     )
 
 

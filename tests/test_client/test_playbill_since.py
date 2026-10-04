@@ -95,7 +95,7 @@ def test_client_refuses_an_invalid_request_before_transport() -> None:
             max_rows=1001,
         )
 
-    assert raised.value.error_code == "playbill.since.request_invalid"
+    assert raised.value.error_code == "cruxible.since.request_invalid"
     assert raised.value.field_path == "$.max_rows"
     assert calls == []
 
@@ -107,10 +107,10 @@ def test_client_reconstructs_the_typed_http_refusal() -> None:
             json={
                 "error_type": "SinceRequestInvalid",
                 "message": (
-                    "playbill.since.request_invalid: request field $.cursor is invalid: "
+                    "cruxible.since.request_invalid: request field $.cursor is invalid: "
                     "Input should be a valid dictionary or instance of SinceCursor"
                 ),
-                "error_code": "playbill.since.request_invalid",
+                "error_code": "cruxible.since.request_invalid",
                 "errors": [],
                 "context": {"field_path": "$.cursor"},
             },
@@ -128,7 +128,7 @@ def test_client_reconstructs_the_typed_http_refusal() -> None:
             access_profile=PROFILE,
         )
 
-    assert raised.value.error_code == "playbill.since.request_invalid"
+    assert raised.value.error_code == "cruxible.since.request_invalid"
     assert raised.value.field_path == "$.cursor"
 
 

@@ -47,19 +47,19 @@ class ClaimRetirementResultItemV1(_StrictRetirementModel):
 
 
 class ClaimRetireError(FormatError):
-    error_code = "playbill.claim.retire_invalid"
+    error_code = "cruxible.claim.retire_invalid"
 
 
 class ClaimRetireClosureMismatch(ClaimRetireError):
-    error_code = "playbill.claim.retire_closure_mismatch"
+    error_code = "cruxible.claim.retire_closure_mismatch"
 
 
 class ClaimRetireDependentUnsupported(ClaimRetireError):
-    error_code = "playbill.claim.retire_dependent_unsupported"
+    error_code = "cruxible.claim.retire_dependent_unsupported"
 
 
 class ClaimRetireStale(ClaimRetireError):
-    error_code = "playbill.claim.retire_stale"
+    error_code = "cruxible.claim.retire_stale"
 
 
 def _inventory(

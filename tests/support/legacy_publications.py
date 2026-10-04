@@ -178,47 +178,47 @@ PUBLICATION_EXPECTATION_EXPIRY = timedelta(days=7)
 
 
 class PublicationClaimNotAccepted(InsertionProtocolError):
-    code = "playbill.authoring.publication_claim_not_accepted"
+    code = "cruxible.authoring.publication_claim_not_accepted"
 
 
 class PublicationNotPrepared(InsertionProtocolError):
-    code = "playbill.authoring.publication_not_prepared"
+    code = "cruxible.authoring.publication_not_prepared"
 
 
 class PublicationPreparationStale(InsertionProtocolError):
-    code = "playbill.authoring.publication_preparation_stale"
+    code = "cruxible.authoring.publication_preparation_stale"
 
 
 class PublicationRevisionLimitExceeded(InsertionProtocolError):
-    code = "playbill.authoring.publication_revision_limit"
+    code = "cruxible.authoring.publication_revision_limit"
 
 
 class PublicationAnchorStale(InsertionProtocolError):
-    code = "playbill.authoring.publication_anchor_stale"
+    code = "cruxible.authoring.publication_anchor_stale"
 
 
 class PublicationAnchorAmbiguous(InsertionProtocolError):
-    code = "playbill.authoring.publication_anchor_ambiguous"
+    code = "cruxible.authoring.publication_anchor_ambiguous"
 
 
 class PublicationBodyNotMarkerCompatible(InsertionProtocolError):
-    code = "playbill.authoring.publication_body_not_marker_compatible"
+    code = "cruxible.authoring.publication_body_not_marker_compatible"
 
 
 class PublicationSourceHasUnrepinnedBlock(InsertionProtocolError):
-    code = "playbill.authoring.source_has_unrepinned_block"
+    code = "cruxible.authoring.source_has_unrepinned_block"
 
 
 class PublicationConfirmationMismatch(InsertionProtocolError):
-    code = "playbill.authoring.publication_confirmation_mismatch"
+    code = "cruxible.authoring.publication_confirmation_mismatch"
 
 
 class PublicationTerminalStateRefused(InsertionProtocolError):
-    code = "playbill.authoring.publication_terminal_state"
+    code = "cruxible.authoring.publication_terminal_state"
 
 
 class PublicationClaimProjectedAsItself(InsertionProtocolError):
-    code = "playbill.authoring.publication_claim_projected_as_itself"
+    code = "cruxible.authoring.publication_claim_projected_as_itself"
 
 
 def _raise_marker_refusal(exc: ProjectionMarkerError) -> NoReturn:

@@ -56,7 +56,7 @@ def _refused(instance: PlaybillInstance, field: str, value: object) -> Any:
     )
     outcome = service_playbill_write(instance, request=request, caller=caller())
     assert outcome.refusal is not None, outcome
-    assert outcome.refusal.code == "playbill.write.value_type_mismatch"
+    assert outcome.refusal.code == "cruxible.write.value_type_mismatch"
     assert outcome.refusal.field_path == "changes[0].value"
     return outcome.refusal
 

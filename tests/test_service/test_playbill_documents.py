@@ -153,7 +153,7 @@ def test_service_document_lifecycle_keeps_state_boundaries_explicit(tmp_path: Pa
     assert redacted.coordinate_kind == "canonical"
     assert redacted.coordinate == activated.accepted_coordinate
     assert not any(
-        fact["schema_id"] == "playbill.document.source_mapping" for fact in redacted.facts
+        fact["schema_id"] == "cruxible.document.source_mapping" for fact in redacted.facts
     )
     with pytest.raises(CasError, match="denied"):
         service_dereference_playbill_document(
@@ -191,7 +191,7 @@ def test_service_refusal_and_coordinate_mixing_are_typed(tmp_path: Path) -> None
         proposal_id=refused.proposal.admission.proposal_id,
     )
     assert inspection.verdict == "refused"
-    assert [item.code for item in inspection.diagnostics] == ["playbill.document.body_missing"]
+    assert [item.code for item in inspection.diagnostics] == ["cruxible.document.body_missing"]
 
     current = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     mixed = current.model_copy(update={"semantic_root": "sha256:" + "88" * 32})

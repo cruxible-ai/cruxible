@@ -433,7 +433,7 @@ class DerivationSpec:
 
 
 class SdkError(CoreError, ValueError):
-    code = "playbill.sdk.refused"
+    code = "cruxible.sdk.refused"
 
     def __init__(self, message: str) -> None:
         super().__init__(f"{self.code}: {message}")
@@ -448,13 +448,13 @@ class CapabilityNotServed(SdkError):
 
 
 class ReferenceKindError(SdkError):
-    code = "playbill.sdk.reference_kind_mismatch"
+    code = "cruxible.sdk.reference_kind_mismatch"
 
 
 class AbsentSubject(SdkError):
     """No Subject of this kind carries this ID at the world's coordinate."""
 
-    code = "playbill.sdk.subject_absent_in_world"
+    code = "cruxible.sdk.subject_absent_in_world"
 
     def __init__(
         self,
@@ -477,7 +477,7 @@ class AbsentSubject(SdkError):
 class LiteralValueTypeError(SdkError):
     """A typed literal minted under one ClaimType was passed to another."""
 
-    code = "playbill.sdk.literal_value_claim_type_mismatch"
+    code = "cruxible.sdk.literal_value_claim_type_mismatch"
 
     def __init__(self, *, minted_under: str, passed_to: str) -> None:
         self.minted_under = minted_under
@@ -492,7 +492,7 @@ class LiteralValueTypeError(SdkError):
 class ExactContentTypeError(SdkError):
     """Exact bytes were passed to a ClaimType whose object is not exact content."""
 
-    code = "playbill.sdk.exact_content_claim_type_mismatch"
+    code = "cruxible.sdk.exact_content_claim_type_mismatch"
 
     def __init__(self, *, predicate: str, object_kind: str) -> None:
         self.predicate = predicate
@@ -507,7 +507,7 @@ class ExactContentTypeError(SdkError):
 class ClaimRoleNotPermittedError(SdkError):
     """A Claim role its ClaimType does not permit, refused before anything is sent."""
 
-    code = "playbill.sdk.claim_role_not_permitted"
+    code = "cruxible.sdk.claim_role_not_permitted"
 
     def __init__(
         self,
@@ -533,7 +533,7 @@ class ClaimRoleNotPermittedError(SdkError):
 class LiteralSchemaError(SdkError):
     """A value refused by its ClaimType's declared literal schema."""
 
-    code = "playbill.sdk.literal_schema_violation"
+    code = "cruxible.sdk.literal_schema_violation"
 
     def __init__(self, *, predicate: str, reason: str) -> None:
         self.predicate = predicate
@@ -542,11 +542,11 @@ class LiteralSchemaError(SdkError):
 
 
 class SourceSelectionError(SdkError):
-    code = "playbill.sdk.source_selection_refused"
+    code = "cruxible.sdk.source_selection_refused"
 
 
 class IncompatibleDaemonVersion(SdkError):
-    code = "playbill.sdk.daemon_version_incompatible"
+    code = "cruxible.sdk.daemon_version_incompatible"
 
     def __init__(
         self,

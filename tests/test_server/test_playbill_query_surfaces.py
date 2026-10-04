@@ -137,7 +137,7 @@ def test_wrong_names_refuse_over_http_with_code_and_nearest(
     assert response.status_code == 400
     body = response.json()
     assert body["error_type"] == "ReadRefusalError"
-    assert body["error_code"] == "playbill.query.unknown_field"
+    assert body["error_code"] == "cruxible.query.unknown_field"
     assert "status" in body["context"]["candidates"]
     assert body["context"]["field_path"] == "where[0].field"
     assert body["context"]["repair_line"]
@@ -151,7 +151,7 @@ def test_wrong_names_refuse_over_http_with_code_and_nearest(
                 {"kind": SUBJECT_KIND, "where": [{"field": "stauts", "eq": "ready"}]}
             ),
         )
-    assert refused.value.error_code == "playbill.query.unknown_field"
+    assert refused.value.error_code == "cruxible.query.unknown_field"
     assert refused.value.http_status == 400
     assert "status" in refused.value.candidates
     assert refused.value.field_path == "where[0].field"

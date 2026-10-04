@@ -267,4 +267,4 @@ def test_coordinator_self_source_profile_is_cas_only_and_claim_bound(tmp_path: P
         predecessor=None,
     )
     assert refused.verdict == "refused"
-    assert refused.diagnostics[0].code == ("playbill.capture_contract.coordinator_profile_mismatch")
+    assert refused.diagnostics[0].code == ("cruxible.capture_contract.coordinator_profile_mismatch")

@@ -463,7 +463,7 @@ def test_a_head_accepted_before_the_append_refuses_a_pinned_ruling(
             request=request.model_copy(update={"dry_run": False, "at": at}),
             actor_context=_actor(),
         )
-    assert moved and refused.value.error_code == "playbill.preview.state_moved"
+    assert moved and refused.value.error_code == "cruxible.preview.state_moved"
     monkeypatch.setattr(curation, "change_scope", original)
     events = instance.review_operational_store().events(family="curation")
     assert len(events) == 1

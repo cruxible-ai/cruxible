@@ -426,7 +426,7 @@ def _subject_address(shorthand: str, *, field_path: str) -> SemanticAddress:
     match = _SUBJECT_SHORTHAND_RE.fullmatch(shorthand)
     if match is None:
         raise AuthoringInputError(
-            "playbill.authoring.input_subject_invalid",
+            "cruxible.authoring.input_subject_invalid",
             field_path,
             "Subject must use canonical <subject-kind>/<subject-id> shorthand.",
             "Replace it with a subject shown by playbill query KIND.",
@@ -466,7 +466,7 @@ def _dispositions(
 def _claim_payload(value: ClaimInput) -> ClaimAuthoringPayloadV1:
     if isinstance(value.source, WorkingSelectionInput):
         raise AuthoringInputError(
-            "playbill.authoring.working_selection_requires_bind",
+            "cruxible.authoring.working_selection_requires_bind",
             "input.source",
             "create and compile cannot observe local working-source bytes.",
             "Run playbill authoring bind with this input and the selected local file.",
@@ -474,7 +474,7 @@ def _claim_payload(value: ClaimInput) -> ClaimAuthoringPayloadV1:
     if isinstance(value.source, ExistingCaptureInput):
         if value.citation_role is None:
             raise AuthoringInputError(
-                "playbill.authoring.existing_capture_not_admitted",
+                "cruxible.authoring.existing_capture_not_admitted",
                 "input.citation_role",
                 "An existing Capture requires evidence or copy intent.",
                 "Set citation_role to evidence or copy.",
@@ -500,7 +500,7 @@ def _claim_payload(value: ClaimInput) -> ClaimAuthoringPayloadV1:
         )
     if value.citation_role is not None:
         raise AuthoringInputError(
-            "playbill.authoring.self_source_citation_role_forbidden",
+            "cruxible.authoring.self_source_citation_role_forbidden",
             "input.citation_role",
             "Self-source fixes its copy citation role server-side.",
             "Remove citation_role.",
@@ -533,21 +533,21 @@ def lower_bound_claim_input(
 
     if not isinstance(value.source, WorkingSelectionInput):
         raise AuthoringInputError(
-            "playbill.authoring.bind_requires_working_selection",
+            "cruxible.authoring.bind_requires_working_selection",
             "input.source",
             "authoring bind accepts only a working_selection source.",
             "Use create or compile for self_source input.",
         )
     if observation.source_id != value.source.source_id:
         raise AuthoringInputError(
-            "playbill.authoring.bind_source_mismatch",
+            "cruxible.authoring.bind_source_mismatch",
             "input.source.source_id",
             "The observation source differs from the declared logical source.",
             "Bind the file using the declared source_id.",
         )
     if value.citation_role is None:
         raise AuthoringInputError(
-            "playbill.authoring.working_selection_citation_role_required",
+            "cruxible.authoring.working_selection_citation_role_required",
             "input.citation_role",
             "A working selection requires evidence or copy intent.",
             "Set citation_role to evidence or copy.",
@@ -574,7 +574,7 @@ def _artifact_identity(value: str, *, field_path: str) -> ArtifactIdentity:
     kind, separator, name = value.partition(":")
     if not separator:
         raise AuthoringInputError(
-            "playbill.authoring.accepted_target_invalid",
+            "cruxible.authoring.accepted_target_invalid",
             field_path,
             "Accepted references use ArtifactKind:name.",
             "Replace target with an identity returned by discover.",
@@ -583,7 +583,7 @@ def _artifact_identity(value: str, *, field_path: str) -> ArtifactIdentity:
         return ArtifactIdentity(kind=kind, name=name)
     except ValueError as exc:
         raise AuthoringInputError(
-            "playbill.authoring.accepted_target_invalid",
+            "cruxible.authoring.accepted_target_invalid",
             field_path,
             "Accepted reference identity is not canonical.",
             "Replace target with an identity returned by discover.",
@@ -610,7 +610,7 @@ def _procedure_references(
             target = value["target"]
             if not isinstance(role, str) or not isinstance(target, str):
                 raise AuthoringInputError(
-                    "playbill.authoring.candidate_reference_invalid",
+                    "cruxible.authoring.candidate_reference_invalid",
                     field_path,
                     "Candidate references require text role and target fields.",
                     "Use {kind: candidate, role: <role>, target: ArtifactKind:name}.",
@@ -634,7 +634,7 @@ def _procedure_references(
             contract = contracts.get(reference.name)
             if contract is None:
                 raise AuthoringInputError(
-                    "playbill.authoring.carried_contract_unresolved",
+                    "cruxible.authoring.carried_contract_unresolved",
                     f"{field_path}.name",
                     "The carried Contract reference has no matching declaration.",
                     "Declare that name in input.contracts or repair the reference.",
@@ -682,7 +682,7 @@ def _procedure_payload(
     by_name = {contract.identity.name: contract for contract in contracts}
     if len(by_name) != len(contracts):
         raise AuthoringInputError(
-            "playbill.authoring.carried_contract_duplicate",
+            "cruxible.authoring.carried_contract_duplicate",
             "input.contracts",
             "Carried Contract names must be unique.",
             "Remove or rename the duplicate declaration.",
@@ -797,7 +797,7 @@ def lower_authoring_input(value: AuthoringInput) -> AuthoringPayload:
     identities = tuple(authoring_member_identity(member) for member in members)
     if len(set(identities)) != len(identities):
         raise AuthoringInputError(
-            "playbill.authoring.change_set_duplicate_identity",
+            "cruxible.authoring.change_set_duplicate_identity",
             "input.members",
             "Change-set member semantic identities must be unique.",
             "Remove or rename the duplicate member.",

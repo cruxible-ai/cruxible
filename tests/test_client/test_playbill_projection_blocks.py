@@ -176,7 +176,7 @@ def test_evidence_intersection_is_typed_but_ordinary_prose_is_allowed() -> None:
             start_byte=start,
             end_byte=start + 4,
         )
-    assert refusal.value.code == "playbill.projection.evidence_from_projection"
+    assert refusal.value.code == "cruxible.projection.evidence_from_projection"
     assert refusal.value.source_id == "corpus.runbook"
     assert refusal.value.block_id == "summary"
     assert "never evidence" in str(refusal.value)
@@ -208,7 +208,7 @@ def test_unstamped_block_preserves_independent_evidence_and_stamped_block_refusa
     with pytest.raises(ProjectionIndependentEvidenceForbidden) as refusal:
         bind_working_selection_input(evidence, content=content, anchor="Visible prose")
     assert refusal.value.block_id == "summary"
-    assert refusal.value.code == "playbill.projection.evidence_from_projection"
+    assert refusal.value.code == "cruxible.projection.evidence_from_projection"
 
 
 def test_query_backing_commits_existing_resolved_parameter_digest_and_semantics_only() -> None:

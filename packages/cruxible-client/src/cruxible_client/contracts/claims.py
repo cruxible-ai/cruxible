@@ -106,7 +106,7 @@ class ClaimFormatError(FormatError):
 
 
 class ClaimUnsupportedFormatError(ClaimFormatError):
-    error_code = "playbill.claim.format_unsupported"
+    error_code = "cruxible.claim.format_unsupported"
 
 
 class _StrictClaimModel(BaseModel):
@@ -1542,12 +1542,12 @@ def _citation_origin_refusal(
     )
     if reuse_class == "claim_bound_mismatch":
         return (
-            "playbill.claim.self_source_capture_unbound",
+            "cruxible.claim.self_source_capture_unbound",
             "The Claim-bound Capture belongs to another Claim or has mismatched family signals.",
         )
     if reuse_class == "not_shareable":
         return (
-            "playbill.authoring.capture_not_shareable",
+            "cruxible.authoring.capture_not_shareable",
             "Only a verified observed Capture may be shared across Claims.",
         )
     direct_self_source = capture_is_direct_self_source(
@@ -1569,7 +1569,7 @@ def _citation_origin_refusal(
     )
     if coordinator_contract and not coordinator_self_source:
         return (
-            "playbill.claim.self_source_capture_unbound",
+            "cruxible.claim.self_source_capture_unbound",
             "The coordinator self-source Capture is not bound to this Claim.",
         )
     verified_self_source = direct_self_source or coordinator_self_source
@@ -1577,12 +1577,12 @@ def _citation_origin_refusal(
     for association in associations:
         if verified_self_source and association.origin != "self_source":
             return (
-                "playbill.claim.self_source_origin_mismatch",
+                "cruxible.claim.self_source_origin_mismatch",
                 "A direct self-source tied to this Claim must declare self_source origin.",
             )
         if not self_source_origin_permitted and association.origin == "self_source":
             return (
-                "playbill.claim.self_source_origin_mismatch",
+                "cruxible.claim.self_source_origin_mismatch",
                 "self_source origin requires a verified self-source Capture tied to this Claim.",
             )
     return None
@@ -1796,13 +1796,13 @@ def evaluate_claim_law(
     try:
         validate_claim_path(claim, path)
     except ClaimFormatError as exc:
-        return _diagnostic("playbill.claim.path_mismatch", str(exc), path=path)
+        return _diagnostic("cruxible.claim.path_mismatch", str(exc), path=path)
     statement = claim.statement
     evaluated_at = evaluation_time or claim.backing.referent_context.observed_at
     claim_type = claim_types.get(statement.claim_type.qualified)
     if claim_type is None or claim_type.artifact_digest != statement.claim_type_digest:
         return _diagnostic(
-            "playbill.claim.claim_type_unresolved",
+            "cruxible.claim.claim_type_unresolved",
             "The exact ClaimType dependency does not resolve.",
             path=path,
         )
@@ -1836,7 +1836,7 @@ def evaluate_claim_law(
         digest=claim_type.artifact_digest,
     ):
         return _diagnostic(
-            "playbill.claim.claim_type_pin_missing",
+            "cruxible.claim.claim_type_pin_missing",
             "The Claim does not pin its exact ClaimType artifact.",
             path=path,
         )
@@ -1873,7 +1873,7 @@ def evaluate_claim_law(
     )
     if subject is None:
         return _diagnostic(
-            "playbill.claim.subject_unresolved",
+            "cruxible.claim.subject_unresolved",
             "The Claim subject does not resolve to an exact Subject shell.",
             path=path,
             field="subject",
@@ -1882,7 +1882,7 @@ def evaluate_claim_law(
         contract, subject.semantic_kind
     ):
         return _diagnostic(
-            "playbill.claim.subject_kind_forbidden",
+            "cruxible.claim.subject_kind_forbidden",
             f"Subject kind {subject.semantic_kind!r} is not admitted by ClaimType "
             f"{contract.predicate!r}; admitted kinds: "
             f"{', '.join(contract.allowed_subject_kinds) or 'none'}.",
@@ -1891,7 +1891,7 @@ def evaluate_claim_law(
         )
     if claim.backing.referent_context.subject_content_digest != subject.artifact_digest:
         return _diagnostic(
-            "playbill.claim.subject_context_mismatch",
+            "cruxible.claim.subject_context_mismatch",
             "The proposer-observed Subject shell digest does not resolve.",
             path=path,
         )
@@ -1902,7 +1902,7 @@ def evaluate_claim_law(
         digest=subject.artifact_digest,
     ):
         return _diagnostic(
-            "playbill.claim.subject_pin_missing",
+            "cruxible.claim.subject_pin_missing",
             "The Claim does not pin its exact Subject shell.",
             path=path,
         )
@@ -1910,7 +1910,7 @@ def evaluate_claim_law(
     object_subject: _ResolvedReferent | None = None
     if not claim_type_retirement_shape_exempt and statement.object.kind != contract.object_kind:
         return _diagnostic(
-            "playbill.claim.object_kind_mismatch",
+            "cruxible.claim.object_kind_mismatch",
             f"The Claim object kind {statement.object.kind!r} differs from ClaimType "
             f"{contract.predicate!r}, which states {contract.object_kind!r}.",
             path=path,
@@ -1930,7 +1930,7 @@ def evaluate_claim_law(
                 else ""
             )
             return _diagnostic(
-                "playbill.claim.literal_schema_invalid",
+                "cruxible.claim.literal_schema_invalid",
                 f"The Claim literal {statement.object.value!r} fails the exact schema of "
                 f"ClaimType {contract.predicate!r}{admitted}.",
                 path=path,
@@ -1938,7 +1938,7 @@ def evaluate_claim_law(
             )
         if claim.backing.referent_context.object_content_digest is not None:
             return _diagnostic(
-                "playbill.claim.object_context_unexpected",
+                "cruxible.claim.object_context_unexpected",
                 "Literal Claims cannot name an object Subject shell digest.",
                 path=path,
             )
@@ -1951,7 +1951,7 @@ def evaluate_claim_law(
         )
         if object_subject is None:
             return _diagnostic(
-                "playbill.claim.object_subject_unresolved",
+                "cruxible.claim.object_subject_unresolved",
                 "The Claim object Subject does not resolve.",
                 path=path,
                 field="object",
@@ -1961,7 +1961,7 @@ def evaluate_claim_law(
             and object_subject.semantic_kind not in contract.allowed_object_subject_kinds
         ):
             return _diagnostic(
-                "playbill.claim.object_subject_kind_forbidden",
+                "cruxible.claim.object_subject_kind_forbidden",
                 f"Object Subject kind {object_subject.semantic_kind!r} is not admitted by "
                 f"ClaimType {contract.predicate!r}; admitted kinds: "
                 f"{', '.join(contract.allowed_object_subject_kinds) or 'none'}.",
@@ -1970,7 +1970,7 @@ def evaluate_claim_law(
             )
         if claim.backing.referent_context.object_content_digest != object_subject.artifact_digest:
             return _diagnostic(
-                "playbill.claim.object_context_mismatch",
+                "cruxible.claim.object_context_mismatch",
                 "The proposer-observed object Subject shell digest does not resolve.",
                 path=path,
             )
@@ -1981,20 +1981,20 @@ def evaluate_claim_law(
             digest=object_subject.artifact_digest,
         ):
             return _diagnostic(
-                "playbill.claim.object_subject_pin_missing",
+                "cruxible.claim.object_subject_pin_missing",
                 "The Claim does not pin its exact object Subject shell.",
                 path=path,
             )
     elif claim.backing.referent_context.object_content_digest is not None:
         return _diagnostic(
-            "playbill.claim.object_context_unexpected",
+            "cruxible.claim.object_context_unexpected",
             "Exact-content Claims cannot name an object Subject shell digest.",
             path=path,
         )
 
     if statement.predicate != contract.predicate:
         return _diagnostic(
-            "playbill.claim.statement_contract_mismatch",
+            "cruxible.claim.statement_contract_mismatch",
             f"The Claim predicate {statement.predicate!r} differs from its pinned ClaimType "
             f"predicate {contract.predicate!r}.",
             path=path,
@@ -2002,7 +2002,7 @@ def evaluate_claim_law(
         )
     if not claim_type_retirement_shape_exempt and statement.role not in contract.permitted_roles:
         return _diagnostic(
-            "playbill.claim.role_not_permitted",
+            "cruxible.claim.role_not_permitted",
             f"Role {statement.role!r} is not permitted by ClaimType {contract.predicate!r}; "
             f"permitted roles: {', '.join(contract.permitted_roles)}.",
             path=path,
@@ -2014,13 +2014,13 @@ def evaluate_claim_law(
     elif contract.referent_sensitivity == "shell":
         if statement.shell_context_digest != expected_shell_digest:
             return _diagnostic(
-                "playbill.claim.shell_context_mismatch",
+                "cruxible.claim.shell_context_mismatch",
                 "A shell-sensitive Claim must bind the exact referent-context digest.",
                 path=path,
             )
     elif statement.shell_context_digest is not None:
         return _diagnostic(
-            "playbill.claim.shell_context_forbidden",
+            "cruxible.claim.shell_context_forbidden",
             "An identity-sensitive Claim cannot add shell bytes to statement identity.",
             path=path,
         )
@@ -2029,7 +2029,7 @@ def evaluate_claim_law(
     if claim.backing.attestation_digests:
         if instance_id is None or accepted_coordinate is None:
             return _diagnostic(
-                "playbill.claim.attestation_context_missing",
+                "cruxible.claim.attestation_context_missing",
                 "ClaimAttestationV1 verification requires the exact accepted base coordinate.",
                 path=path,
             )
@@ -2077,7 +2077,7 @@ def evaluate_claim_law(
                 )
             except FormatError as exc:
                 return _diagnostic(
-                    "playbill.claim.attestation_unverified",
+                    "cruxible.claim.attestation_unverified",
                     str(exc),
                     path=path,
                 )
@@ -2085,13 +2085,13 @@ def evaluate_claim_law(
     if predecessor is None:
         if isinstance(claim, ClaimArtifact):
             return _diagnostic(
-                "playbill.claim.retirement_predecessor_required",
+                "cruxible.claim.retirement_predecessor_required",
                 "An attributed retirement requires an exact live Claim predecessor.",
                 path=path,
             )
         if claim.lifecycle != ArtifactLifecycle():
             return _diagnostic(
-                "playbill.claim.unexpected_predecessor",
+                "cruxible.claim.unexpected_predecessor",
                 "A new Claim must begin live without a predecessor.",
                 path=path,
             )
@@ -2099,20 +2099,20 @@ def evaluate_claim_law(
             item.capture_digest for item in claim.backing.citations
         } != set(claim.backing.capture_digests):
             return _diagnostic(
-                "playbill.claim.citation_set_incomplete",
+                "cruxible.claim.citation_set_incomplete",
                 "Every Capture on a new v2 Claim must have an explicit citation association.",
                 path=path,
             )
     else:
         if predecessor.path != path or predecessor.claim.identity != claim.identity:
             return _diagnostic(
-                "playbill.claim.predecessor_identity_mismatch",
+                "cruxible.claim.predecessor_identity_mismatch",
                 "The live predecessor belongs to a different Claim lineage.",
                 path=path,
             )
         if claim.lifecycle.predecessor_digest != predecessor.artifact_digest:
             return _diagnostic(
-                "playbill.claim.stale_predecessor",
+                "cruxible.claim.stale_predecessor",
                 "The Claim successor does not name the exact live predecessor.",
                 path=path,
             )
@@ -2133,7 +2133,7 @@ def evaluate_claim_law(
         # one of these.
         if claim.statement.subject != predecessor.claim.statement.subject:
             return _diagnostic(
-                "playbill.claim.revision_subject_moved",
+                "cruxible.claim.revision_subject_moved",
                 "A Claim revision keeps the Subject it revises. The accepted Claim is about "
                 f"{predecessor.claim.statement.subject.artifact_path!r} and this revision "
                 f"states {claim.statement.subject.artifact_path!r}. Replace the subject with "
@@ -2143,7 +2143,7 @@ def evaluate_claim_law(
             )
         if claim.statement.predicate != predecessor.claim.statement.predicate:
             return _diagnostic(
-                "playbill.claim.revision_predicate_moved",
+                "cruxible.claim.revision_predicate_moved",
                 "A Claim revision keeps the predicate it revises. The accepted Claim states "
                 f"{predecessor.claim.statement.predicate!r} and this revision states "
                 f"{claim.statement.predicate!r}. Replace the predicate with the accepted one, "
@@ -2164,14 +2164,14 @@ def evaluate_claim_law(
             attributed_retirement or claim_type_rederivation or claim_type_attributed_retirement
         ):
             return _diagnostic(
-                "playbill.claim.retirement_delta_invalid",
+                "cruxible.claim.retirement_delta_invalid",
                 "Claim v3 permits only attributed retirement or exact retired ClaimType "
                 "rederivation.",
                 path=path,
             )
         if predecessor.claim.lifecycle.state == "retired" and not claim_type_rederivation:
             return _diagnostic(
-                "playbill.claim.lifecycle_invalid",
+                "cruxible.claim.lifecycle_invalid",
                 "A retired Claim lineage cannot be revived.",
                 path=path,
             )
@@ -2182,7 +2182,7 @@ def evaluate_claim_law(
             and set(old.input_claim_digests).issubset(claim.backing.input_claim_digests)
         ):
             return _diagnostic(
-                "playbill.claim.required_backing_dropped",
+                "cruxible.claim.required_backing_dropped",
                 "Claim succession cannot silently drop accepted backing.",
                 path=path,
             )
@@ -2195,7 +2195,7 @@ def evaluate_claim_law(
                     implicit_legacy = set()
                 if citation_capture_digests.intersection(implicit_legacy):
                     return _diagnostic(
-                        "playbill.claim.legacy_capture_relabeled",
+                        "cruxible.claim.legacy_capture_relabeled",
                         "A v1 predecessor Capture cannot be retroactively relabeled.",
                         path=path,
                     )
@@ -2203,7 +2203,7 @@ def evaluate_claim_law(
                     citation_capture_digests
                 ):
                     return _diagnostic(
-                        "playbill.claim.citation_set_incomplete",
+                        "cruxible.claim.citation_set_incomplete",
                         "Every Capture added at the v1-to-v2 boundary needs a citation.",
                         path=path,
                     )
@@ -2218,7 +2218,7 @@ def evaluate_claim_law(
                 current_legacy = set(claim.backing.capture_digests) - citation_capture_digests
                 if current_legacy != predecessor_legacy and not (replacing and not current_legacy):
                     return _diagnostic(
-                        "playbill.claim.legacy_capture_set_changed",
+                        "cruxible.claim.legacy_capture_set_changed",
                         "The implicit legacy Capture set is immutable after v2 succession.",
                         path=path,
                     )
@@ -2229,13 +2229,13 @@ def evaluate_claim_law(
                     item.citation_id for item in claim.backing.citations
                 ):
                     return _diagnostic(
-                        "playbill.claim.required_citation_dropped",
+                        "cruxible.claim.required_citation_dropped",
                         "Claim succession cannot silently drop accepted citation associations.",
                         path=path,
                     )
         if digest == predecessor.artifact_digest:
             return _diagnostic(
-                "playbill.claim.no_semantic_change",
+                "cruxible.claim.no_semantic_change",
                 "Claim succession must produce a new artifact digest.",
                 path=path,
             )
@@ -2243,7 +2243,7 @@ def evaluate_claim_law(
     statement_address = claim_statement_address(path)
     if any(mapping.subject != statement_address for mapping in claim.backing.source_mappings):
         return _diagnostic(
-            "playbill.claim.source_mapping_subject_mismatch",
+            "cruxible.claim.source_mapping_subject_mismatch",
             "Every Claim source mapping must target its exact statement address.",
             path=path,
         )
@@ -2266,7 +2266,7 @@ def evaluate_claim_law(
             # The exact identity/version pair must be real, live or historical.
             if resolved_version is None or resolved_version.contract.identity != pin.target:
                 return _diagnostic(
-                    "playbill.claim.capture_contract_pin_unresolved",
+                    "cruxible.claim.capture_contract_pin_unresolved",
                     "A capture-contract pin names no accepted version of its CaptureContract.",
                     path=path,
                 )
@@ -2318,13 +2318,13 @@ def evaluate_claim_law(
             break
         if envelope is None or resolved_contract is None:
             return _diagnostic(
-                "playbill.claim.capture_unverified",
+                "cruxible.claim.capture_unverified",
                 "A backing Capture or its exact CaptureContract cannot be verified.",
                 path=path,
             )
         if resolved_contract.artifact_digest not in capture_contract_pin_digests:
             return _diagnostic(
-                "playbill.claim.capture_contract_pin_missing",
+                "cruxible.claim.capture_contract_pin_missing",
                 "A backing CaptureContract is not pinned by the Claim.",
                 path=path,
             )
@@ -2356,7 +2356,7 @@ def evaluate_claim_law(
         if cited is not None:
             resolved, window = cited
             return _diagnostic(
-                "playbill.projection.evidence_from_projection",
+                "cruxible.projection.evidence_from_projection",
                 "A citation reaches into a projection block: bytes "
                 f"[{resolved.start_byte}, {resolved.end_byte}) of source "
                 f"{resolved.source_id or envelope.commitment.digest!r} intersect stamped "
@@ -2382,7 +2382,7 @@ def evaluate_claim_law(
                 digest=provider_digest(required_provider).tagged,
             ):
                 return _diagnostic(
-                    "playbill.claim.provider_pin_missing",
+                    "cruxible.claim.provider_pin_missing",
                     "A Provider-produced Capture requires every exact accepted Provider pin.",
                     path=path,
                 )
@@ -2399,7 +2399,7 @@ def evaluate_claim_law(
                 digest=procedure_digest,
             ):
                 return _diagnostic(
-                    "playbill.claim.procedure_pin_missing",
+                    "cruxible.claim.procedure_pin_missing",
                     "A Procedure-produced Capture requires its exact accepted Procedure pin.",
                     path=path,
                 )
@@ -2490,7 +2490,7 @@ def evaluate_claim_law(
         )
     if replacing and not capture_contract_pin_digests.issubset(cited_contract_versions):
         return _diagnostic(
-            "playbill.claim.capture_contract_pin_unbacked",
+            "cruxible.claim.capture_contract_pin_unbacked",
             "Under revision_evidence 'replace', a revision that changes its statement "
             "carries exactly the evidence it cites, so every capture-contract pin must name "
             "the contract version of a Capture it cites.",
@@ -2498,7 +2498,7 @@ def evaluate_claim_law(
         )
     if evidence_requirement == "captured" and not carry and not captured_evidence:
         return _diagnostic(
-            "playbill.claim.captured_evidence_required",
+            "cruxible.claim.captured_evidence_required",
             f"ClaimType {contract.predicate!r} requires captured evidence: cite a Capture "
             "taken under a declared CaptureContract that one of its evidence rules admits; "
             "the Claim's own words cannot back it.",
@@ -2514,7 +2514,7 @@ def evaluate_claim_law(
                 or span.end_byte > getattr(commitment, "byte_length")
             ):
                 return _diagnostic(
-                    "playbill.claim.source_mapping_unverified",
+                    "cruxible.claim.source_mapping_unverified",
                     "A source span is not bounded by an exact verified Capture commitment.",
                     path=path,
                 )
@@ -2522,7 +2522,7 @@ def evaluate_claim_law(
         exact_commitment = verified_commitments.get(statement.object.content_digest)
         if exact_commitment is None:
             return _diagnostic(
-                "playbill.claim.exact_content_unverified",
+                "cruxible.claim.exact_content_unverified",
                 "The exact-content object has no verified backing Capture commitment.",
                 path=path,
             )
@@ -2534,7 +2534,7 @@ def evaluate_claim_law(
             }
             if canonical_bytes(statement.object.span.model_dump(mode="json")) not in mapped_spans:
                 return _diagnostic(
-                    "playbill.claim.exact_content_span_unmapped",
+                    "cruxible.claim.exact_content_span_unmapped",
                     "The exact-content object span is not mapped to the Claim statement.",
                     path=path,
                 )
@@ -2542,13 +2542,13 @@ def evaluate_claim_law(
         statement.object, ExactContentClaimObject
     ):
         return _diagnostic(
-            "playbill.claim.environment_binding_not_exact",
+            "cruxible.claim.environment_binding_not_exact",
             "An environment-binding Claim must identify exact content bytes.",
             path=path,
         )
     if not claim.backing.capture_digests:
         return _diagnostic(
-            "playbill.claim.origin_capture_missing",
+            "cruxible.claim.origin_capture_missing",
             "Every accepted Claim requires inspectable origin Capture backing.",
             path=path,
         )
@@ -2556,7 +2556,7 @@ def evaluate_claim_law(
         not claim.backing.input_claim_digests or claim.backing.reducer_digest is None
     ):
         return _diagnostic(
-            "playbill.claim.derivation_incomplete",
+            "cruxible.claim.derivation_incomplete",
             "A derivation Claim requires exact inputs and reducer backing.",
             path=path,
         )
@@ -2564,7 +2564,7 @@ def evaluate_claim_law(
         claim.backing.input_claim_digests or claim.backing.reducer_digest is not None
     ):
         return _diagnostic(
-            "playbill.claim.derivation_forbidden",
+            "cruxible.claim.derivation_forbidden",
             "Only derivation Claims may name reducers and input Claims.",
             path=path,
         )

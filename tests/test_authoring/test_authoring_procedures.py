@@ -522,7 +522,7 @@ def test_an_unreadable_accepted_tree_refuses_typed_rather_than_faulting(
 
     assert compiled.verdict == "refused"
     (diagnostic,) = compiled.frontier.diagnostics
-    assert diagnostic.code == "playbill.authoring.lowering_invalid"
+    assert diagnostic.code == "cruxible.authoring.lowering_invalid"
     assert diagnostic.offending_element == "definition"
     assert diagnostic.repairs[0].kind == "restore_accepted_projection"
 
@@ -544,7 +544,7 @@ def test_max_items_requires_a_referenced_list_contract(tmp_path: Path) -> None:
     )
     assert refused.verdict == "refused"
     diagnostic = refused.frontier.diagnostics[0]
-    assert diagnostic.code == ("playbill.authoring.procedure_definition_invalid")
+    assert diagnostic.code == ("cruxible.authoring.procedure_definition_invalid")
     assert diagnostic.offending_element == "definition.budget.max_items"
     assert "declare a list field" in diagnostic.repairs[0].description.lower()
 
@@ -619,7 +619,7 @@ def test_change_set_successor_resolves_candidate_query_to_exact_new_digest(
     )
     assert accepted_spelling_for_new_candidate.verdict == "refused"
     assert accepted_spelling_for_new_candidate.frontier.diagnostics[0].code == (
-        "playbill.authoring.artifact_reference_unresolved"
+        "cruxible.authoring.artifact_reference_unresolved"
     )
     first = coordinator.compile(
         actor=actor,
@@ -754,7 +754,7 @@ def test_change_set_submit_activate_closure_and_run_read_exact_successor_query(
         canonical_timestamp="2026-08-21T12:01:00.000000Z",
     )
     assert incomplete.verdict == "refused"
-    assert "playbill.change_set.incomplete_closure" in {
+    assert "cruxible.change_set.incomplete_closure" in {
         item.code for item in incomplete.frontier.diagnostics
     }
 
@@ -839,7 +839,7 @@ def test_approval_policy_is_a_real_singleton_authoring_scope(tmp_path: Path) -> 
     )
     assert mixed.verdict == "refused"
     diagnostic = mixed.frontier.diagnostics[0]
-    assert diagnostic.code == "playbill.authoring.approval_policy_singleton_required"
+    assert diagnostic.code == "cruxible.authoring.approval_policy_singleton_required"
     assert diagnostic.offending_element == "members"
     assert diagnostic.repairs[0].kind == "split_change_set"
 
@@ -875,7 +875,7 @@ def test_procedure_runtime_policy_is_a_real_singleton_authoring_scope(tmp_path: 
     )
     assert mixed.verdict == "refused"
     assert mixed.frontier.diagnostics[0].code == (
-        "playbill.authoring.procedure_runtime_policy_singleton_required"
+        "cruxible.authoring.procedure_runtime_policy_singleton_required"
     )
 
 
@@ -937,7 +937,7 @@ def test_change_set_membership_and_candidate_reference_refusals(tmp_path: Path) 
     )
     assert refused.verdict == "refused"
     assert refused.frontier.diagnostics[0].code == (
-        "playbill.authoring.candidate_reference_outside_change_set"
+        "cruxible.authoring.candidate_reference_outside_change_set"
     )
 
 
@@ -951,7 +951,7 @@ def test_change_set_membership_and_candidate_reference_refusals(tmp_path: Path) 
                 "target": {"kind": "Procedure", "name": "other"},
                 "resolution": "candidate_in_change_set",
             },
-            "playbill.authoring.candidate_procedure_reference_forbidden",
+            "cruxible.authoring.candidate_procedure_reference_forbidden",
         ),
         (
             {
@@ -959,7 +959,7 @@ def test_change_set_membership_and_candidate_reference_refusals(tmp_path: Path) 
                 "target": {"kind": "QueryDefinition", "name": "claims-by-type"},
                 "resolution": "candidate_in_change_set",
             },
-            "playbill.authoring.candidate_reference_invalid",
+            "cruxible.authoring.candidate_reference_invalid",
         ),
     ),
 )
@@ -1093,7 +1093,7 @@ def test_graph_law_failures_use_typed_definition_refusal(
 
     assert result.verdict == "refused"
     diagnostic = result.frontier.diagnostics[0]
-    assert diagnostic.code == "playbill.authoring.procedure_definition_invalid"
+    assert diagnostic.code == "cruxible.authoring.procedure_definition_invalid"
     assert diagnostic.stage == "lowering"
     assert diagnostic.offending_element == "definition"
     assert expected_cause in diagnostic.message
@@ -1146,7 +1146,7 @@ def test_invalid_graph_v4_authoring_names_its_own_generation(tmp_path: Path) -> 
 
     assert result.verdict == "refused"
     diagnostic = result.frontier.diagnostics[0]
-    assert diagnostic.code == "playbill.authoring.procedure_definition_invalid"
+    assert diagnostic.code == "cruxible.authoring.procedure_definition_invalid"
     assert diagnostic.offending_element == "definition"
     assert "graph-v4" in diagnostic.message
     assert diagnostic.repairs[0].description == "Repair the indicated graph-v4 definition field."
@@ -1182,7 +1182,7 @@ def test_layout_only_procedure_successor_refuses_in_coordinator(tmp_path: Path) 
     )
 
     assert result.verdict == "refused"
-    assert result.frontier.diagnostics[0].code == "playbill.proposal.non_singleton_scope"
+    assert result.frontier.diagnostics[0].code == "cruxible.proposal.non_singleton_scope"
     assert result.frontier.diagnostics[0].message == (
         "The proposal changes no registered semantic member."
     )
@@ -1206,7 +1206,7 @@ def test_invalid_artifact_reference_message_excludes_pydantic_metadata(
 
     assert result.verdict == "refused"
     diagnostic = result.frontier.diagnostics[0]
-    assert diagnostic.code == "playbill.authoring.artifact_reference_invalid"
+    assert diagnostic.code == "cruxible.authoring.artifact_reference_invalid"
     assert "definition.contract_in.role" in diagnostic.message
     assert "definition.contract_in.target.name" in diagnostic.message
     assert "offending element" in diagnostic.message
@@ -1257,7 +1257,7 @@ def test_caller_originated_exact_procedure_pin_is_typed_refusal(tmp_path: Path) 
     diagnostic = next(
         item
         for item in result.frontier.diagnostics
-        if item.code == "playbill.authoring.caller_artifact_digest_forbidden"
+        if item.code == "cruxible.authoring.caller_artifact_digest_forbidden"
     )
     assert diagnostic.offending_element == "definition.contract_in"
     assert diagnostic.repairs[0].kind == "replace_reference"

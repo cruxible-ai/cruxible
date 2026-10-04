@@ -305,7 +305,7 @@ def _capture_contract_at_base(
         if historical is not None:
             return historical
         _refuse(
-            "playbill.authoring.capture_contract_unresolved",
+            "cruxible.authoring.capture_contract_unresolved",
             "source.capture_digest",
             "The existing Capture's exact CaptureContract is not accepted at this base.",
             repair_kind="replace_capture",
@@ -315,7 +315,7 @@ def _capture_contract_at_base(
         )
     if not isinstance(path, str) or not isinstance(base_tree.get(path), bytes):
         _refuse(
-            "playbill.authoring.capture_contract_unresolved",
+            "cruxible.authoring.capture_contract_unresolved",
             "source.capture_digest",
             "The CaptureContract relation does not resolve an accepted artifact.",
             repair_kind="replace_capture",
@@ -331,7 +331,7 @@ def _capture_contract_at_base(
     )
     if accepted.artifact_digest != contract_digest:
         _refuse(
-            "playbill.authoring.capture_contract_unresolved",
+            "cruxible.authoring.capture_contract_unresolved",
             "source.capture_digest",
             "The indexed CaptureContract differs from the Capture's exact contract digest.",
             repair_kind="replace_capture",
@@ -470,7 +470,7 @@ def _referent(
 ) -> tuple[ArtifactIdentity, str]:
     if address.selector.scheme != "artifact-v1":
         _refuse(
-            "playbill.authoring.referent_not_whole_artifact",
+            "cruxible.authoring.referent_not_whole_artifact",
             "statement.subject",
             "Claim referents must name a whole accepted Subject artifact.",
             repair_kind="replace_subject",
@@ -479,7 +479,7 @@ def _referent(
     content = tree.get(address.artifact_path)
     if content is None:
         _refuse(
-            "playbill.authoring.referent_not_found",
+            "cruxible.authoring.referent_not_found",
             "statement.subject",
             "The Claim referent does not exist at the intent base.",
             repair_kind="replace_subject",
@@ -492,7 +492,7 @@ def _referent(
         claim_type = parse_claim_type(content, path=address.artifact_path)
         return claim_type.identity, claim_type_digest(claim_type).tagged
     _refuse(
-        "playbill.authoring.referent_kind_not_admitted",
+        "cruxible.authoring.referent_kind_not_admitted",
         "statement.subject",
         "The selected artifact kind is not admitted as this Claim's referent.",
         repair_kind="replace_subject",
@@ -698,7 +698,7 @@ def _install_claim_dependencies(
             or draft_path != subject_artifact_path
         ):
             _refuse(
-                "playbill.authoring.dependency_subject_mismatch",
+                "cruxible.authoring.dependency_subject_mismatch",
                 "dependency_drafts.subject",
                 "The Subject draft does not equal this Claim's exact subject.",
                 repair_kind="replace_dependency_subject",
@@ -708,7 +708,7 @@ def _install_claim_dependencies(
         accepted = base_tree.get(draft_path)
         if accepted is not None and accepted != rendered:
             _refuse(
-                "playbill.authoring.dependency_conflicts_with_accepted",
+                "cruxible.authoring.dependency_conflicts_with_accepted",
                 "dependency_drafts.subject",
                 "The Subject dependency conflicts with accepted bytes at this identity.",
                 repair_kind="use_accepted_subject",
@@ -719,7 +719,7 @@ def _install_claim_dependencies(
             changed_paths.add(draft_path)
     elif subject_artifact_path not in base_tree:
         _refuse(
-            "playbill.authoring.dependency_subject_required",
+            "cruxible.authoring.dependency_subject_required",
             "dependency_drafts.subject",
             "This Claim's Subject is absent at the intent base.",
             repair_kind="provide_dependency_subject",
@@ -732,7 +732,7 @@ def _install_claim_dependencies(
         draft_path = claim_type_path(claim_type_draft.predicate)
         if draft_path != type_artifact_path:
             _refuse(
-                "playbill.authoring.dependency_claim_type_mismatch",
+                "cruxible.authoring.dependency_claim_type_mismatch",
                 "dependency_drafts.claim_type",
                 "The ClaimType draft does not equal this Claim's predicate.",
                 repair_kind="replace_dependency_claim_type",
@@ -742,7 +742,7 @@ def _install_claim_dependencies(
         accepted = base_tree.get(draft_path)
         if accepted is not None and accepted != rendered:
             _refuse(
-                "playbill.authoring.dependency_conflicts_with_accepted",
+                "cruxible.authoring.dependency_conflicts_with_accepted",
                 "dependency_drafts.claim_type",
                 "The ClaimType dependency conflicts with accepted bytes at this identity.",
                 repair_kind="use_accepted_claim_type",
@@ -753,7 +753,7 @@ def _install_claim_dependencies(
             changed_paths.add(draft_path)
     elif type_artifact_path not in base_tree:
         _refuse(
-            "playbill.authoring.dependency_claim_type_required",
+            "cruxible.authoring.dependency_claim_type_required",
             "dependency_drafts.claim_type",
             "This Claim's ClaimType is absent at the intent base.",
             repair_kind="provide_dependency_claim_type",
@@ -838,7 +838,7 @@ def _refuse_citation_into_projection_window(
     registered = registered_projection_blocks(instance)
     if registered is None:
         _refuse(
-            "playbill.projection.window_unverifiable",
+            "cruxible.projection.window_unverifiable",
             "source",
             f"Source {cited_source!r} may carry projection blocks and the registration "
             "fold cannot be read, so this span cannot be proved outside them.",
@@ -850,7 +850,7 @@ def _refuse_citation_into_projection_window(
         return
     if page is None:
         _refuse(
-            "playbill.projection.window_unverifiable",
+            "cruxible.projection.window_unverifiable",
             "source",
             f"Source {cited_source!r} registers projection blocks and its whole bytes "
             "were not presented, so this span cannot be proved outside them.",
@@ -864,7 +864,7 @@ def _refuse_citation_into_projection_window(
     missing = [block_id for block_id in expected if block_id not in stamped]
     if missing:
         _refuse(
-            "playbill.projection.window_unverifiable",
+            "cruxible.projection.window_unverifiable",
             "source",
             f"The bytes presented for source {cited_source!r} carry no stamped window for "
             f"registered block {missing[0]!r}, so they are not the page this instance "
@@ -885,7 +885,7 @@ def _refuse_evidence_from_projection(
     end_byte: int,
 ) -> NoReturn:
     _refuse(
-        "playbill.projection.evidence_from_projection",
+        "cruxible.projection.evidence_from_projection",
         "source",
         f"Bytes [{start_byte}, {end_byte}) of source {source_id!r} lie inside projection "
         f"block {block_id!r}. A projection block is never evidence, whatever the citation "
@@ -930,7 +930,7 @@ def _lower_claim(
             or derivation.procedure.artifact_digest != derivation_procedure.artifact_digest
         ):
             _refuse(
-                "playbill.authoring.derivation_requires_execution",
+                "cruxible.authoring.derivation_requires_execution",
                 "derivation",
                 "Derived Claims must be produced by the executing Procedure's proposal "
                 "terminal; ordinary authoring cannot assert or carry execution provenance.",
@@ -946,7 +946,7 @@ def _lower_claim(
     type_content = candidate_base_tree.get(type_path)
     if type_content is None:
         _refuse(
-            "playbill.authoring.claim_type_not_found",
+            "cruxible.authoring.claim_type_not_found",
             "statement.predicate",
             "The predicate has no accepted ClaimType at the intent base.",
             repair_kind="replace_predicate",
@@ -965,7 +965,7 @@ def _lower_claim(
     statement_object = _exact_object(instance, payload.statement.object)
     if statement_object.kind != claim_type.object_kind:
         _refuse(
-            "playbill.claim.object_kind_mismatch",
+            "cruxible.claim.object_kind_mismatch",
             "statement.object",
             "The Claim object kind differs from its accepted ClaimType.",
             repair_kind="replace_object",
@@ -982,7 +982,7 @@ def _lower_claim(
         object_name = object_path.removeprefix("subjects/").removesuffix(".json")
         if object_content is None:
             _refuse(
-                "playbill.authoring.object_subject_not_found",
+                "cruxible.authoring.object_subject_not_found",
                 "statement.object.address",
                 f"The object Subject {object_name!r} is not accepted at the intent base.",
                 repair_kind="propose_subject",
@@ -993,7 +993,7 @@ def _lower_claim(
             )
         if not object_path.startswith("subjects/"):
             _refuse(
-                "playbill.claim.object_subject_kind_forbidden",
+                "cruxible.claim.object_subject_kind_forbidden",
                 "statement.object.address",
                 "A subject-valued Claim object must name an accepted Subject artifact.",
                 repair_kind="replace_object_subject",
@@ -1002,7 +1002,7 @@ def _lower_claim(
         object_subject = parse_subject(object_content, path=object_path)
         if object_subject.subject_kind not in claim_type.allowed_object_subject_kinds:
             _refuse(
-                "playbill.claim.object_subject_kind_forbidden",
+                "cruxible.claim.object_subject_kind_forbidden",
                 "statement.object.address",
                 f"Subject kind {object_subject.subject_kind!r} is not admitted by "
                 f"ClaimType {claim_type.predicate!r}.",
@@ -1057,7 +1057,7 @@ def _lower_claim(
     if not required_ids.issubset(supplied) or not supplied.issubset(dispositionable):
         required = tuple(sorted(slot_claims, key=lambda item: item.identity.name.encode("ascii")))
         _refuse(
-            "playbill.authoring.existing_claim_dispositions_incomplete",
+            "cruxible.authoring.existing_claim_dispositions_incomplete",
             "existing_claim_dispositions",
             "Every live Claim in this statement's (subject, predicate, qualifier) "
             "slot must receive an explicit disposition.",
@@ -1086,7 +1086,7 @@ def _lower_claim(
         predecessor = parse_claim(candidate_base_tree[path], path=path)
         if isinstance(predecessor, ClaimArtifact):
             _refuse(
-                "playbill.authoring.claim_terminal",
+                "cruxible.authoring.claim_terminal",
                 "revises",
                 "An attributed retired Claim is terminal and cannot be authored again.",
                 repair_kind="omit_revises",
@@ -1095,7 +1095,7 @@ def _lower_claim(
             )
     elif payload.revises is not None:
         _refuse(
-            "playbill.authoring.claim_predecessor_not_found",
+            "cruxible.authoring.claim_predecessor_not_found",
             "revises",
             "The requested Claim lineage does not exist at the intent base.",
             repair_kind="omit_revises",
@@ -1133,7 +1133,7 @@ def _lower_claim(
             )
         except CruxibleError:
             _refuse(
-                "playbill.authoring.existing_capture_not_found",
+                "cruxible.authoring.existing_capture_not_found",
                 "source.capture_digest",
                 "The existing Capture digest is not present in the daemon CAS.",
                 repair_kind="replace_capture",
@@ -1143,7 +1143,7 @@ def _lower_claim(
             envelope = parse_capture_envelope(raw_envelope)
         except (CruxibleError, ValueError):
             _refuse(
-                "playbill.authoring.existing_capture_invalid",
+                "cruxible.authoring.existing_capture_invalid",
                 "source.capture_digest",
                 "The referenced bytes are not a canonical Capture envelope.",
                 repair_kind="replace_capture",
@@ -1178,7 +1178,7 @@ def _lower_claim(
             )
         except (CruxibleError, ValueError):
             _refuse(
-                "playbill.authoring.existing_capture_invalid",
+                "cruxible.authoring.existing_capture_invalid",
                 "source.capture_digest",
                 "The existing Capture does not verify against its exact accepted contract.",
                 repair_kind="replace_capture",
@@ -1192,7 +1192,7 @@ def _lower_claim(
         )
         if classification == "claim_bound_mismatch":
             _refuse(
-                "playbill.claim.self_source_capture_unbound",
+                "cruxible.claim.self_source_capture_unbound",
                 "source.capture_digest",
                 "The Claim-bound Capture belongs to another Claim or has mismatched "
                 "family signals.",
@@ -1201,7 +1201,7 @@ def _lower_claim(
             )
         if classification == "not_shareable":
             _refuse(
-                "playbill.authoring.capture_not_shareable",
+                "cruxible.authoring.capture_not_shareable",
                 "source.capture_digest",
                 "Only verified observed Captures are shareable across Claims.",
                 repair_kind="replace_capture",
@@ -1210,7 +1210,7 @@ def _lower_claim(
         assert payload.citation_role is not None
         if classification == "claim_bound" and payload.citation_role != "copy":
             _refuse(
-                "playbill.authoring.existing_capture_not_admitted",
+                "cruxible.authoring.existing_capture_not_admitted",
                 "citation_role",
                 "Claim-bound self-source Captures remain non-evidentiary copies.",
                 repair_kind="replace_citation_role",
@@ -1253,7 +1253,7 @@ def _lower_claim(
             # refusal of THIS request, and it used to leave as an unhandled
             # server fault the author could only read in the daemon log.
             _refuse(
-                "playbill.authoring.working_selection_refused",
+                "cruxible.authoring.working_selection_refused",
                 "source.selector",
                 f"The working selection cannot be captured: {exc}",
                 repair_kind="revise_selection",
@@ -1397,7 +1397,7 @@ def _lower_claim(
                 pins.append(pin)
         except (ValueError, CruxibleError) as exc:
             _refuse(
-                "playbill.authoring.derivation_unverified",
+                "cruxible.authoring.derivation_unverified",
                 "derivation",
                 str(exc),
                 repair_kind="rebind_derivation",
@@ -1442,7 +1442,7 @@ def _lower_claim(
         )
         if not any(decision.trace.result.verdict == "eligible" for decision in admissions):
             _refuse(
-                "playbill.authoring.existing_capture_not_admitted",
+                "cruxible.authoring.existing_capture_not_admitted",
                 "source.capture_digest",
                 "The existing Capture satisfies no evidence admission rule for this Claim.",
                 repair_kind="replace_capture_or_role",
@@ -1511,7 +1511,7 @@ def _lower_claim(
             "citation_id": citation.citation_id,
             **(
                 {
-                    "outcome": "playbill.authoring.existing_capture_already_associated",
+                    "outcome": "cruxible.authoring.existing_capture_already_associated",
                 }
                 if idempotent
                 else {}
@@ -1584,7 +1584,7 @@ def _acquisition_policy_pin(
         target = ArtifactIdentity(kind="SourceAcquisitionPolicy", name=name)
     except ValueError:
         _refuse(
-            "playbill.authoring.artifact_reference_invalid",
+            "cruxible.authoring.artifact_reference_invalid",
             "acquisition_policy",
             "The named SourceAcquisitionPolicy identity is not canonical.",
             repair_kind="replace_reference",
@@ -1620,7 +1620,7 @@ def _resolve_authoring_references(
                 reference = AuthoringArtifactReference.model_validate(value)
             except ValidationError as exc:
                 _refuse(
-                    "playbill.authoring.artifact_reference_invalid",
+                    "cruxible.authoring.artifact_reference_invalid",
                     location,
                     "The procedure authoring reference is invalid: "
                     + " | ".join(_validation_error_lines(exc, root=location)),
@@ -1631,7 +1631,7 @@ def _resolve_authoring_references(
             resolved = accepted.get(target_identity)
             if resolved is None:
                 _refuse(
-                    "playbill.authoring.artifact_reference_unresolved",
+                    "cruxible.authoring.artifact_reference_unresolved",
                     location,
                     "The referenced artifact is not uniquely accepted at the intent base.",
                     repair_kind="replace_with_pin_slot",
@@ -1651,7 +1651,7 @@ def _resolve_authoring_references(
                 candidate_reference = AuthoringCandidateReference.model_validate(value)
             except ValidationError as exc:
                 _refuse(
-                    "playbill.authoring.candidate_reference_invalid",
+                    "cruxible.authoring.candidate_reference_invalid",
                     location,
                     "The change-set candidate reference is invalid: "
                     + " | ".join(_validation_error_lines(exc, root=location)),
@@ -1660,7 +1660,7 @@ def _resolve_authoring_references(
                 )
             if candidate_reference.target.kind == "Procedure":
                 _refuse(
-                    "playbill.authoring.candidate_procedure_reference_forbidden",
+                    "cruxible.authoring.candidate_procedure_reference_forbidden",
                     location,
                     "A Procedure cannot candidate-reference another Procedure in change-set v1.",
                     repair_kind="replace_reference",
@@ -1668,7 +1668,7 @@ def _resolve_authoring_references(
                 )
             if candidate_reference.target.qualified not in candidate_identities:
                 _refuse(
-                    "playbill.authoring.candidate_reference_outside_change_set",
+                    "cruxible.authoring.candidate_reference_outside_change_set",
                     location,
                     "The candidate reference does not name a member of this change set.",
                     repair_kind="add_or_replace_member",
@@ -1693,7 +1693,7 @@ def _resolve_authoring_references(
             contract = None if not isinstance(name, str) else (owned_contracts or {}).get(name)
             if contract is None or not isinstance(role, str):
                 _refuse(
-                    "playbill.authoring.carried_contract_unresolved",
+                    "cruxible.authoring.carried_contract_unresolved",
                     location,
                     "The carried Contract reference has no matching owned declaration.",
                     repair_kind="replace_reference",
@@ -1706,7 +1706,7 @@ def _resolve_authoring_references(
             ).model_dump(mode="json")
         if set(value) == {"role", "target", "artifact_digest"}:
             _refuse(
-                "playbill.authoring.caller_artifact_digest_forbidden",
+                "cruxible.authoring.caller_artifact_digest_forbidden",
                 location,
                 "Procedure authoring cannot supply an exact artifact digest.",
                 repair_kind="replace_reference",
@@ -1769,7 +1769,7 @@ def _parse_reference_tree(
         # instance, not of the payload -- but the author still asked a question
         # and is owed a typed answer with a repair rather than a bare 500.
         _refuse(
-            "playbill.authoring.lowering_invalid",
+            "cruxible.authoring.lowering_invalid",
             "definition",
             f"The accepted artifacts this Procedure resolves against cannot be read: {exc}",
             repair_kind="restore_accepted_projection",
@@ -1854,7 +1854,7 @@ def _lower_procedure(
         except (SourceCompileError, ValueError) as exc:
             diagnostic = exc.diagnostic if isinstance(exc, SourceCompileError) else None
             _refuse(
-                diagnostic.code if diagnostic else "playbill.authoring.procedure_source_invalid",
+                diagnostic.code if diagnostic else "cruxible.authoring.procedure_source_invalid",
                 "definition.source_request",
                 (
                     f"{diagnostic.span.filename}:{diagnostic.span.line}:"
@@ -1929,7 +1929,7 @@ def _lower_procedure(
             else " | ".join(_validation_error_lines(exc, root="definition"))
         )
         _refuse(
-            "playbill.authoring.procedure_definition_invalid",
+            "cruxible.authoring.procedure_definition_invalid",
             "definition",
             f"The lowered graph-v{graph_generation} Procedure definition is invalid: " + message,
             repair_kind="replace_definition",
@@ -1987,7 +1987,7 @@ def _lower_procedure(
         )
         if unreferenced_contracts:
             _refuse(
-                "playbill.authoring.procedure_definition_invalid",
+                "cruxible.authoring.procedure_definition_invalid",
                 "owned_contracts",
                 "The Procedure declares owned Contracts that its graph does not reference: "
                 + ", ".join(unreferenced_contracts),
@@ -2015,7 +2015,7 @@ def _lower_procedure(
             for contract in payload.owned_contracts
         ):
             _refuse(
-                "playbill.authoring.procedure_definition_invalid",
+                "cruxible.authoring.procedure_definition_invalid",
                 "definition.budget.max_items",
                 "The lowered Procedure definition declares max_items but none of "
                 "its pinned Contracts declares a list field.",
@@ -2052,7 +2052,7 @@ def _lower_procedure(
             )
     except ValidationError as exc:
         _refuse(
-            "playbill.authoring.procedure_definition_invalid",
+            "cruxible.authoring.procedure_definition_invalid",
             "procedure",
             "The lowered Procedure artifact is invalid: "
             + " | ".join(_validation_error_lines(exc, root="procedure")),
@@ -2162,7 +2162,7 @@ def _render_non_procedure_member(
                 content = tree.get(target_path)
                 if content is None:
                     _refuse(
-                        "playbill.authoring.claim_type_missing",
+                        "cruxible.authoring.claim_type_missing",
                         "query_definition",
                         f"Query predicate {predicate!r} is absent from the candidate vocabulary.",
                         repair_kind="replace_input",
@@ -2177,7 +2177,7 @@ def _render_non_procedure_member(
                 key = (pin.role, pin.target.qualified)
                 if key in pins and pins[key] != pin:
                     _refuse(
-                        "playbill.authoring.query_pin_mismatch",
+                        "cruxible.authoring.query_pin_mismatch",
                         "query_definition.pins",
                         "Explicit query pin differs from the resolved definition.",
                         repair_kind="replace_input",
@@ -2185,7 +2185,7 @@ def _render_non_procedure_member(
                     )
                 if target.lifecycle.state != "live":
                     _refuse(
-                        "playbill.authoring.claim_type_missing",
+                        "cruxible.authoring.claim_type_missing",
                         "query_definition",
                         "Query predicates must reference live ClaimTypes.",
                         repair_kind="replace_input",
@@ -2238,7 +2238,7 @@ def _render_line_member(
     procedure_content = tree.get(procedure_target)
     if procedure_content is None:
         _refuse(
-            "playbill.authoring.line_procedure_missing",
+            "cruxible.authoring.line_procedure_missing",
             "procedure_name",
             "Line authoring requires the named accepted or same-ChangeSet Procedure.",
             repair_kind="replace_procedure_name",
@@ -2254,7 +2254,7 @@ def _render_line_member(
         )
         if acquiring:
             _refuse(
-                "playbill.authoring.line_acquisition_policy_required",
+                "cruxible.authoring.line_acquisition_policy_required",
                 "acquisition_policy_name",
                 f"Procedure {payload.procedure_name!r} acquires through Source or exhaust nodes "
                 f"{acquiring}, so its Line must name a SourceAcquisitionPolicy.",
@@ -2269,7 +2269,7 @@ def _render_line_member(
         policy_content = tree.get(policy_target)
         if policy_content is None:
             _refuse(
-                "playbill.authoring.line_acquisition_policy_missing",
+                "cruxible.authoring.line_acquisition_policy_missing",
                 "acquisition_policy_name",
                 "Line authoring requires the named accepted or same-ChangeSet "
                 "SourceAcquisitionPolicy.",
@@ -2287,7 +2287,7 @@ def _render_line_member(
         )
     if procedure.definition.graph_format not in {4, 5, 6}:
         _refuse(
-            "playbill.authoring.line_graph_format_unsupported",
+            "cruxible.authoring.line_graph_format_unsupported",
             "procedure_name",
             "Line authoring requires a supported Procedure graph.",
             repair_kind="replace_procedure_name",
@@ -2295,7 +2295,7 @@ def _render_line_member(
         )
     if _required_slot_names(procedure):
         _refuse(
-            "playbill.authoring.line_slots_unsupported",
+            "cruxible.authoring.line_slots_unsupported",
             "procedure_name",
             "Line authoring supports Procedures that pin every Provider exactly; "
             "this one declares open slots.",
@@ -2340,7 +2340,7 @@ def _render_line_member(
         )
         if not isinstance(contract, ArtifactPin):
             _refuse(
-                "playbill.authoring.line_trigger_input_invalid",
+                "cruxible.authoring.line_trigger_input_invalid",
                 "trigger_input",
                 f"trigger_input {payload.trigger_input!r} must name exactly one graph-v4 "
                 "Source input of the Procedure that pins its CaptureContract exactly.",
@@ -2416,7 +2416,7 @@ def _render_trigger_member(
     if payload.line_name is not None:
         if live and line_spec_path(payload.line_name) not in tree:
             _refuse(
-                "playbill.authoring.trigger_line_missing",
+                "cruxible.authoring.trigger_line_missing",
                 "line_name",
                 "Trigger authoring requires the named accepted or same-ChangeSet Line.",
                 repair_kind="replace_line_name",
@@ -2441,7 +2441,7 @@ def _render_trigger_member(
             != selector.capture_contract_digest
         ):
             _refuse(
-                "playbill.authoring.trigger_capture_missing",
+                "cruxible.authoring.trigger_capture_missing",
                 "schedule",
                 "The Trigger's CaptureContract does not match the accepted or staged version.",
                 repair_kind="replace_schedule",
@@ -2512,7 +2512,7 @@ def _check_line_parameters(
     except ProcedureContractValidationError as exc:
         field_path = exc.field_path
         _refuse(
-            "playbill.authoring.line_parameters_refused",
+            "cruxible.authoring.line_parameters_refused",
             "parameters" if not field_path else f"parameters.{field_path}",
             f"Line parameters are the input record of Procedure {payload.procedure_name!r}, "
             f"and its input contract {contract.target.name!r} refuses them: {exc}",
@@ -2543,7 +2543,7 @@ def _render_procedure_mandate_member(
     target_content = tree.get(target_path)
     if target_content is None:
         _refuse(
-            "playbill.authoring.procedure_mandate_procedure_missing",
+            "cruxible.authoring.procedure_mandate_procedure_missing",
             "procedure_name",
             "ProcedureMandate authoring requires the named accepted or same-ChangeSet Procedure.",
             repair_kind="replace_procedure_name",
@@ -2563,7 +2563,7 @@ def _render_procedure_mandate_member(
         type_content = tree.get(type_path)
         if type_content is None:
             _refuse(
-                "playbill.authoring.procedure_mandate_claim_type_missing",
+                "cruxible.authoring.procedure_mandate_claim_type_missing",
                 f"scope[{index}].claim_type",
                 f"Settle scope ClaimType {item.claim_type!r} is not accepted or staged.",
                 repair_kind="replace_claim_type",
@@ -2589,7 +2589,7 @@ def _render_procedure_mandate_member(
         query_content = tree.get(query_path)
         if query_content is None:
             _refuse(
-                "playbill.authoring.procedure_mandate_condition_query_missing",
+                "cruxible.authoring.procedure_mandate_condition_query_missing",
                 "condition.query_name",
                 f"Condition query {payload.condition.query_name!r} is not accepted or staged.",
                 repair_kind="replace_query_name",
@@ -2814,7 +2814,7 @@ class ChangeSetSingletonOnlyMember:
 
     @property
     def code(self) -> str:
-        return f"playbill.authoring.{self.kind}_singleton_required"
+        return f"cruxible.authoring.{self.kind}_singleton_required"
 
 
 CHANGE_SET_SINGLETON_ONLY_MEMBERS: tuple[ChangeSetSingletonOnlyMember, ...] = (
@@ -2869,7 +2869,7 @@ def _lower_change_set(
         owner = owner_by_path.get(path)
         if owner is not None:
             _refuse(
-                "playbill.authoring.change_set_member_path_collision",
+                "cruxible.authoring.change_set_member_path_collision",
                 f"members[{index}]",
                 f"Members {owner} and {index} both author {path!r}.",
                 repair_kind="drop_or_merge_member",
@@ -3131,7 +3131,7 @@ def _resolve_re_author_siblings(
             sibling_index = sibling_member_by_claim_id.get(named)
             if sibling_index is None:
                 _refuse(
-                    "playbill.authoring.claim_type_succession_re_author_invalid",
+                    "cruxible.authoring.claim_type_succession_re_author_invalid",
                     element,
                     "No Claim member of this change set revises the Claim this dependent "
                     "is re-authored as.",
@@ -3152,7 +3152,7 @@ def _resolve_re_author_siblings(
             assert isinstance(sibling, ClaimAuthoringPayloadV1)
             if sibling.statement.predicate != member.predicate:
                 _refuse(
-                    "playbill.authoring.claim_type_succession_re_author_invalid",
+                    "cruxible.authoring.claim_type_succession_re_author_invalid",
                     element,
                     "A re-authoring sibling Claim member lowers under the succeeded "
                     "ClaimType, not another one.",
@@ -3170,7 +3170,7 @@ def _resolve_re_author_siblings(
                 )
             if named != required:
                 _refuse(
-                    "playbill.authoring.claim_type_succession_re_author_invalid",
+                    "cruxible.authoring.claim_type_succession_re_author_invalid",
                     element,
                     "A re-authored dependent keeps its own Claim identity.",
                     repair_kind="replace_re_author_member",
@@ -3188,7 +3188,7 @@ def _resolve_re_author_siblings(
                 accepted = parse_claim(accepted_content, path=claim_path(required))
                 if sibling.statement.subject != accepted.statement.subject:
                     _refuse(
-                        "playbill.authoring.claim_type_succession_re_author_invalid",
+                        "cruxible.authoring.claim_type_succession_re_author_invalid",
                         f"members[{sibling_index}].statement.subject",
                         "A re-authored dependent keeps the Subject it was accepted about: "
                         "moving it would state a different Claim under this one's identity.",
@@ -3208,7 +3208,7 @@ def _resolve_re_author_siblings(
             claimed_by = owner.get(sibling_index)
             if claimed_by is not None:
                 _refuse(
-                    "playbill.authoring.claim_type_succession_re_author_invalid",
+                    "cruxible.authoring.claim_type_succession_re_author_invalid",
                     element,
                     f"Members {claimed_by} and {index} both re-author member {sibling_index}.",
                     repair_kind="replace_re_author_member",
@@ -3257,7 +3257,7 @@ def _refuse_contended_succession_paths(
         if _member_stage(members[other]) == "definition":
             continue
         _refuse(
-            "playbill.authoring.change_set_member_path_collision",
+            "cruxible.authoring.change_set_member_path_collision",
             f"members[{index}].dependents",
             f"Members {index} and {other} both change {path!r}: this succession already "
             "dispositions it.",
@@ -3301,7 +3301,7 @@ def _stage_claim_type_succession(
         if dependent.disposition != "invalidation":
             continue
         _refuse(
-            "playbill.authoring.claim_type_succession_disposition_deprecated",
+            "cruxible.authoring.claim_type_succession_disposition_deprecated",
             f"dependents[{position}].disposition",
             "`invalidation` is the standalone migration route's deprecated spelling of "
             "`retire`. A change set refuses or accepts -- it has no warning channel to "
@@ -3327,7 +3327,7 @@ def _stage_claim_type_succession(
         )
     except ClaimTypeMigrationError as error:
         _refuse(
-            "playbill.authoring.claim_type_succession_invalid",
+            "cruxible.authoring.claim_type_succession_invalid",
             "successor",
             str(error),
             repair_kind="replace_successor",
@@ -3339,7 +3339,7 @@ def _stage_claim_type_succession(
         inventory = claim_type_migration_inventory(staged_tree, root=successor.identity)
     except ClaimTypeMigrationError as error:
         _refuse(
-            "playbill.authoring.claim_type_succession_closure_unsupported",
+            "cruxible.authoring.claim_type_succession_closure_unsupported",
             "dependents",
             str(error),
             repair_kind="split_change_set",
@@ -3376,7 +3376,7 @@ def _stage_claim_type_succession(
     supplied = {item.identity.qualified: item for item in member.dependents}
     if set(required) != set(supplied):
         _refuse(
-            "playbill.authoring.claim_type_succession_closure_incomplete",
+            "cruxible.authoring.claim_type_succession_closure_incomplete",
             "dependents",
             "A ClaimType succession must disposition its exact reverse-pin closure.",
             repair_kind="replace_dependents",
@@ -3403,7 +3403,7 @@ def _stage_claim_type_succession(
             live_claim = row.artifact_kind == "claim" and "retire" in row.permitted_dispositions
             if dependent.disposition == "successor" and live_claim:
                 _refuse(
-                    "playbill.authoring.claim_type_succession_object_kind_change",
+                    "cruxible.authoring.claim_type_succession_object_kind_change",
                     f"dependents[{position}].disposition",
                     "A successor that changes object_kind cannot carry a live Claim "
                     "dependent unchanged: its object no longer says what the ClaimType "
@@ -3450,7 +3450,7 @@ def _stage_claim_type_succession(
             )
         except AuthoringLoweringError as error:
             _refuse(
-                "playbill.authoring.claim_type_succession_re_author_refused",
+                "cruxible.authoring.claim_type_succession_re_author_refused",
                 f"dependents[{position}].successor_claim_id",
                 error.message,
                 repair_kind="edit_re_author_member",
@@ -3495,7 +3495,7 @@ def _stage_claim_type_succession(
         )
     except ClaimTypeMigrationError as error:
         _refuse(
-            "playbill.authoring.claim_type_succession_dependent_invalid",
+            "cruxible.authoring.claim_type_succession_dependent_invalid",
             "dependents",
             str(error),
             repair_kind="replace_dependents",
@@ -3533,7 +3533,7 @@ def _stage_claim_retirement(
     content = staged_tree.get(path)
     if content is None:
         _refuse(
-            "playbill.authoring.claim_predecessor_not_found",
+            "cruxible.authoring.claim_predecessor_not_found",
             "retires",
             "The Claim named for retirement does not exist in this change set's tree.",
             repair_kind="replace_retires",
@@ -3542,7 +3542,7 @@ def _stage_claim_retirement(
     claim = parse_claim(content, path=path)
     if claim.lifecycle.state != "live":
         _refuse(
-            "playbill.authoring.claim_terminal",
+            "cruxible.authoring.claim_terminal",
             "retires",
             "A retired Claim cannot be retired again.",
             repair_kind="drop_member",
@@ -3563,7 +3563,7 @@ def _stage_claim_retirement(
         )
     except ClaimRetireError as error:
         _refuse(
-            "playbill.authoring.claim_retirement_closure_unsupported",
+            "cruxible.authoring.claim_retirement_closure_unsupported",
             "dependents",
             str(error),
             repair_kind="split_change_set",
@@ -3577,7 +3577,7 @@ def _stage_claim_retirement(
     }
     if supplied != expected:
         _refuse(
-            "playbill.authoring.claim_retirement_closure_incomplete",
+            "cruxible.authoring.claim_retirement_closure_incomplete",
             "dependents",
             "A retirement member must carry its exact live Claim closure.",
             repair_kind="replace_dependents",
@@ -3610,7 +3610,7 @@ def _stage_claim_retirement(
         )
     except ClaimRetireError as error:
         _refuse(
-            "playbill.authoring.claim_retirement_stale",
+            "cruxible.authoring.claim_retirement_stale",
             "dependents",
             str(error),
             repair_kind="replace_dependents",

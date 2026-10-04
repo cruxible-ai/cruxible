@@ -213,7 +213,7 @@ def create_playbill_host(
         dry_run=dry_run,
         at=at,
         kind="direct",
-        operation="playbill.host.create",
+        operation="cruxible.host.create",
         describe="allocating a Cruxible host",
     ) as change:
         registry = get_registry()
@@ -405,7 +405,7 @@ def playbill_host_workspace_attach(
         dry_run=dry_run,
         at=at,
         kind="direct",
-        operation="playbill.workspace.attach",
+        operation="cruxible.workspace.attach",
         describe=f"attaching host {instance_id}",
     ) as change:
         # Opened behind the preview's guards: a cold open may not repair on disk.
@@ -561,7 +561,7 @@ def _playbill_host_workspace_detach_admitted(
         dry_run=dry_run,
         at=at,
         kind="direct",
-        operation="playbill.workspace.detach",
+        operation="cruxible.workspace.detach",
         describe=f"detaching host {instance_id}",
     ) as change:
         registry = get_registry()

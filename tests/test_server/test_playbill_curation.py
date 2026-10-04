@@ -68,7 +68,7 @@ def test_http_curation_list_maps_raw_source_observation_to_typed_refusal(
     )
 
     assert response.status_code == 400, response.text
-    assert response.json()["error_code"] == "playbill.next.workspace_observation_invalid"
+    assert response.json()["error_code"] == "cruxible.next.workspace_observation_invalid"
 
 
 @pytest.mark.parametrize(
@@ -118,7 +118,7 @@ def test_http_curation_lifecycle_validation_is_a_typed_refusal(
     )
 
     assert response.status_code == 400, response.text
-    assert response.json()["error_code"] == "playbill.curation.refused"
+    assert response.json()["error_code"] == "cruxible.curation.refused"
 
 
 @pytest.mark.parametrize(
@@ -159,7 +159,7 @@ def test_http_curation_lifecycle_routes_deliver_typed_domain_refusals(
     )
 
     assert response.status_code == 400, response.text
-    assert response.json()["error_code"] == "playbill.curation.item_not_found"
+    assert response.json()["error_code"] == "cruxible.curation.item_not_found"
 
 
 @pytest.mark.parametrize(
@@ -168,12 +168,12 @@ def test_http_curation_lifecycle_routes_deliver_typed_domain_refusals(
         (
             ReviewOperationalStoreError("corrupt operational event"),
             400,
-            "playbill.curation.operational_store_invalid",
+            "cruxible.curation.operational_store_invalid",
         ),
         (
             ReviewOperationalConcurrentChangeError(),
             409,
-            "playbill.curation.concurrent_change",
+            "cruxible.curation.concurrent_change",
         ),
     ),
 )

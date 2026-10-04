@@ -412,7 +412,7 @@ def test_line_input_authoring_law_and_frozen_compiler_boundary(tmp_path):
             predecessor=None,
         )
         assert verdict.verdict == "refused"
-        assert verdict.diagnostics[0].code == "playbill.line.trigger_input_mismatch"
+        assert verdict.diagnostics[0].code == "cruxible.line.trigger_input_mismatch"
     with pytest.raises(ProjectionFormatError, match="Line v6 requires compiler revision 32"):
         parse_projection_tree(
             {line_spec_path(line.identity.name): render_line_spec(line)},
@@ -767,7 +767,7 @@ def test_a_line_that_binds_its_trigger_capture_accepts_only_triggers_on_that_eve
     )
     assert ticking.candidate is None
     assert [item.code for item in ticking.evaluation.diagnostics] == [
-        "playbill.trigger.event_not_accepted"
+        "cruxible.trigger.event_not_accepted"
     ]
     second = submit(
         line_trigger(

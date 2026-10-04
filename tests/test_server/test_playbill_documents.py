@@ -121,7 +121,7 @@ def test_http_activation_refuses_a_malformed_proposal_id_as_typed_400(
 
     assert response.status_code == 400
     assert response.json()["error_type"] == "ProposalActivationRequestInvalid"
-    assert response.json()["error_code"] == ("playbill.proposal.activation_request_invalid")
+    assert response.json()["error_code"] == ("cruxible.proposal.activation_request_invalid")
 
 
 def test_http_models_refuse_private_key_and_local_path_inputs(
@@ -232,7 +232,7 @@ def test_friendly_change_set_duplicate_is_a_typed_http_400(
 
     assert response.status_code == 400, response.text
     assert response.json()["error_type"] == "AuthoringInputError"
-    assert response.json()["error_code"] == ("playbill.authoring.change_set_duplicate_identity")
+    assert response.json()["error_code"] == ("cruxible.authoring.change_set_duplicate_identity")
 
 
 def test_residual_proposal_ref_validation_is_a_typed_http_400(
@@ -368,9 +368,9 @@ def test_http_inspect_and_review_refuse_an_unknown_proposal_id_as_typed_404(
     for response in (inspected, reviewed):
         assert response.status_code == 404, response.text
         body = response.json()
-        assert body["error_code"] == "playbill.proposal_not_found"
+        assert body["error_code"] == "cruxible.proposal_not_found"
         assert body["context"]["selector"] == selector
-        assert body["repair"]["operation"] == "playbill.proposal.list"
+        assert body["repair"]["operation"] == "cruxible.proposal.list"
 
 
 def test_sdk_proposal_status_reads_one_proposal_by_id_without_paging_the_list(
@@ -419,4 +419,4 @@ def test_sdk_proposal_status_reads_one_proposal_by_id_without_paging_the_list(
 
     missing = client.get(f"/api/v1/{instance_id}/playbill/proposals/sha256:{'0' * 64}/status")
     assert missing.status_code == 404, missing.text
-    assert missing.json()["error_code"] == "playbill.proposal_not_found"
+    assert missing.json()["error_code"] == "cruxible.proposal_not_found"

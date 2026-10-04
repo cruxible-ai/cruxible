@@ -584,27 +584,27 @@ def evaluate_provider_interface_law(
 ) -> ProviderInterfaceLawResult:
     if path != provider_interface_path(registration.interface_id):
         return _refusal(
-            "playbill.provider_interface.path_mismatch",
+            "cruxible.provider_interface.path_mismatch",
             "Provider interface identity/path disagreement.",
             path=path,
         )
     if predecessor is None:
         if registration.lifecycle.predecessor_digest is not None:
             return _refusal(
-                "playbill.provider_interface.predecessor_missing",
+                "cruxible.provider_interface.predecessor_missing",
                 "A new Provider interface cannot name a predecessor.",
                 path=path,
             )
     else:
         if registration.identity != predecessor.registration.identity:
             return _refusal(
-                "playbill.provider_interface.stable_identity_changed",
+                "cruxible.provider_interface.stable_identity_changed",
                 "A Provider interface successor must retain stable identity.",
                 path=path,
             )
         if registration.lifecycle.predecessor_digest != predecessor.artifact_digest:
             return _refusal(
-                "playbill.provider_interface.predecessor_mismatch",
+                "cruxible.provider_interface.predecessor_mismatch",
                 "Provider interface successor does not pin its exact predecessor.",
                 path=path,
             )
@@ -614,7 +614,7 @@ def evaluate_provider_interface_law(
         fixture = conformance_fixtures.get(proof.fixture_id)
         if fixture is None:
             return _refusal(
-                "playbill.provider_interface.bucket_fixture_missing",
+                "cruxible.provider_interface.bucket_fixture_missing",
                 f"Compiler conformance fixture {proof.fixture_id!r} is unavailable.",
                 path=path,
             )
@@ -623,7 +623,7 @@ def evaluate_provider_interface_law(
             or fixture.measured_bucket_id != proof.measured_bucket_id
         ):
             return _refusal(
-                "playbill.provider_interface.classifier_digest_mismatch",
+                "cruxible.provider_interface.classifier_digest_mismatch",
                 f"Conformance proof {proof.fixture_id!r} diverges from compiler bytes.",
                 path=path,
             )

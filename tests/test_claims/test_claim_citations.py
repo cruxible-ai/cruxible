@@ -387,7 +387,7 @@ def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
         "2026-08-20T12:01:00.000000Z",
     )
     assert {item.code for item in forged.evaluation.diagnostics} == {
-        "playbill.claim.self_source_origin_mismatch"
+        "cruxible.claim.self_source_origin_mismatch"
     }
     first_evaluation = _submit(
         instance,
@@ -438,7 +438,7 @@ def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
     assert accounts[citation.citation_id].status == "not_admitted"
     assert accounts[citation.citation_id].decisions[0].closest_rule_id is None
     assert accounts[citation.citation_id].decisions[0].refusal_code == (
-        "playbill.evidence.undeclared_contract_kind"
+        "cruxible.evidence.undeclared_contract_kind"
     )
     coverage_index = build_accepted_evidence_index_v2(
         instance,
@@ -479,7 +479,7 @@ def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
         "2026-08-20T12:02:00.000000Z",
     )
     assert {item.code for item in refused.evaluation.diagnostics} == {
-        "playbill.claim.legacy_capture_set_changed"
+        "cruxible.claim.legacy_capture_set_changed"
     }
 
 

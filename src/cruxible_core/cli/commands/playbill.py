@@ -4896,9 +4896,9 @@ _POSITIONAL_REPAIR_ARGUMENTS = frozenset(
 def _cli_repair(repair: Any) -> str:
     """Render a served repair as the CLI command that performs it."""
 
-    if not isinstance(repair, RepairOperation) or not repair.operation.startswith("playbill."):
+    if not isinstance(repair, RepairOperation) or not repair.operation.startswith("cruxible."):
         return render_served_repair(repair)
-    parts = ["cruxible", *repair.operation.split(".")]
+    parts = ["cruxible", "playbill", *repair.operation.removeprefix("cruxible.").split(".")]
     for key, value in repair.arguments.items():
         if key in _POSITIONAL_REPAIR_ARGUMENTS:
             parts.append(shlex.quote(str(value)))
@@ -6587,12 +6587,12 @@ def post_tool_use_hook(root: str) -> None:
                     try:
                         _require_instance_id()
                     except click.UsageError:
-                        diagnostic = "playbill.coverage_hook.instance_id_missing"
+                        diagnostic = "cruxible.coverage_hook.instance_id_missing"
     except CoverageRuleTagError:
-        diagnostic = "playbill.coverage_hook.rule_tag_invalid"
+        diagnostic = "cruxible.coverage_hook.rule_tag_invalid"
         text = ""
     except PostToolUseResponseError:
-        diagnostic = "playbill.coverage_hook.tool_response_invalid"
+        diagnostic = "cruxible.coverage_hook.tool_response_invalid"
         text = ""
     except Exception:  # noqa: BLE001 - fail open; a broken hook is not the agent's problem
         text = ""

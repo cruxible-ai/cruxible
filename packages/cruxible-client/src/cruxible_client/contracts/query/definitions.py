@@ -519,13 +519,13 @@ def evaluate_query_definition_law(
     try:
         validate_query_definition_path(query, path)
     except QueryDefinitionFormatError as exc:
-        return _refusal("playbill.query_definition.path_mismatch", str(exc), path=path)
+        return _refusal("cruxible.query_definition.path_mismatch", str(exc), path=path)
     if accepted_artifacts is not None:
         for pin in query.pins:
             accepted = accepted_artifacts.get(pin.target.qualified)
             if accepted is None or accepted[1] != pin.artifact_digest:
                 return _refusal(
-                    "playbill.query_definition.pin_unresolved",
+                    "cruxible.query_definition.pin_unresolved",
                     "A QueryDefinition pin does not resolve at the accepted parent coordinate.",
                     path=path,
                 )
@@ -533,7 +533,7 @@ def evaluate_query_definition_law(
     if predecessor is None:
         if query.lifecycle.state != "live" or query.lifecycle.predecessor_digest is not None:
             return _refusal(
-                "playbill.query_definition.unexpected_predecessor",
+                "cruxible.query_definition.unexpected_predecessor",
                 "A new QueryDefinition must begin live without a predecessor.",
                 path=path,
             )
@@ -541,25 +541,25 @@ def evaluate_query_definition_law(
         previous = predecessor.query
         if previous.identity != query.identity or predecessor.path != path:
             return _refusal(
-                "playbill.query_definition.predecessor_identity_mismatch",
+                "cruxible.query_definition.predecessor_identity_mismatch",
                 "The live predecessor has a different QueryDefinition identity.",
                 path=path,
             )
         if digest == predecessor.artifact_digest:
             return _refusal(
-                "playbill.query_definition.no_semantic_change",
+                "cruxible.query_definition.no_semantic_change",
                 "QueryDefinition succession must produce a new artifact digest.",
                 path=path,
             )
         if query.lifecycle.predecessor_digest != predecessor.artifact_digest:
             return _refusal(
-                "playbill.query_definition.stale_predecessor",
+                "cruxible.query_definition.stale_predecessor",
                 "The QueryDefinition does not name the exact live predecessor digest.",
                 path=path,
             )
         if previous.lifecycle.state == "retired":
             return _refusal(
-                "playbill.query_definition.lifecycle_invalid",
+                "cruxible.query_definition.lifecycle_invalid",
                 "A retired QueryDefinition cannot be revived or revised.",
                 path=path,
             )

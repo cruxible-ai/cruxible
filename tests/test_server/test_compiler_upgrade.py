@@ -125,7 +125,7 @@ def test_upgrade_to_the_current_compiler_is_a_coded_400_not_a_500(
 
     assert response.status_code == 400, response.text
     body = response.json()
-    assert body["error_code"] == "playbill.compiler_upgrade.already_current"
+    assert body["error_code"] == "cruxible.compiler_upgrade.already_current"
     assert before.compiler.rule_digest in body["message"]
     assert body["repair"]["hand_edit"]["required_change"]
     assert instance.accepted_coordinate() == before

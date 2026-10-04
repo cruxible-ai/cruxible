@@ -173,7 +173,7 @@ def test_proposal_selector_resolves_full_prefix_and_current_target_ref(
         service_resolve_playbill_proposal_selector(
             instance, selector="refs/proposals/owner/missing"
         )
-    assert refused.value.error_code == "playbill.proposal_not_found"
+    assert refused.value.error_code == "cruxible.proposal_not_found"
     assert refused.value.repair_commands == ("cruxible playbill proposal list",)
 
     forced = (
@@ -473,7 +473,7 @@ def test_a_withdrawn_proposal_cannot_be_activated(tmp_path: Path) -> None:
             activated_by="owner",
         )
 
-    assert excinfo.value.error_code == "playbill.proposal_withdrawn"
+    assert excinfo.value.error_code == "cruxible.proposal_withdrawn"
     assert excinfo.value.actor_id == "owner"
     assert excinfo.value.withdrawn_at == WITHDRAWN_AT
     assert "its change-set record exceeds the ledger blob ceiling" in str(excinfo.value)

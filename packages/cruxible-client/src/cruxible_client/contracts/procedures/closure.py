@@ -138,7 +138,7 @@ def close_procedure_pin_slots(
     missing = referenced - supplied
     extra = supplied - referenced
     if missing:
-        raise ProcedurePinClosureError(f"playbill.procedure.unfilled_pin_slot: {sorted(missing)}")
+        raise ProcedurePinClosureError(f"cruxible.procedure.unfilled_pin_slot: {sorted(missing)}")
     if extra:
         raise ProcedurePinClosureError(f"LineSpec supplies extra pin slots: {sorted(extra)}")
 

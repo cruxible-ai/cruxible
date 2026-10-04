@@ -767,10 +767,10 @@ def test_bound_publication_marker_corruption_surfaces_exact_blocking_repair(
     assert row.detail == {
         "source_id": source_id,
         "block_id": block_id,
-        "error_code": "playbill.projection.marker_invalid",
+        "error_code": "cruxible.projection.marker_invalid",
         "marker_status": "invalid",
     }
-    assert row.repair.operation == "playbill.block.repin"
+    assert row.repair.operation == "cruxible.block.repin"
     assert row.repair.required_change == "restore_projection_frame_then_repin"
     assert row.repair.command == f"cruxible playbill block repin {source_id} {block_id}"
 
@@ -1004,7 +1004,7 @@ def test_depublishing_a_block_no_registration_names_refuses_by_name(
         tmp_path
     )
 
-    with pytest.raises(FormatError, match="playbill.block.not_registered"):
+    with pytest.raises(FormatError, match="cruxible.block.not_registered"):
         service_depublish_playbill_block(
             instance,
             coordinator=coordinator,

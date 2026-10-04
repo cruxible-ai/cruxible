@@ -507,7 +507,7 @@ def procedure_track_record_facts(
     procedure_pins = tuple(pin for pin in promotion.pins if pin.role == "procedure")
     return tuple(
         ProjectionFact(
-            schema_id="playbill.procedure.track_record",
+            schema_id="cruxible.procedure.track_record",
             schema_version=1,
             subject_identity=pin.target.qualified,
             fact_key=promotion.identity.name,

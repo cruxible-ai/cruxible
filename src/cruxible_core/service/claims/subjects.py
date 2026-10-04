@@ -99,7 +99,7 @@ def _public_subject(
 
 def _claim_statement(view: ClaimProjectionView) -> Mapping[str, object] | None:
     statement = next(
-        (fact.value for fact in view.facts if fact.schema_id == "playbill.claim.statement"),
+        (fact.value for fact in view.facts if fact.schema_id == "cruxible.claim.statement"),
         None,
     )
     return statement if isinstance(statement, Mapping) else None
@@ -107,7 +107,7 @@ def _claim_statement(view: ClaimProjectionView) -> Mapping[str, object] | None:
 
 def _claim_is_live(view: ClaimProjectionView) -> bool:
     lifecycle = next(
-        (fact.value for fact in view.facts if fact.schema_id == "playbill.claim.lifecycle"),
+        (fact.value for fact in view.facts if fact.schema_id == "cruxible.claim.lifecycle"),
         None,
     )
     if not isinstance(lifecycle, Mapping):

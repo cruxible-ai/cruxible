@@ -98,7 +98,7 @@ def test_cli_since_surfaces_a_typed_profile_refusal_without_traceback(
 
     assert result.exit_code == 1
     assert "SinceRequestInvalid" in result.output
-    assert "playbill.since.request_invalid" in result.output
+    assert "cruxible.since.request_invalid" in result.output
     assert "$.access_profile" in result.output
     assert "Traceback" not in result.output
 

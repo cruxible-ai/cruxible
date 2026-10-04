@@ -160,7 +160,7 @@ def test_the_v7_law_refuses_an_unpermitted_default_role() -> None:
     forged = v7().model_copy(update={"default_role": "environment_binding"})
     result = evaluate_claim_type_law(forged, path=PATH, predecessor=None)
     assert [item.code for item in result.diagnostics] == [
-        "playbill.claim_type.default_role_not_permitted"
+        "cruxible.claim_type.default_role_not_permitted"
     ]
 
 
@@ -244,11 +244,11 @@ def test_an_unsatisfiable_requirement_is_refused_by_the_claim_type_law() -> None
     assert codes(v7(evidence_requirement="captured")) == []
     assert codes(
         v7(evidence_requirement="captured", evidence_admission_policy=_self_only_rules())
-    ) == ["playbill.claim_type.evidence_requirement_unsatisfiable"]
+    ) == ["cruxible.claim_type.evidence_requirement_unsatisfiable"]
     assert codes(v7(evidence_requirement="none")) == []
     resolution = v7().resolution_policy.model_copy(update={"required_basis_kinds": ("direct",)})
     assert codes(v7(evidence_requirement="none", resolution_policy=resolution)) == [
-        "playbill.claim_type.evidence_requirement_unsatisfiable"
+        "cruxible.claim_type.evidence_requirement_unsatisfiable"
     ]
 
 
@@ -510,7 +510,7 @@ def test_inherited_descriptions_of_members_the_enum_dropped_are_refused_by_name(
     tree = {PATH: render_claim_type(_described_v7())}
     with pytest.raises(ClaimTypeMemberDescriptionsStale) as refused:
         _lower(_input(literal_schema={"enum": ["done", "shipped"], "type": "string"}), tree)
-    assert refused.value.error_code == "playbill.claim_type.member_descriptions_stale"
+    assert refused.value.error_code == "cruxible.claim_type.member_descriptions_stale"
     assert "'ready'" in str(refused.value) and "'done'" not in str(refused.value)
     with pytest.raises(ClaimTypeMemberDescriptionsStale):
         _lower(_input(literal_schema={"type": "string"}), tree)
@@ -534,7 +534,7 @@ def test_an_inherited_default_role_the_edit_no_longer_permits_is_refused() -> No
     }
     with pytest.raises(ClaimTypeDefaultRoleNotPermitted) as refused:
         _lower(_input(**edited_roles), tree)
-    assert refused.value.error_code == "playbill.claim_type.default_role_not_permitted"
+    assert refused.value.error_code == "cruxible.claim_type.default_role_not_permitted"
     assert "'normative'" in str(refused.value)
     assert _lower(_input(**edited_roles, default_role=None), tree).default_role is None
     assert (

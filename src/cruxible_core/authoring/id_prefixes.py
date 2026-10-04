@@ -18,7 +18,7 @@ MINIMUM_PREFIX_HEX = 8
 class AmbiguousIdPrefix(FormatError):
     """A short id prefix named more than one accepted artifact."""
 
-    error_code = "playbill.id.prefix_ambiguous"
+    error_code = "cruxible.id.prefix_ambiguous"
 
 
 def resolve_id_prefix(

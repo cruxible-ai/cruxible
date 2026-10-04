@@ -112,19 +112,19 @@ _UPGRADE_MARKERS = ("evidence_rules_upgrade", "upgrade-evidence-rules", "evidenc
 
 def _request_invalid(message: str) -> ReadRefusalError:
     return ReadRefusalError(
-        "playbill.orient.request_invalid",
+        "cruxible.orient.request_invalid",
         message,
-        repair=RepairOperation(operation="playbill.orient"),
+        repair=RepairOperation(operation="cruxible.orient"),
     )
 
 
 def _kind_not_found(kind: str, known: Iterable[str]) -> ReadRefusalError:
     return ReadRefusalError(
-        "playbill.orient.kind_not_found",
+        "cruxible.orient.kind_not_found",
         f"no accepted Subject or ClaimType has kind {kind!r}",
         http_status=404,
         candidates=nearest(kind, known),
-        repair=RepairOperation(operation="playbill.orient"),
+        repair=RepairOperation(operation="cruxible.orient"),
         repair_line="Use one of these kinds; orient without a kind lists every kind",
         context={"kind": kind},
     )

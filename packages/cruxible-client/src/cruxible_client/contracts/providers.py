@@ -802,14 +802,14 @@ def evaluate_provider_law(
 ) -> ProviderLawResult:
     if path != provider_path(provider.identity.name):
         return _law_refusal(
-            "playbill.provider.path_mismatch",
+            "cruxible.provider.path_mismatch",
             "Provider identity/path disagreement.",
             path=path,
         )
     if predecessor is None:
         if provider.lifecycle.predecessor_digest is not None:
             return _law_refusal(
-                "playbill.provider.predecessor_missing",
+                "cruxible.provider.predecessor_missing",
                 "A new Provider cannot name a predecessor.",
                 path=path,
             )
@@ -818,13 +818,13 @@ def evaluate_provider_law(
             provider.control_domain != predecessor.provider.control_domain
         ):
             return _law_refusal(
-                "playbill.provider.stable_identity_changed",
+                "cruxible.provider.stable_identity_changed",
                 "Provider identity and ultimate control domain are immutable in v1.",
                 path=path,
             )
         if provider.lifecycle.predecessor_digest != predecessor.artifact_digest:
             return _law_refusal(
-                "playbill.provider.predecessor_mismatch",
+                "cruxible.provider.predecessor_mismatch",
                 "Provider successor does not pin the exact predecessor.",
                 path=path,
             )
@@ -833,7 +833,7 @@ def evaluate_provider_law(
             ProviderV2,
         ):
             return _law_refusal(
-                "playbill.provider.wire_downgrade",
+                "cruxible.provider.wire_downgrade",
                 "A Provider v2 lineage cannot be succeeded by the historical v1 wire.",
                 path=path,
             )
@@ -842,7 +842,7 @@ def evaluate_provider_law(
     }
     if not set(provider.capture_contract_digests).issubset(pinned_contracts):
         return _law_refusal(
-            "playbill.provider.capture_contract_pin_missing",
+            "cruxible.provider.capture_contract_pin_missing",
             "Provider CaptureContract declarations require exact governed pins.",
             path=path,
         )
@@ -857,7 +857,7 @@ def evaluate_provider_law(
             registration = getattr(accepted, "registration", accepted)
             if registration is None:
                 return _law_refusal(
-                    "playbill.provider.unknown_interface",
+                    "cruxible.provider.unknown_interface",
                     f"Provider interface {implementation.interface_id!r} is not accepted.",
                     path=path,
                 )
@@ -865,13 +865,13 @@ def evaluate_provider_law(
             interface_pin = interface_pins.get(identity)
             if interface_pin is None or interface_pin.artifact_digest != accepted_digest:
                 return _law_refusal(
-                    "playbill.provider.interface_pin_missing",
+                    "cruxible.provider.interface_pin_missing",
                     "Provider interface declarations require exact governed registration pins.",
                     path=path,
                 )
             if getattr(registration, "interface_digest", None) != implementation.interface_digest:
                 return _law_refusal(
-                    "playbill.provider.interface_digest_mismatch",
+                    "cruxible.provider.interface_digest_mismatch",
                     "Provider manifest and governed interface digest disagree.",
                     path=path,
                 )
@@ -885,7 +885,7 @@ def evaluate_provider_law(
                     or implementation.bucket_conformance.get(selector) != proof.fixture_id
                 ):
                     return _law_refusal(
-                        "playbill.provider.bucket_fixture_missing",
+                        "cruxible.provider.bucket_fixture_missing",
                         f"Provider selector {selector!r} lacks its governed conformance proof.",
                         path=path,
                     )
@@ -894,7 +894,7 @@ def evaluate_provider_law(
             )
             if implementation.side_effects != expected_side_effects:
                 return _law_refusal(
-                    "playbill.provider.effect_declaration_mismatch",
+                    "cruxible.provider.effect_declaration_mismatch",
                     "Provider side_effects must equal the governed interface effect class.",
                     path=path,
                 )

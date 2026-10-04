@@ -46,7 +46,7 @@ _ABSOLUTE_PATH_RE: Final = re.compile(r"^/[^\s:]*$")
 class LedgerMirrorUrlInvalid(FormatError):
     """A proposed mirror URL is not a transport this daemon will push to."""
 
-    error_code = "playbill.ledger.mirror_url_invalid"
+    error_code = "cruxible.ledger.mirror_url_invalid"
 
     def __init__(self, detail: str) -> None:
         self.repair_commands = ("cruxible playbill ledger set-mirror <url>",)
@@ -56,7 +56,7 @@ class LedgerMirrorUrlInvalid(FormatError):
 class LedgerMirrorUnset(FormatError):
     """This instance publishes its ledger nowhere, so there is no URL to print."""
 
-    error_code = "playbill.ledger.mirror_unset"
+    error_code = "cruxible.ledger.mirror_unset"
 
     def __init__(self) -> None:
         self.repair_commands = ("cruxible playbill ledger set-mirror <url>",)

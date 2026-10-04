@@ -348,10 +348,10 @@ def extension_registry() -> ProjectionExtensionRegistry:
             constraints=("unique(subject_identity,fact_key)",),
         )
         for schema_id in (
-            "playbill.document.metadata",
-            "playbill.document.references",
-            "playbill.document.source_mapping",
-            "playbill.document.subject",
+            "cruxible.document.metadata",
+            "cruxible.document.references",
+            "cruxible.document.source_mapping",
+            "cruxible.document.subject",
         )
     )
     return ProjectionExtensionRegistry(document)
@@ -369,10 +369,10 @@ def governance_extension_registry() -> ProjectionExtensionRegistry:
             constraints=("unique(subject_identity,fact_key)",),
         )
         for schema_id in (
-            "playbill.document.attestation_coverage",
-            "playbill.document.governance",
-            "playbill.document.history",
-            "playbill.document.provenance",
+            "cruxible.document.attestation_coverage",
+            "cruxible.document.governance",
+            "cruxible.document.history",
+            "cruxible.document.provenance",
         )
     )
     return ProjectionExtensionRegistry((*pb_c_semantic, *explanation))
@@ -390,13 +390,13 @@ def subject_extension_registry() -> ProjectionExtensionRegistry:
             constraints=("unique(subject_identity,fact_key)",),
         )
         for schema_id in (
-            "playbill.subject.attestation_coverage",
-            "playbill.subject.governance",
-            "playbill.subject.history",
-            "playbill.subject.identity",
-            "playbill.subject.lifecycle",
-            "playbill.subject.provenance",
-            "playbill.subject.references",
+            "cruxible.subject.attestation_coverage",
+            "cruxible.subject.governance",
+            "cruxible.subject.history",
+            "cruxible.subject.identity",
+            "cruxible.subject.lifecycle",
+            "cruxible.subject.provenance",
+            "cruxible.subject.references",
         )
     )
     return ProjectionExtensionRegistry((*prior.declarations("semantic"), *subject))
@@ -414,18 +414,18 @@ def claim_type_extension_registry() -> ProjectionExtensionRegistry:
             constraints=("unique(subject_identity,fact_key)",),
         )
         for schema_id in (
-            "playbill.claim_type.attestation_coverage",
-            "playbill.claim_type.governance",
-            "playbill.claim_type.history",
-            "playbill.claim_type.identity",
-            "playbill.claim_type.policies",
-            "playbill.claim_type.provenance",
-            "playbill.claim_type.references",
+            "cruxible.claim_type.attestation_coverage",
+            "cruxible.claim_type.governance",
+            "cruxible.claim_type.history",
+            "cruxible.claim_type.identity",
+            "cruxible.claim_type.policies",
+            "cruxible.claim_type.provenance",
+            "cruxible.claim_type.references",
         )
     )
     claim_type_v2 = (
         ProjectionFactDeclaration(
-            schema_id="playbill.claim_type.identity",
+            schema_id="cruxible.claim_type.identity",
             schema_version=2,
             classification="semantic",
             constraints=("unique(subject_identity,fact_key)",),
@@ -452,13 +452,13 @@ def claim_extension_registry() -> ProjectionExtensionRegistry:
             constraints=("unique(subject_identity,fact_key)",),
         )
         for schema_id in (
-            "playbill.capture_contract.contract",
-            "playbill.capture_contract.references",
-            "playbill.claim.backing",
-            "playbill.claim.identity",
-            "playbill.claim.lifecycle",
-            "playbill.claim.source_mapping",
-            "playbill.claim.statement",
+            "cruxible.capture_contract.contract",
+            "cruxible.capture_contract.references",
+            "cruxible.claim.backing",
+            "cruxible.claim.identity",
+            "cruxible.claim.lifecycle",
+            "cruxible.claim.source_mapping",
+            "cruxible.claim.statement",
         )
     )
     return ProjectionExtensionRegistry((*prior.declarations("semantic"), *claim))
@@ -476,16 +476,16 @@ def evidence_extension_registry() -> ProjectionExtensionRegistry:
             constraints=("unique(subject_identity,fact_key)",),
         )
         for schema_id in (
-            "playbill.claim.attestation_coverage",
-            "playbill.claim.current_verdict",
-            "playbill.claim.evidence_basis",
-            "playbill.claim.governance",
-            "playbill.claim.history",
-            "playbill.claim.provenance",
-            "playbill.provider.identity",
-            "playbill.provider.keys",
-            "playbill.provider.provenance",
-            "playbill.source_acquisition_policy.policy",
+            "cruxible.claim.attestation_coverage",
+            "cruxible.claim.current_verdict",
+            "cruxible.claim.evidence_basis",
+            "cruxible.claim.governance",
+            "cruxible.claim.history",
+            "cruxible.claim.provenance",
+            "cruxible.provider.identity",
+            "cruxible.provider.keys",
+            "cruxible.provider.provenance",
+            "cruxible.source_acquisition_policy.policy",
         )
     )
     return ProjectionExtensionRegistry((*prior.declarations("semantic"), *evidence))
@@ -503,19 +503,19 @@ def procedure_extension_registry() -> ProjectionExtensionRegistry:
             constraints=("unique(subject_identity,fact_key)",),
         )
         for schema_id in (
-            "playbill.line.attestation_coverage",
-            "playbill.line.governance",
-            "playbill.line.history",
-            "playbill.line.provenance",
-            "playbill.line.source_mapping",
-            "playbill.line.spec",
-            "playbill.procedure.attestation_coverage",
-            "playbill.procedure.definition",
-            "playbill.procedure.governance",
-            "playbill.procedure.graph",
-            "playbill.procedure.history",
-            "playbill.procedure.provenance",
-            "playbill.procedure.source_mapping",
+            "cruxible.line.attestation_coverage",
+            "cruxible.line.governance",
+            "cruxible.line.history",
+            "cruxible.line.provenance",
+            "cruxible.line.source_mapping",
+            "cruxible.line.spec",
+            "cruxible.procedure.attestation_coverage",
+            "cruxible.procedure.definition",
+            "cruxible.procedure.governance",
+            "cruxible.procedure.graph",
+            "cruxible.procedure.history",
+            "cruxible.procedure.provenance",
+            "cruxible.procedure.source_mapping",
         )
     )
     return ProjectionExtensionRegistry((*prior.declarations("semantic"), *procedures))
@@ -540,22 +540,22 @@ def runtime_extension_registry() -> ProjectionExtensionRegistry:
             constraints=("unique(subject_identity,fact_key)",),
         )
         for schema_id in (
-            "playbill.citation_relation.capture_contract",
-            "playbill.citation_relation.external_use",
-            "playbill.citation_relation.retired_conflict",
-            "playbill.citation_relation.source_use",
-            "playbill.citation_relation.use",
-            "playbill.exhaust_promotion.basis",
-            "playbill.line.track_record",
-            "playbill.procedure.resolution_activation",
-            "playbill.procedure.track_record",
-            "playbill.query_definition.attestation_coverage",
-            "playbill.query_definition.definition",
-            "playbill.query_definition.governance",
-            "playbill.query_definition.history",
-            "playbill.query_definition.policy",
-            "playbill.query_definition.provenance",
-            "playbill.query_definition.references",
+            "cruxible.citation_relation.capture_contract",
+            "cruxible.citation_relation.external_use",
+            "cruxible.citation_relation.retired_conflict",
+            "cruxible.citation_relation.source_use",
+            "cruxible.citation_relation.use",
+            "cruxible.exhaust_promotion.basis",
+            "cruxible.line.track_record",
+            "cruxible.procedure.resolution_activation",
+            "cruxible.procedure.track_record",
+            "cruxible.query_definition.attestation_coverage",
+            "cruxible.query_definition.definition",
+            "cruxible.query_definition.governance",
+            "cruxible.query_definition.history",
+            "cruxible.query_definition.policy",
+            "cruxible.query_definition.provenance",
+            "cruxible.query_definition.references",
         )
     )
     return ProjectionExtensionRegistry((*prior.declarations("semantic"), *runtime))
@@ -579,11 +579,11 @@ def provider_runtime_extension_registry() -> ProjectionExtensionRegistry:
             constraints=("unique(subject_identity,fact_key)",),
         )
         for schema_id in (
-            "playbill.provider.runtime",
-            "playbill.provider.implementations",
-            "playbill.provider_interface.registration",
-            "playbill.provider_interface.vocabulary",
-            "playbill.provider_interface.classifier",
+            "cruxible.provider.runtime",
+            "cruxible.provider.implementations",
+            "cruxible.provider_interface.registration",
+            "cruxible.provider_interface.vocabulary",
+            "cruxible.provider_interface.classifier",
         )
     )
     return ProjectionExtensionRegistry(
@@ -600,7 +600,7 @@ def p2c_extension_registry() -> ProjectionExtensionRegistry:
 
     prior = provider_runtime_extension_registry()
     mandate = ProjectionFactDeclaration(
-        schema_id="playbill.procedure_mandate.authority",
+        schema_id="cruxible.procedure_mandate.authority",
         schema_version=1,
         classification="semantic",
         constraints=("unique(subject_identity,fact_key)",),

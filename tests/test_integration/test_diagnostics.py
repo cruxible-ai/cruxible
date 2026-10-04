@@ -21,7 +21,7 @@ def test_diagnostic_code_and_related_subjects_survive_message_rewording() -> Non
     subject = _subject("design")
     related = (_subject("reference"),)
     first = CompilerDiagnostic(
-        code="playbill.document.stale_predecessor",
+        code="cruxible.document.stale_predecessor",
         severity="error",
         message="The predecessor is stale.",
         subject=subject,

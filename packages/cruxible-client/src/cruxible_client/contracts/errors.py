@@ -30,7 +30,7 @@ class FormatError(CruxibleError):
 class SinceRequestInvalid(FormatError):
     """A ``playbill since`` request failed its frozen model boundary."""
 
-    error_code = "playbill.since.request_invalid"
+    error_code = "cruxible.since.request_invalid"
 
     def __init__(
         self,
@@ -72,7 +72,7 @@ class SinceRequestInvalid(FormatError):
 class ClaimAttestationRequestInvalid(FormatError):
     """A Claim-attestation append failed its exact request model boundary."""
 
-    error_code = "playbill.claim_attestation.request_invalid"
+    error_code = "cruxible.claim_attestation.request_invalid"
 
     def __init__(self, *, field_path: str, detail: str = "invalid value") -> None:
         self.field_path = field_path
@@ -101,7 +101,7 @@ class ClaimAttestationRequestInvalid(FormatError):
 class InstanceIncompatiblePrereleaseContent(FormatError):
     """An accepted prerelease artifact was intentionally removed before release."""
 
-    error_code = "playbill.instance.incompatible_prerelease_content"
+    error_code = "cruxible.instance.incompatible_prerelease_content"
 
     def __init__(self, *, artifact_class: str) -> None:
         self.artifact_class = artifact_class
@@ -114,7 +114,7 @@ class InstanceIncompatiblePrereleaseContent(FormatError):
 class ReseedRequired(FormatError):
     """A prerelease instance is readable but no longer accepts mutations."""
 
-    error_code = "playbill.instance.reseed_required"
+    error_code = "cruxible.instance.reseed_required"
 
     def __init__(self, *, found: str | None = None) -> None:
         #: The pre-PC-HR file or directory that was found, when a layout (rather
@@ -133,7 +133,7 @@ class ReseedRequired(FormatError):
 class InstanceDecommissioned(FormatError):
     """A decommissioned instance is readable forever but never writable again."""
 
-    error_code = "playbill.instance.decommissioned"
+    error_code = "cruxible.instance.decommissioned"
 
     def __init__(self, *, instance_id: str, reason: str, decommissioned_at: str) -> None:
         self.instance_id = instance_id
@@ -154,7 +154,7 @@ class InstanceDecommissioned(FormatError):
 class SemanticDeltaLimitError(FormatError):
     """A semantic delta exceeds its deterministic served-response budget."""
 
-    error_code = "playbill.semantic_delta.limit_exceeded"
+    error_code = "cruxible.semantic_delta.limit_exceeded"
 
 
 class BootstrapError(CruxibleError):
@@ -170,7 +170,7 @@ class ObjectFormatConflict(BootstrapError):
     refuses never reaches advertisement at all.
     """
 
-    error_code = "playbill.init.object_format_conflict"
+    error_code = "cruxible.init.object_format_conflict"
 
     def __init__(self, message: str, *, workspace_format: str | None = None) -> None:
         self.workspace_format = workspace_format
@@ -252,7 +252,7 @@ class ProposalWithdrawnError(ProposalAdmissionError):
     author who meant to activate is who withdrew it, when, and why.
     """
 
-    error_code = "playbill.proposal_withdrawn"
+    error_code = "cruxible.proposal_withdrawn"
 
     def __init__(
         self,
@@ -276,7 +276,7 @@ class ProposalWithdrawnError(ProposalAdmissionError):
 class ProposalNotFoundError(CruxibleError):
     """A proposal selector did not resolve to immutable admission evidence."""
 
-    error_code = "playbill.proposal_not_found"
+    error_code = "cruxible.proposal_not_found"
 
     def __init__(self, selector: str, *, message: str | None = None) -> None:
         self.selector = selector
@@ -297,7 +297,7 @@ class ProposalNotFoundError(CruxibleError):
 class ProposalSelectorAmbiguousError(CruxibleError):
     """A mutable proposal selector does not name one current admission."""
 
-    error_code = "playbill.proposal_selector_ambiguous"
+    error_code = "cruxible.proposal_selector_ambiguous"
 
     def __init__(
         self,
@@ -327,7 +327,7 @@ class ProposalSelectorAmbiguousError(CruxibleError):
 class ProposalContentUnavailable(ProposalAdmissionError):
     """Closed candidate bytes were released; the outcome record remains readable."""
 
-    error_code = "playbill.proposal_content_unavailable"
+    error_code = "cruxible.proposal_content_unavailable"
 
     def __init__(self) -> None:
         super().__init__(
@@ -345,7 +345,7 @@ class ProposalReadmitAlreadyAccepted(ProposalAdmissionError):
     proposal id. Readmitting it again would only propose the change twice.
     """
 
-    error_code = "playbill.proposal.readmit_already_accepted"
+    error_code = "cruxible.proposal.readmit_already_accepted"
 
     def __init__(self, proposal_id: str, *, accepted_as: str | None = None) -> None:
         self.proposal_id = proposal_id
@@ -365,7 +365,7 @@ class ProposalReadmitAlreadyAccepted(ProposalAdmissionError):
 class ProposalReadmitNotStale(ProposalAdmissionError):
     """Readmission refused: only a stale proposal is readmitted, and this one is not."""
 
-    error_code = "playbill.proposal.readmit_not_stale"
+    error_code = "cruxible.proposal.readmit_not_stale"
 
     def __init__(self, proposal_id: str, *, status: str) -> None:
         self.proposal_id = proposal_id
@@ -385,7 +385,7 @@ class ProposalReadmitNotStale(ProposalAdmissionError):
 class ProposalReadmitRequiresResubmission(ProposalAdmissionError):
     """A generated closure must be rebuilt rather than byte-rebased."""
 
-    error_code = "playbill.proposal.readmit_requires_resubmission"
+    error_code = "cruxible.proposal.readmit_requires_resubmission"
 
     def __init__(self, reason: str | None = None) -> None:
         super().__init__(
@@ -402,7 +402,7 @@ class ProposalReadmitRequiresResubmission(ProposalAdmissionError):
 class ProposalActivationRequestInvalid(FormatError):
     """A proposal activation route received a malformed proposal digest."""
 
-    error_code = "playbill.proposal.activation_request_invalid"
+    error_code = "cruxible.proposal.activation_request_invalid"
 
 
 class ProposalIntegrityError(CruxibleError):

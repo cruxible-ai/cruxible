@@ -151,13 +151,13 @@ def test_subject_acceptance_rebuild_history_and_explanation(tmp_path: Path) -> N
     assert subject.envelope["kind"] == "subject"
     assert subject.envelope["revision"] == 1
     assert {fact["schema_id"] for fact in subject.facts} >= {
-        "playbill.subject.attestation_coverage",
-        "playbill.subject.governance",
-        "playbill.subject.history",
-        "playbill.subject.identity",
-        "playbill.subject.lifecycle",
-        "playbill.subject.provenance",
-        "playbill.subject.references",
+        "cruxible.subject.attestation_coverage",
+        "cruxible.subject.governance",
+        "cruxible.subject.history",
+        "cruxible.subject.identity",
+        "cruxible.subject.lifecycle",
+        "cruxible.subject.provenance",
+        "cruxible.subject.references",
     }
 
     history = service_playbill_subject_history(instance, identity=SUBJECT_IDENTITY)

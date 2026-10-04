@@ -358,7 +358,7 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
             next(
                 fact["value"]
                 for fact in derived_claim["facts"]
-                if fact["schema_id"] == "playbill.claim.backing"
+                if fact["schema_id"] == "cruxible.claim.backing"
             )
         )
         assert backing.input_claim_digests == (original["envelope"]["artifact_digest"],)

@@ -588,7 +588,7 @@ def test_dirty_and_stale_rows_have_exact_frozen_repairs_and_deterministic_ids(
             "blocking" if item.reason == "projection_backing_stale" else "warning"
         )
         assert item.subject_identity == "corpus.runbook#status"
-        assert item.repair.operation == "playbill.block.repin"
+        assert item.repair.operation == "cruxible.block.repin"
         assert item.repair.arguments == {"source_id": "corpus.runbook", "block_id": "status"}
 
 
@@ -651,7 +651,7 @@ def test_ontology_claim_type_marker_goes_stale_after_claim_type_migration(
     (row,) = _projection_rows(instance, migrated_request)
     assert row.reason == "projection_backing_stale"
     assert row.related_identities == ("ClaimType:sec.vuln.severity",)
-    assert row.repair.operation == "playbill.block.repin"
+    assert row.repair.operation == "cruxible.block.repin"
 
 
 def test_presentation_offsets_do_not_enter_projection_queue_identity(
@@ -717,7 +717,7 @@ def test_invalid_projection_marker_surfaces_source_level_blocking_row(
     assert row.related_identities == ()
     assert row.detail == {
         "source_id": "corpus.runbook",
-        "error_code": "playbill.projection.marker_invalid",
+        "error_code": "cruxible.projection.marker_invalid",
         "marker_status": "invalid",
     }
     assert row.repair.target == "corpus.runbook"
@@ -755,7 +755,7 @@ def test_missing_registered_projection_marker_surfaces_runnable_block_row(
     assert row.detail == {
         "source_id": "corpus.runbook",
         "block_id": "pub-status",
-        "error_code": "playbill.projection.marker_invalid",
+        "error_code": "cruxible.projection.marker_invalid",
         "marker_status": "registered_marker_missing",
     }
     assert row.repair.arguments == {
@@ -787,7 +787,7 @@ def test_invalid_projection_marker_recovers_registered_block_identity(
     assert row.detail == {
         "source_id": "corpus.runbook",
         "block_id": "pub-status",
-        "error_code": "playbill.projection.marker_invalid",
+        "error_code": "cruxible.projection.marker_invalid",
         "marker_status": "invalid",
     }
     assert row.repair.command == "cruxible playbill block repin corpus.runbook pub-status"
@@ -841,7 +841,7 @@ def test_retired_claim_backing_requires_depublication_without_access_disclosure(
     # No verb republishes a retired backing, and until `block depublish` existed
     # the row named a change with no command behind it. There is a verb now, so
     # the row names it and composes the exact invocation.
-    assert row.repair.operation == "playbill.block.depublish"
+    assert row.repair.operation == "cruxible.block.depublish"
     assert row.repair.command == "cruxible playbill block depublish corpus.runbook status"
     assert row.repair.required_change == "depublish_retired_backing_block"
 
@@ -908,7 +908,7 @@ def test_one_retired_member_of_a_held_list_is_repinned_onto_what_survives(
     assert row.detail["backing_state"] == "retired"
     assert row.detail["retired_backings"] == [claim_backing.identity.qualified]
     assert row.detail["surviving_backings"] == [survivor.identity.qualified]
-    assert row.repair.operation == "playbill.block.repin"
+    assert row.repair.operation == "cruxible.block.repin"
     assert row.repair.required_change == "drop_the_retired_backing_then_repin"
     assert row.repair.arguments["claim"] == []
     assert row.repair.arguments["clear_claims"] is True  # omitted artifact category is preserved
@@ -989,7 +989,7 @@ def test_overturned_claim_backing_requires_depublication(
     assert row.detail["overturned_backings"] == [backing.identity.qualified]
     assert row.detail["backing_state"] == "exhausted"
     assert row.detail["surviving_backings"] == []
-    assert row.repair.operation == "playbill.block.depublish"
+    assert row.repair.operation == "cruxible.block.depublish"
     assert row.repair.command == "cruxible playbill block depublish corpus.runbook status"
     assert row.repair.required_change == "depublish_overturned_backing_block"
 

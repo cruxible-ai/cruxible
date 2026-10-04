@@ -134,7 +134,7 @@ def test_line_parameters_are_checked_against_the_procedure_input_at_authoring(
     )
     assert compiled.verdict != "passed"
     frontier = str(compiled.frontier)
-    assert "playbill.authoring.line_parameters_refused" in frontier
+    assert "cruxible.authoring.line_parameters_refused" in frontier
     assert "count" in frontier
 
 

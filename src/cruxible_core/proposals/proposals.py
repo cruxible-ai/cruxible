@@ -735,7 +735,7 @@ def deterministic_rebase(
 
 class RebaseMemberConflictV2(_StrictProposalModel):
     tag: Literal["playbill-rebase-member-conflict-v2"] = "playbill-rebase-member-conflict-v2"
-    code: Literal["playbill.rebase.member_conflict"] = "playbill.rebase.member_conflict"
+    code: Literal["cruxible.rebase.member_conflict"] = "cruxible.rebase.member_conflict"
     path: str
     old_parent_digest: str | None
     proposed_digest: str | None
@@ -998,7 +998,7 @@ def _run_corroboration_requirements(
         if definition is None:
             issues.append(
                 (
-                    "playbill.claim.corroboration_query_unresolved",
+                    "cruxible.claim.corroboration_query_unresolved",
                     "Claim corroboration requirement "
                     f"{requirement.requirement_id!r} pins unresolved accepted "
                     f"QueryDefinition {requirement.query_definition_digest}.",
@@ -1014,7 +1014,7 @@ def _run_corroboration_requirements(
             name, expected, declared = invalid
             issues.append(
                 (
-                    "playbill.claim.corroboration_parameter_contract_invalid",
+                    "cruxible.claim.corroboration_parameter_contract_invalid",
                     "Claim corroboration requirement "
                     f"{requirement.requirement_id!r} declares reserved parameter {name!r} "
                     f"as {declared!r}; the daemon binding requires {expected!r}.",
@@ -1046,7 +1046,7 @@ def _run_corroboration_requirements(
         if result.verdict == "refused":
             issues.append(
                 (
-                    "playbill.claim.corroboration_query_refused",
+                    "cruxible.claim.corroboration_query_refused",
                     "Claim corroboration requirement "
                     f"{requirement.requirement_id!r} ({requirement.query_definition_digest}) "
                     f"was refused by query code {receipt.refusal_code!r}.",
@@ -1055,7 +1055,7 @@ def _run_corroboration_requirements(
         elif not satisfied:
             issues.append(
                 (
-                    "playbill.claim.corroboration_insufficient",
+                    "cruxible.claim.corroboration_insufficient",
                     "Claim corroboration requirement "
                     f"{requirement.requirement_id!r} requires {requirement.min_count} rows "
                     f"but observed {observed_count} from "
@@ -1660,7 +1660,7 @@ class _MemberKind:
     removal_code: str
     removal_message: str
     evaluate: Callable[[_MemberContext], _MemberVerdict]
-    format_code: str = "playbill.proposal.member_format_invalid"
+    format_code: str = "cruxible.proposal.member_format_invalid"
 
 
 def _installed(context: _MemberContext, artifact_tag: str) -> InstalledAcceptanceLaw:
@@ -1874,7 +1874,7 @@ def _exhaust_promotion_member(context: _MemberContext) -> _MemberVerdict:
         return _MemberVerdict(
             diagnostics=(
                 _diagnostic(
-                    "playbill.promotion.verifier_unavailable",
+                    "cruxible.promotion.verifier_unavailable",
                     "ExhaustPromotion evaluation requires the exact journal/reducer verifier.",
                     context.path,
                 ),
@@ -1890,7 +1890,7 @@ def _exhaust_promotion_member(context: _MemberContext) -> _MemberVerdict:
         return _MemberVerdict(
             diagnostics=(
                 _diagnostic(
-                    law.refusal_code or "playbill.promotion.refused",
+                    law.refusal_code or "cruxible.promotion.refused",
                     law.message or "ExhaustPromotion law refused.",
                     context.path,
                 ),
@@ -1992,7 +1992,7 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
             return _MemberVerdict(
                 diagnostics=(
                     _diagnostic(
-                        "playbill.line.embedded_trigger_retired",
+                        "cruxible.line.embedded_trigger_retired",
                         "This compiler accepts no new version of a Line that embeds its "
                         "trigger: author a Line v6 and aim Trigger artifacts at it.",
                         context.path,
@@ -2003,7 +2003,7 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
         return _MemberVerdict(
             diagnostics=(
                 _diagnostic(
-                    "playbill.line.governed_triggers_required",
+                    "cruxible.line.governed_triggers_required",
                     "A Line v6 requires compiler revision 32; upgrade the instance first.",
                     context.path,
                 ),
@@ -2014,7 +2014,7 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
         return _MemberVerdict(
             diagnostics=(
                 _diagnostic(
-                    "playbill.line.procedure_unavailable",
+                    "cruxible.line.procedure_unavailable",
                     "LineSpec's exact Procedure is unavailable in candidate state.",
                     context.path,
                 ),
@@ -2066,7 +2066,7 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
             return _MemberVerdict(
                 diagnostics=(
                     _diagnostic(
-                        "playbill.line.triggers_not_settled",
+                        "cruxible.line.triggers_not_settled",
                         "This Line change would strand live Triggers aimed at it; retire "
                         "or retarget them in the same ChangeSet: " + ", ".join(stranded),
                         context.path,
@@ -2096,7 +2096,7 @@ def _trigger_member(context: _MemberContext) -> _MemberVerdict:
         return _MemberVerdict(
             diagnostics=(
                 _diagnostic(
-                    "playbill.trigger.compiler_unsupported",
+                    "cruxible.trigger.compiler_unsupported",
                     "Trigger artifacts require compiler revision 32; upgrade the instance first.",
                     context.path,
                 ),
@@ -2170,7 +2170,7 @@ def _literal_object_traversal(
         if accepted.claim_type.object_kind == "subject":
             continue
         return CompilerDiagnostic(
-            code="playbill.query_definition.traversal_object_not_subject",
+            code="cruxible.query_definition.traversal_object_not_subject",
             severity="error",
             message=(
                 f"Traversal step {step.binding!r} walks predicate {step.predicate!r}, "
@@ -2234,7 +2234,7 @@ def _query_definition_member(context: _MemberContext) -> _MemberVerdict:
             return _MemberVerdict(
                 diagnostics=(
                     _diagnostic(
-                        "playbill.query_definition.corroboration_dependents_not_settled",
+                        "cruxible.query_definition.corroboration_dependents_not_settled",
                         "Live ClaimTypes corroborate through this exact QueryDefinition; revise "
                         "them to the new digest or retire them in the same ChangeSet: "
                         + ", ".join(stranded),
@@ -2364,7 +2364,7 @@ def _procedure_mandate_member(context: _MemberContext) -> _MemberVerdict:
         return _MemberVerdict(
             diagnostics=(
                 _diagnostic(
-                    "playbill.procedure_mandate.procedure_mismatch",
+                    "cruxible.procedure_mandate.procedure_mismatch",
                     "ProcedureMandate must pin an exact candidate Procedure artifact.",
                     context.path,
                 ),
@@ -2392,7 +2392,7 @@ def _procedure_mandate_member(context: _MemberContext) -> _MemberVerdict:
             return _MemberVerdict(
                 diagnostics=(
                     _diagnostic(
-                        "playbill.procedure_mandate.format_regression",
+                        "cruxible.procedure_mandate.format_regression",
                         "A v2 ProcedureMandate cannot be succeeded by a v1 mandate.",
                         context.path,
                     ),
@@ -2471,7 +2471,7 @@ def _resolution_contract_member(context: _MemberContext) -> _MemberVerdict:
     except (CruxibleError, ValueError) as exc:
         return _MemberVerdict(
             diagnostics=(
-                _diagnostic("playbill.resolution_contract.binding_invalid", str(exc), context.path),
+                _diagnostic("cruxible.resolution_contract.binding_invalid", str(exc), context.path),
             )
         )
 
@@ -2549,7 +2549,7 @@ def _attestation_member(context: _MemberContext) -> _MemberVerdict:
         return _MemberVerdict(
             diagnostics=(
                 _diagnostic(
-                    "playbill.attestation.compiler_unsupported",
+                    "cruxible.attestation.compiler_unsupported",
                     "This compiler does not admit standalone attestations.",
                     context.path,
                 ),
@@ -2562,7 +2562,7 @@ def _attestation_member(context: _MemberContext) -> _MemberVerdict:
     except (CruxibleError, ValueError) as exc:
         return _MemberVerdict(
             diagnostics=(
-                _diagnostic("playbill.attestation.binding_invalid", str(exc), context.path),
+                _diagnostic("cruxible.attestation.binding_invalid", str(exc), context.path),
             )
         )
 
@@ -2786,7 +2786,7 @@ def _capture_contract_member(context: _MemberContext) -> _MemberVerdict:
             return _MemberVerdict(
                 diagnostics=(
                     _diagnostic(
-                        "playbill.capture_contract.dependents_not_settled",
+                        "cruxible.capture_contract.dependents_not_settled",
                         "This CaptureContract change would strand live definitions that name "
                         "it; revise or retire them in the same ChangeSet: " + ", ".join(stranded),
                         context.path,
@@ -2847,7 +2847,7 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
         return _MemberVerdict(
             diagnostics=(
                 _diagnostic(
-                    "playbill.claim.embedded_attestations_retired",
+                    "cruxible.claim.embedded_attestations_retired",
                     "Propose standalone signed attestation artifacts; "
                     "Claim-backed attestations are no longer authored.",
                     context.path,
@@ -2868,7 +2868,7 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
         return _MemberVerdict(
             diagnostics=(
                 _diagnostic(
-                    "playbill.claim.capture_store_unavailable",
+                    "cruxible.claim.capture_store_unavailable",
                     "Claim evaluation requires the managed evidence CAS.",
                     context.path,
                 ),
@@ -3008,7 +3008,7 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
             return _MemberVerdict(
                 diagnostics=(
                     _diagnostic(
-                        "playbill.claim_type.producer_authorization_forbidden",
+                        "cruxible.claim_type.producer_authorization_forbidden",
                         "Producer authorization belongs to Procedure mandates, not ClaimTypes.",
                         context.path,
                     ),
@@ -3033,7 +3033,7 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
             return _MemberVerdict(
                 diagnostics=(
                     _diagnostic(
-                        "playbill.claim_type.reference_unresolved",
+                        "cruxible.claim_type.reference_unresolved",
                         "A ClaimType's evidence rules name retired CaptureContracts: "
                         + ", ".join(unresolved),
                         context.path,
@@ -3087,7 +3087,7 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
             return _MemberVerdict(
                 diagnostics=(
                     _diagnostic(
-                        "playbill.claim_type.profile_evidence_invalid",
+                        "cruxible.claim_type.profile_evidence_invalid",
                         str(exc),
                         context.path,
                     ),
@@ -3212,7 +3212,7 @@ def _approval_policy_member(context: _MemberContext) -> _MemberVerdict:
         return _MemberVerdict(
             diagnostics=(
                 _diagnostic(
-                    "playbill.approval_policy.successor_required",
+                    "cruxible.approval_policy.successor_required",
                     "Approval policy is a genesis singleton and may only change by successor.",
                     context.path,
                 ),
@@ -3224,7 +3224,7 @@ def _approval_policy_member(context: _MemberContext) -> _MemberVerdict:
         return _MemberVerdict(
             diagnostics=(
                 _diagnostic(
-                    "playbill.approval_policy.format_invalid",
+                    "cruxible.approval_policy.format_invalid",
                     str(exc),
                     context.path,
                 ),
@@ -3243,7 +3243,7 @@ def _approval_policy_member(context: _MemberContext) -> _MemberVerdict:
             return _MemberVerdict(
                 diagnostics=(
                     _diagnostic(
-                        "playbill.approval_policy.independent_approval_minimum",
+                        "cruxible.approval_policy.independent_approval_minimum",
                         "independent_approval_required mode needs at least two active ordinary "
                         "principals; register the missing approver before tightening the policy.",
                         context.path,
@@ -3277,7 +3277,7 @@ def _procedure_runtime_policy_member(context: _MemberContext) -> _MemberVerdict:
         return _MemberVerdict(
             diagnostics=(
                 _diagnostic(
-                    "playbill.procedure_runtime_policy.compiler_unsupported",
+                    "cruxible.procedure_runtime_policy.compiler_unsupported",
                     "The instance compiler does not recognize ProcedureRuntimePolicy; "
                     "migrate the instance compiler before proposing this singleton.",
                     context.path,
@@ -3290,7 +3290,7 @@ def _procedure_runtime_policy_member(context: _MemberContext) -> _MemberVerdict:
         return _MemberVerdict(
             diagnostics=(
                 _diagnostic(
-                    "playbill.procedure_runtime_policy.format_invalid",
+                    "cruxible.procedure_runtime_policy.format_invalid",
                     str(exc),
                     context.path,
                 ),
@@ -3355,7 +3355,7 @@ def _compiler_upgrade_member(context: _MemberContext) -> _MemberVerdict:
             raise ValueError("compiler upgrade requires an ordinary client principal")
     except ValueError as exc:
         return _MemberVerdict(
-            diagnostics=(_diagnostic("playbill.compiler_upgrade.invalid", str(exc), context.path),)
+            diagnostics=(_diagnostic("cruxible.compiler_upgrade.invalid", str(exc), context.path),)
         )
     return _accepted(
         context,
@@ -3402,7 +3402,7 @@ def _principal_member(context: _MemberContext) -> _MemberVerdict:
         return _MemberVerdict(
             diagnostics=(
                 _diagnostic(
-                    lifecycle.error_code or "playbill.principal.transition_refused",
+                    lifecycle.error_code or "cruxible.principal.transition_refused",
                     lifecycle.error_message or "Principal transition was refused.",
                     context.path,
                 ),
@@ -3431,145 +3431,145 @@ _MEMBER_KINDS: Final[tuple[_MemberKind, ...]] = (
     _MemberKind(
         name="compiler-upgrade",
         pattern=re.compile(r"^compiler-upgrade\.json$"),
-        removal_code="playbill.compiler_upgrade.removal_unsupported",
+        removal_code="cruxible.compiler_upgrade.removal_unsupported",
         removal_message="Compiler history cannot be removed.",
         evaluate=_compiler_upgrade_member,
     ),
     _MemberKind(
         name="resolution-contract",
         pattern=re.compile(r"^resolution-contracts/[a-z][a-z0-9_.-]{0,255}\.json$"),
-        removal_code="playbill.resolution_contract.removal_unsupported",
+        removal_code="cruxible.resolution_contract.removal_unsupported",
         removal_message="Retire a resolution contract through an explicit successor.",
         evaluate=_resolution_contract_member,
     ),
     _MemberKind(
         name="attestation",
         pattern=_ATTESTATION_PATH_RE,
-        removal_code="playbill.attestation.removal_unsupported",
+        removal_code="cruxible.attestation.removal_unsupported",
         removal_message="Signed attestations are immutable retained statements.",
         evaluate=_attestation_member,
     ),
     _MemberKind(
         name="approval-policy",
         pattern=_APPROVAL_POLICY_PATH_RE,
-        removal_code="playbill.approval_policy.removal_unsupported",
+        removal_code="cruxible.approval_policy.removal_unsupported",
         removal_message="Approval policy is a genesis singleton and cannot be removed.",
         evaluate=_approval_policy_member,
-        format_code="playbill.approval_policy.format_invalid",
+        format_code="cruxible.approval_policy.format_invalid",
     ),
     _MemberKind(
         name="procedure-runtime-policy",
         pattern=_PROCEDURE_RUNTIME_POLICY_PATH_RE,
-        removal_code="playbill.procedure_runtime_policy.removal_unsupported",
+        removal_code="cruxible.procedure_runtime_policy.removal_unsupported",
         removal_message=("Procedure runtime policy is a governed singleton and cannot be removed."),
         evaluate=_procedure_runtime_policy_member,
-        format_code="playbill.procedure_runtime_policy.format_invalid",
+        format_code="cruxible.procedure_runtime_policy.format_invalid",
     ),
     _MemberKind(
         name="procedure",
         pattern=_PROCEDURE_PATH_RE,
-        removal_code="playbill.change_set.delete_unsupported",
+        removal_code="cruxible.change_set.delete_unsupported",
         removal_message="PC-A2 does not activate artifact deletion semantics.",
         evaluate=_procedure_member,
     ),
     _MemberKind(
         name="exhaust-promotion",
         pattern=_EXHAUST_PROMOTION_PATH_RE,
-        removal_code="playbill.change_set.delete_unsupported",
+        removal_code="cruxible.change_set.delete_unsupported",
         removal_message="PC-A2 does not activate artifact deletion semantics.",
         evaluate=_exhaust_promotion_member,
     ),
     _MemberKind(
         name="line",
         pattern=_LINE_PATH_RE,
-        removal_code="playbill.change_set.delete_unsupported",
+        removal_code="cruxible.change_set.delete_unsupported",
         removal_message="PC-A2 does not activate artifact deletion semantics.",
         evaluate=_line_member,
     ),
     _MemberKind(
         name="trigger",
         pattern=_TRIGGER_PATH_RE,
-        removal_code="playbill.trigger.removal_unsupported",
+        removal_code="cruxible.trigger.removal_unsupported",
         removal_message="Triggers are retired by successor, never removed.",
         evaluate=_trigger_member,
     ),
     _MemberKind(
         name="query-definition",
         pattern=_QUERY_DEFINITION_PATH_RE,
-        removal_code="playbill.change_set.delete_unsupported",
+        removal_code="cruxible.change_set.delete_unsupported",
         removal_message="PC-A2 does not activate artifact deletion semantics.",
         evaluate=_query_definition_member,
     ),
     _MemberKind(
         name="provider",
         pattern=_PROVIDER_PATH_RE,
-        removal_code="playbill.change_set.delete_unsupported",
+        removal_code="cruxible.change_set.delete_unsupported",
         removal_message="PC-A2 does not activate artifact deletion semantics.",
         evaluate=_provider_member,
     ),
     _MemberKind(
         name="provider-interface",
         pattern=_PROVIDER_INTERFACE_PATH_RE,
-        removal_code="playbill.change_set.delete_unsupported",
+        removal_code="cruxible.change_set.delete_unsupported",
         removal_message="PC-A2 does not activate artifact deletion semantics.",
         evaluate=_provider_interface_member,
     ),
     _MemberKind(
         name="source-acquisition-policy",
         pattern=_SOURCE_ACQUISITION_POLICY_PATH_RE,
-        removal_code="playbill.change_set.delete_unsupported",
+        removal_code="cruxible.change_set.delete_unsupported",
         removal_message="PC-A2 does not activate artifact deletion semantics.",
         evaluate=_acquisition_policy_member,
     ),
     _MemberKind(
         name="procedure-mandate",
         pattern=_PROCEDURE_MANDATE_PATH_RE,
-        removal_code="playbill.change_set.delete_unsupported",
+        removal_code="cruxible.change_set.delete_unsupported",
         removal_message="ProcedureMandates are retired by successor, never removed.",
         evaluate=_procedure_mandate_member,
     ),
     _MemberKind(
         name="capture-contract",
         pattern=_CAPTURE_CONTRACT_PATH_RE,
-        removal_code="playbill.change_set.delete_unsupported",
+        removal_code="cruxible.change_set.delete_unsupported",
         removal_message="PC-A2 does not activate artifact deletion semantics.",
         evaluate=_capture_contract_member,
     ),
     _MemberKind(
         name="claim",
         pattern=_CLAIM_PATH_RE,
-        removal_code="playbill.change_set.delete_unsupported",
+        removal_code="cruxible.change_set.delete_unsupported",
         removal_message="PC-A2 does not activate artifact deletion semantics.",
         evaluate=_claim_member,
     ),
     _MemberKind(
         name="claim-type",
         pattern=_CLAIM_TYPE_PATH_RE,
-        removal_code="playbill.change_set.delete_unsupported",
+        removal_code="cruxible.change_set.delete_unsupported",
         removal_message="PC-A2 does not activate artifact deletion semantics.",
         evaluate=_claim_type_member,
-        format_code="playbill.claim_type.format_invalid",
+        format_code="cruxible.claim_type.format_invalid",
     ),
     _MemberKind(
         name="subject",
         pattern=_SUBJECT_PATH_RE,
-        removal_code="playbill.subject.removal_unsupported",
+        removal_code="cruxible.subject.removal_unsupported",
         removal_message="Subjects are retired by successor, never removed from accepted state.",
         evaluate=_subject_member,
-        format_code="playbill.subject.format_invalid",
+        format_code="cruxible.subject.format_invalid",
     ),
     _MemberKind(
         name="document",
         pattern=_DOCUMENT_PATH_RE,
-        removal_code="playbill.document.removal_unsupported",
+        removal_code="cruxible.document.removal_unsupported",
         removal_message="PB-C does not activate Document removal semantics.",
         evaluate=_document_member,
-        format_code="playbill.document.format_invalid",
+        format_code="cruxible.document.format_invalid",
     ),
     _MemberKind(
         name="principal",
         pattern=_PRINCIPAL_PATH_RE,
-        removal_code="playbill.principal.removal_unsupported",
+        removal_code="cruxible.principal.removal_unsupported",
         removal_message="Principal records are revoked, never removed from accepted state.",
         evaluate=_principal_member,
     ),
@@ -3615,7 +3615,7 @@ def _member_kind(path: str) -> _MemberKind | None:
 
 def _unregistered(path: str) -> CompilerDiagnostic:
     return _diagnostic(
-        "playbill.proposal.unregistered_semantic_kind",
+        "cruxible.proposal.unregistered_semantic_kind",
         "No PC-A2 acceptance law is registered for this changed path.",
         path,
     )
@@ -3629,7 +3629,7 @@ def _refused_closure(
     if missing_dependents:
         diagnostics.append(
             _diagnostic(
-                "playbill.change_set.incomplete_closure",
+                "cruxible.change_set.incomplete_closure",
                 canonical_bytes(
                     {"missing": [item.model_dump(mode="json") for item in missing_dependents]}
                 ).decode("utf-8"),
@@ -3638,7 +3638,7 @@ def _refused_closure(
     if unresolved_pins:
         diagnostics.append(
             _diagnostic(
-                "playbill.change_set.unresolved_pin",
+                "cruxible.change_set.unresolved_pin",
                 canonical_bytes(
                     {"pins": [item.model_dump(mode="json") for item in unresolved_pins]}
                 ).decode("utf-8"),
@@ -3767,8 +3767,8 @@ def _procedure_mandate_pair_diagnostics(
         before_target_path = parent.paths_by_identity.get(before_pin.target.qualified)
         after_target_path = candidate.paths_by_identity.get(after_pin.target.qualified)
         if before_target_path not in scoped or after_target_path not in scoped:
-            diagnostics[("playbill.procedure_mandate.successor_pair_required", path)] = _diagnostic(
-                "playbill.procedure_mandate.successor_pair_required",
+            diagnostics[("cruxible.procedure_mandate.successor_pair_required", path)] = _diagnostic(
+                "cruxible.procedure_mandate.successor_pair_required",
                 "A ProcedureMandate may retarget authority only with the exact Procedure "
                 "successor in the same ChangeSet.",
                 path,
@@ -3814,11 +3814,11 @@ def _procedure_mandate_pair_diagnostics(
             ):
                 diagnostics[
                     (
-                        "playbill.procedure_mandate.successor_pair_required",
+                        "cruxible.procedure_mandate.successor_pair_required",
                         path,
                     )
                 ] = _diagnostic(
-                    "playbill.procedure_mandate.successor_pair_required",
+                    "cruxible.procedure_mandate.successor_pair_required",
                     "A Procedure with accepted mandate authority must carry an exact mandate "
                     "successor in the same ChangeSet.",
                     path,
@@ -3887,7 +3887,7 @@ def _evaluate_scoped_members(
                 None,
                 (
                     _diagnostic(
-                        "playbill.claim_type.freshness_horizon_invalid",
+                        "cruxible.claim_type.freshness_horizon_invalid",
                         str(exc),
                         path,
                     ),
@@ -3923,7 +3923,7 @@ def _evaluate_scoped_members(
             return CandidateEvaluation(
                 candidate_tree,
                 None,
-                (_diagnostic(f"playbill.{kind.name}.format_invalid", str(exc), path),),
+                (_diagnostic(f"cruxible.{kind.name}.format_invalid", str(exc), path),),
                 rebased,
             )
 
@@ -3983,7 +3983,7 @@ def _evaluate_scoped_members(
                 None,
                 (
                     _diagnostic(
-                        "playbill.proposal.creator_principal_invalid",
+                        "cruxible.proposal.creator_principal_invalid",
                         "Authenticated actor does not resolve to an active Principal at the "
                         "accepted coordinate.",
                         scope[0],
@@ -4038,7 +4038,7 @@ def _evaluate_scoped_members(
             ):
                 diagnostics.append(
                     _diagnostic(
-                        "playbill.claim.retirement_pin_delta_invalid",
+                        "cruxible.claim.retirement_pin_delta_invalid",
                         "A retirement may update a Claim-target pin digest only when the "
                         "exact target retires by one succession hop in the same complete "
                         "ChangeSet.",
@@ -4149,7 +4149,7 @@ def _evaluate_scoped_members(
     if any(item.expanded_artifact_digest not in used_expansions for item in claim_type_expansions):
         diagnostics.append(
             _diagnostic(
-                "playbill.claim_type.profile_output_mismatch",
+                "cruxible.claim_type.profile_output_mismatch",
                 "ClaimType profile evidence does not bind any expanded candidate artifact.",
             )
         )
@@ -4576,7 +4576,7 @@ def evaluate_proposal_tree(
                     None,
                     tuple(
                         _diagnostic(
-                            "playbill.proposal.rebase_conflict",
+                            "cruxible.proposal.rebase_conflict",
                             "The accepted artifact changed incompatibly after the proposed base.",
                             path,
                         )
@@ -4611,7 +4611,7 @@ def evaluate_proposal_tree(
                 None,
                 (
                     _diagnostic(
-                        "playbill.proposal.non_singleton_scope",
+                        "cruxible.proposal.non_singleton_scope",
                         "The proposal changes no registered semantic member.",
                     ),
                 ),
@@ -4704,7 +4704,7 @@ def _require_executed_derivations(
             continue
         if authorized.get(path) != content:
             raise ProposalAdmissionError(
-                "playbill.authoring.derivation_requires_execution: "
+                "cruxible.authoring.derivation_requires_execution: "
                 f"{path} must be the exact output of an authorized Procedure terminal"
             )
 
@@ -4837,7 +4837,7 @@ class ProposalService:
                 self._active_principal_provider(current, actor.actor_id)
         except PrincipalIntegrityError as exc:
             raise ProposalAdmissionError(
-                "playbill.proposal.creator_principal_invalid: authenticated actor does not "
+                "cruxible.proposal.creator_principal_invalid: authenticated actor does not "
                 "resolve to an active Principal at the accepted coordinate"
             ) from exc
         authorized_derivations = (

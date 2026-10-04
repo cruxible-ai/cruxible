@@ -111,7 +111,7 @@ def test_a_reverse_follow_along_a_wrong_predicate_refuses_with_the_incoming_ones
         _query(instance, follow=[{"field": field, "as": "batch", "direction": "reverse"}])
 
     error = refused.value
-    assert error.error_code == "playbill.query.follow_not_incoming"
+    assert error.error_code == "cruxible.query.follow_not_incoming"
     assert message in str(error)
     assert error.context["field_path"] == "follow[0].field"
     assert set(error.candidates) <= {DELIVERS, GOVERNS, PARENT}
@@ -125,7 +125,7 @@ def test_following_an_incoming_predicate_forward_points_at_reverse(instance: Any
     with pytest.raises(ReadRefusalError) as refused:
         _query(instance, follow=[{"field": DELIVERS, "as": "batch"}])
 
-    assert refused.value.error_code == "playbill.query.follow_not_relation"
+    assert refused.value.error_code == "cruxible.query.follow_not_relation"
     assert refused.value.candidates == ("parent",)
     assert refused.value.repair_line is not None
     assert 'direction "reverse"' in refused.value.repair_line
@@ -276,7 +276,7 @@ def test_contains_and_where_filter_reverse_rows(instance: Any) -> None:
             follow=[BATCH],
             where=[{"field": "batch.subject_id", "eq": "b-9"}],
         )
-    assert refused.value.error_code == "playbill.query.unknown_ref"
+    assert refused.value.error_code == "cruxible.query.unknown_ref"
 
 
 def test_orient_lists_the_reverse_follows_query_resolves(instance: Any) -> None:
@@ -354,7 +354,7 @@ def test_a_short_reverse_field_shared_by_two_source_kinds_is_ambiguous() -> None
 
     with pytest.raises(ReadRefusalError) as refused:
         plan("delivers")
-    assert refused.value.error_code == "playbill.query.ambiguous_field"
+    assert refused.value.error_code == "cruxible.query.ambiguous_field"
     assert refused.value.candidates == ("dev.batch.delivers", "dev.release.delivers")
 
     follow = plan("dev.release.delivers").follows["src"]
@@ -363,7 +363,7 @@ def test_a_short_reverse_field_shared_by_two_source_kinds_is_ambiguous() -> None
     # A predicate pointing at another kind is not incoming here.
     with pytest.raises(ReadRefusalError) as wrong:
         plan("dev.batch.delivers_too")
-    assert wrong.value.error_code == "playbill.query.follow_not_incoming"
+    assert wrong.value.error_code == "cruxible.query.follow_not_incoming"
     assert set(wrong.value.candidates) <= {"dev.batch.delivers", "dev.release.delivers"}
 
 
@@ -377,7 +377,7 @@ def test_a_kind_nothing_points_at_says_so() -> None:
     )
     with pytest.raises(ReadRefusalError) as refused:
         _CompactPlan(vocabulary, request)
-    assert refused.value.error_code == "playbill.query.follow_not_incoming"
+    assert refused.value.error_code == "cruxible.query.follow_not_incoming"
     assert "no Subject-valued predicate points at k" in str(refused.value)
     assert refused.value.candidates == ()
 
@@ -431,20 +431,20 @@ def test_follow_refusals_stay_bounded_as_the_vocabulary_grows() -> None:
 
     # Reverse: a name nothing resembles falls back to the first incoming names.
     unknown = refused(follow=[{"field": "zzzzzzzzzzzz", "as": "a", "direction": "reverse"}])
-    assert unknown.error_code == "playbill.query.follow_not_incoming"
+    assert unknown.error_code == "cruxible.query.follow_not_incoming"
     assert unknown.candidates == tuple(incoming[:NEAREST_LIMIT])
     # Reverse: a short name every source kind carries is ambiguous, capped.
     ambiguous = refused(follow=[{"field": "delivers", "as": "a", "direction": "reverse"}])
-    assert ambiguous.error_code == "playbill.query.ambiguous_field"
+    assert ambiguous.error_code == "cruxible.query.ambiguous_field"
     assert ambiguous.candidates == tuple(incoming[:NEAREST_LIMIT])
     assert "names 12 predicates" in str(ambiguous)
 
     # Forward: a literal predicate of the kind falls back to the first relations.
     literal = refused(follow=[{"field": "title", "as": "a"}])
-    assert literal.error_code == "playbill.query.follow_not_relation"
+    assert literal.error_code == "cruxible.query.follow_not_relation"
     assert literal.candidates == tuple(relations[:NEAREST_LIMIT])
     # Forward: an unknown name, and an alias field shared by every target kind.
     assert len(refused(follow=[{"field": "zzzzzzzzzzzz", "as": "a"}]).candidates) <= 5
     shared = refused(follow=[{"field": "rel00", "as": "a"}], select=["a.state"])
-    assert shared.error_code == "playbill.query.ambiguous_field"
+    assert shared.error_code == "cruxible.query.ambiguous_field"
     assert shared.candidates == tuple(sorted(f"{s}.state" for s in sources)[:NEAREST_LIMIT])

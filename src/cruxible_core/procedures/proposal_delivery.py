@@ -536,7 +536,7 @@ class ProposalTerminalEgressSink:
             raise ProposalDeliveryRefused(
                 "proposal_lowering_refused",
                 "The proposed Claims change nothing at the admitted base; there is no proposal.",
-                details={"code": "playbill.authoring.no_change"},
+                details={"code": "cruxible.authoring.no_change"},
             )
         target_paths = tuple(path for path, _content in lowered.changed_members)
         item_paths = {item_key: claim_path(claim_id) for item_key, claim_id in claim_ids.items()}

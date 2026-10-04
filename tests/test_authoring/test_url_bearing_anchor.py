@@ -138,7 +138,7 @@ def test_a_selection_the_capture_contract_refuses_is_a_typed_refusal(tmp_path: P
     (diagnostic,) = [
         item
         for item in result.frontier.diagnostics
-        if item.code == "playbill.authoring.working_selection_refused"
+        if item.code == "cruxible.authoring.working_selection_refused"
     ]
     assert diagnostic.offending_element == "source.selector"
     assert "byte budget" in diagnostic.message

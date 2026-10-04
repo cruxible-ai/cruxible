@@ -119,14 +119,14 @@ def test_insertion_protocol_refusal_is_a_typed_bad_request() -> None:
     """
 
     error = PublicationTerminalStateRefused(
-        "playbill.authoring.publication_terminal_state: publication is already terminal"
+        "cruxible.authoring.publication_terminal_state: publication is already terminal"
     )
 
     status, body = error_to_response(error)
 
     assert status == 400
     assert body.error_type == "PublicationTerminalStateRefused"
-    assert body.error_code == "playbill.authoring.publication_terminal_state"
+    assert body.error_code == "cruxible.authoring.publication_terminal_state"
 
 
 def test_daemon_proposal_integrity_failure_is_never_reported_as_a_conflict() -> None:
@@ -177,7 +177,7 @@ def test_proposal_integrity_split_reaches_the_http_surface(
 
 def test_non_insertion_code_attribute_does_not_widen_the_error_envelope() -> None:
     error = ClaimTypeMigrationIncomplete(
-        "playbill.claim_type.migration_incomplete: missing dependent"
+        "cruxible.claim_type.migration_incomplete: missing dependent"
     )
 
     status, body = error_to_response(error)
@@ -250,7 +250,7 @@ def test_http_next_maps_raw_source_observation_to_typed_refusal(
     )
 
     assert response.status_code == 400, response.text
-    assert response.json()["error_code"] == "playbill.next.workspace_observation_invalid"
+    assert response.json()["error_code"] == "cruxible.next.workspace_observation_invalid"
 
 
 def test_http_next_refuses_a_foreign_cursor_with_its_declared_repair(
@@ -272,8 +272,8 @@ def test_http_next_refuses_a_foreign_cursor_with_its_declared_repair(
     unbounded = client.post(f"/api/v1/{instance_id}/playbill/next", json=body | {"limit": 1001})
 
     assert refused.status_code == 400, refused.text
-    assert refused.json()["error_code"] == "playbill.next.cursor_mismatch"
-    assert refused.json()["repair"] == {"operation": "playbill.next", "arguments": {}}
+    assert refused.json()["error_code"] == "cruxible.next.cursor_mismatch"
+    assert refused.json()["repair"] == {"operation": "cruxible.next", "arguments": {}}
     assert unbounded.status_code == 422, unbounded.text
 
 
@@ -286,7 +286,7 @@ def test_http_activate_refuses_a_missing_proposal_id_typed(
     response = client.post(f"/api/v1/{instance_id}/playbill/proposals/None/activate")
 
     assert response.status_code == 400, response.text
-    assert response.json()["error_code"] == "playbill.proposal.activation_request_invalid"
+    assert response.json()["error_code"] == "cruxible.proposal.activation_request_invalid"
 
 
 def test_a_frozen_model_failing_inside_a_service_stays_a_generic_server_error(

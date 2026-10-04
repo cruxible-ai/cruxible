@@ -38,6 +38,7 @@ from cruxible_client.contracts.claims import (
     claim_statement_digest,
     parse_claim,
 )
+from cruxible_client.contracts.diagnostics import normalize_code
 from cruxible_client.contracts.errors import CruxibleError, ProjectionIntegrityError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.providers import ProviderV1
@@ -807,19 +808,19 @@ def _admission_failures(
                 coverage.omit("admission_subject_unresolved")
                 continue
             proposal_subject, direction = resolved
-            attempts[(proposal_subject.qualified, diagnostic.code, direction)][attempt_id] = (
-                CurationEvidenceRefV1(
-                    kind="proposal_attempt",
-                    identity=attempt_id,
-                    path=path,
-                    event_digest=evaluation.proposal_id,
-                    facts={
-                        "diagnostic_code": diagnostic.code,
-                        "refusal_direction": direction,
-                        "evaluated_base_oid": evaluation.evaluated_base_oid,
-                        "proposal_id": evaluation.proposal_id,
-                    },
-                )
+            attempts[(proposal_subject.qualified, normalize_code(diagnostic.code), direction)][
+                attempt_id
+            ] = CurationEvidenceRefV1(
+                kind="proposal_attempt",
+                identity=attempt_id,
+                path=path,
+                event_digest=evaluation.proposal_id,
+                facts={
+                    "diagnostic_code": diagnostic.code,
+                    "refusal_direction": direction,
+                    "evaluated_base_oid": evaluation.evaluated_base_oid,
+                    "proposal_id": evaluation.proposal_id,
+                },
             )
 
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
@@ -848,9 +849,13 @@ def _admission_failures(
                 coverage.omit("admission_subject_unresolved")
                 continue
             attempt_id = preflight.certificate.certificate_digest
-            attempts[(authoring_subject.qualified, authoring_diagnostic.code, authoring_direction)][
-                attempt_id
-            ] = CurationEvidenceRefV1(
+            attempts[
+                (
+                    authoring_subject.qualified,
+                    normalize_code(authoring_diagnostic.code),
+                    authoring_direction,
+                )
+            ][attempt_id] = CurationEvidenceRefV1(
                 kind="authoring_attempt",
                 identity=attempt_id,
                 event_digest=event.event_digest,

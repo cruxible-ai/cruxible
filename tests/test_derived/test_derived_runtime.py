@@ -255,7 +255,7 @@ def test_build_capacity_is_explicit_retryable_service_unavailability():
         BuildCapacityError("derived-state pending build budget exhausted")
     )
     assert status == 503
-    assert body.error_code == "playbill.derived.capacity"
+    assert body.error_code == "cruxible.derived.capacity"
     assert body.context["retryable"] is True
     assert body.repair is None
     assert "budget exhausted" in body.message

@@ -73,7 +73,7 @@ def service_declare_playbill_block(
     existing = projection_block_declarations(instance)
     if existing is None:
         raise FormatError(
-            "playbill.block.declaration_registry_unavailable: the block declaration store "
+            "cruxible.block.declaration_registry_unavailable: the block declaration store "
             "cannot be read; repair: restore the instance exhaust and retry"
         )
     known = any(
@@ -140,7 +140,7 @@ def service_depublish_playbill_block(
         dry_run=dry_run,
         at=at,
         kind="direct",
-        operation="playbill.block.depublish",
+        operation="cruxible.block.depublish",
         describe=f"depublishing block {source_id}#{block_id}",
     ) as mode:
         return _depublish(
@@ -168,13 +168,13 @@ def _depublish(
     registrations = bound_publication_registrations(instance)
     if registrations is None:
         raise FormatError(
-            "playbill.block.publication_registry_unavailable: the durable publication "
+            "cruxible.block.publication_registry_unavailable: the durable publication "
             "stream cannot be read; repair: restore the instance exhaust and retry"
         )
     declarations = projection_block_declarations(instance)
     if declarations is None:
         raise FormatError(
-            "playbill.block.declaration_registry_unavailable: the block declaration store "
+            "cruxible.block.declaration_registry_unavailable: the block declaration store "
             "cannot be read; repair: restore the instance exhaust and retry"
         )
     # A declared block has no intent to abandon: releasing it is forgetting the
@@ -218,7 +218,7 @@ def _depublish(
         released = _released_publication_expectation(instance, source_id, block_id)
         if released is None:
             raise FormatError(
-                f"playbill.block.not_registered: this instance registers no block "
+                f"cruxible.block.not_registered: this instance registers no block "
                 f"{source_id}#{block_id}, by declaration or by publication; repair: read "
                 "the registered blocks with `cruxible playbill next` before releasing one"
             )
@@ -234,7 +234,7 @@ def _depublish(
         )
     if len(matched) > 1:
         raise FormatError(
-            f"playbill.block.publication_registration_ambiguous: {len(matched)} bound "
+            f"cruxible.block.publication_registration_ambiguous: {len(matched)} bound "
             f"publications register {source_id}#{block_id}; repair: abandon each intent "
             "through `cruxible playbill authoring abandon-insertion`"
         )

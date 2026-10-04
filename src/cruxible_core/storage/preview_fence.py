@@ -26,7 +26,7 @@ _PREVIEWING: ContextVar[bool] = ContextVar("cruxible_previewing", default=False)
 class PreviewWriteRefused(RuntimeError):
     """A preview reached a write door. Always a defect in the preview path."""
 
-    error_code = "playbill.preview.write_reached"
+    error_code = "cruxible.preview.write_reached"
 
     def __init__(self, door: str) -> None:
         self.door = door

@@ -302,7 +302,7 @@ def test_a_moved_backing_is_reported_stale_and_the_page_is_never_touched(
     assert item.outcome == "stale"
     assert item.reason == "block_backing_changed"
     assert item.repair == RepairOperation(
-        operation="playbill.block.repin",
+        operation="cruxible.block.repin",
         arguments={"source_id": "corpus.runbook", "block_id": "pub-example"},
     )
     assert item.detail["moved_backings"] == ["Claim:CLM-" + "a" * 32]
@@ -352,7 +352,7 @@ def test_a_moved_claim_type_backing_is_stale_like_any_other_held_member(
     assert item.reason == "block_backing_changed"
     assert item.detail["moved_backings"] == ["ClaimType:sec.vuln.severity"]
     assert item.repair == RepairOperation(
-        operation="playbill.block.repin",
+        operation="cruxible.block.repin",
         arguments={"source_id": "corpus.runbook", "block_id": "vocabulary"},
     )
     assert source.read_bytes() == before
@@ -580,7 +580,7 @@ def test_retired_block_refuses_then_detaches_markers_without_changing_body(tmp_p
     )
     assert refused.items[0].reason == "block_backing_retired"
     assert refused.items[0].repair == RepairOperation(
-        operation="playbill.block.sync",
+        operation="cruxible.block.sync",
         arguments={"paths": [refused.items[0].path], "detach": True},
     )
 
@@ -657,7 +657,7 @@ def test_ambiguous_live_successors_emit_exact_repin_selections(tmp_path: Path) -
 
     assert result.items[0].reason == "block_successor_ambiguous"
     assert result.items[0].repair == RepairOperation(
-        operation="playbill.block.repin",
+        operation="cruxible.block.repin",
         arguments={
             "source_id": "corpus.runbook",
             "block_id": "pub-example",
@@ -1183,7 +1183,7 @@ def test_mixed_retirement_repair_keeps_surviving_artifact_category():
         path="report.md", source_id=stamp.source_id, block_id=stamp.block_id, stamp=stamp, read=read
     )
     assert item.outcome == "stale"
-    assert item.repair.operation == "playbill.block.repin"
+    assert item.repair.operation == "cruxible.block.repin"
     assert item.repair.arguments == {
         "source_id": stamp.source_id,
         "block_id": stamp.block_id,
