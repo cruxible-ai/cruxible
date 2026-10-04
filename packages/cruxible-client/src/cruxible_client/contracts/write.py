@@ -22,7 +22,7 @@ the nearest valid names.
 from __future__ import annotations
 
 import re
-from typing import Annotated, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias
 
 from pydantic import (
     BaseModel,
@@ -34,7 +34,7 @@ from pydantic import (
 
 from cruxible_client.contracts import AcceptedCoordinate
 from cruxible_client.contracts.authoring.models import WorkingSelectionObservation
-from cruxible_client.contracts.codes import current_code_keys
+from cruxible_client.contracts.codes import CurrentCode, code_told_union
 from cruxible_client.contracts.get_reads import GetCoordinate, ReadSurface
 
 SUBJECT_REF_PATTERN = r"^[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*/[a-z][a-z0-9_.-]{0,255}$"
@@ -463,7 +463,9 @@ class VerdictNotSupportedWarning(_StrictWriteModel):
     evidence, and becomes the outcome's ``next``.
     """
 
-    code: Literal["cruxible.write.verdict_not_supported"] = "cruxible.write.verdict_not_supported"
+    code: Annotated[Literal["cruxible.write.verdict_not_supported"], CurrentCode] = (
+        "cruxible.write.verdict_not_supported"
+    )
     change: int
     claim: str | None = Field(default=None, exclude_if=_omit_none)
     verdict: str
@@ -481,7 +483,7 @@ class NewerCaptureNotCitableWarning(_StrictWriteModel):
     ``capture`` instead.
     """
 
-    code: Literal["cruxible.write.newer_capture_not_citable"] = (
+    code: Annotated[Literal["cruxible.write.newer_capture_not_citable"], CurrentCode] = (
         "cruxible.write.newer_capture_not_citable"
     )
     change: int
@@ -493,10 +495,16 @@ class NewerCaptureNotCitableWarning(_StrictWriteModel):
     repair: str | None = Field(default=None, exclude_if=_omit_none)
 
 
-WriteWarning = Annotated[
-    VerdictNotSupportedWarning | NewerCaptureNotCitableWarning,
-    Field(discriminator="code"),
-]
+if TYPE_CHECKING:
+    WriteWarning: TypeAlias = VerdictNotSupportedWarning | NewerCaptureNotCitableWarning
+else:
+    WriteWarning = code_told_union(
+        "code",
+        (
+            (VerdictNotSupportedWarning, "cruxible.write.verdict_not_supported"),
+            (NewerCaptureNotCitableWarning, "cruxible.write.newer_capture_not_citable"),
+        ),
+    )
 """Something the write did that the writer did not ask for, said plainly."""
 
 
@@ -541,9 +549,6 @@ class WriteOutcome(_StrictWriteModel):
     warnings: tuple[WriteWarning, ...] = Field(default=(), exclude_if=_omit_empty)
     refusal: WriteRefusal | None = Field(default=None, exclude_if=_omit_none)
     next: str | None = Field(default=None, exclude_if=_omit_none)
-
-    # A warning recorded before the public rename is told apart on today's code.
-    _current_warning_codes = field_validator("warnings", mode="before")(current_code_keys("code"))
 
     @property
     def refused(self) -> bool:

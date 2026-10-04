@@ -29,38 +29,72 @@ def test_a_retained_procedure_refusal_reads_as_todays_code(prefix: str) -> None:
     assert current_refusal_code(f"{prefix}.acquisition.stale") == "cruxible.acquisition.stale"
 
 
+def _verdict(prefix: str) -> dict[str, object]:
+    return {
+        "code": f"{prefix}.write.verdict_not_supported",
+        "change": 0,
+        "verdict": "uncovered",
+        "message": "not admitted",
+    }
+
+
+def _newer(prefix: str) -> dict[str, object]:
+    return {
+        "code": f"{prefix}.write.newer_capture_not_citable",
+        "change": 1,
+        "capture": "CAP-0123456789ab",
+        "message": "older capture cited",
+    }
+
+
 @pytest.mark.parametrize("prefix", PREFIXES)
-def test_write_warnings_select_their_member_on_either_spelling(prefix: str) -> None:
+def test_write_warnings_read_either_spelling_at_every_reader(prefix: str) -> None:
+    """Each member alone, the exported union, and the outcome that carries it."""
+
+    from pydantic import TypeAdapter
+
     from cruxible_client.contracts.write import (
         NewerCaptureNotCitableWarning,
         VerdictNotSupportedWarning,
         WriteOutcome,
+        WriteWarning,
     )
+
+    verdict = VerdictNotSupportedWarning.model_validate(_verdict(prefix))
+    assert verdict.code == "cruxible.write.verdict_not_supported"
+    newer = NewerCaptureNotCitableWarning.model_validate(_newer(prefix))
+    assert newer.code == "cruxible.write.newer_capture_not_citable"
+
+    adapter: TypeAdapter[object] = TypeAdapter(WriteWarning)
+    assert isinstance(adapter.validate_python(_verdict(prefix)), VerdictNotSupportedWarning)
+    assert isinstance(adapter.validate_python(_newer(prefix)), NewerCaptureNotCitableWarning)
 
     outcome = WriteOutcome.model_validate(
         {
             "status": "accepted",
             "coordinate": {"git_oid": "a" * 12, "generation": 3},
-            "warnings": [
-                {
-                    "code": f"{prefix}.write.verdict_not_supported",
-                    "change": 0,
-                    "verdict": "uncovered",
-                    "message": "not admitted",
-                },
-                {
-                    "code": f"{prefix}.write.newer_capture_not_citable",
-                    "change": 1,
-                    "capture": "CAP-0123456789ab",
-                    "message": "older capture cited",
-                },
-            ],
+            "warnings": [_verdict(prefix), _newer(prefix)],
         }
     )
-    verdict, newer = outcome.warnings
-    assert isinstance(verdict, VerdictNotSupportedWarning)
-    assert verdict.code == "cruxible.write.verdict_not_supported"
-    assert isinstance(newer, NewerCaptureNotCitableWarning)
+    first, second = outcome.warnings
+    assert isinstance(first, VerdictNotSupportedWarning)
+    assert isinstance(second, NewerCaptureNotCitableWarning)
+    assert first.code == "cruxible.write.verdict_not_supported"
+
+
+def test_the_write_warning_schema_keeps_its_code_discriminator() -> None:
+    from pydantic import TypeAdapter
+
+    from cruxible_client.contracts.write import WriteWarning
+
+    schema = TypeAdapter(WriteWarning).json_schema()
+    assert schema["discriminator"] == {
+        "mapping": {
+            "cruxible.write.verdict_not_supported": "#/$defs/VerdictNotSupportedWarning",
+            "cruxible.write.newer_capture_not_citable": "#/$defs/NewerCaptureNotCitableWarning",
+        },
+        "propertyName": "code",
+    }
 
 
 @pytest.mark.parametrize("prefix", PREFIXES)

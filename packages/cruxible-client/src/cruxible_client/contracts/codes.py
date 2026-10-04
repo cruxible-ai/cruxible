@@ -7,7 +7,7 @@ the two spellings as one code:
 - a closed code vocabulary (a ``Literal`` field) reads a historical spelling as
   today's (``CurrentCode``), so the served view carries one spelling;
 - a union told apart by its code picks its member on the current spelling
-  (``current_code_keys``);
+  (``code_told_union``), and so does each member read on its own (``CurrentCode``);
 - an open code (a plain ``str`` field inside a record whose bytes are re-verified,
   such as a ledger evaluation note) keeps the spelling it was written with, and
   code-keyed logic compares on ``normalize_code``.
@@ -43,10 +43,8 @@ CurrentCode = BeforeValidator(_current)
 def current_code_keys(field: str) -> Callable[[Any, Any], Any]:
     """A before-validator for a sequence of code-told union members.
 
-    Pydantic reads a discriminator before any validator on the union itself, so
-    the field holding the members rewrites each member's ``field`` to the
-    current spelling first; the served schema keeps its discriminator mapping
-    and a historical record still selects its member.
+    Rewrites each member's ``field`` to the current spelling; for a field whose
+    union type is not ``code_told_union`` itself.
     """
 
     def current(cls: Any, value: Any) -> Any:
@@ -62,10 +60,56 @@ def current_code_keys(field: str) -> Callable[[Any, Any], Any]:
     return classmethod(current)  # type: ignore[return-value]
 
 
+class _CodeToldSchema:
+    """Restore the discriminator mapping a callable discriminator drops from the schema."""
+
+    def __init__(self, field: str, codes: tuple[str, ...]) -> None:
+        self.field = field
+        self.codes = codes
+
+    def __get_pydantic_json_schema__(self, core_schema: Any, handler: Any) -> Any:
+        schema = handler(core_schema)
+        branches = schema.get("oneOf", ())
+        refs = [branch.get("$ref") for branch in branches]
+        if len(refs) == len(self.codes) and all(isinstance(ref, str) for ref in refs):
+            schema["discriminator"] = {
+                "mapping": dict(zip(self.codes, refs, strict=True)),
+                "propertyName": self.field,
+            }
+        return schema
+
+
+def code_told_union(field: str, members: tuple[tuple[type[Any], str], ...]) -> Any:
+    """A union of models told apart by a code ``field``, read on its current spelling.
+
+    Pydantic reads a string discriminator before any validator runs, so a
+    record written with a ``playbill.`` code would fail member selection; this
+    union selects on ``normalize_code`` instead, and its schema keeps the plain
+    ``{propertyName, mapping}`` discriminator the string form would publish.
+    Each member's own ``field`` should carry ``CurrentCode`` too.
+    """
+
+    from typing import Annotated, Union
+
+    from pydantic import Discriminator, Tag
+
+    def discriminate(value: Any) -> str | None:
+        raw = value.get(field) if isinstance(value, dict) else getattr(value, field, None)
+        return normalize_code(raw) if isinstance(raw, str) else None
+
+    choices = tuple(Annotated[model, Tag(code)] for model, code in members)
+    return Annotated[
+        Union[choices],  # noqa: UP007 - built from a runtime tuple
+        Discriminator(discriminate),
+        _CodeToldSchema(field, tuple(code for _model, code in members)),
+    ]
+
+
 __all__ = [
     "CODE_PREFIX",
     "HISTORICAL_CODE_PREFIX",
     "CurrentCode",
+    "code_told_union",
     "current_code_keys",
     "normalize_code",
 ]
