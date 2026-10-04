@@ -48,9 +48,9 @@ def _tag_only_schema(schema: object) -> bool:
     return False
 
 
-def _strip(node: object, removed: set[str]) -> object:
+def _strip(node: object, removed: set[str], stripped: set[int]) -> object:
     if isinstance(node, list):
-        return [_strip(item, removed) for item in node]
+        return [_strip(item, removed, stripped) for item in node]
     if not isinstance(node, dict):
         return node
     properties = node.get("properties")
@@ -59,6 +59,8 @@ def _strip(node: object, removed: set[str]) -> object:
         for name in hidden:
             del properties[name]
             removed.add(name)
+        if hidden:
+            stripped.add(id(node))
         required = node.get("required")
         if isinstance(required, list) and hidden:
             kept = [name for name in required if name not in hidden]
@@ -67,20 +69,43 @@ def _strip(node: object, removed: set[str]) -> object:
             else:
                 del node["required"]
     for key, value in list(node.items()):
-        node[key] = _strip(value, removed)
+        node[key] = _strip(value, removed, stripped)
     return node
 
 
-def _drop_discriminators(node: object, removed: set[str]) -> None:
+def _branch(node: object, definitions: dict[str, Any]) -> object:
+    if isinstance(node, dict) and isinstance(node.get("$ref"), str):
+        return definitions.get(node["$ref"].rsplit("/", 1)[-1], node)
+    return node
+
+
+def _loosen_unions(
+    node: object, removed: set[str], stripped: set[int], definitions: dict[str, Any]
+) -> None:
+    """Hidden tags leave versions of one model accepting the same arguments.
+
+    A ``oneOf`` over such branches would reject a valid call (exactly one branch
+    must match), so it becomes ``anyOf``; the server picks the member when it
+    fills the tag. A discriminator on a hidden tag goes with it.
+    """
+
     if isinstance(node, list):
         for item in node:
-            _drop_discriminators(item, removed)
-    elif isinstance(node, dict):
-        discriminator = node.get("discriminator")
-        if isinstance(discriminator, dict) and discriminator.get("propertyName") in removed:
-            del node["discriminator"]
-        for value in node.values():
-            _drop_discriminators(value, removed)
+            _loosen_unions(item, removed, stripped, definitions)
+        return
+    if not isinstance(node, dict):
+        return
+    discriminator = node.get("discriminator")
+    if isinstance(discriminator, dict) and discriminator.get("propertyName") in removed:
+        del node["discriminator"]
+    branches = node.get("oneOf")
+    if isinstance(branches, list) and any(
+        id(_branch(branch, definitions)) in stripped for branch in branches
+    ):
+        node.pop("discriminator", None)
+        node["anyOf"] = node.pop("oneOf")
+    for value in node.values():
+        _loosen_unions(value, removed, stripped, definitions)
 
 
 def hide_wire_tags(schema: dict[str, Any]) -> dict[str, Any]:
@@ -88,8 +113,10 @@ def hide_wire_tags(schema: dict[str, Any]) -> dict[str, Any]:
 
     result = copy.deepcopy(schema)
     removed: set[str] = set()
-    _strip(result, removed)
-    _drop_discriminators(result, removed)
+    stripped: set[int] = set()
+    _strip(result, removed, stripped)
+    definitions = result.get("$defs")
+    _loosen_unions(result, removed, stripped, definitions if isinstance(definitions, dict) else {})
     return result
 
 
@@ -195,6 +222,13 @@ def _member_rank(member: Any) -> tuple[int, int]:
     return max((_version(tag) for tag in tags), default=(0, 0))
 
 
+def _admits_supplied_tags(member: type[BaseModel], value: Mapping[str, Any]) -> bool:
+    """Whether every tag ``value`` supplies is one ``member`` admits."""
+
+    tags = _model_tags(member)
+    return all(value[key] in admitted for key, admitted in tags.items() if key in value)
+
+
 def _fill_union(value: Any, members: tuple[Any, ...]) -> Any:
     if isinstance(value, list):
         for member in members:
@@ -204,14 +238,12 @@ def _fill_union(value: Any, members: tuple[Any, ...]) -> Any:
     models = [member for member in members if _is_model(member)]
     if not isinstance(value, Mapping) or not models:
         return value
-    # A sent tag names its member.
-    for member in models:
-        tags = _model_tags(member)
-        sent = {key: value[key] for key in tags if key in value}
-        if sent and all(item in tags[key] for key, item in sent.items()):
-            return _fill_model(value, member)
-    # Otherwise the newest member the arguments validate as.
-    ordered = sorted(models, key=_member_rank, reverse=True)
+    # Supplied tag values narrow the members (a tag several members share, such
+    # as a grammar version, narrows nothing); the newest remaining member the
+    # arguments validate as is the one, and a call no member accepts is filled
+    # for the newest so its refusal names that member's fields.
+    candidates = [member for member in models if _admits_supplied_tags(member, value)] or models
+    ordered = sorted(candidates, key=_member_rank, reverse=True)
     for member in ordered:
         candidate = _fill_model(value, member)
         try:
