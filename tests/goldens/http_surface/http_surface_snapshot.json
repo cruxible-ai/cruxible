@@ -1,6 +1,6 @@
 {
   "/api/v1/runtime/instances": {
-    "POST": "PlaybillHostResult"
+    "POST": "HostResult"
   },
   "/api/v1/server/info": {
     "GET": "ServerInfoResult"
@@ -11,281 +11,248 @@
   "/api/v1/server/stop": {
     "POST": "ServerStopResult"
   },
-  "/api/v1/{instance_id}/playbill/audit": {
-    "POST": "PlaybillAuditResult"
+  "/api/v1/{instance_id}/audit": {
+    "POST": "AuditResult"
   },
-  "/api/v1/{instance_id}/playbill/authoring/compile": {
-    "POST": "PlaybillAuthoringPreflightResult"
+  "/api/v1/{instance_id}/authoring/compile": {
+    "POST": "AuthoringPreflightResult"
   },
-  "/api/v1/{instance_id}/playbill/authoring/intents": {
-    "GET": "PlaybillAuthoringIntentList",
-    "POST": "PlaybillAuthoringIntentView"
+  "/api/v1/{instance_id}/authoring/intents": {
+    "GET": "AuthoringIntentListRecord",
+    "POST": "AuthoringIntentViewRecord"
   },
-  "/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}": {
-    "GET": "PlaybillAuthoringIntentView"
+  "/api/v1/{instance_id}/authoring/intents/{intent_id}": {
+    "GET": "AuthoringIntentViewRecord"
   },
-  "/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/abandon": {
-    "POST": "PlaybillInsertionAbandonResult"
+  "/api/v1/{instance_id}/authoring/intents/{intent_id}/insertion/abandon": {
+    "POST": "InsertionAbandonResultRecord"
   },
-  "/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/preflight": {
-    "POST": "PlaybillAuthoringPreflightResult"
+  "/api/v1/{instance_id}/authoring/intents/{intent_id}/preflight": {
+    "POST": "AuthoringPreflightResult"
   },
-  "/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/rebase": {
-    "POST": "PlaybillAuthoringIntentView"
+  "/api/v1/{instance_id}/authoring/intents/{intent_id}/rebase": {
+    "POST": "AuthoringIntentViewRecord"
   },
-  "/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/resume": {
-    "GET": "PlaybillAuthoringIntentView"
+  "/api/v1/{instance_id}/authoring/intents/{intent_id}/resume": {
+    "GET": "AuthoringIntentViewRecord"
   },
-  "/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/status": {
-    "GET": "PlaybillCandidateStatus"
+  "/api/v1/{instance_id}/authoring/intents/{intent_id}/status": {
+    "GET": "CandidateStatusRecord"
   },
-  "/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/submit": {
-    "POST": "PlaybillAuthoringSubmitResult"
+  "/api/v1/{instance_id}/authoring/intents/{intent_id}/submit": {
+    "POST": "AuthoringSubmitResultRecord"
   },
-  "/api/v1/{instance_id}/playbill/authoring/submit": {
-    "POST": "PlaybillAuthoringSubmitResult"
+  "/api/v1/{instance_id}/authoring/submit": {
+    "POST": "AuthoringSubmitResultRecord"
   },
-  "/api/v1/{instance_id}/playbill/blocks/declare": {
-    "POST": "PlaybillBlockDeclareResultV1"
+  "/api/v1/{instance_id}/blocks/declare": {
+    "POST": "BlockDeclareResult"
   },
-  "/api/v1/{instance_id}/playbill/blocks/depublish": {
-    "POST": "PlaybillBlockDepublishResultV1"
+  "/api/v1/{instance_id}/blocks/depublish": {
+    "POST": "BlockDepublishResult"
   },
-  "/api/v1/{instance_id}/playbill/bodies": {
-    "POST": "PlaybillCasObjectResult"
+  "/api/v1/{instance_id}/bodies": {
+    "POST": "CasObjectResult"
   },
-  "/api/v1/{instance_id}/playbill/captures/read": {
-    "POST": "CaptureReadV1"
+  "/api/v1/{instance_id}/captures/read": {
+    "POST": "CaptureRead"
   },
-  "/api/v1/{instance_id}/playbill/claim-attestations": {
-    "POST": "ClaimAttestationAppendResultV1"
+  "/api/v1/{instance_id}/claim-attestations": {
+    "POST": "ClaimAttestationAppendResult"
   },
-  "/api/v1/{instance_id}/playbill/claim-attestations/recover": {
+  "/api/v1/{instance_id}/claim-attestations/recover": {
     "POST": null
   },
-  "/api/v1/{instance_id}/playbill/claim-types/evidence-rules/upgrade": {
-    "POST": "EvidenceRuleUpgradeResultV1"
+  "/api/v1/{instance_id}/claim-types/evidence-rules/upgrade": {
+    "POST": "EvidenceRuleUpgradeResult"
   },
-  "/api/v1/{instance_id}/playbill/claim-types/migrations": {
-    "POST": "PlaybillClaimTypeMigrationResult | PlaybillClaimTypeMigrationPreflight | PlaybillClaimTypeMigrationResultV2 | PlaybillClaimTypeMigrationResultV3"
+  "/api/v1/{instance_id}/claim-types/migrations": {
+    "POST": "ClaimTypeMigrationResultV1 | ClaimTypeMigrationPreflight | ClaimTypeMigrationResultV2 | ClaimTypeMigrationResult"
   },
-  "/api/v1/{instance_id}/playbill/claim-types/proposals": {
-    "POST": "PlaybillProposalInspection | PlaybillClaimTypeInputProposalResult"
+  "/api/v1/{instance_id}/claim-types/proposals": {
+    "POST": "ProposalInspection | ClaimTypeInputProposalResult"
   },
-  "/api/v1/{instance_id}/playbill/claim-types/upgrade": {
-    "POST": "ClaimTypeUpgradeResultV1"
+  "/api/v1/{instance_id}/claim-types/upgrade": {
+    "POST": "ClaimTypeUpgradeResult"
   },
-  "/api/v1/{instance_id}/playbill/claims/backings": {
-    "POST": "ClaimBackingsResultV1"
+  "/api/v1/{instance_id}/claims/backings": {
+    "POST": "ClaimBackingsResult"
   },
-  "/api/v1/{instance_id}/playbill/claims/read-batch": {
-    "POST": "ClaimReadBatchResultV1"
+  "/api/v1/{instance_id}/claims/read-batch": {
+    "POST": "ClaimReadBatchResult"
   },
-  "/api/v1/{instance_id}/playbill/compiler/proposals": {
-    "POST": "PlaybillProposalInspection"
+  "/api/v1/{instance_id}/compiler/proposals": {
+    "POST": "ProposalInspection"
   },
-  "/api/v1/{instance_id}/playbill/coverage/resolve": {
-    "POST": "PlaybillCoverageResult"
+  "/api/v1/{instance_id}/coverage/resolve": {
+    "POST": "CoverageResult"
   },
-  "/api/v1/{instance_id}/playbill/curation/accept-fixed": {
-    "POST": "PlaybillCurationActionResult"
+  "/api/v1/{instance_id}/curation/accept-fixed": {
+    "POST": "CurationActionResult"
   },
-  "/api/v1/{instance_id}/playbill/curation/list": {
-    "POST": "PlaybillCurationListResult"
+  "/api/v1/{instance_id}/curation/list": {
+    "POST": "CurationListResult"
   },
-  "/api/v1/{instance_id}/playbill/curation/overrule": {
-    "POST": "PlaybillCurationActionResult"
+  "/api/v1/{instance_id}/curation/overrule": {
+    "POST": "CurationActionResult"
   },
-  "/api/v1/{instance_id}/playbill/curation/suppress": {
-    "POST": "PlaybillCurationActionResult"
+  "/api/v1/{instance_id}/curation/suppress": {
+    "POST": "CurationActionResult"
   },
-  "/api/v1/{instance_id}/playbill/documents/proposals": {
-    "POST": "PlaybillProposalInspection"
+  "/api/v1/{instance_id}/documents/proposals": {
+    "POST": "ProposalInspection"
   },
-  "/api/v1/{instance_id}/playbill/floor/deliver-now": {
-    "POST": "PlaybillFloorDeliveryResultV1"
+  "/api/v1/{instance_id}/floor/deliver-now": {
+    "POST": "FloorDeliveryResult"
   },
-  "/api/v1/{instance_id}/playbill/floor/delta": {
-    "POST": "PlaybillFloorDeltaV1"
+  "/api/v1/{instance_id}/floor/delta": {
+    "POST": "FloorDelta"
   },
-  "/api/v1/{instance_id}/playbill/floor/export": {
-    "POST": "PlaybillFloorExport"
+  "/api/v1/{instance_id}/floor/export": {
+    "POST": "FloorExport"
   },
-  "/api/v1/{instance_id}/playbill/get": {
-    "POST": "PlaybillGetResultV1"
+  "/api/v1/{instance_id}/get": {
+    "POST": "GetResult"
   },
-  "/api/v1/{instance_id}/playbill/get-batch": {
-    "POST": "PlaybillGetBatchResultV1"
+  "/api/v1/{instance_id}/get-batch": {
+    "POST": "GetBatchResult"
   },
-  "/api/v1/{instance_id}/playbill/head": {
-    "GET": "PlaybillHeadV1"
+  "/api/v1/{instance_id}/head": {
+    "GET": "Head"
   },
-  "/api/v1/{instance_id}/playbill/host": {
-    "GET": "PlaybillHostInspectionV1"
+  "/api/v1/{instance_id}/host": {
+    "GET": "HostInspection"
   },
-  "/api/v1/{instance_id}/playbill/init": {
-    "POST": "PlaybillInitResult"
+  "/api/v1/{instance_id}/init": {
+    "POST": "InitResult"
   },
-  "/api/v1/{instance_id}/playbill/instance/decommission": {
-    "POST": "PlaybillInstanceDecommissionResultV1"
+  "/api/v1/{instance_id}/instance/decommission": {
+    "POST": "InstanceDecommissionResult"
   },
-  "/api/v1/{instance_id}/playbill/kits": {
-    "GET": "PlaybillKitStatusV1",
-    "POST": "PlaybillKitChangeResultV1"
+  "/api/v1/{instance_id}/kits": {
+    "GET": "KitStatus",
+    "POST": "KitChangeResult"
   },
-  "/api/v1/{instance_id}/playbill/kits/build": {
-    "POST": "PlaybillKitBuildResultV1"
+  "/api/v1/{instance_id}/kits/build": {
+    "POST": "KitBuildResult"
   },
-  "/api/v1/{instance_id}/playbill/kits/remove": {
-    "POST": "PlaybillKitChangeResultV1"
+  "/api/v1/{instance_id}/kits/remove": {
+    "POST": "KitChangeResult"
   },
-  "/api/v1/{instance_id}/playbill/ledger/mirror": {
-    "GET": "PlaybillLedgerMirrorV1",
-    "POST": "PlaybillLedgerMirrorV1"
+  "/api/v1/{instance_id}/ledger/mirror": {
+    "GET": "LedgerMirror",
+    "POST": "LedgerMirror"
   },
-  "/api/v1/{instance_id}/playbill/ledger/publish": {
-    "POST": "PlaybillLedgerMirrorV1"
+  "/api/v1/{instance_id}/ledger/publish": {
+    "POST": "LedgerMirror"
   },
-  "/api/v1/{instance_id}/playbill/lines/{line}/arm": {
-    "GET": "LineArmV1",
-    "POST": "LineArmV1"
+  "/api/v1/{instance_id}/lines/{line}/arm": {
+    "GET": "LineArm",
+    "POST": "LineArm"
   },
-  "/api/v1/{instance_id}/playbill/lines/{line}/check": {
-    "POST": "LineTriggerCheckResultV1"
+  "/api/v1/{instance_id}/lines/{line}/check": {
+    "POST": "LineTriggerCheckResult"
   },
-  "/api/v1/{instance_id}/playbill/lines/{line}/disarm": {
-    "POST": "LineArmV1"
+  "/api/v1/{instance_id}/lines/{line}/disarm": {
+    "POST": "LineArm"
   },
-  "/api/v1/{instance_id}/playbill/lines/{line}/dispatch": {
-    "POST": "LineDispatchResultV1"
+  "/api/v1/{instance_id}/lines/{line}/dispatch": {
+    "POST": "LineDispatchResult"
   },
-  "/api/v1/{instance_id}/playbill/lines/{line}/evaluate": {
-    "POST": "LineTriggerCheckResultV1"
+  "/api/v1/{instance_id}/lines/{line}/evaluate": {
+    "POST": "LineTriggerCheckResult"
   },
-  "/api/v1/{instance_id}/playbill/lines/{line}/runs": {
-    "POST": "PlaybillProcedureRunState"
+  "/api/v1/{instance_id}/lines/{line}/runs": {
+    "POST": "ProcedureRunState"
   },
-  "/api/v1/{instance_id}/playbill/next": {
-    "POST": "PlaybillNextResult"
+  "/api/v1/{instance_id}/next": {
+    "POST": "NextResult"
   },
-  "/api/v1/{instance_id}/playbill/orient": {
-    "GET": "PlaybillOrientResultV1"
+  "/api/v1/{instance_id}/orient": {
+    "GET": "OrientResult"
   },
-  "/api/v1/{instance_id}/playbill/predictions": {
-    "POST": "PlaybillPredictResultV2"
+  "/api/v1/{instance_id}/predictions": {
+    "POST": "PredictResult"
   },
-  "/api/v1/{instance_id}/playbill/predictions/{prediction_id}/settlements": {
-    "POST": "PlaybillSettleResultV2"
+  "/api/v1/{instance_id}/predictions/{prediction_id}/settlements": {
+    "POST": "SettleResult"
   },
-  "/api/v1/{instance_id}/playbill/principals/proposals": {
-    "POST": "PlaybillProposalInspection"
+  "/api/v1/{instance_id}/principals/proposals": {
+    "POST": "ProposalInspection"
   },
-  "/api/v1/{instance_id}/playbill/procedure-runs/{run_id}": {
-    "GET": "PlaybillProcedureRunState"
+  "/api/v1/{instance_id}/procedure-runs/{run_id}": {
+    "GET": "ProcedureRunState"
   },
-  "/api/v1/{instance_id}/playbill/procedures/source/preview": {
-    "POST": "ProcedureSourcePreviewV1"
+  "/api/v1/{instance_id}/procedures/source/preview": {
+    "POST": "ProcedureSourcePreview"
   },
-  "/api/v1/{instance_id}/playbill/procedures/{name}/bind": {
-    "POST": "PlaybillProcedureBindResult"
+  "/api/v1/{instance_id}/procedures/{name}/bind": {
+    "POST": "ProcedureBindResult"
   },
-  "/api/v1/{instance_id}/playbill/procedures/{name}/measurements": {
-    "POST": "PlaybillProcedureMeasureResultV1"
+  "/api/v1/{instance_id}/procedures/{name}/measurements": {
+    "POST": "ProcedureMeasureResult"
   },
-  "/api/v1/{instance_id}/playbill/procedures/{name}/readiness": {
-    "GET": "PlaybillProcedureReadiness"
+  "/api/v1/{instance_id}/procedures/{name}/readiness": {
+    "GET": "ProcedureReadiness"
   },
-  "/api/v1/{instance_id}/playbill/procedures/{name}/readings": {
-    "POST": "PlaybillProcedureReadingsResultV1"
+  "/api/v1/{instance_id}/procedures/{name}/readings": {
+    "POST": "ProcedureReadingsResult"
   },
-  "/api/v1/{instance_id}/playbill/procedures/{name}/runs": {
-    "POST": "PlaybillProcedureRunState"
+  "/api/v1/{instance_id}/procedures/{name}/runs": {
+    "POST": "ProcedureRunState"
   },
-  "/api/v1/{instance_id}/playbill/projections/check": {
-    "POST": "PlaybillProjectionCheckResultV1"
+  "/api/v1/{instance_id}/projections/check": {
+    "POST": "ProjectionCheckResult"
   },
-  "/api/v1/{instance_id}/playbill/projections/sync-backing": {
-    "POST": "PlaybillBlockSyncReadResultV1"
+  "/api/v1/{instance_id}/projections/sync-backing": {
+    "POST": "BlockSyncReadResult"
   },
-  "/api/v1/{instance_id}/playbill/proposal-selector": {
-    "GET": "PlaybillProposalSelectorResultV1"
+  "/api/v1/{instance_id}/proposal-selector": {
+    "GET": "ProposalSelectorResult"
   },
-  "/api/v1/{instance_id}/playbill/proposals": {
-    "GET": "PlaybillProposalList"
+  "/api/v1/{instance_id}/proposals": {
+    "GET": "ProposalList"
   },
-  "/api/v1/{instance_id}/playbill/proposals/{proposal_id}": {
-    "GET": "PlaybillProposalInspection"
+  "/api/v1/{instance_id}/proposals/{proposal_id}": {
+    "GET": "ProposalInspection"
   },
-  "/api/v1/{instance_id}/playbill/proposals/{proposal_id}/activate": {
-    "POST": "PlaybillActivationReceipt"
+  "/api/v1/{instance_id}/proposals/{proposal_id}/activate": {
+    "POST": "ActivationReceipt"
   },
-  "/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approval-challenge": {
-    "POST": "PlaybillApprovalChallenge"
+  "/api/v1/{instance_id}/proposals/{proposal_id}/approval-challenge": {
+    "POST": "ApprovalChallenge"
   },
-  "/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approvals": {
-    "POST": "PlaybillApprovalReceipt"
+  "/api/v1/{instance_id}/proposals/{proposal_id}/approvals": {
+    "POST": "ApprovalReceipt"
   },
-  "/api/v1/{instance_id}/playbill/proposals/{proposal_id}/readmit": {
-    "POST": "PlaybillProposalReadmitResult"
+  "/api/v1/{instance_id}/proposals/{proposal_id}/readmit": {
+    "POST": "ProposalReadmitResult"
   },
-  "/api/v1/{instance_id}/playbill/proposals/{proposal_id}/refusal": {
-    "GET": "PlaybillRefusalInspection"
+  "/api/v1/{instance_id}/proposals/{proposal_id}/refusal": {
+    "GET": "RefusalInspection"
   },
-  "/api/v1/{instance_id}/playbill/proposals/{proposal_id}/review": {
-    "POST": "PlaybillProposalReview"
+  "/api/v1/{instance_id}/proposals/{proposal_id}/review": {
+    "POST": "ProposalReview"
   },
-  "/api/v1/{instance_id}/playbill/proposals/{proposal_id}/status": {
-    "GET": "PlaybillProposalListEntry"
+  "/api/v1/{instance_id}/proposals/{proposal_id}/status": {
+    "GET": "ProposalListEntry"
   },
-  "/api/v1/{instance_id}/playbill/proposals/{proposal_id}/withdraw": {
-    "POST": "PlaybillProposalWithdrawResult"
+  "/api/v1/{instance_id}/proposals/{proposal_id}/withdraw": {
+    "POST": "ProposalWithdrawResult"
   },
-  "/api/v1/{instance_id}/playbill/providers": {
-    "GET": "PlaybillProviderCatalogV1"
+  "/api/v1/{instance_id}/providers": {
+    "GET": "ProviderCatalog"
   },
-  "/api/v1/{instance_id}/playbill/providers/install": {
-    "POST": "PlaybillProviderInstallResultV1"
+  "/api/v1/{instance_id}/providers/install": {
+    "POST": "ProviderInstallResult"
   },
-  "/api/v1/{instance_id}/playbill/query": {
-    "POST": "PlaybillQueryResult"
+  "/api/v1/{instance_id}/query": {
+    "POST": "QueryResultRecord"
   },
-  "/api/v1/{instance_id}/playbill/resolution-contracts/query": {
-    "POST": "ResolutionContractsResultV1"
+  "/api/v1/{instance_id}/resolution-contracts/query": {
+    "POST": "ResolutionContractsResult"
   },
-  "/api/v1/{instance_id}/playbill/retire": {
-    "POST": "WriteOutcome"
-  },
-  "/api/v1/{instance_id}/playbill/set": {
-    "POST": "WriteOutcome"
-  },
-  "/api/v1/{instance_id}/playbill/since": {
-    "POST": "PlaybillSinceResult"
-  },
-  "/api/v1/{instance_id}/playbill/sources/check": {
-    "POST": "PlaybillSourceCheckResult"
-  },
-  "/api/v1/{instance_id}/playbill/sources/context": {
-    "GET": "PlaybillSourceContext"
-  },
-  "/api/v1/{instance_id}/playbill/sources/proposals": {
-    "POST": "PlaybillProposalInspection"
-  },
-  "/api/v1/{instance_id}/playbill/whoami": {
-    "GET": "PlaybillWhoAmI"
-  },
-  "/api/v1/{instance_id}/playbill/workspace-attach": {
-    "POST": "PlaybillHostWorkspaceAttachResultV1"
-  },
-  "/api/v1/{instance_id}/playbill/workspace-detach": {
-    "POST": "PlaybillWorkspaceDetachResultV1"
-  },
-  "/api/v1/{instance_id}/playbill/workspace-registration": {
-    "GET": "PlaybillHostWorkspaceRegistrationV1"
-  },
-  "/api/v1/{instance_id}/playbill/workspace/floor-delivery": {
-    "POST": "PlaybillHostWorkspaceRegistrationV1"
-  },
-  "/api/v1/{instance_id}/playbill/write": {
+  "/api/v1/{instance_id}/retire": {
     "POST": "WriteOutcome"
   },
   "/api/v1/{instance_id}/runtime/bootstrap/claim": {
@@ -300,6 +267,39 @@
   },
   "/api/v1/{instance_id}/runtime/credentials/{credential_id}/rotate": {
     "POST": "RuntimeCredentialResult"
+  },
+  "/api/v1/{instance_id}/set": {
+    "POST": "WriteOutcome"
+  },
+  "/api/v1/{instance_id}/since": {
+    "POST": "SinceResult"
+  },
+  "/api/v1/{instance_id}/sources/check": {
+    "POST": "SourceCheckResult"
+  },
+  "/api/v1/{instance_id}/sources/context": {
+    "GET": "SourceContext"
+  },
+  "/api/v1/{instance_id}/sources/proposals": {
+    "POST": "ProposalInspection"
+  },
+  "/api/v1/{instance_id}/whoami": {
+    "GET": "WhoAmI"
+  },
+  "/api/v1/{instance_id}/workspace-attach": {
+    "POST": "HostWorkspaceAttachResult"
+  },
+  "/api/v1/{instance_id}/workspace-detach": {
+    "POST": "WorkspaceDetachResult"
+  },
+  "/api/v1/{instance_id}/workspace-registration": {
+    "GET": "HostWorkspaceRegistration"
+  },
+  "/api/v1/{instance_id}/workspace/floor-delivery": {
+    "POST": "HostWorkspaceRegistration"
+  },
+  "/api/v1/{instance_id}/write": {
+    "POST": "WriteOutcome"
   },
   "/health": {
     "GET": null
