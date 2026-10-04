@@ -8,7 +8,9 @@ runs once per prefix and must behave identically.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
+from collections import UserDict
+from collections.abc import Callable
+from types import MappingProxyType, SimpleNamespace
 
 import pytest
 
@@ -80,6 +82,46 @@ def test_write_warnings_read_either_spelling_at_every_reader(prefix: str) -> Non
     assert isinstance(first, VerdictNotSupportedWarning)
     assert isinstance(second, NewerCaptureNotCitableWarning)
     assert first.code == "cruxible.write.verdict_not_supported"
+
+
+@pytest.mark.parametrize("wrap", [MappingProxyType, UserDict], ids=["proxy", "userdict"])
+@pytest.mark.parametrize("prefix", PREFIXES)
+def test_write_warnings_read_any_mapping(prefix: str, wrap: Callable[[dict], object]) -> None:
+    """The union reads its code from any mapping, as each member does, and from a model."""
+
+    from pydantic import TypeAdapter
+
+    from cruxible_client.contracts.write import (
+        NewerCaptureNotCitableWarning,
+        VerdictNotSupportedWarning,
+        WriteOutcome,
+        WriteWarning,
+    )
+
+    adapter: TypeAdapter[object] = TypeAdapter(WriteWarning)
+    for payload, model, code in (
+        (_verdict(prefix), VerdictNotSupportedWarning, "cruxible.write.verdict_not_supported"),
+        (_newer(prefix), NewerCaptureNotCitableWarning, "cruxible.write.newer_capture_not_citable"),
+    ):
+        alone = model.model_validate(wrap(payload))
+        assert alone.code == code
+        selected = adapter.validate_python(wrap(payload))
+        assert isinstance(selected, model) and selected.code == code
+        # A model instance is read by attribute.
+        assert adapter.validate_python(alone) == alone
+
+    outcome = WriteOutcome.model_validate(
+        {
+            "status": "accepted",
+            "coordinate": {"git_oid": "a" * 12, "generation": 3},
+            "warnings": [wrap(_verdict(prefix)), wrap(_newer(prefix))],
+        }
+    )
+    assert [type(item) for item in outcome.warnings] == [
+        VerdictNotSupportedWarning,
+        NewerCaptureNotCitableWarning,
+    ]
+    assert outcome.warnings[0].code == "cruxible.write.verdict_not_supported"
 
 
 def test_the_write_warning_schema_keeps_its_code_discriminator() -> None:

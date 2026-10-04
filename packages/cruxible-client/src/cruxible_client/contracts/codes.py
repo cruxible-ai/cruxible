@@ -15,7 +15,7 @@ the two spellings as one code:
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Mapping
 from typing import Any
 
 from pydantic import BeforeValidator
@@ -38,26 +38,6 @@ def _current(value: object) -> object:
 
 #: Annotate a closed code field: ``Annotated[Literal[...], CurrentCode]``.
 CurrentCode = BeforeValidator(_current)
-
-
-def current_code_keys(field: str) -> Callable[[Any, Any], Any]:
-    """A before-validator for a sequence of code-told union members.
-
-    Rewrites each member's ``field`` to the current spelling; for a field whose
-    union type is not ``code_told_union`` itself.
-    """
-
-    def current(cls: Any, value: Any) -> Any:
-        if not isinstance(value, list | tuple):
-            return value
-        return [
-            {**item, field: normalize_code(item[field])}
-            if isinstance(item, dict) and isinstance(item.get(field), str)
-            else item
-            for item in value
-        ]
-
-    return classmethod(current)  # type: ignore[return-value]
 
 
 class _CodeToldSchema:
@@ -94,7 +74,8 @@ def code_told_union(field: str, members: tuple[tuple[type[Any], str], ...]) -> A
     from pydantic import Discriminator, Tag
 
     def discriminate(value: Any) -> str | None:
-        raw = value.get(field) if isinstance(value, dict) else getattr(value, field, None)
+        # Any mapping (dict, MappingProxyType, UserDict) reads by key; a model by attribute.
+        raw = value.get(field) if isinstance(value, Mapping) else getattr(value, field, None)
         return normalize_code(raw) if isinstance(raw, str) else None
 
     choices = tuple(Annotated[model, Tag(code)] for model, code in members)
@@ -110,6 +91,5 @@ __all__ = [
     "HISTORICAL_CODE_PREFIX",
     "CurrentCode",
     "code_told_union",
-    "current_code_keys",
     "normalize_code",
 ]
