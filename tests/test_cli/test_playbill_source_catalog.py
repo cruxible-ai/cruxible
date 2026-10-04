@@ -25,7 +25,7 @@ def test_cli_compile_and_propose_never_send_a_client_path(
     repository = tmp_path / "authoring"
     source = repository / "specs" / "design.md"
     source.parent.mkdir(parents=True)
-    original = b"# Playbill from a declared source\n"
+    original = b"# Cruxible from a declared source\n"
     source.write_bytes(original)
     catalog = tmp_path / "playbill-sources.yaml"
     catalog.write_text(
@@ -37,7 +37,7 @@ entries:
     locator: specs/design.md
     document_id: design
     document_kind: design
-    title: Playbill design
+    title: Cruxible design
     media_type: text/markdown
     governance_scope: [project:playbill]
 """
@@ -46,16 +46,16 @@ entries:
     submitted: list[dict[str, Any]] = []
 
     class StubClient:
-        def playbill_source_context(self, instance_id: str) -> contracts.PlaybillSourceContext:
+        def source_context(self, instance_id: str) -> contracts.SourceContext:
             assert instance_id == "inst_cli"
-            return contracts.PlaybillSourceContext(
-                accepted_coordinate=contracts.PlaybillAcceptedCoordinate.model_validate(
+            return contracts.SourceContext(
+                accepted_coordinate=contracts.AcceptedCoordinate.model_validate(
                     coordinate.model_dump(mode="json")
                 ),
                 documents=[],
             )
 
-        def propose_playbill_source_bundle(
+        def propose_source_bundle(
             self,
             instance_id: str,
             *,
@@ -64,14 +64,14 @@ entries:
             proposal_name: str,
             dry_run: bool | None = None,
             at: str | None = None,
-        ) -> contracts.PlaybillProposalInspection:
+        ) -> contracts.ProposalInspection:
             assert instance_id == "inst_cli"
             assert source_name == "playbill-design"
             assert proposal_name == "compiled-design"
             submitted.append(bundle)
-            return contracts.PlaybillProposalInspection(
+            return contracts.ProposalInspection(
                 proposal={"admission": {"proposal_id": "sha256:" + "1" * 64}},
-                accepted_coordinate=contracts.PlaybillAcceptedCoordinate.model_validate(
+                accepted_coordinate=contracts.AcceptedCoordinate.model_validate(
                     coordinate.model_dump(mode="json")
                 ),
             )

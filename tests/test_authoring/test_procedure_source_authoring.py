@@ -58,7 +58,7 @@ def test_preview_and_prepare_accept_the_same_symbolic_source(tmp_path):
     assert preview.source_map[-1].span.filename == __file__
     from cruxible_client.authoring.procedures import ProcedurePreview
 
-    client = SimpleNamespace(preview_playbill_procedure_source=lambda *args, **kwargs: preview)
+    client = SimpleNamespace(preview_procedure_source=lambda *args, **kwargs: preview)
     world = SimpleNamespace(
         coordinate=at, _playbill=SimpleNamespace(_client=client, _instance_id="test")
     )

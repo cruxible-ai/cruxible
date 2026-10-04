@@ -21,7 +21,7 @@ from cruxible_client.contracts.documents import (
     parse_document,
     render_document,
 )
-from cruxible_client.contracts.errors import DocumentFormatError, PlaybillCasError
+from cruxible_client.contracts.errors import CasError, DocumentFormatError
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.storage.cas import BodyAccessContext, ContentAddressedBodyStore
 from tests.core_support._support import initialize_local
@@ -38,7 +38,7 @@ def _shell(
     *,
     revision: int = 1,
     predecessor_digest: str | None = None,
-    title: str = "Playbill design",
+    title: str = "Cruxible design",
 ) -> DocumentShell:
     return DocumentShell(
         identity="document:playbill-design",
@@ -84,7 +84,7 @@ def test_cas_store_is_inert_idempotent_verified_and_access_controlled(tmp_path: 
         "byte_length": None,
         "redacted": True,
     }
-    with pytest.raises(PlaybillCasError, match="denied"):
+    with pytest.raises(CasError, match="denied"):
         store.read(first.digest, access=denied)
     assert store.read(first.digest, access=allowed) == body
     assert store.metadata(first.digest, access=allowed).byte_length == len(body)
@@ -92,7 +92,7 @@ def test_cas_store_is_inert_idempotent_verified_and_access_controlled(tmp_path: 
     digest_hex = first.digest.removeprefix("sha256:")
     stored_path = store.root / "sha256" / digest_hex[:2] / digest_hex
     stored_path.write_bytes(b"swapped")
-    with pytest.raises(PlaybillCasError, match="do not match"):
+    with pytest.raises(CasError, match="do not match"):
         store.verify(first.digest)
 
 
@@ -170,7 +170,7 @@ def test_document_acceptance_requires_exact_body_and_predecessor(tmp_path: Path)
         next_body.digest,
         revision=2,
         predecessor_digest=predecessor.envelope_digest,
-        title="Playbill design v2",
+        title="Cruxible design v2",
     )
     next_result = evaluate_document_law(
         successor,
@@ -221,7 +221,7 @@ def test_cas_reads_refuse_a_symlinked_digest_shard(tmp_path: Path) -> None:
     shard = store.root / "sha256" / digest.value[:2]
     shard.symlink_to(external, target_is_directory=True)
 
-    with pytest.raises(PlaybillCasError, match="shard"):
+    with pytest.raises(CasError, match="shard"):
         store.verify(digest.tagged)
 
 

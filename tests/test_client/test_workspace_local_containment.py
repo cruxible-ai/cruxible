@@ -9,7 +9,7 @@ import pytest
 
 from cruxible_client.authoring import floor_apply
 from cruxible_client.authoring import workspace as authoring
-from cruxible_client.authoring.workspace import PlaybillWorkspaceError
+from cruxible_client.authoring.workspace import WorkspaceError
 from tests.support.floor_exports import floor_v5_delta
 from tests.test_client.test_floor_apply import COORDINATE
 
@@ -122,7 +122,7 @@ def test_local_index_refuses_a_component_swapped_before_open(tmp_path, monkeypat
 
     monkeypatch.setattr(floor_apply.os, "open", open_at)
     relative = "projections/INDEX" if component == "projections" else "sources/INDEX"
-    with pytest.raises(PlaybillWorkspaceError, match="link or a file"):
+    with pytest.raises(WorkspaceError, match="link or a file"):
         authoring._write_floor_local(workspace, relative, "index\n")
     assert swapped
     assert (outside / "INDEX").read_bytes() == b"outside sentinel\n"
@@ -154,7 +154,7 @@ def test_join_does_not_bless_a_workspace_swap_by_resolving_it_again(tmp_path, mo
         return resolve(path)
 
     monkeypatch.setattr(authoring, "_workspace_root", swap_before_resolve)
-    with pytest.raises(PlaybillWorkspaceError, match="link or a file"):
+    with pytest.raises(WorkspaceError, match="link or a file"):
         authoring.write_projection_index(workspace)
     for relative in ("sources/INDEX", "projections/INDEX"):
         assert (outside / ".playbill/floor" / relative).read_bytes() == b"outside sentinel\n"
@@ -183,7 +183,7 @@ def test_gitignore_comparison_refuses_a_symlink(tmp_path):
     outside = tmp_path / "outside"
     outside.write_bytes(b"outside sentinel\n")
     (floor / ".gitignore").symlink_to(outside)
-    with pytest.raises(PlaybillWorkspaceError, match="could not be written atomically"):
+    with pytest.raises(WorkspaceError, match="could not be written atomically"):
         authoring.write_projection_index(workspace)
     assert outside.read_bytes() == b"outside sentinel\n"
 
@@ -199,7 +199,7 @@ def test_local_join_refuses_a_fifo_promptly(tmp_path, relative):
     fifo = floor / relative
     fifo.unlink(missing_ok=True)
     os.mkfifo(fifo)
-    with pytest.raises(PlaybillWorkspaceError, match="not a regular file"):
+    with pytest.raises(WorkspaceError, match="not a regular file"):
         call_with_fifo_timeout(fifo, lambda: authoring.write_projection_index(workspace))
     assert fifo.is_fifo()
 

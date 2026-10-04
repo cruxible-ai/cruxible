@@ -29,12 +29,12 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.predictions import (
     ObservationSettlementEvidence,
-    PlaybillPredictRequest,
-    PlaybillSettleRequest,
     PredictionEqualityRule,
     PredictionObservationSelector,
     PredictionPresenceRule,
     PredictionThresholdRule,
+    PredictRequest,
+    SettleRequest,
     TerminalSettlementEvidence,
 )
 from cruxible_client.contracts.procedures.windows import FixedWindow
@@ -172,7 +172,7 @@ def _predict(instance, owner, capture_digest, *, value="ready", presence=False, 
     )
     proposed = service_predict_playbill(
         instance,
-        request=PlaybillPredictRequest(contract=contract),
+        request=PredictRequest(contract=contract),
         actor=AuthenticatedActor(actor_id="owner"),
         evaluation_time=PREDICTED_AT,
     )
@@ -192,7 +192,7 @@ def _settle(instance, contract, observation, *, at=RECORDED_AT):
     return service_settle_playbill_prediction(
         instance,
         prediction_id=contract.identity.name,
-        request=PlaybillSettleRequest(
+        request=SettleRequest(
             contract=contract, evidence=ObservationSettlementEvidence(claim=observation)
         ),
         actor_context=_actor(),
@@ -356,7 +356,7 @@ def test_predict_resolution_contracts_and_settle_take_plain_claim_ids(tmp_path: 
     )
     proposed = service_predict_playbill(
         instance,
-        request=PlaybillPredictRequest(contract=contract),
+        request=PredictRequest(contract=contract),
         actor=AuthenticatedActor(actor_id="owner"),
         evaluation_time=PREDICTED_AT,
     )
@@ -377,7 +377,7 @@ def test_predict_resolution_contracts_and_settle_take_plain_claim_ids(tmp_path: 
     settled = service_settle_playbill_prediction(
         instance,
         prediction_id="status-test",
-        request=PlaybillSettleRequest(observation=observation.identity.name),
+        request=SettleRequest(observation=observation.identity.name),
         actor_context=_actor(),
         recorded_at=RECORDED_AT,
     )
@@ -687,7 +687,7 @@ def test_retained_terminal_settles_exact_investigation_and_replays(
             "receipt": receipt.model_dump(mode="json"),
         },
     )
-    request = PlaybillSettleRequest(
+    request = SettleRequest(
         contract=contract,
         evidence=TerminalSettlementEvidence(
             claim=observation, run_id=run.run_id, terminal_record_digest=terminal.record_digest

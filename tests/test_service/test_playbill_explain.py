@@ -1,4 +1,4 @@
-"""PB-E coordinate-bound Playbill explanation service tests."""
+"""PB-E coordinate-bound Cruxible explanation service tests."""
 
 from __future__ import annotations
 
@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.errors import PlaybillFormatError, SubjectNotFoundError
+from cruxible_client.contracts.errors import FormatError, SubjectNotFoundError
 from cruxible_client.contracts.semantic import SemanticAddress, SemanticSelector
 from cruxible_core.service.authoring.documents import (
-    PlaybillAcceptedCoordinate,
+    AcceptedCoordinate,
     service_activate_playbill_proposal,
     service_propose_playbill_document,
     service_store_playbill_body,
@@ -29,7 +29,7 @@ def _accepted(tmp_path: Path):
     instance, owner, reviewer = _instance(tmp_path)
     body = service_store_playbill_body(
         instance,
-        content=b"# Playbill design\n\nSecret reviewable prose.\n",
+        content=b"# Cruxible design\n\nSecret reviewable prose.\n",
     )
     proposal = service_propose_playbill_document(
         instance,
@@ -63,7 +63,7 @@ def test_summary_and_evidence_preserve_coverage_without_body_leakage(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     instance, proposal = _accepted(tmp_path)
-    coordinate = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     monkeypatch.setattr(
         instance, "tree_at", lambda _oid: pytest.fail("selected reads must not load the world")
     )
@@ -117,7 +117,7 @@ def test_a_card_path_is_a_typed_refusal_not_an_escaping_format_error(tmp_path: P
     """Explain resolves a caller-supplied path, and cards live in the accepted tree."""
 
     instance, _proposal = _accepted(tmp_path)
-    coordinate = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     cards = [
         path
         for path in instance.tree_at(instance.accepted_coordinate().git_oid)
@@ -139,7 +139,7 @@ def test_a_card_path_is_a_typed_refusal_not_an_escaping_format_error(tmp_path: P
 
 def test_proof_is_typed_deferred_and_coordinate_mixing_refuses(tmp_path: Path) -> None:
     instance, _proposal = _accepted(tmp_path)
-    coordinate = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     subject = SemanticAddress.whole_artifact("documents/design.json")
 
     proof = service_explain_playbill_subject(
@@ -153,7 +153,7 @@ def test_proof_is_typed_deferred_and_coordinate_mixing_refuses(tmp_path: Path) -
     assert proof.supported_details == ("summary", "evidence")
 
     mixed = coordinate.model_copy(update={"generation_root": "sha256:" + "88" * 32})
-    with pytest.raises(PlaybillFormatError, match="mixed"):
+    with pytest.raises(FormatError, match="mixed"):
         service_explain_playbill_subject(
             instance,
             subject=subject,
@@ -162,7 +162,7 @@ def test_proof_is_typed_deferred_and_coordinate_mixing_refuses(tmp_path: Path) -
             access=BodyAccessContext(principal_id="auditor"),
         )
     wrong_compiler = coordinate.model_copy(update={"compiler_digest": "sha256:" + "99" * 32})
-    with pytest.raises(PlaybillFormatError, match="compiler"):
+    with pytest.raises(FormatError, match="compiler"):
         service_explain_playbill_subject(
             instance,
             subject=subject,

@@ -175,7 +175,7 @@ def test_arms_three_and_four_are_identical_but_for_one_boolean(
     """The §11.8 sharing rule, asserted rather than described.
 
     "Arms 3 and 4 share the same model, harness loop, task corpus, accepted
-    ledger, Playbill state, and tool implementations; only the coverage-delivery
+    ledger, Cruxible state, and tool implementations; only the coverage-delivery
     adapter changes." Two checks make that structural: the two arm records differ
     in exactly one field, and the two workspaces are byte-identical before the
     turn runs.
@@ -285,7 +285,7 @@ def test_arms_one_and_two_carry_the_corpus_and_arm_two_carries_a_scratchpad(
     assert (first.workspace / recipe.GOVERNED_PATH).is_file()
     assert not (first.workspace / "scratchpad").exists()
     assert (second.workspace / "scratchpad/NOTES.md").is_file()
-    # Neither control gets the Playbill surface or a binding configuration.
+    # Neither control gets the Cruxible surface or a binding configuration.
     for setup in (first, second):
         assert not (setup.workspace / ".playbill/floor").exists()
         assert not (setup.workspace / ".playbill").exists()

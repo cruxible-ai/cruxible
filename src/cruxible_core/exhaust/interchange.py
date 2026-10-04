@@ -11,7 +11,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.canonical import CasDigest, canonical_bytes
-from cruxible_client.contracts.errors import PlaybillJournalError
+from cruxible_client.contracts.errors import JournalError
 from cruxible_core.exhaust.backends import JournalBackendProtocol, LocalJournalBackend
 from cruxible_core.exhaust.records import (
     JournalHeadManifestV1,
@@ -320,9 +320,9 @@ def parse_journal_export(content: bytes) -> JournalExportBundleV1:
     try:
         bundle = JournalExportBundleV1.model_validate(json.loads(content))
     except (UnicodeDecodeError, ValueError) as exc:
-        raise PlaybillJournalError("journal export bundle is malformed") from exc
+        raise JournalError("journal export bundle is malformed") from exc
     if render_journal_export(bundle) != content:
-        raise PlaybillJournalError("journal export bundle is not canonical")
+        raise JournalError("journal export bundle is not canonical")
     return bundle
 
 
@@ -332,31 +332,31 @@ def _records_from_segment(
 ) -> tuple[StoredProcedureJournalRecordV1, ...]:
     body = bytes.fromhex(content.content_hex)
     if len(body) != descriptor.byte_length:
-        raise PlaybillJournalError("journal segment byte length does not reproduce")
+        raise JournalError("journal segment byte length does not reproduce")
     lines = body.splitlines(keepends=True)
     if not lines or any(not line.endswith(b"\n") for line in lines):
-        raise PlaybillJournalError("journal segment record framing is invalid")
+        raise JournalError("journal segment record framing is invalid")
     records: list[StoredProcedureJournalRecordV1] = []
     for line in lines:
         raw = line[:-1]
         try:
             stored = StoredProcedureJournalRecordV1.model_validate(json.loads(raw))
         except (UnicodeDecodeError, ValueError) as exc:
-            raise PlaybillJournalError("journal segment contains a malformed record") from exc
+            raise JournalError("journal segment contains a malformed record") from exc
         if canonical_bytes(stored.model_dump(mode="json")) != raw:
-            raise PlaybillJournalError("journal segment record is not canonical")
+            raise JournalError("journal segment record is not canonical")
         records.append(stored)
     if len(records) != descriptor.record_count or (
         records[0].record.sequence != descriptor.first_sequence
         or records[-1].record.sequence != descriptor.last_sequence
     ):
-        raise PlaybillJournalError("journal segment descriptor does not match its records")
+        raise JournalError("journal segment descriptor does not match its records")
     if any(
         record.record.stream != descriptor.stream
         or record.record.partition_id != descriptor.partition_id
         for record in records
     ):
-        raise PlaybillJournalError("journal segment contains substituted stream coordinates")
+        raise JournalError("journal segment contains substituted stream coordinates")
     return tuple(records)
 
 
@@ -400,7 +400,7 @@ def import_journal_export(
         ):
             local_range = backend.read_exact_range(journal_range)
             if local_range != records:
-                raise PlaybillJournalError("journal import head matches but local prefix differs")
+                raise JournalError("journal import head matches but local prefix differs")
             imported.append(current)
             continue
         expected = JournalPartitionHeadV1(
@@ -410,7 +410,7 @@ def import_journal_export(
             record_digest=journal_range.expected_previous_digest,
         )
         if current != expected:
-            raise PlaybillJournalError("journal import refuses a missing prefix or fork merge")
+            raise JournalError("journal import refuses a missing prefix or fork merge")
         imported.append(backend.import_verified_range(records, expected_head=expected))
     return tuple(sorted(imported, key=journal_head_key))
 
@@ -435,7 +435,7 @@ def verified_journal_handoff(
     )
     for head in imported:
         if target.read_head(head.stream, head.partition_id) != head:
-            raise PlaybillJournalError("handoff target failed complete-prefix verification")
+            raise JournalError("handoff target failed complete-prefix verification")
     for head in imported:
         source.fence_writer(
             head.stream,

@@ -8,7 +8,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from pydantic import ValidationError
 
-from cruxible_client.contracts.errors import PlaybillJournalError
+from cruxible_client.contracts.errors import JournalError
 from cruxible_core.exhaust import (
     JournalExportBundleV1,
     JournalHeadVectorV1,
@@ -116,7 +116,7 @@ def test_import_refuses_a_fork_instead_of_merging(tmp_path) -> None:
         expected_head=target.read_head(_stream(), "runs-2026-08"),
         fencing_token="fork-writer",
     )
-    with pytest.raises(PlaybillJournalError, match="fork merge"):
+    with pytest.raises(JournalError, match="fork merge"):
         import_journal_export(target, bundle, expected_head_public_key=public_key)
 
 
@@ -134,7 +134,7 @@ def test_verified_handoff_fences_old_writer_before_new_append(tmp_path) -> None:
     )
     expected = imported[0]
 
-    with pytest.raises(PlaybillJournalError, match="active fencing token"):
+    with pytest.raises(JournalError, match="active fencing token"):
         source.append(
             _draft("after-handoff"),
             expected_head=expected,

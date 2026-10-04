@@ -8,7 +8,7 @@ import httpx
 
 from cruxible_client import CruxibleClient, contracts
 
-COORDINATE = contracts.PlaybillAcceptedCoordinate(
+COORDINATE = contracts.AcceptedCoordinate(
     git_oid="1" * 64,
     semantic_root="sha256:" + "2" * 64,
     generation_root="sha256:" + "3" * 64,
@@ -60,7 +60,7 @@ def test_client_sends_the_frozen_audit_request() -> None:
     client._client = httpx.Client(  # type: ignore[attr-defined]
         base_url="http://cruxible", transport=httpx.MockTransport(handler)
     )
-    result = client.audit_playbill(
+    result = client.audit(
         "inst",
         evaluation_time="2026-08-26T18:00:00+00:00",
         access_profile=PROFILE,

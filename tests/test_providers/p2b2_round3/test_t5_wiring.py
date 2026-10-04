@@ -14,7 +14,7 @@ import pytest
 
 import cruxible_core.providers.provider_local_runtime as runtime_module
 import cruxible_core.providers.provider_process_leases as lease_module
-from cruxible_client.contracts.errors import PlaybillExecutionError
+from cruxible_client.contracts.errors import ExecutionError
 from cruxible_core.procedures.egress import compute_effective_rung
 from cruxible_core.procedures.execution import (
     ProcedureExecutor,
@@ -111,7 +111,7 @@ def test_c2_a_line_admission_is_the_only_effect_intent_origin(tmp_path: Path) ->
     executor = SimpleNamespace(effective_rung=rung)
     verify = ProcedureExecutor._verify_effective_rung  # noqa: SLF001
 
-    with pytest.raises(PlaybillExecutionError) as refused:
+    with pytest.raises(ExecutionError) as refused:
         verify(executor, admission)
     assert "never a direct actor invocation" in str(refused.value)
 
@@ -126,7 +126,7 @@ def test_c2_a_line_admission_is_the_only_effect_intent_origin(tmp_path: Path) ->
     )
     verify(executor, as_line)
 
-    with pytest.raises(PlaybillExecutionError) as mismatched:
+    with pytest.raises(ExecutionError) as mismatched:
         verify(
             executor,
             as_line.model_copy(update={"mandate_coordinate_digest": _c2_digest("another-mandate")}),

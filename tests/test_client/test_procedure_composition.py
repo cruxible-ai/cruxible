@@ -19,7 +19,7 @@ from cruxible_client.authoring.procedures import (
     Source,
     Transform,
 )
-from cruxible_client.authoring.sdk import Playbill
+from cruxible_client.authoring.sdk import Cruxible
 from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_client.contracts.procedures.models import (
@@ -80,7 +80,7 @@ def test_sequence_wires_previous_and_uses_sdk_lowering_without_transport():
     assert preview.terminals == ("second",)
     assert preview.pending_checks
     assert "sha256:" not in str(preview.nodes[0])  # No synthetic pins escape.
-    draft = Playbill.procedure(object(), definition=bound)
+    draft = Cruxible.procedure(object(), definition=bound)
     assert draft.payload == lower_authoring_input(bound.build())
     assert (
         draft.payload.definition["nodes"][1]["provider"]["resolution"] == "accepted_at_intent_base"
@@ -104,7 +104,7 @@ def test_source_project_emit_matches_security_dogfood_shape():
 def test_unbound_provider_refuses_before_authoring():
     plan = sequence(Call("call", contract_in=EMPTY, contract_out=NUMBER))
     with pytest.raises(ProcedureCompositionError, match="Bind an accepted"):
-        Playbill.procedure(object(), definition=plan)
+        Cruxible.procedure(object(), definition=plan)
     with pytest.raises(ValueError, match="not a provider-backed"):
         plan.bind(typo=PROVIDER)
 
@@ -250,11 +250,11 @@ def test_contract_budget_checked_by_existing_graph_model():
 
 def test_discovery_requires_explicit_choice_when_multiple_providers_exist():
     from cruxible_client.contracts import (
-        PlaybillProviderInterfaceEntry,
-        PlaybillProviderInterfaceImplementation,
+        ProviderInterfaceEntry,
+        ProviderInterfaceImplementation,
     )
 
-    entry = PlaybillProviderInterfaceEntry(
+    entry = ProviderInterfaceEntry(
         tag="playbill-provider-interface-entry-v1",
         identity="ProviderInterface:web.fetch",
         artifact_digest="sha256:" + "a" * 64,
@@ -267,7 +267,7 @@ def test_discovery_requires_explicit_choice_when_multiple_providers_exist():
         classifier_status="installed",
         interface_basis="accepted_registration",
         providers=[
-            PlaybillProviderInterfaceImplementation(
+            ProviderInterfaceImplementation(
                 provider_identity="Provider:" + name,
                 provider_artifact_digest="sha256:" + "d" * 64,
                 implementation_digest=PROVIDER.implementation_digest,
@@ -306,7 +306,7 @@ def test_sdk_changeset_carries_procedure_line_and_mandate_together():
     from cruxible_client.authoring.sdk import ChangeSetDraft
     from cruxible_client.contracts.authoring.models import authoring_member_identity
 
-    pb = object.__new__(Playbill)  # These public builders do not require transport.
+    pb = object.__new__(Cruxible)  # These public builders do not require transport.
     plan = sequence(Project("result", fields={"count": 1}, contract_out=NUMBER))
     changes = (
         ChangeSetDraft(pb)
@@ -353,7 +353,7 @@ def test_sequence_through_sdk_authoring_acceptance_and_existing_executor(tmp_pat
     instance, owner = initialize_local(tmp_path)
     actor = AuthenticatedActor(actor_id="owner")
     plan = sequence(Project("result", fields={"count": 7}, contract_out=NUMBER))
-    draft = Playbill.procedure(object(), definition=plan)
+    draft = Cruxible.procedure(object(), definition=plan)
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     compiled = coordinator.compile(
         actor=actor, payload=draft.payload, canonical_timestamp="2026-09-19T12:00:00.000000Z"

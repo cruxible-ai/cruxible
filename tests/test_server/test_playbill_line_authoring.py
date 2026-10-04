@@ -35,12 +35,12 @@ def _members(*names: str) -> ChangeSetInput:
 
 def _accept(http: TestClient, instance_id: str, key: Path, payload: object) -> str:
     transport = _transport(http)
-    compiled = transport.compile_playbill_authoring_input(
+    compiled = transport.compile_authoring_input(
         instance_id,
         input=payload.model_dump(mode="json"),  # type: ignore[attr-defined]
     )
     assert compiled.verdict == "passed", compiled.frontier
-    submitted = transport.submit_playbill_authoring_intent(
+    submitted = transport.submit_authoring_intent(
         instance_id, str(compiled.certificate["intent_id"])
     )
     proposal_id = submitted.status.proposal_id
@@ -75,10 +75,10 @@ def test_an_observe_only_line_runs_without_a_mandate(
     http, instance_id, key = playbill_http
     _accept(http, instance_id, key, _members("procedure", "line"))
     transport = _transport(http)
-    run = transport.run_playbill_line(instance_id, "replace-me", occurrence_id=None)
+    run = transport.run_line(instance_id, "replace-me", occurrence_id=None)
     assert run.status == "succeeded", run.terminal
     assert run.result == {"count": 1}
-    armed = transport.arm_playbill_line(instance_id, "replace-me")
+    armed = transport.arm_line(instance_id, "replace-me")
     assert armed.state == "armed"
 
 
@@ -97,7 +97,7 @@ def test_a_line_may_name_the_example_policy_even_though_it_acquires_nothing(
         ),
     )
     _accept(http, instance_id, key, change_set)
-    run = _transport(http).run_playbill_line(instance_id, "replace-me", occurrence_id=None)
+    run = _transport(http).run_line(instance_id, "replace-me", occurrence_id=None)
     assert run.status == "succeeded", run.terminal
 
 
@@ -110,7 +110,7 @@ def test_singleton_line_and_policy_inputs_lower_through_the_tagless_union(
     assert isinstance(policy, AcquisitionPolicyInput)
     _accept(http, instance_id, key, policy)
     line = authoring_example("line")
-    created = _transport(http).create_playbill_authoring_input(
+    created = _transport(http).create_authoring_input(
         instance_id, input=line.model_dump(mode="json")
     )
     assert created.intent["semantic_identity"] == "Line:replace-me"
@@ -129,7 +129,7 @@ def test_line_parameters_are_checked_against_the_procedure_input_at_authoring(
             line.model_copy(update={"parameters": {"count": 1}}),
         ),
     )
-    compiled = _transport(http).compile_playbill_authoring_input(
+    compiled = _transport(http).compile_authoring_input(
         instance_id, input=change_set.model_dump(mode="json")
     )
     assert compiled.verdict != "passed"
@@ -167,7 +167,7 @@ def test_a_mandate_wider_than_its_procedure_names_each_widened_cap(
         kind="change_set",
         members=(authoring_example("procedure"), wide),  # type: ignore[arg-type]
     )
-    compiled = _transport(http).compile_playbill_authoring_input(
+    compiled = _transport(http).compile_authoring_input(
         instance_id, input=change_set.model_dump(mode="json")
     )
     assert compiled.verdict != "passed"

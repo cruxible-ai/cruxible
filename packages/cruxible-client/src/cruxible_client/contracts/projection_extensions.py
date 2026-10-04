@@ -337,7 +337,7 @@ class ProjectionExtensionRegistry:
         )
 
 
-def playbill_extension_registry() -> ProjectionExtensionRegistry:
+def extension_registry() -> ProjectionExtensionRegistry:
     """Return the declared Document facts used by the source compiler."""
 
     document = tuple(
@@ -357,10 +357,10 @@ def playbill_extension_registry() -> ProjectionExtensionRegistry:
     return ProjectionExtensionRegistry(document)
 
 
-def playbill_governance_extension_registry() -> ProjectionExtensionRegistry:
+def governance_extension_registry() -> ProjectionExtensionRegistry:
     """Return PB-D's additive accepted-governance explanation schemas."""
 
-    pb_c_semantic = playbill_extension_registry().declarations("semantic")
+    pb_c_semantic = extension_registry().declarations("semantic")
     explanation = tuple(
         ProjectionFactDeclaration(
             schema_id=schema_id,
@@ -378,10 +378,10 @@ def playbill_governance_extension_registry() -> ProjectionExtensionRegistry:
     return ProjectionExtensionRegistry((*pb_c_semantic, *explanation))
 
 
-def playbill_subject_extension_registry() -> ProjectionExtensionRegistry:
+def subject_extension_registry() -> ProjectionExtensionRegistry:
     """Return PC-A1's additive Subject and Subject-explanation schemas."""
 
-    prior = playbill_governance_extension_registry()
+    prior = governance_extension_registry()
     subject = tuple(
         ProjectionFactDeclaration(
             schema_id=schema_id,
@@ -402,10 +402,10 @@ def playbill_subject_extension_registry() -> ProjectionExtensionRegistry:
     return ProjectionExtensionRegistry((*prior.declarations("semantic"), *subject))
 
 
-def playbill_claim_type_extension_registry() -> ProjectionExtensionRegistry:
+def claim_type_extension_registry() -> ProjectionExtensionRegistry:
     """Return PC-A2's additive ClaimType and explanation schemas."""
 
-    prior = playbill_subject_extension_registry()
+    prior = subject_extension_registry()
     claim_type = tuple(
         ProjectionFactDeclaration(
             schema_id=schema_id,
@@ -440,10 +440,10 @@ def playbill_claim_type_extension_registry() -> ProjectionExtensionRegistry:
     )
 
 
-def playbill_claim_extension_registry() -> ProjectionExtensionRegistry:
+def claim_extension_registry() -> ProjectionExtensionRegistry:
     """Return PC-B's additive CaptureContract and Claim projection schemas."""
 
-    prior = playbill_claim_type_extension_registry()
+    prior = claim_type_extension_registry()
     claim = tuple(
         ProjectionFactDeclaration(
             schema_id=schema_id,
@@ -464,10 +464,10 @@ def playbill_claim_extension_registry() -> ProjectionExtensionRegistry:
     return ProjectionExtensionRegistry((*prior.declarations("semantic"), *claim))
 
 
-def playbill_evidence_extension_registry() -> ProjectionExtensionRegistry:
+def evidence_extension_registry() -> ProjectionExtensionRegistry:
     """Return PC-C's additive provider, evidence, verdict, and mandate schemas."""
 
-    prior = playbill_claim_extension_registry()
+    prior = claim_extension_registry()
     evidence = tuple(
         ProjectionFactDeclaration(
             schema_id=schema_id,
@@ -491,10 +491,10 @@ def playbill_evidence_extension_registry() -> ProjectionExtensionRegistry:
     return ProjectionExtensionRegistry((*prior.declarations("semantic"), *evidence))
 
 
-def playbill_procedure_extension_registry() -> ProjectionExtensionRegistry:
+def procedure_extension_registry() -> ProjectionExtensionRegistry:
     """Return PC-D's additive Procedure and LineSpec projection schemas."""
 
-    prior = playbill_evidence_extension_registry()
+    prior = evidence_extension_registry()
     procedures = tuple(
         ProjectionFactDeclaration(
             schema_id=schema_id,
@@ -521,7 +521,7 @@ def playbill_procedure_extension_registry() -> ProjectionExtensionRegistry:
     return ProjectionExtensionRegistry((*prior.declarations("semantic"), *procedures))
 
 
-def playbill_runtime_extension_registry() -> ProjectionExtensionRegistry:
+def runtime_extension_registry() -> ProjectionExtensionRegistry:
     """Return the additive activation, promotion, and track-record schemas.
 
     PC-E1 added the Procedure grain; PC-E2 adds the Line grain, keyed by Line
@@ -531,7 +531,7 @@ def playbill_runtime_extension_registry() -> ProjectionExtensionRegistry:
     accepted artifact family.
     """
 
-    prior = playbill_procedure_extension_registry()
+    prior = procedure_extension_registry()
     runtime = tuple(
         ProjectionFactDeclaration(
             schema_id=schema_id,
@@ -561,16 +561,16 @@ def playbill_runtime_extension_registry() -> ProjectionExtensionRegistry:
     return ProjectionExtensionRegistry((*prior.declarations("semantic"), *runtime))
 
 
-def playbill_replay_extension_registry() -> ProjectionExtensionRegistry:
+def replay_extension_registry() -> ProjectionExtensionRegistry:
     """Return P2-B0 runtime schemas plus its governed runtime-policy kind."""
 
-    return playbill_runtime_extension_registry().with_artifact_kinds("procedure-runtime-policy")
+    return runtime_extension_registry().with_artifact_kinds("procedure-runtime-policy")
 
 
-def playbill_provider_runtime_extension_registry() -> ProjectionExtensionRegistry:
+def provider_runtime_extension_registry() -> ProjectionExtensionRegistry:
     """Return P2-B1 Provider runtime/interface schemas and governed kind."""
 
-    prior = playbill_replay_extension_registry()
+    prior = replay_extension_registry()
     provider_runtime = tuple(
         ProjectionFactDeclaration(
             schema_id=schema_id,
@@ -595,10 +595,10 @@ def playbill_provider_runtime_extension_registry() -> ProjectionExtensionRegistr
     )
 
 
-def playbill_p2c_extension_registry() -> ProjectionExtensionRegistry:
+def p2c_extension_registry() -> ProjectionExtensionRegistry:
     """Return the P2-C registry with governed Procedure mandates."""
 
-    prior = playbill_provider_runtime_extension_registry()
+    prior = provider_runtime_extension_registry()
     mandate = ProjectionFactDeclaration(
         schema_id="playbill.procedure_mandate.authority",
         schema_version=1,
@@ -617,15 +617,15 @@ __all__ = [
     "ProjectionFactClassification",
     "ProjectionFactDeclaration",
     "normalize_projection_value",
-    "playbill_claim_extension_registry",
-    "playbill_evidence_extension_registry",
-    "playbill_procedure_extension_registry",
-    "playbill_provider_runtime_extension_registry",
-    "playbill_p2c_extension_registry",
-    "playbill_replay_extension_registry",
-    "playbill_runtime_extension_registry",
-    "playbill_claim_type_extension_registry",
-    "playbill_extension_registry",
-    "playbill_governance_extension_registry",
-    "playbill_subject_extension_registry",
+    "claim_extension_registry",
+    "evidence_extension_registry",
+    "procedure_extension_registry",
+    "provider_runtime_extension_registry",
+    "p2c_extension_registry",
+    "replay_extension_registry",
+    "runtime_extension_registry",
+    "claim_type_extension_registry",
+    "extension_registry",
+    "governance_extension_registry",
+    "subject_extension_registry",
 ]

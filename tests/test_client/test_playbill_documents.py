@@ -87,7 +87,7 @@ def test_client_preserves_typed_malformed_activation_refusal() -> None:
     client = _client(handler)
 
     with pytest.raises(ProposalActivationRequestInvalid, match="canonical sha256"):
-        client.activate_playbill_proposal("inst_test", "bogus-no-prefix")
+        client.activate_proposal("inst_test", "bogus-no-prefix")
 
 
 def test_client_signer_callback_submits_only_public_attestation() -> None:
@@ -140,7 +140,7 @@ def test_client_signer_callback_submits_only_public_attestation() -> None:
         seen_statement.update(statement)
         return {**statement, "sig": "c" * 128}
 
-    receipt = client.approve_playbill_proposal(
+    receipt = client.approve_proposal(
         "inst_test",
         "sha256:" + "9" * 64,
         signer_id="owner",
@@ -180,8 +180,8 @@ def test_client_encodes_body_bytes_and_exact_coordinate_params() -> None:
         )
 
     client = _client(handler)
-    client.store_playbill_body("inst_test", b"bytes\n")
-    head = client.playbill_head("inst_test", at=COORDINATE)
+    client.store_body("inst_test", b"bytes\n")
+    head = client.head("inst_test", at=COORDINATE)
     assert (
         json.loads(captured[0].content)["content_base64"] == base64.b64encode(b"bytes\n").decode()
     )

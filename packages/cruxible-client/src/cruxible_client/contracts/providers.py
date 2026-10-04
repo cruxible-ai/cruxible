@@ -28,7 +28,7 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.semantic import SemanticAddress
 
@@ -39,7 +39,7 @@ _SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _DYNAMIC_ENDPOINT_FORMS = frozenset({"dynamic:target-from-run-input"})
 
 
-class ProviderFormatError(PlaybillFormatError):
+class ProviderFormatError(FormatError):
     """A Provider artifact or canonical path is invalid."""
 
 

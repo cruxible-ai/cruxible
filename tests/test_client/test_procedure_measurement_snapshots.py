@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client import Playbill
+from cruxible_client import Cruxible
 from cruxible_client import contracts as api
 from cruxible_client.authoring.sdk import ProcedureRun
 from cruxible_client.authoring.sdk_types import ProcedureRef
@@ -37,18 +37,16 @@ class MeasurementClient(_LiveClient):
             "observation_time": request.evaluation_time,
         }
 
-    def measure_playbill_procedure(self, instance, name, *, request):
+    def measure_procedure(self, instance, name, *, request):
         self.requests.append(request)
-        return api.PlaybillProcedureMeasureResult(
-            **self._account(request), run_id=request.run_id, rows=()
-        )
+        return api.ProcedureMeasureResult(**self._account(request), run_id=request.run_id, rows=())
 
-    def list_playbill_procedure_readings(self, instance, name, *, request):
+    def list_procedure_readings(self, instance, name, *, request):
         self.requests.append(request)
         if request.cursor:
             assert request.cursor == "first-page-cursor"
             return self.first_page.model_copy(update={"truncated": False, "cursor": None})
-        self.first_page = api.PlaybillProcedureReadingsResult(
+        self.first_page = api.ProcedureReadingsResult(
             **self._account(request),
             contracts=(),
             readings=(),
@@ -62,7 +60,7 @@ class MeasurementClient(_LiveClient):
 def connection(tmp_path: Path):
     client = MeasurementClient()
     clock = [NOW]
-    pb = Playbill._from_client(
+    pb = Cruxible._from_client(
         client, instance_id="inst_world", workspace=tmp_path, clock=lambda: clock[0]
     )
     return pb, client, clock
@@ -135,7 +133,7 @@ def test_live_cursor_continuation_keeps_first_pages_selection(connection):
 def _run(context, run_id="RUN-test"):
     return ProcedureRun(
         context,
-        api.PlaybillProcedureRunState(
+        api.ProcedureRunState(
             run_id=run_id,
             procedure_identity={"kind": "Procedure", "name": "daily-summary"},
             procedure_artifact_digest="sha256:" + "1" * 64,

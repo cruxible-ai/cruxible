@@ -5,7 +5,7 @@ from dataclasses import replace
 
 import pytest
 
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.compiler.projection_artifacts import ArtifactEnvelopeRow
 from cruxible_core.indexes.history.history_index import (
@@ -68,9 +68,9 @@ def test_sparse_occurrences_reinstatement_rename_cutoff_and_queries(tmp_path, se
         assert reader.sequence == 1
         assert reader.artifact("old").occurrence_sequence == 0
         assert reader.generation_for_candidate(latest.candidate_digest) is None
-        with pytest.raises(PlaybillFormatError):
+        with pytest.raises(FormatError):
             reader.generation(2)
-        with pytest.raises(PlaybillFormatError):
+        with pytest.raises(FormatError):
             reader.resolve(coordinate(state.history[2], seeded))
     assert index.generations_checked == checked
     assert index.artifact_rows_written == written == 3
@@ -177,9 +177,9 @@ def test_mixed_coordinates_duplicate_oid_and_ambiguous_digest(tmp_path, seeded):
     index = AcceptedHistoryIndex(tmp_path / "history.sqlite3")
     with index.read(state, lambda n, _prior: [envelope(identity=f"Claim:{n}")]) as reader:
         assert reader.resolve(coordinate(second, seeded)).sequence == 1
-        with pytest.raises(PlaybillFormatError):
+        with pytest.raises(FormatError):
             reader.resolve(coordinate(second, seeded).model_copy(update={"semantic_root": "wrong"}))
-        with pytest.raises(PlaybillFormatError, match="multiple identities"):
+        with pytest.raises(FormatError, match="multiple identities"):
             reader.artifact("old")
         assert reader.identities_for_digest("old") == ("Claim:0", "Claim:1")
         assert reader.identities_for_digest("missing") == ()

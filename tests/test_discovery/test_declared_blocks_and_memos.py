@@ -72,8 +72,8 @@ from cruxible_core.service.discovery.claim_status import (
     reset_claim_resolution_memo,
 )
 from cruxible_core.service.discovery.next import (
+    NextRequestV1,
     PlaybillNextItemV1,
-    PlaybillNextRequestV1,
     service_playbill_next,
 )
 from cruxible_core.service.discovery.query import build_accepted_query_facts
@@ -201,7 +201,7 @@ def _claim_backings(instance: PlaybillInstance) -> tuple[ProjectionClaimBacking,
 
 def _rows(
     instance: PlaybillInstance,
-    request: PlaybillNextRequestV1,
+    request: NextRequestV1,
     *,
     reason: str,
 ) -> tuple[PlaybillNextItemV1, ...]:
@@ -212,14 +212,14 @@ def _rows(
     )
 
 
-def _stamp_of(request: PlaybillNextRequestV1) -> ProjectionBlockStampV1:
+def _stamp_of(request: NextRequestV1) -> ProjectionBlockStampV1:
     observation = request.workspace_observation
     assert observation is not None
     assert observation.source_observations is not None
     return observation.source_observations[0].marker_summaries[0].stamp
 
 
-def _with_block_id(request: PlaybillNextRequestV1, block_id: str) -> PlaybillNextRequestV1:
+def _with_block_id(request: NextRequestV1, block_id: str) -> NextRequestV1:
     """Re-address the observed marker without rebuilding the observation."""
 
     observation = request.workspace_observation
@@ -661,7 +661,7 @@ def test_one_next_folds_the_durable_registration_stream_exactly_once(
 
     service_playbill_next(
         instance,
-        request=PlaybillNextRequestV1(
+        request=NextRequestV1(
             at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
             evaluation_time=NOW,
             access_profile=_request(instance, backing=(_claim_backing(instance),)).access_profile,
@@ -757,7 +757,7 @@ def _next(instance: PlaybillInstance) -> Any:
 
     return service_playbill_next(
         instance,
-        request=PlaybillNextRequestV1(
+        request=NextRequestV1(
             at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
             evaluation_time=datetime.now(UTC),
             access_profile=CoverageAccessProfile(

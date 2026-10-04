@@ -4,14 +4,14 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client import ClaimRef, ClaimRole, Disposition, Playbill
+from cruxible_client import ClaimRef, ClaimRole, Cruxible, Disposition
 from tests.test_client.test_playbill_sdk import _Client, _workspace
 
 
 @pytest.fixture
 def pb(tmp_path: Path):
     _workspace(tmp_path)
-    return Playbill._from_client(_Client(), instance_id="inst_test", workspace=tmp_path)
+    return Cruxible._from_client(_Client(), instance_id="inst_test", workspace=tmp_path)
 
 
 def draft(pb, revises, dispositions):

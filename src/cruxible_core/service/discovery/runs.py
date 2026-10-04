@@ -16,16 +16,16 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal, get_args
 
-from cruxible_client.contracts import PlaybillProcedureRunState
+from cruxible_client.contracts import ProcedureRunState
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.operational_reads import (
     OPERATIONAL_CARD_LIST_LIMIT,
-    PlaybillGetProcedureRunCard,
-    PlaybillGetRunCurrentNode,
-    PlaybillGetRunNode,
-    PlaybillGetRunTrigger,
-    PlaybillRunRow,
-    PlaybillRunStatus,
+    GetProcedureRunCard,
+    GetRunCurrentNode,
+    GetRunNode,
+    GetRunTrigger,
+    RunRow,
+    RunStatus,
 )
 from cruxible_client.contracts.procedures.results import (
     ProcedureOperationalFailureCode,
@@ -66,7 +66,7 @@ def _stream(instance: PlaybillInstance) -> JournalStreamIdentityV1:
     return run_stream(instance)
 
 
-def final_status(payload: object) -> PlaybillRunStatus:
+def final_status(payload: object) -> RunStatus:
     """The served run status an ``attempt_finalized`` payload records."""
 
     raw = payload.get("status") if isinstance(payload, Mapping) else None
@@ -82,14 +82,14 @@ def final_status(payload: object) -> PlaybillRunStatus:
     return "internal_failed"
 
 
-def run_row(instance: PlaybillInstance, locator: RunLocator) -> PlaybillRunRow:
+def run_row(instance: PlaybillInstance, locator: RunLocator) -> RunRow:
     """One located run as a row, reading its admission and (if any) final payloads."""
 
     bodies = instance.body_store()
     admission = parse_admission_payload(
         parse_journal_payload(bodies.read(locator.admission_payload_digest, access=_ACCESS))
     ).admission
-    status: PlaybillRunStatus = "running"
+    status: RunStatus = "running"
     if locator.final_payload_digest is not None:
         status = final_status(
             parse_journal_payload(bodies.read(locator.final_payload_digest, access=_ACCESS))
@@ -97,7 +97,7 @@ def run_row(instance: PlaybillInstance, locator: RunLocator) -> PlaybillRunRow:
     line = getattr(admission, "line_identity", None)
     started = parse_datetime(locator.admitted_at)
     assert started is not None
-    return PlaybillRunRow(
+    return RunRow(
         run=locator.run_id,
         procedure=admission.procedure_identity.qualified,
         status=status,
@@ -114,7 +114,7 @@ def run_rows(
     line: ArtifactIdentity | None = None,
     running_only: bool = False,
     after: RunLocatorKey | None = None,
-) -> tuple[tuple[PlaybillRunRow, ...], RunLocatorKey | None]:
+) -> tuple[tuple[RunRow, ...], RunLocatorKey | None]:
     """One page of runs, newest admission first, and where it stopped.
 
     ``line`` keeps one Line's runs; ``running_only`` keeps runs still running.
@@ -250,7 +250,7 @@ def _run_trigger(
     run_id: str,
     admission: object,
     viewer: OperationalViewer | None,
-) -> PlaybillGetRunTrigger | None:
+) -> GetRunTrigger | None:
     """The Line, occurrence and arm that admitted a Line run; ``None`` for a direct run.
 
     Who armed it is shown only to a reader who may see that arming credential.
@@ -265,7 +265,7 @@ def _run_trigger(
     occurrence = getattr(admission, "occurrence_id", None)
     arming = _arming_run(instance, run_id, admission)
     if arming is None:
-        return PlaybillGetRunTrigger(
+        return GetRunTrigger(
             line=line,
             occurrence=occurrence,
             armed_by_withheld=viewer is None or not viewer.admin,
@@ -293,7 +293,7 @@ def _run_trigger(
                     fields["armed_by"] = principal.label
                 else:
                     fields["armed_by_withheld"] = True
-    return PlaybillGetRunTrigger(line=line, occurrence=occurrence, **fields)  # type: ignore[arg-type]
+    return GetRunTrigger(line=line, occurrence=occurrence, **fields)  # type: ignore[arg-type]
 
 
 def procedure_run_card(
@@ -303,7 +303,7 @@ def procedure_run_card(
     evaluation_time: datetime,
     render: Callable[[str, str | None], str],
     viewer: OperationalViewer | None = None,
-) -> PlaybillGetProcedureRunCard:
+) -> GetProcedureRunCard:
     """One run with its live progress, read from the journal index and a few payloads.
 
     A running run is never replayed: the index counts its finished nodes, and
@@ -338,20 +338,20 @@ def procedure_run_card(
         descending=True,
         limit=OPERATIONAL_CARD_LIST_LIMIT,
     )
-    nodes: list[PlaybillGetRunNode] = []
+    nodes: list[GetRunNode] = []
     for stored in reversed(fired):
         payload = _payload(instance, stored.record.payload_digest)
         values = payload if isinstance(payload, Mapping) else {}
         nodes.append(
-            PlaybillGetRunNode(
+            GetRunNode(
                 node=str(values.get("node_id", "?")),
                 kind=None if values.get("kind") is None else str(values["kind"]),
                 verdict=None if values.get("verdict") is None else str(values["verdict"]),
                 sequence=stored.record.sequence,
             )
         )
-    status: PlaybillRunStatus = "running"
-    current: PlaybillGetRunCurrentNode | None = None
+    status: RunStatus = "running"
+    current: GetRunCurrentNode | None = None
     receipt_digest: str | None = None
     terminal: str | None = None
     elapsed: int | None = None
@@ -360,7 +360,7 @@ def procedure_run_card(
         target = _current_node(instance, journal, stream, run_id, nodes, edges, first)
         if target is not None and target in kinds:
             latest = fired[0].record.recorded_at if fired else started
-            current = PlaybillGetRunCurrentNode(node=target, kind=kinds[target], started_at=latest)
+            current = GetRunCurrentNode(node=target, kind=kinds[target], started_at=latest)
         if evaluation_time >= started:
             elapsed = int((evaluation_time - started) / timedelta(microseconds=1))
             basis = "read_time"
@@ -390,7 +390,7 @@ def procedure_run_card(
     if line is not None:
         next_steps.append(render(line.qualified, None))
     next_steps.append(render(f"ProcedureRun:{run_id}", "proof"))
-    return PlaybillGetProcedureRunCard(
+    return GetProcedureRunCard(
         run=run_id,
         procedure=bound.procedure_identity.qualified,
         status=status,
@@ -430,7 +430,7 @@ def run_arming_withheld(
 
 def procedure_run_status(
     instance: PlaybillInstance, run_id: str, *, viewer: OperationalViewer | None
-) -> PlaybillProcedureRunState:
+) -> ProcedureRunState:
     """A run's served state, with its arming credential withheld as on the card.
 
     An armed run acts as its arming credential's principal, which the state's
@@ -443,7 +443,7 @@ def procedure_run_status(
         service_get_playbill_procedure_run,
     )
 
-    state = PlaybillProcedureRunState.model_validate(
+    state = ProcedureRunState.model_validate(
         service_get_playbill_procedure_run(instance, run_id=run_id).model_dump(mode="json")
     )
     if not run_arming_withheld(instance, run_id, viewer=viewer):
@@ -487,7 +487,7 @@ def _current_node(
     journal: LocalJournalBackend,
     stream: JournalStreamIdentityV1,
     run_id: str,
-    nodes: list[PlaybillGetRunNode],
+    nodes: list[GetRunNode],
     edges: dict[str, dict[str, str]] | None,
     first: str | None,
 ) -> str | None:

@@ -1,4 +1,4 @@
-"""Canonical semantic subjects and exact source spans for Playbill."""
+"""Canonical semantic subjects and exact source spans for Cruxible."""
 
 from __future__ import annotations
 

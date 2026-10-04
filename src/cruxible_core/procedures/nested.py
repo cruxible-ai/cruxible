@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from cruxible_client.contracts.artifacts import ArtifactPin
-from cruxible_client.contracts.errors import PlaybillExecutionError
+from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.models import (
     InvokeNode,
@@ -226,7 +226,7 @@ class ParentInvocationContext:
             or child.hard_caps != caps
             or child.budget != constrained_budget(definition.budget, self.remaining, caps)
         ):
-            raise PlaybillExecutionError("nested admission differs from its executing parent")
+            raise ExecutionError("nested admission differs from its executing parent")
         for name in (
             "line_spec_digest",
             "occurrence_id",
@@ -237,9 +237,9 @@ class ParentInvocationContext:
             "epsilon_member",
         ):
             if getattr(child, name) != getattr(self.admission, name):
-                raise PlaybillExecutionError("nested invocation changed inherited authority")
+                raise ExecutionError("nested invocation changed inherited authority")
         if getattr(child, "line_identity", None) != getattr(self.admission, "line_identity", None):
-            raise PlaybillExecutionError("nested invocation changed its accepted Line")
+            raise ExecutionError("nested invocation changed its accepted Line")
 
 
 @dataclass(frozen=True)
@@ -265,10 +265,10 @@ def authority_procedure(
 ) -> ArtifactPin:
     if isinstance(admission, ProcedureRunAdmissionV8):
         if delegation is None:
-            raise PlaybillExecutionError("nested terminal requires verified parent delegation")
+            raise ExecutionError("nested terminal requires verified parent delegation")
         return delegation.authority(admission)
     if delegation is not None:
-        raise PlaybillExecutionError("standalone run cannot claim delegated authority")
+        raise ExecutionError("standalone run cannot claim delegated authority")
     return ArtifactPin(
         role="procedure",
         target=admission.procedure_identity,

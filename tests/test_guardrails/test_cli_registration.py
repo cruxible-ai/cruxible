@@ -99,7 +99,7 @@ def test_every_command_registered_on_a_group_is_in_the_lazy_cli_map() -> None:
     groups = [(obj, origin) for obj, origin in defined.values() if isinstance(obj, click.Group)]
     # 29 includes the retained-Capture read group and the kit group; the read
     # cut removed the subject, policy and query groups (query is one command).
-    assert len(groups) == 29, f"expected 29 Playbill/host groups, found {len(groups)}"
+    assert len(groups) == 29, f"expected 29 Cruxible/host groups, found {len(groups)}"
 
     problems: list[str] = []
     for group, origin in groups:
@@ -124,7 +124,7 @@ def test_every_command_defined_in_the_commands_package_is_reachable() -> None:
     group_claims, leaf_claims = _walk_lazy_map(CLI_COMMANDS)
     # Includes retained evidence reads through `capture read`, `cruxible mcp` and the kit verbs.
     assert len(leaf_claims) == 109, (
-        f"expected 109 Playbill/host leaf commands, found {len(leaf_claims)}"
+        f"expected 109 Cruxible/host leaf commands, found {len(leaf_claims)}"
     )
 
     reachable = set(leaf_claims)

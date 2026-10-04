@@ -16,11 +16,11 @@ from cruxible_core.runtime.provider_runtime import PROVIDER_RUNTIME_CONFIG_PATH
 def interface_entry(client: CruxibleClient, instance_id: str, name: str) -> dict[str, Any]:
     """The accepted inventory entry of one live provider interface, as ``get`` proves it."""
 
-    from cruxible_client.contracts.get_reads import PlaybillGetRequest
+    from cruxible_client.contracts.get_reads import GetRequest
 
-    proof = client.playbill_get(
+    proof = client.get(
         instance_id,
-        request=PlaybillGetRequest(ref=f"ProviderInterface:{name}", detail="proof"),
+        request=GetRequest(ref=f"ProviderInterface:{name}", detail="proof"),
     ).proof
     assert proof is not None
     return dict(proof["entry"])
@@ -90,7 +90,7 @@ def test_transfer_install_and_restart_reuse(installer_http, tmp_path, monkeypatc
 def _run_call(
     client, http, instance_id, reviewer, tmp_path, interface_id, value, fields_in, fields_out
 ):
-    from cruxible_client import Playbill
+    from cruxible_client import Cruxible
     from cruxible_client.authoring.examples import procedure_example
     from cruxible_client.authoring.inputs import CarriedContractInput
     from cruxible_client.contracts.procedures.contract_schema import PropertySchema
@@ -159,13 +159,13 @@ def _run_call(
             ),
         }
     )
-    pb = Playbill._from_client(client, instance_id=instance_id, workspace=tmp_path)
+    pb = Cruxible._from_client(client, instance_id=instance_id, workspace=tmp_path)
     intent = pb.procedure(definition=authored).prepare()
     assert not intent.refused, intent.diagnostics
     intent.submit()
     _approve_and_activate(http, instance_id, reviewer, intent.proposal.proposal_id)
     run = pb.accepted_procedure("installed-package-call").run()
-    state = client.get_playbill_procedure_run(instance_id, run.run_id)
+    state = client.get_procedure_run(instance_id, run.run_id)
     assert run.status == "succeeded", state.model_dump_json(indent=2)
     assert state.receipt_digest
     return run.result.model_dump()
@@ -359,7 +359,7 @@ def test_installed_web_source_fetches_local_http_and_retains_capture(installer_h
     import threading
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-    from cruxible_client import Playbill
+    from cruxible_client import Cruxible
     from cruxible_client.authoring.examples import procedure_example
     from cruxible_client.authoring.inputs import CarriedContractInput
     from cruxible_client.contracts.captures import capture_component_pin
@@ -389,7 +389,7 @@ def test_installed_web_source_fetches_local_http_and_retains_capture(installer_h
         for row in installed.operations
         for item in row.missing_requirements
     )
-    pb = Playbill._from_client(client, instance_id=instance_id, workspace=tmp_path)
+    pb = Cruxible._from_client(client, instance_id=instance_id, workspace=tmp_path)
     base = capture_contract()
     contract = base.model_copy(
         update={
@@ -495,7 +495,7 @@ def test_installed_web_source_fetches_local_http_and_retains_capture(installer_h
         prepared.submit()
         _approve_and_activate(http, instance_id, reviewer, prepared.proposal.proposal_id)
         run = pb.accepted_procedure("installed-web-fetch").run()
-        state = client.get_playbill_procedure_run(instance_id, run.run_id)
+        state = client.get_procedure_run(instance_id, run.run_id)
         assert run.status == "succeeded", state.model_dump_json(indent=2)
         assert run.result.text == '{"severity":"high"}'
         assert state.source_observations[0].capture_digest
@@ -544,13 +544,13 @@ def test_install_retry_reuses_pending_registration_until_approval(
 
 
 def test_repository_catalog_install_and_retry(installer_http, monkeypatch):
-    from cruxible_client.contracts.provider_installation import PlaybillProviderInstallRequest
+    from cruxible_client.contracts.provider_installation import ProviderInstallRequest
     from cruxible_core.service.procedures import provider_installation as service
 
     http, instance_id, _ = installer_http
     client = CruxibleClient(base_url="http://cruxible")
     client._client = http
-    catalog = client.list_playbill_provider_packages(instance_id)
+    catalog = client.list_provider_packages(instance_id)
     assert {item.name for item in catalog.packages} == {
         "cruxible-provider-noop",
         "cruxible-provider-web",
@@ -558,11 +558,11 @@ def test_repository_catalog_install_and_retry(installer_http, monkeypatch):
         "cruxible-provider-docs",
         "cruxible-provider-quant",
     }
-    request = PlaybillProviderInstallRequest(package="cruxible-provider-workspace")
-    result = client.install_playbill_provider(instance_id, request)
+    request = ProviderInstallRequest(package="cruxible-provider-workspace")
+    result = client.install_provider(instance_id, request)
     assert result.status == "ready", result
     monkeypatch.setattr(service, "_source_files", lambda *a: pytest.fail("retry rebuilt package"))
-    again = client.install_playbill_provider(instance_id, request)
+    again = client.install_provider(instance_id, request)
     assert again.status == "ready" and again.installation_id == result.installation_id
 
 
@@ -606,28 +606,26 @@ def index_installer_http(tmp_path, monkeypatch):
 
 
 def test_install_by_name_from_an_index_uses_the_embedded_lock(index_installer_http, monkeypatch):
-    from cruxible_client.contracts.provider_installation import PlaybillProviderInstallRequest
+    from cruxible_client.contracts.provider_installation import ProviderInstallRequest
     from cruxible_client.errors import ConfigError
     from cruxible_core.service.procedures import provider_installation as service
 
     http, instance_id, _ = index_installer_http
     client = CruxibleClient(base_url="http://cruxible")
     client._client = http
-    assert "install by name" in (client.list_playbill_provider_packages(instance_id).detail or "")
-    request = PlaybillProviderInstallRequest(package="cruxible-provider-workspace")
-    result = client.install_playbill_provider(instance_id, request)
+    assert "install by name" in (client.list_provider_packages(instance_id).detail or "")
+    request = ProviderInstallRequest(package="cruxible-provider-workspace")
+    result = client.install_provider(instance_id, request)
     assert result.status == "ready" and result.registered, result
     deployment = get_playbill_manager().provider_runtime_operator().config.deployments[0]
     wheels = Path(os.environ["CRUXIBLE_TEST_PROVIDER_WHEELS"])
     workspace = next(wheels.glob("cruxible_provider_workspace-*.whl"))
     assert deployment.distribution_path.endswith(workspace.name)
     monkeypatch.setattr(service, "_source_files", lambda *a: pytest.fail("retry refetched"))
-    again = client.install_playbill_provider(instance_id, request)
+    again = client.install_provider(instance_id, request)
     assert again.status == "ready" and again.installation_id == result.installation_id
     with pytest.raises(ConfigError, match="no installable wheel"):
-        client.install_playbill_provider(
-            instance_id, request.model_copy(update={"version": "99.0"})
-        )
+        client.install_provider(instance_id, request.model_copy(update={"version": "99.0"}))
 
 
 def test_malformed_wheel_is_a_typed_refusal_before_registration(installer_http, tmp_path):

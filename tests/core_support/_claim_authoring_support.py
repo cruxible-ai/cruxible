@@ -57,8 +57,8 @@ from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.proposals.settlement import ChangeActorBinding
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import (
-    PlaybillAcceptedCoordinate,
-    PlaybillProposalInspection,
+    AcceptedCoordinate,
+    ProposalInspection,
     service_inspect_playbill_proposal,
 )
 from cruxible_core.storage.cas import BodyAccessContext
@@ -113,7 +113,7 @@ class AuthoredClaimV1:
 
 @dataclass(frozen=True)
 class DirectClaimProposalV1(AuthoredClaimV1):
-    proposal: PlaybillProposalInspection | None = None
+    proposal: ProposalInspection | None = None
 
 
 def _dispositions(
@@ -285,7 +285,7 @@ def service_propose_playbill_claim(
     actor_id: str,
     proposal_name: str,
     timestamp: str,
-    base: PlaybillAcceptedCoordinate | None = None,
+    base: AcceptedCoordinate | None = None,
 ) -> DirectClaimProposalV1:
     del proposal_name
     coordinator = AuthoringIntentCoordinator(

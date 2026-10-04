@@ -14,14 +14,14 @@ from cruxible_client.contracts.documents import (
 )
 from cruxible_client.contracts.errors import (
     ApprovalIntegrityError,
+    CasError,
     DocumentNotFoundError,
-    PlaybillCasError,
-    PlaybillFormatError,
+    FormatError,
     SettlementIntegrityError,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import (
-    PlaybillAcceptedCoordinate,
+    AcceptedCoordinate,
     service_activate_playbill_proposal,
     service_dereference_playbill_document,
     service_get_playbill_document,
@@ -71,7 +71,7 @@ def _shell(body_digest: str) -> DocumentShell:
     return DocumentShell(
         identity="document:design",
         document_kind="design",
-        title="Playbill design",
+        title="Cruxible design",
         media_type="text/markdown",
         body_digest=body_digest,
         authority=DocumentAuthority(
@@ -84,7 +84,7 @@ def _shell(body_digest: str) -> DocumentShell:
 
 def test_service_document_lifecycle_keeps_state_boundaries_explicit(tmp_path: Path) -> None:
     instance, owner, reviewer = _instance(tmp_path)
-    body_bytes = b"# Playbill design\n\nGoverned prose.\n"
+    body_bytes = b"# Cruxible design\n\nGoverned prose.\n"
     stored = service_store_playbill_body(instance, content=body_bytes)
 
     assert stored.present
@@ -155,7 +155,7 @@ def test_service_document_lifecycle_keeps_state_boundaries_explicit(tmp_path: Pa
     assert not any(
         fact["schema_id"] == "playbill.document.source_mapping" for fact in redacted.facts
     )
-    with pytest.raises(PlaybillCasError, match="denied"):
+    with pytest.raises(CasError, match="denied"):
         service_dereference_playbill_document(
             instance,
             identity="document:design",
@@ -193,9 +193,9 @@ def test_service_refusal_and_coordinate_mixing_are_typed(tmp_path: Path) -> None
     assert inspection.verdict == "refused"
     assert [item.code for item in inspection.diagnostics] == ["playbill.document.body_missing"]
 
-    current = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    current = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     mixed = current.model_copy(update={"semantic_root": "sha256:" + "88" * 32})
-    with pytest.raises(PlaybillFormatError, match="mixed"):
+    with pytest.raises(FormatError, match="mixed"):
         service_list_playbill_documents(
             instance,
             access=BodyAccessContext(principal_id="reader"),

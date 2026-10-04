@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.errors import PlaybillError, PlaybillExecutionError
+from cruxible_client.contracts.errors import CruxibleError, ExecutionError
 from cruxible_client.contracts.line_dispatch import (
     LineTriggerCheckRequest,
     LineTriggerCheckResult,
@@ -120,7 +120,7 @@ def service_check_line_trigger(
                 raise ValueError("invalid cursor position")
             resume = (decoded["trigger"], position)
         except (ValueError, KeyError, TypeError) as exc:
-            raise PlaybillExecutionError(
+            raise ExecutionError(
                 "trigger cursor must retain its original Line, Triggers and range"
             ) from exc
     if not triggers:
@@ -276,7 +276,7 @@ def service_check_line_trigger(
                             due = datetime.fromisoformat(row[0])
                 bindings.append((trigger, binding, due or now))
             else:
-                raise PlaybillExecutionError(f"unsupported Trigger schedule kind {schedule.kind!r}")
+                raise ExecutionError(f"unsupported Trigger schedule kind {schedule.kind!r}")
         for trigger, binding, eligible in bindings:
             if (eligible >= until and not include_future_windows) or (
                 request.since is not None and eligible < request.since
@@ -301,7 +301,7 @@ def service_check_line_trigger(
                     admitted_run_id=admission.run_id if admission else None,
                 )
             )
-    except (PlaybillError, OSError, ValueError) as exc:
+    except (CruxibleError, OSError, ValueError) as exc:
         return LineTriggerCheckResult(**context, status="incomplete", detail=str(exc))
     if dispatch_root(instance).exists() and occurrences:
         states = LineDispatchStore(instance).occurrence_states(

@@ -238,13 +238,13 @@ def test_activation_refuses_an_approval_note_that_disagrees_with_the_store(
 
 
 def test_the_note_kind_table_is_the_only_vocabulary(tmp_path: Path) -> None:
-    from cruxible_client.contracts.errors import PlaybillGitError
+    from cruxible_client.contracts.errors import GitError
 
     instance, _owner = initialize_local(tmp_path)
     head = instance.inspect().head_oid
 
     assert set(NOTE_REFS) == {"generation", "evaluation", "approval"}
-    with pytest.raises(PlaybillGitError, match="unknown Playbill proposal note kind"):
+    with pytest.raises(GitError, match="unknown Cruxible proposal note kind"):
         instance.read_proposal_note("generation", head)
-    with pytest.raises(PlaybillGitError, match="unknown Playbill proposal note kind"):
+    with pytest.raises(GitError, match="unknown Cruxible proposal note kind"):
         instance.write_proposal_note("verdict", head, b"x\n")

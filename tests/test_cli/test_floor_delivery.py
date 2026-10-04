@@ -18,16 +18,16 @@ def test_local_workspace_delivery_controls(tmp_path, monkeypatch, command):
     calls = []
 
     class Client:
-        def playbill_host_workspace_registration(self, instance_id):
-            return contracts.PlaybillHostWorkspaceRegistration(
+        def host_workspace_registration(self, instance_id):
+            return contracts.HostWorkspaceRegistration(
                 instance_id=instance_id,
                 status="registered",
                 workspace_path=str(workspace.resolve()),
             )
 
-        def set_playbill_floor_delivery(self, instance_id, *, enabled):
+        def set_floor_delivery(self, instance_id, *, enabled):
             calls.append((instance_id, enabled))
-            return self.playbill_host_workspace_registration(instance_id).model_copy(
+            return self.host_workspace_registration(instance_id).model_copy(
                 update={"floor_delivery": enabled}
             )
 

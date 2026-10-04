@@ -35,7 +35,7 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
     typed_digest,
 )
-from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.query.grammar import QueryValueType
 from cruxible_client.contracts.temporal import ensure_utc
@@ -62,7 +62,7 @@ class _StrictDeclaredBlockModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class PlaybillPresentationPolicyV1(_StrictDeclaredBlockModel):
+class PresentationPolicyV1(_StrictDeclaredBlockModel):
     """Local-only suppression policy for presentation diagnostics."""
 
     tag: Literal["playbill-presentation-policy-v1"] = "playbill-presentation-policy-v1"
@@ -79,7 +79,7 @@ class PlaybillPresentationPolicyV1(_StrictDeclaredBlockModel):
         return value
 
 
-class PlaybillProjectionAdvisoryPolicy(_StrictDeclaredBlockModel):
+class ProjectionAdvisoryPolicy(_StrictDeclaredBlockModel):
     """Per-artifact-kind switches for local projection advisories."""
 
     claim: bool = False
@@ -87,38 +87,38 @@ class PlaybillProjectionAdvisoryPolicy(_StrictDeclaredBlockModel):
     procedure: bool = False
 
 
-class PlaybillPresentationPolicy(_StrictDeclaredBlockModel):
+class PresentationPolicy(_StrictDeclaredBlockModel):
     """Current local-only presentation policy; V1 remains readable."""
 
     tag: Literal["playbill-presentation-policy-v2"] = "playbill-presentation-policy-v2"
     archival_source_ids: tuple[str, ...] = ()
-    projection_advisories: PlaybillProjectionAdvisoryPolicy = PlaybillProjectionAdvisoryPolicy()
+    projection_advisories: ProjectionAdvisoryPolicy = ProjectionAdvisoryPolicy()
 
     @field_validator("archival_source_ids")
     @classmethod
     def _source_ids(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        value = PlaybillPresentationPolicyV1._source_ids(value)
+        value = PresentationPolicyV1._source_ids(value)
         if value != tuple(sorted(value, key=lambda item: item.encode("utf-8"))):
             raise ValueError("archival source IDs must be UTF-8-byte-sorted")
         return value
 
 
-PlaybillPresentationPolicyAny: TypeAlias = PlaybillPresentationPolicyV1 | PlaybillPresentationPolicy
+PresentationPolicyAny: TypeAlias = PresentationPolicyV1 | PresentationPolicy
 
 
-def upgrade_playbill_presentation_policy(
-    policy: PlaybillPresentationPolicyAny,
-) -> PlaybillPresentationPolicy:
-    if isinstance(policy, PlaybillPresentationPolicy):
+def upgrade_presentation_policy(
+    policy: PresentationPolicyAny,
+) -> PresentationPolicy:
+    if isinstance(policy, PresentationPolicy):
         return policy
-    return PlaybillPresentationPolicy(
+    return PresentationPolicy(
         archival_source_ids=tuple(
             sorted(policy.archival_source_ids, key=lambda item: item.encode("utf-8"))
         )
     )
 
 
-PlaybillPresentationPolicyNote: TypeAlias = Literal[
+PresentationPolicyNote: TypeAlias = Literal[
     "presentation_policy_malformed",
     "presentation_policy_path_escape",
     "presentation_policy_unknown_source_id",
@@ -126,7 +126,7 @@ PlaybillPresentationPolicyNote: TypeAlias = Literal[
 ]
 
 
-class PlaybillProjectionCoverageBinding(_StrictDeclaredBlockModel):
+class ProjectionCoverageBinding(_StrictDeclaredBlockModel):
     """One client-observed mapping from governed identity to local projection path."""
 
     artifact: ArtifactIdentity
@@ -134,7 +134,7 @@ class PlaybillProjectionCoverageBinding(_StrictDeclaredBlockModel):
     evidence_kind: Literal["claim_marker", "procedure_catalog"]
 
     @model_validator(mode="after")
-    def _shape(self) -> "PlaybillProjectionCoverageBinding":
+    def _shape(self) -> "ProjectionCoverageBinding":
         if self.artifact.kind not in {"Claim", "Procedure"}:
             raise ValueError("projection coverage may identify only a Claim or Procedure")
         expected = "claim_marker" if self.artifact.kind == "Claim" else "procedure_catalog"
@@ -143,7 +143,7 @@ class PlaybillProjectionCoverageBinding(_StrictDeclaredBlockModel):
         return self
 
 
-class PlaybillProjectionCoverageObservation(_StrictDeclaredBlockModel):
+class ProjectionCoverageObservation(_StrictDeclaredBlockModel):
     """Bounded local projection evidence at one exact accepted coordinate."""
 
     tag: Literal["playbill-projection-coverage-observation-v1"] = (
@@ -151,7 +151,7 @@ class PlaybillProjectionCoverageObservation(_StrictDeclaredBlockModel):
     )
     coordinate: AcceptedCoordinate
     complete_kinds: tuple[Literal["Claim", "Procedure"], ...]
-    bindings: tuple[PlaybillProjectionCoverageBinding, ...] = Field(
+    bindings: tuple[ProjectionCoverageBinding, ...] = Field(
         max_length=MAX_PROJECTION_COVERAGE_BINDINGS
     )
 
@@ -167,8 +167,8 @@ class PlaybillProjectionCoverageObservation(_StrictDeclaredBlockModel):
     @field_validator("bindings")
     @classmethod
     def _bindings(
-        cls, value: tuple[PlaybillProjectionCoverageBinding, ...]
-    ) -> tuple[PlaybillProjectionCoverageBinding, ...]:
+        cls, value: tuple[ProjectionCoverageBinding, ...]
+    ) -> tuple[ProjectionCoverageBinding, ...]:
         keys = tuple(
             (item.artifact.qualified, item.workspace_path, item.evidence_kind) for item in value
         )
@@ -179,27 +179,27 @@ class PlaybillProjectionCoverageObservation(_StrictDeclaredBlockModel):
         return value
 
     @model_validator(mode="after")
-    def _binding_kinds(self) -> "PlaybillProjectionCoverageObservation":
+    def _binding_kinds(self) -> "ProjectionCoverageObservation":
         if any(item.artifact.kind not in self.complete_kinds for item in self.bindings):
             raise ValueError("projection bindings require complete observation of their kind")
         return self
 
 
-class PlaybillReviewWorkspaceObservation(_StrictDeclaredBlockModel):
+class ReviewWorkspaceObservation(_StrictDeclaredBlockModel):
     """Review-scoped subset of local projection facts; no daemon path access."""
 
     tag: Literal["playbill-review-workspace-observation-v1"] = (
         "playbill-review-workspace-observation-v1"
     )
-    presentation_policy: PlaybillPresentationPolicyAny | None = None
-    presentation_policy_notes: tuple[PlaybillPresentationPolicyNote, ...] = ()
-    projection_coverage: PlaybillProjectionCoverageObservation | None = None
+    presentation_policy: PresentationPolicyAny | None = None
+    presentation_policy_notes: tuple[PresentationPolicyNote, ...] = ()
+    projection_coverage: ProjectionCoverageObservation | None = None
 
     @field_validator("presentation_policy_notes")
     @classmethod
     def _notes(
-        cls, value: tuple[PlaybillPresentationPolicyNote, ...]
-    ) -> tuple[PlaybillPresentationPolicyNote, ...]:
+        cls, value: tuple[PresentationPolicyNote, ...]
+    ) -> tuple[PresentationPolicyNote, ...]:
         if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
             raise ValueError("presentation-policy notes must be sorted and unique")
         return value
@@ -385,7 +385,7 @@ class ProjectionMarkerSummary(_StrictDeclaredBlockModel):
         return self
 
 
-class ProjectionMarkerError(PlaybillError):
+class ProjectionMarkerError(CruxibleError):
     code = "playbill.projection.marker_invalid"
 
     def __init__(self, message: str) -> None:
@@ -505,7 +505,7 @@ def _parse_projection_stamp(encoded: bytes) -> ProjectionBlockStampAny:
         if canonical_bytes(value) != content:
             raise ValueError("projection stamp does not reproduce canonical JSON bytes")
         stamp = PROJECTION_STAMP_ADAPTER.validate_python(value)
-    except (UnicodeError, ValueError, ValidationError, PlaybillError) as exc:
+    except (UnicodeError, ValueError, ValidationError, CruxibleError) as exc:
         raise ProjectionMarkerError(f"projection stamp is malformed: {exc}") from exc
     return stamp
 
@@ -945,7 +945,7 @@ def projection_query_semantic_result_digest(result: object) -> str:
     ).tagged
 
 
-class PlaybillBlockRepinResult(BaseModel):
+class BlockRepinResult(BaseModel):
     """One block repinned through the client-side adapter, or (preview) what would be.
 
     The adapter reads the page, computes the stamp from the instance's own
@@ -966,19 +966,19 @@ class PlaybillBlockRepinResult(BaseModel):
 
 
 __all__ = [
-    "PlaybillBlockRepinResult",
+    "BlockRepinResult",
     "MAX_PROJECTION_CARDS_PER_SOURCE",
     "MAX_PROJECTION_COVERAGE_BINDINGS",
     "PROJECTION_MARKER_GRAMMAR",
     "PROJECTION_QUERY_PARAMETER_DOMAIN",
     "PROJECTION_QUERY_SEMANTIC_RESULT_DOMAIN",
-    "PlaybillPresentationPolicyAny",
-    "PlaybillPresentationPolicyV1",
-    "PlaybillPresentationPolicy",
-    "PlaybillProjectionAdvisoryPolicy",
-    "PlaybillProjectionCoverageBinding",
-    "PlaybillProjectionCoverageObservation",
-    "PlaybillReviewWorkspaceObservation",
+    "PresentationPolicyAny",
+    "PresentationPolicyV1",
+    "PresentationPolicy",
+    "ProjectionAdvisoryPolicy",
+    "ProjectionCoverageBinding",
+    "ProjectionCoverageObservation",
+    "ReviewWorkspaceObservation",
     "ParsedProjectionBlock",
     "ProjectionBacking",
     "ProjectionArtifactBacking",
@@ -1013,5 +1013,5 @@ __all__ = [
     "projection_manifest_refs",
     "resolve_projection_manifest_digest",
     "stamped_projection_windows",
-    "upgrade_playbill_presentation_policy",
+    "upgrade_presentation_policy",
 ]

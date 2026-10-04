@@ -1,4 +1,4 @@
-"""Deterministic repair queue derived from one accepted Playbill coordinate."""
+"""Deterministic repair queue derived from one accepted Cruxible coordinate."""
 
 from __future__ import annotations
 
@@ -15,16 +15,16 @@ from typing import Literal, TypeAlias, cast
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from cruxible_client.contracts import (
-    PLAYBILL_NEXT_DEFAULT_LIMIT,
-    PLAYBILL_NEXT_MAX_LIMIT,
-    PlaybillNextReason,
-    PlaybillNextRepairOperation,
-    PlaybillNextSeverity,
+    NEXT_DEFAULT_LIMIT,
+    NEXT_MAX_LIMIT,
+    NextReason,
+    NextRepairOperation,
+    NextSeverity,
     ProviderLaneStatus,
 )
 from cruxible_client.contracts.accepted_attestations import AcceptedClaimAttestationEvidence
 from cruxible_client.contracts.artifacts import parse_artifact_identity
-from cruxible_client.contracts.authoring.models import PlaybillBlockSyncReadRequest
+from cruxible_client.contracts.authoring.models import BlockSyncReadRequest
 from cruxible_client.contracts.canonical import (
     CanonicalValue,
     Sha256Value,
@@ -70,17 +70,17 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.declared_blocks import (
     MAX_PROJECTION_CARDS_PER_SOURCE,
-    PlaybillPresentationPolicyAny,
-    PlaybillPresentationPolicyNote,
-    PlaybillPresentationPolicyV1,
-    PlaybillProjectionCoverageObservation,
+    PresentationPolicyAny,
+    PresentationPolicyNote,
+    PresentationPolicyV1,
+    ProjectionCoverageObservation,
     ProjectionMarkerSummary,
-    upgrade_playbill_presentation_policy,
+    upgrade_presentation_policy,
 )
 from cruxible_client.contracts.documents import document_path, parse_document
-from cruxible_client.contracts.errors import PlaybillError, ProposalIntegrityError
+from cruxible_client.contracts.errors import CruxibleError, ProposalIntegrityError
 from cruxible_client.contracts.primitives import canonical_json
-from cruxible_client.contracts.principals import PlaybillAuthoringRefusal
+from cruxible_client.contracts.principals import AuthoringRefusal
 from cruxible_client.contracts.procedure_mandates import ProcedureMandate, ProcedureMandateV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import ExternalSourceReference
@@ -96,10 +96,10 @@ from cruxible_core.compiler.compiler import (
 from cruxible_core.compiler.upgrades import upgrade_law
 from cruxible_core.consumers.protocol import ConsumerHealth
 from cruxible_core.coverage.contracts import (
+    CitationWindowObservation,
     CoverageAccessProfile,
     CoverageCommitmentScanProof,
     LogicalSourceIdentity,
-    PlaybillCitationWindowObservation,
 )
 from cruxible_core.coverage.indexes import (
     WorkingOccurrence,
@@ -115,7 +115,6 @@ from cruxible_core.query.impact import (
     build_dependency_impact,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.authoring.projection_sync import (
     PROJECTION_VISIBILITY_POLICY,
     ProjectionCheckContext,
@@ -163,13 +162,10 @@ NextDomain = Literal[
     "workspace_sources",
     "workspace_projections",
 ]
-NextSeverity: TypeAlias = PlaybillNextSeverity
 CitationLineageNote = Literal[
     "predecessor_lineage_limit_exceeded",
     "predecessor_unresolved",
 ]
-NextReason: TypeAlias = PlaybillNextReason
-NextRepairOperation: TypeAlias = PlaybillNextRepairOperation
 
 # A citation reads unobserved for one of two kinds of reason. Either the
 # citation itself is no longer where the source says it is - a finding about
@@ -216,7 +212,7 @@ class _StrictNextModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class PlaybillNextError(PlaybillError):
+class NextError(CruxibleError):
     code = "playbill.next.refused"
 
     @property
@@ -224,29 +220,29 @@ class PlaybillNextError(PlaybillError):
         return self.code
 
 
-class PlaybillNextAccessProfileInvalid(PlaybillNextError):
+class NextAccessProfileInvalid(NextError):
     code = "playbill.next.access_profile_invalid"
 
 
-class PlaybillNextWorkspaceObservationInvalid(PlaybillNextError):
+class NextWorkspaceObservationInvalid(NextError):
     code = "playbill.next.workspace_observation_invalid"
 
 
-class PlaybillNextCoordinateNotAccepted(PlaybillNextError):
+class NextCoordinateNotAccepted(NextError):
     code = "playbill.next.coordinate_not_accepted"
 
 
-class PlaybillNextAcceptedStateInvalid(PlaybillNextError):
+class NextAcceptedStateInvalid(NextError):
     code = "playbill.next.accepted_state_invalid"
 
 
-class PlaybillNextCursorMismatch(PlaybillNextError):
+class NextCursorMismatch(NextError):
     """A page cursor that does not continue the queue this request reads."""
 
     code = "playbill.next.cursor_mismatch"
 
 
-class PlaybillNextDriftObservation(_StrictNextModel):
+class NextDriftObservation(_StrictNextModel):
     citation_id: str
     expected_commitment_digest: str
     observed_commitment_digest: str
@@ -258,7 +254,7 @@ class PlaybillNextDriftObservation(_StrictNextModel):
         return value
 
 
-class PlaybillNextSourceObservationV3(_StrictNextModel):
+class NextSourceObservationV3(_StrictNextModel):
     tag: Literal["playbill-next-source-observation-v3"]
     source_id: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
     document_id: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.-]{0,255}$")
@@ -294,7 +290,7 @@ class PlaybillNextSourceObservationV3(_StrictNextModel):
         return value
 
     @model_validator(mode="after")
-    def _source_shape(self) -> "PlaybillNextSourceObservationV3":
+    def _source_shape(self) -> "NextSourceObservationV3":
         ids = tuple(marker.stamp.block_id for marker in self.marker_summaries)
         if ids != tuple(sorted(set(ids), key=lambda item: item.encode("utf-8"))):
             raise ValueError("next marker summaries must be sorted and unique by block ID")
@@ -321,7 +317,7 @@ class PlaybillNextSourceObservationV3(_StrictNextModel):
         return self
 
 
-class PlaybillNextSourceObservation(_StrictNextModel):
+class NextSourceObservation(_StrictNextModel):
     tag: Literal["playbill-next-source-observation-v4"] = "playbill-next-source-observation-v4"
     source_id: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
     document_id: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.-]{0,255}$")
@@ -332,7 +328,7 @@ class PlaybillNextSourceObservation(_StrictNextModel):
     commitment_scan_proofs: tuple[CoverageCommitmentScanProof, ...] = Field(
         max_length=MAX_PROJECTION_CARDS_PER_SOURCE
     )
-    citation_window_observations: tuple[PlaybillCitationWindowObservation, ...] = Field(
+    citation_window_observations: tuple[CitationWindowObservation, ...] = Field(
         max_length=MAX_PROJECTION_CARDS_PER_SOURCE
     )
     scan_notes: tuple[str, ...]
@@ -352,7 +348,7 @@ class PlaybillNextSourceObservation(_StrictNextModel):
         return value
 
     @model_validator(mode="after")
-    def _source_shape(self) -> "PlaybillNextSourceObservation":
+    def _source_shape(self) -> "NextSourceObservation":
         expected_source = LogicalSourceIdentity(plane="external", identity=self.source_id)
         marker_ids = tuple(marker.stamp.block_id for marker in self.marker_summaries)
         if marker_ids != tuple(sorted(set(marker_ids), key=lambda item: item.encode("utf-8"))):
@@ -409,12 +405,10 @@ class PlaybillNextSourceObservation(_StrictNextModel):
         return self
 
 
-PlaybillNextSourceObservationAny: TypeAlias = (
-    PlaybillNextSourceObservationV3 | PlaybillNextSourceObservation
-)
+PlaybillNextSourceObservationAny: TypeAlias = NextSourceObservationV3 | NextSourceObservation
 
 
-class PlaybillNextMissingBinding(_StrictNextModel):
+class NextMissingBinding(_StrictNextModel):
     """A catalog entry binding a workspace file that does not exist."""
 
     tag: Literal["playbill-next-missing-binding-v1"] = "playbill-next-missing-binding-v1"
@@ -423,25 +417,23 @@ class PlaybillNextMissingBinding(_StrictNextModel):
     locator: str = Field(min_length=1, max_length=4096)
 
 
-class PlaybillNextWorkspaceObservation(_StrictNextModel):
+class NextWorkspaceObservation(_StrictNextModel):
     tag: Literal["playbill-next-workspace-observation-v1"] = (
         "playbill-next-workspace-observation-v1"
     )
     floor_status: Literal["not_configured", "missing", "current", "stale", "invalid"] | None = None
     installed_coordinate: AcceptedCoordinate | None = None
-    drift_observations: tuple[PlaybillNextDriftObservation, ...] | None = None
+    drift_observations: tuple[NextDriftObservation, ...] | None = None
     source_observations: tuple[PlaybillNextSourceObservationAny, ...] | None = None
-    presentation_policy: PlaybillPresentationPolicyAny | None = None
-    presentation_policy_notes: tuple[PlaybillPresentationPolicyNote, ...] = ()
-    projection_coverage: PlaybillProjectionCoverageObservation | None = None
+    presentation_policy: PresentationPolicyAny | None = None
+    presentation_policy_notes: tuple[PresentationPolicyNote, ...] = ()
+    projection_coverage: ProjectionCoverageObservation | None = None
     # Catalog entries whose bound workspace file is missing; each is a repair row.
-    missing_bindings: tuple[PlaybillNextMissingBinding, ...] = ()
+    missing_bindings: tuple[NextMissingBinding, ...] = ()
 
     @field_validator("missing_bindings")
     @classmethod
-    def _missing(
-        cls, value: tuple[PlaybillNextMissingBinding, ...]
-    ) -> tuple[PlaybillNextMissingBinding, ...]:
+    def _missing(cls, value: tuple[NextMissingBinding, ...]) -> tuple[NextMissingBinding, ...]:
         ids = tuple(item.source_id for item in value)
         if ids != tuple(sorted(set(ids), key=lambda item: item.encode("utf-8"))):
             raise ValueError("next missing bindings must be sorted and unique by source_id")
@@ -451,8 +443,8 @@ class PlaybillNextWorkspaceObservation(_StrictNextModel):
     @classmethod
     def _drift(
         cls,
-        value: tuple[PlaybillNextDriftObservation, ...] | None,
-    ) -> tuple[PlaybillNextDriftObservation, ...] | None:
+        value: tuple[NextDriftObservation, ...] | None,
+    ) -> tuple[NextDriftObservation, ...] | None:
         if value is None:
             return None
         ids = tuple(item.citation_id for item in value)
@@ -474,13 +466,13 @@ class PlaybillNextWorkspaceObservation(_StrictNextModel):
         return value
 
     @model_validator(mode="after")
-    def _floor_shape(self) -> "PlaybillNextWorkspaceObservation":
+    def _floor_shape(self) -> "NextWorkspaceObservation":
         if self.floor_status == "current" and self.installed_coordinate is None:
             raise ValueError("a current floor observation requires its installed coordinate")
         return self
 
 
-class PlaybillNextRequestV1(_StrictNextModel):
+class NextRequestV1(_StrictNextModel):
     tag: Literal["playbill-next-request-v1"] = "playbill-next-request-v1"
     at: AcceptedCoordinate | None = None
     evaluation_time: datetime
@@ -488,7 +480,7 @@ class PlaybillNextRequestV1(_StrictNextModel):
     expiring_within: CanonicalDuration = CanonicalDuration(
         microseconds=DEFAULT_EXPIRING_WITHIN_MICROSECONDS
     )
-    workspace_observation: PlaybillNextWorkspaceObservation | None = None
+    workspace_observation: NextWorkspaceObservation | None = None
     # The result_digest of a queue this caller has already seen. A digest this
     # process still remembers yields only the rows that are new since it; one it
     # does not -- a restart, an eviction, a digest from elsewhere -- yields the
@@ -498,7 +490,7 @@ class PlaybillNextRequestV1(_StrictNextModel):
     # began: it carries that page's evaluation instant, coordinate, attestation
     # head and delta base, which supersede the request's own, so a caller whose
     # clock or head has moved still reads the same queue -- or is refused.
-    limit: int = Field(default=PLAYBILL_NEXT_DEFAULT_LIMIT, ge=1, le=PLAYBILL_NEXT_MAX_LIMIT)
+    limit: int = Field(default=NEXT_DEFAULT_LIMIT, ge=1, le=NEXT_MAX_LIMIT)
     cursor: str | None = Field(default=None, max_length=2048)
     # Who reads the queue, so each repair is one this caller can run: the
     # surface picks the syntax a repair renders in (a CLI command, or an MCP
@@ -519,7 +511,7 @@ class PlaybillNextRequestV1(_StrictNextModel):
         return ensure_utc(value)
 
 
-class PlaybillNextRequest(PlaybillNextRequestV1):
+class NextRequest(NextRequestV1):
     tag: Literal["playbill-next-request-v2"] = "playbill-next-request-v2"  # type: ignore[assignment]
     at_attestation_head_digest: str | None = None
 
@@ -531,31 +523,27 @@ class PlaybillNextRequest(PlaybillNextRequestV1):
         return value
 
 
-PlaybillNextRequestAny: TypeAlias = PlaybillNextRequestV1 | PlaybillNextRequest
+PlaybillNextRequestAny: TypeAlias = NextRequestV1 | NextRequest
 
 
 def validate_playbill_next_request(
     value: PlaybillNextRequestAny | Mapping[str, object],
 ) -> PlaybillNextRequestAny:
-    if isinstance(value, (PlaybillNextRequestV1, PlaybillNextRequest)):
+    if isinstance(value, (NextRequestV1, NextRequest)):
         return value
     try:
-        model = (
-            PlaybillNextRequest
-            if value.get("tag") == "playbill-next-request-v2"
-            else PlaybillNextRequestV1
-        )
+        model = NextRequest if value.get("tag") == "playbill-next-request-v2" else NextRequestV1
         return model.model_validate(value)
     except ValidationError as exc:
         roots = {str(item["loc"][0]) for item in exc.errors() if item["loc"]}
         if "access_profile" in roots:
-            error: type[PlaybillNextError] = PlaybillNextAccessProfileInvalid
+            error: type[NextError] = NextAccessProfileInvalid
         elif "workspace_observation" in roots:
-            error = PlaybillNextWorkspaceObservationInvalid
+            error = NextWorkspaceObservationInvalid
         elif "cursor" in roots:
-            error = PlaybillNextCursorMismatch
+            error = NextCursorMismatch
         else:
-            error = PlaybillNextAcceptedStateInvalid
+            error = NextAcceptedStateInvalid
         raise error(f"{error.code}: {validation_summary(exc)}") from exc
 
 
@@ -611,7 +599,7 @@ class PlaybillNextRepairRequirementV1(_StrictNextModel):
     tier: NextRepairTier
     profile: Literal["full"] | None = Field(default=None, exclude_if=lambda value: value is None)
     because: tuple[NextRepairGate, ...] = Field(min_length=1)
-    authoring_refusal: PlaybillAuthoringRefusal | None = Field(
+    authoring_refusal: AuthoringRefusal | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
 
@@ -795,7 +783,7 @@ class PlaybillNextStatusV1(_StrictNextModel):
 
 class PlaybillNextResultV1(_StrictNextModel):
     tag: Literal["playbill-next-result-v1"] = "playbill-next-result-v1"
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     evaluation_time: datetime
     observed_domains: tuple[NextDomain, ...]
     unobserved_domains: tuple[NextDomain, ...]
@@ -1203,7 +1191,7 @@ def _sdk_call(target: str, *positional: object, **keywords: object) -> str:
 
 
 def _sdk_repair_call(operation: NextRepairOperation, *, arguments: object) -> str | None:
-    """Render one repair as the `Playbill` SDK call that performs it, or None.
+    """Render one repair as the `Cruxible` SDK call that performs it, or None.
 
     Like the CLI and MCP renderings, an operand only the caller holds -- the
     signer, the observation, the retirement reason -- is left for it to add. A
@@ -1902,7 +1890,7 @@ class _Holds:
                         history.artifact(digest, identity=identity) is not None
                         for identity, digest in versions
                     )
-            except PlaybillError:
+            except CruxibleError:
                 self._seen[key] = False
         return self._seen[key]
 
@@ -2000,7 +1988,7 @@ def build_stored_claim_queue(
     statuses = claim_resolution_statuses(
         instance,
         claims=claims,
-        at=PlaybillAcceptedCoordinate.from_internal(coordinate),
+        at=AcceptedCoordinate.from_internal(coordinate),
         evaluation_time=evaluation_time,
         verdicts_by_identity=verdicts,
         read_context=context,
@@ -2093,7 +2081,7 @@ def _claim_rows(
     return (
         *_claim_items(
             instance,
-            coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
+            coordinate=AcceptedCoordinate.from_internal(coordinate),
             evaluation_time=evaluation_time,
             time_boundaries=time_boundaries,
             expiring_within=expiring_within,
@@ -2233,8 +2221,8 @@ def _resolve_coordinate(
             compiler_digest=at.compiler_digest,
         )
     except ValueError as exc:
-        raise PlaybillNextCoordinateNotAccepted(
-            f"{PlaybillNextCoordinateNotAccepted.code}: coordinate is not accepted"
+        raise NextCoordinateNotAccepted(
+            f"{NextCoordinateNotAccepted.code}: coordinate is not accepted"
         ) from exc
 
 
@@ -2249,7 +2237,7 @@ def _claim_threshold_evidence(
 def _claim_attestation_threshold_items(
     instance: PlaybillInstance,
     *,
-    coordinate: PlaybillAcceptedCoordinate,
+    coordinate: AcceptedCoordinate,
     evaluation_time: datetime,
     claims: tuple[ClaimArtifactAny, ...],
     law_evidence: Mapping[str, ClaimLawEvidenceAny],
@@ -2418,7 +2406,7 @@ def _claim_attestation_threshold_items(
 def _claim_items(
     instance: PlaybillInstance,
     *,
-    coordinate: PlaybillAcceptedCoordinate,
+    coordinate: AcceptedCoordinate,
     evaluation_time: datetime,
     expiring_within: CanonicalDuration,
     door_events: tuple[tuple[ClaimAttestationEvent, ClaimAttestationEventPayload], ...] = (),
@@ -2771,7 +2759,7 @@ def _source_selection_span(envelope: object) -> tuple[int, int] | None:
 def _citation_commitments(
     instance: PlaybillInstance,
     *,
-    coordinate: PlaybillAcceptedCoordinate,
+    coordinate: AcceptedCoordinate,
     evaluation_time: datetime,
     claims: tuple[ClaimArtifactAny, ...] | None = None,
     facts_reader: _AcceptedQueryFactsRead | None = None,
@@ -2891,8 +2879,8 @@ def _citation_commitments(
                     ),
                 )
     except Exception as exc:
-        raise PlaybillNextAcceptedStateInvalid(
-            f"{PlaybillNextAcceptedStateInvalid.code}: citation inventory is invalid"
+        raise NextAcceptedStateInvalid(
+            f"{NextAcceptedStateInvalid.code}: citation inventory is invalid"
         ) from exc
     return result
 
@@ -3045,7 +3033,7 @@ def _attestation_resolving_accounts(
                         tree=authority.tree,
                         law=law,
                     )
-                except (PlaybillError, ValueError):
+                except (CruxibleError, ValueError):
                     accounts_by_authority[authority_digest] = ()
                     incomplete = True
         artifact_accounts[artifact.artifact_digest] = accounts_by_authority[authority_digest]
@@ -3366,7 +3354,7 @@ def _source_scan_defect_notes(
     )
     if notes:
         return notes
-    if isinstance(observed, PlaybillNextSourceObservationV3) and not observed.scan_complete:
+    if isinstance(observed, NextSourceObservationV3) and not observed.scan_complete:
         return ()
     return None
 
@@ -3376,14 +3364,14 @@ def _source_citation_item(
     citation_id: str,
     commitment: _CitationCommitment,
     observed: PlaybillNextSourceObservationAny | None,
-    coordinate: PlaybillAcceptedCoordinate,
+    coordinate: AcceptedCoordinate,
 ) -> PlaybillNextItemV1 | None:
     source_id = commitment.source_id
     captured_source_digest = commitment.source_digest
     assert source_id is not None and captured_source_digest is not None
     if observed is None:
         return _citation_unobserved_item(commitment)
-    if isinstance(observed, PlaybillNextSourceObservation):
+    if isinstance(observed, NextSourceObservation):
         expected_source = LogicalSourceIdentity(plane="external", identity=source_id)
         proved = any(
             proof.source == expected_source
@@ -3429,8 +3417,8 @@ def _source_citation_item(
                 drift_state="gone",
             )
         if window.observed_window_digest == commitment.commitment_digest:
-            raise PlaybillNextWorkspaceObservationInvalid(
-                f"{PlaybillNextWorkspaceObservationInvalid.code}: "
+            raise NextWorkspaceObservationInvalid(
+                f"{NextWorkspaceObservationInvalid.code}: "
                 "a complete zero-occurrence proof contradicts its unchanged original window"
             )
         return _citation_drift_item(
@@ -3440,10 +3428,8 @@ def _source_citation_item(
             observed_window_digest=window.observed_window_digest,
         )
 
-    unobserved = (
-        isinstance(observed, PlaybillNextSourceObservationV3) and not observed.scan_complete
-    )
-    if isinstance(observed, PlaybillNextSourceObservationV3):
+    unobserved = isinstance(observed, NextSourceObservationV3) and not observed.scan_complete
+    if isinstance(observed, NextSourceObservationV3):
         if observed.scan_complete:
             matched = any(
                 item.observed_commitment_digest == commitment.commitment_digest
@@ -3529,7 +3515,7 @@ def _citation_unobserved_item(
 def _citation_drift_item(
     commitment: _CitationCommitment,
     *,
-    coordinate: PlaybillAcceptedCoordinate,
+    coordinate: AcceptedCoordinate,
     drift_state: Literal["changed", "gone", "ambiguous"],
     observed_window_digest: str | None = None,
     occurrences: tuple[WorkingOccurrence, ...] = (),
@@ -3615,10 +3601,10 @@ def _citation_drift_item(
 def _workspace_items(
     instance: PlaybillInstance,
     *,
-    coordinate: PlaybillAcceptedCoordinate,
+    coordinate: AcceptedCoordinate,
     evaluation_time: datetime,
     access_profile: CoverageAccessProfile,
-    observation: PlaybillNextWorkspaceObservation | None,
+    observation: NextWorkspaceObservation | None,
     claims: tuple[ClaimArtifactAny, ...] | None = None,
     facts_reader: _AcceptedQueryFactsRead | None = None,
 ) -> tuple[tuple[NextDomain, ...], tuple[PlaybillNextItemV1, ...]]:
@@ -3664,8 +3650,8 @@ def _workspace_items(
         for drift in observation.drift_observations:
             expected = commitments.get(drift.citation_id)
             if expected is None or expected.commitment_digest != drift.expected_commitment_digest:
-                raise PlaybillNextWorkspaceObservationInvalid(
-                    f"{PlaybillNextWorkspaceObservationInvalid.code}: "
+                raise NextWorkspaceObservationInvalid(
+                    f"{NextWorkspaceObservationInvalid.code}: "
                     f"citation {drift.citation_id} does not match accepted state"
                 )
             if drift.observed_commitment_digest == drift.expected_commitment_digest:
@@ -4210,7 +4196,7 @@ def _procedure_catalog_health(
     *,
     coordinate: AcceptedProjectionCoordinate,
     access_profile: CoverageAccessProfile,
-    observation: PlaybillNextWorkspaceObservation | None,
+    observation: NextWorkspaceObservation | None,
 ) -> PlaybillNextHealthV1:
     """Whether a workspace that asked for a complete Procedure catalog has one.
 
@@ -4226,13 +4212,11 @@ def _procedure_catalog_health(
     ):
         return PlaybillNextHealthV1(state="not_observed")
     coverage = observation.projection_coverage
-    if coverage.coordinate.model_dump(mode="json") != PlaybillAcceptedCoordinate.from_internal(
+    if coverage.coordinate.model_dump(mode="json") != AcceptedCoordinate.from_internal(
         coordinate
     ).model_dump(mode="json"):
         return PlaybillNextHealthV1(state="not_observed")
-    policy = upgrade_playbill_presentation_policy(
-        observation.presentation_policy or PlaybillPresentationPolicyV1()
-    )
+    policy = upgrade_presentation_policy(observation.presentation_policy or PresentationPolicyV1())
     if not policy.projection_advisories.procedure or "Procedure" not in coverage.complete_kinds:
         return PlaybillNextHealthV1(state="not_required")
     covered = {
@@ -4275,8 +4259,8 @@ def _procedure_catalog_health(
 def _floor_health(
     instance: PlaybillInstance,
     *,
-    coordinate: PlaybillAcceptedCoordinate,
-    observation: PlaybillNextWorkspaceObservation | None,
+    coordinate: AcceptedCoordinate,
+    observation: NextWorkspaceObservation | None,
 ) -> PlaybillNextHealthV1:
     """Whether the workspace's installed floor matches the accepted coordinate.
 
@@ -4325,7 +4309,7 @@ def _document_items(
     *,
     coordinate: AcceptedProjectionCoordinate,
     access_profile: CoverageAccessProfile,
-    observation: PlaybillNextWorkspaceObservation | None,
+    observation: NextWorkspaceObservation | None,
 ) -> tuple[PlaybillNextItemV1, ...]:
     if observation is None or not access_profile.permits("instance"):
         return ()
@@ -4396,7 +4380,7 @@ def _document_items(
 def _proposal_items(
     instance: PlaybillInstance,
     *,
-    coordinate: PlaybillAcceptedCoordinate,
+    coordinate: AcceptedCoordinate,
     caller_principal_id: str | None,
     access_profile: CoverageAccessProfile,
 ) -> tuple[PlaybillNextItemV1, ...]:
@@ -4516,7 +4500,7 @@ def _approval_items(
         )
         for proposal in proposals_awaiting_approval(
             instance,
-            PlaybillAcceptedCoordinate.from_internal(coordinate),
+            AcceptedCoordinate.from_internal(coordinate),
             principal_id=caller_principal_id,
             ordinary_principal_ids=ordinary,
         )
@@ -4553,8 +4537,8 @@ def _mandate_items(
         for identity, digest, procedure_identity in rows:
             mandate = projection.typed.source(identity)
             if not isinstance(mandate, ProcedureMandateV1 | ProcedureMandate):
-                raise PlaybillNextAcceptedStateInvalid(
-                    f"{PlaybillNextAcceptedStateInvalid.code}: accepted ProcedureMandate "
+                raise NextAcceptedStateInvalid(
+                    f"{NextAcceptedStateInvalid.code}: accepted ProcedureMandate "
                     f"{identity} has no valid source"
                 )
             if isinstance(mandate, ProcedureMandate) and mandate.suspended:
@@ -4686,7 +4670,7 @@ def _projection_items(
     coordinate: AcceptedProjectionCoordinate,
     evaluation_time: datetime,
     access_profile: CoverageAccessProfile,
-    observation: PlaybillNextWorkspaceObservation | None,
+    observation: NextWorkspaceObservation | None,
     verdicts_by_identity: MutableMapping[str, ClaimVerdictResultAny] | None = None,
     facts_reader: _AcceptedQueryFactsRead | None = None,
     resolution_statuses: Mapping[str, str] | None = None,
@@ -4705,8 +4689,8 @@ def _projection_items(
         if isinstance(
             source,
             (
-                PlaybillNextSourceObservationV3,
-                PlaybillNextSourceObservation,
+                NextSourceObservationV3,
+                NextSourceObservation,
             ),
         )
     )
@@ -4791,7 +4775,7 @@ def _projection_items(
                         ),
                     )
                 )
-            assessment = checks.read(PlaybillBlockSyncReadRequest(stamp=marker.stamp))
+            assessment = checks.read(BlockSyncReadRequest(stamp=marker.stamp))
             severity: NextSeverity = (
                 "blocking" if marker.stamp.currency_policy == "require_current" else "warning"
             )
@@ -4966,7 +4950,7 @@ class _CallerView:
         surface: NextCallerSurface | None,
         tools: tuple[str, ...] | None,
         caller_rung: int | None,
-        authoring_refusal: PlaybillAuthoringRefusal | None = None,
+        authoring_refusal: AuthoringRefusal | None = None,
     ) -> None:
         self.instance = instance
         self.surface = surface
@@ -4994,7 +4978,7 @@ class _CallerView:
                 self._line_rungs[line] = run_permission_rung(
                     line_run_target_rung(self.instance, line)
                 )
-            except PlaybillError:
+            except CruxibleError:
                 self._line_rungs[line] = _GOVERNED_WRITE_RUNG
         return max(static, self._line_rungs[line])
 
@@ -5140,15 +5124,15 @@ def _next_queue(
     caller_principal_id: str | None,
     caller_rung: int | None,
     read_context: ClaimVerdictReadContext | None = None,
-    caller_authoring_refusal: PlaybillAuthoringRefusal | None = None,
+    caller_authoring_refusal: AuthoringRefusal | None = None,
 ) -> _NextQueue:
     """The single fold for full next and its bounded attention summary."""
 
     coordinate = _resolve_coordinate(instance, request.at)
-    public_coordinate = PlaybillAcceptedCoordinate.from_internal(coordinate)
+    public_coordinate = AcceptedCoordinate.from_internal(coordinate)
     attestation_head: str | None = None
     door_events: tuple[tuple[ClaimAttestationEvent, ClaimAttestationEventPayload], ...] = ()
-    if isinstance(request, PlaybillNextRequest):
+    if isinstance(request, NextRequest):
         store = instance.claim_attestation_evidence_store()
         attestation_head = request.at_attestation_head_digest or store.head()
         door_events = store.fold_events(at_head=attestation_head)
@@ -5164,7 +5148,7 @@ def _next_queue(
             coordinate=coordinate,
             door_head=attestation_head or instance.claim_attestation_evidence_store().head(),
             evaluation_time=request.evaluation_time,
-            version=2 if isinstance(request, PlaybillNextRequest) else 1,
+            version=2 if isinstance(request, NextRequest) else 1,
         )
     # One request evaluates a Claim's verdict at exactly one coordinate and one
     # evaluation time, so the folds that need it share the result instead of
@@ -5202,7 +5186,7 @@ def _next_queue(
                 verdicts_by_identity=verdicts_by_identity,
                 read_context=read_context,
             )
-        except PlaybillError:
+        except CruxibleError:
             # A queue is a read of whatever resolves. If the population cannot be
             # resolved as a whole -- a missing ClaimType, an unreadable store --
             # each fold falls back to deriving what it needs and reporting on it.
@@ -5341,7 +5325,7 @@ class PlaybillNextSummary:
 def summarize_playbill_next(
     instance: PlaybillInstance,
     *,
-    request: PlaybillNextRequest,
+    request: NextRequest,
     caller_principal_id: str | None = None,
     caller_rung: int | None = None,
     match: Callable[[PlaybillNextItemV1], bool] | None = None,
@@ -5368,7 +5352,7 @@ def summarize_playbill_next(
     matching = (
         None
         if match is None
-        else next((item for item in queue.items[:PLAYBILL_NEXT_MAX_LIMIT] if match(item)), None)
+        else next((item for item in queue.items[:NEXT_MAX_LIMIT] if match(item)), None)
     )
     return PlaybillNextSummary(queue.items[:3], len(queue.items), matching)
 
@@ -5381,7 +5365,7 @@ def service_playbill_next(
     consumers_running: bool = False,
     caller_principal_id: str | None = None,
     caller_rung: int | None = None,
-    caller_authoring_refusal: PlaybillAuthoringRefusal | None = None,
+    caller_authoring_refusal: AuthoringRefusal | None = None,
 ) -> PlaybillNextResultV1 | PlaybillNextResultV2:
     """Fold accepted state and explicit client observations into one repair queue.
 
@@ -5408,7 +5392,7 @@ def service_playbill_next(
         caller_authoring_refusal=caller_authoring_refusal,
     )
     coordinate = queue.coordinate
-    public_coordinate = PlaybillAcceptedCoordinate.from_internal(coordinate)
+    public_coordinate = AcceptedCoordinate.from_internal(coordinate)
     attestation_head = queue.attestation_head
     observed, unobserved = queue.observed, queue.unobserved
     consumer_healths, caller = queue.consumer_healths, queue.caller
@@ -5500,7 +5484,7 @@ def service_playbill_next(
         "total_items": len(items),
     }
     result_model: type[PlaybillNextResultV1] | type[PlaybillNextResultV2]
-    if isinstance(request, PlaybillNextRequest):
+    if isinstance(request, NextRequest):
         assert attestation_head is not None
         result_model = PlaybillNextResultV2
         values["attestation_head_digest"] = attestation_head
@@ -5547,7 +5531,7 @@ def _queue_scope(
     *,
     caller_principal_id: str | None,
     caller_rung: int | None = None,
-    caller_authoring_refusal: PlaybillAuthoringRefusal | None = None,
+    caller_authoring_refusal: AuthoringRefusal | None = None,
 ) -> str:
     return typed_digest(
         Sha256Value,
@@ -5631,9 +5615,9 @@ class _Continuation:
     offset: int
 
 
-def _cursor_mismatch(detail: str) -> PlaybillNextCursorMismatch:
-    return PlaybillNextCursorMismatch(
-        f"{PlaybillNextCursorMismatch.code}: {detail}; read the queue again without a cursor"
+def _cursor_mismatch(detail: str) -> NextCursorMismatch:
+    return NextCursorMismatch(
+        f"{NextCursorMismatch.code}: {detail}; read the queue again without a cursor"
     )
 
 
@@ -5706,7 +5690,7 @@ def _continued(
         "evaluation_time": continuation.evaluation_time,
         "since_result_digest": continuation.delta_since,
     }
-    if isinstance(request, PlaybillNextRequest):
+    if isinstance(request, NextRequest):
         if continuation.attestation_head_digest is None:
             raise _cursor_mismatch("the cursor continues a v1 queue")
         update["at_attestation_head_digest"] = continuation.attestation_head_digest
@@ -5760,20 +5744,20 @@ __all__ = [
     "NEXT_ITEM_ID_DOMAIN",
     "NEXT_RESULT_DIGEST_DOMAIN",
     "NEXT_RESULT_V2_DIGEST_DOMAIN",
-    "PlaybillNextAccessProfileInvalid",
-    "PlaybillNextAcceptedStateInvalid",
-    "PlaybillNextCoordinateNotAccepted",
-    "PlaybillNextCursorMismatch",
-    "PlaybillNextDriftObservation",
+    "NextAccessProfileInvalid",
+    "NextAcceptedStateInvalid",
+    "NextCoordinateNotAccepted",
+    "NextCursorMismatch",
+    "NextDriftObservation",
     "PlaybillNextItemV1",
-    "PlaybillNextRequestV1",
-    "PlaybillNextRequest",
+    "NextRequestV1",
+    "NextRequest",
     "PlaybillNextResultV1",
     "PlaybillNextResultV2",
-    "PlaybillNextSourceObservationV3",
-    "PlaybillNextSourceObservation",
-    "PlaybillNextWorkspaceObservationInvalid",
-    "PlaybillNextWorkspaceObservation",
+    "NextSourceObservationV3",
+    "NextSourceObservation",
+    "NextWorkspaceObservationInvalid",
+    "NextWorkspaceObservation",
     "playbill_next_item_id",
     "playbill_next_result_digest",
     "service_playbill_next",

@@ -18,7 +18,7 @@ from cruxible_client.contracts.attestations import (
     ApprovalStatement,
     approval_statement_bytes,
 )
-from cruxible_client.contracts.errors import PlaybillKeyError
+from cruxible_client.contracts.errors import SigningKeyError
 from cruxible_client.contracts.runtime_credentials import (
     RuntimeCredentialMintStatement,
     RuntimeCredentialPermissionMode,
@@ -43,9 +43,9 @@ def assert_outside_roots(path: Path, forbidden_roots: Sequence[Path]) -> None:
     for raw_root in forbidden_roots:
         root = _resolved(raw_root)
         if _is_within(resolved, root):
-            raise PlaybillKeyError(
+            raise SigningKeyError(
                 "client approval/recovery keys must remain outside workspaces and "
-                "managed Playbill instance storage; "
+                "managed Cruxible instance storage; "
                 f"custody path={str(resolved)!r}, forbidden root={str(root)!r}"
             )
 
@@ -85,7 +85,7 @@ class LocalEd25519ApprovalSigner:
         private_key = _load_private_key(private_key_path)
         public_key = private_key.public_key().public_bytes_raw().hex()
         if public_key != expected_public_key:
-            raise PlaybillKeyError(
+            raise SigningKeyError(
                 "local approval key does not match the principal at the signing semantic root"
             )
         return cls(
@@ -96,10 +96,10 @@ class LocalEd25519ApprovalSigner:
 
     def sign(self, statement: ApprovalStatement) -> ApprovalAttestation:
         if statement.signer_id != self.signer_id:
-            raise PlaybillKeyError("approval statement names a different signer")
+            raise SigningKeyError("approval statement names a different signer")
         private_key = _load_private_key(self.private_key_path)
         if private_key.public_key().public_bytes_raw().hex() != self.public_key:
-            raise PlaybillKeyError("approval key changed after signer initialization")
+            raise SigningKeyError("approval key changed after signer initialization")
         signature = private_key.sign(approval_statement_bytes(statement)).hex()
         return ApprovalAttestation(**statement.model_dump(mode="json"), sig=signature)
 
@@ -139,39 +139,39 @@ def _load_private_key(path: Path) -> Ed25519PrivateKey:
     """Read a nonsymlink 0600 OpenSSH key through a no-follow descriptor."""
 
     if path.parent.is_symlink() or path.is_symlink() or not path.is_file():
-        raise PlaybillKeyError("client approval key must be a regular nonsymlink file")
+        raise SigningKeyError("client approval key must be a regular nonsymlink file")
     parent_mode = stat.S_IMODE(path.parent.stat().st_mode)
     if parent_mode & 0o077:
-        raise PlaybillKeyError(
+        raise SigningKeyError(
             "client approval key directory permissions must exclude group/world access"
         )
     metadata = path.stat()
     if not stat.S_ISREG(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) & 0o077:
-        raise PlaybillKeyError("client approval key permissions must exclude group/world access")
+        raise SigningKeyError("client approval key permissions must exclude group/world access")
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     descriptor: int | None = None
     try:
         descriptor = os.open(path, flags)
         opened = os.fstat(descriptor)
         if opened.st_dev != metadata.st_dev or opened.st_ino != metadata.st_ino:
-            raise PlaybillKeyError("client approval key changed while it was opened")
+            raise SigningKeyError("client approval key changed while it was opened")
         content = bytearray()
         while chunk := os.read(descriptor, 64 * 1024):
             content.extend(chunk)
     except OSError as exc:
-        raise PlaybillKeyError("client approval key is missing or unreadable") from exc
+        raise SigningKeyError("client approval key is missing or unreadable") from exc
     finally:
         if descriptor is not None:
             os.close(descriptor)
     try:
         private_key = serialization.load_ssh_private_key(bytes(content), password=None)
     except (TypeError, ValueError) as exc:
-        raise PlaybillKeyError("client approval key is not an unencrypted OpenSSH key") from exc
+        raise SigningKeyError("client approval key is not an unencrypted OpenSSH key") from exc
     finally:
         for index in range(len(content)):
             content[index] = 0
     if not isinstance(private_key, Ed25519PrivateKey):
-        raise PlaybillKeyError("Playbill approval requires an Ed25519 client key")
+        raise SigningKeyError("Cruxible approval requires an Ed25519 client key")
     return private_key
 
 

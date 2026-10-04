@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from cruxible_client import Playbill
+from cruxible_client import Cruxible
 from cruxible_client.authoring.world import WorldStructureError
 from cruxible_client.contracts.claim_reads import ClaimReadBatchResult
 from tests.test_client.test_playbill_sdk_world import (
@@ -21,7 +21,7 @@ from tests.test_client.test_playbill_sdk_world import (
 def connection(tmp_path):
     _workspace(tmp_path)
     client = _WorldClient()
-    pb = Playbill._from_client(
+    pb = Cruxible._from_client(
         client,
         instance_id="inst_world",
         workspace=tmp_path,
@@ -46,7 +46,7 @@ def install(client: _WorldClient, monkeypatch, *, paged=False, invalid=False):
             cursor="page-two" if paged and request.cursor is None else None,
         )
 
-    monkeypatch.setattr(client, "read_playbill_claim_batch", batch, raising=False)
+    monkeypatch.setattr(client, "read_claim_batch", batch, raising=False)
     return calls
 
 
@@ -106,7 +106,7 @@ def test_prefetch_preserves_json_suffix_in_bare_subject_id(connection, monkeypat
         captured.append(request)
         return ClaimReadBatchResult(coordinate=_COORDINATE, claims=())
 
-    monkeypatch.setattr(client, "read_playbill_claim_batch", empty, raising=False)
+    monkeypatch.setattr(client, "read_claim_batch", empty, raising=False)
     world.prefetch(subjects=["sec.package/report.json"])
     assert captured[0].subject_paths == ("subjects/sec.package/report.json.json",)
     assert ("sec.package/report.json", None) in world._claim_cache

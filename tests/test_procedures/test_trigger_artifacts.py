@@ -511,7 +511,7 @@ def test_triggers_are_authored_lowered_and_read_like_other_definitions(tmp_path)
     )
     from cruxible_client.contracts.authoring.inputs import TriggerInput, lower_authoring_input
     from cruxible_client.contracts.authoring.models import TriggerAuthoringPayload
-    from cruxible_client.contracts.get_reads import PlaybillGetRequest
+    from cruxible_client.contracts.get_reads import GetRequest
     from cruxible_core.authoring.lowering import AuthoringLoweringError, _render_trigger_member
     from cruxible_core.service.discovery.get import service_playbill_get
     from cruxible_core.storage.cas import BodyAccessContext
@@ -552,9 +552,7 @@ def test_triggers_are_authored_lowered_and_read_like_other_definitions(tmp_path)
 
     card = service_playbill_get(
         instance,
-        request=PlaybillGetRequest(
-            ref="Trigger:hourly", evaluation_time=datetime(2026, 9, 30, tzinfo=UTC)
-        ),
+        request=GetRequest(ref="Trigger:hourly", evaluation_time=datetime(2026, 9, 30, tzinfo=UTC)),
         access=BodyAccessContext(principal_id="reader", can_read_body=True),
     )
     assert card.kind == "trigger"

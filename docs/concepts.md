@@ -1,10 +1,10 @@
-# Playbill concepts
+# Cruxible concepts
 
 ## Authority and evidence
 
 Accepted state is the daemon-owned Git ledger. Evidence may live elsewhere:
 files, APIs, databases, event streams, or content-addressed storage. Referencing
-evidence does not transfer authority over the source system to Playbill.
+evidence does not transfer authority over the source system to Cruxible.
 
 SQLite, graph databases, search indexes, and rendered Markdown are projections.
 They may be fast and useful, but they can be discarded and rebuilt.
@@ -61,7 +61,7 @@ reviewer, or recovery. The private Ed25519 key stays in client custody.
 Revocation and rotation change principal state prospectively while key history
 keeps older signatures verifiable.
 
-A runtime bearer credential is not a Playbill principal. It authorizes transport
+A runtime bearer credential is not a Cruxible principal. It authorizes transport
 operations; the principal identifies and attributes a governed act.
 
 ## Document
@@ -118,7 +118,7 @@ describes required input, promised output, preconditions, capabilities, pins,
 budgets, and deterministic graph. An agent can discover the contract and track
 record before loading implementation detail.
 
-Accepted Procedures run under Playbill authority: state reads, governed source
+Accepted Procedures run under Cruxible authority: state reads, governed source
 reads, contracted Calls, deterministic computation, and, through Lines, capture,
 proposal and settlement terminals.
 

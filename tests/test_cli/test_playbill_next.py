@@ -1,4 +1,4 @@
-"""CLI Playbill next is a thin client-observation adapter."""
+"""CLI Cruxible next is a thin client-observation adapter."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ AUTHOR = {
     "required_change": "author_the_claim",
 }
 
-COORDINATE = contracts.PlaybillAcceptedCoordinate(
+COORDINATE = contracts.AcceptedCoordinate(
     git_oid="1" * 64,
     semantic_root="sha256:" + "2" * 64,
     generation_root="sha256:" + "3" * 64,
@@ -70,10 +70,10 @@ def test_cli_next_observes_locally_then_calls_one_queue_route(
     }
 
     class StubClient:
-        def next_playbill(self, instance_id: str, **values: object) -> contracts.PlaybillNextResult:
+        def next(self, instance_id: str, **values: object) -> contracts.NextResult:
             assert instance_id == "inst_next"
             calls.append(values)
-            return contracts.PlaybillNextResult(
+            return contracts.NextResult(
                 coordinate=COORDINATE,
                 evaluation_time="2026-08-24T18:00:00.000000Z",
                 observed_domains=["accepted_state", "workspace_floor"],
@@ -86,7 +86,7 @@ def test_cli_next_observes_locally_then_calls_one_queue_route(
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
     monkeypatch.setattr(
-        "cruxible_core.cli.commands.playbill.observe_playbill_next_workspace",
+        "cruxible_core.cli.commands.playbill.observe_next_workspace",
         lambda _root: observation,
     )
 
@@ -161,11 +161,11 @@ def test_cli_next_delta_labels_additions_and_removals(
         def __init__(self) -> None:
             self.calls = 0
 
-        def next_playbill(self, instance_id: str, **values: object) -> contracts.PlaybillNextResult:
+        def next(self, instance_id: str, **values: object) -> contracts.NextResult:
             assert instance_id == "inst_next"
             self.calls += 1
             assert values.get("since_result_digest") == "sha256:" + "0" * 64
-            return contracts.PlaybillNextResult(
+            return contracts.NextResult(
                 tag="playbill-next-result-v2",
                 coordinate=COORDINATE,
                 evaluation_time="2026-08-24T18:00:00Z",
@@ -188,11 +188,11 @@ def test_cli_next_delta_labels_additions_and_removals(
     client = StubClient()
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
     monkeypatch.setattr(
-        "cruxible_core.cli.commands.playbill.observe_playbill_next_workspace",
+        "cruxible_core.cli.commands.playbill.observe_next_workspace",
         lambda _root: {},
     )
     monkeypatch.setattr(
-        "cruxible_core.cli.commands.playbill.observe_playbill_next_workspace_with_coverage",
+        "cruxible_core.cli.commands.playbill.observe_next_workspace_with_coverage",
         lambda *_args, **_kwargs: ({}, COORDINATE),
     )
 
@@ -230,9 +230,9 @@ def test_cli_next_delta_memo_miss_renders_the_full_queue_without_change_labels(
     }
 
     class StubClient:
-        def next_playbill(self, instance_id: str, **values: object) -> contracts.PlaybillNextResult:
+        def next(self, instance_id: str, **values: object) -> contracts.NextResult:
             assert instance_id == "inst_next"
-            return contracts.PlaybillNextResult(
+            return contracts.NextResult(
                 coordinate=COORDINATE,
                 evaluation_time="2026-08-24T18:00:00Z",
                 observed_domains=[
@@ -251,11 +251,11 @@ def test_cli_next_delta_memo_miss_renders_the_full_queue_without_change_labels(
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
     monkeypatch.setattr(
-        "cruxible_core.cli.commands.playbill.observe_playbill_next_workspace",
+        "cruxible_core.cli.commands.playbill.observe_next_workspace",
         lambda _root: {},
     )
     monkeypatch.setattr(
-        "cruxible_core.cli.commands.playbill.observe_playbill_next_workspace_with_coverage",
+        "cruxible_core.cli.commands.playbill.observe_next_workspace_with_coverage",
         lambda *_args, **_kwargs: ({}, COORDINATE),
     )
 
@@ -298,8 +298,8 @@ def test_cli_next_prints_status_that_needs_attention_above_the_rows(
     }
 
     class StubClient:
-        def next_playbill(self, instance_id: str, **values: object) -> contracts.PlaybillNextResult:
-            return contracts.PlaybillNextResult(
+        def next(self, instance_id: str, **values: object) -> contracts.NextResult:
+            return contracts.NextResult(
                 coordinate=COORDINATE,
                 evaluation_time="2026-08-24T18:00:00.000000Z",
                 observed_domains=["accepted_state", "workspace_floor"],
@@ -312,7 +312,7 @@ def test_cli_next_prints_status_that_needs_attention_above_the_rows(
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
     monkeypatch.setattr(
-        "cruxible_core.cli.commands.playbill.observe_playbill_next_workspace",
+        "cruxible_core.cli.commands.playbill.observe_next_workspace",
         lambda _root: {},
     )
     result = CliRunner().invoke(
@@ -382,9 +382,9 @@ def _stub_pages(
     calls: list[dict[str, object]] = []
 
     class StubClient:
-        def next_playbill(self, instance_id: str, **values: object) -> contracts.PlaybillNextResult:
+        def next(self, instance_id: str, **values: object) -> contracts.NextResult:
             calls.append(values)
-            return contracts.PlaybillNextResult(
+            return contracts.NextResult(
                 coordinate=COORDINATE,
                 evaluation_time="2026-08-24T18:00:00Z",
                 observed_domains=["accepted_state"],
@@ -412,7 +412,7 @@ def _stub_pages(
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
     monkeypatch.setattr(
-        "cruxible_core.cli.commands.playbill.observe_playbill_next_workspace",
+        "cruxible_core.cli.commands.playbill.observe_next_workspace",
         lambda _root: {},
     )
     return calls
@@ -488,10 +488,10 @@ def test_cli_next_defaults_to_the_shared_page_size_and_bounds_it(
 
     _invoke_next()
     refused = CliRunner().invoke(
-        cli, ["playbill", "next", "--limit", str(contracts.PLAYBILL_NEXT_MAX_LIMIT + 1)]
+        cli, ["playbill", "next", "--limit", str(contracts.NEXT_MAX_LIMIT + 1)]
     )
 
-    assert (calls[0]["limit"], calls[0]["cursor"]) == (contracts.PLAYBILL_NEXT_DEFAULT_LIMIT, None)
+    assert (calls[0]["limit"], calls[0]["cursor"]) == (contracts.NEXT_DEFAULT_LIMIT, None)
     assert refused.exit_code != 0
     assert "--limit" in refused.output
 
@@ -515,8 +515,8 @@ def test_cli_next_keeps_a_row_whose_repair_is_withheld_and_names_what_it_needs(
     }
 
     class StubClient:
-        def next_playbill(self, instance_id: str, **values: object) -> contracts.PlaybillNextResult:
-            return contracts.PlaybillNextResult(
+        def next(self, instance_id: str, **values: object) -> contracts.NextResult:
+            return contracts.NextResult(
                 coordinate=COORDINATE,
                 evaluation_time="2026-08-24T18:00:00Z",
                 observed_domains=["accepted_state"],
@@ -533,7 +533,7 @@ def test_cli_next_keeps_a_row_whose_repair_is_withheld_and_names_what_it_needs(
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
     monkeypatch.setattr(
-        "cruxible_core.cli.commands.playbill.observe_playbill_next_workspace",
+        "cruxible_core.cli.commands.playbill.observe_next_workspace",
         lambda _root: {},
     )
 

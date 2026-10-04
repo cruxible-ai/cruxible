@@ -1,6 +1,6 @@
-# Playbill developer quickstart
+# Cruxible developer quickstart
 
-This quickstart targets the breaking Playbill development branch.
+This quickstart targets the breaking Cruxible development branch.
 
 ## Install
 
@@ -42,7 +42,7 @@ attach that exact workspace before initialization:
 uv run cruxible playbill host create --instance-id inst_demo
 ~~~
 
-Initialize Playbill and make yourself the owner, with a key generated outside
+Initialize Cruxible and make yourself the owner, with a key generated outside
 the repository. The principal ID is yours to choose:
 
 ~~~bash

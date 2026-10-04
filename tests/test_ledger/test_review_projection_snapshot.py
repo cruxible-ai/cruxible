@@ -6,7 +6,7 @@ import zlib
 
 import pytest
 
-from cruxible_client.contracts.errors import PlaybillGitError, ProposalIntegrityError
+from cruxible_client.contracts.errors import GitError, ProposalIntegrityError
 from cruxible_core.ledger.git import NOTE_REFS, GitLedger
 from tests.core_support._proposal_note_oracle import build_proposal_note_oracle
 from tests.core_support._support import initialize_local
@@ -52,11 +52,11 @@ def test_snapshot_matches_ordinary_notes_and_proves_dependencies(ledger):
 
 def test_snapshot_refuses_missing_or_wrong_type_dependency(ledger):
     base = ledger.read_main()
-    with pytest.raises(PlaybillGitError, match="tree or parent is missing"):
+    with pytest.raises(GitError, match="tree or parent is missing"):
         ledger.read_review_projection((base,), dependencies={"0" * len(base): "tree"})
-    with pytest.raises(PlaybillGitError, match="conflicting expected types"):
+    with pytest.raises(GitError, match="conflicting expected types"):
         ledger.read_review_projection((base,), dependencies={base: "tree"})
-    with pytest.raises(PlaybillGitError, match="requested object"):
+    with pytest.raises(GitError, match="requested object"):
         ledger.read_review_projection((ledger.tree_oid(base),), dependencies={})
 
 
@@ -68,7 +68,7 @@ def test_snapshot_rehashes_corrupted_loose_commit_on_every_read(ledger):
     assert raw.endswith(b"base\n")
     path.chmod(0o600)
     path.write_bytes(zlib.compress(raw[:-5] + b"fake\n"))
-    with pytest.raises(PlaybillGitError, match="do not reproduce its OID"):
+    with pytest.raises(GitError, match="do not reproduce its OID"):
         ledger.read_review_projection((base,), dependencies={})
 
 
@@ -86,7 +86,7 @@ def test_snapshot_rehashes_corrupted_loose_commit_on_every_read(ledger):
 def test_snapshot_refuses_malformed_batch_output(ledger, monkeypatch, output):
     oid = ledger.read_main()
     monkeypatch.setattr(ledger, "_git", lambda *a, **kw: output.replace(b"{oid}", oid.encode()))
-    with pytest.raises(PlaybillGitError):
+    with pytest.raises(GitError):
         ledger._read_review_objects({oid: "commit"})
 
 
@@ -176,7 +176,7 @@ def test_snapshot_rehashes_corrupted_note_blob(ledger):
     assert raw.endswith(b"good\n")
     path.chmod(0o600)
     path.write_bytes(zlib.compress(raw[:-5] + b"fake\n"))
-    with pytest.raises(PlaybillGitError, match="do not reproduce its OID"):
+    with pytest.raises(GitError, match="do not reproduce its OID"):
         ledger.read_review_projection((original,), dependencies={})
 
 

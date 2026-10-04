@@ -1,4 +1,4 @@
-"""Coordinate-bound structured explanation over accepted Playbill projections."""
+"""Coordinate-bound structured explanation over accepted Cruxible projections."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from cruxible_core.compiler.compiler import artifact_kinds_for_compiler
 from cruxible_core.compiler.projection_artifacts import registered_path_kind
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import (
-    PlaybillAcceptedCoordinate,
+    AcceptedCoordinate,
     PlaybillDocumentView,
     service_get_playbill_document,
 )
@@ -39,7 +39,7 @@ class _StrictExplainModel(BaseModel):
 class PlaybillExplainResult(_StrictExplainModel):
     tag: Literal["playbill-explain-v1"] = "playbill-explain-v1"
     subject: SemanticAddress
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     detail: Literal["summary", "evidence"]
     governance: dict[str, object]
     provenance: dict[str, object]
@@ -59,7 +59,7 @@ class PlaybillExplainUnsupportedDetail(_StrictExplainModel):
         "playbill-explain-unsupported-detail-v1"
     )
     subject: SemanticAddress
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     requested_detail: Literal["proof"] = "proof"
     code: Literal["playbill.explain.detail_unsupported"] = "playbill.explain.detail_unsupported"
     message: str = "Complete proof-bundle retrieval is deferred beyond PB-E."
@@ -193,7 +193,7 @@ def service_explain_playbill_subject(
     instance: PlaybillInstance,
     *,
     subject: SemanticAddress,
-    at: PlaybillAcceptedCoordinate,
+    at: AcceptedCoordinate,
     detail: PlaybillExplainDetail,
     access: BodyAccessContext,
 ) -> PlaybillExplainResponse:
@@ -205,7 +205,7 @@ def service_explain_playbill_subject(
         generation_root=at.generation_root,
         compiler_digest=at.compiler_digest,
     )
-    public_coordinate = PlaybillAcceptedCoordinate.from_internal(coordinate)
+    public_coordinate = AcceptedCoordinate.from_internal(coordinate)
     if detail == "proof":
         return PlaybillExplainUnsupportedDetail(
             subject=subject,

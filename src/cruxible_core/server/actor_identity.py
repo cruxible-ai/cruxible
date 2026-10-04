@@ -1,4 +1,4 @@
-"""Pure runtime actor identity used by Playbill and legacy adapters."""
+"""Pure runtime actor identity used by Cruxible and legacy adapters."""
 
 from __future__ import annotations
 

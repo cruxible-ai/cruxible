@@ -35,7 +35,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
-from cruxible_client.contracts import PlaybillAcceptedCoordinate as ClientCoordinate
+from cruxible_client.contracts import AcceptedCoordinate as ClientCoordinate
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
     AuthoringChangeSetMember,
@@ -79,13 +79,13 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.errors import (
     CanonicalEncodingError,
-    PlaybillError,
+    CruxibleError,
     ReadRefusalError,
     SettlementIntegrityError,
     WriteRefusalError,
 )
 from cruxible_client.contracts.get_reads import (
-    PlaybillReadSurface,
+    ReadSurface,
     summary_value,
 )
 from cruxible_client.contracts.primitives import canonical_json
@@ -102,7 +102,6 @@ from cruxible_client.contracts.write import (
     ExpectedValue,
     FileEvidence,
     NewerCaptureNotCitableWarning,
-    PlaybillWriteRequest,
     RetireChange,
     SelfEvidence,
     SetChange,
@@ -111,6 +110,7 @@ from cruxible_client.contracts.write import (
     WriteOutcome,
     WriteProposalRef,
     WriteRefusal,
+    WriteRequest,
     WriteStatus,
     WriteWarning,
     capture_handle,
@@ -194,7 +194,7 @@ def _full(coordinate: AcceptedProjectionCoordinate | AcceptedCoordinate) -> Clie
 
 
 def _render_proposal_call(
-    surface: PlaybillReadSurface,
+    surface: ReadSurface,
     verb: Literal["approve", "activate"],
     proposal_id: str,
     *,
@@ -209,7 +209,7 @@ def _render_proposal_call(
             )
         return f"cruxible playbill proposal activate {proposal_id}"
     if surface == "sdk":
-        handle = f"pb.proposal({json.dumps(proposal_id)})"
+        handle = f"cx.proposal({json.dumps(proposal_id)})"
         if verb == "approve":
             who = signer or "approver"
             return f"{handle}.approve(signer=<{who} signer>, reviewed={handle}.review())"
@@ -222,15 +222,15 @@ def _render_proposal_call(
     return f"cruxible_playbill_activate(proposal_id={json.dumps(proposal_id)})"
 
 
-def _render_get(surface: PlaybillReadSurface, ref: str) -> str:
+def _render_get(surface: ReadSurface, ref: str) -> str:
     if surface == "cli":
         return f"cruxible playbill get {shlex.quote(ref)}"
     if surface == "sdk":
-        return f"pb.get({json.dumps(ref)})"
+        return f"cx.get({json.dumps(ref)})"
     return f"cruxible_playbill_get(ref={json.dumps(ref)})"
 
 
-def _render_commit(surface: PlaybillReadSurface, git_oid: str) -> str:
+def _render_commit(surface: ReadSurface, git_oid: str) -> str:
     if surface == "cli":
         return f"Run the same command without --dry-run, adding --at {git_oid}"
     if surface == "sdk":
@@ -279,7 +279,7 @@ def _named(subject: str | None) -> str:
     return subject
 
 
-def _with_default_subject(request: PlaybillWriteRequest) -> PlaybillWriteRequest:
+def _with_default_subject(request: WriteRequest) -> WriteRequest:
     """Give every change that names no Subject the write's own ``subject``.
 
     A change's own subject overrides the default. A change with neither
@@ -302,7 +302,7 @@ def _with_default_subject(request: PlaybillWriteRequest) -> PlaybillWriteRequest
     return request.model_copy(update={"changes": tuple(changes)})
 
 
-def _default_subject(request: PlaybillWriteRequest, *, index: int, path: str) -> str:
+def _default_subject(request: WriteRequest, *, index: int, path: str) -> str:
     if request.subject is None:
         raise _refuse(
             "playbill.write.subject_required",
@@ -420,7 +420,7 @@ class _Planner:
         *,
         head: AcceptedProjectionCoordinate,
         read_at: AcceptedProjectionCoordinate,
-        request: PlaybillWriteRequest,
+        request: WriteRequest,
     ) -> None:
         self.instance = instance
         self.head = head
@@ -811,7 +811,7 @@ class _Planner:
             )
         try:
             target = subject_path(kind, subject_id)
-        except (PlaybillError, ValueError) as exc:
+        except (CruxibleError, ValueError) as exc:
             raise _refuse(
                 "playbill.write.value_type_mismatch",
                 f"{value!r} is not a Subject reference: {exc}",
@@ -938,7 +938,7 @@ class _Planner:
                 verified = verify_accepted_capture(
                     self.instance, self.head, digest, access=_VALUE_READ_ACCESS
                 )
-            except (CaptureReadInvalid, ReadRefusalError, PlaybillError, ValueError):
+            except (CaptureReadInvalid, ReadRefusalError, CruxibleError, ValueError):
                 self._verified[digest] = False
             else:
                 self._verified[digest] = not isinstance(verified, str)
@@ -1848,13 +1848,13 @@ def _used_contract(
         envelope = parse_capture_envelope(
             instance.body_store().read(planned.capture, access=_VALUE_READ_ACCESS)
         )
-    except (PlaybillError, ValueError):
+    except (CruxibleError, ValueError):
         return None
     return names.name(envelope.capture_contract_digest)
 
 
 def _render_evidence_repair(
-    surface: PlaybillReadSurface,
+    surface: ReadSurface,
     change: SetChange | AddChange,
     *,
     because: str,
@@ -1875,8 +1875,8 @@ def _render_evidence_repair(
             f"--because {shlex.quote(because)} --capture {placeholder}{role}{contend}"
         )
     if surface == "sdk":
-        # Rendered against the builder signatures: ``pb.set`` takes ``because``;
-        # a batch ``add`` does not, so it goes on ``pb.changes`` instead.
+        # Rendered against the builder signatures: ``cx.set`` takes ``because``;
+        # a batch ``add`` does not, so it goes on ``cx.changes`` instead.
         arguments = [json.dumps(subject), json.dumps(change.field), json.dumps(value)]
         options = [f"evidence=CaptureEvidence(capture={json.dumps(placeholder)})"]
         if change.role is not None:
@@ -1885,11 +1885,11 @@ def _render_evidence_repair(
             if change.contend:
                 options.append("contend=True")
             return (
-                f"pb.set({', '.join(arguments)}, because={json.dumps(because)}, "
+                f"cx.set({', '.join(arguments)}, because={json.dumps(because)}, "
                 f"{', '.join(options)})"
             )
         return (
-            f"pb.changes(because={json.dumps(because)})"
+            f"cx.changes(because={json.dumps(because)})"
             f".add({', '.join([*arguments, *options])}).write()"
         )
     evidence = json.dumps({"kind": "capture", "capture": placeholder})
@@ -1916,7 +1916,7 @@ def _with_verdicts(
     plan: _Plan,
     changes: tuple[ChangeOutcome, ...],
     verdicts: Mapping[str, str],
-    surface: PlaybillReadSurface,
+    surface: ReadSurface,
     because: str,
 ) -> tuple[tuple[ChangeOutcome, ...], tuple[WriteWarning, ...]]:
     """Attach each written Claim's verdict, and warn plainly when it is not supported."""
@@ -2058,7 +2058,7 @@ def _approval(
     reason: ApprovalReason,
     minimum: int,
     caller: WriteCaller,
-    surface: PlaybillReadSurface,
+    surface: ReadSurface,
     proposal_id: str,
 ) -> ApprovalNeeded:
     approvers = (
@@ -2119,7 +2119,7 @@ def _coordinator(
 def service_playbill_write(
     instance: PlaybillInstance,
     *,
-    request: PlaybillWriteRequest,
+    request: WriteRequest,
     caller: WriteCaller,
 ) -> WriteOutcome:
     """Resolve, check and lower one write, then preview it or carry it to acceptance.
@@ -2150,7 +2150,7 @@ def service_playbill_write(
 def _service_write(
     instance: PlaybillInstance,
     *,
-    request: PlaybillWriteRequest,
+    request: WriteRequest,
     caller: WriteCaller,
 ) -> WriteOutcome:
     head = instance.accepted_coordinate()
@@ -2324,7 +2324,7 @@ def _already_done(
     *,
     head: AcceptedProjectionCoordinate,
     plan: _Plan,
-    request: PlaybillWriteRequest,
+    request: WriteRequest,
 ) -> WriteOutcome:
     """Every change is already live: accepted, with no change set submitted."""
 
@@ -2354,7 +2354,7 @@ def _slot_moved(
     *,
     planned_at: AcceptedProjectionCoordinate,
     read_at: AcceptedProjectionCoordinate,
-    request: PlaybillWriteRequest,
+    request: WriteRequest,
     at: AcceptedProjectionCoordinate | None = None,
 ) -> WriteRefusal | None:
     """Why the plan no longer holds at ``at`` (the head by default), if it moved.
@@ -2404,7 +2404,7 @@ def _accepted(
     plan: _Plan,
     head: AcceptedProjectionCoordinate,
     accepted: AcceptedCoordinate | None,
-    request: PlaybillWriteRequest,
+    request: WriteRequest,
     changes: tuple[ChangeOutcome, ...],
     subjects_added: tuple[str, ...],
     proposal: WriteProposalRef | None,
@@ -2449,7 +2449,7 @@ def _dry_run(
     head: AcceptedProjectionCoordinate,
     coordinator: AuthoringIntentCoordinator,
     caller: WriteCaller,
-    request: PlaybillWriteRequest,
+    request: WriteRequest,
     plan: _Plan,
     lowered: _Lowered,
     timestamp: str,

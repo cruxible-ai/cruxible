@@ -47,12 +47,12 @@ from cruxible_client.contracts.claims import (
     parse_claim,
 )
 from cruxible_client.contracts.errors import (
+    CasError,
     ClaimNotFoundError,
-    PlaybillCasError,
-    PlaybillError,
-    PlaybillExecutionError,
-    PlaybillFormatError,
-    PlaybillJournalConflictError,
+    CruxibleError,
+    ExecutionError,
+    FormatError,
+    JournalConflictError,
     ProposalIntegrityError,
 )
 from cruxible_client.contracts.primitives import canonical_json
@@ -69,16 +69,16 @@ from cruxible_client.contracts.procedures.measurements import (
     ProcedureMeasurementDeclaration,
 )
 from cruxible_client.contracts.procedures.readings import (
-    PlaybillProcedureMeasureRequest,
-    PlaybillProcedureMeasureResult,
-    PlaybillProcedureReadingsRequest,
-    PlaybillProcedureReadingsResult,
     ProcedureMeasurementContractStatus,
     ProcedureMeasurementEligibility,
     ProcedureMeasurementRefusalCode,
     ProcedureMeasurementResolutionSummary,
     ProcedureMeasurementRow,
     ProcedureMeasurementStatus,
+    ProcedureMeasureRequest,
+    ProcedureMeasureResult,
+    ProcedureReadingsRequest,
+    ProcedureReadingsResult,
     ProcedureReadingStatus,
     ProcedureReadingSummary,
 )
@@ -128,7 +128,6 @@ from cruxible_core.procedures.resolution import (
     resolution_contract_partition_id,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.discovery.query import (
     PlaybillQueryReceiptJournal,
     service_run_playbill_query,
@@ -337,7 +336,7 @@ def _accepting_generation(
             generation = history.generation(location.sequence)
             activated_at = parse_datetime(record.candidate.timestamp)
             if activated_at is None:
-                raise PlaybillFormatError("accepted candidate timestamp is missing")
+                raise FormatError("accepted candidate timestamp is missing")
             return (
                 AcceptedCoordinate(
                     git_oid=generation.git_oid,
@@ -347,7 +346,7 @@ def _accepting_generation(
                 ),
                 activated_at,
             )
-    raise PlaybillFormatError(
+    raise FormatError(
         "accepted Procedure revision has no accepting generation before the observation"
     )
 
@@ -570,12 +569,12 @@ def _evaluate_accepted_query(
         name=name,
         evaluation_time=observation_time,
         parameters=cast(Mapping[str, object], parameters),
-        at=PlaybillAcceptedCoordinate.from_internal(observation),
+        at=AcceptedCoordinate.from_internal(observation),
         budgets=_query_budgets(measurement),
         receipt_journal=receipt_journal,
     )
     if run.journal_record_digest is None:  # pragma: no cover - journal supplied above
-        raise PlaybillFormatError("query receipt was not retained")
+        raise FormatError("query receipt was not retained")
     proofs = (ProcedureProofReferenceV1(kind="query_receipt", digest=run.journal_record_digest),)
     receipt = run.receipt
     if receipt.verdict == "refused":
@@ -656,7 +655,7 @@ def _accepted_claim_at(
         )
     try:
         claim = parse_claim(content, path=path)
-    except (PlaybillError, ValueError) as exc:
+    except (CruxibleError, ValueError) as exc:
         raise _refuse(
             "measurement_subject_mismatch",
             f"Claim statement {path} at the observation coordinate is not a readable Claim.",
@@ -721,7 +720,7 @@ def _evaluate_claim_statement(
         instance,
         claim_identity=claim.identity.qualified,
         evaluation_time=observation_time,
-        at=PlaybillAcceptedCoordinate.from_internal(observation),
+        at=AcceptedCoordinate.from_internal(observation),
     )
     verdict = claim_verdict_v1_compat(verdict_query.verdict)
     account = ClaimVerdictObservationV1(
@@ -1039,7 +1038,7 @@ def _parse_reading(
     try:
         reading = ProcedureReadingV1.model_validate(payload)
     except ValidationError as exc:
-        raise PlaybillFormatError("retained Procedure reading does not reproduce") from exc
+        raise FormatError("retained Procedure reading does not reproduce") from exc
     return _IndexedReading(stored=stored, reading=reading)
 
 
@@ -1090,7 +1089,7 @@ def _verify_retained(instance: PlaybillInstance, entry: _IndexedReading) -> _Ind
 
     try:
         instance.body_store().read(entry.stored.record.payload_digest, access=_ACCESS)
-    except PlaybillCasError:
+    except CasError:
         memo_discard(_reading_index_memo, (str(instance.root), entry.stored.record.partition_id))
         raise
     return entry
@@ -1243,10 +1242,10 @@ def service_measure_playbill_procedure(
     instance: PlaybillInstance,
     *,
     name: str,
-    request: PlaybillProcedureMeasureRequest,
+    request: ProcedureMeasureRequest,
     actor_context: GovernedActorContext,
     recorded_at: datetime,
-) -> PlaybillProcedureMeasureResult:
+) -> ProcedureMeasureResult:
     """Evaluate due measurements, persist resolutions, and credit one real run.
 
     Idempotent and resumable: a standing resolution is returned rather than
@@ -1380,7 +1379,7 @@ def service_measure_playbill_procedure(
                         stream=stream,
                         expected_head=expected_head,
                     )
-                except PlaybillJournalConflictError as exc:
+                except JournalConflictError as exc:
                     state = _contract_state(instance, journal, stream, activation)
                     if state.latest is None:
                         raise _refuse(
@@ -1388,7 +1387,7 @@ def service_measure_playbill_procedure(
                             "Another writer moved this measurement's journal partition; retry.",
                             contract_id=activation.contract_id,
                         ) from exc
-                except PlaybillExecutionError as exc:
+                except ExecutionError as exc:
                     # The kernel refused the sequence or the closed contract:
                     # a concurrent evaluation landed first. Re-read and return
                     # its answer rather than inventing a second one.
@@ -1462,7 +1461,7 @@ def service_measure_playbill_procedure(
     finally:
         fenced_receipts.release()
         fenced.release()
-    return PlaybillProcedureMeasureResult(
+    return ProcedureMeasureResult(
         procedure_identity=accepted.procedure.identity,
         procedure_artifact_digest=accepted.artifact_digest,
         activation_coordinate=basis.coordinate,
@@ -1506,7 +1505,7 @@ def _credit_reading(
 
     run_id = cast(str, grain.state.run_id)
     if grain.state.receipt_digest is None:
-        raise PlaybillFormatError("a finalized run carries no receipt digest")
+        raise FormatError("a finalized run carries no receipt digest")
     reading = build_procedure_reading(
         accepted,
         accepted_coordinate=activation.subject.accepted_coordinate,
@@ -1573,7 +1572,7 @@ def _credit_reading(
                 },
                 expected_head=index.head,
             )
-        except PlaybillJournalConflictError:
+        except JournalConflictError:
             # Another writer moved the partition after it was indexed. Index
             # it again: if the competing record is this very reading, the
             # next pass replays it; otherwise the append is retried on the
@@ -1591,7 +1590,7 @@ def _credit_reading(
             None,
         )
         if entry is None:  # pragma: no cover - the append just landed
-            raise PlaybillFormatError("appended reading is absent from its partition")
+            raise FormatError("appended reading is absent from its partition")
         return "recorded", _reading_summary(entry)
     raise _refuse(
         "measurement_resolution_conflict",
@@ -1645,11 +1644,11 @@ def _parse_cursor(cursor: str, *, selection: str) -> _Continuation:
             raise ValueError("cursor continuation is malformed")
         at = AcceptedCoordinate.model_validate(payload.get("at"))
     except (ValueError, TypeError, UnicodeError, ValidationError) as exc:
-        raise PlaybillFormatError("reading cursor does not match this selection") from exc
+        raise FormatError("reading cursor does not match this selection") from exc
     return _Continuation(observation_time=ensure_utc(observation_time), at=at, after=after)
 
 
-def _selection_digest(request: PlaybillProcedureReadingsRequest) -> str:
+def _selection_digest(request: ProcedureReadingsRequest) -> str:
     # The instant and coordinate are the continuation's, carried by the
     # cursor; the rest of the request must not change between pages.
     return canonical_json(
@@ -1661,9 +1660,9 @@ def service_list_playbill_procedure_readings(
     instance: PlaybillInstance,
     *,
     name: str,
-    request: PlaybillProcedureReadingsRequest,
+    request: ProcedureReadingsRequest,
     evaluation_time: datetime,
-) -> PlaybillProcedureReadingsResult:
+) -> ProcedureReadingsResult:
     """Bounded, read-only inspection of contract standing and retained readings."""
 
     selection = _selection_digest(request)
@@ -1749,7 +1748,7 @@ def service_list_playbill_procedure_readings(
                 reading_count=counts.get(activation.contract_id, 0),
             )
         )
-    return PlaybillProcedureReadingsResult(
+    return ProcedureReadingsResult(
         procedure_identity=accepted.procedure.identity,
         procedure_artifact_digest=accepted.artifact_digest,
         activation_coordinate=basis.coordinate,
@@ -1800,9 +1799,9 @@ def load_retained_query_receipt(
         try:
             receipt = QueryExecutionReceipt.model_validate(payload)
         except ValidationError as exc:
-            raise PlaybillFormatError("retained query receipt does not reproduce") from exc
+            raise FormatError("retained query receipt does not reproduce") from exc
         return RetainedQueryEvidenceV1(stored=stored, receipt=receipt)
-    raise PlaybillFormatError("query receipt evidence is not retained under that digest")
+    raise FormatError("query receipt evidence is not retained under that digest")
 
 
 def load_retained_claim_verdict_observation(
@@ -1824,11 +1823,9 @@ def load_retained_claim_verdict_observation(
         try:
             account = ClaimVerdictObservationV1.model_validate(payload)
         except ValidationError as exc:
-            raise PlaybillFormatError(
-                "retained Claim verdict observation does not reproduce"
-            ) from exc
+            raise FormatError("retained Claim verdict observation does not reproduce") from exc
         return RetainedClaimVerdictObservationV1(stored=stored, observation=account)
-    raise PlaybillFormatError("Claim verdict observation is not retained under that digest")
+    raise FormatError("Claim verdict observation is not retained under that digest")
 
 
 def reconstruct_query_evidence(
@@ -1853,7 +1850,7 @@ def reconstruct_query_evidence(
         instance,
         name=definition_name,
         evaluation_time=receipt.evaluation_time,
-        at=PlaybillAcceptedCoordinate.from_internal(receipt.coordinate),
+        at=AcceptedCoordinate.from_internal(receipt.coordinate),
         budgets=receipt.budgets,
         parameters=parameters,
     )

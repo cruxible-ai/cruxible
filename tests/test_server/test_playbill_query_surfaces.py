@@ -12,8 +12,8 @@ import pytest
 from click.testing import CliRunner
 from fastapi.testclient import TestClient
 
-from cruxible_client import CruxibleClient, Playbill, contracts
-from cruxible_client.contracts.compact_query import PlaybillQueryRequest
+from cruxible_client import Cruxible, CruxibleClient, contracts
+from cruxible_client.contracts.compact_query import QueryRequest
 from cruxible_client.contracts.errors import ReadRefusalError
 from cruxible_core.cli.main import cli
 from cruxible_core.mcp.server import create_server
@@ -55,7 +55,7 @@ def served(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[CruxibleCli
     return client, instance_id
 
 
-def _rows(result: contracts.PlaybillQueryResult) -> list[tuple[str, object]]:
+def _rows(result: contracts.QueryResultRecord) -> list[tuple[str, object]]:
     return [(row["subject_id"], row["status"]) for row in result.rows]
 
 
@@ -70,9 +70,9 @@ def test_every_surface_returns_the_same_page(
 
     client, instance_id = served
     if surface == "transport":
-        result = client.query_playbill(
+        result = client.query(
             instance_id,
-            request=PlaybillQueryRequest.model_validate(
+            request=QueryRequest.model_validate(
                 {
                     "kind": SUBJECT_KIND,
                     "where": WHERE,
@@ -101,9 +101,9 @@ def test_every_surface_returns_the_same_page(
             ],
         )
         assert invoked.exit_code == 0, invoked.output
-        result = contracts.PlaybillQueryResult.model_validate(json.loads(invoked.output))
+        result = contracts.QueryResultRecord.model_validate(json.loads(invoked.output))
     elif surface == "sdk":
-        playbill = Playbill._from_client(  # type: ignore[arg-type]
+        playbill = Cruxible._from_client(  # type: ignore[arg-type]
             client,
             instance_id=instance_id,
             workspace=tmp_path,
@@ -145,9 +145,9 @@ def test_wrong_names_refuse_over_http_with_code_and_nearest(
 
     # The client rebuilds the same coded refusal, not a bare CoreError.
     with pytest.raises(ReadRefusalError) as refused:
-        client.query_playbill(
+        client.query(
             instance_id,
-            request=PlaybillQueryRequest.model_validate(
+            request=QueryRequest.model_validate(
                 {"kind": SUBJECT_KIND, "where": [{"field": "stauts", "eq": "ready"}]}
             ),
         )
@@ -242,9 +242,9 @@ def test_the_spec_tool_answers_with_the_same_evaluation(
     spec = QueryDefinitionSpec.model_validate(
         {**work_item_query("project.adhoc").model_dump(mode="json"), "pins": []}
     )
-    through_sdk = client.query_playbill(
+    through_sdk = client.query(
         instance_id,
-        request=PlaybillQueryRequest(spec=spec, evaluation_time=EVALUATION_TIME),
+        request=QueryRequest(spec=spec, evaluation_time=EVALUATION_TIME),
     )
     for remote in (False, True):
         monkeypatch.setattr(

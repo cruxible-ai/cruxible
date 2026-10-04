@@ -32,7 +32,7 @@ from cruxible_client.contracts.claim_types import (
     parse_claim_type,
     render_claim_type,
 )
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.evidence_rule_upgrade import (
     EvidenceRuleConversion,
     EvidenceRuleRefusal,
@@ -252,7 +252,7 @@ def _upgrade(
             continue
         try:
             successor, conversion = _convert(claim_type, lineages)
-        except (_Refused, PlaybillFormatError, ValueError) as error:
+        except (_Refused, FormatError, ValueError) as error:
             refused.append(
                 EvidenceRuleRefusal(claim_type=claim_type.identity.qualified, reason=str(error))
             )

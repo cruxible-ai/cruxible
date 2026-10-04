@@ -21,14 +21,14 @@ from cruxible_client.contracts.authoring.models import (
     insertion_result_key,
     update_insertion_expectation_v2,
 )
-from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import ensure_utc
 
 DEFAULT_INSERTION_TOMBSTONE_HORIZON = timedelta(days=30)
 
 
-class InsertionProtocolError(PlaybillError):
+class InsertionProtocolError(CruxibleError):
     """An insertion transition is invalid at the durable expectation state."""
 
     code = "playbill.authoring.publication_transition_invalid"

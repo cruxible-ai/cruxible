@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from cruxible_client.contracts.errors import PlaybillGitError
+from cruxible_client.contracts.errors import GitError
 from cruxible_core.ledger.git import GitLedger
 
 
@@ -65,8 +65,8 @@ def test_hash_only_preserves_git_and_message_refusals(ledger, timestamp, message
         timestamp=timestamp,
         message=message,
     )
-    with pytest.raises(PlaybillGitError):
+    with pytest.raises(GitError):
         ledger.proposal_review_commit_oid(**args)
-    with pytest.raises(PlaybillGitError):
+    with pytest.raises(GitError):
         ledger.proposal_review_commit(**args)
     assert ledger.unreachable_commits() == ()

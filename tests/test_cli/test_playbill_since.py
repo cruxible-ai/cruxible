@@ -13,7 +13,7 @@ from cruxible_core.cli.main import cli
 
 def test_cli_since_calls_the_frozen_client_operation(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     calls: list[tuple[str, int]] = []
-    coordinate = contracts.PlaybillAcceptedCoordinate(
+    coordinate = contracts.AcceptedCoordinate(
         git_oid="1" * 64,
         semantic_root="sha256:" + "2" * 64,
         generation_root="sha256:" + "3" * 64,
@@ -28,9 +28,9 @@ def test_cli_since_calls_the_frozen_client_operation(monkeypatch) -> None:  # ty
     }
 
     class StubClient:
-        def since_playbill(self, instance_id: str, *, generation: int, **_values: object):
+        def since(self, instance_id: str, *, generation: int, **_values: object):
             calls.append((instance_id, generation))
-            return contracts.PlaybillSinceResult.model_validate(
+            return contracts.SinceResult.model_validate(
                 {
                     **values,
                     "result_digest": contracts._since_digest(  # type: ignore[attr-defined]
@@ -97,7 +97,7 @@ def test_cli_since_surfaces_a_typed_profile_refusal_without_traceback(
     )
 
     assert result.exit_code == 1
-    assert "PlaybillSinceRequestInvalid" in result.output
+    assert "SinceRequestInvalid" in result.output
     assert "playbill.since.request_invalid" in result.output
     assert "$.access_profile" in result.output
     assert "Traceback" not in result.output
@@ -107,7 +107,7 @@ def test_cli_since_accepts_a_profile_file_relying_on_model_defaults(
     monkeypatch, tmp_path: Path
 ) -> None:  # type: ignore[no-untyped-def]
     profiles: list[dict] = []
-    coordinate = contracts.PlaybillAcceptedCoordinate(
+    coordinate = contracts.AcceptedCoordinate(
         git_oid="1" * 64,
         semantic_root="sha256:" + "2" * 64,
         generation_root="sha256:" + "3" * 64,
@@ -122,9 +122,9 @@ def test_cli_since_accepts_a_profile_file_relying_on_model_defaults(
     }
 
     class StubClient:
-        def since_playbill(self, instance_id: str, *, access_profile, **_values: object):  # type: ignore[no-untyped-def]
+        def since(self, instance_id: str, *, access_profile, **_values: object):  # type: ignore[no-untyped-def]
             profiles.append(dict(access_profile))
-            return contracts.PlaybillSinceResult.model_validate(
+            return contracts.SinceResult.model_validate(
                 {
                     **values,
                     "result_digest": contracts._since_digest(  # type: ignore[attr-defined]

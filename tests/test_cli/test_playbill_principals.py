@@ -15,7 +15,7 @@ from cruxible_client import contracts
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_core.cli.main import cli
 
-COORDINATE = contracts.PlaybillAcceptedCoordinate(
+COORDINATE = contracts.AcceptedCoordinate(
     git_oid="1" * 64,
     semantic_root="sha256:" + "2" * 64,
     generation_root="sha256:" + "3" * 64,
@@ -34,21 +34,21 @@ def test_cli_principal_add_keeps_private_key_client_side_and_proposes_public_rec
     submitted: list[dict[str, Any]] = []
 
     class StubClient:
-        def orient_playbill(self, instance_id: str, **values: Any) -> Any:
+        def orient(self, instance_id: str, **values: Any) -> Any:
             assert instance_id == "inst_principals" and values["section"] == "principals"
             return SimpleNamespace(principals=(), truncated=False, next_cursor=None)
 
-        def propose_playbill_principal_change(
+        def propose_principal_change(
             self,
             instance_id: str,
             *,
             principal: dict[str, Any],
             proposal_name: str,
             **_: object,
-        ) -> contracts.PlaybillProposalInspection:
+        ) -> contracts.ProposalInspection:
             assert (instance_id, proposal_name) == ("inst_principals", "add-reviewer")
             submitted.append(principal)
-            return contracts.PlaybillProposalInspection(
+            return contracts.ProposalInspection(
                 proposal={"proposal_id": "sha256:" + "5" * 64},
                 accepted_coordinate=COORDINATE,
             )
@@ -99,7 +99,7 @@ def test_cli_principal_add_rejects_existing_identity_before_generating_keys(
     custody = tmp_path / "reviewer-custody"
 
     class StubClient:
-        def orient_playbill(self, instance_id: str, **values: Any) -> Any:
+        def orient(self, instance_id: str, **values: Any) -> Any:
             assert values["section"] == "principals"
             reviewer = PrincipalRecord(
                 principal_id="reviewer", public_key="ab" * 32, kind="ordinary"
@@ -165,8 +165,8 @@ def test_the_global_principal_id_reaches_the_client_and_whoami_says_it_is_a_clai
         def __init__(self, **kwargs: Any) -> None:
             constructed.append(kwargs)
 
-        def playbill_whoami(self, instance_id: str) -> contracts.PlaybillWhoAmI:
-            return contracts.PlaybillWhoAmI(
+        def whoami(self, instance_id: str) -> contracts.WhoAmI:
+            return contracts.WhoAmI(
                 actor_id="alice",
                 credential_label=None,
                 actor_id_source="principal_claim",

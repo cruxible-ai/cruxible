@@ -60,7 +60,6 @@ from cruxible_core.query.engine import (
     query_execution_receipt,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.discovery.query_definitions import accepted_query_definition
 from cruxible_core.service.evidence.evidence import (
     ClaimReadHistoryIndex,
@@ -89,7 +88,7 @@ class PlaybillQueryRunV1(_StrictQueryRunModel):
     """One executed query: its replayable result and its execution receipt."""
 
     tag: Literal["playbill-query-run-v1"] = "playbill-query-run-v1"
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     name: str
     definition_path: str
     definition_digest: str
@@ -100,7 +99,7 @@ class PlaybillQueryRunV1(_StrictQueryRunModel):
 
 def _resolve_coordinate(
     instance: PlaybillInstance,
-    at: PlaybillAcceptedCoordinate | None,
+    at: AcceptedCoordinate | None,
 ) -> AcceptedProjectionCoordinate:
     if at is None:
         return instance.accepted_coordinate()
@@ -529,7 +528,7 @@ class PlaybillQueryReceiptJournal:
     """Append query execution receipts to the registered query-receipt family.
 
     The journal backend is caller-owned exactly as it is for Procedure exhaust;
-    a Playbill instance never opens one implicitly.
+    a Cruxible instance never opens one implicitly.
     """
 
     def __init__(
@@ -640,7 +639,7 @@ def service_run_playbill_query(
     name: str,
     evaluation_time: datetime,
     parameters: Mapping[str, object] | None = None,
-    at: PlaybillAcceptedCoordinate | None = None,
+    at: AcceptedCoordinate | None = None,
     budgets: QueryBudgets | None = None,
     external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,
     receipt_journal: PlaybillQueryReceiptJournal | None = None,
@@ -667,7 +666,7 @@ def service_run_playbill_query(
         external_readers=external_readers,
     )
     receipt = query_execution_receipt(result)
-    accepted = PlaybillAcceptedCoordinate.from_internal(coordinate)
+    accepted = AcceptedCoordinate.from_internal(coordinate)
     journal_record_digest: str | None = None
     if receipt_journal is not None:
         stored = receipt_journal.record(

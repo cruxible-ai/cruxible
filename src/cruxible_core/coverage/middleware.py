@@ -36,7 +36,7 @@ emits came out of the reference renderer, including the one fail-open note.
 The resolve callable is injected rather than imported because the coverage
 package may not reach the service layer (an architecture test holds that line).
 That constraint turned out to be the feature: the same middleware embeds in the
-CLI, in TauBench's executor, and in any harness that can reach a Playbill
+CLI, in TauBench's executor, and in any harness that can reach a Cruxible
 instance, because the only thing it needs from any of them is a function from
 observations to a result.
 
@@ -70,7 +70,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
-from cruxible_client.contracts.workspace_layout import PLAYBILL_FLOOR_PATH
+from cruxible_client.contracts.workspace_layout import FLOOR_PATH
 from cruxible_core.coverage.adapter import (
     WorkingPathBindingsV1,
     WorkingPathBindingV1,
@@ -576,7 +576,7 @@ class CoverageMiddlewareV1:
     """The §11.7 owned-harness adapter: three entry points over one operation.
 
     Construct it with a workspace root, a loaded configuration, and a callable
-    that resolves observations against a Playbill instance. Everything else is
+    that resolves observations against a Cruxible instance. Everything else is
     mechanical.
     """
 
@@ -731,13 +731,13 @@ class CoverageMiddlewareV1:
                 relative = PurePosixPath(value).as_posix()
         except (OSError, ValueError):
             return False
-        floor_parts = PurePosixPath(PLAYBILL_FLOOR_PATH).parts
+        floor_parts = PurePosixPath(FLOOR_PATH).parts
         parts = PurePosixPath(relative).parts
         return parts[: len(floor_parts)] == floor_parts
 
     def _read_floor_manifest(self) -> FloorFreshnessManifestV2:
         root = self._root.resolve()
-        floor_root = (self._root / PLAYBILL_FLOOR_PATH).resolve()
+        floor_root = (self._root / FLOOR_PATH).resolve()
         if not floor_root.is_relative_to(root):
             raise CoverageError("floor output escapes the workspace root")
         path = floor_root / "manifest.json"

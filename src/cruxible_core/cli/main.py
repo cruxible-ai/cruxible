@@ -13,8 +13,8 @@ from typing import TYPE_CHECKING, Any
 import click
 
 from cruxible_client.authoring.context import (
-    PlaybillContextResolutionError,
-    resolve_playbill_context,
+    ContextResolutionError,
+    resolve_context,
 )
 from cruxible_client.contracts.repairs import RepairOperation, render_served_repair
 from cruxible_core.cli.context import load_cli_context
@@ -376,23 +376,23 @@ def _group(
 # enumerate the full surface without importing any domain command module.
 CLI_COMMANDS: dict[str, LazyCommandSpec] = {
     "playbill": _group(
-        "Govern state through Playbill's proposal and acceptance ledger.",
+        "Govern state through Cruxible's proposal and acceptance ledger.",
         {
             "host": _group(
-                "Allocate daemon-owned Playbill hosts.",
+                "Allocate daemon-owned Cruxible hosts.",
                 {
                     "create": _command(
-                        "playbill", "create_host", "Allocate an empty host for Playbill."
+                        "playbill", "create_host", "Allocate an empty host for Cruxible."
                     ),
                     "show": _command(
-                        "playbill", "show_host", "Inspect one registered Playbill host."
+                        "playbill", "show_host", "Inspect one registered Cruxible host."
                     ),
                 },
                 module="playbill",
                 attr="host_group",
             ),
             "workspace": _group(
-                "Bind local configuration to a registered Playbill host.",
+                "Bind local configuration to a registered Cruxible host.",
                 {
                     "attach": _command(
                         "playbill",
@@ -413,7 +413,7 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 module="playbill",
                 attr="workspace_group",
             ),
-            "init": _command("playbill", "init_playbill", "Bootstrap Playbill state."),
+            "init": _command("playbill", "init_playbill", "Bootstrap Cruxible state."),
             "whoami": _command(
                 "playbill", "whoami", "Explain the active writer identity and permissions."
             ),
@@ -977,7 +977,7 @@ def cli(
         return
     try:
         stored = load_cli_context()
-        resolved = resolve_playbill_context(
+        resolved = resolve_context(
             server_url=server_url,
             server_socket=server_socket,
             instance_id=instance_id,
@@ -988,7 +988,7 @@ def cli(
             server_url=resolved.server_url,
             server_socket=resolved.server_socket,
         )
-    except (ConfigError, PlaybillContextResolutionError) as exc:
+    except (ConfigError, ContextResolutionError) as exc:
         raise click.UsageError(str(exc)) from exc
 
     for warning in resolved.warnings:

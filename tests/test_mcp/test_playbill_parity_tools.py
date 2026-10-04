@@ -15,8 +15,8 @@ from cruxible_core.mcp.tool_prompts import tool_description
 from tests.core_support._claim_type_support import claim_type_input_example
 
 
-def _coordinate() -> contracts.PlaybillAcceptedCoordinate:
-    return contracts.PlaybillAcceptedCoordinate(
+def _coordinate() -> contracts.AcceptedCoordinate:
+    return contracts.AcceptedCoordinate(
         git_oid="1" * 40,
         semantic_root="sha256:" + "2" * 64,
         generation_root="sha256:" + "3" * 64,
@@ -41,11 +41,11 @@ def test_governed_query_example_has_mcp_client_factory_parity() -> None:
 
 
 def test_public_example_vocabulary_exactly_matches_authoring_input_examples() -> None:
-    assert get_args(contracts.PlaybillAuthoringExampleName) == get_args(AuthoringExampleName)
+    assert get_args(contracts.AuthoringExampleName) == get_args(AuthoringExampleName)
 
 
 def test_claim_type_uses_typed_proposal_input_not_a_coordinator_example() -> None:
-    assert "claim-type" not in get_args(contracts.PlaybillAuthoringExampleName)
+    assert "claim-type" not in get_args(contracts.AuthoringExampleName)
     assert "ClaimType" not in tool_description("cruxible_playbill_authoring_example")
     description = tool_description("cruxible_playbill_propose_claim_type")
     assert "ClaimTypeInputRecord" in description
@@ -97,15 +97,15 @@ def test_flow_a_bind_reads_workspace_and_sends_only_the_lowered_payload(
     captured: dict[str, Any] = {}
 
     class StubClient:
-        def compile_playbill_authoring(
+        def compile_authoring(
             self,
             instance_id: str,
             *,
             payload: dict[str, Any],
             intent_id: str | None,
-        ) -> contracts.PlaybillAuthoringPreflightResult:
+        ) -> contracts.AuthoringPreflightResult:
             captured.update(payload)
-            return contracts.PlaybillAuthoringPreflightResult(
+            return contracts.AuthoringPreflightResult(
                 verdict="passed",
                 certificate={},
                 frontier={},
@@ -133,33 +133,33 @@ def test_readmit_and_migration_delegate_to_existing_client_routes(
     calls: list[str] = []
 
     class StubClient:
-        def readmit_playbill_proposal(
+        def readmit_proposal(
             self, instance_id: str, proposal_id: str, **_control: object
-        ) -> contracts.PlaybillProposalReadmitResult:
+        ) -> contracts.ProposalReadmitResult:
             calls.append(f"readmit:{proposal_id}")
-            inspection = contracts.PlaybillProposalInspection(
+            inspection = contracts.ProposalInspection(
                 proposal={}, accepted_coordinate=_coordinate()
             )
-            return contracts.PlaybillProposalReadmitResult(
+            return contracts.ProposalReadmitResult(
                 tag="playbill-proposal-readmit-result-v1",
                 source_proposal_id=proposal_id,
                 operation_digest="sha256:" + "5" * 64,
                 proposal=inspection,
             )
 
-        def migrate_playbill_claim_type(
+        def migrate_claim_type(
             self,
             instance_id: str,
             *,
             request: dict[str, Any],
-        ) -> contracts.PlaybillClaimTypeMigrationResultV1:
+        ) -> contracts.ClaimTypeMigrationResultV1:
             calls.append(f"migrate:{request['tag']}")
-            return contracts.PlaybillClaimTypeMigrationResultV1(
+            return contracts.ClaimTypeMigrationResultV1(
                 tag="playbill-claim-type-migration-result-v1",
                 operation_digest="sha256:" + "6" * 64,
                 semantic_delta=[],
                 dependents=[],
-                proposal=contracts.PlaybillProposalInspection(
+                proposal=contracts.ProposalInspection(
                     proposal={}, accepted_coordinate=_coordinate()
                 ),
             )

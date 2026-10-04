@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+from cruxible_core.service.authoring.documents import AcceptedCoordinate
 from cruxible_core.service.claims.subjects import (
     service_get_playbill_subject,
 )
@@ -19,7 +19,7 @@ from tests.core_support._knowledge_loop_support import (
 
 
 def _explanations(instance, coordinate) -> dict[str, list[dict[str, object]]]:
-    at = PlaybillAcceptedCoordinate.from_internal(coordinate)
+    at = AcceptedCoordinate.from_internal(coordinate)
     with instance.bind_accepted_projection(coordinate) as projection:
         identities = [
             str(identity)

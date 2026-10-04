@@ -11,10 +11,10 @@ from typing import Any
 
 import pytest
 
-from cruxible_client.contracts.get_reads import PlaybillGetRequest
+from cruxible_client.contracts.get_reads import GetRequest
 from cruxible_core.service.discovery.get import service_playbill_get
 from cruxible_core.service.discovery.orient import service_playbill_orient
-from cruxible_core.service.list_pages import PlaybillListCursorMismatch
+from cruxible_core.service.list_pages import ListCursorMismatch
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.test_service.test_operational_get import line_world, prediction_world  # noqa: F401
 
@@ -26,7 +26,7 @@ def _suggested_get(instance: Any, call: str) -> None:
 
     assert call.startswith('cruxible_playbill_get(ref="'), call
     ref = call.split('ref="', 1)[1].split('"', 1)[0]
-    service_playbill_get(instance, request=PlaybillGetRequest(ref=ref), access=_ACCESS)
+    service_playbill_get(instance, request=GetRequest(ref=ref), access=_ACCESS)
 
 
 def test_the_lines_and_mandates_sections_carry_arm_state_and_validity(line_world) -> None:  # type: ignore[no-untyped-def]  # noqa: F811
@@ -113,7 +113,7 @@ def test_captures_page_by_key_and_refuse_a_foreign_cursor(prediction_world) -> N
     assert walked == [item.capture for item in whole.captures]
 
     first = service_playbill_orient(instance, section="captures", limit=1)
-    with pytest.raises(PlaybillListCursorMismatch):
+    with pytest.raises(ListCursorMismatch):
         service_playbill_orient(instance, section="runs", cursor=first.next_cursor)
 
 

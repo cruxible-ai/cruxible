@@ -26,7 +26,7 @@ from cruxible_client.contracts.documents import (
     document_path,
     render_document,
 )
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 
 SourceCatalogKind = Literal["portable", "local", "merged"]
@@ -264,27 +264,25 @@ def merge_source_catalogs(
     """Merge a portable catalog with an explicit local override by source name only."""
 
     if portable.catalog_kind != "portable":
-        raise PlaybillFormatError("the base source catalog must be portable")
+        raise FormatError("the base source catalog must be portable")
     if local is None:
         return portable
     if local.catalog_kind != "local":
-        raise PlaybillFormatError("source-catalog overlay must be local")
+        raise FormatError("source-catalog overlay must be local")
     merged = {_entry_key(entry): entry for entry in portable.entries}
     for entry in local.entries:
         key = _entry_key(entry)
         previous = merged.get(key)
         if previous is not None:
             if not isinstance(previous, type(entry)):
-                raise PlaybillFormatError("local catalog ambiguously changes an entry kind")
+                raise FormatError("local catalog ambiguously changes an entry kind")
             if isinstance(entry, SourceCatalogEntry):
                 assert isinstance(previous, SourceCatalogEntry)
                 if (
                     previous.document_id != entry.document_id
                     or previous.compiler_profile != entry.compiler_profile
                 ):
-                    raise PlaybillFormatError(
-                        "local catalog ambiguously changes a source target/profile"
-                    )
+                    raise FormatError("local catalog ambiguously changes a source target/profile")
         merged[key] = entry
     try:
         return SourceCatalog(
@@ -292,7 +290,7 @@ def merge_source_catalogs(
             entries=tuple(sorted(merged.values(), key=_entry_sort_key)),
         )
     except ValueError as exc:
-        raise PlaybillFormatError("merged source catalogs are ambiguous") from exc
+        raise FormatError("merged source catalogs are ambiguous") from exc
 
 
 def _source_catalog_entries_digest(
@@ -333,7 +331,7 @@ def compile_source_catalog(
                 root for root in aliases.values() if locator == root or root in locator.parents
             )
             if len(candidates) != 1:
-                raise PlaybillFormatError(
+                raise FormatError(
                     "absolute source locator must belong to exactly one configured local root"
                 )
             root = candidates[0]
@@ -343,9 +341,7 @@ def compile_source_catalog(
                 repository if entry.root_alias is None else aliases.get(entry.root_alias)
             )
             if resolved_root is None:
-                raise PlaybillFormatError(
-                    f"source root alias is not configured: {entry.root_alias}"
-                )
+                raise FormatError(f"source root alias is not configured: {entry.root_alias}")
             root = resolved_root
             relative = entry.locator
         path = _resolve_declared_file(root, relative)
@@ -427,7 +423,7 @@ def compile_source_catalog(
 
 
 def content_digest_bytes(content: bytes) -> str:
-    """Return the exact Playbill CAS spelling for local source bytes."""
+    """Return the exact Cruxible CAS spelling for local source bytes."""
 
     return CasDigest(hashlib.sha256(content).hexdigest()).tagged
 
@@ -451,7 +447,7 @@ def _proposed_tree_digest(documents: tuple[CompiledSourceDocument, ...]) -> str:
 
 def _trusted_root(path: Path, *, label: str) -> Path:
     if path.is_symlink() or not path.is_dir():
-        raise PlaybillFormatError(f"{label} must be an existing nonsymlink directory")
+        raise FormatError(f"{label} must be an existing nonsymlink directory")
     return path.resolve(strict=True)
 
 
@@ -461,16 +457,16 @@ def _resolve_declared_file(root: Path, locator: str) -> Path:
     for part in PurePosixPath(locator).parts:
         cursor = cursor / part
         if cursor.is_symlink():
-            raise PlaybillFormatError(f"source catalog refuses symlink locator: {locator}")
+            raise FormatError(f"source catalog refuses symlink locator: {locator}")
     try:
         resolved = candidate.resolve(strict=True)
     except OSError as exc:
-        raise PlaybillFormatError(f"declared source is missing: {locator}") from exc
+        raise FormatError(f"declared source is missing: {locator}") from exc
     if resolved == root or root not in resolved.parents:
-        raise PlaybillFormatError(f"declared source escapes its configured root: {locator}")
+        raise FormatError(f"declared source escapes its configured root: {locator}")
     metadata = os.lstat(resolved)
     if not resolved.is_file() or os.path.islink(resolved) or metadata.st_nlink < 1:
-        raise PlaybillFormatError(f"declared source must be a regular file: {locator}")
+        raise FormatError(f"declared source must be a regular file: {locator}")
     return resolved
 
 
@@ -481,11 +477,11 @@ def _read_stable_file(path: Path) -> bytes:
     try:
         descriptor = os.open(path, flags)
     except OSError as exc:
-        raise PlaybillFormatError(f"declared source cannot be opened safely: {path.name}") from exc
+        raise FormatError(f"declared source cannot be opened safely: {path.name}") from exc
     try:
         before = os.fstat(descriptor)
         if not stat.S_ISREG(before.st_mode):
-            raise PlaybillFormatError(f"declared source must be a regular file: {path.name}")
+            raise FormatError(f"declared source must be a regular file: {path.name}")
         with os.fdopen(descriptor, "rb", closefd=False) as handle:
             content = handle.read()
         after = os.fstat(descriptor)
@@ -506,7 +502,7 @@ def _read_stable_file(path: Path) -> bytes:
         after.st_ctime_ns,
     )
     if stable_before != stable_after or len(content) != after.st_size:
-        raise PlaybillFormatError(f"declared source changed while compiling: {path.name}")
+        raise FormatError(f"declared source changed while compiling: {path.name}")
     return content
 
 

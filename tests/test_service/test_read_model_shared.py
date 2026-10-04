@@ -13,12 +13,12 @@ from typing import Any
 
 import pytest
 
-from cruxible_client.contracts.compact_query import PlaybillQueryRequest, PlaybillQueryResult
+from cruxible_client.contracts.compact_query import QueryRequest, QueryResultRecord
 from cruxible_client.contracts.get_reads import (
-    PlaybillGetClaimCard,
-    PlaybillGetRequest,
-    PlaybillGetResult,
-    PlaybillGetSubjectCard,
+    GetClaimCard,
+    GetRequest,
+    GetResult,
+    GetSubjectCard,
 )
 from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
 from cruxible_core.service.discovery.compact_query import service_playbill_query
@@ -48,7 +48,7 @@ def instance(tmp_path: Path) -> Any:
 def test_every_verb_names_the_same_capture_contracts(instance: Any) -> None:
     query_row = service_playbill_query(
         instance,
-        request=PlaybillQueryRequest.model_validate(
+        request=QueryRequest.model_validate(
             {"kind": "ClaimType", "where": [{"field": "namespace", "eq": SUBJECT_KIND}]}
         ),
     ).rows[0]
@@ -60,7 +60,7 @@ def test_every_verb_names_the_same_capture_contracts(instance: Any) -> None:
     )
     card = service_playbill_get(
         instance,
-        request=PlaybillGetRequest(ref=f"ClaimType:{PREDICATE}", evaluation_time=_WHEN),
+        request=GetRequest(ref=f"ClaimType:{PREDICATE}", evaluation_time=_WHEN),
         access=_ACCESS,
     ).card
     assert card is not None
@@ -79,8 +79,8 @@ def test_query_rows_and_get_cards_carry_the_same_flags_for_a_held_conflict(
     from datetime import timedelta
 
     from cruxible_client.contracts.get_reads import (
-        PlaybillGetClaimCard,
-        PlaybillGetSubjectCard,
+        GetClaimCard,
+        GetSubjectCard,
     )
     from tests.core_support._candidate_support import submit_query_definition_candidate
     from tests.core_support._knowledge_loop_support import (
@@ -119,14 +119,14 @@ def test_query_rows_and_get_cards_carry_the_same_flags_for_a_held_conflict(
     def get_card(ref: str) -> Any:
         return service_playbill_get(
             instance,
-            request=PlaybillGetRequest(ref=ref, evaluation_time=LATER),
+            request=GetRequest(ref=ref, evaluation_time=LATER),
             access=_ACCESS,
         ).card
 
     def query_row(**fields: Any) -> dict[str, Any]:
         result = service_playbill_query(
             instance,
-            request=PlaybillQueryRequest.model_validate({**fields, "evaluation_time": LATER}),
+            request=QueryRequest.model_validate({**fields, "evaluation_time": LATER}),
         )
         return next(
             row for row in result.rows if row.get("subject_id", row.get("item_id")) == "wi-42"
@@ -134,8 +134,8 @@ def test_query_rows_and_get_cards_carry_the_same_flags_for_a_held_conflict(
 
     claim_card = get_card(first.identity.name)
     subject_card = get_card(f"{SUBJECT_KIND}/wi-42")
-    assert isinstance(claim_card, PlaybillGetClaimCard)
-    assert isinstance(subject_card, PlaybillGetSubjectCard)
+    assert isinstance(claim_card, GetClaimCard)
+    assert isinstance(subject_card, GetSubjectCard)
     assert "unsure_hold" in claim_card.flags
 
     compact = query_row(kind=SUBJECT_KIND, select=["status"])
@@ -239,8 +239,8 @@ def test_get_cards_name_predicates_by_the_shared_rule_as_orient_does(
         render_claim_type,
     )
     from cruxible_client.contracts.get_reads import (
-        PlaybillGetClaimCard,
-        PlaybillGetSubjectCard,
+        GetClaimCard,
+        GetSubjectCard,
     )
     from cruxible_core.service.discovery.field_names import resolve_field
     from tests.core_support._claim_authoring_support import service_propose_playbill_claim
@@ -297,10 +297,10 @@ def test_get_cards_name_predicates_by_the_shared_rule_as_orient_does(
 
     subject = service_playbill_get(
         instance,
-        request=PlaybillGetRequest(ref=f"{SUBJECT_KIND}/wi-42", evaluation_time=_WHEN),
+        request=GetRequest(ref=f"{SUBJECT_KIND}/wi-42", evaluation_time=_WHEN),
         access=_ACCESS,
     ).card
-    assert isinstance(subject, PlaybillGetSubjectCard)
+    assert isinstance(subject, GetSubjectCard)
     orient_kind = next(
         item for item in service_playbill_orient(instance).kinds if item.kind == SUBJECT_KIND
     )
@@ -321,10 +321,10 @@ def test_get_cards_name_predicates_by_the_shared_rule_as_orient_does(
         assert isinstance(row.claim, str)
         claim = service_playbill_get(
             instance,
-            request=PlaybillGetRequest(ref=row.claim, evaluation_time=_WHEN),
+            request=GetRequest(ref=row.claim, evaluation_time=_WHEN),
             access=_ACCESS,
         ).card
-        assert isinstance(claim, PlaybillGetClaimCard)
+        assert isinstance(claim, GetClaimCard)
         assert claim.predicate == advertised[claim.predicate_full] == row.predicate
 
 
@@ -345,18 +345,18 @@ def exact_world(tmp_path_factory: pytest.TempPathFactory) -> tuple[Any, dict[str
 
 def _exact_get(
     instance: Any, ref: str, *, access: BodyAccessContext = _ACCESS, **fields: Any
-) -> PlaybillGetResult:
+) -> GetResult:
     return service_playbill_get(
         instance,
-        request=PlaybillGetRequest(ref=ref, evaluation_time=_WHEN, **fields),
+        request=GetRequest(ref=ref, evaluation_time=_WHEN, **fields),
         access=access,
     )
 
 
-def _exact_query(instance: Any, **fields: Any) -> PlaybillQueryResult:
+def _exact_query(instance: Any, **fields: Any) -> QueryResultRecord:
     return service_playbill_query(
         instance,
-        request=PlaybillQueryRequest.model_validate({"evaluation_time": _WHEN, **fields}),
+        request=QueryRequest.model_validate({"evaluation_time": _WHEN, **fields}),
     )
 
 
@@ -365,39 +365,39 @@ def test_get_and_query_show_an_exact_content_value_as_its_text(
 ) -> None:
     from cruxible_client.contracts.get_reads import (
         GET_SUMMARY_TEXT_MAX_CHARS,
-        PlaybillExactContentRef,
-        PlaybillGetTruncatedText,
+        ExactContentRef,
+        GetTruncatedText,
     )
 
     instance, seeded = exact_world
     ruling, long_ruling, binary = seeded["wi-42"], seeded["wi-long"], seeded["wi-bin"]
     text = _RULING.decode()
-    cut = PlaybillGetTruncatedText(
+    cut = GetTruncatedText(
         value=_LONG_RULING.decode()[:GET_SUMMARY_TEXT_MAX_CHARS], length=len(_LONG_RULING)
     )
-    marker = PlaybillExactContentRef(
+    marker = ExactContentRef(
         exact_content="binary", content_digest=binary.digest, length=len(_BINARY)
     )
 
     # get: the Claim card and the Subject row read the text, the digest beside it.
     claim = _exact_get(instance, ruling.claim_id).card
-    assert isinstance(claim, PlaybillGetClaimCard)
+    assert isinstance(claim, GetClaimCard)
     assert (claim.value, claim.content_digest) == (text, ruling.digest)
     subject = _exact_get(instance, ruling.subject).card
-    assert isinstance(subject, PlaybillGetSubjectCard)
+    assert isinstance(subject, GetSubjectCard)
     ((row),) = subject.claims
     assert (row.claim, row.value, row.content_digest) == (ruling.claim_id, text, ruling.digest)
 
     # A long value is cut on the card by the card rule; evidence reads it whole.
     long_card = _exact_get(instance, long_ruling.claim_id).card
-    assert isinstance(long_card, PlaybillGetClaimCard) and long_card.value == cut
+    assert isinstance(long_card, GetClaimCard) and long_card.value == cut
     evidence = _exact_get(instance, long_ruling.claim_id, detail="evidence").evidence
     assert evidence is not None
     assert (evidence.value, evidence.content_digest) == (_LONG_RULING.decode(), long_ruling.digest)
 
     # Bytes that are not UTF-8 text show as a typed marker, never an error.
     binary_card = _exact_get(instance, binary.claim_id).card
-    assert isinstance(binary_card, PlaybillGetClaimCard)
+    assert isinstance(binary_card, GetClaimCard)
     assert binary_card.value == marker and binary_card.content_digest == binary.digest
 
     # History reads each revision's value the same way.
@@ -433,7 +433,7 @@ def test_get_and_query_show_an_exact_content_value_as_its_text(
             # Query stays values-first: the digest is get's, not a row key.
             assert not any("digest" in key for key in row_of)
         card = _exact_get(instance, seeded_claim.subject).card
-        assert isinstance(card, PlaybillGetSubjectCard)
+        assert isinstance(card, GetSubjectCard)
         assert card.claims[0].content_digest == seeded_claim.digest
         assert card.claims[0].value == compact[seeded_claim.subject]["status"]
         assert card.claims[0].flags == tuple(compact[seeded_claim.subject]["flags"])
@@ -465,7 +465,7 @@ def test_a_caller_who_may_not_read_bodies_still_reads_exact_content_as_text(
     reader = BodyAccessContext(principal_id="reader", can_read_body=False)
 
     card = _exact_get(instance, ruling.claim_id, access=reader).card
-    assert isinstance(card, PlaybillGetClaimCard)
+    assert isinstance(card, GetClaimCard)
     assert (card.value, card.content_digest) == (text, ruling.digest)
     history = _exact_get(instance, ruling.claim_id, access=reader, detail="history").history
     assert history is not None
@@ -487,7 +487,7 @@ def test_query_reserves_no_digest_row_key() -> None:
 def test_query_cuts_every_long_string_by_the_card_rule(tmp_path: Path) -> None:
     from cruxible_client.contracts.get_reads import (
         GET_SUMMARY_TEXT_MAX_CHARS,
-        PlaybillGetTruncatedText,
+        GetTruncatedText,
     )
     from tests.core_support._claim_authoring_support import service_propose_playbill_claim
     from tests.core_support._knowledge_loop_support import activate, authoring, subject_shell
@@ -509,9 +509,7 @@ def test_query_cuts_every_long_string_by_the_card_rule(tmp_path: Path) -> None:
             timestamp="2026-08-16T20:10:00.000000Z",
         ),
     )
-    cut = PlaybillGetTruncatedText(
-        value=long_note[:GET_SUMMARY_TEXT_MAX_CHARS], length=len(long_note)
-    )
+    cut = GetTruncatedText(value=long_note[:GET_SUMMARY_TEXT_MAX_CHARS], length=len(long_note))
 
     rows = {
         row["subject_id"]: row
@@ -528,7 +526,7 @@ def test_query_cuts_every_long_string_by_the_card_rule(tmp_path: Path) -> None:
 
     # get agrees: the card is cut the same way, evidence reads it whole.
     card = _exact_get(instance, f"{SUBJECT_KIND}/wi-44").card
-    assert isinstance(card, PlaybillGetSubjectCard) and card.claims[0].value == cut
+    assert isinstance(card, GetSubjectCard) and card.claims[0].value == cut
     assert isinstance(card.claims[0].claim, str)
     evidence = _exact_get(instance, card.claims[0].claim, detail="evidence").evidence
     assert evidence is not None and evidence.value == long_note
@@ -626,7 +624,7 @@ def test_two_spans_of_one_body_are_two_values_on_query_and_get(
     assert "contested" in rows["wi-42"]["flags"]
 
     card = _exact_get(instance, first.subject).card
-    assert isinstance(card, PlaybillGetSubjectCard)
+    assert isinstance(card, GetSubjectCard)
     (row,) = card.claims
     assert sorted(row.value) == ["first", "second"]
     assert "contested" in row.flags
@@ -728,9 +726,7 @@ def test_the_compact_coordinate_a_get_prints_is_a_valid_at_for_every_verb(
     earlier = history[-2]
     compact = service_playbill_get(
         instance,
-        request=PlaybillGetRequest(
-            ref=f"ClaimType:{PREDICATE}", at=earlier.oid, evaluation_time=_WHEN
-        ),
+        request=GetRequest(ref=f"ClaimType:{PREDICATE}", at=earlier.oid, evaluation_time=_WHEN),
         access=_ACCESS,
     ).coordinate.git_oid
     assert len(compact) == 12 and earlier.oid.startswith(compact)
@@ -738,13 +734,13 @@ def test_the_compact_coordinate_a_get_prints_is_a_valid_at_for_every_verb(
 
     again = service_playbill_get(
         instance,
-        request=PlaybillGetRequest(ref=f"ClaimType:{PREDICATE}", at=compact, evaluation_time=_WHEN),
+        request=GetRequest(ref=f"ClaimType:{PREDICATE}", at=compact, evaluation_time=_WHEN),
         access=_ACCESS,
     )
     assert again.coordinate.git_oid == compact
     queried = service_playbill_query(
         instance,
-        request=PlaybillQueryRequest.model_validate(
+        request=QueryRequest.model_validate(
             {"kind": "ClaimType", "at": compact, "evaluation_time": EVALUATION_TIME}
         ),
     )
@@ -773,12 +769,12 @@ def test_a_short_unknown_or_ambiguous_at_refuses_with_a_coded_read_refusal(
         for read in (
             lambda: service_playbill_get(
                 instance,
-                request=PlaybillGetRequest(ref=f"ClaimType:{PREDICATE}", at=at),
+                request=GetRequest(ref=f"ClaimType:{PREDICATE}", at=at),
                 access=_ACCESS,
             ),
             lambda: service_playbill_query(
                 instance,
-                request=PlaybillQueryRequest.model_validate({"kind": "ClaimType", "at": at}),
+                request=QueryRequest.model_validate({"kind": "ClaimType", "at": at}),
             ),
         ):
             with pytest.raises(ReadRefusalError) as same:

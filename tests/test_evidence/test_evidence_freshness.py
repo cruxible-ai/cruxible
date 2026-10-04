@@ -37,7 +37,7 @@ from cruxible_core.service.claims.claims import (
     PlaybillClaimExplanationV3,
     service_explain_playbill_claim,
 )
-from cruxible_core.service.discovery.next import PlaybillNextRequestV1, service_playbill_next
+from cruxible_core.service.discovery.next import NextRequestV1, service_playbill_next
 from cruxible_core.service.evidence.evidence import (
     PlaybillClaimVerdictQueryV2,
     service_evaluate_playbill_claim_verdict,
@@ -186,7 +186,7 @@ def test_v3_freshness_succeeds_service_wires_and_next_queue(tmp_path: Path) -> N
 
     expiring = service_playbill_next(
         instance,
-        request=PlaybillNextRequestV1(
+        request=NextRequestV1(
             evaluation_time=before_expiry,
             access_profile=_access(),
             expiring_within=CanonicalDuration(microseconds=2_000_000),
@@ -194,7 +194,7 @@ def test_v3_freshness_succeeds_service_wires_and_next_queue(tmp_path: Path) -> N
     )
     stale = service_playbill_next(
         instance,
-        request=PlaybillNextRequestV1(
+        request=NextRequestV1(
             evaluation_time=at_expiry,
             access_profile=_access(),
         ),

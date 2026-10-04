@@ -132,7 +132,7 @@ def isolate_workspace_bindings(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
-    """No test reads a Playbill workspace binding it did not create.
+    """No test reads a Cruxible workspace binding it did not create.
 
     Workspace discovery walks up from the current directory to the enclosing Git
     checkout looking for `.playbill/coverage.json`, and prefers what it finds

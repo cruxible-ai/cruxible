@@ -1,4 +1,4 @@
-"""PC-G-S1a deterministic floor projection from accepted Playbill state."""
+"""PC-G-S1a deterministic floor projection from accepted Cruxible state."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.service.authoring.documents import (
-    PlaybillAcceptedCoordinate,
+    AcceptedCoordinate,
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
 )
@@ -122,7 +122,7 @@ def test_floor_carries_a_card_per_claim_type_and_a_profile_per_subject(
 
 def test_manifest_binds_every_file_to_the_accepted_coordinate(tmp_path: Path) -> None:
     instance, _owner = _instance_with_query(tmp_path)
-    accepted = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    accepted = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
 
     floor = service_export_playbill_floor(instance)
 
@@ -166,7 +166,7 @@ def test_v2_json_render_is_pretty_stable_and_v1_spelling_is_unchanged() -> None:
 
 
 def test_floor_client_envelope_defaults_to_v2_and_still_reads_v1() -> None:
-    coordinate = contracts.PlaybillAcceptedCoordinate(
+    coordinate = contracts.AcceptedCoordinate(
         git_oid="1" * 64,
         semantic_root="sha256:" + "2" * 64,
         generation_root="sha256:" + "3" * 64,
@@ -174,7 +174,7 @@ def test_floor_client_envelope_defaults_to_v2_and_still_reads_v1() -> None:
     )
 
     assert (
-        contracts.PlaybillFloorExport(
+        contracts.FloorExport(
             coordinate=coordinate,
             manifest={},
             files=[],
@@ -182,7 +182,7 @@ def test_floor_client_envelope_defaults_to_v2_and_still_reads_v1() -> None:
         == "playbill-floor-export-v2"
     )
     assert (
-        contracts.PlaybillFloorExport(
+        contracts.FloorExport(
             tag="playbill-floor-export-v1",
             coordinate=coordinate,
             manifest={},
@@ -234,7 +234,7 @@ def test_profile_states_the_accepted_claim_value_for_its_subject(tmp_path: Path)
 
 def test_floor_is_pinned_to_the_requested_accepted_coordinate(tmp_path: Path) -> None:
     instance, _owner = _instance_with_query(tmp_path)
-    accepted = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    accepted = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
 
     floor = service_export_playbill_floor(instance, at=accepted)
 
@@ -263,7 +263,7 @@ def test_floor_carries_its_coverage_boundary_and_enumerates_it(tmp_path: Path) -
     """§11.7: the exported floor is half the reference surface, boundary included."""
 
     instance, _owner = _instance_with_query(tmp_path)
-    accepted = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    accepted = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
 
     floor = service_export_playbill_floor(instance)
 
@@ -315,7 +315,7 @@ def test_procedure_floor_card_keeps_runnability_governance_and_track_record_sepa
     assert card.governance.lifecycle.state == "live"
     assert card.governance.lifecycle.state == "live"
     assert card.track_record == ()
-    assert card.accepted_coordinate == PlaybillAcceptedCoordinate.from_internal(
+    assert card.accepted_coordinate == AcceptedCoordinate.from_internal(
         instance.accepted_coordinate()
     )
     assert PROCEDURE_CARD_PATH in {item.path for item in _manifest(floor).files}

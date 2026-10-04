@@ -15,12 +15,10 @@ def test_cli_audit_delegates_scope_and_renders_empty_patrol(
     calls: list[dict[str, object]] = []
 
     class StubClient:
-        def audit_playbill(
-            self, _instance_id: str, **values: object
-        ) -> contracts.PlaybillAuditResult:
+        def audit(self, _instance_id: str, **values: object) -> contracts.AuditResult:
             calls.append(values)
-            return contracts.PlaybillAuditResult(
-                coordinate=contracts.PlaybillAcceptedCoordinate(
+            return contracts.AuditResult(
+                coordinate=contracts.AcceptedCoordinate(
                     git_oid="1" * 64,
                     semantic_root="sha256:" + "2" * 64,
                     generation_root="sha256:" + "3" * 64,
@@ -31,9 +29,9 @@ def test_cli_audit_delegates_scope_and_renders_empty_patrol(
                 operational_input_head_digest="sha256:" + "5" * 64,
                 audited_through_generation=7,
                 rows=[],
-                coverage=contracts.PlaybillAuditCoverage(
+                coverage=contracts.AuditCoverage(
                     access_permitted=True,
-                    declared_scope=contracts.PlaybillAuditScope(
+                    declared_scope=contracts.AuditScope(
                         claim_type_identities=list(values["claim_type_identities"]),
                         subject_kinds=list(values["subject_kinds"]),
                     ),

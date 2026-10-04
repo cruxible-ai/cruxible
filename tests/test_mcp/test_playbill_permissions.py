@@ -1,4 +1,4 @@
-"""Transport-tier and curation laws for the Playbill MCP surface."""
+"""Transport-tier and curation laws for the Cruxible MCP surface."""
 
 from __future__ import annotations
 

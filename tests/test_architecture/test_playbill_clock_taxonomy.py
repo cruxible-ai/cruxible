@@ -1,4 +1,4 @@
-"""Every ruled time-bearing contract/runtime field declares one Playbill clock."""
+"""Every ruled time-bearing contract/runtime field declares one Cruxible clock."""
 
 from __future__ import annotations
 

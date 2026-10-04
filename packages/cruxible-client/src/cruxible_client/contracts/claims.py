@@ -79,7 +79,7 @@ from cruxible_client.contracts.declared_blocks import (
     projection_window_intersecting,
 )
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionTrace,
@@ -101,7 +101,7 @@ from cruxible_client.contracts.subjects import AcceptedSubject
 _CLAIM_ID_RE = re.compile(r"^CLM-[0-9a-f]{32}$")
 
 
-class ClaimFormatError(PlaybillFormatError):
+class ClaimFormatError(FormatError):
     """A Claim envelope, path, or frozen semantic preimage is invalid."""
 
 
@@ -1432,7 +1432,7 @@ def _copy_capture_admitted_by_rule(
 
 
 @dataclass(frozen=True)
-class CaptureEvidenceKindAdmission:
+class CaptureEvidenceKindEvaluation:
     evidence_kind: str
     trace: ClaimEvidenceAdmissionTrace
 
@@ -1445,7 +1445,7 @@ def evaluate_capture_evidence_admissions(
     capture_contract: AcceptedCaptureContract,
     envelope: CaptureEnvelopeAny,
     verified_attestations: tuple[VerifiedClaimAttestationV1, ...],
-) -> tuple[CaptureEvidenceKindAdmission, ...]:
+) -> tuple[CaptureEvidenceKindEvaluation, ...]:
     """Run the shared evidence-admission evaluator for every declared evidence kind."""
 
     relevant_spans = tuple(
@@ -1482,7 +1482,7 @@ def evaluate_capture_evidence_admissions(
         attestation_grade = "verified_principal"
     else:
         attestation_grade = "none"
-    decisions: list[CaptureEvidenceKindAdmission] = []
+    decisions: list[CaptureEvidenceKindEvaluation] = []
     for kind in capture_contract.contract.evidence_kinds:
         matching_rules = tuple(
             rule
@@ -1496,7 +1496,7 @@ def evaluate_capture_evidence_admissions(
         )
         source_bound = any(subject_binding_by_rule[rule.rule_id] for rule in matching_rules)
         decisions.append(
-            CaptureEvidenceKindAdmission(
+            CaptureEvidenceKindEvaluation(
                 evidence_kind=kind,
                 trace=evaluate_claim_evidence_admission_trace(
                     claim_type.evidence_admission_policy,
@@ -1743,7 +1743,7 @@ def _named_capture_contract(store: CaptureObjectStoreProtocol, digest: str) -> s
             access=BodyAccessContext(principal_id="playbill-compiler", can_read_body=True),
         )
         return parse_capture_envelope(content).capture_contract_digest
-    except (PlaybillFormatError, ValueError):
+    except (FormatError, ValueError):
         # The same failures verification treats as "this contract does not verify".
         return None
 
@@ -2050,7 +2050,7 @@ def evaluate_claim_law(
                     (accepted_coordinate,)
                 )
                 if referent_coordinate not in allowed_coordinates:
-                    raise PlaybillFormatError(
+                    raise FormatError(
                         "ClaimAttestationV1 referent coordinate is not proven accepted"
                     )
                 verified_attestations.append(
@@ -2075,7 +2075,7 @@ def evaluate_claim_law(
                         ),
                     )
                 )
-            except PlaybillFormatError as exc:
+            except FormatError as exc:
                 return _diagnostic(
                     "playbill.claim.attestation_unverified",
                     str(exc),
@@ -2311,7 +2311,7 @@ def evaluate_claim_law(
                     producer_artifact_digests=known_producer_digests,
                     producer_receipt_resolver=producer_receipt_resolver,
                 )
-            except (PlaybillFormatError, ValueError):
+            except (FormatError, ValueError):
                 continue
             envelope = candidate_envelope
             resolved_contract = contract_candidate

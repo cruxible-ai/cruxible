@@ -1,1 +1,1 @@
-"""Immutable artifacts seeded into newly initialized Playbill instances."""
+"""Immutable artifacts seeded into newly initialized Cruxible instances."""

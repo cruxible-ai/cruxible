@@ -16,7 +16,7 @@ from cruxible_client.contracts.canonical import (
     pretty_canonical_bytes,
     typed_digest,
 )
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 
 APPROVAL_POLICY_PATH = "governance/approval-policy.json"
 APPROVAL_POLICY_IDENTITY = "ApprovalPolicy:instance"
@@ -26,7 +26,7 @@ ApprovalPolicyMode = Literal[
 ]
 
 
-class ApprovalPolicyFormatError(PlaybillFormatError):
+class ApprovalPolicyFormatError(FormatError):
     """The governed approval-policy singleton is absent or malformed."""
 
 

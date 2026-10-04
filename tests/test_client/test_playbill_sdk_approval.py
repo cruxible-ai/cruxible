@@ -11,8 +11,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cruxible_client import (
     AccessProfile,
     ApprovalReviewMismatch,
+    Cruxible,
     LocalEd25519ApprovalSigner,
-    Playbill,
 )
 from cruxible_client import contracts as api
 from cruxible_client.contracts.attestations import (
@@ -48,12 +48,12 @@ class Client:
     def __init__(self, signer: Signer) -> None:
         self.signer = signer
         candidate = _candidate()
-        self.review = api.PlaybillProposalReview(
+        self.review = api.ProposalReview(
             proposal_id="proposal-one",
             candidate=candidate.model_dump(mode="json"),
             candidate_digest=candidate.candidate_digest,
             parent_semantic_root=ROOT,
-            settlement_base=api.PlaybillAcceptedCoordinate(
+            settlement_base=api.AcceptedCoordinate(
                 git_oid="a" * 40,
                 semantic_root=ROOT,
                 generation_root="sha256:" + "b" * 64,
@@ -62,7 +62,7 @@ class Client:
             base_oid="a" * 40,
             complete_members=[m.model_dump(mode="json") for m in candidate.members],
             members=[
-                api.PlaybillReviewedMember(
+                api.ReviewedMember(
                     path=candidate.members[0].path,
                     artifact_kind="document",
                     disposition="replacement",
@@ -89,11 +89,11 @@ class Client:
         self.prepared = 0
         self.receipt_change = False
 
-    def review_playbill_proposal(self, *_args: object, include_body: bool):
+    def review_proposal(self, *_args: object, include_body: bool):
         assert include_body
         return self.review
 
-    def prepare_playbill_approval(self, *_args: object, signer_id: str, include_body: bool):
+    def prepare_approval(self, *_args: object, signer_id: str, include_body: bool):
         assert include_body
         self.prepared += 1
         raw = dict(
@@ -113,12 +113,12 @@ class Client:
             review=self.review.model_dump(mode="json"),
         )
         raw.update(self.changes)
-        return api.PlaybillApprovalChallenge.model_validate(raw)
+        return api.ApprovalChallenge.model_validate(raw)
 
-    def submit_playbill_approval(self, *_args: object, attestation: dict[str, Any]):
+    def submit_approval(self, *_args: object, attestation: dict[str, Any]):
         self.submitted += 1
         signed = ApprovalAttestation.model_validate(attestation)
-        return api.PlaybillApprovalReceipt(
+        return api.ApprovalReceipt(
             proposal_id="wrong" if self.receipt_change else self.review.proposal_id,
             candidate_digest=signed.payload_digest,
             signer_id=signed.signer_id,
@@ -133,7 +133,7 @@ class Client:
 def setup(tmp_path: Path):
     signer = Signer()
     client = Client(signer)
-    pb = Playbill(
+    pb = Cruxible(
         client=client,
         instance_id="instance-one",
         workspace=tmp_path,
@@ -165,7 +165,7 @@ def test_foreign_review_refuses_before_challenge_or_signer(setup, tmp_path, othe
     if other == "proposal":
         target = pb.proposal("proposal-two")
     else:
-        target = Playbill(
+        target = Cruxible(
             client=client,
             instance_id="instance-two" if other == "instance" else "instance-one",
             workspace=tmp_path,

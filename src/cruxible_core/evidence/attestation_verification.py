@@ -38,7 +38,7 @@ from cruxible_client.contracts.claims import (
     evaluate_capture_evidence_admissions,
     parse_claim,
 )
-from cruxible_client.contracts.errors import PlaybillError, PlaybillFormatError
+from cruxible_client.contracts.errors import CruxibleError, FormatError
 from cruxible_client.contracts.procedures.artifacts import (
     parse_procedure,
     procedure_artifact_digest,
@@ -74,7 +74,7 @@ def _capture_contracts(
     return result
 
 
-class ClaimAttestationRefusal(PlaybillFormatError):
+class ClaimAttestationRefusal(FormatError):
     """One typed, stable refusal from the attestation door."""
 
     def __init__(self, suffix: str, message: str) -> None:
@@ -107,7 +107,7 @@ def _accepted_claim(tree: Mapping[str, bytes], claim_id: str) -> ClaimArtifactAn
         _refuse("claim_not_found_at_referent", "signed Claim is absent at the referent")
     try:
         return parse_claim(content, path=path)
-    except (PlaybillError, ValueError) as exc:
+    except (CruxibleError, ValueError) as exc:
         raise ClaimAttestationRefusal(
             "statement_binding_mismatch", "accepted Claim does not parse canonically"
         ) from exc
@@ -120,7 +120,7 @@ def _subject_shell_digest(tree: Mapping[str, bytes], claim: ClaimArtifactAny) ->
         _refuse("statement_binding_mismatch", "Claim subject shell is absent")
     try:
         return subject_digest(parse_subject(content, path=path)).tagged
-    except (PlaybillError, ValueError) as exc:
+    except (CruxibleError, ValueError) as exc:
         raise ClaimAttestationRefusal(
             "statement_binding_mismatch", "Claim subject shell does not reproduce"
         ) from exc
@@ -135,7 +135,7 @@ def _object_shell_digest(tree: Mapping[str, bytes], claim: ClaimArtifactAny) -> 
         _refuse("statement_binding_mismatch", "Claim object shell is absent")
     try:
         return subject_digest(parse_subject(content, path=path)).tagged
-    except (PlaybillError, ValueError) as exc:
+    except (CruxibleError, ValueError) as exc:
         raise ClaimAttestationRefusal(
             "statement_binding_mismatch", "Claim object shell does not reproduce"
         ) from exc
@@ -229,7 +229,7 @@ def _new_capture_accounts(
             claim_type_content,
             path=claim_type_path(claim.statement.predicate),
         )
-    except (PlaybillError, ValueError) as exc:
+    except (CruxibleError, ValueError) as exc:
         raise ClaimAttestationRefusal(
             "capture_admission_refused",
             "Claim evidence admission inputs do not reproduce at the signed referent",
@@ -244,13 +244,13 @@ def _new_capture_accounts(
                     can_read_body=True,
                 ),
             )
-        except PlaybillError as exc:
+        except CruxibleError as exc:
             raise ClaimAttestationRefusal(
                 "capture_unavailable", "Capture is absent from CAS"
             ) from exc
         try:
             envelope = parse_capture_envelope(raw)
-        except (PlaybillError, ValueError) as exc:
+        except (CruxibleError, ValueError) as exc:
             raise ClaimAttestationRefusal("capture_invalid", "Capture envelope is invalid") from exc
         accepted = contracts.get(envelope.capture_contract_digest)
         if accepted is None and historical_capture_contract is not None:
@@ -299,7 +299,7 @@ def _new_capture_accounts(
         elif envelope.producer.kind == "Principal":
             try:
                 principals.require_active(envelope.producer.name)
-            except PlaybillError as exc:
+            except CruxibleError as exc:
                 raise ClaimAttestationRefusal(
                     "capture_provider_unresolved",
                     "Capture producer Principal is not active at the signed referent",
@@ -331,7 +331,7 @@ def _new_capture_accounts(
             )
         except ClaimAttestationRefusal:
             raise
-        except (PlaybillError, ValueError) as exc:
+        except (CruxibleError, ValueError) as exc:
             raise ClaimAttestationRefusal(
                 "capture_binding_invalid",
                 "Capture does not reproduce against its accepted contract and producer",
@@ -345,7 +345,7 @@ def _new_capture_accounts(
                 envelope=envelope,
                 verified_attestations=law.verified_attestations,
             )
-        except (PlaybillError, ValueError) as exc:
+        except (CruxibleError, ValueError) as exc:
             raise ClaimAttestationRefusal(
                 "capture_admission_refused",
                 "Capture evidence admission could not be evaluated",
@@ -431,7 +431,7 @@ def _verify_principal(
     s = attestation.statement
     try:
         principal = registry.require_active(s.attesting_principal_id)
-    except PlaybillError as exc:
+    except CruxibleError as exc:
         raise ClaimAttestationRefusal(
             f"principal_inactive_at_{phase}", f"principal inactive at {phase}"
         ) from exc
@@ -444,7 +444,7 @@ def _verify_principal(
         # was already verified against that key at the signed referent.
         try:
             verify_claim_attestation_v2_principal(attestation, principal=principal)
-        except PlaybillError as exc:
+        except CruxibleError as exc:
             raise ClaimAttestationRefusal("signature_invalid", "signature does not verify") from exc
 
 

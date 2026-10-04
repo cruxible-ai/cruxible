@@ -36,8 +36,8 @@ from cruxible_client.contracts.captures import (
     CaptureContract,
 )
 from cruxible_client.contracts.errors import (
-    PlaybillError,
-    PlaybillExecutionError,
+    CruxibleError,
+    ExecutionError,
     ProjectionIntegrityError,
 )
 from cruxible_client.contracts.procedure_mandates import (
@@ -187,7 +187,7 @@ from cruxible_client.contracts.triggers import (
 )
 from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
-    PlaybillWorkspaceAdvertisement,
+    WorkspaceAdvertisement,
 )
 from cruxible_client.contracts.workspace_file import (
     SourceReadReceipt,
@@ -281,7 +281,6 @@ from cruxible_core.providers.provider_local_runtime import (
 )
 from cruxible_core.providers.provider_outcomes import map_provider_refusal
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.procedures.nested_runs import ServedNestedProcedureRunner
 from cruxible_core.service.procedures.procedures import (
     PlaybillProcedureStateTapReader,
@@ -335,7 +334,7 @@ class _StrictProcedureSurfaceModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class ProcedureSurfaceError(PlaybillError):
+class ProcedureSurfaceError(CruxibleError):
     """A served Procedure/Line surface refusal the caller can repair.
 
     Every subclass is a REQUEST fault, never a daemon fault, so the served
@@ -593,7 +592,7 @@ class ProcedureReadinessResultV1(_StrictProcedureSurfaceModel):
     tag: Literal["playbill-procedure-readiness-result-v1"] = (
         "playbill-procedure-readiness-result-v1"
     )
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     evaluation_time: datetime
     procedure_identity: ArtifactIdentity
     procedure_artifact_digest: str
@@ -636,7 +635,7 @@ class ProcedureBindResultV2(_StrictProcedureSurfaceModel):
     accepted_digest: str
     accepted_readiness: ProcedureReadinessResultV1
     pending: ProcedurePendingSuccessor | None = None
-    workspace_advertisement: PlaybillWorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
+    workspace_advertisement: WorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
 
 
 class ProcedureRunRequest(_StrictProcedureSurfaceModel):
@@ -744,13 +743,13 @@ def load_procedure_run_config(state_root: Path) -> ProcedureRunOperationalConfig
     if not path.exists():
         return ProcedureRunOperationalConfigV1()
     if path.is_symlink() or not path.is_file():
-        raise PlaybillExecutionError(
+        raise ExecutionError(
             f"daemon procedure-run config is not a regular file: {PROCEDURE_RUN_CONFIG_PATH}"
         )
     try:
         return ProcedureRunOperationalConfigV1.model_validate(json.loads(path.read_bytes()))
     except (OSError, ValueError, ValidationError) as exc:
-        raise PlaybillExecutionError(
+        raise ExecutionError(
             f"daemon procedure-run config is malformed: {PROCEDURE_RUN_CONFIG_PATH}"
         ) from exc
 
@@ -770,8 +769,8 @@ class ProcedureRunStateV2(_StrictProcedureSurfaceModel):
     run_id: str | None
     procedure_identity: ArtifactIdentity
     procedure_artifact_digest: str
-    bound_coordinate: PlaybillAcceptedCoordinate
-    head_at_admission: PlaybillAcceptedCoordinate
+    bound_coordinate: AcceptedCoordinate
+    head_at_admission: AcceptedCoordinate
     lane: Literal["current", "replay"]
     evaluation_time: datetime
     status: Literal[
@@ -805,7 +804,7 @@ class ProcedureRunStateV2(_StrictProcedureSurfaceModel):
     terminal_egress: tuple[ProcedureTerminalEgress, ...] = ()
 
     @property
-    def coordinate(self) -> PlaybillAcceptedCoordinate:
+    def coordinate(self) -> AcceptedCoordinate:
         return self.bound_coordinate
 
 
@@ -955,7 +954,7 @@ def trigger_accepted_at(instance: PlaybillInstance, trigger: AcceptedTrigger) ->
             trigger.artifact_digest, identity=trigger.trigger.identity.qualified
         )
         if occurrence is None:
-            raise PlaybillExecutionError("Trigger version has no accepted occurrence")
+            raise ExecutionError("Trigger version has no accepted occurrence")
         generation = history.generation(occurrence.occurrence_sequence)
     accepted_at = instance.accepted_evaluation_time(generation.git_oid)
     memo_put(_TRIGGER_ACCEPTED_AT, key, accepted_at, capacity=_TRIGGER_ACCEPTED_AT_CAPACITY)
@@ -972,15 +971,15 @@ def _trigger_reference(reference: str) -> str:
     return "Trigger:" + reference.removeprefix("Trigger:")
 
 
-class LineTriggerMismatch(PlaybillExecutionError):
+class LineTriggerMismatch(ExecutionError):
     """A run names a Trigger that does not aim at the Line, or names none when some do."""
 
 
-class LineTriggersChanged(PlaybillExecutionError):
+class LineTriggersChanged(ExecutionError):
     """The Triggers aimed at a Line differ at admission from the set an arm pinned."""
 
 
-class LineVersionChanged(PlaybillExecutionError):
+class LineVersionChanged(ExecutionError):
     """The accepted Line differs at admission from the version its pending binding pinned."""
 
 
@@ -1138,11 +1137,11 @@ def _assert_line_closure_complete(
                 # their owning law introduces ledger envelopes.
                 if pin.target.kind in DEFERRED_PIN_TARGET_KINDS:
                     continue
-                raise PlaybillExecutionError(
+                raise ExecutionError(
                     f"accepted Line closure lost {pin.target.qualified} ({pin.role})"
                 )
             if target.artifact_digest != pin.artifact_digest or target.lifecycle.state != "live":
-                raise PlaybillExecutionError(
+                raise ExecutionError(
                     f"accepted Line closure does not reproduce {pin.target.qualified} ({pin.role})"
                 )
 
@@ -1161,9 +1160,7 @@ def _resolve_line_pin(
     try:
         return slot_pins[value.slot_name]
     except KeyError as exc:
-        raise PlaybillExecutionError(
-            f"accepted Line closure lost slot {value.slot_name!r}"
-        ) from exc
+        raise ExecutionError(f"accepted Line closure lost slot {value.slot_name!r}") from exc
 
 
 def _stored_line_admission(
@@ -1288,7 +1285,7 @@ def trigger_binding_for(
         return LineTriggerBinding(
             kind="window_close", trigger=trigger.trigger.identity, window=window, event=window.event
         )
-    raise PlaybillExecutionError(f"unsupported Trigger schedule kind {schedule.kind!r}")
+    raise ExecutionError(f"unsupported Trigger schedule kind {schedule.kind!r}")
 
 
 def _line_occurrence(
@@ -1327,7 +1324,7 @@ def _line_occurrence(
             or binding.kind != schedule.kind
             or binding.trigger != trigger.trigger.identity
         ):
-            raise PlaybillExecutionError(
+            raise ExecutionError(
                 "a Trigger occurrence requires its exact tick, retained event, or window"
             )
         if schedule_is_timed(schedule):
@@ -1335,9 +1332,7 @@ def _line_occurrence(
                 next_due = exact_basis
             else:
                 if accepted_at is None:
-                    raise PlaybillExecutionError(
-                        "a timed occurrence needs its Trigger's acceptance"
-                    )
+                    raise ExecutionError("a timed occurrence needs its Trigger's acceptance")
                 next_due = timer_due(
                     schedule,
                     last=accepted_at
@@ -1456,11 +1451,11 @@ def _plan_external_occurrences(
             provider = providers[provider_pin.artifact_digest]
             interface = interfaces[interface_pin.artifact_digest]
         except KeyError as exc:
-            raise PlaybillExecutionError(
+            raise ExecutionError(
                 f"accepted Line Provider closure is unavailable for node {node.node_id!r}"
             ) from exc
         if not isinstance(provider.provider, ProviderV2):
-            raise PlaybillExecutionError(
+            raise ExecutionError(
                 f"accepted Line Provider node {node.node_id!r} requires Provider v2"
             )
         closure = next(
@@ -1475,7 +1470,7 @@ def _plan_external_occurrences(
             else closure.implementation_digest
         )
         if implementation_digest is None:
-            raise PlaybillExecutionError(
+            raise ExecutionError(
                 f"accepted Line Provider closure lost implementation for node {node.node_id!r}"
             )
         implementation = next(
@@ -1487,7 +1482,7 @@ def _plan_external_occurrences(
             None,
         )
         if implementation is None:
-            raise PlaybillExecutionError(
+            raise ExecutionError(
                 f"accepted Line Provider implementation is unavailable for node {node.node_id!r}"
             )
         eligible = (
@@ -1974,7 +1969,7 @@ def _readiness(
         state = "ready"
         operation = ProcedureNextOperationV1(kind="run")
     return ProcedureReadinessResultV1(
-        coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
+        coordinate=AcceptedCoordinate.from_internal(coordinate),
         evaluation_time=evaluation_time,
         procedure_identity=accepted.procedure.identity,
         procedure_artifact_digest=accepted.artifact_digest,
@@ -3120,10 +3115,10 @@ def _state_from_records(
         else None,
         procedure_identity=admission.procedure_identity,
         procedure_artifact_digest=admission.procedure_artifact_digest,
-        bound_coordinate=PlaybillAcceptedCoordinate.model_validate(
+        bound_coordinate=AcceptedCoordinate.model_validate(
             admission.bound_coordinate.model_dump(mode="json")
         ),
-        head_at_admission=PlaybillAcceptedCoordinate.model_validate(
+        head_at_admission=AcceptedCoordinate.model_validate(
             admission.head_at_admission.model_dump(mode="json")
         ),
         lane=admission.lane,
@@ -3161,8 +3156,8 @@ def _direct_refusal_state(
         run_id=None,
         procedure_identity=accepted.procedure.identity,
         procedure_artifact_digest=accepted.artifact_digest,
-        bound_coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
-        head_at_admission=PlaybillAcceptedCoordinate.from_internal(head_at_admission),
+        bound_coordinate=AcceptedCoordinate.from_internal(coordinate),
+        head_at_admission=AcceptedCoordinate.from_internal(head_at_admission),
         lane="current",
         evaluation_time=evaluation_time,
         status="admission_refused",
@@ -3274,8 +3269,8 @@ def _plan_direct_external_run(
             run_id=None,
             procedure_identity=accepted.procedure.identity,
             procedure_artifact_digest=accepted.artifact_digest,
-            bound_coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
-            head_at_admission=PlaybillAcceptedCoordinate.from_internal(head_at_admission),
+            bound_coordinate=AcceptedCoordinate.from_internal(coordinate),
+            head_at_admission=AcceptedCoordinate.from_internal(head_at_admission),
             lane="current",
             evaluation_time=evaluation_time,
             status="node_refused",
@@ -3291,7 +3286,7 @@ def _plan_direct_external_run(
                 repair=served_repair_for_refusal("provider_unavailable"),
             ),
         )
-    except PlaybillExecutionError as exc:
+    except ExecutionError as exc:
         return refuse(
             code="artifact_binding_mismatch",
             message="The accepted Provider closure for this Procedure is incomplete.",
@@ -3534,8 +3529,8 @@ def service_run_playbill_procedure(
             run_id=None,
             procedure_identity=accepted.procedure.identity,
             procedure_artifact_digest=accepted.artifact_digest,
-            bound_coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
-            head_at_admission=PlaybillAcceptedCoordinate.from_internal(head_at_admission),
+            bound_coordinate=AcceptedCoordinate.from_internal(coordinate),
+            head_at_admission=AcceptedCoordinate.from_internal(head_at_admission),
             lane=lane,
             evaluation_time=evaluation_time,
             status="admission_refused",
@@ -3581,8 +3576,8 @@ def service_run_playbill_procedure(
             run_id=None,
             procedure_identity=accepted.procedure.identity,
             procedure_artifact_digest=accepted.artifact_digest,
-            bound_coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
-            head_at_admission=PlaybillAcceptedCoordinate.from_internal(head_at_admission),
+            bound_coordinate=AcceptedCoordinate.from_internal(coordinate),
+            head_at_admission=AcceptedCoordinate.from_internal(head_at_admission),
             lane=lane,
             evaluation_time=evaluation_time,
             status="admission_refused",
@@ -3610,7 +3605,7 @@ def service_run_playbill_procedure(
             f"{ProcedureRunNotCurrent.code}: Procedure is not current before journal creation"
         )
     if request.trigger_event is not None and request.resolution_contract is None:
-        raise PlaybillExecutionError("direct trigger event requires a resolution contract")
+        raise ExecutionError("direct trigger event requires a resolution contract")
     investigation = (
         None
         if request.resolution_contract is None
@@ -3724,7 +3719,7 @@ def service_run_playbill_procedure(
             message=str(exc),
             details={"boundary_code": exc.code, "detail": exc.details},
         )
-    except PlaybillExecutionError as exc:
+    except ExecutionError as exc:
         if "run_recovery_required" in str(exc):
             raise ProcedureRunRecoveryRequired(
                 f"{ProcedureRunRecoveryRequired.code}: {exc}"
@@ -3751,8 +3746,8 @@ def _line_refusal_state(
         run_id=None,
         procedure_identity=accepted.procedure.identity,
         procedure_artifact_digest=accepted.artifact_digest,
-        bound_coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
-        head_at_admission=PlaybillAcceptedCoordinate.from_internal(head_at_admission),
+        bound_coordinate=AcceptedCoordinate.from_internal(coordinate),
+        head_at_admission=AcceptedCoordinate.from_internal(head_at_admission),
         lane="current",
         evaluation_time=evaluation_time,
         status="admission_refused",
@@ -3971,7 +3966,7 @@ def _run_playbill_line(
         )
     try:
         _assert_line_closure_complete(instance, accepted_line, coordinate)
-    except PlaybillExecutionError as exc:
+    except ExecutionError as exc:
         return _line_refusal_state(
             accepted,
             accepted_line,
@@ -4154,7 +4149,7 @@ def _run_playbill_line(
                 else window.ends_at
             )
         elif request.trigger_event is not None and request.resolution_contract is None:
-            raise PlaybillExecutionError("this Line occurrence does not accept a capture event")
+            raise ExecutionError("this Line occurrence does not accept a capture event")
         if (
             trigger is not None
             and anchor is not None
@@ -4206,9 +4201,7 @@ def _run_playbill_line(
         and trigger_binding.window is not None
         and investigation.window != trigger_binding.window
     ):
-        raise PlaybillExecutionError(
-            "Line and resolution contract must bind the same observation window"
-        )
+        raise ExecutionError("Line and resolution contract must bind the same observation window")
     is_timed = schedule is not None and schedule_is_timed(schedule)
     prior = (
         _trigger_admissions(instance, accepted_line, trigger.trigger.identity)
@@ -4276,7 +4269,7 @@ def _run_playbill_line(
                 details={"occurrence_id": occurrence_id, "repair": "Read its retained run."},
             )
         if existing.investigation != investigation or existing.trigger_binding != trigger_binding:
-            raise PlaybillExecutionError(
+            raise ExecutionError(
                 "occurrence retry must retain its original investigation and trigger binding"
             )
         return _state_from_records(instance, run_id=existing.run_id)
@@ -4367,7 +4360,7 @@ def _run_playbill_line(
                 retryable=exc.retryable,
                 details={"input_name": accepted_line.line.trigger_input, **exc.details},
             )
-        except (PlaybillError, ValueError) as exc:
+        except (CruxibleError, ValueError) as exc:
             return _line_refusal_state(
                 accepted,
                 accepted_line,
@@ -4394,8 +4387,8 @@ def _run_playbill_line(
             run_id=None,
             procedure_identity=accepted.procedure.identity,
             procedure_artifact_digest=accepted.artifact_digest,
-            bound_coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
-            head_at_admission=PlaybillAcceptedCoordinate.from_internal(head_at_admission),
+            bound_coordinate=AcceptedCoordinate.from_internal(coordinate),
+            head_at_admission=AcceptedCoordinate.from_internal(head_at_admission),
             lane="current",
             evaluation_time=evaluation_time,
             status="node_refused",
@@ -4628,7 +4621,7 @@ def _run_playbill_line(
             details=prepared_admission.details,
         )
     if not isinstance(prepared_admission, ProcedureRunAdmissionV5):
-        raise PlaybillExecutionError("Line admission unexpectedly changed wire generation")
+        raise ExecutionError("Line admission unexpectedly changed wire generation")
     manifest = ProcedureAdmissionMaterialManifest(
         members=tuple(
             capture_admission_material_member(
@@ -5194,7 +5187,7 @@ def service_prepare_playbill_line_admission(
     try:
         bound = bind_line_admission_runtime_policy(admission, policy)
         verify_line_admission_spec(bound, accepted_line)
-    except PlaybillExecutionError as exc:
+    except ExecutionError as exc:
         return ProcedureAdmissionRefusal(
             code="artifact_binding_mismatch",
             message=str(exc),

@@ -28,7 +28,7 @@ CHANGES_PREFIX = "changes/"
 NOTES_REF = "refs/notes/playbill-eval"
 
 FLOOR_README = """\
-# Playbill floor
+# Cruxible floor
 
 Accepted state as plain files, for grep. Search here; confirm and act with the
 verbs. The floor does no matching of its own: grep is the search.

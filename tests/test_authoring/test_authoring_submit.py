@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from cruxible_client.contracts.captures import foreign_source_capture_contract
-from cruxible_client.contracts.workspace_advertisement import PlaybillWorkspaceAdvertisement
+from cruxible_client.contracts.workspace_advertisement import WorkspaceAdvertisement
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.store import AuthoringIntentStore
 from cruxible_core.proposals.proposals import AuthenticatedActor
@@ -35,12 +35,12 @@ def test_submit_retry_reuses_candidate_and_status_tracks_acceptance(tmp_path: Pa
     # too, so an index would silently move this failure onto a different door.
     failing = False
 
-    def advertise() -> PlaybillWorkspaceAdvertisement:
+    def advertise() -> WorkspaceAdvertisement:
         nonlocal advertisements
         advertisements += 1
         if failing:
             raise MemoryError("simulated activation advertisement failure")
-        return PlaybillWorkspaceAdvertisement(
+        return WorkspaceAdvertisement(
             status="failed",
             workspace_path=str(tmp_path),
             failure_code="fetch_failed",

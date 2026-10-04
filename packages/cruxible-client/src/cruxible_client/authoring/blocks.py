@@ -9,9 +9,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import cast
 
-from cruxible_client.authoring.context import PlaybillWorkspaceBinding
+from cruxible_client.authoring.context import WorkspaceBinding
 from cruxible_client.authoring.insertions import (
-    PlaybillInsertionApplyError,
+    InsertionApplyError,
     replace_publication_file,
 )
 from cruxible_client.authoring.projection_manifests import (
@@ -21,10 +21,10 @@ from cruxible_client.authoring.projection_manifests import (
 from cruxible_client.authoring.selectors import WorkspaceSources
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
-    PlaybillBlockSyncItem,
-    PlaybillBlockSyncReadRequest,
-    PlaybillBlockSyncResult,
-    PlaybillProjectionCheckRequest,
+    BlockSyncItem,
+    BlockSyncReadRequest,
+    BlockSyncResult,
+    ProjectionCheckRequest,
 )
 from cruxible_client.contracts.canonical import normalize_canonical
 from cruxible_client.contracts.claims import ClaimStatement, claim_statement_digest
@@ -57,14 +57,14 @@ from cruxible_client.contracts.declared_blocks import (
     render_projection_opening,
     resolve_projection_manifest_digest,
 )
-from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.repairs import RepairOperation, ServedRepair
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 from cruxible_client.transport.http import CruxibleClient
 
 
-class ProjectionIndependentEvidenceForbidden(PlaybillError):
+class ProjectionIndependentEvidenceForbidden(CruxibleError):
     """A citation's span lies inside a projection block: the client fast path.
 
     Evidence never comes from a projection window, whatever the citation's role
@@ -94,14 +94,14 @@ class ProjectionIndependentEvidenceForbidden(PlaybillError):
         )
 
 
-class ProjectionRepinError(PlaybillError):
+class ProjectionRepinError(CruxibleError):
     code = "playbill.projection.repin_refused"
 
     def __init__(self, message: str) -> None:
         super().__init__(f"{self.code}: {message}")
 
 
-class ProjectionSyncError(PlaybillError):
+class ProjectionSyncError(CruxibleError):
     code = "playbill.projection.sync_refused"
 
     def __init__(self, message: str) -> None:
@@ -143,15 +143,15 @@ def _proof(
 ) -> Mapping[str, object]:
     """One accepted artifact's full envelope through get, pinned to ``coordinate``."""
 
-    from cruxible_client.contracts import PlaybillAcceptedCoordinate
-    from cruxible_client.contracts.get_reads import PlaybillGetRequest
+    from cruxible_client.contracts import AcceptedCoordinate
+    from cruxible_client.contracts.get_reads import GetRequest
 
-    result = client.playbill_get(
+    result = client.get(
         instance_id,
-        request=PlaybillGetRequest(
+        request=GetRequest(
             ref=ref,
             detail="proof",
-            at=PlaybillAcceptedCoordinate.model_validate(coordinate.model_dump(mode="json")),
+            at=AcceptedCoordinate.model_validate(coordinate.model_dump(mode="json")),
             evaluation_time=(
                 None if evaluation_time is None else datetime.fromisoformat(evaluation_time)
             ),
@@ -221,7 +221,7 @@ def _claim_backings(
     evaluation_time: str,
 ) -> list[ProjectionClaimBacking]:
     """Resolve held Claim metadata in bounded batches, without admission reads."""
-    batch = getattr(client, "get_playbill_claim_backings", None)
+    batch = getattr(client, "get_claim_backings", None)
     if batch is None:
         # Keep the documented structural client adapters usable. Production
         # transports expose the batch method; server failures are never hidden
@@ -262,15 +262,15 @@ def _query_backing(
     coordinate: AcceptedCoordinate,
     evaluation_time: datetime,
 ) -> ProjectionQueryBacking:
-    from cruxible_client.contracts.compact_query import PlaybillQueryRequest
+    from cruxible_client.contracts.compact_query import QueryRequest
 
     bare = name.removeprefix("QueryDefinition:")
     normalized = normalize_canonical(dict(parameters))
     assert isinstance(normalized, dict)
     # The named query's full receipt is the replayable result a backing pins.
-    evaluated = client.query_playbill(
+    evaluated = client.query(
         instance_id,
-        request=PlaybillQueryRequest.model_validate(
+        request=QueryRequest.model_validate(
             {
                 "name": bare,
                 "params": normalized or None,
@@ -318,7 +318,7 @@ def _relative_path(root: Path, path: Path) -> str:
         raise ProjectionSyncError(f"source path escapes workspace: {path}") from exc
 
 
-def _result(items: Sequence[PlaybillBlockSyncItem]) -> PlaybillBlockSyncResult:
+def _result(items: Sequence[BlockSyncItem]) -> BlockSyncResult:
     ordered = tuple(
         sorted(
             items,
@@ -330,7 +330,7 @@ def _result(items: Sequence[PlaybillBlockSyncItem]) -> PlaybillBlockSyncResult:
             ),
         )
     )
-    return PlaybillBlockSyncResult(
+    return BlockSyncResult(
         items=ordered,
         changed_file_count=len({item.path for item in ordered if item.outcome == "detached"}),
         would_change=any(item.outcome in {"detached", "would_detach"} for item in ordered),
@@ -338,7 +338,7 @@ def _result(items: Sequence[PlaybillBlockSyncItem]) -> PlaybillBlockSyncResult:
     )
 
 
-def _workspace_binding(root: Path) -> PlaybillWorkspaceBinding | None:
+def _workspace_binding(root: Path) -> WorkspaceBinding | None:
     path = root / ".playbill" / "coverage.json"
     if not path.is_file():
         return None
@@ -347,7 +347,7 @@ def _workspace_binding(root: Path) -> PlaybillWorkspaceBinding | None:
         if not resolved.is_relative_to(root):
             raise ProjectionSyncError("workspace coverage binding escapes the workspace")
         payload = json.loads(path.read_text(encoding="utf-8"))
-        return PlaybillWorkspaceBinding.model_validate(payload)
+        return WorkspaceBinding.model_validate(payload)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         raise ProjectionSyncError(f"workspace coverage binding is invalid: {exc}") from exc
 
@@ -365,10 +365,10 @@ def _marker_error_item(
     path: Path,
     content: bytes,
     error: Exception,
-) -> PlaybillBlockSyncItem:
+) -> BlockSyncItem:
     relative = _relative_path(root, path)
     if isinstance(error, ProjectionProcessingLimitExceeded):
-        return PlaybillBlockSyncItem(
+        return BlockSyncItem(
             path=relative,
             outcome="refused",
             reason="projection_processing_incomplete",
@@ -379,7 +379,7 @@ def _marker_error_item(
                 "message": str(error),
             },
         )
-    return PlaybillBlockSyncItem(
+    return BlockSyncItem(
         path=relative,
         outcome="refused",
         reason="block_marker_malformed",
@@ -399,7 +399,7 @@ def _not_a_projection_target_item(
     content: bytes,
     error: Exception,
     source_id: str | None = None,
-) -> PlaybillBlockSyncItem:
+) -> BlockSyncItem:
     """Note a discovered file that does not declare a projection block.
 
     Nothing in a workspace announces which files are projection pages, so a
@@ -420,7 +420,7 @@ def _not_a_projection_target_item(
     """
 
     relative = _relative_path(root, path)
-    return PlaybillBlockSyncItem(
+    return BlockSyncItem(
         path=relative,
         source_id=source_id,
         outcome="skipped",
@@ -438,7 +438,7 @@ def _discover_source(
     root: Path,
     path: Path,
     inferred: bool = False,
-) -> tuple[str | None, PlaybillBlockSyncItem | None]:
+) -> tuple[str | None, BlockSyncItem | None]:
     content = b""
     try:
         if path.is_symlink():
@@ -447,7 +447,7 @@ def _discover_source(
         if not resolved.is_relative_to(root) or not resolved.is_file():
             raise ProjectionSyncError("source path escapes the workspace or is not a file")
     except (OSError, ProjectionSyncError) as exc:
-        return None, PlaybillBlockSyncItem(
+        return None, BlockSyncItem(
             path=path.name or ".",
             outcome="refused",
             reason="source_path_invalid",
@@ -488,9 +488,9 @@ def _discover_source(
 
 def _discover_workspace_sources(
     root: Path,
-) -> tuple[dict[Path, str], list[PlaybillBlockSyncItem]]:
+) -> tuple[dict[Path, str], list[BlockSyncItem]]:
     selected: dict[Path, str] = {}
-    items: list[PlaybillBlockSyncItem] = []
+    items: list[BlockSyncItem] = []
     scanned_bytes = 0
     candidates = sorted(
         (
@@ -507,7 +507,7 @@ def _discover_workspace_sources(
             size = path.stat().st_size
             if scanned_bytes + size > projection_processing_policy().max_bytes:
                 items.append(
-                    PlaybillBlockSyncItem(
+                    BlockSyncItem(
                         path=".",
                         outcome="refused",
                         reason="projection_processing_incomplete",
@@ -556,7 +556,7 @@ def _sync_item_from_read_refusal(
     block_id: str,
     stamp: ProjectionBlockStampAny,
     read: object,
-) -> PlaybillBlockSyncItem:
+) -> BlockSyncItem:
     reason = getattr(read, "reason", None)
     detail = getattr(read, "detail", None)
     values: dict[str, object] = {
@@ -616,7 +616,7 @@ def _sync_item_from_read_refusal(
     }
     reason_key = reason if isinstance(reason, str) else ""
     local_reason = mapped.get(reason_key, "block_backing_changed")
-    return PlaybillBlockSyncItem.model_validate(
+    return BlockSyncItem.model_validate(
         {
             "path": path,
             "source_id": source_id,
@@ -641,7 +641,7 @@ def sync_projection_blocks(
     check: bool = False,
     detach_paths: Sequence[str | Path] = (),
     observe_preimages: Callable[[Mapping[Path, bytes]], None] | None = None,
-) -> PlaybillBlockSyncResult:
+) -> BlockSyncResult:
     """Check all dependencies without authoring prose. Only explicit detach edits files.
 
     ``observe_preimages``, when given, is called once with the exact bytes of
@@ -657,7 +657,7 @@ def sync_projection_blocks(
     except ProjectionSyncError as exc:
         return _result(
             (
-                PlaybillBlockSyncItem(
+                BlockSyncItem(
                     path=".playbill/coverage.json",
                     outcome="refused",
                     reason="workspace_binding_invalid",
@@ -668,7 +668,7 @@ def sync_projection_blocks(
     if binding is None or not binding.attached:
         return _result(
             (
-                PlaybillBlockSyncItem(
+                BlockSyncItem(
                     path=".",
                     outcome="refused",
                     reason="workspace_not_attached",
@@ -679,7 +679,7 @@ def sync_projection_blocks(
     if binding.instance_id != instance_id:
         return _result(
             (
-                PlaybillBlockSyncItem(
+                BlockSyncItem(
                     path=".",
                     outcome="refused",
                     reason="workspace_instance_mismatch",
@@ -695,7 +695,7 @@ def sync_projection_blocks(
     if paths and detach_paths:
         raise ProjectionSyncError("ordinary sync paths cannot be combined with --detach")
     selected: dict[Path, str] = {}
-    items: list[PlaybillBlockSyncItem] = []
+    items: list[BlockSyncItem] = []
     requested = tuple(detach_paths or paths)
     catalog_paths = tuple(
         path
@@ -706,10 +706,10 @@ def sync_projection_blocks(
     if catalog_paths:
         try:
             sources = WorkspaceSources(root)
-        except (ValueError, PlaybillError) as exc:
+        except (ValueError, CruxibleError) as exc:
             return _result(
                 (
-                    PlaybillBlockSyncItem(
+                    BlockSyncItem(
                         path=".playbill/sources.yaml",
                         outcome="refused",
                         reason="workspace_source_catalog_invalid",
@@ -724,9 +724,9 @@ def sync_projection_blocks(
         for entry in sources.document_entries:
             try:
                 selected[sources.path_for_source(entry.name)] = entry.name
-            except (ValueError, PlaybillError) as exc:
+            except (ValueError, CruxibleError) as exc:
                 items.append(
-                    PlaybillBlockSyncItem(
+                    BlockSyncItem(
                         path=entry.locator,
                         source_id=entry.name,
                         outcome="refused",
@@ -753,7 +753,7 @@ def sync_projection_blocks(
                 except ValueError as exc:
                     display = str(requested_path)
                     items.append(
-                        PlaybillBlockSyncItem(
+                        BlockSyncItem(
                             path=display,
                             outcome="refused",
                             reason="source_path_invalid",
@@ -813,9 +813,7 @@ def sync_projection_blocks(
         block.stamp for _, _, _, blocks in prepared for block in blocks if block.stamp is not None
     )
     checked = (
-        client.check_playbill_projection_blocks(
-            instance_id, request=PlaybillProjectionCheckRequest(stamps=stamps)
-        )
+        client.check_projection_blocks(instance_id, request=ProjectionCheckRequest(stamps=stamps))
         if stamps
         else None
     )
@@ -832,7 +830,7 @@ def sync_projection_blocks(
             stamp = block.stamp
             if stamp is None:
                 items.append(
-                    PlaybillBlockSyncItem(
+                    BlockSyncItem(
                         path=relative,
                         source_id=source_id,
                         block_id=block.block_id,
@@ -849,7 +847,7 @@ def sync_projection_blocks(
                 continue
             if not detach and block.body_digest != stamp.body_digest:
                 items.append(
-                    PlaybillBlockSyncItem(
+                    BlockSyncItem(
                         path=relative,
                         source_id=source_id,
                         block_id=block.block_id,
@@ -896,7 +894,7 @@ def sync_projection_blocks(
                     original_spans.append((block.opening_start, block.closing_end))
                     changed_item_indexes.append(len(items))
                     items.append(
-                        PlaybillBlockSyncItem(
+                        BlockSyncItem(
                             path=relative,
                             source_id=source_id,
                             block_id=block.block_id,
@@ -928,7 +926,7 @@ def sync_projection_blocks(
                 continue
             if detach:
                 items.append(
-                    PlaybillBlockSyncItem(
+                    BlockSyncItem(
                         path=relative,
                         source_id=source_id,
                         block_id=block.block_id,
@@ -941,7 +939,7 @@ def sync_projection_blocks(
                 continue
             if read.status == "current":
                 items.append(
-                    PlaybillBlockSyncItem(
+                    BlockSyncItem(
                         path=relative,
                         source_id=source_id,
                         block_id=block.block_id,
@@ -959,7 +957,7 @@ def sync_projection_blocks(
             # -- the author wrote it -- so the row names every member that moved
             # and the repin that re-declares the list the block still means.
             items.append(
-                PlaybillBlockSyncItem(
+                BlockSyncItem(
                     path=relative,
                     source_id=source_id,
                     block_id=block.block_id,
@@ -1034,7 +1032,7 @@ def sync_projection_blocks(
                 )
         except (KeyError, ProjectionMarkerError, ProjectionSyncError) as exc:
             for index in changed_item_indexes:
-                items[index] = PlaybillBlockSyncItem(
+                items[index] = BlockSyncItem(
                     path=relative,
                     source_id=source_id,
                     block_id=items[index].block_id,
@@ -1047,9 +1045,9 @@ def sync_projection_blocks(
             continue
         try:
             replace_publication_file(path, expected=content, replacement=replacement)
-        except PlaybillInsertionApplyError as exc:
+        except InsertionApplyError as exc:
             for index in changed_item_indexes:
-                items[index] = PlaybillBlockSyncItem(
+                items[index] = BlockSyncItem(
                     path=relative,
                     source_id=source_id,
                     block_id=items[index].block_id,
@@ -1134,9 +1132,9 @@ def repin_projection_block(
     if backing_digest is not None:
         if block.stamp is None:
             raise ProjectionRepinError("--backing requires an existing stamped block")
-        selected = client.read_playbill_block_sync_backing(
+        selected = client.read_block_sync_backing(
             instance_id,
-            request=PlaybillBlockSyncReadRequest(
+            request=BlockSyncReadRequest(
                 stamp=block.stamp,
                 preferred_successor_digest=backing_digest,
                 at=coordinate,
@@ -1153,7 +1151,7 @@ def repin_projection_block(
         generation = selected.generation
         backing: list[ProjectionBacking] = list(selected.current_backings)
     else:
-        head = client.playbill_head(
+        head = client.head(
             instance_id,
             at=None if coordinate is None else coordinate.model_dump(mode="json"),
         )
@@ -1248,7 +1246,7 @@ def repin_projection_block(
     load_projection_manifests(root, replacement)
     try:
         replace_publication_file(path, expected=content, replacement=replacement)
-    except PlaybillInsertionApplyError as exc:
+    except InsertionApplyError as exc:
         raise ProjectionRepinError(str(exc)) from exc
     # The page now carries a marker this instance has never heard of. A block
     # was known to the instance only if the retired publication road minted it,
@@ -1256,7 +1254,7 @@ def repin_projection_block(
     # `workspace detach` could not refuse on a block an agent declared. The
     # declaration is recorded after the write, because a registration for a
     # marker that never landed would be the same lie in the other direction.
-    client.declare_playbill_block(instance_id, stamp.model_dump(mode="json"))
+    client.declare_block(instance_id, stamp.model_dump(mode="json"))
     return stamp
 
 

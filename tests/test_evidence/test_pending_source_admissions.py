@@ -45,7 +45,7 @@ def test_pending_documents_require_an_unsettled_admission(
     repository = tmp_path / "authoring"
     source = repository / "specs" / "design.md"
     source.parent.mkdir(parents=True)
-    source.write_bytes(b"# Playbill v1\n")
+    source.write_bytes(b"# Cruxible v1\n")
     catalog = SourceCatalog(
         catalog_kind="portable",
         entries=(
@@ -54,7 +54,7 @@ def test_pending_documents_require_an_unsettled_admission(
                 locator="specs/design.md",
                 document_id="design",
                 document_kind="design",
-                title="Playbill design",
+                title="Cruxible design",
                 media_type="text/markdown",
                 required_tier="graph_write",
                 governance_scope=("project:playbill",),

@@ -19,7 +19,7 @@ from click.testing import CliRunner
 
 from cruxible_client import contracts
 from cruxible_core.cli.main import cli
-from cruxible_core.service.discovery.next import PlaybillNextRequest, service_playbill_next
+from cruxible_core.service.discovery.next import NextRequest, service_playbill_next
 from cruxible_core.service.discovery.orient import service_playbill_orient
 from cruxible_core.service.procedures.line_dispatch import service_stop_line_arm
 from tests.test_procedures.test_line_arming import _armed_world
@@ -48,7 +48,7 @@ def test_next_counts_line_arms_in_the_consumers_facet(stopped) -> None:  # type:
 
     result = service_playbill_next(
         instance,
-        request=PlaybillNextRequest(evaluation_time=when, access_profile=_PROFILE),
+        request=NextRequest(evaluation_time=when, access_profile=_PROFILE),
         caller_rung=1,
     )
 
@@ -112,7 +112,7 @@ class _Stub:
     def __init__(self, instance: Any) -> None:
         self.instance = instance
 
-    def orient_playbill(self, instance_id: str, **values: Any) -> Any:
+    def orient(self, instance_id: str, **values: Any) -> Any:
         from datetime import datetime
 
         values.pop("caller_tools", None)
@@ -120,15 +120,15 @@ class _Stub:
             values["evaluation_time"] = datetime.fromisoformat(values["evaluation_time"])
         return service_playbill_orient(self.instance, **values)
 
-    def next_playbill(self, instance_id: str, **values: Any) -> Any:
-        request = PlaybillNextRequest.model_validate(
+    def next(self, instance_id: str, **values: Any) -> Any:
+        request = NextRequest.model_validate(
             {
                 "evaluation_time": values["evaluation_time"],
                 "access_profile": values["access_profile"],
             }
         )
         result = service_playbill_next(self.instance, request=request, caller_rung=1)
-        return contracts.PlaybillNextResult.model_validate(result.model_dump(mode="json"))
+        return contracts.NextResult.model_validate(result.model_dump(mode="json"))
 
 
 def test_the_cli_shows_stopped_arms_in_orient_and_next(stopped, monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -137,7 +137,7 @@ def test_the_cli_shows_stopped_arms_in_orient_and_next(stopped, monkeypatch, tmp
     monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: stub)
     monkeypatch.setattr(
-        "cruxible_core.cli.commands.playbill.observe_playbill_next_workspace", lambda _root: {}
+        "cruxible_core.cli.commands.playbill.observe_next_workspace", lambda _root: {}
     )
     prefix = ["--server-url", "http://server", "--instance-id", "inst"]
     stamp = when.isoformat()
@@ -195,7 +195,7 @@ def test_the_mcp_orient_tool_carries_the_arms(stopped, monkeypatch) -> None:  # 
     monkeypatch.setattr(
         handlers.playbill_api,
         "playbill_orient",
-        lambda instance_id, **values: stub.orient_playbill(instance_id, **values),
+        lambda instance_id, **values: stub.orient(instance_id, **values),
     )
     server = create_server()
 
@@ -216,10 +216,10 @@ def test_the_mcp_orient_tool_carries_the_arms(stopped, monkeypatch) -> None:  # 
 
 
 def test_the_sdk_reads_the_arms_off_orient(stopped) -> None:  # type: ignore[no-untyped-def]
-    from cruxible_client.authoring.sdk import Playbill
+    from cruxible_client.authoring.sdk import Cruxible
 
     instance, _line, when = stopped
-    playbill = Playbill.__new__(Playbill)
+    playbill = Cruxible.__new__(Cruxible)
     playbill._client = _Stub(instance)  # type: ignore[assignment]
     playbill._instance_id = "inst"
     # A connection without a workspace: orient then reports no floor.

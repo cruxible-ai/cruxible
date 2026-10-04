@@ -1,5 +1,5 @@
-"""Frozen paths in a repository attached to one Playbill instance."""
+"""Frozen paths in a repository attached to one Cruxible instance."""
 
-PLAYBILL_FLOOR_PATH = ".playbill/floor"
+FLOOR_PATH = ".playbill/floor"
 
-__all__ = ["PLAYBILL_FLOOR_PATH"]
+__all__ = ["FLOOR_PATH"]

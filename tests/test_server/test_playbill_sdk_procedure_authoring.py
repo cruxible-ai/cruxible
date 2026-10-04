@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from cruxible_client import Playbill
+from cruxible_client import Cruxible
 from cruxible_client.authoring.examples import procedure_example
 from cruxible_client.authoring.inputs import AuthoringInputError, QueryDefinitionInput
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
@@ -25,7 +25,7 @@ def test_sdk_concrete_procedure_prepares_submits_and_runs(
     http, instance_id, reviewer_key = playbill_http
     transport = CruxibleClient(base_url="http://cruxible")
     transport._client = http  # type: ignore[assignment]
-    pb = Playbill._from_client(transport, instance_id=instance_id, workspace=tmp_path)
+    pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=tmp_path)
 
     definition = procedure_example()
     if state_tap:
@@ -68,7 +68,7 @@ def test_sdk_concrete_procedure_prepares_submits_and_runs(
             default_budgets=QueryBudgets(max_results=10, max_traversal_depth=0),
             maximum_budgets=QueryBudgets(max_results=10, max_traversal_depth=0),
         )
-        compiled = transport.compile_playbill_authoring_input(
+        compiled = transport.compile_authoring_input(
             instance_id,
             input=QueryDefinitionInput(kind="query_definition", query_definition=query).model_dump(
                 mode="json"
@@ -77,7 +77,7 @@ def test_sdk_concrete_procedure_prepares_submits_and_runs(
         assert compiled.verdict == "passed", compiled.frontier
         intent_id = compiled.certificate["intent_id"]
         assert isinstance(intent_id, str)
-        submitted = transport.submit_playbill_authoring_intent(instance_id, intent_id)
+        submitted = transport.submit_authoring_intent(instance_id, intent_id)
         proposal_id = submitted.status.proposal_id
         assert proposal_id is not None
         _approve_and_activate(http, instance_id, reviewer_key, proposal_id)
@@ -111,7 +111,7 @@ def test_sdk_reports_missing_or_duplicate_carried_contracts(duplicate: bool) -> 
         update={"contracts": (*contracts, contracts[0]) if duplicate else contracts[1:]}
     )
     with pytest.raises(AuthoringInputError) as error:
-        Playbill.procedure(object(), definition=invalid)
+        Cruxible.procedure(object(), definition=invalid)
     assert error.value.code == (
         "playbill.authoring.carried_contract_duplicate"
         if duplicate
@@ -130,8 +130,8 @@ def test_sdk_program_identity_includes_carried_schemas() -> None:
             )
         }
     )
-    first = Playbill.procedure(object(), definition=definition)
-    second = Playbill.procedure(object(), definition=revised)
+    first = Cruxible.procedure(object(), definition=definition)
+    second = Cruxible.procedure(object(), definition=revised)
     assert first.program_stamp != second.program_stamp
 
 
@@ -141,7 +141,7 @@ def test_sdk_never_reinterprets_exact_pins_as_authoring_references(
     http, instance_id, _reviewer_key = playbill_http
     transport = CruxibleClient(base_url="http://cruxible")
     transport._client = http  # type: ignore[assignment]
-    pb = Playbill._from_client(transport, instance_id=instance_id, workspace=tmp_path)
+    pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=tmp_path)
     definition = procedure_example()
     draft = pb.procedure(definition=definition)
     assert isinstance(draft.payload, ProcedureAuthoringPayload)
@@ -180,7 +180,7 @@ def test_sdk_capture_terminal_prepares_but_cannot_continue(
     http, instance_id, reviewer_key = playbill_http
     transport = CruxibleClient(base_url="http://cruxible")
     transport._client = http  # type: ignore[assignment]
-    pb = Playbill._from_client(transport, instance_id=instance_id, workspace=tmp_path)
+    pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=tmp_path)
     contract = capture_contract()
     prepared = pb.changes().capture_contract(contract).prepare()
     assert not prepared.refused, prepared.diagnostics

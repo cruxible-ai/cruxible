@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from cruxible_client.contracts import PlaybillProposalList
+from cruxible_client.contracts import ProposalList
 from cruxible_client.contracts.proposal_models import ProposalWithdrawalRecord
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.proposals.proposals import service_list_playbill_proposals
@@ -89,7 +89,7 @@ def test_incomplete_entry_does_not_hide_healthy_rows_or_invent_verdict(tmp_path,
     )
     assert service_list_playbill_proposals(instance, status="settled").entries == ()
     assert service_list_playbill_proposals(instance, status="incomplete").entries == (entry,)
-    assert PlaybillProposalList.model_validate(result.model_dump(mode="json")).entries
+    assert ProposalList.model_validate(result.model_dump(mode="json")).entries
 
 
 @pytest.mark.parametrize("missing", ("admission", "evaluation", "candidate"))

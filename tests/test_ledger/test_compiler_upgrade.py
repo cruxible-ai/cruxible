@@ -22,7 +22,7 @@ from cruxible_core.compiler.compiler import (
 )
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import (
-    PlaybillAcceptedCoordinate,
+    AcceptedCoordinate,
     service_activate_playbill_proposal,
     service_propose_compiler_upgrade,
     service_submit_playbill_approval,
@@ -47,7 +47,7 @@ def propose(instance, target=UPGRADE_COMPILER):
         actor_id="owner",
         proposal_name="upgrade",
         timestamp=TIMESTAMP,
-        base=PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        base=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
     ).proposal
 
 
@@ -104,7 +104,7 @@ def test_upgrade_preserves_historical_coordinates_and_reopens(
     assert reopened.inspect().compiler == target
     with reopened._history_reader_for_epoch(reopened._recovered) as reader:
         assert (
-            reader.resolve(PlaybillAcceptedCoordinate.from_internal(before)).compiler_digest
+            reader.resolve(AcceptedCoordinate.from_internal(before)).compiler_digest
             == source.rule_digest
         )
 
@@ -353,11 +353,11 @@ def test_failed_target_prebuild_leaves_original_compiler_and_serving(tmp_path, m
 
 
 def test_decommissioned_instance_cannot_propose_upgrade(tmp_path, monkeypatch):
-    from cruxible_client.contracts.errors import PlaybillInstanceDecommissioned
+    from cruxible_client.contracts.errors import InstanceDecommissioned
 
     instance, _, _ = old_instance(tmp_path, monkeypatch)
     instance.decommission(reason="retired", decommissioned_by="owner")
-    with pytest.raises(PlaybillInstanceDecommissioned):
+    with pytest.raises(InstanceDecommissioned):
         propose(instance)
 
 
@@ -375,7 +375,7 @@ def test_old_query_receipt_is_identical_after_upgrade_and_rebuild(tmp_path, monk
         )
         instance, owner = _instance_with_query(tmp_path)
     old = service_run_playbill_query(instance, name=QUERY_NAME, evaluation_time=READ_TIME)
-    at = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    at = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     proposal = propose(instance)
     candidate = proposal.candidate
     signature = _sign(owner, candidate.candidate_digest, candidate.candidate.parent_semantic_root)
@@ -475,7 +475,7 @@ def test_provider_installation_uses_accepted_compiler_after_upgrade_and_reopen(
     tmp_path, monkeypatch
 ):
     from cruxible_client.contracts.provider_installation import (
-        PlaybillProviderInstallRequest,
+        ProviderInstallRequest,
         ProviderWheelObject,
     )
     from cruxible_core.compiler.compiler import PROVIDER_PACKAGE_COMPILER
@@ -485,7 +485,7 @@ def test_provider_installation_uses_accepted_compiler_after_upgrade_and_reopen(
 
     instance, _, reviewer = old_instance(tmp_path, monkeypatch, UPGRADE_COMPILER)
     operator = ProviderRuntimeOperator(tmp_path / "operator")
-    request = PlaybillProviderInstallRequest(
+    request = ProviderInstallRequest(
         wheel=ProviderWheelObject(filename="demo-1-py3-none-any.whl", digest="sha256:" + "a" * 64),
         lock_digest="sha256:" + "b" * 64,
     )

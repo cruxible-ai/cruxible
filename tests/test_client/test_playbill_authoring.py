@@ -12,9 +12,9 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 import cruxible_client
-from cruxible_client import AccessProfile, ClaimRef, CruxibleClient, Playbill
+from cruxible_client import AccessProfile, ClaimRef, Cruxible, CruxibleClient
 from cruxible_client.authoring.inputs import AuthoringInput, AuthoringInputError
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 
 COORDINATE = {
@@ -84,7 +84,7 @@ def test_authoring_input_error_preserves_published_exception_compatibility() -> 
         repair="choose a listed subject",
     )
 
-    assert isinstance(error, PlaybillFormatError)
+    assert isinstance(error, FormatError)
     assert isinstance(error, ValueError)
     assert isinstance(hash(error), int)
 
@@ -115,8 +115,8 @@ def test_client_speaks_frozen_compile_and_submit_requests() -> None:
 
     client = _client(handler)
     payload = _claim_payload()
-    compiled = client.compile_playbill_authoring("inst", payload=payload)
-    submitted = client.submit_playbill_authoring_intent("inst", INTENT_ID)
+    compiled = client.compile_authoring("inst", payload=payload)
+    submitted = client.submit_authoring_intent("inst", INTENT_ID)
 
     assert compiled.verdict == "refused"
     assert submitted.status.state == "draft"
@@ -153,7 +153,7 @@ def test_client_preserves_advisory_lint_outside_the_preflight_certificate() -> N
             },
         )
 
-    result = _client(handler).compile_playbill_authoring("inst", payload=_claim_payload())
+    result = _client(handler).compile_authoring("inst", payload=_claim_payload())
 
     assert result.verdict == "passed"
     assert result.lint is not None
@@ -182,7 +182,7 @@ def test_client_speaks_program_stamped_v3_request() -> None:
         "sdk_version": "0.4.0",
         "sdk_contract_snapshot_digest": "sha256:" + "8" * 64,
     }
-    _client(handler).create_playbill_authoring_intent(
+    _client(handler).create_authoring_intent(
         "inst",
         payload=payload,
         reference_expectations=(),
@@ -226,8 +226,8 @@ def test_client_speaks_tagless_input_request_variants() -> None:
         "predicate": "project.work_item.status",
     }
     client = _client(handler)
-    client.create_playbill_authoring_input("inst", input=input_value)
-    client.compile_playbill_authoring_input("inst", input=input_value)
+    client.create_authoring_input("inst", input=input_value)
+    client.compile_authoring_input("inst", input=input_value)
 
     assert [json.loads(item.content)["tag"] for item in captured] == [
         "playbill-authoring-input-create-request-v1",
@@ -257,10 +257,10 @@ def test_client_get_resume_list_and_status_are_path_only_reads() -> None:
         )
 
     client = _client(handler)
-    client.get_playbill_authoring_intent("inst", INTENT_ID)
-    client.resume_playbill_authoring_intent("inst", INTENT_ID)
-    client.list_pending_playbill_authoring_intents("inst")
-    status = client.playbill_authoring_intent_status("inst", INTENT_ID)
+    client.get_authoring_intent("inst", INTENT_ID)
+    client.resume_authoring_intent("inst", INTENT_ID)
+    client.list_pending_authoring_intents("inst")
+    status = client.authoring_intent_status("inst", INTENT_ID)
 
     assert status.state == "draft"
     assert [item.method for item in captured] == ["GET", "GET", "GET", "GET"]
@@ -280,7 +280,7 @@ def test_client_speaks_the_frozen_authoring_rebase_request() -> None:
             },
         )
 
-    result = _client(handler).rebase_playbill_authoring_intent("inst", INTENT_ID)
+    result = _client(handler).rebase_authoring_intent("inst", INTENT_ID)
 
     assert result.intent["intent_id"] == INTENT_ID
     assert captured[0].url.path.endswith(f"/{INTENT_ID}/rebase")
@@ -320,8 +320,8 @@ def test_client_whoami_and_proposal_list_use_read_routes_and_status_query() -> N
         )
 
     client = _client(handler)
-    identity = client.playbill_whoami("inst")
-    proposals = client.list_playbill_proposals("inst", status="open")
+    identity = client.whoami("inst")
+    proposals = client.list_proposals("inst", status="open")
 
     assert identity.actor_id_source == "runtime_credential"
     assert proposals.status_filter == "open"
@@ -339,7 +339,7 @@ def test_removed_brief_has_no_sdk_export_builder_or_authoring_union_arm() -> Non
     ):
         assert not hasattr(cruxible_client, name)
         assert name not in cruxible_client.__all__
-    assert not hasattr(Playbill, "brief")
+    assert not hasattr(Cruxible, "brief")
     with pytest.raises(ValidationError):
         TypeAdapter(AuthoringInput).validate_python({"kind": "brief"})
 
@@ -358,7 +358,7 @@ def _authored_change_set(captured: list[httpx.Request]) -> dict[str, Any]:
 
 
 def _workspace(path: Path) -> Path:
-    """The smallest workspace a `Playbill` will open: one source catalog."""
+    """The smallest workspace a `Cruxible` will open: one source catalog."""
 
     catalog = path / ".playbill"
     catalog.mkdir(parents=True, exist_ok=True)
@@ -382,7 +382,7 @@ entries:
     return path
 
 
-def _retirement_playbill(workspace: Path) -> tuple[Playbill, list[httpx.Request]]:
+def _retirement_playbill(workspace: Path) -> tuple[Cruxible, list[httpx.Request]]:
     captured: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -408,7 +408,7 @@ def _retirement_playbill(workspace: Path) -> tuple[Playbill, list[httpx.Request]
             },
         )
 
-    pb = Playbill(
+    pb = Cruxible(
         client=_client(handler),
         instance_id="inst",
         workspace=_workspace(workspace),
@@ -430,7 +430,7 @@ def test_change_set_retire_takes_every_spelling_the_sdk_hands_out(
     tmp_path: Path,
     spelling: str,
 ) -> None:
-    """`pb.changes().retire(...)` accepts every spelling the SDK hands a Claim back in.
+    """`cx.changes().retire(...)` accepts every spelling the SDK hands a Claim back in.
 
     The SDK hands a Claim identity back as `Claim:CLM-...` -- off a search row,
     off a `KnowledgeCard`, on a `ClaimRef`. The builder used to raise

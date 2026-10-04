@@ -1,4 +1,4 @@
-"""Fetch daemon-owned Playbill refs into an attached workspace as advisory refs."""
+"""Fetch daemon-owned Cruxible refs into an attached workspace as advisory refs."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from typing import cast
 
 from cruxible_client.contracts.types import GitObjectFormat
 from cruxible_client.contracts.workspace_advertisement import (
-    PlaybillWorkspaceAdvertisement,
+    WorkspaceAdvertisement,
     WorkspaceAdvertisementFailureCode,
 )
 from cruxible_core.ledger.git import NOTE_REFS
@@ -156,13 +156,13 @@ def _advertise_workspace_refs(
     workspace_root: Path | None,
     ledger_path: Path,
     ledger_object_format: GitObjectFormat,
-) -> PlaybillWorkspaceAdvertisement:
+) -> WorkspaceAdvertisement:
     if workspace_root is None:
-        return PlaybillWorkspaceAdvertisement(status="not_attached", workspace_path=None)
+        return WorkspaceAdvertisement(status="not_attached", workspace_path=None)
     workspace = workspace_root.expanduser().resolve(strict=False)
 
-    def failed(code: WorkspaceAdvertisementFailureCode) -> PlaybillWorkspaceAdvertisement:
-        return PlaybillWorkspaceAdvertisement(
+    def failed(code: WorkspaceAdvertisementFailureCode) -> WorkspaceAdvertisement:
+        return WorkspaceAdvertisement(
             status="failed",
             workspace_path=str(workspace),
             failure_code=code,
@@ -337,7 +337,7 @@ def _advertise_workspace_refs(
             key=lambda item: item.encode("utf-8"),
         )
     )
-    return PlaybillWorkspaceAdvertisement(
+    return WorkspaceAdvertisement(
         status="updated",
         workspace_path=str(workspace),
         advertised_refs=refs,
@@ -349,7 +349,7 @@ def advertise_workspace_refs(
     workspace_root: Path | None,
     ledger_path: Path,
     ledger_object_format: GitObjectFormat,
-) -> PlaybillWorkspaceAdvertisement:
+) -> WorkspaceAdvertisement:
     """Refresh the daemon-owned namespace and reduce every failure to typed advice."""
 
     try:
@@ -359,7 +359,7 @@ def advertise_workspace_refs(
             ledger_object_format=ledger_object_format,
         )
     except BaseException:
-        return PlaybillWorkspaceAdvertisement(
+        return WorkspaceAdvertisement(
             status="failed",
             workspace_path=None if workspace_root is None else str(workspace_root),
             failure_code="unexpected_failure",

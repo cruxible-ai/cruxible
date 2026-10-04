@@ -1,4 +1,4 @@
-"""Deterministic greppable file floor projected from accepted Playbill state.
+"""Deterministic greppable file floor projected from accepted Cruxible state.
 
 This is the pre-OKF floor: a plain, byte-stable rendering of accepted state,
 plus a root manifest that binds every file to the accepted coordinate it came
@@ -34,7 +34,7 @@ from typing import Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
-from cruxible_client.contracts import PlaybillFloorExportPart
+from cruxible_client.contracts import FloorExportPart
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
@@ -47,7 +47,7 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.errors import ProjectionIntegrityError, ProposalIntegrityError
 from cruxible_client.contracts.floor import (
-    PlaybillFloorManifest,
+    FloorManifest,
     build_floor_manifest,
     render_floor_manifest,
 )
@@ -81,7 +81,7 @@ from cruxible_core.query.cards import (
 from cruxible_core.query.semantic_discovery import DiscoveryEntryV1
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import (
-    PlaybillAcceptedCoordinate,
+    AcceptedCoordinate,
     service_list_playbill_documents,
 )
 from cruxible_core.service.discovery.coverage import (
@@ -127,7 +127,7 @@ class PlaybillFloorManifestV1(_StrictFloorModel):
 
     tag: Literal["playbill-floor-manifest-v1"] = "playbill-floor-manifest-v1"
     format: Literal["playbill-floor-export-v1"] = "playbill-floor-export-v1"
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     files: tuple[PlaybillFloorFileV1, ...]
     floor_digest: str
 
@@ -137,7 +137,7 @@ class PlaybillFloorManifestV2(_StrictFloorModel):
 
     tag: Literal["playbill-floor-manifest-v2"] = "playbill-floor-manifest-v2"
     format: Literal["playbill-floor-export-v2"] = "playbill-floor-export-v2"
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     files: tuple[PlaybillFloorFileV1, ...]
     floor_digest: str
 
@@ -192,7 +192,7 @@ class PlaybillProcedureFloorCardV1(_StrictFloorModel):
     identity: ArtifactIdentity
     path: str
     artifact_digest: str
-    accepted_coordinate: PlaybillAcceptedCoordinate
+    accepted_coordinate: AcceptedCoordinate
     input_contract: PlaybillProcedureInputContractV1
     output_contract: ArtifactPin | ProcedurePinSlotRef
     binding_state: Literal["directly_runnable", "binding_required"]
@@ -205,7 +205,7 @@ class PlaybillProcedureFloorCardV1(_StrictFloorModel):
 
 def _resolve_coordinate(
     instance: PlaybillInstance,
-    at: PlaybillAcceptedCoordinate | None,
+    at: AcceptedCoordinate | None,
 ) -> AcceptedProjectionCoordinate:
     if at is None:
         return instance.accepted_coordinate()
@@ -257,7 +257,7 @@ def _claim_type_cards(
     tree: Mapping[str, bytes],
     *,
     entries: Mapping[bytes, DiscoveryEntryV1],
-    at: PlaybillAcceptedCoordinate,
+    at: AcceptedCoordinate,
     claims: tuple[ClaimArtifactAny, ...],
     relations: RelationIndex,
 ) -> dict[str, bytes]:
@@ -293,7 +293,7 @@ def _subject_profiles(
     tree: Mapping[str, bytes],
     *,
     entries: Mapping[bytes, DiscoveryEntryV1],
-    at: PlaybillAcceptedCoordinate,
+    at: AcceptedCoordinate,
     claims: tuple[ClaimArtifactAny, ...],
     relations: RelationIndex,
 ) -> dict[str, bytes]:
@@ -334,7 +334,7 @@ def _subject_profiles(
 def _coverage_manifest(
     instance: PlaybillInstance,
     *,
-    at: PlaybillAcceptedCoordinate,
+    at: AcceptedCoordinate,
 ) -> PlaybillFloorCoverageManifestV2:
     """Summarize the coverage boundary of this export from the evidence index.
 
@@ -363,7 +363,7 @@ def _coverage_manifest(
 def _documents(
     instance: PlaybillInstance,
     *,
-    at: PlaybillAcceptedCoordinate,
+    at: AcceptedCoordinate,
     access: BodyAccessContext,
 ) -> dict[str, bytes]:
     listing = service_list_playbill_documents(instance, access=access, at=at)
@@ -394,7 +394,7 @@ def _procedure_cards(
     instance: PlaybillInstance,
     *,
     coordinate: AcceptedProjectionCoordinate,
-    at: PlaybillAcceptedCoordinate,
+    at: AcceptedCoordinate,
 ) -> dict[str, bytes]:
     with instance.bind_accepted_projection(coordinate) as projection:
         rows = sorted(projection.typed.envelopes(kind="procedure"), key=lambda row: row.path)
@@ -463,7 +463,7 @@ def _discovery_layer(
     instance: PlaybillInstance,
     *,
     coordinate: AcceptedProjectionCoordinate,
-    accepted: PlaybillAcceptedCoordinate,
+    accepted: AcceptedCoordinate,
     external_readers: Mapping[str, ExternalSourceReaderProtocol] | None,
 ) -> tuple[dict[str, bytes], tuple[ClaimArtifactAny, ...]]:
     """The discovery cards: ClaimType cards, Subject profiles, Procedure cards, coverage.
@@ -513,7 +513,7 @@ def _discovery_files(
     instance: PlaybillInstance,
     *,
     coordinate: AcceptedProjectionCoordinate,
-    accepted: PlaybillAcceptedCoordinate,
+    accepted: AcceptedCoordinate,
     access: BodyAccessContext,
     external_readers: Mapping[str, ExternalSourceReaderProtocol] | None,
 ) -> dict[str, bytes]:
@@ -544,9 +544,9 @@ def _discovery_files(
 def service_export_playbill_floor(
     instance: PlaybillInstance,
     *,
-    at: PlaybillAcceptedCoordinate | None = None,
+    at: AcceptedCoordinate | None = None,
     format_version: Literal[2, 5] = 5,
-    include: tuple[PlaybillFloorExportPart, ...] = (),
+    include: tuple[FloorExportPart, ...] = (),
     review_notes_oid: str | None = None,
     access: BodyAccessContext | None = None,
     external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,
@@ -566,15 +566,15 @@ def service_export_playbill_floor(
     change rationale is read from (``"absent"`` for none).
     """
 
-    if at is not None and not isinstance(at, PlaybillAcceptedCoordinate):
+    if at is not None and not isinstance(at, AcceptedCoordinate):
         raise ProposalIntegrityError("floor export accepts only verified accepted coordinates")
     coordinate = _resolve_coordinate(instance, at)
-    accepted = PlaybillAcceptedCoordinate.from_internal(coordinate)
+    accepted = AcceptedCoordinate.from_internal(coordinate)
     body_access = access or BodyAccessContext(principal_id=DEFAULT_FLOOR_PRINCIPAL)
 
     if format_version not in (2, 5):
         raise ValueError("unsupported floor format version")
-    unknown = sorted(set(include) - set(get_args(PlaybillFloorExportPart)))
+    unknown = sorted(set(include) - set(get_args(FloorExportPart)))
     if unknown:
         raise ValueError(f"unsupported floor export part(s): {', '.join(unknown)}")
     parts = tuple(sorted(set(include)))
@@ -661,7 +661,7 @@ __all__ = [
     "PlaybillFloorFileV1",
     "PlaybillFloorManifestV1",
     "PlaybillFloorManifestV2",
-    "PlaybillFloorManifest",
+    "FloorManifest",
     "PlaybillProcedureCapabilitiesV1",
     "PlaybillProcedureFloorCardV1",
     "PlaybillProcedureGovernanceV1",

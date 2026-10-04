@@ -43,7 +43,7 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
     typed_digest,
 )
-from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_core.authoring.id_prefixes import resolve_id_prefix
 from cruxible_core.storage.preview_fence import is_previewing
@@ -84,7 +84,7 @@ def _intent_is_pending(intent: AuthoringIntentV1) -> bool:
     return intent.candidate_status.state not in _TERMINAL_STATES
 
 
-class AuthoringIntentStoreError(PlaybillError):
+class AuthoringIntentStoreError(CruxibleError):
     """Durable AuthoringIntent state is missing, corrupt, or concurrently changed."""
 
 

@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 from cruxible_core.coverage.contracts import (
+    CitationWindowObservation,
     CoverageCommitmentScanProof,
     CoverageLineOverlay,
     LogicalSourceIdentity,
-    PlaybillCitationWindowObservation,
     occurrence_identity_digest,
 )
 from cruxible_core.coverage.indexes import WorkingOccurrence
-from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+from cruxible_core.service.authoring.documents import AcceptedCoordinate
 from cruxible_core.service.discovery.next import (
-    PlaybillNextSourceObservation,
-    PlaybillNextSourceObservationV3,
+    NextSourceObservation,
+    NextSourceObservationV3,
     _CitationCommitment,
     _source_citation_item,
 )
@@ -69,8 +69,8 @@ def _observed(
     scanned: tuple[str, ...] = (),
     complete: bool = True,
     digest: str = CHANGED_SOURCE,
-) -> PlaybillNextSourceObservationV3:
-    return PlaybillNextSourceObservationV3(
+) -> NextSourceObservationV3:
+    return NextSourceObservationV3(
         tag="playbill-next-source-observation-v3",
         source_id=SOURCE_ID,
         observed_source_digest=digest,
@@ -85,7 +85,7 @@ def _observed(
 
 
 def _repair(
-    observed: PlaybillNextSourceObservationV3 | None,
+    observed: NextSourceObservationV3 | None,
     *,
     whole_source: bool = False,
 ):  # type: ignore[no-untyped-def]
@@ -93,7 +93,7 @@ def _repair(
         citation_id=CITATION,
         commitment=_commitment(whole_source=whole_source),
         observed=observed,
-        coordinate=PlaybillAcceptedCoordinate.model_validate(coordinate().model_dump()),
+        coordinate=AcceptedCoordinate.model_validate(coordinate().model_dump()),
     )
 
 
@@ -103,9 +103,9 @@ def _observed_v4(
     proof: bool = True,
     addressable: bool = True,
     observed_window_digest: str | None = CHANGED_SOURCE,
-) -> PlaybillNextSourceObservation:
+) -> NextSourceObservation:
     source = LogicalSourceIdentity(plane="external", identity=SOURCE_ID)
-    return PlaybillNextSourceObservation(
+    return NextSourceObservation(
         source_id=SOURCE_ID,
         observed_source_digest=CHANGED_SOURCE,
         byte_length=100,
@@ -121,7 +121,7 @@ def _observed_v4(
         if proof
         else (),
         citation_window_observations=(
-            PlaybillCitationWindowObservation(
+            CitationWindowObservation(
                 source=source,
                 citation_id=CITATION,
                 commitment_digest=SELECTION,
@@ -136,12 +136,12 @@ def _observed_v4(
     )
 
 
-def _repair_v4(observed: PlaybillNextSourceObservation):  # type: ignore[no-untyped-def]
+def _repair_v4(observed: NextSourceObservation):  # type: ignore[no-untyped-def]
     return _source_citation_item(
         citation_id=CITATION,
         commitment=_commitment(with_original_span=True),
         observed=observed,
-        coordinate=PlaybillAcceptedCoordinate.model_validate(coordinate().model_dump()),
+        coordinate=AcceptedCoordinate.model_validate(coordinate().model_dump()),
     )
 
 

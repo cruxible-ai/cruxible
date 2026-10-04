@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cruxible_client.contracts.errors import PlaybillReseedRequired
+from cruxible_client.contracts.errors import ReseedRequired
 from cruxible_core.errors import ConfigError
 from cruxible_core.mcp.permissions import reset_permissions
 from cruxible_core.server import app as server_app
@@ -197,7 +197,7 @@ def test_pre_pc_hr_state_tree_preserves_the_auth_latch_by_refusing_reseed(
     legacy_store.mark_auth_required("legacy-auth-enabled")
     assert legacy_store.is_auth_required()
 
-    with pytest.raises(PlaybillReseedRequired):
+    with pytest.raises(ReseedRequired):
         get_server_state_root({"CRUXIBLE_STATE_ROOT": str(state_root)})
 
 
@@ -213,7 +213,7 @@ def test_flat_pre_pc_hr_state_tree_requires_reseed_naming_the_file(
     connection.execute("CREATE TABLE instances (instance_id TEXT)")
     connection.close()
 
-    with pytest.raises(PlaybillReseedRequired) as refused:
+    with pytest.raises(ReseedRequired) as refused:
         get_server_state_root({"CRUXIBLE_STATE_ROOT": str(state_root)})
     assert refused.value.found == str(legacy.resolve())
     assert str(legacy.resolve()) in str(refused.value)

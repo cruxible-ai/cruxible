@@ -35,7 +35,7 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.closure import (
@@ -84,7 +84,7 @@ from cruxible_client.contracts.semantic import SemanticAddress
 _LINE_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 
 
-class LineSpecFormatError(PlaybillFormatError):
+class LineSpecFormatError(FormatError):
     """A LineSpec artifact, closure, or successor transition is invalid."""
 
 

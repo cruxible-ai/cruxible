@@ -13,13 +13,13 @@ import pytest
 from cruxible_client import contracts
 from cruxible_client.authoring.blocks import sync_projection_blocks
 from cruxible_client.authoring.workspace import (
-    observe_playbill_next_workspace,
-    observe_playbill_next_workspace_with_coverage,
+    observe_next_workspace,
+    observe_next_workspace_with_coverage,
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
     AuthoringExistingClaimDisposition,
-    PlaybillBlockSyncReadRequest,
+    BlockSyncReadRequest,
     SelfSourceBody,
 )
 from cruxible_client.contracts.claims import (
@@ -45,7 +45,7 @@ from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring import projection_sync as playbill_projection_sync
 from cruxible_core.service.authoring.documents import (
-    PlaybillAcceptedCoordinate as ServiceAcceptedCoordinate,
+    AcceptedCoordinate as ServiceAcceptedCoordinate,
 )
 from cruxible_core.service.authoring.projection_sync import (
     _claim_nodes,
@@ -54,8 +54,8 @@ from cruxible_core.service.authoring.projection_sync import (
 )
 from cruxible_core.service.discovery.coverage import service_resolve_playbill_coverage
 from cruxible_core.service.discovery.next import (
-    PlaybillNextRequestV1,
-    PlaybillNextWorkspaceObservation,
+    NextRequestV1,
+    NextWorkspaceObservation,
     service_playbill_next,
 )
 from cruxible_core.service.proposals.publications import service_declare_playbill_block
@@ -86,16 +86,16 @@ class _ServiceClient:
     def __init__(self, instance) -> None:  # type: ignore[no-untyped-def]
         self.instance = instance
 
-    def check_playbill_projection_blocks(self, instance_id, *, request):
+    def check_projection_blocks(self, instance_id, *, request):
         from cruxible_core.service.authoring.projection_sync import service_check_projection_blocks
 
         return service_check_projection_blocks(self.instance, request=request)
 
-    def read_playbill_block_sync_backing(self, instance_id, *, request):  # type: ignore[no-untyped-def]
+    def read_block_sync_backing(self, instance_id, *, request):  # type: ignore[no-untyped-def]
         assert instance_id == self.instance.descriptor.instance_id
         return service_read_playbill_block_sync_backing(self.instance, request=request)
 
-    def declare_playbill_block(self, instance_id, stamp):  # type: ignore[no-untyped-def]
+    def declare_block(self, instance_id, stamp):  # type: ignore[no-untyped-def]
         assert instance_id == self.instance.descriptor.instance_id
         return service_declare_playbill_block(
             self.instance,
@@ -104,7 +104,7 @@ class _ServiceClient:
             declared_at="2026-09-10T12:00:00.000000Z",
         )
 
-    def resolve_playbill_coverage(  # type: ignore[no-untyped-def]
+    def resolve_coverage(  # type: ignore[no-untyped-def]
         self,
         instance_id,
         *,
@@ -132,8 +132,8 @@ class _ServiceClient:
                 None if scan_budget is None else CoverageScanBudget.model_validate(scan_budget)
             ),
         )
-        return contracts.PlaybillCoverageResult(
-            coordinate=contracts.PlaybillAcceptedCoordinate.model_validate(
+        return contracts.CoverageResult(
+            coordinate=contracts.AcceptedCoordinate.model_validate(
                 result.at.model_dump(mode="json")
             ),
             result=result.model_dump(mode="json"),
@@ -176,8 +176,8 @@ entries:
 def _observe(instance: PlaybillInstance, workspace_root: Path):  # type: ignore[no-untyped-def]
     """The workspace observation `next` reads, resolved through real coverage."""
 
-    observation = observe_playbill_next_workspace(workspace_root)
-    observation, coordinate = observe_playbill_next_workspace_with_coverage(
+    observation = observe_next_workspace(workspace_root)
+    observation, coordinate = observe_next_workspace_with_coverage(
         _ServiceClient(instance),  # type: ignore[arg-type]
         instance.descriptor.instance_id,
         workspace_root,
@@ -191,11 +191,11 @@ def _observe(instance: PlaybillInstance, workspace_root: Path):  # type: ignore[
 def _next(instance: PlaybillInstance, observation: object):  # type: ignore[no-untyped-def]
     return service_playbill_next(
         instance,
-        request=PlaybillNextRequestV1(
+        request=NextRequestV1(
             at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
             evaluation_time=EVALUATION_TIME,
             access_profile=ACCESS_PROFILE,
-            workspace_observation=PlaybillNextWorkspaceObservation.model_validate(observation),
+            workspace_observation=NextWorkspaceObservation.model_validate(observation),
         ),
     )
 
@@ -333,7 +333,7 @@ def test_body_only_successor_is_current_in_both_sync_and_next(
 
     settled = service_read_playbill_block_sync_backing(
         instance,
-        request=PlaybillBlockSyncReadRequest(stamp=stamp),
+        request=BlockSyncReadRequest(stamp=stamp),
     )
     assert settled.status == "current"
     assert settled.moved_backings == ()
@@ -355,7 +355,7 @@ def test_body_only_successor_is_current_in_both_sync_and_next(
 
     moved = service_read_playbill_block_sync_backing(
         instance,
-        request=PlaybillBlockSyncReadRequest(stamp=stamp),
+        request=BlockSyncReadRequest(stamp=stamp),
     )
     assert moved.status == "current"
     assert moved.moved_backings == ()
@@ -430,7 +430,7 @@ def test_a_moved_statement_reaches_next_and_sync_without_either_rewriting_the_pa
 
     current = service_read_playbill_block_sync_backing(
         instance,
-        request=PlaybillBlockSyncReadRequest(stamp=original_stamp),
+        request=BlockSyncReadRequest(stamp=original_stamp),
     )
     assert current.status == "current"
 
@@ -545,7 +545,7 @@ def test_a_moved_statement_reaches_next_and_sync_without_either_rewriting_the_pa
     )
     ambiguous_read = service_read_playbill_block_sync_backing(
         instance,
-        request=PlaybillBlockSyncReadRequest(stamp=original_stamp),
+        request=BlockSyncReadRequest(stamp=original_stamp),
     )
     assert ambiguous_read.status == "unchecked"
     assert ambiguous_read.reason == "block_successor_ambiguous"
@@ -651,7 +651,7 @@ def test_a_block_holding_three_claims_reports_one_ordinary_outcome(
 
     read = service_read_playbill_block_sync_backing(
         instance,
-        request=PlaybillBlockSyncReadRequest(stamp=stamp),
+        request=BlockSyncReadRequest(stamp=stamp),
     )
     assert read.status == "current"
     assert read.moved_backings == ()
@@ -677,7 +677,7 @@ def test_a_block_holding_three_claims_reports_one_ordinary_outcome(
     assert source.read_bytes() == page_before
 
     # The check reads every Claim backing in one batch, never one path at a time.
-    from cruxible_client.contracts.authoring.models import PlaybillProjectionCheckRequest
+    from cruxible_client.contracts.authoring.models import ProjectionCheckRequest
     from cruxible_core.service.authoring.projection_sync import service_check_projection_blocks
 
     single_reads: list[str] = []
@@ -692,16 +692,14 @@ def test_a_block_holding_three_claims_reports_one_ordinary_outcome(
         patch.setattr(instance, "blob_at", counted_blob)
         checked = service_check_projection_blocks(
             instance,
-            request=PlaybillProjectionCheckRequest(
-                stamps=(stamp,), evaluation_time=EVALUATION_TIME
-            ),
+            request=ProjectionCheckRequest(stamps=(stamp,), evaluation_time=EVALUATION_TIME),
         )
     assert checked.results[0].status == "current"
     assert single_reads == []
 
     from cruxible_client.contracts.authoring.models import (
-        PlaybillBlockSyncReadResult,
-        PlaybillBlockSyncSuccessorCandidate,
+        BlockSyncReadResult,
+        BlockSyncSuccessorCandidate,
     )
     from cruxible_core.indexes.typed_state import TypedStateReader
 
@@ -716,7 +714,7 @@ def test_a_block_holding_three_claims_reports_one_ordinary_outcome(
             ),
         )
         absent = service_read_playbill_block_sync_backing(
-            instance, request=PlaybillBlockSyncReadRequest(stamp=stamp)
+            instance, request=BlockSyncReadRequest(stamp=stamp)
         )
         assert absent.reason == "block_backing_missing"
         assert absent.issues[0].identity.qualified == missing
@@ -725,13 +723,13 @@ def test_a_block_holding_three_claims_reports_one_ordinary_outcome(
     failures = {}
     for index, backing in enumerate(stamp.backing):
         origin = "sha256:" + str(index + 1) * 64
-        failures[backing.identity.qualified] = PlaybillBlockSyncReadResult(
+        failures[backing.identity.qualified] = BlockSyncReadResult(
             status="unchecked",
             reason="block_successor_ambiguous",
             detail="ambiguous " + backing.identity.qualified,
             original_artifact_digest=origin,
             successor_candidates=tuple(
-                PlaybillBlockSyncSuccessorCandidate(
+                BlockSyncSuccessorCandidate(
                     identity=backing.identity,
                     artifact_digest="sha256:" + digit * 64,
                     coordinate=stamp.declared_coordinate,
@@ -746,7 +744,7 @@ def test_a_block_holding_three_claims_reports_one_ordinary_outcome(
         lambda instance, *, backing, **kwargs: failures[backing.identity.qualified],
     )
     ambiguous = service_read_playbill_block_sync_backing(
-        instance, request=PlaybillBlockSyncReadRequest(stamp=stamp)
+        instance, request=BlockSyncReadRequest(stamp=stamp)
     )
     selected = failures[ambiguous.issues[0].identity.qualified]
     assert ambiguous.detail == selected.detail

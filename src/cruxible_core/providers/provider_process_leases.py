@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.errors import PlaybillExecutionError
+from cruxible_client.contracts.errors import ExecutionError
 
 DEFAULT_PROVIDER_LEASE_ACQUISITION_TIMEOUT_SECONDS = 5.0
 DEFAULT_PROVIDER_LEASE_RECOVERY_TIMEOUT_SECONDS = 5.0
@@ -43,7 +43,7 @@ ProviderProcessFenceCodeV1 = Literal[
 ]
 
 
-class ProviderLocalRuntimeRefused(PlaybillExecutionError):
+class ProviderLocalRuntimeRefused(ExecutionError):
     """Typed daemon-local refusal translated into a Provider completion."""
 
     def __init__(

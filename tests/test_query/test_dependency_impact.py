@@ -7,7 +7,7 @@ evaluation time. A later backing successor must expose the downstream impacts
 and the repair candidates without retroactively relabelling a single recorded
 dependency coordinate.
 
-The rest is ordinary Playbill discipline: one accepted coordinate, one absolute
+The rest is ordinary Cruxible discipline: one accepted coordinate, one absolute
 instant, deterministic order, stated truncation, and a read that writes nothing.
 """
 

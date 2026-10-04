@@ -43,18 +43,18 @@ from cruxible_client.contracts.claim_verdicts import (
 )
 from cruxible_client.contracts.claims import claim_path
 from cruxible_client.contracts.compact_query import (
-    PlaybillQueryClaim,
-    PlaybillQueryColumn,
-    PlaybillQueryReceipt,
-    PlaybillQueryReplay,
-    PlaybillQueryRequest,
-    PlaybillQueryResult,
+    QueryClaim,
     QueryClaimStatus,
+    QueryColumn,
     QueryFilter,
     QueryFilterOperator,
     QueryFlag,
     QueryFollowDirection,
     QueryMode,
+    QueryReceipt,
+    QueryReplay,
+    QueryRequest,
+    QueryResultRecord,
 )
 from cruxible_client.contracts.get_reads import summary_value
 from cruxible_client.contracts.primitives import canonical_json
@@ -100,7 +100,6 @@ from cruxible_client.contracts.temporal import utc_now
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.query.backends import ClaimQueryFactsV1
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.exact_content import ExactContentReader
 from cruxible_core.service.discovery.query import (
@@ -139,8 +138,8 @@ from cruxible_core.service.discovery.read_flags import (
     verdict_flags,
 )
 from cruxible_core.service.list_pages import (
-    PlaybillListCursorMismatch,
-    PlaybillListCursorStale,
+    ListCursorMismatch,
+    ListCursorStale,
     list_snapshot,
 )
 from cruxible_core.service.read_refusals import (
@@ -185,7 +184,7 @@ _ANSWER_STATUSES = frozenset({"accepted", "conflicted"})
 # -- mode and coordinate ------------------------------------------------------
 
 
-def _mode(request: PlaybillQueryRequest) -> QueryMode:
+def _mode(request: QueryRequest) -> QueryMode:
     compact = request.kind is not None or request.contains is not None
     shaping = bool(request.where or request.select or request.follow or request.order_by)
     chosen = [
@@ -246,13 +245,13 @@ class _Answer:
     mode: QueryMode
     kind: str | None
     spec_digest: str
-    columns: tuple[PlaybillQueryColumn, ...]
+    columns: tuple[QueryColumn, ...]
     candidates: Sequence[Any]
     keys: Sequence[tuple[str, ...]]
     render: Callable[[Sequence[Any]], list[dict[str, Any]]]
     capped: tuple[str, ...] = ()
     notes: tuple[str, ...] = ()
-    replay: PlaybillQueryReplay | None = None
+    replay: QueryReplay | None = None
     # The Claim paths the rendered rows served; ``render`` fills it.
     served: set[str] = field(default_factory=set)
 
@@ -378,18 +377,18 @@ def _column_keys(wanted: Sequence[_Wanted]) -> list[str]:
     return [key for key in keys if key is not None]
 
 
-def _column(item: _Field | _Follow, *, name: str) -> PlaybillQueryColumn:
+def _column(item: _Field | _Follow, *, name: str) -> QueryColumn:
     if isinstance(item, _Follow):
-        return PlaybillQueryColumn(
+        return QueryColumn(
             name=name,
             predicate=item.info.predicate,
             type="subject",
             cardinality="one",
         )
     if isinstance(item.info, str):
-        return PlaybillQueryColumn(name=name, type="string", cardinality="one")
+        return QueryColumn(name=name, type="string", cardinality="one")
     info = item.info
-    return PlaybillQueryColumn(
+    return QueryColumn(
         name=name,
         predicate=info.predicate,
         type=object_label(info),
@@ -404,7 +403,7 @@ def _column(item: _Field | _Follow, *, name: str) -> PlaybillQueryColumn:
 class _CompactPlan:
     """A validated compact request against one Subject kind."""
 
-    def __init__(self, vocabulary: QueryVocabulary, request: PlaybillQueryRequest) -> None:
+    def __init__(self, vocabulary: QueryVocabulary, request: QueryRequest) -> None:
         assert request.kind is not None
         self.vocabulary = vocabulary
         self.kind = vocabulary.require_kind(request.kind)
@@ -923,12 +922,12 @@ class _RowRenderer:
         retired = self.retired.slot(path, predicate) if "retired" in self.status else []
         return live, list(retired)
 
-    def _cell_claim(self, item: LiveValue, reads: Mapping[str, ClaimRead]) -> PlaybillQueryClaim:
+    def _cell_claim(self, item: LiveValue, reads: Mapping[str, ClaimRead]) -> QueryClaim:
         value: object = item.value
         if item.exact:
             value = self.content.value(str(item.value), item.span)
         read = reads.get(item.identity)
-        return PlaybillQueryClaim(
+        return QueryClaim(
             claim=item.identity.removeprefix("Claim:"),
             value=summary_value(value),
             verdict="retired" if read is None else read.verdict,
@@ -1088,8 +1087,8 @@ def _searchable(item: LiveValue, content: ExactContentReader) -> str | None:
 
 
 def _compact_columns(
-    plan: _CompactPlan, request: PlaybillQueryRequest
-) -> tuple[list[_Column], list[PlaybillQueryColumn], tuple[str, ...]]:
+    plan: _CompactPlan, request: QueryRequest
+) -> tuple[list[_Column], list[QueryColumn], tuple[str, ...]]:
     """The columns a compact query serves, each under its own row key."""
 
     wanted: dict[tuple[str, ...], _Wanted] = {}
@@ -1129,7 +1128,7 @@ def _compact_columns(
             want(follow, (follow.alias,))
     items = list(wanted.values())
     columns: list[_Column] = []
-    output: list[PlaybillQueryColumn] = []
+    output: list[QueryColumn] = []
     for item, key in zip(items, _column_keys(items), strict=True):
         if isinstance(item.item, _Follow):
             columns.append(_Column(name=key, binding=item.item.alias, field=None))
@@ -1143,7 +1142,7 @@ def _compact_subject_query(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
     vocabulary: QueryVocabulary,
-    request: PlaybillQueryRequest,
+    request: QueryRequest,
     evaluation_time: datetime,
     *,
     content: ExactContentReader,
@@ -1435,7 +1434,7 @@ def _contains_everywhere(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
     vocabulary: QueryVocabulary,
-    request: PlaybillQueryRequest,
+    request: QueryRequest,
     evaluation_time: datetime,
     *,
     content: ExactContentReader,
@@ -1501,10 +1500,10 @@ def _contains_everywhere(
         kind=None,
         spec_digest=spec_digest,
         columns=(
-            PlaybillQueryColumn(name="kind", type="string"),
-            PlaybillQueryColumn(name="predicate", type="string"),
-            PlaybillQueryColumn(name="value", type="string"),
-            PlaybillQueryColumn(name="claim", type="string"),
+            QueryColumn(name="kind", type="string"),
+            QueryColumn(name="predicate", type="string"),
+            QueryColumn(name="value", type="string"),
+            QueryColumn(name="claim", type="string"),
         ),
         candidates=matches,
         keys=[(item.identity,) for item in matches],
@@ -1519,21 +1518,19 @@ _ARTIFACT_FIELDS: dict[str, tuple[str, ...]] = {
     "ClaimType": ("namespace", "name", "subject_kind"),
     "Procedure": ("namespace", "name"),
 }
-_ARTIFACT_COLUMNS: dict[str, tuple[PlaybillQueryColumn, ...]] = {
+_ARTIFACT_COLUMNS: dict[str, tuple[QueryColumn, ...]] = {
     "ClaimType": (
-        PlaybillQueryColumn(name="predicate", type="string"),
-        PlaybillQueryColumn(name="subject_kinds", type="string", cardinality="many"),
-        PlaybillQueryColumn(name="object", type="string"),
-        PlaybillQueryColumn(
-            name="cardinality", type="enum", members=("many", "one"), cardinality="one"
-        ),
-        PlaybillQueryColumn(name="members", type="string", cardinality="many"),
-        PlaybillQueryColumn(name="description", type="string"),
-        PlaybillQueryColumn(name="evidence", type="string", cardinality="many"),
+        QueryColumn(name="predicate", type="string"),
+        QueryColumn(name="subject_kinds", type="string", cardinality="many"),
+        QueryColumn(name="object", type="string"),
+        QueryColumn(name="cardinality", type="enum", members=("many", "one"), cardinality="one"),
+        QueryColumn(name="members", type="string", cardinality="many"),
+        QueryColumn(name="description", type="string"),
+        QueryColumn(name="evidence", type="string", cardinality="many"),
     ),
     "Procedure": (
-        PlaybillQueryColumn(name="name", type="string"),
-        PlaybillQueryColumn(
+        QueryColumn(name="name", type="string"),
+        QueryColumn(
             name="runnable",
             type="enum",
             members=("binding_required", "directly_runnable"),
@@ -1563,7 +1560,7 @@ def _artifact_answer(
     definition: AcceptedQueryDefinition,
     evaluation_time: datetime,
     mode: QueryMode,
-    request: PlaybillQueryRequest | None,
+    request: QueryRequest | None,
     budgets: QueryBudgets | None = None,
 ) -> _Answer:
     result = evaluate_accepted_query(
@@ -1636,8 +1633,8 @@ def _shape_artifact_rows(
     kind: str,
     rows: list[dict[str, Any]],
     identities: list[str],
-    request: PlaybillQueryRequest,
-) -> tuple[list[dict[str, Any]], list[str], tuple[PlaybillQueryColumn, ...]]:
+    request: QueryRequest,
+) -> tuple[list[dict[str, Any]], list[str], tuple[QueryColumn, ...]]:
     fields = _ARTIFACT_FIELDS[kind]
     checks: list[tuple[str, QueryFilterOperator, object]] = []
     for index, item in enumerate(request.where):
@@ -1723,7 +1720,7 @@ def _shape_artifact_rows(
         kept_rows = [kept_rows[position] for position in order]
         kept_ids = [kept_ids[position] for position in order]
     if request.select:
-        chosen: list[PlaybillQueryColumn] = []
+        chosen: list[QueryColumn] = []
         for index, name in enumerate(request.select):
             match = next((column for column in columns if column.name == name), None)
             if match is None:
@@ -1748,7 +1745,7 @@ def _require_artifact_names(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
     vocabulary: QueryVocabulary,
-    request: PlaybillQueryRequest,
+    request: QueryRequest,
 ) -> None:
     """A definition filter naming a namespace, name or kind that is not accepted refuses."""
 
@@ -1783,7 +1780,7 @@ def _require_artifact_names(
 
 
 def _artifact_definition(
-    vocabulary: QueryVocabulary, request: PlaybillQueryRequest
+    vocabulary: QueryVocabulary, request: QueryRequest
 ) -> AcceptedQueryDefinition:
     kind = cast(Literal["ClaimType", "Procedure"], request.kind)
     selection: Literal["all", "namespaces", "name_prefixes"] = "all"
@@ -1892,25 +1889,23 @@ def _pinned_spec(vocabulary: QueryVocabulary, spec: QueryDefinitionSpec) -> Quer
         ) from exc
 
 
-def _field_column(
-    vocabulary: QueryVocabulary, name: str, ref: QueryValueRef
-) -> PlaybillQueryColumn:
+def _field_column(vocabulary: QueryVocabulary, name: str, ref: QueryValueRef) -> QueryColumn:
     if isinstance(ref, QueryClaimValueRef):
         info = vocabulary.predicates.get(ref.predicate)
         if info is not None:
-            return PlaybillQueryColumn(
+            return QueryColumn(
                 name=name,
                 predicate=info.predicate,
                 type=object_label(info),
                 members=info.members or None,
                 cardinality=info.cardinality,
             )
-        return PlaybillQueryColumn(name=name, predicate=ref.predicate, type="json")
+        return QueryColumn(name=name, predicate=ref.predicate, type="json")
     if isinstance(ref, QuerySubjectFieldRef):
-        return PlaybillQueryColumn(name=name, type="string")
+        return QueryColumn(name=name, type="string")
     if isinstance(ref, QueryEvaluationTimeRef):
-        return PlaybillQueryColumn(name=name, type="timestamp")
-    return PlaybillQueryColumn(name=name, type="json")
+        return QueryColumn(name=name, type="timestamp")
+    return QueryColumn(name=name, type="json")
 
 
 def _engine_answer(
@@ -1931,7 +1926,7 @@ def _engine_answer(
     projection = query.projection
     notes: tuple[str, ...] = ()
     renderer_columns: list[_Column] = []
-    output: list[PlaybillQueryColumn] = []
+    output: list[QueryColumn] = []
     if projection is not None:
         output = [
             _field_column(vocabulary, _out(item.name), item.value) for item in projection.fields
@@ -2138,7 +2133,7 @@ def _named_answer(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
     vocabulary: QueryVocabulary,
-    request: PlaybillQueryRequest,
+    request: QueryRequest,
     evaluation_time: datetime,
     *,
     content: ExactContentReader,
@@ -2176,12 +2171,12 @@ def _named_answer(
         name=request.name,
         evaluation_time=evaluation_time,
         parameters=dict(request.params or {}),
-        at=PlaybillAcceptedCoordinate.from_internal(coordinate),
+        at=AcceptedCoordinate.from_internal(coordinate),
         budgets=budgets,
     )
     _refuse_engine(run.result, declared=tuple(item.name for item in definition.query.parameters))
     replay = (
-        PlaybillQueryReplay(
+        QueryReplay(
             definition_path=run.definition_path,
             result=run.result,
             execution=run.receipt,
@@ -2220,7 +2215,7 @@ def _spec_answer(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
     vocabulary: QueryVocabulary,
-    request: PlaybillQueryRequest,
+    request: QueryRequest,
     evaluation_time: datetime,
     *,
     content: ExactContentReader,
@@ -2269,7 +2264,7 @@ def _spec_answer(
 # -- the verb ---------------------------------------------------------------------
 
 
-def _selection(request: PlaybillQueryRequest, mode: QueryMode) -> dict[str, Any]:
+def _selection(request: QueryRequest, mode: QueryMode) -> dict[str, Any]:
     """The digest of everything that shapes the listing, so a cursor binds to it compactly."""
 
     body = request.model_dump(
@@ -2347,9 +2342,9 @@ def _encode_cursor(
     )
 
 
-def _cursor_mismatch(detail: str) -> PlaybillListCursorMismatch:
-    return PlaybillListCursorMismatch(
-        f"{PlaybillListCursorMismatch.error_code}: {detail}; query again without a cursor"
+def _cursor_mismatch(detail: str) -> ListCursorMismatch:
+    return ListCursorMismatch(
+        f"{ListCursorMismatch.error_code}: {detail}; query again without a cursor"
     )
 
 
@@ -2385,9 +2380,9 @@ def _decode_cursor(cursor: str, *, selection: str) -> _QueryCursor:
 def service_playbill_query(
     instance: PlaybillInstance,
     *,
-    request: PlaybillQueryRequest,
+    request: QueryRequest,
     served_claims: set[str] | None = None,
-) -> PlaybillQueryResult:
+) -> QueryResultRecord:
     """Answer one ``query`` call: one page of values, flags and paging.
 
     Exact-content values read as their text, for every caller.
@@ -2413,8 +2408,8 @@ def service_playbill_query(
         at = pinned
         pinned_time = continuation.evaluation_time
         if evaluation_time is not None and evaluation_time != pinned_time:
-            raise PlaybillListCursorStale(
-                f"{PlaybillListCursorStale.error_code}: the cursor continues an answer "
+            raise ListCursorStale(
+                f"{ListCursorStale.error_code}: the cursor continues an answer "
                 f"evaluated at {pinned_time.isoformat()}, not {evaluation_time.isoformat()}; "
                 "omit evaluation_time to continue it, or query again without a cursor"
             )
@@ -2488,8 +2483,8 @@ def service_playbill_query(
     start = 0
     if continuation is not None:
         if continuation.snapshot != _digest_part(snapshot):
-            raise PlaybillListCursorStale(
-                f"{PlaybillListCursorStale.error_code}: the query answer changed since the "
+            raise ListCursorStale(
+                f"{ListCursorStale.error_code}: the query answer changed since the "
                 "cursor's first page; query again without a cursor"
             )
         if continuation.offset > len(answer.candidates):
@@ -2514,7 +2509,7 @@ def service_playbill_query(
             snapshot=snapshot,
             offset=start + len(page),
         )
-    return PlaybillQueryResult(
+    return QueryResultRecord(
         kind=answer.kind,
         columns=answer.columns,
         rows=tuple(rows),
@@ -2522,7 +2517,7 @@ def service_playbill_query(
         next_cursor=next_cursor,
         capped=answer.capped,
         notes=answer.notes,
-        receipt=PlaybillQueryReceipt(
+        receipt=QueryReceipt(
             mode=answer.mode,
             spec_digest=answer.spec_digest,
             coordinate=served,

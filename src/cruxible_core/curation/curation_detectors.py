@@ -38,7 +38,7 @@ from cruxible_client.contracts.claims import (
     claim_statement_digest,
     parse_claim,
 )
-from cruxible_client.contracts.errors import PlaybillError, ProjectionIntegrityError
+from cruxible_client.contracts.errors import CruxibleError, ProjectionIntegrityError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.providers import ProviderV1
 from cruxible_client.contracts.query.definitions import QueryEvaluationPolicy
@@ -745,7 +745,7 @@ def _attempt_subject_from_path(
         return None
     try:
         parsed = parse_dependency_artifact(path, content)
-    except (PlaybillError, ValueError):
+    except (CruxibleError, ValueError):
         return None
     if parsed is None:
         return None
@@ -784,7 +784,7 @@ def _admission_failures(
                 admission.candidate_tree_oid, paths, proposal_id=admission.proposal_id
             )
             base_tree = instance.blobs_at(admission.proposed_base_oid, paths)
-        except (OSError, PlaybillError, ValueError):
+        except (OSError, CruxibleError, ValueError):
             coverage.omit("admission_tree_unavailable")
             continue
         attempt_payload = evaluation.model_dump(mode="json")
@@ -934,7 +934,7 @@ def _freshness_calibration(
         coverage.evaluated += 1
         try:
             envelope = parse_capture_envelope(body_store.read(capture_digest_value, access=access))
-        except (OSError, PlaybillError, ValueError):
+        except (OSError, CruxibleError, ValueError):
             coverage.omit("drift_series_unavailable")
             continue
         if not isinstance(envelope.source, ExternalSourceReference):

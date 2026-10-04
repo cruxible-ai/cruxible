@@ -15,8 +15,8 @@ from cruxible_client.contracts.documents import (
     document_path,
     render_document,
 )
-from cruxible_client.contracts.get_reads import PlaybillExactContentRef
-from cruxible_client.contracts.write import PlaybillWriteRequest, WriteOutcome
+from cruxible_client.contracts.get_reads import ExactContentRef
+from cruxible_client.contracts.write import WriteOutcome, WriteRequest
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
@@ -41,7 +41,7 @@ BODY_READER = BodyAccessContext(principal_id="owner", can_read_body=True)
 
 
 def _write(instance: PlaybillInstance, *changes: dict[str, Any], **options: Any) -> WriteOutcome:
-    request = PlaybillWriteRequest.model_validate(
+    request = WriteRequest.model_validate(
         {"because": "The writer checked it.", "changes": list(changes), **options}
     )
     outcome = service_playbill_write(instance, request=request, caller=caller())
@@ -254,7 +254,7 @@ def test_bytes_that_are_not_text_show_a_typed_marker_with_their_size(
     monkeypatch.setattr(
         renderer._content,
         "of",
-        lambda _obj: PlaybillExactContentRef(
+        lambda _obj: ExactContentRef(
             exact_content="binary", content_digest="sha256:" + "0" * 64, length=12
         ),
     )
@@ -295,14 +295,12 @@ def _export_envelope(files: dict[str, bytes]) -> Any:
     from cruxible_client import contracts
 
     manifest = json.loads(files["manifest.json"])
-    return contracts.PlaybillFloorExport(
+    return contracts.FloorExport(
         tag=manifest["format"],
         coordinate=manifest["coordinate"],
         manifest=manifest,
         files=[
-            contracts.PlaybillFloorFile(
-                path=path, content_base64=base64.b64encode(content).decode("ascii")
-            )
+            contracts.FloorFile(path=path, content_base64=base64.b64encode(content).decode("ascii"))
             for path, content in files.items()
         ],
     )
@@ -324,11 +322,11 @@ def test_every_floor_reader_still_verifies_the_export(
 ) -> None:
     from cruxible_client.authoring.workspace import (
         inspect_workspace_floor,
-        materialize_playbill_floor,
-        record_playbill_floor_output,
+        materialize_floor,
+        record_floor_output,
         verified_floor_files,
     )
-    from cruxible_client.contracts import PlaybillAcceptedCoordinate
+    from cruxible_client.contracts import AcceptedCoordinate
     from cruxible_core.coverage.middleware import FloorFreshnessManifestV2
 
     files = world["readable"]
@@ -337,12 +335,12 @@ def test_every_floor_reader_still_verifies_the_export(
     manifest = FloorFreshnessManifestV2.model_validate(json.loads(files["manifest.json"]))
     assert manifest.floor_digest == json.loads(files["manifest.json"])["floor_digest"]
     workspace = tmp_path_factory.mktemp("floor-workspace")
-    written = materialize_playbill_floor(workspace, export=export)
+    written = materialize_floor(workspace, export=export)
     assert written.file_count == len(files)
-    record_playbill_floor_output(workspace, instance_id="inst_floor", server_socket="daemon.sock")
+    record_floor_output(workspace, instance_id="inst_floor", server_socket="daemon.sock")
     status = inspect_workspace_floor(
         workspace,
-        current_coordinate=PlaybillAcceptedCoordinate.model_validate(
+        current_coordinate=AcceptedCoordinate.model_validate(
             manifest.coordinate.model_dump(mode="json")
         ),
     )
@@ -405,7 +403,7 @@ def test_a_later_export_renders_only_what_the_change_records_touched(
 
 def test_orient_reports_the_workspace_floor_and_how_far_behind_it_is(tmp_path: Any) -> None:
     from cruxible_client.authoring.workspace import (
-        materialize_playbill_floor,
+        materialize_floor,
         workspace_floor_freshness,
     )
     from cruxible_core.service.discovery.orient import service_playbill_orient
@@ -418,9 +416,7 @@ def test_orient_reports_the_workspace_floor_and_how_far_behind_it_is(tmp_path: A
 
     _write(instance, _set(WI1, "status", "ready"))
     exported_at = instance.accepted_coordinate().git_oid
-    materialize_playbill_floor(
-        workspace, export=_export_envelope(service_export_playbill_floor(instance))
-    )
+    materialize_floor(workspace, export=_export_envelope(service_export_playbill_floor(instance)))
     current = workspace_floor_freshness(workspace, service_playbill_orient(instance))
     assert current.floor is not None
     assert (current.floor.at, current.floor.generations_behind) == (exported_at, 0)
@@ -478,9 +474,9 @@ def test_the_refresh_profile_records_opt_in_parts_and_rewrites_old_formats(
     tmp_path: Any,
 ) -> None:
     from cruxible_client.authoring.workspace import (
-        PlaybillWorkspaceError,
+        WorkspaceError,
         configured_floor_output,
-        record_playbill_floor_output,
+        record_floor_output,
         refresh_workspace_floor,
     )
 
@@ -500,10 +496,10 @@ def test_the_refresh_profile_records_opt_in_parts_and_rewrites_old_formats(
         ),
         encoding="utf-8",
     )
-    with pytest.raises(PlaybillWorkspaceError, match="floor export --force"):
+    with pytest.raises(WorkspaceError, match="floor export --force"):
         configured_floor_output(tmp_path)
 
-    record_playbill_floor_output(tmp_path, instance_id="inst_floor", include=("discovery",))
+    record_floor_output(tmp_path, instance_id="inst_floor", include=("discovery",))
     written = json.loads(config.read_text(encoding="utf-8"))
     assert written["floor_output"] == {
         "tag": "playbill-floor-output-v1",
@@ -516,11 +512,11 @@ def test_the_refresh_profile_records_opt_in_parts_and_rewrites_old_formats(
     seen: list[dict[str, Any]] = []
 
     class _Client:
-        def export_playbill_floor(self, _instance_id: str, **kwargs: Any) -> Any:
+        def export_floor(self, _instance_id: str, **kwargs: Any) -> Any:
             seen.append(kwargs)
             raise LookupError("stop after the request")
 
-        def playbill_floor_delta(self, _instance_id: str, **kwargs: Any) -> Any:
+        def floor_delta(self, _instance_id: str, **kwargs: Any) -> Any:
             seen.append(kwargs)
             raise LookupError("stop after the request")
 
@@ -528,7 +524,7 @@ def test_the_refresh_profile_records_opt_in_parts_and_rewrites_old_formats(
     assert result.status == "failed"
     assert seen == [{"at": None, "include": ("discovery",)}]
 
-    record_playbill_floor_output(tmp_path, instance_id="inst_floor")
+    record_floor_output(tmp_path, instance_id="inst_floor")
     assert "include" not in json.loads(config.read_text(encoding="utf-8"))["floor_output"]
     refresh_workspace_floor(_Client(), "inst_floor", workspace=tmp_path)  # type: ignore[arg-type]
     # The default floor is asked for as a delta from the floor this workspace holds.
@@ -538,7 +534,7 @@ def test_the_refresh_profile_records_opt_in_parts_and_rewrites_old_formats(
 def test_every_handle_the_floor_prints_resolves_through_get(world: dict[str, Any]) -> None:
     import re
 
-    from cruxible_client.contracts.get_reads import PlaybillGetRequest
+    from cruxible_client.contracts.get_reads import GetRequest
     from cruxible_core.service.discovery.get import service_playbill_get
 
     instance: PlaybillInstance = world["instance"]
@@ -553,7 +549,7 @@ def test_every_handle_the_floor_prints_resolves_through_get(world: dict[str, Any
     for ref in (*claims, *refs):
         result = service_playbill_get(
             instance,
-            request=PlaybillGetRequest(ref=ref),
+            request=GetRequest(ref=ref),
             access=BodyAccessContext(principal_id="owner"),
         )
         assert result.card is not None, ref

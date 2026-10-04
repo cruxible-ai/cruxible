@@ -15,7 +15,7 @@ from cruxible_client.contracts.claims import (
     claim_artifact_digest,
     claim_path,
 )
-from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.temporal import utc_now
 from cruxible_core.evidence.attestation_verification import (
     ClaimAttestationRefusal,
@@ -52,7 +52,7 @@ def service_append_claim_attestation(
             generation_root=statement.referent_coordinate.generation_root,
             compiler_digest=statement.referent_coordinate.compiler_digest,
         )
-    except PlaybillError as exc:
+    except CruxibleError as exc:
         raise ClaimAttestationRefusal(
             "referent_coordinate_unaccepted", "referent is not an accepted coordinate"
         ) from exc

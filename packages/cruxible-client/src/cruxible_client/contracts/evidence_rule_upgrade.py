@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from cruxible_client.contracts.change_control import DryRun, PreviewAt
-from cruxible_client.contracts.get_reads import PlaybillGetCoordinate
+from cruxible_client.contracts.get_reads import GetCoordinate
 
 
 class _Model(BaseModel):
@@ -48,7 +48,7 @@ class EvidenceRuleUpgradeResult(_Model):
     detail: str | None = None
     #: The accepted coordinate the change set was evaluated at; pass it as ``at``
     #: to commit exactly this preview.
-    coordinate: PlaybillGetCoordinate | None = None
+    coordinate: GetCoordinate | None = None
 
 
 __all__ = [

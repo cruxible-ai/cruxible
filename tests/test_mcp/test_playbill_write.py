@@ -10,10 +10,10 @@ import pytest
 
 from cruxible_client.contracts.write import (
     FileEvidence,
-    PlaybillRetireRequest,
-    PlaybillSetRequest,
-    PlaybillWriteRequest,
+    RetireRequest,
     SetChange,
+    SetRequest,
+    WriteRequest,
 )
 from cruxible_core.errors import DataValidationError
 from cruxible_core.mcp import handlers
@@ -147,15 +147,15 @@ def test_handlers_build_typed_requests_for_the_mcp_surface(
     )
 
     (set_request,) = sets
-    assert isinstance(set_request, PlaybillSetRequest)
+    assert isinstance(set_request, SetRequest)
     assert set_request.surface == "mcp" and set_request.dry_run and set_request.at == "0123456789ab"
     assert set_request.expect == "ready"
     assert set_request.evidence.capture == "CAP-0123456789ab"  # type: ignore[union-attr]
     (retire_request,) = retires
-    assert isinstance(retire_request, PlaybillRetireRequest) and retire_request.surface == "mcp"
+    assert isinstance(retire_request, RetireRequest) and retire_request.surface == "mcp"
     assert retire_request.expect == ("done", "ready")
     (write_request,) = writes
-    assert isinstance(write_request, PlaybillWriteRequest)
+    assert isinstance(write_request, WriteRequest)
     assert write_request.changes[0].op == "add"
     assert write_request.changes[0].expect_absent  # type: ignore[union-attr]
     assert write_request.subject == "dev.item/a"

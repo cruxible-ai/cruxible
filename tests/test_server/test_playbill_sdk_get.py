@@ -1,4 +1,4 @@
-"""Playbill.get resolves references on the daemon, keeping the SDK's typed views."""
+"""Cruxible.get resolves references on the daemon, keeping the SDK's typed views."""
 
 from __future__ import annotations
 
@@ -9,15 +9,15 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from cruxible_client.authoring.sdk import ClaimView, Playbill
+from cruxible_client.authoring.sdk import ClaimView, Cruxible
 from cruxible_client.authoring.sdk_types import ClaimRef, ClaimTypeRef, RefKind, SubjectRef
 from cruxible_client.contracts import ClaimViewRecord
 from cruxible_client.contracts.get_reads import (
-    PlaybillGetBatchRequest,
-    PlaybillGetClaimTypeCard,
-    PlaybillGetEvidence,
-    PlaybillGetRequest,
-    PlaybillGetSubjectCard,
+    GetBatchRequest,
+    GetClaimTypeCard,
+    GetEvidence,
+    GetRequest,
+    GetSubjectCard,
 )
 from cruxible_client.errors import CoreError
 from cruxible_client.transport.http import CruxibleClient
@@ -30,12 +30,12 @@ from tests.test_server.test_playbill_procedure_measurements import (  # noqa: F4
 )
 
 
-def _sdk(client: TestClient, instance_id: str, tmp_path: Path) -> Playbill:
+def _sdk(client: TestClient, instance_id: str, tmp_path: Path) -> Cruxible:
     transport = CruxibleClient(base_url="http://testserver")
     transport._client._client = client  # type: ignore[attr-defined]  # noqa: SLF001
     workspace = tmp_path / "sdk-workspace"
     workspace.mkdir()
-    return Playbill._from_client(  # noqa: SLF001
+    return Cruxible._from_client(  # noqa: SLF001
         transport,
         instance_id=instance_id,
         workspace=workspace,
@@ -61,7 +61,7 @@ def test_get_resolves_strings_and_typed_refs_directly(
 
     subject = pb.get("project.work_item/wi-42")
     assert subject.kind is RefKind.SUBJECT and subject.identity == "project.work_item/wi-42"
-    assert isinstance(subject.value, PlaybillGetSubjectCard)
+    assert isinstance(subject.value, GetSubjectCard)
     assert [(row.predicate, row.value) for row in subject.value.claims] == [("status", "ready")]
     assert isinstance(subject.ref, SubjectRef)
     # Summaries answer a compact coordinate; the SDK asks for the full one to pin.
@@ -69,7 +69,7 @@ def test_get_resolves_strings_and_typed_refs_directly(
 
     by_leaf = pb.get("status")
     assert by_leaf.kind is RefKind.CLAIM_TYPE and by_leaf.identity == PREDICATE
-    assert isinstance(by_leaf.value, PlaybillGetClaimTypeCard)
+    assert isinstance(by_leaf.value, GetClaimTypeCard)
     assert pb.get(ClaimTypeRef(PREDICATE, pb.coordinate)).value == by_leaf.value
 
     # A Claim summary keeps the SDK's typed ClaimView, from a prefix or a ref.
@@ -88,7 +88,7 @@ def test_get_resolves_strings_and_typed_refs_directly(
     assert pb.get(f"claims/{claim_id[4:6]}/{claim_id}.json").value == card.value
 
     evidence = pb.get(claim_id, detail="evidence")
-    assert isinstance(evidence.value, PlaybillGetEvidence)
+    assert isinstance(evidence.value, GetEvidence)
     proof = pb.get(claim_id, detail="proof")
     assert isinstance(proof.value, ClaimViewRecord)
 
@@ -100,7 +100,7 @@ def test_an_exact_content_claim_view_carries_the_text_the_daemon_reads(
     owned_playbill_http: tuple[TestClient, str, Path],  # noqa: F811
     tmp_path: Path,
 ) -> None:
-    from cruxible_client.contracts.get_reads import PlaybillExactContentRef
+    from cruxible_client.contracts.get_reads import ExactContentRef
     from tests.core_support._exact_content_support import seed_exact_content_into
 
     client, instance_id, key = owned_playbill_http
@@ -125,7 +125,7 @@ def test_an_exact_content_claim_view_carries_the_text_the_daemon_reads(
     assert pb.claim_view(ruling.claim_id) == card.value
     (batched, marked) = pb.claim_views([ruling.claim_id, binary.claim_id])
     assert batched == card.value
-    assert marked.value == PlaybillExactContentRef(
+    assert marked.value == ExactContentRef(
         exact_content="binary", content_digest=binary.digest, length=9
     )
     assert marked.content_digest == binary.digest
@@ -141,8 +141,8 @@ def test_cut_values_offer_runnable_evidence_on_every_surface(
 
     from click.testing import CliRunner
 
-    from cruxible_client.contracts import PlaybillAcceptedCoordinate
-    from cruxible_client.contracts.get_reads import PlaybillGetHistory
+    from cruxible_client.contracts import AcceptedCoordinate
+    from cruxible_client.contracts.get_reads import GetHistory
     from cruxible_core.cli.main import cli
     from cruxible_core.mcp import handlers
     from tests.core_support._exact_content_support import seed_exact_content_into
@@ -205,13 +205,11 @@ def test_cut_values_offer_runnable_evidence_on_every_surface(
         if isinstance(card.value, ClaimView):
             assert card.value.value == whole
             continue
-        assert isinstance(card.value, PlaybillGetSubjectCard | PlaybillGetHistory)
-        section_sdk = (
-            card.value.revisions[0] if isinstance(card.value, PlaybillGetHistory) else card.value
-        )
+        assert isinstance(card.value, GetSubjectCard | GetHistory)
+        section_sdk = card.value.revisions[0] if isinstance(card.value, GetHistory) else card.value
         read_sdk = eval(
             section_sdk.next[0],
-            {"pb": pb, "PlaybillAcceptedCoordinate": PlaybillAcceptedCoordinate},
+            {"cx": pb, "AcceptedCoordinate": AcceptedCoordinate},
         )
         assert read_sdk.value.value == whole
 
@@ -406,12 +404,10 @@ def test_the_compact_coordinate_passes_back_as_at_on_every_surface(
     transport = CruxibleClient(base_url="http://testserver")
     transport._client._client = client  # type: ignore[attr-defined]  # noqa: SLF001
     assert (
-        transport.playbill_get(
-            instance_id, request=PlaybillGetRequest(ref=ref, at=compact)
-        ).coordinate.git_oid
+        transport.get(instance_id, request=GetRequest(ref=ref, at=compact)).coordinate.git_oid
         == compact
     )
-    assert transport.orient_playbill(instance_id, at=compact).generation == earlier.sequence
+    assert transport.orient(instance_id, at=compact).generation == earlier.sequence
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: transport)
     prefix = ["--server-url", "http://testserver", "--instance-id", instance_id]
     as_json = CliRunner().invoke(cli, [*prefix, "playbill", "get", ref, "--at", compact, "--json"])
@@ -461,9 +457,9 @@ def test_world_reads_values_subjects_and_vocabulary_through_the_read_verbs(
 
     head = pb.refresh()
     assert head.coordinate.git_oid == pb.coordinate.git_oid
-    batch = pb._client.playbill_get_batch(  # noqa: SLF001
+    batch = pb._client.get_batch(  # noqa: SLF001
         instance_id,
-        request=PlaybillGetBatchRequest(refs=(f"ClaimType:{PREDICATE}", value.claim)),
+        request=GetBatchRequest(refs=(f"ClaimType:{PREDICATE}", value.claim)),
     )
     assert [item.kind for item in batch.results] == ["claim_type", "claim"]
     assert {item.accepted_coordinate for item in batch.results} == {batch.coordinate}

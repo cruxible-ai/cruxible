@@ -1,4 +1,4 @@
-"""Regenerate the ratified Playbill v1 served-surface inventory.
+"""Regenerate the ratified Cruxible v1 served-surface inventory.
 
 What the pin covers, and what it did not until 2026-09-09. Each HTTP route's
 request and response digest is taken over the RESOLVED JSON schema, so a field
@@ -447,7 +447,7 @@ def verify_served_surface_snapshot(
         raise ValueError("served-surface succession digest does not match its surface")
     expected = generate_served_surface() if live_surface is None else live_surface
     if surface != expected:
-        raise ValueError("live Playbill served surface differs from the ratified v1 inventory")
+        raise ValueError("live Cruxible served surface differs from the ratified v1 inventory")
 
 
 def _render(snapshot: Mapping[str, object]) -> bytes:

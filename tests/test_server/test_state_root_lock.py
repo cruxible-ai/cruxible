@@ -183,7 +183,7 @@ def test_the_stop_route_schedules_a_graceful_shutdown_and_names_the_daemon_pid(
     reset_permissions()
     reset_registry()
     reset_runtime_credential_store()
-    # `create_app` binds the process-wide Playbill manager (and its Provider
+    # `create_app` binds the process-wide Cruxible manager (and its Provider
     # runtime operator) to this temporary state root. Leaving it bound after the
     # directory is gone makes a later suite read a lane rooted at a path that no
     # longer exists, so clear it on both sides exactly as tests/test_server's

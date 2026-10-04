@@ -18,17 +18,17 @@ def test_floor_write_delegates_only_to_an_opted_in_local_daemon(
     workspace.mkdir()
     delivered = []
     delta = _delta()
-    receipt = contracts.PlaybillWorkspaceFloorWriteResult(
+    receipt = contracts.WorkspaceFloorWriteResult(
         status="written",
         path=".playbill/floor",
         destination=str(workspace / ".playbill/floor"),
         floor_digest="sha256:" + "a" * 64,
-        coordinate=contracts.PlaybillAcceptedCoordinate.model_validate(
+        coordinate=contracts.AcceptedCoordinate.model_validate(
             delta.head.coordinate().model_dump(mode="json")
         ),
         file_count=1,
     )
-    result = contracts.PlaybillFloorDeliveryResult(delta=delta, written=receipt)
+    result = contracts.FloorDeliveryResult(delta=delta, written=receipt)
 
     def deliver(_):
         delivered.append(True)
@@ -36,13 +36,13 @@ def test_floor_write_delegates_only_to_an_opted_in_local_daemon(
 
     client = SimpleNamespace(
         socket_path=str(tmp_path / "socket") if local else None,
-        playbill_host_workspace_registration=lambda _: contracts.PlaybillHostWorkspaceRegistration(
+        host_workspace_registration=lambda _: contracts.HostWorkspaceRegistration(
             instance_id="inst_floor",
             status="registered",
             workspace_path=str(workspace),
             floor_delivery=enabled,
         ),
-        deliver_playbill_floor_now=deliver,
+        deliver_floor_now=deliver,
     )
     fetches = []
 
@@ -71,45 +71,43 @@ def test_floor_write_delegates_only_to_an_opted_in_local_daemon(
 def test_delivery_refuses_a_different_registered_workspace(tmp_path):
     client = SimpleNamespace(
         socket_path=str(tmp_path / "socket"),
-        playbill_host_workspace_registration=lambda _: contracts.PlaybillHostWorkspaceRegistration(
+        host_workspace_registration=lambda _: contracts.HostWorkspaceRegistration(
             instance_id="inst_floor",
             status="registered",
             workspace_path=str(tmp_path / "other"),
             floor_delivery=True,
         ),
     )
-    with pytest.raises(authoring.PlaybillWorkspaceError, match="another workspace"):
+    with pytest.raises(authoring.WorkspaceError, match="another workspace"):
         daemon_floor_delivery(client, "inst_floor", tmp_path)
 
 
 def test_activation_refresh_uses_the_same_daemon_writer(tmp_path, monkeypatch):
     from cruxible_client.authoring.workspace import (
-        record_playbill_floor_output,
+        record_floor_output,
         refresh_workspace_floor,
     )
 
-    record_playbill_floor_output(
-        tmp_path, instance_id="inst_floor", server_socket=str(tmp_path / "socket")
-    )
+    record_floor_output(tmp_path, instance_id="inst_floor", server_socket=str(tmp_path / "socket"))
     delta = _delta()
-    written = contracts.PlaybillWorkspaceFloorWriteResult(
+    written = contracts.WorkspaceFloorWriteResult(
         path=".playbill/floor",
         destination=str(tmp_path / ".playbill/floor"),
         floor_digest="sha256:" + "a" * 64,
-        coordinate=contracts.PlaybillAcceptedCoordinate.model_validate(
+        coordinate=contracts.AcceptedCoordinate.model_validate(
             delta.head.coordinate().model_dump(mode="json")
         ),
         file_count=1,
     )
     client = SimpleNamespace(
         socket_path=str(tmp_path / "socket"),
-        playbill_host_workspace_registration=lambda _: contracts.PlaybillHostWorkspaceRegistration(
+        host_workspace_registration=lambda _: contracts.HostWorkspaceRegistration(
             instance_id="inst_floor",
             status="registered",
             workspace_path=str(tmp_path),
             floor_delivery=True,
         ),
-        deliver_playbill_floor_now=lambda *_a, **_k: contracts.PlaybillFloorDeliveryResult(
+        deliver_floor_now=lambda *_a, **_k: contracts.FloorDeliveryResult(
             delta=delta, written=written
         ),
     )
@@ -127,13 +125,13 @@ def test_client_transport_sends_typed_delivery_requests(tmp_path):
 
     calls = []
     delta = _delta()
-    delivered = contracts.PlaybillFloorDeliveryResult(
+    delivered = contracts.FloorDeliveryResult(
         delta=delta,
-        written=contracts.PlaybillWorkspaceFloorWriteResult(
+        written=contracts.WorkspaceFloorWriteResult(
             path=".playbill/floor",
             destination=str(tmp_path / ".playbill/floor"),
             floor_digest="sha256:" + "a" * 64,
-            coordinate=contracts.PlaybillAcceptedCoordinate.model_validate(
+            coordinate=contracts.AcceptedCoordinate.model_validate(
                 delta.head.coordinate().model_dump(mode="json")
             ),
             file_count=1,
@@ -148,7 +146,7 @@ def test_client_transport_sends_typed_delivery_requests(tmp_path):
             return httpx.Response(200, json=delivered.model_dump(mode="json"))
         return httpx.Response(
             200,
-            json=contracts.PlaybillHostWorkspaceRegistration(
+            json=contracts.HostWorkspaceRegistration(
                 instance_id="inst_floor", status="registered", floor_delivery=True
             ).model_dump(mode="json"),
         )
@@ -157,8 +155,8 @@ def test_client_transport_sends_typed_delivery_requests(tmp_path):
     client._client.close()
     client._client = httpx.Client(transport=httpx.MockTransport(respond), base_url="http://test")
     try:
-        assert client.set_playbill_floor_delivery("inst_floor", enabled=True).floor_delivery
-        assert client.deliver_playbill_floor_now("inst_floor") == delivered
+        assert client.set_floor_delivery("inst_floor", enabled=True).floor_delivery
+        assert client.deliver_floor_now("inst_floor") == delivered
         assert calls == [
             ("/api/v1/inst_floor/playbill/workspace/floor-delivery", {"enabled": True}),
             ("/api/v1/inst_floor/playbill/floor/deliver-now", {"include": [], "at": None}),

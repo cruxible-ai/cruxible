@@ -1,4 +1,4 @@
-"""Frozen provider-execution records shared by the client and Playbill core."""
+"""Frozen provider-execution records shared by the client and Cruxible core."""
 
 from __future__ import annotations
 

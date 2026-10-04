@@ -13,17 +13,17 @@ import pytest
 
 from cruxible_client.contracts import ProviderLaneStatus
 from cruxible_client.contracts.declared_blocks import (
-    PlaybillPresentationPolicy,
-    PlaybillProjectionAdvisoryPolicy,
+    PresentationPolicy,
+    ProjectionAdvisoryPolicy,
 )
-from cruxible_client.contracts.errors import PlaybillInstanceDecommissioned
+from cruxible_client.contracts.errors import InstanceDecommissioned
 from cruxible_client.contracts.projection import AcceptedCoordinate as ClientAcceptedCoordinate
 from cruxible_core.cli.commands.playbill import _NEXT_STATUS_ATTENTION
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.runtime.instance import DESCRIPTOR_FILE
 from cruxible_core.service.discovery.next import (
-    PlaybillNextRequestV1,
-    PlaybillNextWorkspaceObservation,
+    NextRequestV1,
+    NextWorkspaceObservation,
     service_playbill_next,
 )
 from tests.core_support._support import initialize_local
@@ -69,7 +69,7 @@ def test_a_missing_or_stale_floor_names_the_export_until_it_is_current(
 
     status = _status(
         instance,
-        _request(instance, workspace=PlaybillNextWorkspaceObservation(floor_status=reported)),
+        _request(instance, workspace=NextWorkspaceObservation(floor_status=reported)),
     )
     assert status.floor.state == reported
     assert status.floor.repair is not None
@@ -80,7 +80,7 @@ def test_a_missing_or_stale_floor_names_the_export_until_it_is_current(
         instance,
         _request(
             instance,
-            workspace=PlaybillNextWorkspaceObservation(
+            workspace=NextWorkspaceObservation(
                 floor_status="current", installed_coordinate=coordinate
             ),
         ),
@@ -95,9 +95,7 @@ def test_a_workspace_that_never_configured_a_floor_says_nothing_about_it(
 
     status = _status(
         instance,
-        _request(
-            instance, workspace=PlaybillNextWorkspaceObservation(floor_status="not_configured")
-        ),
+        _request(instance, workspace=NextWorkspaceObservation(floor_status="not_configured")),
     )
 
     assert status.floor.state == "not_configured" and _attention(status) == ()
@@ -182,19 +180,19 @@ def test_a_current_mirror_stays_current_for_an_earlier_requested_coordinate(
     assert _status(instance, earlier).ledger_mirror.state == "current"
 
 
-def _catalog_observation(instance, *, advisory: bool) -> PlaybillNextWorkspaceObservation:  # type: ignore[no-untyped-def]
+def _catalog_observation(instance, *, advisory: bool) -> NextWorkspaceObservation:  # type: ignore[no-untyped-def]
     from cruxible_client.contracts.declared_blocks import (
-        PlaybillProjectionCoverageObservation,
+        ProjectionCoverageObservation,
     )
 
     public = ClientAcceptedCoordinate.model_validate(
         AcceptedCoordinate.from_internal(instance.accepted_coordinate()).model_dump(mode="json")
     )
-    return PlaybillNextWorkspaceObservation(
-        presentation_policy=PlaybillPresentationPolicy(
-            projection_advisories=PlaybillProjectionAdvisoryPolicy(procedure=advisory)
+    return NextWorkspaceObservation(
+        presentation_policy=PresentationPolicy(
+            projection_advisories=ProjectionAdvisoryPolicy(procedure=advisory)
         ),
-        projection_coverage=PlaybillProjectionCoverageObservation(
+        projection_coverage=ProjectionCoverageObservation(
             coordinate=public, complete_kinds=("Procedure",), bindings=()
         ),
     )
@@ -220,7 +218,7 @@ def test_a_procedure_catalog_is_checked_only_where_the_workspace_asks_for_one(
     def status(observation):  # type: ignore[no-untyped-def]
         return _status(
             instance,
-            PlaybillNextRequestV1(
+            NextRequestV1(
                 evaluation_time=EVALUATION_TIME,
                 access_profile=_access(),
                 workspace_observation=observation,
@@ -256,7 +254,7 @@ def test_a_decommissioned_instance_blocks_in_the_status_header(tmp_path: Path) -
         "allocate_a_new_instance_with_playbill_host_create_or_archive_this_directory_yourself"
     )
     # Terminal: nothing inside the instance clears it.
-    with pytest.raises(PlaybillInstanceDecommissioned):
+    with pytest.raises(InstanceDecommissioned):
         instance.decommission(reason="a second reason", decommissioned_by="owner")
 
 
@@ -388,7 +386,7 @@ def test_due_line_occurrences_name_their_dispatch_until_it_admits_them(tmp_path:
     assert due.line_dispatch.repair is not None
     assert due.line_dispatch.repair.command == f"cruxible playbill line dispatch {identity}"
     assert _attention(due) == (("line_dispatch", due.line_dispatch),)
-    hidden = PlaybillNextRequestV1(
+    hidden = NextRequestV1(
         evaluation_time=now,
         access_profile=_access().model_copy(update={"permitted_access_classes": ("public",)}),
     )
@@ -506,7 +504,7 @@ def test_worker_findings_report_how_current_they_are(
         {"kind": "next", "state": "disabled"}
     ]
 
-    hidden = PlaybillNextRequestV1(
+    hidden = NextRequestV1(
         evaluation_time=late,
         access_profile=_access().model_copy(update={"permitted_access_classes": ("public",)}),
     )

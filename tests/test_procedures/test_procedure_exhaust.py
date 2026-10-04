@@ -12,7 +12,7 @@ from cruxible_client.contracts.canonical import (
     SemanticRoot,
     typed_digest,
 )
-from cruxible_client.contracts.errors import PlaybillJournalError
+from cruxible_client.contracts.errors import JournalError
 from cruxible_core.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
     JournalStreamIdentityV1,
@@ -127,7 +127,7 @@ def test_writer_refuses_inactive_fence_without_journal_record(tmp_path) -> None:
     writer, journal, _bodies, stream, partition_id = _writer(tmp_path)
     journal.fence_writer(stream, partition_id, expected_fencing_token="writer-a")
 
-    with pytest.raises(PlaybillJournalError, match="active fencing token"):
+    with pytest.raises(JournalError, match="active fencing token"):
         writer.append(
             stream=stream,
             partition_id=partition_id,

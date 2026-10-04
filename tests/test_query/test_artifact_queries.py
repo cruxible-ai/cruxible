@@ -326,7 +326,7 @@ def test_procedure_selection_retains_versions_and_uses_name_scope(tmp_path):
 
 @pytest.mark.parametrize("policy,severity", [("warn", "warning"), ("require_current", "blocking")])
 def test_ontology_query_only_blocks_share_sync_and_next_currency(tmp_path, policy, severity):
-    from cruxible_client.contracts.authoring.models import PlaybillProjectionCheckRequest
+    from cruxible_client.contracts.authoring.models import ProjectionCheckRequest
     from cruxible_client.contracts.declared_blocks import (
         ProjectionBlockStamp,
         ProjectionQueryBacking,
@@ -363,7 +363,7 @@ def test_ontology_query_only_blocks_share_sync_and_next_currency(tmp_path, polic
         at = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
         check = service_check_projection_blocks(
             instance,
-            request=PlaybillProjectionCheckRequest(stamps=(stamp,), at=at, evaluation_time=NOW),
+            request=ProjectionCheckRequest(stamps=(stamp,), at=at, evaluation_time=NOW),
         ).results[0]
         current_request = request.model_copy(
             update={

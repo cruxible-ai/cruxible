@@ -6,7 +6,7 @@ import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.captures import capture_contract_digest
-from cruxible_client.contracts.errors import PlaybillExecutionError
+from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.line_dispatch import (
     LineArmPrincipal,
     LineDispatchRequest,
@@ -297,7 +297,7 @@ def test_trigger_input_refuses_before_admission_without_refetch(tmp_path, failur
             instance, coordinate=instance.accepted_coordinate(), name=line.procedure.target.name
         )
         contract = capture_contract()
-        with pytest.raises(PlaybillExecutionError, match="bound read budget") as error:
+        with pytest.raises(ExecutionError, match="bound read budget") as error:
             bind_trigger_capture(
                 instance,
                 line=line,

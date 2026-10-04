@@ -7,10 +7,10 @@ from typing import Any
 
 import pytest
 
-from cruxible_client.contracts.get_reads import PlaybillGetRequest
+from cruxible_client.contracts.get_reads import GetRequest
 from cruxible_client.contracts.operational_reads import (
-    PlaybillGetLineCard,
-    PlaybillGetProcedureRunCard,
+    GetLineCard,
+    GetProcedureRunCard,
 )
 from cruxible_core.service.discovery.get import service_playbill_get
 from cruxible_core.service.discovery.operational import OperationalViewer
@@ -23,7 +23,7 @@ _ACCESS = BodyAccessContext(principal_id="reader", can_read_body=False)
 
 def _get(instance: Any, ref: str, viewer: OperationalViewer | None = None, **fields: Any):  # type: ignore[no-untyped-def]
     return service_playbill_get(
-        instance, request=PlaybillGetRequest(ref=ref, **fields), access=_ACCESS, viewer=viewer
+        instance, request=GetRequest(ref=ref, **fields), access=_ACCESS, viewer=viewer
     )
 
 
@@ -69,7 +69,7 @@ def test_another_principals_credential_is_withheld_from_the_line_and_run_cards(
 
     for viewer in (None, OperationalViewer(credential_id="cred-someone-else", admin=False)):
         card = _get(instance, line.identity.qualified, viewer, evaluation_time=when).card
-        assert isinstance(card, PlaybillGetLineCard)
+        assert isinstance(card, GetLineCard)
         (arm,) = card.arms
         assert arm.principal_kind == "runtime_credential"
         assert arm.credential is None and arm.armed_by is None and arm.armed_by_withheld
@@ -77,7 +77,7 @@ def test_another_principals_credential_is_withheld_from_the_line_and_run_cards(
         assert "cred-arm" not in dumped and "line-operator" not in dumped
 
         run = _get(instance, f"ProcedureRun:{run_id}", viewer).card
-        assert isinstance(run, PlaybillGetProcedureRunCard) and run.triggered_by is not None
+        assert isinstance(run, GetProcedureRunCard) and run.triggered_by is not None
         assert run.triggered_by.armed_by is None
         assert "line-operator" not in str(run.model_dump(mode="json"))
 
@@ -94,7 +94,7 @@ def test_the_arming_credential_or_an_admin_sees_it(credential_world, viewer) -> 
 
     card = _get(instance, line.identity.qualified, viewer, evaluation_time=when).card
 
-    assert isinstance(card, PlaybillGetLineCard)
+    assert isinstance(card, GetLineCard)
     (arm,) = card.arms
     assert (arm.credential, arm.armed_by) == ("cred-arm", "line-operator")
     assert not arm.armed_by_withheld
@@ -148,10 +148,10 @@ def test_a_credential_bound_to_the_arming_principal_sees_it_and_no_one_else(
     instance, line, run_id, when = credential_world
 
     card = _get(instance, line.identity.qualified, viewer, evaluation_time=when).card
-    assert isinstance(card, PlaybillGetLineCard)
+    assert isinstance(card, GetLineCard)
     (arm,) = card.arms
     run = _get(instance, f"ProcedureRun:{run_id}", viewer).card
-    assert isinstance(run, PlaybillGetProcedureRunCard) and run.triggered_by is not None
+    assert isinstance(run, GetProcedureRunCard) and run.triggered_by is not None
     if visible:
         assert (arm.credential, arm.armed_by) == ("cred-arm", "line-operator")
         assert run.triggered_by.armed_by == "line-operator" and run.actor == "owner"
@@ -195,7 +195,7 @@ def test_the_runtime_get_passes_the_authenticated_viewer(monkeypatch: pytest.Mon
     monkeypatch.setattr(playbill_api, "get_current_mode", lambda: PermissionMode.READ_ONLY)
 
     with pytest.raises(RuntimeError):
-        playbill_api.playbill_get("inst", request=PlaybillGetRequest(ref="Line:x"))
+        playbill_api.playbill_get("inst", request=GetRequest(ref="Line:x"))
 
     viewer = seen["viewer"]
     assert viewer == OperationalViewer(
@@ -249,7 +249,7 @@ def test_an_unbound_credential_or_a_claim_gets_no_principal_widening(
     monkeypatch.setattr(playbill_api, "get_current_mode", lambda: PermissionMode.GOVERNED_WRITE)
 
     with pytest.raises(RuntimeError):
-        playbill_api.playbill_get("inst", request=PlaybillGetRequest(ref="Line:x"))
+        playbill_api.playbill_get("inst", request=GetRequest(ref="Line:x"))
 
     viewer = seen["viewer"]
     assert viewer.credential_id == expected_credential
@@ -377,7 +377,7 @@ def test_run_status_withholds_the_run_actor_exactly_as_the_run_card_does(
     instance, _line, run_id, _when = credential_world
     state = procedure_run_status(instance, run_id, viewer=viewer)
     card = _get(instance, f"ProcedureRun:{run_id}", viewer).card
-    assert isinstance(card, PlaybillGetProcedureRunCard)
+    assert isinstance(card, GetProcedureRunCard)
 
     assert state.receipt_digest is not None
     if visible:

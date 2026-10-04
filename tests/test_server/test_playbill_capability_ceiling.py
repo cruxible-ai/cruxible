@@ -1,4 +1,4 @@
-"""HTTP laws for the immutable capability ceiling on Playbill surfaces."""
+"""HTTP laws for the immutable capability ceiling on Cruxible surfaces."""
 
 from __future__ import annotations
 
@@ -95,7 +95,7 @@ def test_each_playbill_tier_allows_at_ceiling_and_refuses_above_it(
         else ({} if denied_path == "/api/v1/runtime/instances" else None),
     )
 
-    # Uninitialized Playbill operations reach the semantic boundary and refuse
+    # Uninitialized Cruxible operations reach the semantic boundary and refuse
     # with a state conflict; the read-only server-info request succeeds.
     assert allowed.status_code in {200, 409}, allowed.text
     assert denied.status_code == 403, denied.text

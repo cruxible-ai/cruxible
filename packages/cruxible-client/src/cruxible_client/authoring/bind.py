@@ -15,10 +15,10 @@ from cruxible_client.contracts.authoring.models import (
     WorkingSelectionObservation,
 )
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.errors import CruxibleError
 
 
-class AuthoringBindError(PlaybillError):
+class AuthoringBindError(CruxibleError):
     """A local Flow-A bind input could not produce one mechanical observation."""
 
 

@@ -18,7 +18,7 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.claim_type_structure import ClaimTypeStructure
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, render_claim_type
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.policies import (
     AttestationRequirement,
     ClaimAdmissionPolicy,
@@ -36,7 +36,7 @@ ClaimTypeProfileId = Literal[
 ]
 
 
-class AuthoringProfileError(PlaybillFormatError):
+class AuthoringProfileError(FormatError):
     """A compact authoring profile cannot be expanded unambiguously."""
 
 

@@ -1,10 +1,10 @@
 """Typed, attribute-addressed access to one accepted world.
 
-Every authoring surface below `Playbill` still speaks strings: a predicate is a
+Every authoring surface below `Cruxible` still speaks strings: a predicate is a
 dotted name, a Subject is a `kind/id` shorthand, and a literal is whatever the
 caller typed. That is exactly the ergonomics markdown already has, so the SDK
 gave up its one structural advantage -- it knows the accepted ontology and can
-hand it back as objects with fields. `pb.world()` reads the accepted ClaimType
+hand it back as objects with fields. `cx.world()` reads the accepted ClaimType
 vocabulary once and exposes it as a tree: kinds nest, Subjects answer by
 attribute or index, predicates carry their own structure and their own
 admissible values, and every ref it mints carries the coordinate it was read at.
@@ -13,13 +13,13 @@ The world is a READ, never an authority. It refuses once the connection's
 orientation moves, under the same law as every other typed ref, because a name
 that resolved at one coordinate may name something else at the next.
 
-    w = pb.world()
+    w = cx.world()
 
     vulnerability = w.sec.vulnerability["cve-2026-69247"]
     vulnerability.severity                      # live Claims under that predicate
     w.sec.vuln.severity.cardinality             # the ClaimType's own structure
 
-    draft = pb.changes(rationale="Name the package this advisory affects.")
+    draft = cx.changes(rationale="Name the package this advisory affects.")
     package = draft.subject(w.sec.package.define("click"))
     draft.claim(
         subject=vulnerability,
@@ -51,8 +51,8 @@ from cruxible_client.authoring.sdk_types import (
     ClaimTypeRef,
     LiteralSchemaError,
     LiteralValue,
-    PlaybillSdkError,
     ReferentSensitivity,
+    SdkError,
     SubjectRef,
 )
 from cruxible_client.contracts.canonical import CanonicalValue, normalize_canonical
@@ -70,8 +70,8 @@ from cruxible_client.contracts.records import RecordConstructor
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from cruxible_client.authoring.compact_query import CompactQuery
-    from cruxible_client.authoring.sdk import ClaimView, Playbill, SubjectDraft
-    from cruxible_client.contracts.compact_query import PlaybillQueryClaimValue
+    from cruxible_client.authoring.sdk import ClaimView, Cruxible, SubjectDraft
+    from cruxible_client.contracts.compact_query import QueryClaimValue
     from cruxible_client.contracts.write import (
         Change,
         Evidence,
@@ -92,7 +92,7 @@ def _write_value(value: object) -> Any:
     return value
 
 
-class WorldStructureError(PlaybillSdkError):
+class WorldStructureError(SdkError):
     """The world cannot answer this name at the shape it was asked for."""
 
     code = "playbill.sdk.world_structure_refused"
@@ -222,7 +222,7 @@ def admit_literal(
     if isinstance(declared, str):
         admissible = _TYPE_CHECKS.get(declared)
         if admissible is None:
-            raise _refuse(predicate, f"declared type {declared!r} is not an exact Playbill type")
+            raise _refuse(predicate, f"declared type {declared!r} is not an exact Cruxible type")
         if declared != "boolean" and isinstance(canonical, bool):
             raise _refuse(predicate, f"a boolean is not {declared}")
         if not isinstance(canonical, admissible):
@@ -321,7 +321,7 @@ class WorldClaimType(ClaimTypeRef):
 
     @property
     def predicate(self) -> str:
-        """The full dotted predicate. Next: ``pb.query(kind, select=[leaf])`` for its values."""
+        """The full dotted predicate. Next: ``cx.query(kind, select=[leaf])`` for its values."""
 
         return self.address
 
@@ -441,7 +441,7 @@ class WorldSubject(SubjectRef):
 
     @property
     def subject_id(self) -> str:
-        """The Subject's ID. Next: ``pb.get(subject)`` for its fields and flags."""
+        """The Subject's ID. Next: ``cx.get(subject)`` for its fields and flags."""
 
         return self.address.split("/", 1)[1]
 
@@ -449,7 +449,7 @@ class WorldSubject(SubjectRef):
     def claims(self) -> tuple[ClaimView, ...]:
         """Every live Claim this Subject is the subject of.
 
-        Next: ``pb.get(view.claim_id, detail="evidence")`` for what backs one.
+        Next: ``cx.get(view.claim_id, detail="evidence")`` for what backs one.
         """
 
         return self._world._claims_about(self.address)
@@ -457,7 +457,7 @@ class WorldSubject(SubjectRef):
     def explain(self) -> object:
         """Read this Subject's governance and provenance context.
 
-        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
+        Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
         """
 
         self._world._assert_current()
@@ -483,7 +483,7 @@ class WorldSubject(SubjectRef):
         World stay valid after it: the next write is checked from this World's
         coordinate plus its own writes, so only a slot someone else moved refuses.
 
-        Next: ``outcome.next`` for what is still needed; ``pb.get(subject)`` reads it back.
+        Next: ``outcome.next`` for what is still needed; ``cx.get(subject)`` reads it back.
         """
 
         from cruxible_client.contracts.write import SetChange
@@ -548,7 +548,7 @@ class WorldSubject(SubjectRef):
     ) -> WriteOutcome:
         """Retire the one live value of a field of this Subject.
 
-        Next: ``outcome.next``; ``pb.get(subject)`` shows the field without it.
+        Next: ``outcome.next``; ``cx.get(subject)`` shows the field without it.
         """
 
         from cruxible_client.contracts.write import RetireChange, SlotRef
@@ -741,9 +741,9 @@ _DESCRIBED_VERBS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     (
         "Read:",
         (
-            ("pb.orient()", "map accepted state; orient(kind=...) for one kind"),
-            ('pb.query("<kind>", where=[...])', "one page of values with verdict flags"),
-            ('pb.get("<ref>")', "one thing: kind/id, CLM-..., a predicate, CAP-..."),
+            ("cx.orient()", "map accepted state; orient(kind=...) for one kind"),
+            ('cx.query("<kind>", where=[...])', "one page of values with verdict flags"),
+            ('cx.get("<ref>")', "one thing: kind/id, CLM-..., a predicate, CAP-..."),
             ("grep -r <text> .playbill/floor/current/", "the exported floor, one file per Subject"),
             ('w.<kind>["<id>"].<field>', "the live Claims under one field"),
             ("w.<kind>.where(<field>=...)", "a compact query over one kind"),
@@ -755,10 +755,10 @@ _DESCRIBED_VERBS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
             ('w.<kind>["<id>"].set(<field>=...)', "replace a single value (because=...)"),
             ('w.<kind>["<id>"].add(<field>=...)', "add to a many-valued field"),
             ('w.<kind>["<id>"].retire("<field>")', "end the live value"),
-            ('pb.changes(because="...")', "several changes as one change set"),
+            ('cx.changes(because="...")', "several changes as one change set"),
         ),
     ),
-    ("Then:", (("pb.next(expiring_within=...)", "what needs attention"),)),
+    ("Then:", (("cx.next(expiring_within=...)", "what needs attention"),)),
 )
 
 
@@ -792,7 +792,7 @@ class World:
 
     def __init__(
         self,
-        playbill: Playbill,
+        playbill: Cruxible,
         *,
         coordinate: AcceptedCoordinate,
         root: _Node,
@@ -815,7 +815,7 @@ class World:
     def coordinate(self) -> AcceptedCoordinate:
         """The accepted coordinate every name in this World answers at.
 
-        Next: ``pb.at(w.coordinate)`` for other reads at the same state.
+        Next: ``cx.at(w.coordinate)`` for other reads at the same state.
         """
 
         return self._coordinate
@@ -826,7 +826,7 @@ class World:
 
         An attribute and a call alike: ``w.kinds`` or ``w.kinds()``. Next:
         ``w.kind("dev.batch")`` (or ``w.dev.batch``) for one kind, or
-        ``pb.orient(kind=...)`` for its counts and sample Subjects.
+        ``cx.orient(kind=...)`` for its counts and sample Subjects.
         """
 
         self._assert_current()
@@ -850,7 +850,7 @@ class World:
         by attribute, then what the field holds (``literal``, ``-> kind`` for
         a Subject, ``exact_content``), its cardinality, enum members and
         description. Next: ``print(w.describe())``, then one of the verbs it
-        lists -- ``pb.query(kind, ...)`` to read values, ``pb.get(ref)`` for
+        lists -- ``cx.query(kind, ...)`` to read values, ``cx.get(ref)`` for
         one thing, ``w.<kind>[id].set(...)`` to write.
         """
 
@@ -947,12 +947,12 @@ class World:
         else changed it.
         """
 
-        from cruxible_client.contracts.write import PlaybillWriteRequest
+        from cruxible_client.contracts.write import WriteRequest
 
         if not changes:
             raise TypeError("a write needs at least one field=value")
         outcome = self._playbill._write(
-            PlaybillWriteRequest(
+            WriteRequest(
                 because=because,
                 changes=tuple(changes),
                 dry_run=dry_run,
@@ -1018,7 +1018,7 @@ class World:
     def claim_type(self, predicate: str) -> WorldClaimType:
         """Read one accepted predicate by its full dotted name.
 
-        Next: its ``members``, ``cardinality`` and ``description``; ``pb.query(kind,
+        Next: its ``members``, ``cardinality`` and ``description``; ``cx.query(kind,
         select=[...])`` for its values.
         """
 
@@ -1125,8 +1125,8 @@ class World:
 
     def _live_subject_ids(self, subject_kind: str) -> list[str]:
         from cruxible_client.contracts.compact_query import (
-            PLAYBILL_QUERY_MAX_LIMIT,
-            PlaybillQueryRequest,
+            QUERY_MAX_LIMIT,
+            QueryRequest,
         )
 
         playbill = self._playbill
@@ -1136,9 +1136,9 @@ class World:
             last: str | None = None
             cursor: str | None = None
             while True:
-                page = playbill._client.query_playbill(
+                page = playbill._client.query(
                     playbill._instance_id,
-                    request=PlaybillQueryRequest.model_validate(
+                    request=QueryRequest.model_validate(
                         {
                             "kind": subject_kind,
                             "select": ("subject_id",),
@@ -1147,7 +1147,7 @@ class World:
                             else ({"field": "subject_id", "gt": after},),
                             "order_by": ("subject_id",),
                             "status": ("live", "retired"),
-                            "limit": PLAYBILL_QUERY_MAX_LIMIT,
+                            "limit": QUERY_MAX_LIMIT,
                             "cursor": cursor,
                             "at": None
                             if cursor is not None
@@ -1208,7 +1208,7 @@ class World:
         no partial attribute cache is installed and the caller can narrow the
         selection or increase ``max_claims``.
 
-        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
+        Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
         """
         from datetime import datetime
 
@@ -1242,7 +1242,7 @@ class World:
         seen: set[str] = set()
         views: list[ClaimView] = []
         while True:
-            result = self._playbill._client.read_playbill_claim_batch(
+            result = self._playbill._client.read_claim_batch(
                 self._playbill._instance_id,
                 request=request.model_copy(update={"cursor": cursor}),
             )
@@ -1297,7 +1297,7 @@ class World:
         *,
         subjects: Sequence[str | SubjectRef],
         predicates: Sequence[str | ClaimTypeRef] = (),
-    ) -> tuple[PlaybillQueryClaimValue, ...]:
+    ) -> tuple[QueryClaimValue, ...]:
         """Each live Claim's value, verdict and status for these Subjects, through ``query``.
 
         Lighter than ``prefetch`` when only values and verdicts are wanted: one
@@ -1305,9 +1305,9 @@ class World:
         resolution overturned or refused. Strings are subject kind/id addresses
         or paths and fully qualified predicates.
 
-        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
+        Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
         """
-        from cruxible_client.contracts.compact_query import PLAYBILL_QUERY_MAX_SELECT
+        from cruxible_client.contracts.compact_query import QUERY_MAX_SELECT
 
         self._assert_current()
         for ref in (*subjects, *predicates):
@@ -1326,17 +1326,17 @@ class World:
         # Every page is one answer: this World's coordinate and one evaluation
         # instant, however many Subject and predicate batches it takes.
         evaluation_time = playbill._evaluation_time()
-        values: list[PlaybillQueryClaimValue] = []
+        values: list[QueryClaimValue] = []
         for kind, ids in by_kind.items():
             admitted = {full for group in self._leaf_map(kind).values() for full in group}
             select = sorted(admitted & names if names else admitted)
             for start in range(0, len(ids), 256) if select else ():
-                for first in range(0, len(select), PLAYBILL_QUERY_MAX_SELECT):
+                for first in range(0, len(select), QUERY_MAX_SELECT):
                     values.extend(
                         self._value_page(
                             kind,
                             ids[start : start + 256],
-                            select[first : first + PLAYBILL_QUERY_MAX_SELECT],
+                            select[first : first + QUERY_MAX_SELECT],
                             evaluation_time=evaluation_time,
                         )
                     )
@@ -1349,28 +1349,28 @@ class World:
         select: Sequence[str],
         *,
         evaluation_time: str,
-    ) -> list[PlaybillQueryClaimValue]:
+    ) -> list[QueryClaimValue]:
         """Every Claim value of one Subject and predicate batch, every page of it."""
         from cruxible_client.contracts.compact_query import (
-            PLAYBILL_QUERY_MAX_LIMIT,
-            PlaybillQueryClaimValue,
-            PlaybillQueryRequest,
+            QUERY_MAX_LIMIT,
+            QueryClaimValue,
+            QueryRequest,
         )
 
         playbill = self._playbill
-        values: list[PlaybillQueryClaimValue] = []
+        values: list[QueryClaimValue] = []
         cursor: str | None = None
         while True:
-            page = playbill._client.query_playbill(
+            page = playbill._client.query(
                 playbill._instance_id,
-                request=PlaybillQueryRequest.model_validate(
+                request=QueryRequest.model_validate(
                     {
                         "kind": kind,
                         "where": [{"field": "subject_id", "in": list(ids)}],
                         "select": list(select),
                         "status": ("live", "overturned", "refused"),
                         "claims": True,
-                        "limit": PLAYBILL_QUERY_MAX_LIMIT,
+                        "limit": QUERY_MAX_LIMIT,
                         "cursor": cursor,
                         "at": None
                         if cursor is not None
@@ -1390,7 +1390,7 @@ class World:
             for row in page.rows:
                 for column, entries in (row.get("claims") or {}).items():
                     values.extend(
-                        PlaybillQueryClaimValue.model_validate(
+                        QueryClaimValue.model_validate(
                             {**entry, "subject": row["subject"], "predicate": predicate_of[column]}
                         )
                         for entry in entries
@@ -1509,7 +1509,7 @@ def _meaning(envelope: Mapping[str, object]) -> _Meaning:
 
 
 def build_world(
-    playbill: Playbill,
+    playbill: Cruxible,
     *,
     coordinate: AcceptedCoordinate,
     claim_type_envelopes: Sequence[Mapping[str, object]],
@@ -1517,7 +1517,7 @@ def build_world(
     """Assemble one world from the accepted ClaimType vocabulary.
 
     Subject kinds come from the vocabulary rather than from the Subjects
-    themselves, which is what lets `pb.world()` name every kind without reading
+    themselves, which is what lets `cx.world()` name every kind without reading
     a single Subject: a kind with no ClaimType admitting it is a kind nothing
     can be said about.
     """

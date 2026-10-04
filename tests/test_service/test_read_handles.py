@@ -16,9 +16,9 @@ import pytest
 from click.testing import CliRunner
 
 from cruxible_client.contracts.capture_reads import CaptureReadRequest
-from cruxible_client.contracts.compact_query import PlaybillQueryRequest
+from cruxible_client.contracts.compact_query import QueryRequest
 from cruxible_client.contracts.errors import ReadRefusalError
-from cruxible_client.contracts.get_reads import PlaybillGetRequest
+from cruxible_client.contracts.get_reads import GetRequest
 from cruxible_core.cli.main import cli
 from cruxible_core.mcp import handlers
 from cruxible_core.service.discovery.compact_query import service_playbill_query
@@ -40,9 +40,7 @@ def world(tmp_path_factory: pytest.TempPathFactory):  # type: ignore[no-untyped-
 
 
 def _get(instance: Any, ref: str, **fields: Any):  # type: ignore[no-untyped-def]
-    return service_playbill_get(
-        instance, request=PlaybillGetRequest(ref=ref, **fields), access=_ACCESS
-    )
+    return service_playbill_get(instance, request=GetRequest(ref=ref, **fields), access=_ACCESS)
 
 
 def test_an_evidence_handle_reads_back_through_get_and_read_capture(world) -> None:  # type: ignore[no-untyped-def]
@@ -153,7 +151,7 @@ def test_a_generation_number_reads_the_same_generation_as_its_oid(world) -> None
     assert by_number.coordinate.generation == older.sequence
 
     queried = service_playbill_query(
-        instance, request=PlaybillQueryRequest(kind="ClaimType", at=str(older.sequence))
+        instance, request=QueryRequest(kind="ClaimType", at=str(older.sequence))
     )
     assert queried.receipt.coordinate.git_oid == older.oid
 
@@ -205,11 +203,11 @@ def test_the_cli_passes_a_generation_and_a_capture_handle(
     requests: list[Any] = []
 
     class _Stub:
-        def playbill_get(self, instance_id: str, *, request: PlaybillGetRequest) -> Any:
+        def get(self, instance_id: str, *, request: GetRequest) -> Any:
             requests.append(request)
             raise ReadRefusalError("playbill.get.ref_not_found", "stub", http_status=404)
 
-        def read_playbill_capture(self, instance_id: str, request: CaptureReadRequest) -> Any:
+        def read_capture(self, instance_id: str, request: CaptureReadRequest) -> Any:
             requests.append(request)
             raise ReadRefusalError("playbill.capture.not_found", "stub", http_status=404)
 

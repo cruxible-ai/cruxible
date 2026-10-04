@@ -1,16 +1,16 @@
-# Cruxible Playbill development documentation
+# Cruxible development documentation
 
-This documentation describes the breaking Playbill development line, not the
+This documentation describes the breaking Cruxible development line, not the
 retired config-authority and mutable-graph product.
 
-Playbill is a governed state substrate. Exact bytes and external source
+Cruxible is a governed state substrate. Exact bytes and external source
 coordinates become deterministic candidates; humans or agents review and sign
 those candidates; activation advances an accepted Git ledger by compare-and-set.
 SQLite and rendered files are rebuildable projections.
 
 ## Start here
 
-- [Quickstart](quickstart.md): run a daemon and initialize a Playbill instance.
+- [Quickstart](quickstart.md): run a daemon and initialize a Cruxible instance.
 - [Concepts](concepts.md): CAS, proposals, generations, Claims, Procedures, and
   attestations.
 - [Architecture](architecture.md): authority boundaries and the hot/cold split.

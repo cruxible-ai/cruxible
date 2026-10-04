@@ -7,7 +7,7 @@ from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
 
-from cruxible_client import LocalEd25519ApprovalSigner, Playbill
+from cruxible_client import Cruxible, LocalEd25519ApprovalSigner
 from cruxible_client.transport.http import CruxibleClient
 
 
@@ -17,7 +17,7 @@ def test_public_claim_review_and_repair_example(playbill_http, tmp_path: Path, m
     transport._client = http
     workspace = tmp_path / "demo-workspace"
     workspace.mkdir()
-    pb = Playbill._from_client(transport, instance_id=instance_id, workspace=workspace)
+    pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=workspace)
     # Lose the local draft and then the submission response. Both recovery
     # boundaries must reuse the daemon-owned intent and candidate identities.
     from cruxible_client.authoring.sdk import Intent

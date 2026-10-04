@@ -4,10 +4,10 @@ from pathlib import Path
 
 from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
-    PlaybillWorkspaceAdvertisement,
+    WorkspaceAdvertisement,
 )
 from cruxible_core.service.authoring.documents import (
-    PlaybillAcceptedCoordinate,
+    AcceptedCoordinate,
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
 )
@@ -46,13 +46,13 @@ def test_receipt_keeps_own_generation_when_advertisement_observes_later_acceptan
         attestation=approval.attestation,
         authenticated_submitter="reviewer",
     )
-    first_coordinate: PlaybillAcceptedCoordinate | None = None
+    first_coordinate: AcceptedCoordinate | None = None
 
-    def publish_later_generation() -> PlaybillWorkspaceAdvertisement:
+    def publish_later_generation() -> WorkspaceAdvertisement:
         nonlocal first_coordinate
         if first_coordinate is not None:
             return NOT_ATTACHED_ADVERTISEMENT
-        first_coordinate = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+        first_coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
         # The activation lock is released before advertisement. Model a second
         # writer publishing in that interval using a real subsequent generation.
         second = submit_query_definition_candidate(
@@ -76,6 +76,6 @@ def test_receipt_keeps_own_generation_when_advertisement_observes_later_acceptan
 
     assert receipt.status == "accepted"
     assert receipt.accepted_coordinate == first_coordinate
-    assert receipt.accepted_coordinate != PlaybillAcceptedCoordinate.from_internal(
+    assert receipt.accepted_coordinate != AcceptedCoordinate.from_internal(
         instance.accepted_coordinate()
     )

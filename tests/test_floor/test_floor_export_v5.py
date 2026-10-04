@@ -9,7 +9,7 @@ import pytest
 
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.proposal_models import ProposalAdmissionRecord
-from cruxible_client.contracts.write import PlaybillWriteRequest
+from cruxible_client.contracts.write import WriteRequest
 from cruxible_core.proposals.proposal_notes import admission_bytes
 from cruxible_core.service.authoring.write_verbs import service_playbill_write
 from cruxible_core.service.floor.floor import service_export_playbill_floor
@@ -106,7 +106,7 @@ def test_floor_changes_reverify_no_change_set_record(tmp_path: Path, monkeypatch
 
 def test_change_rationale_reads_one_pinned_note_by_path(tmp_path: Path, monkeypatch) -> None:
     instance, _ = seed_write_surface(tmp_path)
-    request = PlaybillWriteRequest.model_validate(
+    request = WriteRequest.model_validate(
         {
             "because": "The writer checked it.",
             "changes": [

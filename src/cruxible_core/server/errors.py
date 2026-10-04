@@ -6,15 +6,14 @@ from typing import Any
 
 from cruxible_client.contracts.errors import (
     ApprovalIntegrityError,
+    BootstrapError,
     CanonicalEncodingError,
     ClaimNotFoundError,
     DocumentFormatError,
     DocumentNotFoundError,
-    PlaybillBootstrapError,
-    PlaybillFormatError,
-    PlaybillInstanceDecommissioned,
-    PlaybillObjectFormatConflict,
-    PlaybillSinceRequestInvalid,
+    FormatError,
+    InstanceDecommissioned,
+    ObjectFormatConflict,
     PrincipalIntegrityError,
     ProjectionCoordinateError,
     ProposalAdmissionError,
@@ -25,6 +24,7 @@ from cruxible_client.contracts.errors import (
     ProposalReadmitNotStale,
     ProposalSelectorAmbiguousError,
     SettlementIntegrityError,
+    SinceRequestInvalid,
     SubjectNotFoundError,
 )
 from cruxible_client.contracts.repairs import (
@@ -60,10 +60,10 @@ from cruxible_core.errors import (
 )
 from cruxible_core.evidence.claim_attestation_store import ClaimAttestationStoreError
 from cruxible_core.service.claims.claim_types import ClaimTypeNotFoundError
-from cruxible_core.service.discovery.audit import PlaybillAuditError
-from cruxible_core.service.discovery.curation import PlaybillCurationError
-from cruxible_core.service.discovery.next import PlaybillNextError
-from cruxible_core.service.discovery.since import PlaybillSinceError
+from cruxible_core.service.discovery.audit import AuditError
+from cruxible_core.service.discovery.curation import CurationError
+from cruxible_core.service.discovery.next import NextError
+from cruxible_core.service.discovery.since import SinceError
 from cruxible_core.service.procedures.procedure_runs import ProcedureSurfaceError
 from cruxible_core.service.read_refusals import ReadRefusalError
 from cruxible_core.service.refusals import (
@@ -205,11 +205,11 @@ def _status_for_error(exc: CoreError) -> int:
             DataValidationError,
             CanonicalEncodingError,
             DocumentFormatError,
-            PlaybillFormatError,
-            PlaybillAuditError,
-            PlaybillCurationError,
-            PlaybillNextError,
-            PlaybillSinceError,
+            FormatError,
+            AuditError,
+            CurationError,
+            NextError,
+            SinceError,
             ReviewOperationalStoreError,
             ProposalAdmissionError,
             InsertionProtocolError,
@@ -235,7 +235,7 @@ def _status_for_error(exc: CoreError) -> int:
         (
             ApprovalIntegrityError,
             InstanceLocationRefusedError,
-            PlaybillBootstrapError,
+            BootstrapError,
             PrincipalIntegrityError,
             ProjectionCoordinateError,
             SettlementIntegrityError,
@@ -270,10 +270,10 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         context["profile"] = exc.profile
     if isinstance(exc, CustomerCodeExecutionUnsupportedError) and exc.detail is not None:
         context["detail"] = exc.detail
-    if isinstance(exc, PlaybillObjectFormatConflict):
+    if isinstance(exc, ObjectFormatConflict):
         if exc.workspace_format is not None:
             context["workspace_format"] = exc.workspace_format
-    if isinstance(exc, PlaybillInstanceDecommissioned):
+    if isinstance(exc, InstanceDecommissioned):
         context["instance_id"] = exc.instance_id
         context["reason"] = exc.reason
         context["decommissioned_at"] = exc.decommissioned_at
@@ -289,7 +289,7 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
     elif isinstance(exc, InstanceScopeError):
         context["instance_id"] = exc.instance_id
         context["credential_scope"] = exc.credential_scope
-    if isinstance(exc, PlaybillSinceRequestInvalid):
+    if isinstance(exc, SinceRequestInvalid):
         context["field_path"] = exc.field_path
     if isinstance(exc, RuntimeCredentialNotFoundError):
         context["credential_id"] = exc.credential_id

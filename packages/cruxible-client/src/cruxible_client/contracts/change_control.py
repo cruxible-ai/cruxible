@@ -11,7 +11,7 @@ accepted ``coordinate`` it was evaluated at.
 the check runs again where the change commits, under the lock its write holds.
 A change to state outside the accepted ledger (a runtime credential, a host's
 worktree binding, a page's projection markers) answers instead with a
-``PlaybillStateCoordinate``: a digest of exactly the records it changes.
+``StateCoordinate``: a digest of exactly the records it changes.
 
 Defaults, per operation:
 
@@ -93,7 +93,7 @@ ChangeRefusalCode = Literal[
 ]
 
 
-class PlaybillStateCoordinate(BaseModel):
+class StateCoordinate(BaseModel):
     """The operational state one change was evaluated against.
 
     ``subject`` names the records (``runtime_credential:<id>``,
@@ -109,7 +109,7 @@ class PlaybillStateCoordinate(BaseModel):
     digest: str = Field(pattern=r"^[0-9a-f]{64}$")
 
     @classmethod
-    def of(cls, subject: str, state: object) -> PlaybillStateCoordinate:
+    def of(cls, subject: str, state: object) -> StateCoordinate:
         """The coordinate of ``state`` (JSON-serializable; None for an absent subject)."""
 
         encoded = json.dumps(
@@ -138,6 +138,6 @@ __all__ = [
     "ChangeKind",
     "ChangeRefusalCode",
     "DryRun",
-    "PlaybillStateCoordinate",
+    "StateCoordinate",
     "PreviewAt",
 ]

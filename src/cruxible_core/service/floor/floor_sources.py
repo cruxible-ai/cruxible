@@ -37,7 +37,7 @@ from cruxible_client.contracts.captures import (
     parse_capture_envelope,
 )
 from cruxible_client.contracts.claims import ClaimArtifactAny
-from cruxible_client.contracts.errors import PlaybillError, ProjectionIntegrityError
+from cruxible_client.contracts.errors import CruxibleError, ProjectionIntegrityError
 from cruxible_client.contracts.source_references import (
     CasSourceReference,
     ExternalSourceReference,
@@ -112,7 +112,7 @@ def capture_sources(
     for digest in wanted:
         try:
             envelope = parse_capture_envelope(store.read(digest, access=_ACCESS))
-        except (PlaybillError, OSError, ValueError) as exc:
+        except (CruxibleError, OSError, ValueError) as exc:
             raise ProjectionIntegrityError(
                 f"floor cannot render sources/LEDGER: the cited Capture {digest} is not retained"
             ) from exc

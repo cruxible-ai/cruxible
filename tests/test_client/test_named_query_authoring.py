@@ -10,7 +10,7 @@ from cruxible_client.authoring.examples import (
     query_ontology_example,
     query_procedures_example,
 )
-from cruxible_client.authoring.sdk import Playbill
+from cruxible_client.authoring.sdk import Cruxible
 from cruxible_client.authoring.sdk_types import ClaimTypeRef, PendingClaimTypeRef
 from cruxible_client.contracts.authoring.inputs import (
     AuthoringInput,
@@ -25,7 +25,7 @@ from tests.test_client.test_playbill_sdk import _Client, _workspace
 def test_typed_and_declarative_query_drafts_prepare_through_coordinator(tmp_path: Path, example):
     _workspace(tmp_path)
     client = _Client()
-    pb = Playbill._from_client(client, instance_id="inst_test", workspace=tmp_path)
+    pb = Cruxible._from_client(client, instance_id="inst_test", workspace=tmp_path)
     definition = example()
     draft = pb.query_definition(definition=definition)
     assert draft.payload == lower_authoring_input(
@@ -42,7 +42,7 @@ def test_typed_and_declarative_query_drafts_prepare_through_coordinator(tmp_path
 
 def test_query_refs_preserve_staleness_expectations_and_allow_same_set_refs(tmp_path):
     _workspace(tmp_path)
-    pb = Playbill._from_client(_Client(), instance_id="inst_test", workspace=tmp_path)
+    pb = Cruxible._from_client(_Client(), instance_id="inst_test", workspace=tmp_path)
     definition = query_claims_by_type_example()
     ref = ClaimTypeRef("project.work_item.status", pb.coordinate)
     draft = pb.query_definition(definition=definition, vocabulary=(ref,))
@@ -63,7 +63,7 @@ def test_query_refs_preserve_staleness_expectations_and_allow_same_set_refs(tmp_
 
 
 def test_typed_definition_listing_rejects_partial_or_misbound_results():
-    from cruxible_client.contracts import PlaybillQueryRun
+    from cruxible_client.contracts import QueryRun
     from cruxible_client.contracts.claim_types import claim_type_digest, claim_type_path
     from tests.test_authoring.test_authoring_change_set_intents import _predicate_type
 
@@ -94,7 +94,7 @@ def test_typed_definition_listing_rejects_partial_or_misbound_results():
             ),
         ),
     )
-    result = PlaybillQueryRun.model_construct(result=body)
+    result = QueryRun.model_construct(result=body)
     assert result.artifact_definitions[0].definition == claim_type
     for change in (
         {"verdict": "refused"},
@@ -102,9 +102,7 @@ def test_typed_definition_listing_rejects_partial_or_misbound_results():
         {"result_shape": "subject"},
     ):
         with pytest.raises(ValueError):
-            PlaybillQueryRun.model_construct(
-                result=body.model_copy(update=change)
-            ).artifact_definitions
+            QueryRun.model_construct(result=body.model_copy(update=change)).artifact_definitions
     with pytest.raises(ValueError):
         QueryArtifactDefinition.model_validate(
             {**artifact, "artifact_digest": "sha256:" + "0" * 64}

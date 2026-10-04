@@ -17,7 +17,7 @@ in the transcript.
 How the resolver is reached
 ---------------------------
 The middleware takes its resolve callable by injection, and :func:`_resolver`
-below is exactly the embedding a harness writes: a closure over a Playbill
+below is exactly the embedding a harness writes: a closure over a Cruxible
 client and an instance ID that carries observations to the served coverage
 operation and validates the frozen result back. That is the whole TauBench seam
 -- arms 3 and 4 differ by whether this middleware is wired in, and by nothing
@@ -84,7 +84,7 @@ def _resolver(client: Any, instance_id: str) -> ResolveCoverage:
     """The embedding recipe: observations in, one frozen coverage result out."""
 
     def resolve(observations: Sequence[WorkingSourceObservation]) -> CoverageResultV3:
-        answered = client.resolve_playbill_coverage(
+        answered = client.resolve_coverage(
             instance_id,
             observations=[item.model_dump(mode="json") for item in observations],
         )
@@ -632,7 +632,7 @@ def test_hook_uses_the_workspace_config_instance_id(
     calls: list[str] = []
 
     class StubClient:
-        def resolve_playbill_coverage(self, instance_id: str, **_: object) -> None:
+        def resolve_coverage(self, instance_id: str, **_: object) -> None:
             calls.append(instance_id)
             raise RuntimeError("stop after proving instance selection")
 

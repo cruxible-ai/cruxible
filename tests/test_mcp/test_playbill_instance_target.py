@@ -17,7 +17,7 @@ from cruxible_core.mcp import handlers
 from cruxible_core.mcp.server import create_server
 from cruxible_core.mcp.target import require_instance_id
 
-_COORDINATE = contracts.PlaybillAcceptedCoordinate(
+_COORDINATE = contracts.AcceptedCoordinate(
     git_oid="1" * 40,
     semantic_root="sha256:" + "2" * 64,
     generation_root="sha256:" + "3" * 64,
@@ -25,8 +25,8 @@ _COORDINATE = contracts.PlaybillAcceptedCoordinate(
 )
 
 
-def _whoami() -> contracts.PlaybillWhoAmI:
-    return contracts.PlaybillWhoAmI(
+def _whoami() -> contracts.WhoAmI:
+    return contracts.WhoAmI(
         actor_id="agent-a",
         credential_label="agent-a",
         actor_id_source="runtime_credential",
@@ -40,8 +40,8 @@ def _whoami() -> contracts.PlaybillWhoAmI:
     )
 
 
-def _host(instance_id: str) -> contracts.PlaybillHostInspection:
-    return contracts.PlaybillHostInspection(
+def _host(instance_id: str) -> contracts.HostInspection:
+    return contracts.HostInspection(
         instance_id=instance_id,
         managed_root=None,
         workspace_root=None,
@@ -62,10 +62,10 @@ class _ScopedClient:
     def version(self) -> str:
         return "9.9.9"
 
-    def show_playbill_host(self, instance_id: str) -> contracts.PlaybillHostInspection:
+    def show_host(self, instance_id: str) -> contracts.HostInspection:
         return _host(instance_id)
 
-    def playbill_whoami(self, instance_id: str) -> contracts.PlaybillWhoAmI:
+    def whoami(self, instance_id: str) -> contracts.WhoAmI:
         self.whoami_calls.append(instance_id)
         return _whoami()
 
@@ -138,7 +138,7 @@ def test_an_incomplete_workspace_binding_does_not_select_an_instance(
     _bind_workspace(tmp_path, instance_id="inst_bound")
     monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(tmp_path))
 
-    with pytest.raises(ConfigError, match="No Playbill instance selected"):
+    with pytest.raises(ConfigError, match="No Cruxible instance selected"):
         require_instance_id()
 
 
@@ -151,7 +151,7 @@ def test_remembered_cli_context_never_retargets_the_adapter(
     monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "client-context.json"))
     monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(tmp_path))
 
-    with pytest.raises(ConfigError, match="No Playbill instance selected"):
+    with pytest.raises(ConfigError, match="No Cruxible instance selected"):
         require_instance_id()
 
 
@@ -234,7 +234,7 @@ def test_a_malformed_workspace_binding_selects_nothing_and_breaks_nothing(
     (tmp_path / ".playbill").mkdir()
     (tmp_path / ".playbill" / "coverage.json").write_bytes(b"\xff\xfe not utf-8")
     monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(tmp_path))
-    with pytest.raises(ConfigError, match="No Playbill instance selected"):
+    with pytest.raises(ConfigError, match="No Cruxible instance selected"):
         require_instance_id()
 
     (tmp_path / ".playbill" / "coverage.json").write_text(
@@ -248,7 +248,7 @@ def test_a_malformed_workspace_binding_selects_nothing_and_breaks_nothing(
         encoding="utf-8",
     )
     monkeypatch.setenv("CRUXIBLE_SERVER_SOCKET", str(tmp_path / "d.sock"))
-    with pytest.raises(ConfigError, match="No Playbill instance selected"):
+    with pytest.raises(ConfigError, match="No Cruxible instance selected"):
         require_instance_id()
 
 
@@ -261,5 +261,5 @@ def test_a_binding_socket_under_an_unknown_home_selects_nothing(
     monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(tmp_path))
     monkeypatch.setenv("CRUXIBLE_SERVER_SOCKET", str(tmp_path / "d.sock"))
 
-    with pytest.raises(ConfigError, match="No Playbill instance selected"):
+    with pytest.raises(ConfigError, match="No Cruxible instance selected"):
         require_instance_id()

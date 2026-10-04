@@ -38,7 +38,7 @@ from cruxible_client.contracts.documents import (
     document_path,
     render_document,
 )
-from cruxible_client.contracts.floor import PlaybillFloorDelta
+from cruxible_client.contracts.floor import FloorDelta
 from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeDependentDispositionV1,
     ClaimTypeMigrationRequestV1,
@@ -245,7 +245,7 @@ def _coordinate(instance: PlaybillInstance, generation: int) -> AcceptedCoordina
 
 def _delta(
     instance: PlaybillInstance, head: int, base: int | None, renderer: str | None
-) -> PlaybillFloorDelta:
+) -> FloorDelta:
     return service_playbill_floor_delta(
         instance,
         head=_coordinate(instance, head),
@@ -316,7 +316,7 @@ def test_a_floor_installed_before_the_notes_moved_reaches_every_head(
             directory = tmp_path / f"sync-{base}-{target}"
             shutil.copytree(world["installed"] / str(base), directory)
 
-            def fetch(generation: int | None, renderer: str | None) -> PlaybillFloorDelta:
+            def fetch(generation: int | None, renderer: str | None) -> FloorDelta:
                 return _delta(instance, target, generation, renderer)
 
             sync_floor_directory(fetch, directory)
@@ -329,7 +329,7 @@ def test_deltas_are_the_same_cold_warm_and_coalesced(world: dict[str, Any]) -> N
     renderer = _delta(instance, head, None, None).renderer
     pairs = [(base, target) for target in range(head + 1) for base in range(target + 1)]
 
-    def every() -> list[PlaybillFloorDelta]:
+    def every() -> list[FloorDelta]:
         return [_delta(instance, target, base, renderer) for base, target in pairs]
 
     warm = every()

@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 import pytest
 
 from cruxible_core.indexes.sqlite import ProjectionHandle
-from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+from cruxible_core.service.authoring.documents import AcceptedCoordinate
 from cruxible_core.service.claims import claims as playbill_claims
 from cruxible_core.service.discovery import claim_status as playbill_search
 from cruxible_core.service.evidence import evidence as playbill_evidence
@@ -26,7 +26,7 @@ def test_discovery_matches_full_view_inputs_without_building_them(tmp_path, monk
     assert sorted(context.claims(), key=lambda c: c.identity.name) == sorted(
         expected, key=lambda c: c.identity.name
     )
-    at = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    at = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     for claim in expected:
         args = dict(claim_identity=claim.identity.qualified, evaluation_time=EVALUATION_TIME, at=at)
         assert playbill_evidence.service_evaluate_playbill_claim_verdict(
@@ -99,7 +99,7 @@ def test_batch_context_rechecks_time_and_replay_and_rejects_wrong_coordinate(tmp
     old = instance.coordinate_for_oid(instance.accepted_history()[-2].oid)
     with pytest.raises(playbill_evidence.ProposalIntegrityError, match="read context differs"):
         playbill_evidence.service_evaluate_playbill_claim_verdict(
-            instance, read_context=context, at=PlaybillAcceptedCoordinate.from_internal(old), **args
+            instance, read_context=context, at=AcceptedCoordinate.from_internal(old), **args
         )
 
 
@@ -107,7 +107,7 @@ def test_verdicts_verify_each_retained_record_once_per_instance(tmp_path, monkey
     from cruxible_core.indexes.history import history_index
 
     instance, _ = seed_claims(tmp_path)
-    at = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    at = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     parsed: list[str] = []
     parse = history_index.parse_change_set_record
 
@@ -163,7 +163,7 @@ def test_retained_records_answer_only_their_exact_location(tmp_path):
 
 def test_subject_statuses_evaluate_only_that_subjects_claims(tmp_path, monkeypatch):
     instance, _ = seed_claims(tmp_path)
-    at = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    at = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     everything = ClaimVerdictReadContext(instance, instance.accepted_coordinate()).claims()
     subject = next(
         c.statement.subject
@@ -226,7 +226,7 @@ def test_status_batches_select_attestations_once_for_every_claim(tmp_path, monke
     playbill_search.claim_resolution_statuses(
         instance,
         claims=claims,
-        at=PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         evaluation_time=EVALUATION_TIME,
     )
     assert len(calls) == 1

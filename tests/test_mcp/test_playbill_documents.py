@@ -69,24 +69,20 @@ def test_playbill_handlers_decode_bytes_and_submit_only_public_attestation(monke
     approval_result = object()
 
     class StubClient:
-        def store_playbill_body(
-            self, instance_id: str, content: bytes
-        ) -> contracts.PlaybillCasObjectResult:
+        def store_body(self, instance_id: str, content: bytes) -> contracts.CasObjectResult:
             calls.append(("store", (instance_id, content)))
-            return contracts.PlaybillCasObjectResult(
+            return contracts.CasObjectResult(
                 digest="sha256:" + "1" * 64,
                 present=True,
                 byte_length=len(content),
                 redacted=False,
             )
 
-        def propose_playbill_document(self, instance_id: str, **kwargs: Any) -> Any:
+        def propose_document(self, instance_id: str, **kwargs: Any) -> Any:
             calls.append(("propose", (instance_id, kwargs)))
             return proposal_result
 
-        def submit_playbill_approval(
-            self, instance_id: str, proposal_id: str, **kwargs: Any
-        ) -> Any:
+        def submit_approval(self, instance_id: str, proposal_id: str, **kwargs: Any) -> Any:
             calls.append(("approve", (instance_id, proposal_id, kwargs)))
             return approval_result
 

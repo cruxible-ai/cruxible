@@ -1,4 +1,4 @@
-"""Client-owned Playbill authoring, SDK, and workspace adapters."""
+"""Client-owned Cruxible authoring, SDK, and workspace adapters."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ if TYPE_CHECKING:
         LocalEd25519ClaimAttestationSigner,
     )
     from cruxible_client.authoring.procedures import Sequence as ProcedureSequence
-    from cruxible_client.authoring.sdk import Playbill, Prediction, PredictionSettlement
+    from cruxible_client.authoring.sdk import Cruxible, Prediction, PredictionSettlement
     from cruxible_client.authoring.signing import ApprovalSigner, LocalEd25519ApprovalSigner
 
 __all__ = [
@@ -21,7 +21,7 @@ __all__ = [
     "LocalEd25519ApprovalSigner",
     "ClaimAttestationSigner",
     "LocalEd25519ClaimAttestationSigner",
-    "Playbill",
+    "Cruxible",
     "ProcedureSequence",
     "Prediction",
     "PredictionSettlement",
@@ -41,7 +41,7 @@ def __getattr__(name: str) -> Any:
         from cruxible_client.authoring import signing
 
         return getattr(signing, name)
-    if name in {"Playbill", "Prediction", "PredictionSettlement"}:
+    if name in {"Cruxible", "Prediction", "PredictionSettlement"}:
         from cruxible_client.authoring import sdk
 
         return getattr(sdk, name)

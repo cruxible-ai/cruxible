@@ -300,7 +300,7 @@ def test_new_kind_does_not_change_previous_compiler_registration() -> None:
 def test_new_capture_acceptance_uses_historical_binding_and_discovery(tmp_path: Path) -> None:
     from cruxible_client.contracts.claims import claim_path
     from cruxible_core.coverage.contracts import CoverageAccessProfile
-    from cruxible_core.service.discovery.next import PlaybillNextRequestV1
+    from cruxible_core.service.discovery.next import NextRequestV1
     from tests.test_claims.test_claim_attestation_service import (
         RECORDED_AT,
         _coordinator_new_capture,
@@ -340,7 +340,7 @@ def test_new_capture_acceptance_uses_historical_binding_and_discovery(tmp_path: 
     )
     result = unfolded_next(
         instance,
-        request=PlaybillNextRequestV1(
+        request=NextRequestV1(
             evaluation_time=RECORDED_AT,
             access_profile=CoverageAccessProfile(
                 profile_id="test", permitted_access_classes=("instance", "public")

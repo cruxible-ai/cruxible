@@ -13,7 +13,7 @@ from typing import Any, Literal, NoReturn, cast
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.procedures.contract_schema import (
     ContractSchema,
     PropertySchema,
@@ -1724,7 +1724,7 @@ def compile_source(
         )
     except SourceCompileError:
         raise
-    except (ValueError, PlaybillFormatError) as exc:
+    except (ValueError, FormatError) as exc:
         raise SourceCompileError(
             SourceDiagnostic(
                 code="playbill.source.contract_or_graph_invalid",

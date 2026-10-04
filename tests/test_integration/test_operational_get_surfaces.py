@@ -14,11 +14,11 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 
-from cruxible_client.authoring.sdk import Playbill
+from cruxible_client.authoring.sdk import Cruxible
 from cruxible_client.authoring.sdk_types import RefKind
-from cruxible_client.contracts.get_reads import PlaybillGetRequest
+from cruxible_client.contracts.get_reads import GetRequest
 from cruxible_client.contracts.line_dispatch import LineDispatchRequest, LineEvaluateRequest
-from cruxible_client.contracts.operational_reads import PlaybillGetLineCard
+from cruxible_client.contracts.operational_reads import GetLineCard
 from cruxible_core.cli.main import cli
 from cruxible_core.mcp import handlers
 from cruxible_core.mcp.server import create_server
@@ -74,9 +74,9 @@ class _ServiceClient:
 
     def __init__(self, instance: Any) -> None:
         self.instance = instance
-        self.requests: list[PlaybillGetRequest] = []
+        self.requests: list[GetRequest] = []
 
-    def playbill_get(self, instance_id: str, *, request: PlaybillGetRequest) -> Any:
+    def get(self, instance_id: str, *, request: GetRequest) -> Any:
         self.requests.append(request)
         return service_playbill_get(self.instance, request=request, access=_ACCESS)
 
@@ -115,7 +115,7 @@ def test_the_mcp_tool_answers_a_line_card_by_its_identity_digest(world, monkeypa
     instance, line = world
     client = _ServiceClient(instance)
     monkeypatch.setattr(handlers, "_get_client", lambda: None)
-    monkeypatch.setattr(handlers.playbill_api, "playbill_get", client.playbill_get)
+    monkeypatch.setattr(handlers.playbill_api, "playbill_get", client.get)
     server = create_server()
 
     async def exercise() -> tuple[bool, str]:
@@ -140,7 +140,7 @@ def test_the_mcp_tool_answers_a_line_card_by_its_identity_digest(world, monkeypa
 
 def test_the_sdk_returns_typed_operational_cards(world, tmp_path) -> None:  # type: ignore[no-untyped-def]
     instance, line = world
-    playbill = Playbill.__new__(Playbill)
+    playbill = Cruxible.__new__(Cruxible)
     client = _ServiceClient(instance)
     playbill._client = client  # type: ignore[assignment]
     playbill._instance_id = "inst"
@@ -151,8 +151,8 @@ def test_the_sdk_returns_typed_operational_cards(world, tmp_path) -> None:  # ty
     card = playbill.get(line.identity.qualified)
 
     assert card.kind is RefKind.LINE and card.identity == line.identity.name
-    assert isinstance(card.value, PlaybillGetLineCard)
-    assert card.value.next[0] == f'pb.get("{line.procedure.target.qualified}")'
+    assert isinstance(card.value, GetLineCard)
+    assert card.value.next[0] == f'cx.get("{line.procedure.target.qualified}")'
     mandate = playbill.get("ProcedureMandate:served-line-mandate")
     assert mandate.kind is RefKind.MANDATE
     assert client.requests[-1].surface == "sdk"
@@ -164,12 +164,12 @@ def _orient_client(instance: Any) -> Any:
     from cruxible_core.service.discovery.orient import service_playbill_orient
 
     class _Orient(_ServiceClient):
-        def playbill_head(self, instance_id: str, **_values: Any) -> Any:
+        def head(self, instance_id: str, **_values: Any) -> Any:
             from cruxible_core.service.discovery.orient import service_playbill_head
 
             return service_playbill_head(self.instance)
 
-        def orient_playbill(self, instance_id: str, **values: Any) -> Any:
+        def orient(self, instance_id: str, **values: Any) -> Any:
             self.surfaces = [*getattr(self, "surfaces", []), values["surface"]]
             values.pop("caller_tools", None)
             if isinstance(values.get("evaluation_time"), str):
@@ -209,7 +209,7 @@ def test_the_mcp_orient_tool_pages_lines(world, monkeypatch) -> None:  # type: i
     monkeypatch.setattr(
         handlers.playbill_api,
         "playbill_orient",
-        lambda instance_id, **values: client.orient_playbill(instance_id, **values),
+        lambda instance_id, **values: client.orient(instance_id, **values),
     )
     server = create_server()
 
@@ -230,7 +230,7 @@ def test_the_mcp_orient_tool_pages_lines(world, monkeypatch) -> None:  # type: i
 
 def test_the_sdk_orients_by_operational_section(world) -> None:  # type: ignore[no-untyped-def]
     instance, line = world
-    playbill = Playbill._from_client(  # type: ignore[arg-type]
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
         _orient_client(instance),
         instance_id="inst",
         workspace=None,
@@ -241,4 +241,4 @@ def test_the_sdk_orients_by_operational_section(world) -> None:  # type: ignore[
     assert answer.floor is None
 
     assert answer.lines is not None and answer.lines[0].line == line.identity.qualified
-    assert answer.next[0] == f'pb.get("{line.identity.qualified}")'
+    assert answer.next[0] == f'cx.get("{line.identity.qualified}")'

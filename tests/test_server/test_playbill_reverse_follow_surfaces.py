@@ -11,8 +11,8 @@ import pytest
 from click.testing import CliRunner
 from fastapi.testclient import TestClient
 
-from cruxible_client import CruxibleClient, Playbill, contracts
-from cruxible_client.contracts.compact_query import PlaybillQueryRequest
+from cruxible_client import Cruxible, CruxibleClient, contracts
+from cruxible_client.contracts.compact_query import QueryRequest
 from cruxible_client.contracts.errors import ReadRefusalError
 from cruxible_core.cli.main import cli
 from cruxible_core.runtime import playbill_api
@@ -59,8 +59,8 @@ def served(
     return client, instance_id
 
 
-def _playbill(client: CruxibleClient, instance_id: str, tmp_path: Path) -> Playbill:
-    return Playbill._from_client(  # type: ignore[arg-type]
+def _playbill(client: CruxibleClient, instance_id: str, tmp_path: Path) -> Cruxible:
+    return Cruxible._from_client(  # type: ignore[arg-type]
         client,
         instance_id=instance_id,
         workspace=tmp_path,
@@ -84,9 +84,9 @@ def test_every_surface_follows_a_relation_backwards(
     ]
     select = ["batch", "batch.state", "up"]
     if surface == "transport":
-        result = client.query_playbill(
+        result = client.query(
             instance_id,
-            request=PlaybillQueryRequest.model_validate(
+            request=QueryRequest.model_validate(
                 {
                     "kind": SUBJECT_KIND,
                     "follow": follow,
@@ -117,7 +117,7 @@ def test_every_surface_follows_a_relation_backwards(
             ],
         )
         assert invoked.exit_code == 0, invoked.output
-        result = contracts.PlaybillQueryResult.model_validate(json.loads(invoked.output))
+        result = contracts.QueryResultRecord.model_validate(json.loads(invoked.output))
     elif surface == "sdk":
         result = (
             _playbill(client, instance_id, tmp_path)
@@ -181,7 +181,7 @@ def test_every_surface_pages_reverse_rows_and_refuses_a_wrong_predicate(
             ]
             invoked = CliRunner().invoke(cli, [*args, *(["--cursor", cursor] if cursor else [])])
             assert invoked.exit_code == 0, invoked.output
-            return contracts.PlaybillQueryResult.model_validate(json.loads(invoked.output))
+            return contracts.QueryResultRecord.model_validate(json.loads(invoked.output))
         if surface == "sdk":
             return (
                 _playbill(client, instance_id, tmp_path)
@@ -189,9 +189,9 @@ def test_every_surface_pages_reverse_rows_and_refuses_a_wrong_predicate(
                 .page
             )
         if surface == "transport":
-            return client.query_playbill(
+            return client.query(
                 instance_id,
-                request=PlaybillQueryRequest.model_validate(
+                request=QueryRequest.model_validate(
                     {
                         "kind": SUBJECT_KIND,
                         "follow": [follow],
@@ -256,7 +256,7 @@ def test_every_surface_orients_with_the_incoming_predicates(
 
     client, instance_id = served
     if surface == "transport":
-        result = client.orient_playbill(instance_id, kind=SUBJECT_KIND, surface="mcp")
+        result = client.orient(instance_id, kind=SUBJECT_KIND, surface="mcp")
         marker = f'follow=[{{"field": "{DELIVERS}", "as": "batch", "direction": "reverse"}}]'
     elif surface == "cli":
         from cruxible_core.cli.commands import playbill as commands
@@ -264,13 +264,13 @@ def test_every_surface_orients_with_the_incoming_predicates(
         monkeypatch.setattr(commands, "_server_call", lambda op, **_: op(client, instance_id))
         invoked = CliRunner().invoke(cli, ["playbill", "orient", "--kind", SUBJECT_KIND, "--json"])
         assert invoked.exit_code == 0, invoked.output
-        result = contracts.PlaybillOrientResult.model_validate(json.loads(invoked.output))
+        result = contracts.OrientResult.model_validate(json.loads(invoked.output))
         marker = f"--follow-in {DELIVERS}:batch"
         text = CliRunner().invoke(cli, ["playbill", "orient", "--kind", SUBJECT_KIND]).output
         assert f"Incoming (--follow-in): {DELIVERS}, {GOVERNS}, {PARENT}" in text
     elif surface == "sdk":
         result = _playbill(client, instance_id, tmp_path).orient(kind=SUBJECT_KIND)
-        marker = f'pb.query(kind="{SUBJECT_KIND}", follow=[{{"field": "{DELIVERS}"'
+        marker = f'cx.query(kind="{SUBJECT_KIND}", follow=[{{"field": "{DELIVERS}"'
     else:
         monkeypatch.setattr(
             handlers, "_get_client", lambda: None if surface == "mcp-local" else client

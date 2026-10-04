@@ -40,7 +40,7 @@ from cruxible_client.contracts.laws import (
     CLAIM_LAW_V2_REVISION_8,
     CLAIM_TYPE_LAW_V7_REVISION_1,
 )
-from cruxible_client.contracts.types import PlaybillTrustRoot
+from cruxible_client.contracts.types import TrustRoot
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.store import AuthoringIntentStore
 from cruxible_core.proposals.settlement import parse_change_set_record
@@ -62,10 +62,10 @@ PRE_V7_LAWS = textwrap.dedent(
         laws.CLAIM_TYPE_LAW_V7_REVISION_1,
     }
     old_current = {laws.CLAIM_LAW_V2_REVISION_7, laws.CLAIM_LAW_V3_REVISION_9}
-    laws.PLAYBILL_ACCEPTANCE_LAWS = laws.AcceptanceLawRegistry(
+    laws.ACCEPTANCE_LAWS = laws.AcceptanceLawRegistry(
         tuple(
             replace(item, current=True) if item.coordinate in old_current else item
-            for item in laws.PLAYBILL_ACCEPTANCE_LAWS._by_coordinate.values()
+            for item in laws.ACCEPTANCE_LAWS._by_coordinate.values()
             if item.coordinate not in new
         )
     )
@@ -166,12 +166,12 @@ REOPEN = textwrap.dedent(
     import sys
     from pathlib import Path
 
-    from cruxible_client.contracts.types import PlaybillTrustRoot
+    from cruxible_client.contracts.types import TrustRoot
     from cruxible_core.runtime.instance import PlaybillInstance
 
     state = json.loads(Path(sys.argv[1]).read_text())
     PlaybillInstance.open(
-        Path(sys.argv[2]), trust_root=PlaybillTrustRoot.model_validate(state["trust_root"])
+        Path(sys.argv[2]), trust_root=TrustRoot.model_validate(state["trust_root"])
     )
     """
 )
@@ -180,10 +180,10 @@ DROP_HISTORICAL_CLAIM_LAWS = textwrap.dedent(
     from cruxible_client.contracts import laws
 
     historical = {laws.CLAIM_LAW_V2_REVISION_7, laws.CLAIM_LAW_V3_REVISION_9}
-    laws.PLAYBILL_ACCEPTANCE_LAWS = laws.AcceptanceLawRegistry(
+    laws.ACCEPTANCE_LAWS = laws.AcceptanceLawRegistry(
         tuple(
             item
-            for item in laws.PLAYBILL_ACCEPTANCE_LAWS._by_coordinate.values()
+            for item in laws.ACCEPTANCE_LAWS._by_coordinate.values()
             if item.coordinate not in historical
         )
     )
@@ -262,7 +262,7 @@ def test_pre_v7_history_replays_settles_and_extends_under_the_new_laws(tmp_path:
     assert built.returncode == 0, built.stderr[-4000:]
     state = json.loads((tmp_path / "state.json").read_text())
     managed = Path(state["managed_root"])
-    trust = PlaybillTrustRoot.model_validate(state["trust_root"])
+    trust = TrustRoot.model_validate(state["trust_root"])
 
     _drop_checkpoints(managed)
     instance = PlaybillInstance.open(managed, trust_root=trust)

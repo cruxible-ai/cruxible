@@ -1,4 +1,4 @@
-"""Guardrail: a Playbill commit message is prose, and nothing ever reads it back.
+"""Guardrail: a Cruxible commit message is prose, and nothing ever reads it back.
 
 The ledger's commit messages became a review summary so that a reviewer with
 nothing but Git can read a proposal. That only stays true while they are prose:

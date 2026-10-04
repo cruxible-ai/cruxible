@@ -38,7 +38,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.claim_verdicts import evaluate_claim_verdict
-from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpec
 from cruxible_client.contracts.providers import ProviderV1
@@ -72,7 +72,7 @@ _VERDICT_REASONS: Mapping[str, str] = {
 """
 
 
-class DependencyImpactError(PlaybillError):
+class DependencyImpactError(CruxibleError):
     """A dependency-impact read could not be answered at the named coordinate."""
 
 

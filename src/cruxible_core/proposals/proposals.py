@@ -116,14 +116,14 @@ from cruxible_client.contracts.documents import (
     parse_document,
 )
 from cruxible_client.contracts.errors import (
+    CruxibleError,
     DocumentFormatError,
-    PlaybillError,
-    PlaybillFormatError,
-    PlaybillReseedRequired,
+    FormatError,
     PrincipalIntegrityError,
     ProposalAdmissionError,
     ProposalEvaluationIntegrityError,
     ProposalIntegrityError,
+    ReseedRequired,
     SubjectFormatError,
 )
 from cruxible_client.contracts.governance import (
@@ -134,6 +134,7 @@ from cruxible_client.contracts.governance import (
     PermissionTier,
 )
 from cruxible_client.contracts.laws import (
+    ACCEPTANCE_LAWS,
     APPROVAL_POLICY_ACCEPTANCE_LAW,
     CAPTURE_CONTRACT_LAW_REVISION_4,
     CLAIM_LAW_V2_REVISION_7,
@@ -141,7 +142,6 @@ from cruxible_client.contracts.laws import (
     CLAIM_LAW_V3_REVISION_8,
     CLAIM_LAW_V3_REVISION_9,
     CLAIM_LAW_V3_REVISION_10,
-    PLAYBILL_ACCEPTANCE_LAWS,
     PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
     PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
     QUERY_DEFINITION_LAW,
@@ -262,7 +262,7 @@ from cruxible_client.contracts.triggers import (
 from cruxible_client.contracts.types import CompilerCoordinate, PrincipalRecord
 from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
-    PlaybillWorkspaceAdvertisement,
+    WorkspaceAdvertisement,
 )
 from cruxible_core.claims.closure import (
     ArtifactDependencyStateV1,
@@ -641,7 +641,7 @@ def claim_type_expansions_from_candidate(
             continue
         try:
             expansions.append(ClaimTypeExpansionEvidence.model_validate(raw))
-        except (PlaybillError, ValidationError) as exc:
+        except (CruxibleError, ValidationError) as exc:
             raise ProposalIntegrityError(
                 "candidate contains invalid ClaimType authoring expansion evidence"
             ) from exc
@@ -1467,7 +1467,7 @@ def advance_tree_members(
     else:
         try:
             return advance_member_delta(state, edits)
-        except (PlaybillError, ValueError):
+        except (CruxibleError, ValueError):
             # Invalid path combinations retain the cold validator's exact
             # refusal and ordering; valid deltas never enumerate this fallback.
             return advance_tree_members(state, previous_tree=dict(previous_tree), tree=dict(tree))
@@ -2468,7 +2468,7 @@ def _condition_query(
 def _resolution_contract_member(context: _MemberContext) -> _MemberVerdict:
     try:
         return _verified_resolution_contract_member(context)
-    except (PlaybillError, ValueError) as exc:
+    except (CruxibleError, ValueError) as exc:
         return _MemberVerdict(
             diagnostics=(
                 _diagnostic("playbill.resolution_contract.binding_invalid", str(exc), context.path),
@@ -2489,7 +2489,7 @@ def _verified_resolution_contract_member(context: _MemberContext) -> _MemberVerd
         k.kind == "resolution-contract"
         for k in artifact_kinds_for_compiler(context.current.compiler).entries()
     ):
-        raise PlaybillFormatError("compiler does not admit independent resolution contracts")
+        raise FormatError("compiler does not admit independent resolution contracts")
     value = parse_resolution_contract(context.content, path=context.path)
     previous = (
         None
@@ -2500,12 +2500,10 @@ def _verified_resolution_contract_member(context: _MemberContext) -> _MemberVerd
     if value.lifecycle.predecessor_digest != predecessor or (
         previous is not None and value.identity != previous.identity
     ):
-        raise PlaybillFormatError(
-            "resolution contract predecessor does not match the accepted version"
-        )
+        raise FormatError("resolution contract predecessor does not match the accepted version")
     h = value.hypothesis
     if h.coordinate not in context.accepted_referent_coordinates:
-        raise PlaybillFormatError("resolution hypothesis coordinate is not accepted")
+        raise FormatError("resolution hypothesis coordinate is not accepted")
     tree = (
         context.current_tree
         if h.coordinate == context.accepted_coordinate()
@@ -2514,10 +2512,10 @@ def _verified_resolution_contract_member(context: _MemberContext) -> _MemberVerd
         )
     )
     if tree is None:
-        raise PlaybillFormatError("resolution hypothesis requires retained history")
+        raise FormatError("resolution hypothesis requires retained history")
     raw = tree.get(claim_path(h.identity.name))
     if raw is None:
-        raise PlaybillFormatError("resolution hypothesis Claim is absent at its bound coordinate")
+        raise FormatError("resolution hypothesis Claim is absent at its bound coordinate")
     value.verify_hypothesis(
         parse_claim(
             raw,
@@ -2561,7 +2559,7 @@ def _attestation_member(context: _MemberContext) -> _MemberVerdict:
         return _verified_attestation_member(context)
     except ClaimAttestationRefusal as exc:
         return _MemberVerdict(diagnostics=(_diagnostic(exc.error_code, str(exc), context.path),))
-    except (PlaybillError, ValueError) as exc:
+    except (CruxibleError, ValueError) as exc:
         return _MemberVerdict(
             diagnostics=(
                 _diagnostic("playbill.attestation.binding_invalid", str(exc), context.path),
@@ -3919,7 +3917,7 @@ def _evaluate_scoped_members(
                 rebased,
             )
 
-        except PlaybillFormatError as exc:
+        except FormatError as exc:
             if kind.name not in {"attestation", "resolution-contract", "trigger"}:
                 raise
             return CandidateEvaluation(
@@ -4501,7 +4499,7 @@ def evaluate_proposal_tree(
     wire_version: CandidateWireVersion = PRODUCED_CANDIDATE_VERSION,
     query_facts_provider: ClaimQueryFactsProvider | None = None,
     replay_claim_admission_accounts: tuple[ClaimAdmissionEvaluationAccount, ...] | None = None,
-    acceptance_laws: AcceptanceLawRegistry = PLAYBILL_ACCEPTANCE_LAWS,
+    acceptance_laws: AcceptanceLawRegistry = ACCEPTANCE_LAWS,
     historical_law_coordinates: Mapping[str, tuple[str, str]] | None = None,
     candidate_card_renderer_digest: str | None = None,
     principal_registry_provider: Callable[[AcceptedProjectionCoordinate], PrincipalRegistrySnapshot]
@@ -4728,7 +4726,7 @@ class ProposalService:
         promotion_verifier: ExhaustPromotionVerifierProtocol | None = None,
         producer_receipt_resolver: ProducerReceiptResolverProtocol | None = None,
         query_facts_provider: ClaimQueryFactsProvider | None = None,
-        workspace_advertiser: Callable[[], PlaybillWorkspaceAdvertisement] | None = None,
+        workspace_advertiser: Callable[[], WorkspaceAdvertisement] | None = None,
         require_writable: Callable[[], None] | None = None,
         ledger_publisher: Callable[[], object] | None = None,
         tree_state_provider: TreeStateProvider | None = None,
@@ -4810,7 +4808,7 @@ class ProposalService:
             raise ProposalAdmissionError("authenticated actor lacks the propose capability")
         current = self._current_coordinate()
         if current.compiler not in PC_HR_ARTIFACT_CODEC_COMPILERS:
-            raise PlaybillReseedRequired()
+            raise ReseedRequired()
         namespace = request.target_ref.split("/")[2]
         if namespace != actor.actor_id:
             raise ProposalAdmissionError(
@@ -5196,7 +5194,7 @@ class ProposalService:
             try:
                 advertisement = self.workspace_advertiser()
             except BaseException:
-                advertisement = PlaybillWorkspaceAdvertisement(
+                advertisement = WorkspaceAdvertisement(
                     status="failed",
                     workspace_path=None,
                     failure_code="unexpected_failure",

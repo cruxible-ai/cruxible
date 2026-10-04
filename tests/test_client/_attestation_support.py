@@ -9,7 +9,7 @@ from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationAppendRequest,
     ClaimAttestationAppendResult,
 )
-from cruxible_client.contracts.get_reads import PlaybillGetRequest, PlaybillGetResult
+from cruxible_client.contracts.get_reads import GetRequest, GetResult
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.runtime.permissions import PermissionMode
 from cruxible_core.service.discovery.get import service_playbill_get
@@ -29,7 +29,7 @@ class ServiceAttestationClient:
         self.actor_id = actor_id
         self.state_dir = state_dir
 
-    def playbill_whoami(self, instance_id: str) -> contracts.PlaybillWhoAmI:
+    def whoami(self, instance_id: str) -> contracts.WhoAmI:
         assert instance_id == self.instance.descriptor.instance_id
         value = service_playbill_whoami(
             self.instance,
@@ -39,22 +39,22 @@ class ServiceAttestationClient:
             authenticated=True,
             permission_mode=PermissionMode.GOVERNED_WRITE,
         )
-        return contracts.PlaybillWhoAmI.model_validate(value.model_dump(mode="json"))
+        return contracts.WhoAmI.model_validate(value.model_dump(mode="json"))
 
-    def orient_playbill(
+    def orient(
         self,
         instance_id: str,
         *,
-        section: contracts.PlaybillOrientSection,
+        section: contracts.OrientSection,
         limit: int,
         cursor: str | None = None,
-    ) -> contracts.PlaybillOrientResult:
+    ) -> contracts.OrientResult:
         assert instance_id == self.instance.descriptor.instance_id
         return service_playbill_orient(
             self.instance, section=section, limit=limit, cursor=cursor, surface="sdk"
         )
 
-    def playbill_get(self, instance_id: str, *, request: PlaybillGetRequest) -> PlaybillGetResult:
+    def get(self, instance_id: str, *, request: GetRequest) -> GetResult:
         assert instance_id == self.instance.descriptor.instance_id
         return service_playbill_get(
             self.instance,
@@ -62,7 +62,7 @@ class ServiceAttestationClient:
             access=BodyAccessContext(principal_id=self.actor_id, can_read_body=False),
         )
 
-    def append_playbill_claim_attestation(
+    def append_claim_attestation(
         self,
         instance_id: str,
         *,

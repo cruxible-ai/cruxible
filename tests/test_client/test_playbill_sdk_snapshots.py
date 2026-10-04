@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from cruxible_client import Playbill
+from cruxible_client import Cruxible
 from cruxible_client import contracts as api
 from cruxible_client.authoring.sdk_types import ClaimRef, ProcedureSlotRef
 from cruxible_client.contracts.claim_reads import ClaimReadBatchResult
@@ -25,21 +25,19 @@ class _LiveClient(_WorldClient):
     def close(self) -> None:
         self.closed += 1
 
-    def read_playbill_claim_batch(self, instance: str, *, request: Any) -> ClaimReadBatchResult:
+    def read_claim_batch(self, instance: str, *, request: Any) -> ClaimReadBatchResult:
         self.batches.append(request)
         if request.subject_paths:
-            return super().read_playbill_claim_batch(instance, request=request)
+            return super().read_claim_batch(instance, request=request)
         at = request.at or self.coordinate
         views = tuple(self._claim_view(instance, name, at=at) for name in request.claim_ids)
         if self.corrupt_batch:
             views = (views[0].model_copy(update={"coordinate": _MOVED_COORDINATE}),)
         return ClaimReadBatchResult(coordinate=at, claims=views)
 
-    def activate_playbill_proposal(
-        self, instance: str, proposal_id: str
-    ) -> api.PlaybillActivationReceipt:
+    def activate_proposal(self, instance: str, proposal_id: str) -> api.ActivationReceipt:
         self.coordinate = _MOVED_COORDINATE
-        return api.PlaybillActivationReceipt(
+        return api.ActivationReceipt(
             proposal_id=proposal_id,
             activated_by="owner",
             status="accepted",
@@ -49,9 +47,9 @@ class _LiveClient(_WorldClient):
 
 
 @pytest.fixture
-def connection(tmp_path: Path) -> tuple[Playbill, _LiveClient]:
+def connection(tmp_path: Path) -> tuple[Cruxible, _LiveClient]:
     client = _LiveClient()
-    pb = Playbill._from_client(
+    pb = Cruxible._from_client(
         client,  # type: ignore[arg-type]
         instance_id="inst_world",
         workspace=tmp_path,
@@ -165,7 +163,7 @@ def test_explicit_connect_skips_current_orientation(connection, monkeypatch, tmp
     client.head_reads.clear()
     monkeypatch.setattr(sdk, "CruxibleClient", lambda **kwargs: client)
     monkeypatch.setattr(sdk.client_compatibility, "check_daemon_compatibility", lambda c: None)
-    with Playbill.connect(
+    with Cruxible.connect(
         target="http://test",
         instance="inst_world",
         workspace=tmp_path,
@@ -191,7 +189,7 @@ def test_projection_only_scan_can_bind_head_without_whole_world_orientation(tmp_
     )
     monkeypatch.setattr(
         workspace,
-        "observe_playbill_projection_coverage",
+        "observe_projection_coverage",
         lambda root, *, coordinate: calls.append(coordinate),
     )
 
@@ -199,7 +197,7 @@ def test_projection_only_scan_can_bind_head_without_whole_world_orientation(tmp_
         calls.append("metadata")
         return _MOVED_COORDINATE
 
-    _, coordinate = workspace.observe_playbill_next_workspace_with_coverage(
+    _, coordinate = workspace.observe_next_workspace_with_coverage(
         object(),
         "instance",
         tmp_path,

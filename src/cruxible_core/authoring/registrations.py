@@ -20,7 +20,7 @@ from typing import Literal
 
 from cruxible_client.contracts.authoring.models import PublicationPreparation
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.errors import PlaybillError, PlaybillFormatError
+from cruxible_client.contracts.errors import CruxibleError, FormatError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.authoring.store import AuthoringIntentStore
 from cruxible_core.derived.memo import memo_clear, memo_get, memo_put
@@ -99,7 +99,7 @@ def bound_publication_registrations(
             return memoized
     try:
         latest = AuthoringIntentStore(exhaust_root, read_only=True).publication_states()
-    except (OSError, PlaybillError):
+    except (OSError, CruxibleError):
         return None
     # Every expectation the intent owns, not just the singular mirror: one intent
     # is one changeset, so a set that published three Claims registers three
@@ -181,7 +181,7 @@ def _declaration_path(root: Path, source_id: str, block_id: str) -> Path:
     # neither can be `.`, `..`, absolute, or carry a separator. The check is
     # still made here rather than assumed: this function names a file.
     if not _SAFE_SEGMENT.fullmatch(source_id) or not _SAFE_SEGMENT.fullmatch(block_id):
-        raise PlaybillFormatError(
+        raise FormatError(
             "playbill.block.declaration_identity_invalid: a block declaration is addressed "
             "by a source id and a block id in the marker grammar's own alphabet"
         )
@@ -293,7 +293,7 @@ def release_projection_block_declaration(
     except FileNotFoundError:
         return False
     except OSError as exc:
-        raise PlaybillFormatError(
+        raise FormatError(
             "playbill.block.declaration_unreleasable: the block declaration store cannot "
             f"be written: {exc}"
         ) from exc

@@ -1,4 +1,4 @@
-"""Rebuild the surviving Playbill fixtures and the TauBench seed example."""
+"""Rebuild the surviving Cruxible fixtures and the TauBench seed example."""
 
 from __future__ import annotations
 

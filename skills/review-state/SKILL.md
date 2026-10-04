@@ -130,8 +130,8 @@ Use this to answer:
 
 For a time-bounded uncertainty that later evidence can decide, recommend the
 served uncertain → predict → settle loop: author the predicted value as an
-ordinary Claim proposal with `Playbill.predict(...)`, activate it through the
-normal review path, then call `Playbill.settle(...)` with the later accepted
+ordinary Claim proposal with `Cruxible.predict(...)`, activate it through the
+normal review path, then call `Cruxible.settle(...)` with the later accepted
 observation (or an authorized retained terminal record). Only the resulting
 settled-outcome relation enters calibration; an open prediction does not.
 

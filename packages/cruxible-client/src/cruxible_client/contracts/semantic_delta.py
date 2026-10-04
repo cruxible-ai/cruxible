@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import Final, cast
 
 from cruxible_client.contracts import (
-    PlaybillSemanticFieldDelta,
-    PlaybillSemanticFieldValue,
+    SemanticFieldDelta,
+    SemanticFieldValue,
 )
 from cruxible_client.contracts.canonical import CanonicalValue, normalize_canonical
 from cruxible_client.contracts.errors import SemanticDeltaLimitError
@@ -21,10 +21,10 @@ def _pointer(parent: str, key: str) -> str:
     return f"{parent}/{escaped}"
 
 
-def _side(value: CanonicalValue | object) -> PlaybillSemanticFieldValue:
+def _side(value: CanonicalValue | object) -> SemanticFieldValue:
     if value is _MISSING:
-        return PlaybillSemanticFieldValue(state="absent", value=None)
-    return PlaybillSemanticFieldValue(state="present", value=cast(CanonicalValue, value))
+        return SemanticFieldValue(state="absent", value=None)
+    return SemanticFieldValue(state="present", value=cast(CanonicalValue, value))
 
 
 def _require_bounded_depth(value: object, *, depth: int = 0) -> None:
@@ -63,7 +63,7 @@ def _same_canonical_value(left: CanonicalValue, right: CanonicalValue) -> bool:
 def semantic_field_delta(
     before: dict[str, object],
     after: dict[str, object],
-) -> tuple[PlaybillSemanticFieldDelta, ...]:
+) -> tuple[SemanticFieldDelta, ...]:
     """Return every changed object leaf in deterministic JSON-Pointer order.
 
     Objects recurse, including through wholly added or removed objects. Arrays are
@@ -76,7 +76,7 @@ def semantic_field_delta(
     after_value = normalize_canonical(after)
     if not isinstance(before_value, dict) or not isinstance(after_value, dict):
         raise ValueError("semantic field delta requires object roots")
-    rows: list[PlaybillSemanticFieldDelta] = []
+    rows: list[SemanticFieldDelta] = []
 
     def visit(path: str, left: CanonicalValue | object, right: CanonicalValue | object) -> None:
         if (
@@ -116,7 +116,7 @@ def semantic_field_delta(
                 f"{MAX_SEMANTIC_DELTA_ROWS}"
             )
         rows.append(
-            PlaybillSemanticFieldDelta(
+            SemanticFieldDelta(
                 field_path=path,
                 before=_side(left),
                 after=_side(right),

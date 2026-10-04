@@ -1,6 +1,6 @@
 """CLI transport-failure handling.
 
-When the daemon is unreachable (connection refused, timeout, DNS), Playbill
+When the daemon is unreachable (connection refused, timeout, DNS), Cruxible
 reads and server metadata commands must emit a friendly single-line error and exit
 non-zero -- never a raw httpx traceback (agent/UX-hostile).
 """

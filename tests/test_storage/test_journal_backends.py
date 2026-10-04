@@ -16,7 +16,7 @@ from cruxible_client.contracts.canonical import (
     SemanticRoot,
     typed_digest,
 )
-from cruxible_client.contracts.errors import PlaybillJournalError
+from cruxible_client.contracts.errors import JournalError
 from cruxible_core.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
     JournalHeadVectorV1,
@@ -179,9 +179,9 @@ def test_expected_head_fence_chain_and_idempotent_append(tmp_path) -> None:
     assert first.record.sequence == 1
     assert first.record.previous_record_digest == genesis.record_digest
 
-    with pytest.raises(PlaybillJournalError, match="fencing token"):
+    with pytest.raises(JournalError, match="fencing token"):
         backend.append(_draft("second"), expected_head=genesis, fencing_token="writer-b")
-    with pytest.raises(PlaybillJournalError, match="stale or forked"):
+    with pytest.raises(JournalError, match="stale or forked"):
         backend.append(_draft("second"), expected_head=genesis, fencing_token="writer-a")
 
 
@@ -476,7 +476,7 @@ def test_complete_chain_tamper_is_corruption_not_crash_recovery(tmp_path) -> Non
     content = bytearray(path.read_bytes())
     content[-5] ^= 1
     path.write_bytes(content)
-    with pytest.raises(PlaybillJournalError, match="malformed|digest|canonical"):
+    with pytest.raises(JournalError, match="malformed|digest|canonical"):
         backend.recover_partition(_stream(), "runs-2026-08")
 
 
@@ -496,7 +496,7 @@ def test_signed_head_authenticates_assertion_but_not_witness_role(tmp_path) -> N
     changed = manifest.model_dump(mode="json")
     changed["statement"]["head_vector"]["partitions"][0]["sequence"] = 2
     tampered = type(manifest).model_validate(changed)
-    with pytest.raises(PlaybillJournalError, match="signature"):
+    with pytest.raises(JournalError, match="signature"):
         verify_journal_head_manifest(
             tampered,
             expected_public_key=signer.private_key.public_key().public_bytes_raw().hex(),
@@ -526,7 +526,7 @@ def test_exact_range_rejects_truncation_substitution_and_discontinuity(tmp_path)
     truncated = journal_range.model_dump(mode="json")
     truncated["last_sequence"] = 1
     truncated["expected_head_digest"] = second.record_digest
-    with pytest.raises(PlaybillJournalError, match="expected head"):
+    with pytest.raises(JournalError, match="expected head"):
         backend.read_exact_range(type(journal_range).model_validate(truncated))
 
 

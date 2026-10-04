@@ -18,12 +18,12 @@ from cruxible_client.contracts.captures import (
     CaptureRunCoordinateV1,
     capture_digest,
 )
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 
 _RAW_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
-class CaptureJournalError(PlaybillFormatError):
+class CaptureJournalError(FormatError):
     """A landing append violates partition, idempotency, or chain law."""
 
 

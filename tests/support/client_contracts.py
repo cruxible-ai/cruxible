@@ -107,7 +107,7 @@ def _public_models() -> dict[str, Any]:
     clients see, moving no pin. That one is now covered.
 
     Two neighbours named alongside it in the card are NOT, and neither becomes
-    covered by this filter. `PlaybillDescriptor.decommissioned` lives in
+    covered by this filter. `Descriptor.decommissioned` lives in
     `contracts/types.py`, which the namespace does not re-export, so the model
     is reachable by importing the submodule but is not published and moves no
     pin here. `PlaybillSearchOrientationV1` is not a client contract at all --

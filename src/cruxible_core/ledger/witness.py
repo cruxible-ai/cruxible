@@ -1,4 +1,4 @@
-"""Distinct optional witness-record contract for accepted Playbill generations."""
+"""Distinct optional witness-record contract for accepted Cruxible generations."""
 
 from __future__ import annotations
 

@@ -12,22 +12,22 @@ import pytest
 
 from cruxible_client import contracts
 from cruxible_client.authoring.workspace import (
-    PlaybillWorkspaceError,
+    WorkspaceError,
     activate_with_workspace_refresh,
     inspect_workspace_floor,
-    materialize_playbill_floor,
-    observe_playbill_next_workspace,
-    record_playbill_floor_output,
-    write_playbill_workspace_config,
+    materialize_floor,
+    observe_next_workspace,
+    record_floor_output,
+    write_workspace_config,
 )
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
-from cruxible_client.contracts.floor import PlaybillFloorDelta
+from cruxible_client.contracts.floor import FloorDelta
 from cruxible_client.contracts.repairs import RepairOperation
 from tests.support.floor_exports import delta_from_export, floor_v5_export
 
 
-def _coordinate(seed: str = "1") -> contracts.PlaybillAcceptedCoordinate:
-    return contracts.PlaybillAcceptedCoordinate(
+def _coordinate(seed: str = "1") -> contracts.AcceptedCoordinate:
+    return contracts.AcceptedCoordinate(
         git_oid=seed * 40,
         semantic_root="sha256:" + "2" * 64,
         generation_root="sha256:" + "3" * 64,
@@ -35,7 +35,7 @@ def _coordinate(seed: str = "1") -> contracts.PlaybillAcceptedCoordinate:
     )
 
 
-def _delta(*, content: bytes = b'{"fresh":true}\n') -> PlaybillFloorDelta:
+def _delta(*, content: bytes = b'{"fresh":true}\n') -> FloorDelta:
     """The full floor delta the daemon serves the default floor refresh."""
 
     return delta_from_export(
@@ -43,7 +43,7 @@ def _delta(*, content: bytes = b'{"fresh":true}\n') -> PlaybillFloorDelta:
     )
 
 
-def _export(*, content: bytes = b'{"fresh":true}\n') -> contracts.PlaybillFloorExport:
+def _export(*, content: bytes = b'{"fresh":true}\n') -> contracts.FloorExport:
     inventory = [
         {
             "path": "cards/fresh.json",
@@ -62,15 +62,15 @@ def _export(*, content: bytes = b'{"fresh":true}\n') -> contracts.PlaybillFloorE
             {"files": inventory},
         ).tagged,
     }
-    return contracts.PlaybillFloorExport(
+    return contracts.FloorExport(
         coordinate=_coordinate(),
         manifest=manifest,
         files=[
-            contracts.PlaybillFloorFile(
+            contracts.FloorFile(
                 path="manifest.json",
                 content_base64=base64.b64encode(json.dumps(manifest).encode()).decode(),
             ),
-            contracts.PlaybillFloorFile(
+            contracts.FloorFile(
                 path="cards/fresh.json",
                 content_base64=base64.b64encode(content).decode(),
             ),
@@ -101,15 +101,15 @@ def test_workspace_config_writer_refuses_differences_and_never_carries_secrets(
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    written = write_playbill_workspace_config(
+    written = write_workspace_config(
         workspace,
         instance_id="inst_one",
         server_url="https://one.example.test",
     )
     original = written.read_bytes()
 
-    with pytest.raises(PlaybillWorkspaceError, match="--replace"):
-        write_playbill_workspace_config(
+    with pytest.raises(WorkspaceError, match="--replace"):
+        write_workspace_config(
             workspace,
             instance_id="inst_two",
             server_url="https://two.example.test",
@@ -127,7 +127,7 @@ def test_workspace_config_writer_refuses_differences_and_never_carries_secrets(
         ),
         encoding="utf-8",
     )
-    write_playbill_workspace_config(
+    write_workspace_config(
         workspace,
         instance_id="inst_two",
         server_socket=str(tmp_path / "daemon.sock"),
@@ -150,8 +150,8 @@ def test_workspace_config_writer_refuses_credentials_embedded_in_url(tmp_path: P
     workspace = tmp_path / "workspace"
     workspace.mkdir()
 
-    with pytest.raises(PlaybillWorkspaceError, match="CRUXIBLE_SERVER_BEARER_TOKEN"):
-        write_playbill_workspace_config(
+    with pytest.raises(WorkspaceError, match="CRUXIBLE_SERVER_BEARER_TOKEN"):
+        write_workspace_config(
             workspace,
             instance_id="inst_secret",
             server_url="https://agent:secret@example.test",
@@ -165,7 +165,7 @@ def test_workspace_config_writer_adds_machine_local_git_exclusion(tmp_path: Path
     workspace.mkdir()
     subprocess.run(["git", "init", "-q", str(workspace)], check=True)
 
-    write_playbill_workspace_config(
+    write_workspace_config(
         workspace,
         instance_id="inst_local",
         server_url="https://playbill.example.test",
@@ -203,7 +203,7 @@ def test_floor_output_writer_upgrades_and_preserves_safe_coverage_rules(
         encoding="utf-8",
     )
 
-    record_playbill_floor_output(
+    record_floor_output(
         workspace,
         instance_id="inst_floor",
         server_url="https://playbill.example.test",
@@ -250,7 +250,7 @@ def test_replace_upgrades_v1_config_without_dropping_coverage_fields(tmp_path: P
         encoding="utf-8",
     )
 
-    write_playbill_workspace_config(
+    write_workspace_config(
         workspace,
         instance_id="inst_new",
         server_socket=str(tmp_path / "daemon.sock"),
@@ -271,7 +271,7 @@ def test_materialization_exactly_replaces_and_reports_current(tmp_path: Path) ->
     destination.mkdir()
     (destination / "stale.json").write_text("old", encoding="utf-8")
 
-    result = materialize_playbill_floor(
+    result = materialize_floor(
         workspace,
         export=_export(),
     )
@@ -282,7 +282,7 @@ def test_materialization_exactly_replaces_and_reports_current(tmp_path: Path) ->
     assert (destination / "cards/fresh.json").read_bytes() == b'{"fresh":true}\n'
     assert status.status == "current"
     assert status.installed_coordinate == _coordinate()
-    observation = observe_playbill_next_workspace(workspace)
+    observation = observe_next_workspace(workspace)
     assert observation["installed_coordinate"] == _coordinate().model_dump(mode="json")
     assert observation["drift_observations"] is None
 
@@ -293,8 +293,8 @@ def test_materialization_refuses_symlink_escape(tmp_path: Path) -> None:
     outside.mkdir()
     (workspace / ".playbill/floor").symlink_to(outside, target_is_directory=True)
 
-    with pytest.raises(PlaybillWorkspaceError, match="escapes"):
-        materialize_playbill_floor(
+    with pytest.raises(WorkspaceError, match="escapes"):
+        materialize_floor(
             workspace,
             export=_export(),
         )
@@ -337,8 +337,8 @@ def test_materialization_refuses_export_file_escape_forms(
         }
     )
 
-    with pytest.raises(PlaybillWorkspaceError, match="escapes its root"):
-        materialize_playbill_floor(
+    with pytest.raises(WorkspaceError, match="escapes its root"):
+        materialize_floor(
             workspace,
             export=malicious_export,
         )
@@ -348,10 +348,10 @@ def test_activate_reports_accepted_and_refresh_failure(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
 
     class StubClient:
-        def activate_playbill_proposal(
+        def activate_proposal(
             self, instance_id: str, proposal_id: str
-        ) -> contracts.PlaybillActivationReceipt:
-            return contracts.PlaybillActivationReceipt(
+        ) -> contracts.ActivationReceipt:
+            return contracts.ActivationReceipt(
                 proposal_id=proposal_id,
                 activated_by="owner",
                 status="accepted",
@@ -359,14 +359,14 @@ def test_activate_reports_accepted_and_refresh_failure(tmp_path: Path) -> None:
                 workspace_advertisement={"status": "not_attached", "workspace_path": None},
             )
 
-        def playbill_floor_delta(
+        def floor_delta(
             self,
             instance_id: str,
             *,
             at=None,  # type: ignore[no-untyped-def]
             base_generation: int | None = None,
             base_renderer: str | None = None,
-        ) -> PlaybillFloorDelta:
+        ) -> FloorDelta:
             return delta_from_export(
                 floor_v5_export({"cards/fresh.json": b"fresh"}, coordinate=_coordinate()),
                 corrupt="cards/fresh.json",
@@ -392,11 +392,11 @@ def test_accepted_activation_runs_workspace_sync_last(
     events: list[str] = []
 
     class StubClient:
-        def activate_playbill_proposal(
+        def activate_proposal(
             self, instance_id: str, proposal_id: str
-        ) -> contracts.PlaybillActivationReceipt:
+        ) -> contracts.ActivationReceipt:
             events.append("activate")
-            return contracts.PlaybillActivationReceipt(
+            return contracts.ActivationReceipt(
                 proposal_id=proposal_id,
                 activated_by="owner",
                 status="accepted",
@@ -404,20 +404,20 @@ def test_accepted_activation_runs_workspace_sync_last(
                 workspace_advertisement={"status": "not_attached", "workspace_path": None},
             )
 
-        def playbill_floor_delta(
+        def floor_delta(
             self,
             instance_id: str,
             *,
             at=None,  # type: ignore[no-untyped-def]
             base_generation: int | None = None,
             base_renderer: str | None = None,
-        ) -> PlaybillFloorDelta:
+        ) -> FloorDelta:
             events.append("floor")
             return _delta()
 
     def sync(*_args, **_kwargs):  # type: ignore[no-untyped-def]
         events.append("sync")
-        return contracts.PlaybillBlockSyncResult(
+        return contracts.BlockSyncResult(
             items=(), changed_file_count=0, would_change=False, has_refusals=False
         )
 
@@ -443,10 +443,10 @@ def test_accepted_activation_skips_sync_for_an_unattached_workspace(tmp_path: Pa
     workspace.mkdir()
 
     class StubClient:
-        def activate_playbill_proposal(
+        def activate_proposal(
             self, instance_id: str, proposal_id: str
-        ) -> contracts.PlaybillActivationReceipt:
-            return contracts.PlaybillActivationReceipt(
+        ) -> contracts.ActivationReceipt:
+            return contracts.ActivationReceipt(
                 proposal_id=proposal_id,
                 activated_by="owner",
                 status="accepted",
@@ -475,17 +475,17 @@ def test_accepted_activation_skips_sync_for_an_unattached_workspace(tmp_path: Pa
 def test_floor_refresh_reuses_verified_files_and_repairs_local_edits(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
     export = _export()
-    result = materialize_playbill_floor(workspace, export=export)
+    result = materialize_floor(workspace, export=export)
     destination = Path(result.destination)
     card = destination / "cards/fresh.json"
     original = card.stat()
-    materialize_playbill_floor(workspace, export=export)
+    materialize_floor(workspace, export=export)
     assert card.stat().st_ino == original.st_ino
     assert card.stat().st_mtime_ns == original.st_mtime_ns
     card.write_bytes(b"local corruption")
     extra = destination / "extra.json"
     extra.write_bytes(b"extra")
-    materialize_playbill_floor(workspace, export=export)
+    materialize_floor(workspace, export=export)
     assert card.read_bytes() == b'{"fresh":true}\n'
     assert not extra.exists()
     # A symlink with matching bytes must be replaced by a regular owned file.
@@ -493,6 +493,6 @@ def test_floor_refresh_reuses_verified_files_and_repairs_local_edits(tmp_path: P
     external.write_bytes(card.read_bytes())
     card.unlink()
     card.symlink_to(external)
-    materialize_playbill_floor(workspace, export=export)
+    materialize_floor(workspace, export=export)
     assert not card.is_symlink()
     assert external.read_bytes() == card.read_bytes()

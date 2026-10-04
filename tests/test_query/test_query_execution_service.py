@@ -21,7 +21,7 @@ from cruxible_core.exhaust.records import (
 from cruxible_core.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.query.engine import claim_query_result_digest
-from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+from cruxible_core.service.authoring.documents import AcceptedCoordinate
 from cruxible_core.service.discovery.query import (
     DEFAULT_RECEIPT_PARTITION_ID,
     DEFAULT_RECEIPT_STREAM_ID,
@@ -141,7 +141,7 @@ def test_receipt_names_the_exact_definition_coordinate_and_result_digest(
     tmp_path: Path,
 ) -> None:
     instance, _owner = _instance_with_query(tmp_path)
-    accepted = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    accepted = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
 
     run = service_run_playbill_query(instance, name=QUERY_NAME, evaluation_time=READ_TIME)
 

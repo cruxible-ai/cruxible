@@ -16,7 +16,7 @@ from pydantic import (
     model_validator,
 )
 
-from cruxible_client.contracts import PlaybillSemanticFieldDelta
+from cruxible_client.contracts import SemanticFieldDelta
 from cruxible_client.contracts.attestations import ApprovalStatement, approval_digest
 from cruxible_client.contracts.candidates import (
     CandidateMemberEvidence,
@@ -25,9 +25,9 @@ from cruxible_client.contracts.candidates import (
     CandidateRecordV1,
 )
 from cruxible_client.contracts.declared_blocks import (
-    PlaybillPresentationPolicyV1,
-    PlaybillReviewWorkspaceObservation,
-    upgrade_playbill_presentation_policy,
+    PresentationPolicyV1,
+    ReviewWorkspaceObservation,
+    upgrade_presentation_policy,
 )
 from cruxible_client.contracts.documents import parse_document
 from cruxible_client.contracts.errors import ApprovalIntegrityError, ProposalIntegrityError
@@ -65,7 +65,7 @@ class PlaybillReviewedDocument(_StrictReviewModel):
     diff_unavailable_reason: str | None
 
 
-class PlaybillReviewedMember(_StrictReviewModel):
+class ReviewedMember(_StrictReviewModel):
     """One member in the atomic review; generated/invalidated members cannot disappear."""
 
     path: str
@@ -76,14 +76,14 @@ class PlaybillReviewedMember(_StrictReviewModel):
     candidate_artifact_digest: str | None
     base_semantic_artifact: dict[str, object] | None
     candidate_semantic_artifact: dict[str, object] | None
-    semantic_delta: tuple[PlaybillSemanticFieldDelta, ...]
+    semantic_delta: tuple[SemanticFieldDelta, ...]
     law_identifier: str
     law_digest: str
     law_evidence: dict[str, object]
     dependency_proof_refs: tuple[dict[str, object], ...]
 
 
-class PlaybillProjectionAdvisory(_StrictReviewModel):
+class ProjectionAdvisory(_StrictReviewModel):
     tag: Literal["playbill-projection-advisory-v1"] = "playbill-projection-advisory-v1"
     unprojected_count: int = Field(ge=1)
     artifact_identities: tuple[str, ...]
@@ -97,13 +97,13 @@ class PlaybillProjectionAdvisory(_StrictReviewModel):
         return value
 
     @model_validator(mode="after")
-    def _count(self) -> "PlaybillProjectionAdvisory":
+    def _count(self) -> "ProjectionAdvisory":
         if self.unprojected_count != len(self.artifact_identities):
             raise ValueError("projection advisory count must match its identities")
         return self
 
 
-class PlaybillProjectionEvidence(_StrictReviewModel):
+class ProjectionEvidence(_StrictReviewModel):
     """Whether one bounded workspace projection observation informed review."""
 
     tag: Literal["playbill-projection-evidence-v1"] = "playbill-projection-evidence-v1"
@@ -121,7 +121,7 @@ class PlaybillProjectionEvidence(_StrictReviewModel):
     ) = None
 
     @model_validator(mode="after")
-    def _shape(self) -> "PlaybillProjectionEvidence":
+    def _shape(self) -> "ProjectionEvidence":
         if self.status == "used" and (self.coordinate is None or self.reason is not None):
             raise ValueError("used projection evidence requires a coordinate and no reason")
         if self.status == "rejected" and self.reason is None:
@@ -129,7 +129,7 @@ class PlaybillProjectionEvidence(_StrictReviewModel):
         return self
 
 
-class PlaybillProposalReview(_StrictReviewModel):
+class ProposalReview(_StrictReviewModel):
     tag: Literal["playbill-proposal-review-v1"] = "playbill-proposal-review-v1"
     coordinate_kind: Literal["provisional"] = "provisional"
     proposal_id: str
@@ -139,23 +139,23 @@ class PlaybillProposalReview(_StrictReviewModel):
     settlement_base: AcceptedCoordinate
     base_oid: str
     complete_members: tuple[CandidateMemberEvidence | CandidateMemberLawEvidence, ...]
-    members: tuple[PlaybillReviewedMember, ...]
+    members: tuple[ReviewedMember, ...]
     governance: dict[str, object]
     provenance: dict[str, object]
     attestation_coverage: dict[str, object]
     documents: tuple[PlaybillReviewedDocument, ...]
     redactions: tuple[str, ...]
-    projection_advisory: PlaybillProjectionAdvisory | None = None
-    projection_evidence: PlaybillProjectionEvidence | None = None
+    projection_advisory: ProjectionAdvisory | None = None
+    projection_evidence: ProjectionEvidence | None = None
 
 
-class PlaybillApprovalChallenge(_StrictReviewModel):
+class ApprovalChallenge(_StrictReviewModel):
     tag: Literal["playbill-approval-challenge-v1"] = "playbill-approval-challenge-v1"
     proposal_id: str
     signer_principal: PrincipalRecord
     signer_key_history_ref: str
     statement: ApprovalStatement
-    review: PlaybillProposalReview
+    review: ProposalReview
 
 
 def _text_body(media_type: str, body: bytes) -> str | None:
@@ -256,7 +256,7 @@ def _review_members(
     *,
     base_tree: dict[str, bytes],
     candidate_tree: dict[str, bytes],
-) -> tuple[PlaybillReviewedMember, ...]:
+) -> tuple[ReviewedMember, ...]:
     def semantic_artifact(content: bytes | None) -> dict[str, object] | None:
         if content is None:
             return None
@@ -271,17 +271,17 @@ def _review_members(
     def member_delta(
         base: dict[str, object] | None,
         candidate_value: dict[str, object] | None,
-    ) -> tuple[PlaybillSemanticFieldDelta, ...]:
+    ) -> tuple[SemanticFieldDelta, ...]:
         return semantic_field_delta(base or {}, candidate_value or {})
 
     if not isinstance(candidate, CandidateRecordV1):
         evidence_by_path = {item.path: item for item in candidate.law_evidence}
-        reviewed: list[PlaybillReviewedMember] = []
+        reviewed: list[ReviewedMember] = []
         for versioned_member in candidate.members:
             base_artifact = semantic_artifact(base_tree.get(versioned_member.path))
             candidate_artifact = semantic_artifact(candidate_tree.get(versioned_member.path))
             reviewed.append(
-                PlaybillReviewedMember(
+                ReviewedMember(
                     path=versioned_member.path,
                     artifact_kind=versioned_member.artifact_kind,
                     disposition=versioned_member.disposition,
@@ -301,12 +301,12 @@ def _review_members(
                 )
             )
         return tuple(reviewed)
-    legacy_reviewed: list[PlaybillReviewedMember] = []
+    legacy_reviewed: list[ReviewedMember] = []
     for legacy_member in candidate.members:
         base_artifact = semantic_artifact(base_tree.get(legacy_member.path))
         candidate_artifact = semantic_artifact(candidate_tree.get(legacy_member.path))
         legacy_reviewed.append(
-            PlaybillReviewedMember(
+            ReviewedMember(
                 path=legacy_member.path,
                 artifact_kind=legacy_member.artifact_kind,
                 disposition=legacy_member.disposition,
@@ -331,19 +331,17 @@ def _review_members(
 
 def _projection_advisory(
     *,
-    members: tuple[PlaybillReviewedMember, ...],
+    members: tuple[ReviewedMember, ...],
     candidate_tree: dict[str, bytes],
     settlement_base: AcceptedCoordinate,
-    workspace_observation: PlaybillReviewWorkspaceObservation | Mapping[str, object] | None,
+    workspace_observation: ReviewWorkspaceObservation | Mapping[str, object] | None,
     eligible_coordinates: tuple[AcceptedCoordinate, ...] | None = None,
-) -> PlaybillProjectionAdvisory | None:
+) -> ProjectionAdvisory | None:
     if workspace_observation is None:
         return None
-    if not isinstance(workspace_observation, PlaybillReviewWorkspaceObservation):
+    if not isinstance(workspace_observation, ReviewWorkspaceObservation):
         try:
-            workspace_observation = PlaybillReviewWorkspaceObservation.model_validate(
-                workspace_observation
-            )
+            workspace_observation = ReviewWorkspaceObservation.model_validate(workspace_observation)
         except ValidationError:
             return None
     if workspace_observation.presentation_policy_notes:
@@ -352,8 +350,8 @@ def _projection_advisory(
     coordinates = (settlement_base,) if eligible_coordinates is None else eligible_coordinates
     if coverage is None or coverage.coordinate not in coordinates:
         return None
-    policy = upgrade_playbill_presentation_policy(
-        workspace_observation.presentation_policy or PlaybillPresentationPolicyV1()
+    policy = upgrade_presentation_policy(
+        workspace_observation.presentation_policy or PresentationPolicyV1()
     )
     enabled = {
         "Claim": policy.projection_advisories.claim,
@@ -380,7 +378,7 @@ def _projection_advisory(
         return None
     count = len(identities)
     noun = "artifact" if count == 1 else "artifacts"
-    return PlaybillProjectionAdvisory(
+    return ProjectionAdvisory(
         unprojected_count=count,
         artifact_identities=identities,
         message=(
@@ -393,10 +391,10 @@ def _assess_projection_evidence(
     instance: PlaybillInstance,
     *,
     settlement_base: AcceptedCoordinate,
-    workspace_observation: PlaybillReviewWorkspaceObservation | Mapping[str, object] | None,
+    workspace_observation: ReviewWorkspaceObservation | Mapping[str, object] | None,
 ) -> tuple[
-    PlaybillReviewWorkspaceObservation | None,
-    PlaybillProjectionEvidence | None,
+    ReviewWorkspaceObservation | None,
+    ProjectionEvidence | None,
     tuple[AcceptedCoordinate, ...],
 ]:
     history = tuple(
@@ -412,15 +410,13 @@ def _assess_projection_evidence(
     eligible = history[base_index:]
     if workspace_observation is None:
         return None, None, eligible
-    if not isinstance(workspace_observation, PlaybillReviewWorkspaceObservation):
+    if not isinstance(workspace_observation, ReviewWorkspaceObservation):
         try:
-            workspace_observation = PlaybillReviewWorkspaceObservation.model_validate(
-                workspace_observation
-            )
+            workspace_observation = ReviewWorkspaceObservation.model_validate(workspace_observation)
         except ValidationError:
             return (
                 None,
-                PlaybillProjectionEvidence(
+                ProjectionEvidence(
                     status="rejected",
                     reason="observation_invalid",
                 ),
@@ -429,7 +425,7 @@ def _assess_projection_evidence(
     if workspace_observation.presentation_policy_notes:
         return (
             None,
-            PlaybillProjectionEvidence(
+            ProjectionEvidence(
                 status="rejected",
                 reason="presentation_policy_invalid",
             ),
@@ -439,14 +435,14 @@ def _assess_projection_evidence(
     if coverage is None:
         return (
             None,
-            PlaybillProjectionEvidence(status="rejected", reason="coverage_missing"),
+            ProjectionEvidence(status="rejected", reason="coverage_missing"),
             eligible,
         )
     coordinate = coverage.coordinate
     if coordinate not in history:
         return (
             None,
-            PlaybillProjectionEvidence(
+            ProjectionEvidence(
                 status="rejected",
                 coordinate=coordinate,
                 reason="coordinate_not_accepted",
@@ -456,7 +452,7 @@ def _assess_projection_evidence(
     if coordinate not in eligible:
         return (
             None,
-            PlaybillProjectionEvidence(
+            ProjectionEvidence(
                 status="rejected",
                 coordinate=coordinate,
                 reason="coordinate_before_settlement_base",
@@ -465,7 +461,7 @@ def _assess_projection_evidence(
         )
     return (
         workspace_observation,
-        PlaybillProjectionEvidence(status="used", coordinate=coordinate),
+        ProjectionEvidence(status="used", coordinate=coordinate),
         eligible,
     )
 
@@ -475,8 +471,8 @@ def service_review_playbill_proposal(
     *,
     proposal_id: str,
     access: BodyAccessContext,
-    workspace_observation: PlaybillReviewWorkspaceObservation | Mapping[str, object] | None = None,
-) -> PlaybillProposalReview:
+    workspace_observation: ReviewWorkspaceObservation | Mapping[str, object] | None = None,
+) -> ProposalReview:
     """Render one immutable candidate from its recorded base and proposal tree."""
 
     inspection = service_inspect_playbill_proposal(instance, proposal_id=proposal_id)
@@ -529,7 +525,7 @@ def service_review_playbill_proposal(
             workspace_observation=workspace_observation,
         )
     )
-    return PlaybillProposalReview(
+    return ProposalReview(
         proposal_id=proposal_id,
         candidate=candidate,
         candidate_digest=candidate.candidate_digest,
@@ -577,7 +573,7 @@ def service_prepare_playbill_approval(
     proposal_id: str,
     signer_id: str,
     access: BodyAccessContext,
-) -> PlaybillApprovalChallenge:
+) -> ApprovalChallenge:
     """Return the exact public statement a client signer may choose to approve."""
 
     review = service_review_playbill_proposal(instance, proposal_id=proposal_id, access=access)
@@ -601,7 +597,7 @@ def service_prepare_playbill_approval(
         )
     if not principal_lifecycle and principal.kind == "recovery":
         raise ApprovalIntegrityError("recovery principal cannot approve ordinary Documents")
-    return PlaybillApprovalChallenge(
+    return ApprovalChallenge(
         proposal_id=proposal_id,
         signer_principal=principal,
         signer_key_history_ref=generation.principals.key_history_reference(signer_id),
@@ -614,7 +610,7 @@ def service_prepare_playbill_approval(
     )
 
 
-def render_playbill_proposal_review_pointer(review: PlaybillProposalReview) -> str:
+def render_playbill_proposal_review_pointer(review: ProposalReview) -> str:
     """Point a reviewer at the ledger instead of re-rendering the ledger.
 
     The ledger is Git, so review is Git. A second rendering of a change set --
@@ -655,7 +651,7 @@ def render_playbill_proposal_review_pointer(review: PlaybillProposalReview) -> s
     )
 
 
-def render_playbill_proposal_review(review: PlaybillProposalReview) -> str:
+def render_playbill_proposal_review(review: ProposalReview) -> str:
     """Render the exact candidate a signer is about to attest to.
 
     This is the approval confirmation, not the review surface: `proposal
@@ -747,11 +743,11 @@ def render_playbill_proposal_review(review: PlaybillProposalReview) -> str:
 
 
 __all__ = [
-    "PlaybillApprovalChallenge",
-    "PlaybillProposalReview",
-    "PlaybillProjectionAdvisory",
+    "ApprovalChallenge",
+    "ProposalReview",
+    "ProjectionAdvisory",
     "PlaybillReviewedDocument",
-    "PlaybillReviewedMember",
+    "ReviewedMember",
     "render_playbill_proposal_review",
     "render_playbill_proposal_review_pointer",
     "service_prepare_playbill_approval",

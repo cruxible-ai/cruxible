@@ -1,4 +1,4 @@
-# Playbill migration oracles
+# Cruxible migration oracles
 
 DP-0 is destructive only at the served architecture boundary. These commits
 remain the immutable behavioral references while the legacy runtime is removed:

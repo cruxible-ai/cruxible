@@ -10,7 +10,7 @@ from cruxible_client.contracts.claim_type_structure import (
     ClaimTypeStructure,
     check_claim_type_structure,
 )
-from cruxible_client.contracts.laws import PLAYBILL_ACCEPTANCE_LAWS
+from cruxible_client.contracts.laws import ACCEPTANCE_LAWS
 
 
 def _literal() -> dict[str, object]:
@@ -80,6 +80,6 @@ def test_claim_type_structural_diagnostics_are_explicitly_local_only() -> None:
 
 
 def test_claim_type_artifact_format_activates_only_with_pc_a2_policy_wire() -> None:
-    law = PLAYBILL_ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-claim-type-v1")
+    law = ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-claim-type-v1")
     assert law.artifact_kind == "claim-type"
     assert law.coordinate.identifier == "playbill.claim-type.v1"

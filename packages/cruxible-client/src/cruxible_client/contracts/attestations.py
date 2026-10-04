@@ -1,4 +1,4 @@
-"""Externally produced Playbill approval attestations and quorum verification."""
+"""Externally produced Cruxible approval attestations and quorum verification."""
 
 from __future__ import annotations
 

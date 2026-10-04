@@ -288,10 +288,10 @@ def _propose(instance, name: str):  # type: ignore[no-untyped-def]
 
 
 def _stale_ids(instance, *, actor_id: str | None = "owner") -> list[str]:  # type: ignore[no-untyped-def]
-    from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+    from cruxible_core.service.authoring.documents import AcceptedCoordinate
     from cruxible_core.service.proposals.proposals import stale_unreadmitted_proposals
 
-    head = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    head = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     return [
         item.proposal_id for item in stale_unreadmitted_proposals(instance, head, actor_id=actor_id)
     ]
@@ -326,8 +326,8 @@ def test_an_accepted_readmission_supersedes_its_source(tmp_path: Path) -> None:
     """
 
     from cruxible_core.coverage.contracts import CoverageAccessProfile
-    from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
-    from cruxible_core.service.discovery.next import PlaybillNextRequestV1, service_playbill_next
+    from cruxible_core.service.authoring.documents import AcceptedCoordinate
+    from cruxible_core.service.discovery.next import NextRequestV1, service_playbill_next
     from cruxible_core.service.proposals.proposals import (
         proposal_readmission,
         service_withdraw_playbill_proposal,
@@ -336,7 +336,7 @@ def test_an_accepted_readmission_supersedes_its_source(tmp_path: Path) -> None:
     def stale_rows() -> list[str]:
         queue = service_playbill_next(
             instance,
-            request=PlaybillNextRequestV1(
+            request=NextRequestV1(
                 evaluation_time=datetime(2026, 8, 22, 12, tzinfo=UTC),
                 access_profile=CoverageAccessProfile(
                     profile_id="readmit", permitted_access_classes=("instance",)
@@ -346,8 +346,8 @@ def test_an_accepted_readmission_supersedes_its_source(tmp_path: Path) -> None:
         )
         return [item.subject_identity for item in queue.items if item.reason == "proposal_stale"]
 
-    def head() -> PlaybillAcceptedCoordinate:
-        return PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    def head() -> AcceptedCoordinate:
+        return AcceptedCoordinate.from_internal(instance.accepted_coordinate())
 
     instance, owner = initialize_local(tmp_path)
     first, source = _propose(instance, "first"), _propose(instance, "source")
@@ -398,7 +398,7 @@ def test_a_proposal_that_only_spells_a_readmission_ref_links_nothing(tmp_path: P
     accepted. It carries no ``readmits`` record, so it links nothing.
     """
 
-    from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+    from cruxible_core.service.authoring.documents import AcceptedCoordinate
     from cruxible_core.service.proposals.proposals import (
         proposal_readmission,
         readmission_operation_digest,
@@ -408,7 +408,7 @@ def test_a_proposal_that_only_spells_a_readmission_ref_links_nothing(tmp_path: P
     first, source = _propose(instance, "first"), _propose(instance, "source")
     source_id = source.proposal.admission.proposal_id
     _accept(instance, owner, first)
-    head = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    head = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     digest = readmission_operation_digest(source_id, head)
     body = service_store_playbill_body(instance, content=b"unrelated").digest
     impostor = service_propose_playbill_document(
@@ -423,7 +423,7 @@ def test_a_proposal_that_only_spells_a_readmission_ref_links_nothing(tmp_path: P
 
     _accept(instance, owner, impostor)
 
-    head = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    head = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     assert proposal_readmission(instance, head, source_id) is None
     assert _stale_ids(instance) == [source_id]
     readmitted = service_readmit_playbill_proposal(
@@ -446,7 +446,7 @@ def test_a_readmission_keeps_its_link_when_head_moves_before_evaluation(
     lost it, so the accepted readmission's source stayed stale work.
     """
 
-    from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+    from cruxible_core.service.authoring.documents import AcceptedCoordinate
     from cruxible_core.service.proposals.proposals import proposal_readmission
 
     instance, owner = initialize_local(tmp_path)
@@ -454,7 +454,7 @@ def test_a_readmission_keeps_its_link_when_head_moves_before_evaluation(
     source_id = source.proposal.admission.proposal_id
     _accept(instance, owner, first)
     interloper = _propose(instance, "interloper")
-    read_at = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    read_at = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
 
     real = type(instance).proposal_service
     moved: list[bool] = []
@@ -485,7 +485,7 @@ def test_a_readmission_keeps_its_link_when_head_moves_before_evaluation(
     assert link is not None and link.coordinate == read_at
     _accept(instance, owner, readmitted.proposal)
 
-    head = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    head = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     carried = proposal_readmission(instance, head, source_id)
     landed = readmitted.proposal.proposal.admission.proposal_id
     assert carried is not None and (carried.proposal_id, carried.accepted) == (landed, True)

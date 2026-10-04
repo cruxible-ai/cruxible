@@ -1,4 +1,4 @@
-"""The checked-in Playbill wire updater must execute and be byte-idempotent."""
+"""The checked-in Cruxible wire updater must execute and be byte-idempotent."""
 
 from __future__ import annotations
 

@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from cruxible_client import Playbill
+from cruxible_client import Cruxible
 from cruxible_client.contracts.acquisition_policies import (
     acquisition_policy_path,
     render_acquisition_policy,
@@ -268,16 +268,16 @@ def test_sdk_source_retains_and_reads_acquisition(playbill_http, tmp_path, monke
 
     transport = CruxibleClient(base_url="http://cruxible")
     transport._client = http
-    pb = Playbill._from_client(transport, instance_id=instance_id, workspace=tmp_path)
+    pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=tmp_path)
     intent = pb.procedure(definition=source._sdk_procedure_input(procedure)).prepare()
     assert not intent.refused, intent.diagnostics
     intent.submit()
     _approve_and_activate(http, instance_id, reviewer, intent.proposal.proposal_id)
     run = pb.accepted_procedure(procedure.identity.name).run()
-    assert run.status == "succeeded", transport.get_playbill_procedure_run(instance_id, run.run_id)
+    assert run.status == "succeeded", transport.get_procedure_run(instance_id, run.run_id)
     assert run.result["severity"]
     assert invoker.spawn_calls == 1
-    state = transport.get_playbill_procedure_run(instance_id, run.run_id)
+    state = transport.get_procedure_run(instance_id, run.run_id)
     assert state.receipt_digest is not None
     assert state.source_observations[0].capture_digest
     # The source result, its evidence identity and receipt survive public readback.
@@ -354,7 +354,7 @@ def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
     monkeypatch.setattr(manager, "provider_runtime_operator", lambda: Lane())
     transport = CruxibleClient(base_url="http://cruxible")
     transport._client = http
-    pb = Playbill._from_client(transport, instance_id=instance_id, workspace=tmp_path)
+    pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=tmp_path)
     example = procedure_example()
 
     def carried(role):
@@ -409,7 +409,7 @@ def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
     intent.submit()
     _approve_and_activate(http, instance_id, reviewer, intent.proposal.proposal_id)
     run = pb.accepted_procedure("replace-me").run()
-    state = transport.get_playbill_procedure_run(instance_id, run.run_id)
+    state = transport.get_procedure_run(instance_id, run.run_id)
     assert run.status == "succeeded", str(state.terminal)
     assert run.result.size == 1
     assert state.source_observations == []

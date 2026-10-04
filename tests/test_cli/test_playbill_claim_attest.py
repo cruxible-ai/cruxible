@@ -79,7 +79,7 @@ def test_cli_claim_attestation_recover_calls_admin_surface(
     calls: list[str] = []
 
     class Client:
-        def recover_playbill_claim_attestations(self, instance_id: str) -> None:
+        def recover_claim_attestations(self, instance_id: str) -> None:
             calls.append(instance_id)
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", Client)

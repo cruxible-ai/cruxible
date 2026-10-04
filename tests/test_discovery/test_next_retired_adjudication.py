@@ -103,9 +103,7 @@ def test_short_circuit_refuses_where_the_retired_build_refuses(
             claims=claims,
         )
     # Full next and orient's bounded summary share the fold, so both refuse.
-    request = playbill_next.PlaybillNextRequest(
-        evaluation_time=EVALUATION_TIME, access_profile=PROFILE
-    )
+    request = playbill_next.NextRequest(evaluation_time=EVALUATION_TIME, access_profile=PROFILE)
     with pytest.raises(ProposalIntegrityError, match=NOT_REPRODUCED):
         playbill_next.service_playbill_next(instance, request=request)
     with pytest.raises(ProposalIntegrityError, match=NOT_REPRODUCED):

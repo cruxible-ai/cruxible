@@ -1,4 +1,4 @@
-"""Shared CLI/MCP adapter for deterministic local Playbill source compilation."""
+"""Shared CLI/MCP adapter for deterministic local Cruxible source compilation."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ class WorkspaceSourceError(DataValidationError):
 
 
 class SourceContextClient(Protocol):
-    def playbill_source_context(self, instance_id: str) -> contracts.PlaybillSourceContext: ...
+    def source_context(self, instance_id: str) -> contracts.SourceContext: ...
 
 
 def root_aliases(values: Iterable[str]) -> dict[str, Path]:
@@ -70,7 +70,7 @@ def compile_client_source_context(
 ) -> SourceCompilationBundle:
     """Read local bytes against path-free accepted context from the daemon."""
 
-    context = client.playbill_source_context(instance_id)
+    context = client.source_context(instance_id)
     accepted = {
         shell.document_id: shell
         for value in context.documents

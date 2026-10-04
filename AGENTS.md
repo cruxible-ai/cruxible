@@ -155,7 +155,7 @@ HTTP (server/)                  ─┘
 
 - **SDK** (`packages/cruxible-client/`) — typed contracts, HTTP transport, and agent-oriented authoring/reading adapters.
 - **MCP** (`mcp/`) — FastMCP tools delegating through the same runtime/client surfaces.
-- **CLI** (`cli/`) — Click commands; Playbill commands live in `cli/commands/playbill.py`.
+- **CLI** (`cli/`) — Click commands; Cruxible commands live in `cli/commands/playbill.py`.
 - **HTTP** (`server/`) — FastAPI routes with bearer-token authentication.
 
 ### Service layer (`service/<domain>/`)
@@ -169,7 +169,7 @@ The source of truth for served orchestration. It is organized by concern:
 
 Service functions accept a `PlaybillInstance` and return typed Pydantic results.
 
-### Playbill instance and accepted state
+### Cruxible instance and accepted state
 
 `PlaybillInstance` in `runtime/instance.py` manages the daemon-owned repository and stores:
 
@@ -211,7 +211,7 @@ MCP tools are gated by `CRUXIBLE_MODE` env var. Four cumulative tiers
 
 | Mode | Env value | Tools |
 |------|-----------|-------|
-| `READ_ONLY` | `read_only` | Playbill reads, receipted query runs, coverage, curation/audit reads |
+| `READ_ONLY` | `read_only` | Cruxible reads, receipted query runs, coverage, curation/audit reads |
 | `GOVERNED_WRITE` | `governed_write` | READ_ONLY + authoring/proposal and attributed operational actions |
 | `GRAPH_WRITE` | `graph_write` | Retained tier boundary; no legacy graph-write product surface |
 | `ADMIN` | `admin` (default) | Instance/principal lifecycle and published-state trust boundaries |
@@ -220,7 +220,7 @@ MCP tools are gated by `CRUXIBLE_MODE` env var. Four cumulative tiers
 
 ### Error Handling
 
-All errors inherit from `CoreError` in `errors.py`. Playbill wire and execution
+All errors inherit from `CoreError` in `errors.py`. Cruxible wire and execution
 refusals are typed in `cruxible_client.contracts.errors`.
 
 ### Test Organization

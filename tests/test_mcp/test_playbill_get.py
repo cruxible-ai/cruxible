@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from cruxible_client.contracts.get_reads import PlaybillByteRange, PlaybillGetRequest
+from cruxible_client.contracts.get_reads import ByteRange, GetRequest
 from cruxible_core.errors import DataValidationError
 from cruxible_core.mcp import handlers
 from cruxible_core.mcp.server import create_server
@@ -65,9 +65,9 @@ def test_get_is_a_read_only_default_tool_with_only_declared_parameters(
 def test_get_handler_builds_the_request_for_the_mcp_surface(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    captured: list[PlaybillGetRequest] = []
+    captured: list[GetRequest] = []
 
-    def local(instance_id: str, *, request: PlaybillGetRequest) -> Any:
+    def local(instance_id: str, *, request: GetRequest) -> Any:
         assert instance_id == "inst_get"
         captured.append(request)
         return "result"
@@ -82,13 +82,13 @@ def test_get_handler_builds_the_request_for_the_mcp_surface(
         "inst_get",
         ref="Document:design",
         detail="body",
-        range=PlaybillByteRange(start=0, end=16),
+        range=ByteRange(start=0, end=16),
         at="a" * 40,
         evaluation_time="2026-09-01T00:00:00Z",
     )
 
     assert captured[0].detail == "summary" and captured[0].surface == "mcp"
-    assert captured[1].range == PlaybillByteRange(start=0, end=16)
+    assert captured[1].range == ByteRange(start=0, end=16)
     assert captured[1].at == "a" * 40
     assert captured[1].evaluation_time is not None
 
@@ -96,7 +96,7 @@ def test_get_handler_builds_the_request_for_the_mcp_surface(
 def test_a_malformed_get_names_the_json_path_and_an_example() -> None:
     with pytest.raises(DataValidationError) as caught:
         handlers.handle_playbill_get(
-            "inst_get", ref="Document:design", range=PlaybillByteRange(start=0, end=4)
+            "inst_get", ref="Document:design", range=ByteRange(start=0, end=4)
         )
 
     assert "example" in str(caught.value)

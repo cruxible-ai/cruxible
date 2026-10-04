@@ -41,7 +41,7 @@ from cruxible_client.contracts.claim_attestations import (
     claim_attestation_v2_statement_digest,
     claim_attestation_verification_account_digest,
 )
-from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 
 STORE_DIRECTORY = "claim-attestations-v1"
@@ -49,7 +49,7 @@ LOCK_FILE = ".claim-attestations-v1.lock"
 NULL_DIGEST = "sha256:" + "0" * 64
 
 
-class ClaimAttestationStoreError(PlaybillError):
+class ClaimAttestationStoreError(CruxibleError):
     """Persisted evidence is corrupt, ambiguous, or temporarily poisoned."""
 
     def __init__(self, code: str, message: str) -> None:

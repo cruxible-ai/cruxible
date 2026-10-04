@@ -30,7 +30,7 @@ from cruxible_client.contracts.claim_attestations import (
     VerifiedClaimAttestationV1,
     claim_attestation_v2_envelope_digest,
 )
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 
 ATTESTATION_ARTIFACT_DOMAIN = "cruxible-accepted-claim-attestation-artifact-v1"
 
@@ -63,15 +63,15 @@ def parse_accepted_attestation(
     content: bytes, *, path: str, codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC
 ) -> ClaimAttestation:
     if codec != ArtifactCodec.CURRENT_PRETTY_JSON:
-        raise PlaybillFormatError("accepted attestations require the JSON artifact codec")
+        raise FormatError("accepted attestations require the JSON artifact codec")
     try:
         value = ClaimAttestation.model_validate_json(content)
     except ValueError as exc:
-        raise PlaybillFormatError("accepted attestation envelope is malformed") from exc
+        raise FormatError("accepted attestation envelope is malformed") from exc
     if path != attestation_path(claim_attestation_v2_envelope_digest(value)):
-        raise PlaybillFormatError("accepted attestation path does not match its signed envelope")
+        raise FormatError("accepted attestation path does not match its signed envelope")
     if content != render_accepted_attestation(value):
-        raise PlaybillFormatError("accepted attestation bytes are not canonical")
+        raise FormatError("accepted attestation bytes are not canonical")
     return value
 
 

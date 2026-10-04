@@ -33,19 +33,19 @@ from cruxible_client.contracts.kits import (
     KIT_ARTIFACT_PREFIXES,
     KIT_RECEIPT_DOCUMENT_KIND,
     InstalledKit,
+    KitAddRequest,
     KitArtifact,
     KitArtifactBytes,
+    KitBuildRequest,
+    KitBuildResult,
     KitBundle,
+    KitChangeResult,
     KitInstalledArtifact,
     KitManifest,
     KitPathPlan,
     KitReceipt,
-    PlaybillKitAddRequest,
-    PlaybillKitBuildRequest,
-    PlaybillKitBuildResult,
-    PlaybillKitChangeResult,
-    PlaybillKitRemoveRequest,
-    PlaybillKitStatus,
+    KitRemoveRequest,
+    KitStatus,
     kit_artifact_path_allowed,
     kit_receipt_document_id,
 )
@@ -181,16 +181,14 @@ def _dependency_order(
         yield from visit(path)
 
 
-def service_build_kit(
-    instance: PlaybillInstance, request: PlaybillKitBuildRequest
-) -> PlaybillKitBuildResult:
+def service_build_kit(instance: PlaybillInstance, request: KitBuildRequest) -> KitBuildResult:
     """Export owned definitions at the accepted head as one release of ``kit_id``."""
 
     tree = instance.immutable_tree_at(instance.accepted_coordinate().git_oid)
-    return PlaybillKitBuildResult(bundle=build_kit(tree, request))
+    return KitBuildResult(bundle=build_kit(tree, request))
 
 
-def build_kit(tree: Mapping[str, bytes], request: PlaybillKitBuildRequest) -> KitBundle:
+def build_kit(tree: Mapping[str, bytes], request: KitBuildRequest) -> KitBundle:
     """Export the owned definitions of one accepted tree as a self-contained release.
 
     Owned live definitions and everything they pin become lineage-free
@@ -496,7 +494,7 @@ def _submit(
     plan: tuple[KitPathPlan, ...],
     actor_id: str,
     timestamp: str,
-) -> PlaybillKitChangeResult:
+) -> KitChangeResult:
     assert mode.head is not None
     base = mode.head
     body = instance.store_document_body(pretty_canonical_bytes(receipt.model_dump(mode="json")))
@@ -541,7 +539,7 @@ def _submit(
         # preview says the commit would.
         assert pending.candidate_digest is not None
         evidence = instance.proposal_evidence().read_candidate(pending.candidate_digest)
-        return PlaybillKitChangeResult(
+        return KitChangeResult(
             kit_id=kit_id,
             version=version,
             status="would_propose" if mode.previewing else "proposed",
@@ -558,7 +556,7 @@ def _submit(
         candidate_tree=candidate,
         timestamp=timestamp,
     )
-    return PlaybillKitChangeResult(
+    return KitChangeResult(
         kit_id=kit_id,
         version=version,
         status=admitted.status,
@@ -570,7 +568,7 @@ def _submit(
     )
 
 
-def _overrides(request: PlaybillKitAddRequest) -> dict[str, ClaimTypeDependentDisposition]:
+def _overrides(request: KitAddRequest) -> dict[str, ClaimTypeDependentDisposition]:
     chosen = {}
     for item in request.dependents:
         disposition = item.disposition
@@ -590,11 +588,11 @@ def _overrides(request: PlaybillKitAddRequest) -> dict[str, ClaimTypeDependentDi
 
 def service_add_kit(
     instance: PlaybillInstance,
-    request: PlaybillKitAddRequest,
+    request: KitAddRequest,
     *,
     actor_id: str,
     timestamp: str,
-) -> PlaybillKitChangeResult:
+) -> KitChangeResult:
     """Propose the diff that brings this instance to one kit release.
 
     Derived across many artifacts, so it previews unless ``dry_run`` is false.
@@ -614,11 +612,11 @@ def service_add_kit(
 def _add_kit(
     instance: PlaybillInstance,
     mode: ChangeMode,
-    request: PlaybillKitAddRequest,
+    request: KitAddRequest,
     *,
     actor_id: str,
     timestamp: str,
-) -> PlaybillKitChangeResult:
+) -> KitChangeResult:
     assert mode.head is not None
     bundle = request.bundle
     manifest = bundle.manifest
@@ -638,7 +636,7 @@ def _add_kit(
         blocked.append(f"{len(conflicts)} path(s) conflict")
     plan = tuple(sorted(diff.plan, key=lambda item: item.path))
     if blocked:
-        return PlaybillKitChangeResult(
+        return KitChangeResult(
             kit_id=manifest.kit_id,
             version=manifest.version,
             status="would_block" if mode.previewing else "blocked",
@@ -647,7 +645,7 @@ def _add_kit(
             coordinate=mode.coordinate,
         )
     if not writes and receipt is not None and receipt.content_digest == manifest.content_digest:
-        return PlaybillKitChangeResult(
+        return KitChangeResult(
             kit_id=manifest.kit_id,
             version=manifest.version,
             status="unchanged",
@@ -691,11 +689,11 @@ def _add_kit(
 
 def service_remove_kit(
     instance: PlaybillInstance,
-    request: PlaybillKitRemoveRequest,
+    request: KitRemoveRequest,
     *,
     actor_id: str,
     timestamp: str,
-) -> PlaybillKitChangeResult:
+) -> KitChangeResult:
     """Propose retiring every definition a kit owns; carried ones stay.
 
     Derived across many artifacts, so it previews unless ``dry_run`` is false.
@@ -715,11 +713,11 @@ def service_remove_kit(
 def _remove_kit(
     instance: PlaybillInstance,
     mode: ChangeMode,
-    request: PlaybillKitRemoveRequest,
+    request: KitRemoveRequest,
     *,
     actor_id: str,
     timestamp: str,
-) -> PlaybillKitChangeResult:
+) -> KitChangeResult:
     assert mode.head is not None
     tree = instance.immutable_tree_at(mode.head.git_oid)
     found = _read_receipt(instance, tree, request.kit_id)
@@ -738,7 +736,7 @@ def _remove_kit(
     _retire_dropped(tree, receipt.digests(), set(), diff)
     plan = tuple(diff.plan)
     if any(item.action == "conflict" for item in plan):
-        return PlaybillKitChangeResult(
+        return KitChangeResult(
             kit_id=request.kit_id,
             version=receipt.version,
             status="would_block" if mode.previewing else "blocked",
@@ -760,7 +758,7 @@ def _remove_kit(
     )
 
 
-def service_kit_status(instance: PlaybillInstance) -> PlaybillKitStatus:
+def service_kit_status(instance: PlaybillInstance) -> KitStatus:
     tree = instance.immutable_tree_at(instance.accepted_coordinate().git_oid)
     kits = []
     for receipt in _receipts(instance, tree):
@@ -780,4 +778,4 @@ def service_kit_status(instance: PlaybillInstance) -> PlaybillKitStatus:
                 drifted=drifted,
             )
         )
-    return PlaybillKitStatus(kits=tuple(kits))
+    return KitStatus(kits=tuple(kits))

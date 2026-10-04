@@ -17,7 +17,7 @@ from cruxible_client.contracts.acquisition_policies import (
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import CanonicalDuration
-from cruxible_client.contracts.errors import PlaybillExecutionError
+from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandateV1,
     procedure_mandate_digest,
@@ -504,7 +504,7 @@ def test_daemon_derives_manual_and_capture_occurrences() -> None:
         != first[0]
     )
     # A binding names the Trigger it came from; another Trigger's binding refuses.
-    with pytest.raises(PlaybillExecutionError, match="exact tick"):
+    with pytest.raises(ExecutionError, match="exact tick"):
         procedure_run_service._line_occurrence(
             manual_line, evaluation_time=READ_TIME, prior=(), trigger=trigger, binding=twin_binding
         )

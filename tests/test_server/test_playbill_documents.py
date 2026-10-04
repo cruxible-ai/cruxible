@@ -33,7 +33,7 @@ def test_http_document_lifecycle_and_explanation(
     # Simulate a daemon-process reopen: no test-only in-memory registration may
     # be required to find or verify the pinned out-of-band trust root.
     get_playbill_manager().clear()
-    body_bytes = b"# Public Playbill\n\nGoverned through HTTP.\n"
+    body_bytes = b"# Public Cruxible\n\nGoverned through HTTP.\n"
     stored = client.post(
         f"/api/v1/{instance_id}/playbill/bodies",
         json={"content_base64": base64.b64encode(body_bytes).decode("ascii")},
@@ -43,7 +43,7 @@ def test_http_document_lifecycle_and_explanation(
     shell = DocumentShell(
         identity="document:design",
         document_kind="design",
-        title="Playbill design",
+        title="Cruxible design",
         media_type="text/markdown",
         body_digest=body_digest,
         authority=DocumentAuthority(required_tier="graph_write"),
@@ -377,7 +377,7 @@ def test_sdk_proposal_status_reads_one_proposal_by_id_without_paging_the_list(
     playbill_http: tuple[TestClient, str, Path],
     tmp_path: Path,
 ) -> None:
-    from cruxible_client import CruxibleClient, Playbill
+    from cruxible_client import Cruxible, CruxibleClient
     from cruxible_client.authoring.sdk import Proposal
 
     client, instance_id, _ = playbill_http
@@ -408,8 +408,8 @@ def test_sdk_proposal_status_reads_one_proposal_by_id_without_paging_the_list(
     def no_listing(*_args: object, **_kwargs: object) -> object:
         raise AssertionError("Proposal.status paged the proposal list")
 
-    transport.list_playbill_proposals = no_listing  # type: ignore[method-assign]
-    pb = Playbill._from_client(transport, instance_id=instance_id, workspace=tmp_path)
+    transport.list_proposals = no_listing  # type: ignore[method-assign]
+    pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=tmp_path)
 
     status = Proposal(pb, proposal_id).status()
 

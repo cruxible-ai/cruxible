@@ -41,7 +41,7 @@ from cruxible_client.contracts.claims import (
     claim_statement_digest,
     parse_claim,
 )
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.subjects import parse_subject, subject_digest
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.store import AuthoringIntentStore
@@ -50,8 +50,8 @@ from cruxible_core.evidence.attestation_verification import _examined_capture_se
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.service.discovery.next import (
-    PlaybillNextRequest,
-    PlaybillNextRequestV1,
+    NextRequest,
+    NextRequestV1,
     service_playbill_next,
 )
 from cruxible_core.service.evidence.claim_attestations import (
@@ -366,7 +366,7 @@ def test_principal_inactive_codes_are_distinct_by_coordinate(
 
     class InactiveRegistry:
         def require_active(self, _principal_id: str):  # type: ignore[no-untyped-def]
-            raise PlaybillFormatError("inactive")
+            raise FormatError("inactive")
 
     monkeypatch.setattr(
         instance,
@@ -671,14 +671,14 @@ def test_next_v2_reads_one_exact_evidence_head_while_v1_stays_legacy(
 
     legacy = unfolded_next(
         instance,
-        request=PlaybillNextRequestV1(
+        request=NextRequestV1(
             evaluation_time=RECORDED_AT,
             access_profile=access,
         ),
     )
     result = unfolded_next(
         instance,
-        request=PlaybillNextRequest(
+        request=NextRequest(
             evaluation_time=RECORDED_AT,
             access_profile=access,
             at_attestation_head_digest=appended.current_head,
@@ -689,7 +689,7 @@ def test_next_v2_reads_one_exact_evidence_head_while_v1_stays_legacy(
     assert result.attestation_head_digest == appended.current_head
     assert result == unfolded_next(
         instance,
-        request=PlaybillNextRequest(
+        request=NextRequest(
             evaluation_time=RECORDED_AT,
             access_profile=access,
             at_attestation_head_digest=appended.current_head,
@@ -777,7 +777,7 @@ def _assert_successor_resolves_attestation_membership(
             item
             for item in unfolded_next(
                 instance,
-                request=PlaybillNextRequest(
+                request=NextRequest(
                     evaluation_time=RECORDED_AT,
                     access_profile=access,
                 ),
@@ -868,7 +868,7 @@ def test_new_evidence_rows_count_only_attestations_current_at_the_evaluation_tim
     def rows(at: datetime) -> tuple:  # type: ignore[type-arg]
         result = service_playbill_next(
             instance,
-            request=PlaybillNextRequest(
+            request=NextRequest(
                 evaluation_time=at,
                 access_profile=access,
                 at_attestation_head_digest=appended.current_head,

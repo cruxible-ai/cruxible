@@ -45,14 +45,14 @@ from pathlib import Path
 from typing import Literal
 
 from cruxible_client._safe_files import SafeFileReadError, read_regular_file
-from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.floor import (
+    FLOOR_LOCAL_PATHS,
+    FLOOR_MANIFEST_PATH,
     FLOOR_STAGING_NAME,
-    PLAYBILL_FLOOR_LOCAL_PATHS,
-    PLAYBILL_FLOOR_MANIFEST_PATH,
-    PlaybillFloorApplyResult,
-    PlaybillFloorDelta,
-    PlaybillFloorManifest,
+    FloorApplyResult,
+    FloorDelta,
+    FloorManifest,
     build_floor_manifest,
     floor_manifest_digest,
     floor_path_key,
@@ -62,11 +62,11 @@ from cruxible_client.contracts.floor import (
 _CLOEXEC = getattr(os, "O_CLOEXEC", 0)
 _DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | _CLOEXEC
 _CREATE = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | _CLOEXEC
-_LOCAL_KEYS = frozenset(floor_path_key(path) for path in PLAYBILL_FLOOR_LOCAL_PATHS)
-_MANIFEST_KEY = floor_path_key(PLAYBILL_FLOOR_MANIFEST_PATH)
+_LOCAL_KEYS = frozenset(floor_path_key(path) for path in FLOOR_LOCAL_PATHS)
+_MANIFEST_KEY = floor_path_key(FLOOR_MANIFEST_PATH)
 
 
-class PlaybillFloorApplyError(PlaybillError, ValueError):
+class FloorApplyError(CruxibleError, ValueError):
     """A floor delta failed verification, or the floor changed under it."""
 
     error_code = "playbill.floor.apply_refused"
@@ -80,13 +80,13 @@ def _split(path: str) -> tuple[tuple[str, ...], str]:
     return tuple(parts[:-1]), parts[-1]
 
 
-def _escape(parts: tuple[str, ...], exc: OSError) -> PlaybillFloorApplyError:
+def _escape(parts: tuple[str, ...], exc: OSError) -> FloorApplyError:
     where = "/".join(parts) or "."
     if exc.errno in {errno.ELOOP, errno.ENOTDIR, errno.EMLINK}:
-        return PlaybillFloorApplyError(
+        return FloorApplyError(
             f"floor path escapes the floor directory through a link or a file: {where}"
         )
-    return PlaybillFloorApplyError(f"floor directory {where} is unusable: {exc}")
+    return FloorApplyError(f"floor directory {where} is unusable: {exc}")
 
 
 @contextmanager
@@ -130,7 +130,7 @@ def _read_at(directory: int, name: str, *, max_bytes: int | None = None) -> byte
     try:
         return read_regular_file(name, dir_fd=directory, max_bytes=max_bytes)
     except SafeFileReadError as exc:
-        raise PlaybillFloorApplyError(str(exc)) from exc
+        raise FloorApplyError(str(exc)) from exc
 
 
 def _write_file(
@@ -259,7 +259,7 @@ def _walk(root: int) -> _Installed:
                 installed.local.add(path)
             elif not stat.S_ISREG(mode):
                 installed.others.add(path)
-            elif path == PLAYBILL_FLOOR_MANIFEST_PATH:
+            elif path == FLOOR_MANIFEST_PATH:
                 installed.manifest = _read_at(directory, name)
             elif floor_path_key(path) == _MANIFEST_KEY:
                 # The manifest under another spelling is not the manifest.
@@ -272,16 +272,16 @@ def _walk(root: int) -> _Installed:
     return installed
 
 
-def _manifest(content: bytes | None) -> PlaybillFloorManifest | None:
+def _manifest(content: bytes | None) -> FloorManifest | None:
     if content is None:
         return None
     try:
-        return PlaybillFloorManifest.model_validate(json.loads(content))
+        return FloorManifest.model_validate(json.loads(content))
     except ValueError:
         return None
 
 
-def read_floor_manifest(floor_dir: Path) -> PlaybillFloorManifest | None:
+def read_floor_manifest(floor_dir: Path) -> FloorManifest | None:
     """The directory's v5 manifest, or None when it holds no valid one."""
 
     try:
@@ -289,8 +289,8 @@ def read_floor_manifest(floor_dir: Path) -> PlaybillFloorManifest | None:
     except OSError:
         return None
     try:
-        return _manifest(_read_at(root, PLAYBILL_FLOOR_MANIFEST_PATH))
-    except (OSError, PlaybillFloorApplyError):
+        return _manifest(_read_at(root, FLOOR_MANIFEST_PATH))
+    except (OSError, FloorApplyError):
         return None
     finally:
         os.close(root)
@@ -300,12 +300,12 @@ def read_floor_manifest(floor_dir: Path) -> PlaybillFloorManifest | None:
 def _floor_root(floor_dir: Path) -> Iterator[int]:
     floor_dir = Path(floor_dir)
     if floor_dir.is_symlink():
-        raise PlaybillFloorApplyError("the floor directory may not be a symlink")
+        raise FloorApplyError("the floor directory may not be a symlink")
     floor_dir.mkdir(parents=True, exist_ok=True)
     try:
         root = os.open(floor_dir, _DIRECTORY)
     except OSError as exc:
-        raise PlaybillFloorApplyError(f"the floor directory cannot be opened: {exc}") from exc
+        raise FloorApplyError(f"the floor directory cannot be opened: {exc}") from exc
     try:
         yield root
     finally:
@@ -315,8 +315,8 @@ def _floor_root(floor_dir: Path) -> Iterator[int]:
 # -- the apply ----------------------------------------------------------------------
 
 
-def _mismatch(delta: PlaybillFloorDelta, message: str) -> PlaybillFloorApplyResult:
-    return PlaybillFloorApplyResult(
+def _mismatch(delta: FloorDelta, message: str) -> FloorApplyResult:
+    return FloorApplyResult(
         status="base_mismatch",
         kind=delta.kind,
         generation=delta.head.generation,
@@ -325,13 +325,13 @@ def _mismatch(delta: PlaybillFloorDelta, message: str) -> PlaybillFloorApplyResu
 
 
 def _result(
-    delta: PlaybillFloorDelta,
-    head: PlaybillFloorManifest,
+    delta: FloorDelta,
+    head: FloorManifest,
     status: Literal["applied", "unchanged"],
     written: int,
     removed: int,
-) -> PlaybillFloorApplyResult:
-    return PlaybillFloorApplyResult(
+) -> FloorApplyResult:
+    return FloorApplyResult(
         status=status,
         kind=delta.kind,
         generation=head.generation,
@@ -344,7 +344,7 @@ def _result(
 
 
 def _head_files(
-    delta: PlaybillFloorDelta, local: PlaybillFloorManifest | None
+    delta: FloorDelta, local: FloorManifest | None
 ) -> dict[str, tuple[str, int, int]] | None:
     """The head inventory the delta builds from this directory, or None for no base."""
 
@@ -368,13 +368,13 @@ def _head_files(
     }
 
 
-def apply_floor_delta(floor_dir: Path, delta: PlaybillFloorDelta) -> PlaybillFloorApplyResult:
+def apply_floor_delta(floor_dir: Path, delta: FloorDelta) -> FloorApplyResult:
     """Bring ``floor_dir`` to ``delta.head``; see the module docstring for the proof order."""
 
     try:
         decoded = {item.path: item.content() for item in delta.files}
     except ValueError as exc:
-        raise PlaybillFloorApplyError(str(exc)) from exc
+        raise FloorApplyError(str(exc)) from exc
     with _floor_root(floor_dir) as root:
         installed = _walk(root)
         head_files = _head_files(delta, _manifest(installed.manifest))
@@ -395,12 +395,12 @@ def apply_floor_delta(floor_dir: Path, delta: PlaybillFloorDelta) -> PlaybillFlo
                 files=head_files,
             )
         except ValueError as exc:
-            raise PlaybillFloorApplyError(f"the floor this delta builds is invalid: {exc}") from exc
+            raise FloorApplyError(f"the floor this delta builds is invalid: {exc}") from exc
         # The floor the delta builds from this directory is exactly the head it
         # names. At an installed head this proves every replayed file, every
         # tombstone and the whole coordinate against the installed manifest.
         if floor_manifest_digest(head) != delta.head_manifest_digest:
-            raise PlaybillFloorApplyError(
+            raise FloorApplyError(
                 "the floor this delta builds differs from its head manifest digest"
             )
         wanted = {item.path: item.content_digest for item in head.files}
@@ -411,7 +411,7 @@ def apply_floor_delta(floor_dir: Path, delta: PlaybillFloorDelta) -> PlaybillFlo
         stray = {path for path in installed.files if path not in wanted} | installed.others
         # The directories a floor needs: those its files (and the client's own)
         # live under, by exact spelling. Any other is stale or an alias.
-        needed = _parents(wanted) | _parents(installed.local) | _parents(PLAYBILL_FLOOR_LOCAL_PATHS)
+        needed = _parents(wanted) | _parents(installed.local) | _parents(FLOOR_LOCAL_PATHS)
         stale_directories: set[str] = set()
         if delta.kind == "delta":
             # Touched files may hold base or head bytes (a crash between them);
@@ -464,8 +464,8 @@ def apply_floor_delta(floor_dir: Path, delta: PlaybillFloorDelta) -> PlaybillFlo
         for path in sorted(writes):
             _write_file(root, path, writes[path])
         if installed.manifest != manifest_bytes:
-            _write_file(root, PLAYBILL_FLOOR_MANIFEST_PATH, manifest_bytes)
+            _write_file(root, FLOOR_MANIFEST_PATH, manifest_bytes)
         return _result(delta, head, "applied", len(writes), removed)
 
 
-__all__ = ["PlaybillFloorApplyError", "apply_floor_delta", "read_floor_manifest"]
+__all__ = ["FloorApplyError", "apply_floor_delta", "read_floor_manifest"]

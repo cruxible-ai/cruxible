@@ -1,4 +1,4 @@
-"""Public values for the synchronous Playbill SDK.
+"""Public values for the synchronous Cruxible SDK.
 
 Knowledge is governed state; code is how agents author changes to it.  These
 types carry decisions and coordinate assertions, never authority of their own.
@@ -69,7 +69,7 @@ class SubjectRef(_ShortRefRepr):
     """One accepted Subject at the coordinate it was read at.
 
     Pass it as ``subject=``, as a Subject-valued ``value=``, or to
-    ``pb.get(ref)``. Next: ``pb.get(ref)`` for its fields and verdict flags.
+    ``cx.get(ref)``. Next: ``cx.get(ref)`` for its fields and verdict flags.
     """
 
     address: str
@@ -81,8 +81,8 @@ class SubjectRef(_ShortRefRepr):
 class ClaimTypeRef(_ShortRefRepr):
     """One accepted predicate at the coordinate it was read at.
 
-    Pass it as ``predicate=`` or a write ``field``. Next: ``pb.get(ref)`` for
-    its structure and meaning, or ``pb.query(kind, select=[...])`` for its values.
+    Pass it as ``predicate=`` or a write ``field``. Next: ``cx.get(ref)`` for
+    its structure and meaning, or ``cx.query(kind, select=[...])`` for its values.
     """
 
     address: str
@@ -106,8 +106,8 @@ class PendingSubjectRef(SubjectRef):
 class ClaimRef(_ShortRefRepr):
     """One accepted Claim at the coordinate it was read at.
 
-    Next: ``pb.get(ref)`` for its value and verdict, ``pb.get(ref,
-    detail="evidence")`` for what backs it, or ``pb.retire(ref, ...)`` to end it.
+    Next: ``cx.get(ref)`` for its value and verdict, ``cx.get(ref,
+    detail="evidence")`` for what backs it, or ``cx.retire(ref, ...)`` to end it.
     """
 
     address: str
@@ -130,8 +130,8 @@ class PendingClaimTypeRef(ClaimTypeRef):
 class ProcedureRef(_ShortRefRepr):
     """One accepted Procedure at the coordinate it was read at.
 
-    Next: ``pb.get(ref)`` for its inputs, readiness and track record, or
-    ``pb.accepted_procedure(ref).run(...)`` to run it.
+    Next: ``cx.get(ref)`` for its inputs, readiness and track record, or
+    ``cx.accepted_procedure(ref).run(...)`` to run it.
     """
 
     address: str
@@ -143,7 +143,7 @@ class ProcedureRef(_ShortRefRepr):
 class QueryRef(_ShortRefRepr):
     """One accepted named query at the coordinate it was read at.
 
-    Next: ``pb.query(name=ref, params={...})`` to run it, or ``pb.get(ref)``
+    Next: ``cx.query(name=ref, params={...})`` to run it, or ``cx.get(ref)``
     for its parameters.
     """
 
@@ -156,7 +156,7 @@ class QueryRef(_ShortRefRepr):
 class SourceRef(_ShortRefRepr):
     """One catalogued workspace source at the coordinate it was read at.
 
-    Next: ``pb.get(ref)`` for its catalog entry.
+    Next: ``cx.get(ref)`` for its catalog entry.
     """
 
     address: str
@@ -168,8 +168,8 @@ class SourceRef(_ShortRefRepr):
 class CaptureRef:
     """Opaque accepted Capture plus its contract and citation-role provenance.
 
-    Pass it as ``supported_by=`` to cite it. Next: ``pb.get(ref.handle)`` for
-    the Capture card, or ``pb.capture(ref.capture_digest)`` for its material.
+    Pass it as ``supported_by=`` to cite it. Next: ``cx.get(ref.handle)`` for
+    the Capture card, or ``cx.capture(ref.capture_digest)`` for its material.
     """
 
     capture_digest: str
@@ -179,7 +179,7 @@ class CaptureRef:
 
     @property
     def handle(self) -> str:
-        """The ``CAP-<12 hex>`` handle every verb accepts. Next: ``pb.get(ref.handle)``."""
+        """The ``CAP-<12 hex>`` handle every verb accepts. Next: ``cx.get(ref.handle)``."""
 
         return "CAP-" + self.capture_digest.partition(":")[2][:12]
 
@@ -432,14 +432,14 @@ class DerivationSpec:
     name: str
 
 
-class PlaybillSdkError(CoreError, ValueError):
+class SdkError(CoreError, ValueError):
     code = "playbill.sdk.refused"
 
     def __init__(self, message: str) -> None:
         super().__init__(f"{self.code}: {message}")
 
 
-class CapabilityNotServed(PlaybillSdkError):
+class CapabilityNotServed(SdkError):
     def __init__(self, *, code: str, capability: str, repair: str) -> None:
         self.code = code
         self.capability = capability
@@ -447,11 +447,11 @@ class CapabilityNotServed(PlaybillSdkError):
         super().__init__(f"{capability} is not served. Repair: {repair}")
 
 
-class ReferenceKindError(PlaybillSdkError):
+class ReferenceKindError(SdkError):
     code = "playbill.sdk.reference_kind_mismatch"
 
 
-class AbsentSubject(PlaybillSdkError):
+class AbsentSubject(SdkError):
     """No Subject of this kind carries this ID at the world's coordinate."""
 
     code = "playbill.sdk.subject_absent_in_world"
@@ -474,7 +474,7 @@ class AbsentSubject(PlaybillSdkError):
         )
 
 
-class LiteralValueTypeError(PlaybillSdkError):
+class LiteralValueTypeError(SdkError):
     """A typed literal minted under one ClaimType was passed to another."""
 
     code = "playbill.sdk.literal_value_claim_type_mismatch"
@@ -489,7 +489,7 @@ class LiteralValueTypeError(PlaybillSdkError):
         )
 
 
-class ExactContentTypeError(PlaybillSdkError):
+class ExactContentTypeError(SdkError):
     """Exact bytes were passed to a ClaimType whose object is not exact content."""
 
     code = "playbill.sdk.exact_content_claim_type_mismatch"
@@ -504,7 +504,7 @@ class ExactContentTypeError(PlaybillSdkError):
         )
 
 
-class ClaimRoleNotPermittedError(PlaybillSdkError):
+class ClaimRoleNotPermittedError(SdkError):
     """A Claim role its ClaimType does not permit, refused before anything is sent."""
 
     code = "playbill.sdk.claim_role_not_permitted"
@@ -530,7 +530,7 @@ class ClaimRoleNotPermittedError(PlaybillSdkError):
         )
 
 
-class LiteralSchemaError(PlaybillSdkError):
+class LiteralSchemaError(SdkError):
     """A value refused by its ClaimType's declared literal schema."""
 
     code = "playbill.sdk.literal_schema_violation"
@@ -541,11 +541,11 @@ class LiteralSchemaError(PlaybillSdkError):
         super().__init__(f"ClaimType {predicate!r} does not admit this value: {reason}")
 
 
-class SourceSelectionError(PlaybillSdkError):
+class SourceSelectionError(SdkError):
     code = "playbill.sdk.source_selection_refused"
 
 
-class IncompatibleDaemonVersion(PlaybillSdkError):
+class IncompatibleDaemonVersion(SdkError):
     code = "playbill.sdk.daemon_version_incompatible"
 
     def __init__(
@@ -598,7 +598,7 @@ __all__ = [
     "LiteralValueTypeError",
     "PendingClaimTypeRef",
     "PendingSubjectRef",
-    "PlaybillSdkError",
+    "SdkError",
     "ProcedureRef",
     "QueryRef",
     "RefKind",

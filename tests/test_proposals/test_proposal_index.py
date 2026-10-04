@@ -622,7 +622,7 @@ def _accept_document(instance, owner, name: str, second: int):
 
 def test_open_candidate_enumeration_does_not_grow_with_accepted_history(tmp_path, monkeypatch):
     import cruxible_core.service.proposals.proposals as proposals_module
-    from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+    from cruxible_core.service.authoring.documents import AcceptedCoordinate
 
     instance, owner = initialize_local(tmp_path)
     steps: list[int] = []
@@ -650,7 +650,7 @@ def test_open_candidate_enumeration_does_not_grow_with_accepted_history(tmp_path
         while settled < amount:
             _accept_document(instance, owner, f"doc-{settled}", settled)
             settled += 1
-        head = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+        head = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
         (found,) = proposals_module.stale_unreadmitted_proposals(instance, head)
         assert found.proposal_id == stale.admission.proposal_id
         measured.append(steps[-1])
@@ -660,15 +660,15 @@ def test_open_candidate_enumeration_does_not_grow_with_accepted_history(tmp_path
 
 
 def test_an_older_coordinate_counts_candidates_settled_after_it(tmp_path):
-    from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+    from cruxible_core.service.authoring.documents import AcceptedCoordinate
     from cruxible_core.service.proposals.proposals import stale_unreadmitted_proposals
 
     instance, owner = initialize_local(tmp_path)
     _accept_document(instance, owner, "first", 0)
-    older = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    older = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     _accept_document(instance, owner, "second", 1)
     third = _accept_document(instance, owner, "third", 2)
-    head = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    head = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     assert stale_unreadmitted_proposals(instance, head) == ()
     # A bound read synchronized history, and each settled candidate with it.
     index = instance.proposal_evidence().index

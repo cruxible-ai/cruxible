@@ -1,4 +1,4 @@
-# Modeling semantic state in Playbill
+# Modeling semantic state in Cruxible
 
 This branch no longer uses one YAML config as the authority for a mutable entity
 graph. Model accepted knowledge around semantic subjects and external sources.
@@ -13,7 +13,7 @@ For every source, decide:
 - what change cadence and freshness matter;
 - which observations are exhaust versus candidates for governance.
 
-Playbill should not copy an external database merely to point at it. A Claim may
+Cruxible should not copy an external database merely to point at it. A Claim may
 refer to a source coordinate and evidence digest while the database remains the
 record authority.
 

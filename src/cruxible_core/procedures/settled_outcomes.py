@@ -21,7 +21,7 @@ from cruxible_client.contracts.canonical import (
     canonical_bytes,
     typed_digest,
 )
-from cruxible_client.contracts.errors import PlaybillExecutionError
+from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 from cruxible_core.exhaust import StoredProcedureJournalRecordV1
 from cruxible_core.indexes.projection import AcceptedCoordinate
@@ -338,7 +338,7 @@ def query_settled_outcomes(
 
     activation_ids = tuple(item.contract_id for item in activations)
     if activation_ids != tuple(sorted(set(activation_ids), key=lambda item: item.encode("utf-8"))):
-        raise PlaybillExecutionError(
+        raise ExecutionError(
             "settled-outcomes activations must be byte-sorted by unique contract_id"
         )
 
@@ -351,7 +351,7 @@ def query_settled_outcomes(
                 activation, (ResolutionContractActivationV2, ResolutionContractActivationV3)
             ):
                 if request.outcome_classes:
-                    raise PlaybillExecutionError(
+                    raise ExecutionError(
                         "settled-outcomes outcome_class filter requires v2 activations"
                     )
                 continue
@@ -372,7 +372,7 @@ def query_settled_outcomes(
                 if stored.record.recorded_at <= request.evaluation_time
             )
             if any(stored.record.partition_id != partition_id for stored in records):
-                raise PlaybillExecutionError(
+                raise ExecutionError(
                     "settled-outcomes record mapping crosses a resolution partition"
                 )
             book = ProcedureResolutionBook((activation,))
@@ -382,7 +382,7 @@ def query_settled_outcomes(
                 continue
             resolution = book.resolution_by_id(history.resolution_id or "")
             if not isinstance(resolution, ProcedureResolutionV2):  # pragma: no cover - classifier
-                raise PlaybillExecutionError("settled history lacks its v2 resolution")
+                raise ExecutionError("settled history lacks its v2 resolution")
             if any(proof.digest not in visible_proofs for proof in resolution.evidence_refs):
                 continue
             relation = build_settled_outcome_relation(activation, resolution)

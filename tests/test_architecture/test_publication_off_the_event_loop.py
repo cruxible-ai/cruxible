@@ -97,7 +97,7 @@ def test_no_async_playbill_route_can_reach_the_ledger_publication() -> None:
     )
 
     assert offenders == [], (
-        "these Playbill routes are `async def` and can reach the ledger mirror "
+        "these Cruxible routes are `async def` and can reach the ledger mirror "
         "publication, so a blocking `git push` would run on the event loop; "
         "declare them `def` like every other mutating route: " + ", ".join(offenders)
     )

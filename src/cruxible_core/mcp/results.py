@@ -18,7 +18,7 @@ class McpWhoAmIResult(BaseModel):
     instance_id: str
     adapter_version: str
     daemon_version: str
-    identity: contracts.PlaybillWhoAmI
+    identity: contracts.WhoAmI
 
 
 class McpServerInfoResult(BaseModel):
@@ -32,8 +32,8 @@ class McpServerInfoResult(BaseModel):
     adapter_version: str
     daemon_version: str
     daemon: contracts.ServerInfoResult | None = None
-    host: contracts.PlaybillHostInspection | None = None
-    identity: contracts.PlaybillWhoAmI | None = None
+    host: contracts.HostInspection | None = None
+    identity: contracts.WhoAmI | None = None
 
     @model_validator(mode="after")
     def _scope_fields(self) -> McpServerInfoResult:

@@ -16,7 +16,7 @@ from cruxible_client.contracts.canonical import (
     canonical_bytes,
     typed_digest,
 )
-from cruxible_client.contracts.errors import PlaybillExecutionError
+from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedures.results import (
     ProcedureRunReceipt,
     ProcedureRunReceiptV2,
@@ -46,7 +46,7 @@ CalibrationWitnessRefusalCode = Literal[
 ]
 
 
-class ProcedureCalibrationWitnessError(PlaybillExecutionError):
+class ProcedureCalibrationWitnessError(ExecutionError):
     """Typed refusal for absent or non-reproducing G2 membership evidence."""
 
     def __init__(self, code: CalibrationWitnessRefusalCode, message: str) -> None:
@@ -476,7 +476,7 @@ def select_settled_outcomes_for_calibration(
         for row in selected
         for proof in row.relation.resolution.evidence_refs
     ):
-        raise PlaybillExecutionError("Claim attestations cannot enter calibration selection")
+        raise ExecutionError("Claim attestations cannot enter calibration selection")
     return selected
 
 
@@ -496,9 +496,7 @@ def produce_procedure_calibration_reading(
         or receipt.evaluation_time != result.evaluation_time
         or receipt.visible_row_count != len(result.rows)
     ):
-        raise PlaybillExecutionError(
-            "settled-outcomes receipt does not reproduce its exact query result"
-        )
+        raise ExecutionError("settled-outcomes receipt does not reproduce its exact query result")
     rows = select_settled_outcomes_for_calibration(
         result,
         procedure_artifact_digest=cohort.procedure_artifact_digest,
@@ -626,14 +624,14 @@ def load_procedure_calibration_reading(
 
     _digest(expected_cohort_key, label="expected calibration cohort key")
     if artifact.cohort_key != expected_cohort_key:
-        raise PlaybillExecutionError("calibration reading belongs to another implementation cohort")
+        raise ExecutionError("calibration reading belongs to another implementation cohort")
     content = bodies.read(artifact.body_digest, access=access)
     try:
         raw = json.loads(content)
     except (UnicodeDecodeError, ValueError) as exc:
-        raise PlaybillExecutionError("calibration reading artifact is malformed") from exc
+        raise ExecutionError("calibration reading artifact is malformed") from exc
     if not isinstance(raw, dict) or canonical_bytes(raw) != content:
-        raise PlaybillExecutionError("calibration reading artifact is not exact canonical bytes")
+        raise ExecutionError("calibration reading artifact is not exact canonical bytes")
     try:
         reading: ProcedureCalibrationReading
         tag = raw.get("tag")
@@ -644,13 +642,13 @@ def load_procedure_calibration_reading(
         else:
             raise ValueError("unsupported calibration reading tag")
     except ValueError as exc:
-        raise PlaybillExecutionError("calibration reading artifact is invalid") from exc
+        raise ExecutionError("calibration reading artifact is invalid") from exc
     if (
         reading.reading_id != artifact.pin.target.name
         or procedure_calibration_reading_digest(reading) != artifact.pin.artifact_digest
         or reading.cohort.cohort_key != artifact.cohort_key
     ):
-        raise PlaybillExecutionError("calibration reading artifact does not reproduce its pin")
+        raise ExecutionError("calibration reading artifact does not reproduce its pin")
     return reading
 
 

@@ -16,11 +16,11 @@ from typing import Literal, get_args
 
 import pytest
 
-from cruxible_client.contracts import PlaybillNextReason
-from cruxible_client.contracts.get_reads import PlaybillGetRequest
+from cruxible_client.contracts import NextReason
+from cruxible_client.contracts.get_reads import GetRequest
 from cruxible_client.contracts.line_dispatch import LineEvaluateRequest
 from cruxible_core.service.discovery.get import service_playbill_get
-from cruxible_core.service.discovery.next import PlaybillNextRequest, service_playbill_next
+from cruxible_core.service.discovery.next import NextRequest, service_playbill_next
 from cruxible_core.service.procedures.line_dispatch import (
     service_evaluate_line,
     service_stop_line_arm,
@@ -64,7 +64,7 @@ _REFERENCE_FORMS: dict[str, Literal["get", "workspace"]] = {
 
 
 def test_every_next_reason_names_what_its_references_are_read_with() -> None:
-    assert set(_REFERENCE_FORMS) == set(get_args(PlaybillNextReason))
+    assert set(_REFERENCE_FORMS) == set(get_args(NextReason))
 
 
 def _references(result) -> list[str]:  # type: ignore[no-untyped-def]
@@ -84,14 +84,14 @@ def _references(result) -> list[str]:  # type: ignore[no-untyped-def]
 def _assert_every_reference_resolves(instance, result) -> list[str]:  # type: ignore[no-untyped-def]
     refs = _references(result)
     for ref in refs:
-        service_playbill_get(instance, request=PlaybillGetRequest(ref=ref), access=_ACCESS)
+        service_playbill_get(instance, request=GetRequest(ref=ref), access=_ACCESS)
     return refs
 
 
 def _queue(instance, when: datetime):  # type: ignore[no-untyped-def]
     return service_playbill_next(
         instance,
-        request=PlaybillNextRequest(evaluation_time=when, access_profile=_PROFILE),
+        request=NextRequest(evaluation_time=when, access_profile=_PROFILE),
         caller_rung=0,
     )
 

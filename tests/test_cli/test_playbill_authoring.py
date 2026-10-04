@@ -44,7 +44,7 @@ from cruxible_core.server.app import create_app
 from cruxible_core.server.registry import get_registry, reset_registry
 from tests.core_support._claim_type_support import claim_type_input_example
 
-COORDINATE = contracts.PlaybillAcceptedCoordinate(
+COORDINATE = contracts.AcceptedCoordinate(
     git_oid="1" * 64,
     semantic_root="sha256:" + "2" * 64,
     generation_root="sha256:" + "3" * 64,
@@ -58,7 +58,7 @@ def test_cli_line_run_forwards_only_the_occurrence_assertion(monkeypatch) -> Non
     calls: list[tuple[str, str, str | None, str]] = []
 
     class StubClient:
-        def run_playbill_line(
+        def run_line(
             self,
             instance_id: str,
             line_identity_digest: str,
@@ -68,10 +68,10 @@ def test_cli_line_run_forwards_only_the_occurrence_assertion(monkeypatch) -> Non
             resolution_contract=None,
             trigger_event=None,
             trigger=None,
-        ) -> contracts.PlaybillProcedureRunState:
+        ) -> contracts.ProcedureRunState:
             assert resolution_contract is None and trigger_event is None and trigger is None
             calls.append((instance_id, line_identity_digest, occurrence_id, evaluation_time))
-            return contracts.PlaybillProcedureRunState(
+            return contracts.ProcedureRunState(
                 run_id=None,
                 procedure_identity={"kind": "Procedure", "name": "triage"},
                 procedure_artifact_digest="sha256:" + "9" * 64,
@@ -129,30 +129,30 @@ def test_cli_compile_reads_payload_and_submit_uses_only_opaque_intent(
     calls: list[tuple[str, object]] = []
 
     class StubClient:
-        def compile_playbill_authoring_input(
+        def compile_authoring_input(
             self,
             instance_id: str,
             *,
             input: dict[str, object],
             intent_id: str | None,
-        ) -> contracts.PlaybillAuthoringPreflightResult:
+        ) -> contracts.AuthoringPreflightResult:
             calls.append((instance_id, input))
             assert intent_id is None
-            return contracts.PlaybillAuthoringPreflightResult(
+            return contracts.AuthoringPreflightResult(
                 verdict="refused",
                 certificate={"certificate_digest": "sha256:" + "6" * 64},
                 frontier={"diagnostics": []},
             )
 
-        def submit_playbill_authoring_intent(
+        def submit_authoring_intent(
             self, instance_id: str, intent_id: str
-        ) -> contracts.PlaybillAuthoringSubmitResult:
+        ) -> contracts.AuthoringSubmitResultRecord:
             calls.append((instance_id, intent_id))
-            status = contracts.PlaybillCandidateStatus(
+            status = contracts.CandidateStatusRecord(
                 state="draft",
                 current_accepted_coordinate=COORDINATE,
             )
-            return contracts.PlaybillAuthoringSubmitResult(
+            return contracts.AuthoringSubmitResultRecord(
                 intent={"intent_id": intent_id},
                 status=status,
             )
@@ -200,7 +200,7 @@ def test_cli_claim_type_propose_delivers_nonblocking_source_lint(
     }
 
     class StubClient:
-        def propose_playbill_claim_type_input(
+        def propose_claim_type_input(
             self,
             instance_id: str,
             *,
@@ -208,18 +208,18 @@ def test_cli_claim_type_propose_delivers_nonblocking_source_lint(
             proposal_name: str,
             dry_run: bool | None = None,
             at: str | None = None,
-        ) -> contracts.PlaybillClaimTypeInputProposalResult:
+        ) -> contracts.ClaimTypeInputProposalResult:
             assert (instance_id, proposal_name) == (
                 "inst_authoring",
                 "project.work_item.replace_me",
             )
             assert input["anticipated_source_ids"] == ["corpus.runbook"]
-            return contracts.PlaybillClaimTypeInputProposalResult(
-                proposal=contracts.PlaybillProposalInspection(
+            return contracts.ClaimTypeInputProposalResult(
+                proposal=contracts.ProposalInspection(
                     proposal={"proposal_id": "sha256:" + "8" * 64},
                     accepted_coordinate=COORDINATE,
                 ),
-                lint=contracts.PlaybillClaimTypeProposalLint(warnings=[warning]),
+                lint=contracts.ClaimTypeProposalLint(warnings=[warning]),
             )
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
@@ -284,10 +284,10 @@ def test_cli_refused_stale_preflight_teaches_rebase_not_resume(monkeypatch) -> N
     old_coordinate = COORDINATE.model_copy(update={"git_oid": "a" * 40})
 
     class StubClient:
-        def preflight_playbill_authoring_intent(
+        def preflight_authoring_intent(
             self, _instance_id: str, _intent_id: str
-        ) -> contracts.PlaybillAuthoringPreflightResult:
-            return contracts.PlaybillAuthoringPreflightResult(
+        ) -> contracts.AuthoringPreflightResult:
+            return contracts.AuthoringPreflightResult(
                 verdict="refused",
                 certificate={
                     "accepted_coordinate": COORDINATE.model_dump(mode="json"),
@@ -295,10 +295,10 @@ def test_cli_refused_stale_preflight_teaches_rebase_not_resume(monkeypatch) -> N
                 frontier={"diagnostics": []},
             )
 
-        def get_playbill_authoring_intent(
+        def get_authoring_intent(
             self, _instance_id: str, _intent_id: str
-        ) -> contracts.PlaybillAuthoringIntentView:
-            return contracts.PlaybillAuthoringIntentView(
+        ) -> contracts.AuthoringIntentViewRecord:
+            return contracts.AuthoringIntentViewRecord(
                 intent={"base_coordinate": old_coordinate.model_dump(mode="json")}
             )
 
@@ -348,26 +348,26 @@ def test_cli_claim_type_migration_delivers_nonblocking_source_lint(
     }
 
     class StubClient:
-        def migrate_playbill_claim_type(
+        def migrate_claim_type(
             self,
             instance_id: str,
             *,
             request: dict[str, object],
-        ) -> contracts.PlaybillClaimTypeMigrationPreflight:
+        ) -> contracts.ClaimTypeMigrationPreflight:
             assert instance_id == "inst_authoring"
             assert request["mode"] == "preflight"
-            return contracts.PlaybillClaimTypeMigrationPreflight(
+            return contracts.ClaimTypeMigrationPreflight(
                 coordinate=COORDINATE,
                 successor_artifact_digest="sha256:" + "8" * 64,
                 semantic_delta=[
-                    contracts.PlaybillSemanticFieldDelta(
+                    contracts.SemanticFieldDelta(
                         field_path="/literal_schema/enum",
-                        before=contracts.PlaybillSemanticFieldValue(state="present", value=["old"]),
-                        after=contracts.PlaybillSemanticFieldValue(state="present", value=["new"]),
+                        before=contracts.SemanticFieldValue(state="present", value=["old"]),
+                        after=contracts.SemanticFieldValue(state="present", value=["new"]),
                     )
                 ],
                 dependents=[],
-                lint=contracts.PlaybillClaimTypeProposalLint(warnings=[warning]),
+                lint=contracts.ClaimTypeProposalLint(warnings=[warning]),
             )
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
@@ -426,19 +426,19 @@ def test_cli_claim_type_migration_submit_names_the_proposal_and_next_step(
     )
 
     class StubClient:
-        def migrate_playbill_claim_type(
+        def migrate_claim_type(
             self,
             instance_id: str,
             *,
             request: dict[str, object],
-        ) -> contracts.PlaybillClaimTypeMigrationResultV2:
+        ) -> contracts.ClaimTypeMigrationResultV2:
             assert instance_id == "inst_authoring"
             assert request["mode"] == "submit"
-            return contracts.PlaybillClaimTypeMigrationResultV2(
+            return contracts.ClaimTypeMigrationResultV2(
                 operation_digest="sha256:" + "6" * 64,
                 semantic_delta=[],
                 dependents=[],
-                proposal=contracts.PlaybillProposalInspection(
+                proposal=contracts.ProposalInspection(
                     proposal={"admission": {"proposal_id": proposal_id}},
                     accepted_coordinate=COORDINATE,
                 ),
@@ -467,11 +467,11 @@ def test_cli_claim_type_migration_submit_names_the_proposal_and_next_step(
 
 def test_cli_status_is_a_read_and_emits_no_write_target(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     class StubClient:
-        def playbill_authoring_intent_status(
+        def authoring_intent_status(
             self, instance_id: str, intent_id: str
-        ) -> contracts.PlaybillCandidateStatus:
+        ) -> contracts.CandidateStatusRecord:
             assert (instance_id, intent_id) == ("inst_authoring", INTENT_ID)
-            return contracts.PlaybillCandidateStatus(
+            return contracts.CandidateStatusRecord(
                 state="draft",
                 current_accepted_coordinate=COORDINATE,
             )
@@ -501,9 +501,9 @@ def test_cli_whoami_explains_credential_binding_and_lists_open_proposals(
     calls: list[str] = []
 
     class StubClient:
-        def playbill_whoami(self, instance_id: str) -> contracts.PlaybillWhoAmI:
+        def whoami(self, instance_id: str) -> contracts.WhoAmI:
             calls.append(f"whoami:{instance_id}")
-            return contracts.PlaybillWhoAmI(
+            return contracts.WhoAmI(
                 actor_id="owner",
                 credential_label="owner",
                 actor_id_source="runtime_credential",
@@ -516,22 +516,22 @@ def test_cli_whoami_explains_credential_binding_and_lists_open_proposals(
                 authoring_refusal=None,
             )
 
-        def list_playbill_proposals(
+        def list_proposals(
             self,
             instance_id: str,
             *,
             status: str | None,
             limit: int | None = None,
             cursor: str | None = None,
-        ) -> contracts.PlaybillProposalList:
-            assert limit == contracts.PLAYBILL_PROPOSAL_LIST_DEFAULT_LIMIT
+        ) -> contracts.ProposalList:
+            assert limit == contracts.PROPOSAL_LIST_DEFAULT_LIMIT
             assert cursor is None
             calls.append(f"proposals:{instance_id}:{status}")
-            return contracts.PlaybillProposalList(
+            return contracts.ProposalList(
                 coordinate=COORDINATE,
                 status_filter="open",
                 entries=[
-                    contracts.PlaybillProposalListEntry(
+                    contracts.ProposalListEntry(
                         proposal_id="sha256:" + "5" * 64,
                         actor_id="owner",
                         target_ref="refs/proposals/owner/example",
@@ -577,15 +577,15 @@ def test_cli_insertion_abandon_uses_the_opaque_intent(
     calls: list[tuple[str, object, str | None]] = []
 
     class StubClient:
-        def abandon_playbill_authoring_insertion(
+        def abandon_authoring_insertion(
             self,
             instance_id: str,
             intent_id: str,
             *,
             expectation_id: str | None = None,
-        ) -> contracts.PlaybillInsertionAbandonResult:
+        ) -> contracts.InsertionAbandonResultRecord:
             calls.append((intent_id, "abandon", expectation_id))
-            return contracts.PlaybillInsertionAbandonResult(
+            return contracts.InsertionAbandonResultRecord(
                 intent={"intent_id": intent_id},
                 expectation={"state": "abandoned"},
             )
@@ -982,16 +982,16 @@ def test_cli_bind_derives_observation_and_compiles(
     calls: list[dict[str, object]] = []
 
     class StubClient:
-        def compile_playbill_authoring(
+        def compile_authoring(
             self,
             instance_id: str,
             *,
             payload: dict[str, object],
             intent_id: str | None,
-        ) -> contracts.PlaybillAuthoringPreflightResult:
+        ) -> contracts.AuthoringPreflightResult:
             assert (instance_id, intent_id) == ("inst_authoring", None)
             calls.append(payload)
-            return contracts.PlaybillAuthoringPreflightResult(
+            return contracts.AuthoringPreflightResult(
                 verdict="passed",
                 certificate={"certificate_digest": "sha256:" + "6" * 64},
                 frontier={"diagnostics": []},
@@ -1117,15 +1117,15 @@ def test_cli_bind_occurrence_selects_one_ambiguous_anchor(
     calls: list[dict[str, object]] = []
 
     class StubClient:
-        def compile_playbill_authoring(
+        def compile_authoring(
             self,
             instance_id: str,
             *,
             payload: dict[str, object],
             intent_id: str | None,
-        ) -> contracts.PlaybillAuthoringPreflightResult:
+        ) -> contracts.AuthoringPreflightResult:
             calls.append(payload)
-            return contracts.PlaybillAuthoringPreflightResult(
+            return contracts.AuthoringPreflightResult(
                 verdict="passed",
                 certificate={"certificate_digest": "sha256:" + "6" * 64},
                 frontier={"diagnostics": []},
@@ -1191,15 +1191,15 @@ def test_cli_bind_declared_block_refuses_every_role(
     calls: list[dict[str, object]] = []
 
     class StubClient:
-        def compile_playbill_authoring(
+        def compile_authoring(
             self,
             instance_id: str,
             *,
             payload: dict[str, object],
             intent_id: str | None,
-        ) -> contracts.PlaybillAuthoringPreflightResult:
+        ) -> contracts.AuthoringPreflightResult:
             calls.append(payload)
-            return contracts.PlaybillAuthoringPreflightResult(
+            return contracts.AuthoringPreflightResult(
                 verdict="passed",
                 certificate={"certificate_digest": "sha256:" + "6" * 64},
                 frontier={"diagnostics": []},

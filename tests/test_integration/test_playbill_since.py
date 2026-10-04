@@ -14,16 +14,16 @@ from cruxible_client.contracts.candidates import (
     CandidateMemberEvidence,
     CandidateMemberLawEvidence,
 )
-from cruxible_client.contracts.errors import PlaybillSinceRequestInvalid
+from cruxible_client.contracts.errors import SinceRequestInvalid
 from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.runtime import playbill_api
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+from cruxible_core.service.authoring.documents import AcceptedCoordinate
 from cruxible_core.service.discovery.since import (
-    PlaybillSinceAcceptedStateInvalid,
-    PlaybillSinceCursorCoordinateMismatch,
-    PlaybillSinceGenerationUnknown,
-    PlaybillSinceRowExceedsBudget,
+    SinceAcceptedStateInvalid,
+    SinceCursorCoordinateMismatch,
+    SinceGenerationUnknown,
+    SinceRowExceedsBudget,
     _cursor,
     _normalized_member_row,
     _normalized_rows,
@@ -50,13 +50,13 @@ def _profile(*classes: str) -> dict[str, object]:
     }
 
 
-def _request(**values: object) -> contracts.PlaybillSinceRequest:
+def _request(**values: object) -> contracts.SinceRequest:
     request_values = {
         "generation": 0,
         "access_profile": _profile("instance", "public"),
         **values,
     }
-    return contracts.PlaybillSinceRequest(
+    return contracts.SinceRequest(
         **request_values,
     )
 
@@ -90,7 +90,7 @@ def test_runtime_since_maps_request_validation_to_one_typed_refusal(
         **override,
     }
 
-    with pytest.raises(PlaybillSinceRequestInvalid) as raised:
+    with pytest.raises(SinceRequestInvalid) as raised:
         playbill_api.playbill_since("inst_since", request=request)
 
     assert raised.value.error_code == "playbill.since.request_invalid"
@@ -130,10 +130,8 @@ def test_genesis_equal_head_future_and_visibility_filtering(
     assert isinstance(original, PlaybillInstance)
     instance = PlaybillInstance.open(original.root, trust_root=original.trust_root)
     current = instance.accepted_history()[-1]
-    head = contracts.PlaybillAcceptedCoordinate.model_validate(
-        PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate()).model_dump(
-            mode="json"
-        )
+    head = contracts.AcceptedCoordinate.model_validate(
+        AcceptedCoordinate.from_internal(instance.accepted_coordinate()).model_dump(mode="json")
     )
 
     empty = service_playbill_since(
@@ -144,13 +142,13 @@ def test_genesis_equal_head_future_and_visibility_filtering(
     assert empty.truncated is False
     hidden = service_playbill_since(
         instance,
-        request=contracts.PlaybillSinceRequest(
+        request=contracts.SinceRequest(
             generation=0,
             access_profile=_profile("public"),
         ),
     )
     assert hidden.rows == []
-    with pytest.raises(PlaybillSinceGenerationUnknown):
+    with pytest.raises(SinceGenerationUnknown):
         service_playbill_since(
             instance,
             request=_request(generation=current.sequence + 1),
@@ -178,7 +176,7 @@ def test_row_and_byte_budgets_cursor_binding_and_head_pin(
     )
     assert second.coordinate == first.coordinate
 
-    with pytest.raises(PlaybillSinceCursorCoordinateMismatch):
+    with pytest.raises(SinceCursorCoordinateMismatch):
         service_playbill_since(
             instance,
             request=_request(max_rows=3, cursor=first.next_cursor),
@@ -193,14 +191,14 @@ def test_row_and_byte_budgets_cursor_binding_and_head_pin(
         last_generation=first.next_cursor.last_generation,
         last_member_path=first.next_cursor.last_member_path,
     )
-    with pytest.raises(PlaybillSinceCursorCoordinateMismatch):
+    with pytest.raises(SinceCursorCoordinateMismatch):
         service_playbill_since(instance, request=_request(max_rows=2, cursor=wrong_instance))
-    with pytest.raises(PlaybillSinceCursorCoordinateMismatch):
+    with pytest.raises(SinceCursorCoordinateMismatch):
         service_playbill_since(
             instance,
             request=_request(generation=1, max_rows=2, cursor=first.next_cursor),
         )
-    with pytest.raises(PlaybillSinceCursorCoordinateMismatch):
+    with pytest.raises(SinceCursorCoordinateMismatch):
         service_playbill_since(
             instance,
             request=_request(
@@ -210,12 +208,12 @@ def test_row_and_byte_budgets_cursor_binding_and_head_pin(
             ),
         )
     genesis = instance.accepted_history()[0]
-    genesis_coordinate = contracts.PlaybillAcceptedCoordinate.model_validate(
-        PlaybillAcceptedCoordinate.from_internal(
-            instance.coordinate_for_oid(genesis.oid)
-        ).model_dump(mode="json")
+    genesis_coordinate = contracts.AcceptedCoordinate.model_validate(
+        AcceptedCoordinate.from_internal(instance.coordinate_for_oid(genesis.oid)).model_dump(
+            mode="json"
+        )
     )
-    with pytest.raises(PlaybillSinceCursorCoordinateMismatch):
+    with pytest.raises(SinceCursorCoordinateMismatch):
         service_playbill_since(
             instance,
             request=_request(
@@ -234,12 +232,12 @@ def test_row_and_byte_budgets_cursor_binding_and_head_pin(
         last_generation=first.next_cursor.last_generation,
         last_member_path="documents/not-present.json",
     )
-    with pytest.raises(PlaybillSinceCursorCoordinateMismatch):
+    with pytest.raises(SinceCursorCoordinateMismatch):
         service_playbill_since(
             instance,
             request=_request(max_rows=2, cursor=bad_boundary),
         )
-    with pytest.raises(PlaybillSinceRowExceedsBudget):
+    with pytest.raises(SinceRowExceedsBudget):
         service_playbill_since(
             instance,
             request=_request(max_bytes=1),
@@ -247,7 +245,7 @@ def test_row_and_byte_budgets_cursor_binding_and_head_pin(
     values = first.next_cursor.model_dump(mode="json")
     values["cursor_digest"] = "sha256:" + "0" * 64
     with pytest.raises(ValidationError, match="digest"):
-        contracts.PlaybillSinceCursor.model_validate(values)
+        contracts.SinceCursor.model_validate(values)
 
 
 def test_current_v3_history_is_ordered_by_utf8_member_path(tmp_path: Path) -> None:
@@ -357,7 +355,7 @@ def test_v1_normalization_preserves_disposition_and_never_infers_predecessor(
 def test_non_changeset_accepted_source_is_rejected() -> None:
     fake = SimpleNamespace(accepted_history=lambda: (SimpleNamespace(sequence=1, record=object()),))
     with pytest.raises(
-        PlaybillSinceAcceptedStateInvalid,
+        SinceAcceptedStateInvalid,
         match="accepted generation has no ChangeSet",
     ) as raised:
         _normalized_rows(

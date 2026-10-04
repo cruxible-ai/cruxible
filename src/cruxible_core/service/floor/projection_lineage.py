@@ -15,7 +15,7 @@ from threading import RLock
 from weakref import WeakKeyDictionary
 
 from cruxible_client.contracts.claims import ClaimArtifactAny, claim_artifact_digest, parse_claim
-from cruxible_client.contracts.errors import PlaybillError, PlaybillFormatError
+from cruxible_client.contracts.errors import CruxibleError, FormatError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 
@@ -59,7 +59,7 @@ def read_claim_lineages(
     paths: tuple[str, ...],
     at: AcceptedCoordinate,
     defer_errors: bool = False,
-) -> dict[str, dict[str, ClaimLineageNode] | PlaybillError]:
+) -> dict[str, dict[str, ClaimLineageNode] | CruxibleError]:
     """Batch cold history reads, then extend cached paths only over new generations."""
     coordinate = instance.resolve_accepted_coordinate(
         git_oid=at.git_oid,
@@ -70,7 +70,7 @@ def read_claim_lineages(
     recovered = instance.accepted_history()
     matches = [i for i, generation in enumerate(recovered) if generation.oid == at.git_oid]
     if len(matches) != 1:
-        raise PlaybillFormatError("lineage coordinate is outside accepted history")
+        raise FormatError("lineage coordinate is outside accepted history")
     generations = recovered[: matches[0] + 1]
     history = tuple(
         (g.oid, g.semantic_root.tagged, g.generation_root.tagged, g.sequence) for g in generations
@@ -80,7 +80,7 @@ def read_claim_lineages(
     with _LOCK:
         cache = _CACHE.get(instance, OrderedDict())
         existing = {path: cache.get(path) for path in unique_paths}
-    failures: dict[str, PlaybillError] = {}
+    failures: dict[str, CruxibleError] = {}
     # A verified generation root commits its entire ancestor chain. Matching
     # this retained tip inside the verified prefix proves prefix compatibility
     # without retaining/comparing one history tuple for every backing.
@@ -117,7 +117,7 @@ def read_claim_lineages(
             continue
         try:
             raws = instance.blobs_at(generation.oid, wanted)
-        except PlaybillError:
+        except CruxibleError:
             if not defer_errors:
                 raise
             # A later unreadable blob must not preempt an earlier marker's
@@ -129,7 +129,7 @@ def read_claim_lineages(
                     raw = instance.blob_at(generation.oid, path)
                     if raw is not None:
                         raws[path] = raw
-                except PlaybillError as exc:
+                except CruxibleError as exc:
                     failures[path] = exc
         generation_coordinate = AcceptedCoordinate.from_internal(
             instance.coordinate_for_oid(generation.oid)
@@ -143,7 +143,7 @@ def read_claim_lineages(
                 continue
             try:
                 claim = parse_claim(raw, path=path)
-            except PlaybillError as exc:
+            except CruxibleError as exc:
                 if not defer_errors:
                     raise
                 failures[path] = exc

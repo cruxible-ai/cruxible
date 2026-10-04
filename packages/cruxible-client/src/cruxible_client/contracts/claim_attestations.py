@@ -22,7 +22,7 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.captures import CaptureObjectStoreProtocol
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.principals import PrincipalRegistrySnapshot
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.providers import ProviderV1
@@ -42,7 +42,7 @@ _SIGNATURE_RE = re.compile(r"^[0-9a-f]{128}$")
 _KEY_ID_RE = re.compile(r"^(?:[a-z][a-z0-9_.:-]{0,127}|sha256:[0-9a-f]{64})$")
 
 
-class ClaimAttestationError(PlaybillFormatError):
+class ClaimAttestationError(FormatError):
     """A ClaimAttestationV1 is malformed, misbound, stale, or cryptographically invalid."""
 
 
@@ -701,7 +701,7 @@ def verify_claim_attestation(
             raise ClaimAttestationError("ClaimAttestationV1 Provider is absent or retired")
         try:
             key = provider.require_key(statement.signing_key_id, at=statement.observed_at)
-        except PlaybillFormatError as exc:
+        except FormatError as exc:
             raise ClaimAttestationError(str(exc)) from exc
         public_key = key.public_key
         grade = "verified_provider"

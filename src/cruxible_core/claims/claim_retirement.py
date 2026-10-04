@@ -20,7 +20,7 @@ from cruxible_client.contracts.claims import (
     parse_claim,
     render_claim,
 )
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.claims.closure import ReversePinClosureItem, reverse_pin_closure
 from cruxible_core.derived.derived_state import CandidateTree, fork_tree
@@ -46,7 +46,7 @@ class ClaimRetirementResultItemV1(_StrictRetirementModel):
     successor_digest: str
 
 
-class ClaimRetireError(PlaybillFormatError):
+class ClaimRetireError(FormatError):
     error_code = "playbill.claim.retire_invalid"
 
 
@@ -205,7 +205,7 @@ def claim_retirement_inventory(
         def resolve(digest: str) -> ArtifactIdentity | None:
             try:
                 location = history.artifact(digest)
-            except PlaybillFormatError as exc:
+            except FormatError as exc:
                 raise ClaimRetireError(
                     "one accepted Claim digest names multiple identities"
                 ) from exc

@@ -7,8 +7,8 @@ import hashlib
 import json
 from typing import Any
 
+from cruxible_client.contracts import AcceptedCoordinate as ClientAcceptedCoordinate
 from cruxible_client.contracts import ClaimViewRecord
-from cruxible_client.contracts import PlaybillAcceptedCoordinate as ClientAcceptedCoordinate
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.claim_reads import (
     ClaimBackingsRequest,
@@ -29,13 +29,12 @@ from cruxible_client.contracts.claims import (
 from cruxible_client.contracts.declared_blocks import ProjectionClaimBacking
 from cruxible_client.contracts.errors import (
     ClaimNotFoundError,
-    PlaybillFormatError,
+    FormatError,
 )
 from cruxible_core.authoring.id_prefixes import resolve_id_prefix
 from cruxible_core.compiler.compiler import artifact_codec_for_compiler
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.claims.claims import (
     _accepted_generation_time,
     _public_claim,
@@ -59,15 +58,15 @@ def service_read_claim_batch(
     request: ClaimReadBatchRequest,
 ) -> ClaimReadBatchResult:
     if request.cursor is not None and request.at is None:
-        raise PlaybillFormatError("Claim batch cursor requires an explicit accepted coordinate")
+        raise FormatError("Claim batch cursor requires an explicit accepted coordinate")
     coordinate = _resolve_coordinate(
         instance,
-        PlaybillAcceptedCoordinate.model_validate(request.at.model_dump())
+        AcceptedCoordinate.model_validate(request.at.model_dump())
         if request.at is not None
         else None,
     )
     resolved_at = ClientAcceptedCoordinate.model_validate(
-        PlaybillAcceptedCoordinate.from_internal(coordinate).model_dump()
+        AcceptedCoordinate.from_internal(coordinate).model_dump()
     )
     # A latest-head request becomes one immutable selection before any reads or
     # cursor binding. Subsequent pages must supply this returned coordinate.
@@ -83,7 +82,7 @@ def service_read_claim_batch(
             if binding != _cursor_selection(request) or not isinstance(after, str):
                 raise ValueError("cursor selection differs")
         except (ValueError, TypeError, UnicodeError) as exc:
-            raise PlaybillFormatError("Claim batch cursor does not match this selection") from exc
+            raise FormatError("Claim batch cursor does not match this selection") from exc
     if generation_sequence == 0:
         if request.claim_ids:
             raise ClaimNotFoundError("the accepted generation contains no Claims")
@@ -194,13 +193,13 @@ def service_read_claim_backings(
     request: ClaimBackingsRequest,
 ) -> ClaimBackingsResult:
     coordinate = _resolve_coordinate(
-        instance, PlaybillAcceptedCoordinate.model_validate(request.at.model_dump())
+        instance, AcceptedCoordinate.model_validate(request.at.model_dump())
     )
     names = tuple(name.removeprefix("Claim:") for name in request.claim_ids)
     try:
         paths = tuple(claim_path(name) for name in names)
     except ValueError as exc:
-        raise PlaybillFormatError("Claim backings require exact full Claim identities") from exc
+        raise FormatError("Claim backings require exact full Claim identities") from exc
     bodies = instance.blobs_at(coordinate.git_oid, paths)
     backings: list[ProjectionClaimBacking] = []
     for name, path in zip(names, paths, strict=True):
@@ -210,9 +209,9 @@ def service_read_claim_backings(
             bodies[path], path=path, codec=artifact_codec_for_compiler(coordinate.compiler)
         )
         if claim.identity != ArtifactIdentity(kind="Claim", name=name):
-            raise PlaybillFormatError("Claim backing identity differs from its accepted path")
+            raise FormatError("Claim backing identity differs from its accepted path")
         if claim.lifecycle.state != "live":
-            raise PlaybillFormatError(f"Claim backing must identify a live Claim: {name}")
+            raise FormatError(f"Claim backing must identify a live Claim: {name}")
         backings.append(
             ProjectionClaimBacking(
                 identity=claim.identity,
@@ -237,17 +236,17 @@ def service_read_claim_values(
     """
 
     from cruxible_client.contracts.claim_reads import MAX_CLAIM_VALUE_ROWS
-    from cruxible_client.contracts.errors import PlaybillFormatError as ValuesFormatError
+    from cruxible_client.contracts.errors import FormatError as ValuesFormatError
     from cruxible_core.service.discovery.claim_status import claim_resolution_statuses
     from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
 
     coordinate = _resolve_coordinate(
         instance,
-        PlaybillAcceptedCoordinate.model_validate(request.at.model_dump())
+        AcceptedCoordinate.model_validate(request.at.model_dump())
         if request.at is not None
         else None,
     )
-    at = PlaybillAcceptedCoordinate.from_internal(coordinate)
+    at = AcceptedCoordinate.from_internal(coordinate)
     clauses = ["lifecycle='live'"]
     values: list[object]
     if request.subject_kind is not None:

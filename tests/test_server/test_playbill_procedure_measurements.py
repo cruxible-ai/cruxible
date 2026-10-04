@@ -9,11 +9,11 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from cruxible_client.authoring.sdk import Playbill
+from cruxible_client.authoring.sdk import Cruxible
 from cruxible_client.contracts.procedures.artifacts import render_procedure
 from cruxible_client.contracts.procedures.readings import (
-    PlaybillProcedureMeasureResult,
-    PlaybillProcedureReadingsResult,
+    ProcedureMeasureResult,
+    ProcedureReadingsResult,
 )
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.governance.keys import GeneratedKeyMaterial, generate_client_principal_key
@@ -66,7 +66,7 @@ def test_measure_and_readings_routes_serve_a_real_run_and_typed_refusals(
     assert measured.status_code == 200, measured.text
     body = measured.json()
     assert body["run_id"] == run_id and body["rows"] == []
-    parsed = PlaybillProcedureMeasureResult.model_validate(body)
+    parsed = ProcedureMeasureResult.model_validate(body)
     assert parsed.observation_time == datetime(2026, 9, 3, 10, 5, tzinfo=UTC)
 
     # An undeclared name is a typed request fault carrying a runnable repair.
@@ -213,7 +213,7 @@ def test_a_nonempty_loop_runs_measures_retries_and_pages_over_the_wire(
         json={"tag": "playbill-procedure-readings-request-v1", "limit": 3},
     )
     assert page.status_code == 200, page.text
-    first_page = PlaybillProcedureReadingsResult.model_validate(page.json())
+    first_page = ProcedureReadingsResult.model_validate(page.json())
     assert len(first_page.readings) == 3 and first_page.truncated and first_page.cursor
     rest = client.post(
         f"{base}/readings",
@@ -224,7 +224,7 @@ def test_a_nonempty_loop_runs_measures_retries_and_pages_over_the_wire(
         },
     )
     assert rest.status_code == 200, rest.text
-    second_page = PlaybillProcedureReadingsResult.model_validate(rest.json())
+    second_page = ProcedureReadingsResult.model_validate(rest.json())
     assert len(second_page.readings) == 1 and not second_page.truncated
     assert second_page.observation_time == first_page.observation_time
     assert len({row.reading_id for row in (*first_page.readings, *second_page.readings)}) == 4
@@ -236,7 +236,7 @@ def test_a_nonempty_loop_runs_measures_retries_and_pages_over_the_wire(
     sdk_client._client._client = client  # noqa: SLF001
     workspace = tmp_path / "sdk-workspace"
     workspace.mkdir()
-    pb = Playbill._from_client(  # noqa: SLF001
+    pb = Cruxible._from_client(  # noqa: SLF001
         sdk_client,
         instance_id=instance_id,
         workspace=workspace,

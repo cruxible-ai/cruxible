@@ -46,7 +46,7 @@ from tests.core_support._adoption_fixture import (  # noqa: E402
     build_fixture,
 )
 
-from cruxible_client.contracts.types import PlaybillTrustRoot  # noqa: E402
+from cruxible_client.contracts.types import TrustRoot  # noqa: E402
 from cruxible_core.indexes.serving import SERVING_MANIFEST_FILE  # noqa: E402
 from cruxible_core.ledger.checkpoints import (  # noqa: E402
     CHECKPOINT_DIRECTORY,
@@ -118,7 +118,7 @@ def _saved_checkpoint(root: Path, suffix: int) -> Path:
 def _prepare_checkpoint(
     root: Path,
     managed_root: Path,
-    trust_root: PlaybillTrustRoot,
+    trust_root: TrustRoot,
     suffix: int,
 ) -> int:
     """Build the bounded-suffix checkpoint once and save a copy for every sample.
@@ -200,9 +200,7 @@ def command_open(args: argparse.Namespace) -> int:
 
     root = Path(args.root).resolve()
     managed_root = Path(args.managed_root)
-    trust_root = PlaybillTrustRoot.model_validate_json(
-        (root / TRUST_ROOT_FILE).read_text(encoding="utf-8")
-    )
+    trust_root = TrustRoot.model_validate_json((root / TRUST_ROOT_FILE).read_text(encoding="utf-8"))
     if args.mode == "genesis":
         checkpoint_path(managed_root / CHECKPOINT_DIRECTORY).unlink(missing_ok=True)
         suffix = None
@@ -279,9 +277,7 @@ def command_run(args: argparse.Namespace) -> int:
     summary = json.loads((root / FIXTURE_FILE).read_text(encoding="utf-8"))
     managed_root = Path(summary["managed_root"])
 
-    trust_root = PlaybillTrustRoot.model_validate_json(
-        (root / TRUST_ROOT_FILE).read_text(encoding="utf-8")
-    )
+    trust_root = TrustRoot.model_validate_json((root / TRUST_ROOT_FILE).read_text(encoding="utf-8"))
     placed = _prepare_checkpoint(root, managed_root, trust_root, args.suffix)
     checkpointed = [
         _sample(root, managed_root, mode="checkpoint", suffix=args.suffix)
@@ -362,9 +358,7 @@ def command_profile(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     summary = json.loads((root / FIXTURE_FILE).read_text(encoding="utf-8"))
     managed_root = Path(summary["managed_root"])
-    trust_root = PlaybillTrustRoot.model_validate_json(
-        (root / TRUST_ROOT_FILE).read_text(encoding="utf-8")
-    )
+    trust_root = TrustRoot.model_validate_json((root / TRUST_ROOT_FILE).read_text(encoding="utf-8"))
     suffix = _prepare_checkpoint(root, managed_root, trust_root, args.suffix)
     _restore_checkpoint(root, managed_root, args.suffix)
     profiler = cProfile.Profile()

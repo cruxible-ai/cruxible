@@ -1,9 +1,9 @@
-# Playbill coverage in Claude Code
+# Cruxible coverage in Claude Code
 
 Transparent coverage delivery for Claude Code, via a `PostToolUse` hook.
 
 **Read this first: this integration annotates `Grep` results only.** That is a
-limitation of the harness, not of Playbill, and the section below documents it
+limitation of the harness, not of Cruxible, and the section below documents it
 precisely so nobody has to rediscover it. If you control your own tool executor
 — a benchmark harness, an agent framework, anything where you call the tools
 yourself — use the middleware instead; it delivers coverage on all four tool
@@ -47,7 +47,7 @@ one staleness line if its manifest generation trails current accepted state.
 Floor files are presentation only: the middleware never binds them as evidence,
 even if a path rule would otherwise match.
 
-Bindings are **declared, never inferred.** Playbill will not guess that
+Bindings are **declared, never inferred.** Cruxible will not guess that
 `handbook.md` is the accepted source `documents/handbook.md`, because identical
 bytes in another file are precisely not the same source — that guess is the
 whole failure mode source-occurrence verification exists to prevent. A path with
@@ -128,7 +128,7 @@ Nothing here adapts to an unknown envelope by guessing.
 The command always exits 0 and always emits one JSON object. If the daemon is
 unreachable, a working file is unreadable, or the configuration is missing, the
 tool result is returned unchanged plus — where a channel exists — one
-`Playbill coverage: unavailable  [<code>]` line. A broken hook never breaks the
+`Cruxible coverage: unavailable  [<code>]` line. A broken hook never breaks the
 agent's tool call.
 
 Three adapter diagnostics may appear on stderr, without changing stdout:

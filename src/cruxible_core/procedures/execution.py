@@ -42,11 +42,11 @@ from cruxible_client.contracts.captures import (
     capture_contract_digest,
 )
 from cruxible_client.contracts.errors import (
-    PlaybillCasError,
-    PlaybillExecutionError,
-    PlaybillJournalConflictError,
-    PlaybillJournalError,
-    PlaybillJournalIntegrityError,
+    CasError,
+    ExecutionError,
+    JournalConflictError,
+    JournalError,
+    JournalIntegrityError,
 )
 from cruxible_client.contracts.procedure_runtime_policy import (
     ProcedureRuntimePolicy,
@@ -380,9 +380,9 @@ def resolve_procedure_resource_budget(
 ) -> ProcedureResourceBudgetV1 | None:
     if policy.result_bytes_cap is None and policy.repeat_attempts_cap is None:
         if budget.max_result_bytes is not None or hard_caps.max_result_bytes is not None:
-            raise PlaybillExecutionError("explicit result budgets require a runtime result policy")
+            raise ExecutionError("explicit result budgets require a runtime result policy")
         if hard_caps.max_repeat_attempts > 25:
-            raise PlaybillExecutionError("repeat attempts above 25 require a runtime repeat policy")
+            raise ExecutionError("repeat attempts above 25 require a runtime repeat policy")
         return None
     return ProcedureResourceBudgetV1(
         result_bytes_cap=min(
@@ -1274,13 +1274,13 @@ class ProcedureActivationAuthorityProtocol(Protocol):
 
 
 def _journal_refusal_code(
-    exc: PlaybillJournalError,
+    exc: JournalError,
 ) -> Literal["journal_conflict", "journal_integrity_error", "journal_append_failed"]:
     """Map one journal failure onto its served code by its exception class."""
 
-    if isinstance(exc, PlaybillJournalConflictError):
+    if isinstance(exc, JournalConflictError):
         return "journal_conflict"
-    if isinstance(exc, PlaybillJournalIntegrityError):
+    if isinstance(exc, JournalIntegrityError):
         return "journal_integrity_error"
     return "journal_append_failed"
 
@@ -1524,14 +1524,14 @@ def verify_line_admission_spec(
         admission.line_identity != accepted_line.line.identity
         or admission.line_spec_digest != accepted_line.artifact_digest
     ):
-        raise PlaybillExecutionError("Line admission names another accepted LineSpec")
+        raise ExecutionError("Line admission names another accepted LineSpec")
     if admission.procedure_artifact_digest != accepted_line.line.procedure.artifact_digest:
-        raise PlaybillExecutionError("Line admission names another Procedure artifact")
+        raise ExecutionError("Line admission names another Procedure artifact")
     policy = accepted_line.line.acquisition_policy
     # A Source-free Line pins no acquisition policy; its admission binds the
     # accepted runtime policy digest instead, which the admission digest seals.
     if policy is not None and admission.acquisition_policy_digest != policy.artifact_digest:
-        raise PlaybillExecutionError("Line admission names another acquisition policy")
+        raise ExecutionError("Line admission names another acquisition policy")
 
 
 def procedure_line_partition(line_identity: ArtifactIdentity) -> str:
@@ -1604,7 +1604,7 @@ def parse_admission_payload(
     payload: object,
 ) -> ProcedureAdmissionBoundPayloadV2 | ProcedureAdmissionBoundPayloadV3:
     if not isinstance(payload, dict):
-        raise PlaybillExecutionError("admission payload is not an object")
+        raise ExecutionError("admission payload is not an object")
     models = {
         model.model_fields["tag"].default: model
         for model in (
@@ -1619,7 +1619,7 @@ def parse_admission_payload(
     }
     model = models.get(payload.get("tag"))
     if model is None:
-        raise PlaybillExecutionError("admission payload version is unsupported")
+        raise ExecutionError("admission payload version is unsupported")
     return model.model_validate(payload)
 
 
@@ -1656,7 +1656,7 @@ def bind_prepared_investigation(
     if modern:
         fields["trigger_binding"] = trigger
     elif trigger is not None:
-        raise PlaybillExecutionError("Line trigger requires a Line acquisition admission")
+        raise ExecutionError("Line trigger requires a Line acquisition admission")
     provisional = admission_type.model_construct(**fields)
     replay = procedure_semantic_replay_key_digest(provisional)
     provisional = provisional.model_copy(update={"semantic_replay_key_digest": replay})
@@ -1700,7 +1700,7 @@ def procedure_direct_partition(semantic_replay_key_digest: str) -> str:
     return "direct:" + semantic_replay_key_digest.removeprefix("sha256:")
 
 
-class ProcedureRuntimePolicyAbsent(PlaybillExecutionError):
+class ProcedureRuntimePolicyAbsent(ExecutionError):
     code = "procedure_runtime_policy_absent"
 
 
@@ -1725,7 +1725,7 @@ def bind_line_admission_runtime_policy(
     provisional = provisional.model_copy(update={"semantic_replay_key_digest": replay_key})
     admission_digest = procedure_admission_digest(provisional)
     if provisional.occurrence_id is None:  # pragma: no cover - V3 validation proves this
-        raise PlaybillExecutionError("Line admission lacks its occurrence id")
+        raise ExecutionError("Line admission lacks its occurrence id")
     run_id = procedure_line_run_id(
         occurrence_id=provisional.occurrence_id,
         attempt=provisional.attempt,
@@ -1993,7 +1993,7 @@ def _exact_pin(
     if isinstance(binding, ProcedurePinSlotRef):
         bound = None if slot_pins is None else slot_pins.get(binding.slot_name)
         if bound is None:
-            raise PlaybillExecutionError(f"line_binding_required: {label} uses a LineSpec pin slot")
+            raise ExecutionError(f"line_binding_required: {label} uses a LineSpec pin slot")
         return bound
     return binding
 
@@ -2136,7 +2136,7 @@ def bind_accepted_state_materials(
                 assert isinstance(parameters, dict)
                 identity = parameters["subject_id"]
                 if not isinstance(identity, str):
-                    raise PlaybillExecutionError("Subject id must resolve to a string")
+                    raise ExecutionError("Subject id must resolve to a string")
                 read = state_reader.read_accepted_claim(
                     claim_type=query,
                     subject_kind=node.subject_kind,
@@ -2209,9 +2209,9 @@ def prepare_direct_procedure_run(
 
     procedure = accepted.procedure
     if not procedure.directly_runnable:
-        raise PlaybillExecutionError("line_binding_required: Procedure has unresolved pin slots")
+        raise ExecutionError("line_binding_required: Procedure has unresolved pin slots")
     if procedure_artifact_digest(procedure).tagged != accepted.artifact_digest:
-        raise PlaybillExecutionError("accepted Procedure artifact digest does not reproduce")
+        raise ExecutionError("accepted Procedure artifact digest does not reproduce")
 
     materials = list(
         bind_accepted_state_materials(
@@ -2344,7 +2344,7 @@ class _RunRefusal(Exception):
         )
 
 
-class ProcedureBoundaryRefused(PlaybillExecutionError):
+class ProcedureBoundaryRefused(ExecutionError):
     """A typed pre-execution or integrity refusal at a real public boundary."""
 
     def __init__(self, code: str, message: str, *, details: object | None = None) -> None:
@@ -2406,7 +2406,7 @@ class _Halted(Exception):
         self.reason = reason
 
 
-class _TransformInputInvalid(PlaybillExecutionError):
+class _TransformInputInvalid(ExecutionError):
     def __init__(self, message: str, *, slot: str) -> None:
         super().__init__(message)
         self.slot = slot
@@ -2577,7 +2577,7 @@ class ProcedureExecutor:
                 existing_records,
                 bodies=self.bodies,
             )
-        except (PlaybillJournalError, ValueError) as exc:
+        except (JournalError, ValueError) as exc:
             raise ProcedureBoundaryRefused(
                 "journal_integrity_error",
                 "Procedure journal history failed integrity verification.",
@@ -2585,7 +2585,7 @@ class ProcedureExecutor:
         indexed = self.run_index.get(admission.run_id)
         if indexed is not None:
             if indexed.admission_binding_digest != admission.admission_binding_digest:
-                raise PlaybillExecutionError("run_id collides across distinct admission bindings")
+                raise ExecutionError("run_id collides across distinct admission bindings")
             if indexed.status != "running":
                 return self._replay_completed(admission, existing_records)
             effect_state = (
@@ -2604,7 +2604,7 @@ class ProcedureExecutor:
                 if indexed.terminal_egress_prepared_count != indexed.terminal_egress_resolved_count
                 else ""
             )
-            raise PlaybillExecutionError(
+            raise ExecutionError(
                 "run_recovery_required: admitted run has incomplete exhaust"
                 + effect_state
                 + provider_state
@@ -2613,7 +2613,7 @@ class ProcedureExecutor:
         self._require_current(admission)
         if any(isinstance(node, InvokeNode) for node in accepted.procedure.definition.nodes):
             if self.nested_runner is None:
-                raise PlaybillExecutionError("nested Procedure runner is unavailable")
+                raise ExecutionError("nested Procedure runner is unavailable")
             self.nested_runner.preflight(accepted, admission)
         if isinstance(prepared, PreparedProcedureRunV5):
             self._preflight_source_runtime(prepared, accepted)
@@ -2625,7 +2625,7 @@ class ProcedureExecutor:
                 set(prepared.required_reservation_ids) - active_reservations
             )
             if missing_reservations:
-                raise PlaybillExecutionError(
+                raise ExecutionError(
                     "admission_material_reservation_missing: complete acquisition plan "
                     "reservations must exist before attempt_started"
                 )
@@ -2807,7 +2807,7 @@ class ProcedureExecutor:
             failure_code = exc.code
             failure_details = exc.details
             failure_message = "Procedure execution failed."
-        except PlaybillExecutionError:
+        except ExecutionError:
             status = "failed"
             failure_code = "unexpected_exception"
             failure_message = "Procedure execution failed."
@@ -2817,7 +2817,7 @@ class ProcedureExecutor:
             failure_code = "unexpected_exception"
 
         if state.provider_invocations_started != state.provider_invocations_completed:
-            raise PlaybillExecutionError(
+            raise ExecutionError(
                 "provider_completion_not_durable: Provider result was not committed"
             )
         semantic_result_digest = None
@@ -2931,7 +2931,7 @@ class ProcedureExecutor:
             or acquisition_policy_digest(self.acquisition_policy).tagged
             != admission.acquisition_policy_digest
         ):
-            raise PlaybillExecutionError(
+            raise ExecutionError(
                 "source_acquisition_plan_mismatch: accepted Source policy is unavailable"
             )
         for node in sources:
@@ -2967,12 +2967,12 @@ class ProcedureExecutor:
                     or selected.disposition != "selected"
                     or selected.selected_capture_digests != (supplied.capture_digest,)
                 ):
-                    raise PlaybillExecutionError(
+                    raise ExecutionError(
                         "source_acquisition_plan_mismatch: supplied Source closure differs"
                     )
                 continue
             if len(matches) != 1:
-                raise PlaybillExecutionError(
+                raise ExecutionError(
                     "source_acquisition_plan_mismatch: Source occurrence is not exact"
                 )
             occurrence = matches[0]
@@ -2996,7 +2996,7 @@ class ProcedureExecutor:
                 or contract is None
                 or capture_contract_digest(contract).tagged != contract_pin.artifact_digest
             ):
-                raise PlaybillExecutionError(
+                raise ExecutionError(
                     "source_acquisition_plan_mismatch: Source closure does not reproduce"
                 )
 
@@ -3130,12 +3130,12 @@ class ProcedureExecutor:
             )
         if isinstance(admission, ProcedureRunAdmissionV8):
             if self.parent_context is None:
-                raise PlaybillExecutionError("nested admission requires its executing parent")
+                raise ExecutionError("nested admission requires its executing parent")
             self.parent_context.verify(admission, accepted)
             if self.effective_rung != self.parent_context.child_rung(accepted):
-                raise PlaybillExecutionError("nested invocation changed the parent effective rung")
+                raise ExecutionError("nested invocation changed the parent effective rung")
         elif self.parent_context is not None:
-            raise PlaybillExecutionError("a child cannot execute under a standalone admission")
+            raise ExecutionError("a child cannot execute under a standalone admission")
         if admission.invocation_origin == "actor":
             if procedure.pins != admission.full_pins:
                 raise ProcedureBoundaryRefused(
@@ -3153,7 +3153,7 @@ class ProcedureExecutor:
             admission, ProcedureRunAdmissionV8
         ):
             if procedure.definition.budget != admission.budget:
-                raise PlaybillExecutionError("Procedure admission and accepted artifact differ")
+                raise ExecutionError("Procedure admission and accepted artifact differ")
         else:
             caps = procedure.definition.hard_caps
             if (
@@ -3165,7 +3165,7 @@ class ProcedureExecutor:
                     and admission.budget.max_items > caps.max_items
                 )
             ):
-                raise PlaybillExecutionError("Line run budget exceeds the Procedure hard caps")
+                raise ExecutionError("Line run budget exceeds the Procedure hard caps")
         if _node_pin_sets(accepted, self.slot_pins) != admission.node_pin_sets:
             raise ProcedureBoundaryRefused(
                 "pin_binding_mismatch",
@@ -3239,7 +3239,7 @@ class ProcedureExecutor:
         if rung is None:
             return
         if admission.invocation_origin != "line":
-            raise PlaybillExecutionError(
+            raise ExecutionError(
                 "an effective rung binds a Line run, never a direct actor invocation"
             )
         if (
@@ -3249,9 +3249,7 @@ class ProcedureExecutor:
             or rung.mandate_coordinate_digest != admission.mandate_coordinate_digest
             or rung.calibration_coordinate_digest != admission.calibration_coordinate_digest
         ):
-            raise PlaybillExecutionError(
-                "effective rung was computed against another admission binding"
-            )
+            raise ExecutionError("effective rung was computed against another admission binding")
 
     def _verify_input_planes(
         self,
@@ -3303,7 +3301,7 @@ class ProcedureExecutor:
         for exhaust in admission.exhaust_inputs:
             node = nodes[exhaust.input_name]
             if not isinstance(node, ExhaustTapNode):  # pragma: no cover - plane law covers it
-                raise PlaybillExecutionError("exhaust input names a non-exhaust node")
+                raise ExecutionError("exhaust input names a non-exhaust node")
             reducer = self._pin(
                 node.reducer_or_query,
                 label=f"exhaust_tap {node.node_id!r}",
@@ -3501,15 +3499,13 @@ class ProcedureExecutor:
                             )
                     else:
                         if definition.returns is None:
-                            raise PlaybillExecutionError(
-                                "Procedure must finish at an explicit return path"
-                            )
+                            raise ExecutionError("Procedure must finish at an explicit return path")
                         result = state.outputs[definition.returns]
                         state.return_tokens = (
                             state.alias_tokens(frozenset({definition.returns})) | state.control
                         )
                 except KeyError as exc:  # pragma: no cover - static law should prevent
-                    raise PlaybillExecutionError("Procedure return alias was not produced") from exc
+                    raise ExecutionError("Procedure return alias was not produced") from exc
                 return_contract = self._pin(
                     definition.contract_out,
                     label="Procedure contract_out",
@@ -3568,7 +3564,7 @@ class ProcedureExecutor:
             return None
         if isinstance(node, StateTapNodeV3 | ClaimTapNode):
             if node.as_ not in state.outputs:
-                raise PlaybillExecutionError("admitted state_tap material is absent")
+                raise ExecutionError("admitted state_tap material is absent")
             self._extend_alias(state, node.as_, _node_policy_tokens(node) | state.control)
             return None
         if isinstance(node, SourceNode):
@@ -3696,7 +3692,7 @@ class ProcedureExecutor:
                     outputs=state.outputs,
                     parameters=state.parameters,
                 )
-            except PlaybillExecutionError as exc:
+            except ExecutionError as exc:
                 raise _RunRefusal(
                     "runtime_reference_unresolved",
                     "A guard runtime reference did not resolve.",
@@ -3734,7 +3730,7 @@ class ProcedureExecutor:
         ):
             self._run_terminal(node, admission=admission, state=state, records=records)
             return None
-        raise PlaybillExecutionError(f"unsupported graph-v3 node {type(node).__name__}")
+        raise ExecutionError(f"unsupported graph-v3 node {type(node).__name__}")
 
     @staticmethod
     def _extend_alias(
@@ -4091,7 +4087,7 @@ class ProcedureExecutor:
                 provenance_grade="daemon-fetched",
                 canonical_material=material,
             )
-        except (CaptureFormatError, PlaybillCasError, ValidationError, ValueError) as exc:
+        except (CaptureFormatError, CasError, ValidationError, ValueError) as exc:
             raise _InternalFailure(
                 "provider_protocol_violation",
                 details={"node_id": node.node_id, "reason": "Capture conversion failed"},
@@ -4223,7 +4219,7 @@ class ProcedureExecutor:
             return
         acquisition = result.acquisition
         if acquisition is None:  # pragma: no cover - typed-result invariant
-            raise PlaybillExecutionError("selected acquisition carries no Capture")
+            raise ExecutionError("selected acquisition carries no Capture")
         material = acquisition.canonical_material
         if material is None:
             raise _RunRefusal(
@@ -4289,7 +4285,7 @@ class ProcedureExecutor:
         from cruxible_core.procedures.nested import ParentInvocationContext
 
         if self.nested_runner is None or not isinstance(admission, ProcedureRunAdmissionV2):
-            raise PlaybillExecutionError("nested Procedure invocation requires an admitted runner")
+            raise ExecutionError("nested Procedure invocation requires an admitted runner")
         remaining_us = (
             admission.budget.wall_clock.microseconds
             - (self.clock.monotonic_ns() - started_ns) // 1000
@@ -4351,13 +4347,13 @@ class ProcedureExecutor:
             not child_records
             or tuple(row.record_digest for row in child_records) != result.receipt.record_digests
         ):
-            raise PlaybillExecutionError("nested receipt does not reproduce retained child records")
+            raise ExecutionError("nested receipt does not reproduce retained child records")
         access = BodyAccessContext(principal_id="nested-procedure", can_read_body=True)
         admission_records = [
             row for row in child_records if row.record.event_kind == "admission_bound"
         ]
         if len(admission_records) != 1:
-            raise PlaybillExecutionError("nested receipt requires exactly one child admission")
+            raise ExecutionError("nested receipt requires exactly one child admission")
         admitted = parse_admission_payload(
             parse_journal_payload(
                 self.bodies.read(admission_records[0].record.payload_digest, access=access)
@@ -4367,7 +4363,7 @@ class ProcedureExecutor:
             not isinstance(admitted, ProcedureRunAdmissionV8)
             or admitted.parent_binding != context.binding
         ):
-            raise PlaybillExecutionError("nested receipt is not bound to this parent occurrence")
+            raise ExecutionError("nested receipt is not bound to this parent occurrence")
         if (
             admitted.procedure_identity != node.procedure.target
             or admitted.procedure_artifact_digest != node.procedure.artifact_digest
@@ -4376,16 +4372,16 @@ class ProcedureExecutor:
             or admitted.journal_stream != result.receipt.stream
             or admitted.journal_partition_id != result.receipt.partition_id
         ):
-            raise PlaybillExecutionError("nested receipt names another Procedure")
+            raise ExecutionError("nested receipt names another Procedure")
         final = parse_journal_payload(
             self.bodies.read(child_records[-1].record.payload_digest, access=access)
         )
         if child_records[-1].record.event_kind != "attempt_finalized" or not isinstance(
             final, dict
         ):
-            raise PlaybillExecutionError("nested execution has no durable completion")
+            raise ExecutionError("nested execution has no durable completion")
         if final.get("status") != result.status or final.get("output") != result.output:
-            raise PlaybillExecutionError("nested completion differs from returned result")
+            raise ExecutionError("nested completion differs from returned result")
         budget = ProcedureRunBudgetV1.model_validate(final["budget"]).observed
         state.provider_calls += budget.provider_calls
         state.capture_bytes += budget.capture_bytes
@@ -4402,11 +4398,11 @@ class ProcedureExecutor:
             final["return_manifest"]
         )
         if returned_manifest.run_id != result.run_id:
-            raise PlaybillExecutionError("nested return lineage names another run")
+            raise ExecutionError("nested return lineage names another run")
         returned_tokens = manifest_dependency_tokens(returned_manifest)
         retained_facts = final.get("dependency_facts", {})
         if not isinstance(retained_facts, dict):
-            raise PlaybillExecutionError("nested return facts must be an object")
+            raise ExecutionError("nested return facts must be an object")
         for key, facts in retained_facts.items():
             state.facts[key] = DependencyEvidenceFactsV1.model_validate(facts)
         tokens = (
@@ -4430,13 +4426,9 @@ class ProcedureExecutor:
             if final.get("terminal_capture") is not None:
                 capture = final["terminal_capture"]
                 if not isinstance(capture, str):
-                    raise PlaybillExecutionError(
-                        "nested capture reference must name an exact capture"
-                    )
+                    raise ExecutionError("nested capture reference must name an exact capture")
                 if produced_capture_token(capture) not in returned_tokens:
-                    raise PlaybillExecutionError(
-                        "nested capture has no retained dependency binding"
-                    )
+                    raise ExecutionError("nested capture has no retained dependency binding")
                 outcome["terminal"] = {"capture": {"capture_digest": capture}}
         state.outputs[node.as_] = normalize_canonical(outcome)
         self._append_event(
@@ -5480,7 +5472,7 @@ class ProcedureExecutor:
                     outputs=local_outputs,
                     parameters=state.parameters,
                 )
-            except PlaybillExecutionError as exc:
+            except ExecutionError as exc:
                 raise _RunRefusal(
                     "runtime_reference_unresolved",
                     "A repeat-until runtime reference did not resolve.",
@@ -5718,11 +5710,11 @@ class ProcedureExecutor:
                         and item.body_digest == member.get("body_digest")
                     )
                     if len(matches) != 1:
-                        raise PlaybillExecutionError(
+                        raise ExecutionError(
                             "run_recovery_required: admission material reservation is absent"
                         )
                     if not self.bodies.verify(matches[0].body_digest):
-                        raise PlaybillExecutionError(
+                        raise ExecutionError(
                             "run_recovery_required: reserved admission material is unavailable"
                         )
                     pending_to_release.append(matches[0])
@@ -5753,7 +5745,7 @@ class ProcedureExecutor:
                     expected_head=head,
                     fencing_token=self.fencing_token,
                 )
-            except PlaybillJournalError as exc:
+            except JournalError as exc:
                 # Classification is by exception class, never by grepping English
                 # out of the message: the backend's prose is a diagnostic, and a
                 # served refusal code derived from it misreads any wording the
@@ -5777,9 +5769,7 @@ class ProcedureExecutor:
                     body_digest=stored.record.payload_digest,
                 )
             ):
-                raise PlaybillExecutionError(
-                    "journal append did not reproduce its material reservation"
-                )
+                raise ExecutionError("journal append did not reproduce its material reservation")
             for pending in pending_to_release:
                 self.material_reservations.release_locked(pending.reservation_id)
             self.material_reservations.release_locked(reservation.reservation_id)
@@ -5799,7 +5789,7 @@ class ProcedureExecutor:
             and item.record.admission_binding_digest == admission.admission_binding_digest
         ]
         if not run_records or run_records[-1].record.event_kind != "attempt_finalized":
-            raise PlaybillExecutionError("completed run index is not supported by journal exhaust")
+            raise ExecutionError("completed run index is not supported by journal exhaust")
         provider_starts = sum(
             item.record.event_kind == "provider_invocation_started" for item in run_records
         )
@@ -5820,7 +5810,7 @@ class ProcedureExecutor:
             self.bodies.read(run_records[-1].record.payload_digest, access=access)
         )
         if not isinstance(payload, dict):
-            raise PlaybillExecutionError("attempt-finalized payload is not an object")
+            raise ExecutionError("attempt-finalized payload is not an object")
         receipt = self._receipt(admission, run_records)
         try:
             return ProcedureRunResultV1.model_validate(
@@ -5833,7 +5823,7 @@ class ProcedureExecutor:
                 }
             )
         except ValueError as exc:
-            raise PlaybillExecutionError(
+            raise ExecutionError(
                 "attempt-finalized payload cannot reproduce its run result"
             ) from exc
 
@@ -5843,7 +5833,7 @@ class ProcedureExecutor:
         records: list[StoredProcedureJournalRecordV1],
     ) -> ProcedureRunReceiptV1:
         if not records:  # pragma: no cover - attempt start always lands first
-            raise PlaybillExecutionError("Procedure run produced no exhaust records")
+            raise ExecutionError("Procedure run produced no exhaust records")
         return ProcedureRunReceiptV1(
             run_id=admission.run_id,
             admission_binding_digest=admission.admission_binding_digest,
@@ -6041,7 +6031,7 @@ def _resolve_path(value: object, path: tuple[str, ...], *, reference: str) -> ob
         if isinstance(current, list) and member.isdigit() and int(member) < len(current):
             current = current[int(member)]
             continue
-        raise PlaybillExecutionError(f"runtime reference {reference!r} does not resolve")
+        raise ExecutionError(f"runtime reference {reference!r} does not resolve")
     return current
 
 
@@ -6060,15 +6050,15 @@ def _resolve_reference(
         parts = tuple(value[7:].split("."))
         alias = parts[0]
         if alias not in outputs:
-            raise PlaybillExecutionError(f"runtime reference {value!r} names absent output")
+            raise ExecutionError(f"runtime reference {value!r} names absent output")
         return _resolve_path(outputs[alias], parts[1:], reference=value)
     if value == "$item":
         if item is None:
-            raise PlaybillExecutionError("$item is unavailable outside item transforms")
+            raise ExecutionError("$item is unavailable outside item transforms")
         return item
     if value.startswith("$item."):
         if item is None:
-            raise PlaybillExecutionError("$item is unavailable outside item transforms")
+            raise ExecutionError("$item is unavailable outside item transforms")
         return _resolve_path(item, tuple(value[6:].split(".")), reference=value)
     return value
 
@@ -6147,7 +6137,7 @@ def _resolve_transform_template(
         if key == "fields" and deferred_fields:
             continue
         if _contains_item_reference(member):
-            raise PlaybillExecutionError(
+            raise ExecutionError(
                 f"$item is unavailable in {transform_kind}.{key} outside an item field template"
             )
     return {
@@ -6163,7 +6153,7 @@ def _resolve_transform_template(
 
 def _declared_transform_spec(kind: str, spec: object) -> CanonicalValue:
     if not isinstance(spec, BaseModel):
-        raise PlaybillExecutionError("typed transform spec is absent")
+        raise ExecutionError("typed transform spec is absent")
     payload = spec.model_dump(mode="json", exclude={"tag"})
     if kind == "adapter":
         return normalize_canonical(payload["value"])
@@ -6203,7 +6193,7 @@ def _resolve_node_template(
                 outputs=outputs,
             )
         )
-    except PlaybillExecutionError as exc:
+    except ExecutionError as exc:
         raise _RunRefusal(
             "runtime_reference_unresolved",
             "A Procedure runtime reference did not resolve.",
@@ -6242,7 +6232,7 @@ def _validate_node_contract(
                 max_items=max_items,
             )
             if not isinstance(budget_result, ValidatedProcedureContract):
-                raise PlaybillExecutionError("Contract budget validator returned an invalid result")
+                raise ExecutionError("Contract budget validator returned an invalid result")
             if observe_items is not None:
                 for observation in budget_result.list_observations:
                     observe_items(observation.observed, boundary, observation.field_path)
@@ -6317,7 +6307,7 @@ def _apply_node_transform(
             f"The {kind} transform input is invalid.",
             node_id=node_id,
         ) from exc
-    except PlaybillExecutionError as exc:
+    except ExecutionError as exc:
         raise _RunRefusal(
             _TRANSFORM_INPUT_REFUSAL_CODES[kind],
             f"The {kind} transform input is invalid.",
@@ -6427,7 +6417,7 @@ def _apply_transform(
     if list_boundary is None:
         max_items = None
     if not isinstance(spec, dict):
-        raise PlaybillExecutionError(f"transform {kind!r} requires an object spec")
+        raise ExecutionError(f"transform {kind!r} requires an object spec")
     if kind == "shape_items":
         items = _extract_items(
             spec.get("items"),
@@ -6438,7 +6428,7 @@ def _apply_transform(
         )
         fields = spec.get("fields", {})
         if not isinstance(fields, dict):
-            raise PlaybillExecutionError("shape_items fields must be an object")
+            raise ExecutionError("shape_items fields must be an object")
         shaped: list[CanonicalValue] = []
         for item in items:
             base = (
@@ -6475,7 +6465,7 @@ def _apply_transform(
         )
         where = spec.get("where", {})
         if not isinstance(where, dict):
-            raise PlaybillExecutionError("filter_items where must be an object")
+            raise ExecutionError("filter_items where must be an object")
         kept_indices: list[int] = []
         for index, item in enumerate(items):
             if not isinstance(item, dict) or not all(
@@ -6509,7 +6499,7 @@ def _apply_transform(
         )
         keys = spec.get("keys", [])
         if not isinstance(keys, list) or not all(isinstance(item, str) for item in keys):
-            raise PlaybillExecutionError("dedupe_items keys must be a string list")
+            raise ExecutionError("dedupe_items keys must be a string list")
         key_names = [str(item) for item in keys]
         seen: set[bytes] = set()
         output: list[CanonicalValue] = []
@@ -6561,7 +6551,7 @@ def _apply_transform(
             or not isinstance(right_key, str)
             or not isinstance(fields, dict)
         ):
-            raise PlaybillExecutionError("join_items keys and fields are malformed")
+            raise ExecutionError("join_items keys and fields are malformed")
         joined_output: list[CanonicalValue] = []
         joined_lineage: list[tuple[tuple[str, int], ...]] = []
         for left_index, left_item in enumerate(left):
@@ -6605,7 +6595,7 @@ def _apply_transform(
             list_boundary=list_boundary,
         )
         return normalize_canonical({"count": len(items)}), None
-    raise PlaybillExecutionError(f"unsupported deterministic transform {kind!r}")
+    raise ExecutionError(f"unsupported deterministic transform {kind!r}")
 
 
 def _check_return_budget(
@@ -6649,7 +6639,7 @@ def _operand_value(
         return normalize_canonical(operand.value)
     if operand.kind == "parameter":
         if not isinstance(parameters, dict) or operand.parameter_name not in parameters:
-            raise PlaybillExecutionError("guard parameter is absent")
+            raise ExecutionError("guard parameter is absent")
         return normalize_canonical(parameters[operand.parameter_name])
     if operand.kind in {"input", "exists"} and operand.input_name is not None:
         if not isinstance(input_payload, dict) or operand.input_name not in input_payload:
@@ -6677,7 +6667,7 @@ def _operand_value(
 
 
 def _missing_operand(name: str) -> CanonicalValue:
-    raise PlaybillExecutionError(f"guard operand {name!r} is absent")
+    raise ExecutionError(f"guard operand {name!r} is absent")
 
 
 def _compare(left: CanonicalValue, operator: str, right: CanonicalValue) -> bool:
@@ -6686,7 +6676,7 @@ def _compare(left: CanonicalValue, operator: str, right: CanonicalValue) -> bool
     if operator == "ne":
         return left != right
     if isinstance(left, bool) or isinstance(right, bool):
-        raise PlaybillExecutionError("ordered guard operands cannot be booleans")
+        raise ExecutionError("ordered guard operands cannot be booleans")
     if isinstance(left, int) and isinstance(right, int):
         comparable_left: int | str = left
         comparable_right: int | str = right
@@ -6694,7 +6684,7 @@ def _compare(left: CanonicalValue, operator: str, right: CanonicalValue) -> bool
         comparable_left = left
         comparable_right = right
     else:
-        raise PlaybillExecutionError("ordered guard operands must share an int or string type")
+        raise ExecutionError("ordered guard operands must share an int or string type")
     if operator in {"gt", "after"}:
         return comparable_left > comparable_right  # type: ignore[operator]
     if operator in {"gte", "on_or_after"}:
@@ -6703,7 +6693,7 @@ def _compare(left: CanonicalValue, operator: str, right: CanonicalValue) -> bool
         return comparable_left < comparable_right  # type: ignore[operator]
     if operator in {"lte", "on_or_before"}:
         return comparable_left <= comparable_right  # type: ignore[operator]
-    raise PlaybillExecutionError(f"unknown guard operator {operator!r}")
+    raise ExecutionError(f"unknown guard operator {operator!r}")
 
 
 def _evaluate_predicate(

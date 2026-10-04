@@ -44,7 +44,7 @@ from cruxible_client.contracts.claims import (
     claim_citation_id,
 )
 from cruxible_client.contracts.discovery import DiscoveryMatchBasisKind
-from cruxible_client.contracts.errors import CanonicalEncodingError, PlaybillError
+from cruxible_client.contracts.errors import CanonicalEncodingError, CruxibleError
 from cruxible_client.contracts.query.grammar import byte_sorted
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import CoverageDescriptor, SourceAccessClass
@@ -128,7 +128,7 @@ not degraded: the manifest's own per-source commitments still prove freshness
 against the observed snapshot. `degraded` and `overflowed` cannot."""
 
 
-class CoverageError(PlaybillError):
+class CoverageError(CruxibleError):
     """A coverage answer could not be produced deterministically."""
 
 
@@ -211,7 +211,7 @@ class CoverageCommitmentScanProof(_StrictCoverageModel):
         )
 
 
-class PlaybillCitationWindowObservation(_StrictCoverageModel):
+class CitationWindowObservation(_StrictCoverageModel):
     """Observed bytes at one accepted citation's original source window."""
 
     tag: Literal["playbill-citation-window-observation-v1"] = (
@@ -233,7 +233,7 @@ class PlaybillCitationWindowObservation(_StrictCoverageModel):
         return value
 
     @model_validator(mode="after")
-    def _window_shape(self) -> "PlaybillCitationWindowObservation":
+    def _window_shape(self) -> "CitationWindowObservation":
         if self.original_end < self.original_start:
             raise ValueError("citation window end must not precede its start")
         if self.addressable != (self.observed_window_digest is not None):
@@ -573,7 +573,7 @@ class CoverageSpanResultV3(_StrictCoverageModel):
     ambiguous_occurrence_count: int = Field(default=0, ge=0)
     omitted_card_count: int = Field(default=0, ge=0)
     commitment_scan_proofs: tuple[CoverageCommitmentScanProof, ...] = ()
-    citation_window_observations: tuple[PlaybillCitationWindowObservation, ...] = ()
+    citation_window_observations: tuple[CitationWindowObservation, ...] = ()
     coverage: CoverageDescriptor
 
     @model_validator(mode="after")
@@ -836,7 +836,7 @@ __all__ = [
     "CoverageWatcherHealthV1",
     "coverage_span_match_state",
     "LogicalSourceIdentity",
-    "PlaybillCitationWindowObservation",
+    "CitationWindowObservation",
     "logical_sources_sorted",
     "strongest_match_state",
     "occurrence_identity_digest",

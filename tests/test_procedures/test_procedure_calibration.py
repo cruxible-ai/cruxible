@@ -7,7 +7,7 @@ from datetime import timedelta
 import pytest
 
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
-from cruxible_client.contracts.errors import PlaybillCasError, PlaybillExecutionError
+from cruxible_client.contracts.errors import CasError, ExecutionError
 from cruxible_client.contracts.procedures.results import (
     ProcedureProviderBindingV1,
     ProcedureRunReceiptV4,
@@ -370,7 +370,7 @@ def test_g2_cohort_changes_for_provider_successor_and_never_implicitly_carries(t
     assert refused.value.code == "calibration.cohort_witness_implementation_mismatch"
 
     artifact = store_procedure_calibration_reading(bodies, first_reading)
-    with pytest.raises(PlaybillExecutionError, match="another implementation cohort"):
+    with pytest.raises(ExecutionError, match="another implementation cohort"):
         load_procedure_calibration_reading(
             bodies,
             artifact,
@@ -384,7 +384,7 @@ def test_reading_refuses_a_substituted_query_receipt(tmp_path) -> None:
     cohort = _cohort(activations[0].procedure_artifact_digest)
     substituted = receipt.model_copy(update={"visible_row_count": 1})
 
-    with pytest.raises(PlaybillExecutionError, match="exact query result"):
+    with pytest.raises(ExecutionError, match="exact query result"):
         produce_procedure_calibration_reading(
             result=result,
             receipt=substituted,
@@ -432,7 +432,7 @@ def test_reading_load_refuses_access_missing_body_invalid_body_and_pin_tamper(tm
     assert reading is not None
     artifact = store_procedure_calibration_reading(bodies, reading)
 
-    with pytest.raises(PlaybillCasError, match="access is denied"):
+    with pytest.raises(CasError, match="access is denied"):
         load_procedure_calibration_reading(
             bodies,
             artifact,
@@ -440,7 +440,7 @@ def test_reading_load_refuses_access_missing_body_invalid_body_and_pin_tamper(tm
             expected_cohort_key=cohort.cohort_key,
         )
 
-    with pytest.raises(PlaybillCasError, match="object is missing"):
+    with pytest.raises(CasError, match="object is missing"):
         load_procedure_calibration_reading(
             bodies,
             artifact.model_copy(update={"body_digest": _digest("missing-reading-body")}),
@@ -449,7 +449,7 @@ def test_reading_load_refuses_access_missing_body_invalid_body_and_pin_tamper(tm
         )
 
     invalid_body = bodies.store(b"{}")
-    with pytest.raises(PlaybillExecutionError, match="artifact is invalid"):
+    with pytest.raises(ExecutionError, match="artifact is invalid"):
         load_procedure_calibration_reading(
             bodies,
             artifact.model_copy(update={"body_digest": invalid_body.digest}),
@@ -457,7 +457,7 @@ def test_reading_load_refuses_access_missing_body_invalid_body_and_pin_tamper(tm
             expected_cohort_key=cohort.cohort_key,
         )
 
-    with pytest.raises(PlaybillExecutionError, match="does not reproduce its pin"):
+    with pytest.raises(ExecutionError, match="does not reproduce its pin"):
         load_procedure_calibration_reading(
             bodies,
             artifact.model_copy(

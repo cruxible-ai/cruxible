@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.canonical import ArtifactDigest
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.procedures.artifacts import ProcedureArtifactAny
 from cruxible_client.contracts.procedures.models import (
     ProcedurePinSlotRef,
@@ -18,7 +18,7 @@ from cruxible_client.contracts.procedures.models import (
 )
 
 
-class ProcedurePinClosureError(PlaybillFormatError):
+class ProcedurePinClosureError(FormatError):
     """A LineSpec binding cannot close an accepted Procedure exactly."""
 
 

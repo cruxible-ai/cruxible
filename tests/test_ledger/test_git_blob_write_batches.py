@@ -8,7 +8,7 @@ from unittest.mock import Mock
 import pytest
 
 from cruxible_client.contracts.canonical import normalize_manifest_paths
-from cruxible_client.contracts.errors import CanonicalEncodingError, PlaybillGitError
+from cruxible_client.contracts.errors import CanonicalEncodingError, GitError
 from cruxible_core.ledger.git import GitLedger
 
 
@@ -150,14 +150,14 @@ def test_a_path_may_turn_between_file_and_directory(ledger, tmp_path, before, af
 
 def test_a_path_that_is_both_file_and_directory_is_refused(ledger):
     base = ledger._write_tree({"a": b"file"})
-    with pytest.raises(PlaybillGitError, match="both a file and a directory"):
+    with pytest.raises(GitError, match="both a file and a directory"):
         ledger._commit_changes_to_tree(base, {"a/b": ledger._blob_oid(b"x")}, {})
 
 
 def test_normalization_collisions_refuse_before_writing(ledger, monkeypatch):
     writer = Mock()
     monkeypatch.setattr(ledger, "_store_loose_objects", writer)
-    with pytest.raises(PlaybillGitError, match="collide after normalization"):
+    with pytest.raises(GitError, match="collide after normalization"):
         ledger._write_tree({"café": b"one", "cafe\u0301": b"two"})
     with pytest.raises(CanonicalEncodingError, match="case-fold-colliding"):
         ledger._write_tree({"A": b"one", "a": b"two"})
@@ -169,7 +169,7 @@ def test_different_bytes_with_same_computed_address_are_not_deduplicated(ledger,
     monkeypatch.setattr(ledger, "_blob_oid", lambda content: oid)
     writer = Mock()
     monkeypatch.setattr(ledger, "_store_loose_objects", writer)
-    with pytest.raises(PlaybillGitError, match="different blob bytes"):
+    with pytest.raises(GitError, match="different blob bytes"):
         ledger._write_tree({"a": b"one", "b": b"two"})
     writer.assert_not_called()
 
@@ -312,6 +312,6 @@ def test_blobs_at_answers_exact_files_as_the_whole_tree_read(ledger):
     blob = ledger._git(["hash-object", "-w", "--stdin"], input_bytes=b"q.json").decode().strip()
     listing = f"120000 blob {blob}\tlink\n100644 blob {ledger._blob_oid(b'q')}\tq.json\n"
     linked = _commit(ledger, ledger._git(["mktree"], input_bytes=listing.encode()).decode().strip())
-    with pytest.raises(PlaybillGitError, match="unsupported 120000"):
+    with pytest.raises(GitError, match="unsupported 120000"):
         ledger.blobs_at(linked, ("link",))
     assert ledger.blobs_at(linked, ("q.json",)) == {"q.json": b"q"}

@@ -20,7 +20,7 @@ def test_next_observes_the_mcp_workspace_and_stamps_the_default_request(
     answer = object()
 
     class StubClient:
-        def next_playbill(self, instance_id: str, **kwargs: Any) -> object:
+        def next(self, instance_id: str, **kwargs: Any) -> object:
             sent.update(kwargs, instance_id=instance_id)
             return answer
 
@@ -62,7 +62,7 @@ def test_rebase_reaches_the_served_rebase_route(monkeypatch: pytest.MonkeyPatch)
     view = object()
 
     class StubClient:
-        def rebase_playbill_authoring_intent(self, instance_id: str, intent_id: str) -> object:
+        def rebase_authoring_intent(self, instance_id: str, intent_id: str) -> object:
             rebased.append((instance_id, intent_id))
             return view
 

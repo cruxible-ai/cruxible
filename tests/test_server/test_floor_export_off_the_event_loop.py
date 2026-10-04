@@ -26,7 +26,7 @@ import structlog
 from fastapi.testclient import TestClient
 
 from cruxible_client import contracts
-from cruxible_client.contracts.floor import PlaybillFloorDelta
+from cruxible_client.contracts.floor import FloorDelta
 from cruxible_core.errors import FloorAdmissionMisuse
 from cruxible_core.mcp.permissions import reset_permissions
 from cruxible_core.runtime import playbill_api
@@ -41,7 +41,7 @@ from tests.support.floor_exports import floor_v5_delta
 
 _FAILURE_BOUND_SECONDS = 30.0
 _DIGEST = "sha256:" + "0" * 64
-_COORDINATE = contracts.PlaybillAcceptedCoordinate(
+_COORDINATE = contracts.AcceptedCoordinate(
     git_oid="0" * 40,
     semantic_root=_DIGEST,
     generation_root=_DIGEST,
@@ -104,16 +104,16 @@ def test_a_slow_floor_export_does_not_block_a_concurrent_cheap_request(
     release = threading.Event()
     released_by_test: list[bool] = []
 
-    def blocking_export(instance_id: str, **_: object) -> contracts.PlaybillFloorExport:
+    def blocking_export(instance_id: str, **_: object) -> contracts.FloorExport:
         entered.set()
         released_by_test.append(release.wait(_FAILURE_BOUND_SECONDS))
-        coordinate = contracts.PlaybillAcceptedCoordinate(
+        coordinate = contracts.AcceptedCoordinate(
             git_oid="0" * 40,
             semantic_root=_DIGEST,
             generation_root=_DIGEST,
             compiler_digest=_DIGEST,
         )
-        return contracts.PlaybillFloorExport(
+        return contracts.FloorExport(
             tag="playbill-floor-export-v5", coordinate=coordinate, manifest={}, files=[]
         )
 
@@ -188,7 +188,7 @@ def test_queued_exports_hold_no_worker_thread_while_they_wait(
             resolved.append(instance_id)
         return instance_id
 
-    def blocking_export(instance_id: str, **_: object) -> contracts.PlaybillFloorExport:
+    def blocking_export(instance_id: str, **_: object) -> contracts.FloorExport:
         with running_lock:
             running[instance_id] = running.get(instance_id, 0) + 1
             most_running[instance_id] = max(most_running.get(instance_id, 0), running[instance_id])
@@ -199,9 +199,9 @@ def test_queued_exports_hold_no_worker_thread_while_they_wait(
                 released_by_test.append(release.wait(_FAILURE_BOUND_SECONDS))
             if instance_id == "inst_b":
                 other_instance_entered.set()
-            return contracts.PlaybillFloorExport(
+            return contracts.FloorExport(
                 tag="playbill-floor-export-v5",
-                coordinate=contracts.PlaybillAcceptedCoordinate(
+                coordinate=contracts.AcceptedCoordinate(
                     git_oid="0" * 40,
                     semantic_root=_DIGEST,
                     generation_root=_DIGEST,
@@ -282,18 +282,18 @@ def test_a_delta_waits_behind_an_export_of_its_instance_only(
             resolved.append(instance_id)
         return instance_id
 
-    def blocking_export(instance_id: str, **_: object) -> contracts.PlaybillFloorExport:
+    def blocking_export(instance_id: str, **_: object) -> contracts.FloorExport:
         with order_lock:
             order.append(f"export {instance_id} in")
         export_entered.set()
         released_by_test.append(release.wait(_FAILURE_BOUND_SECONDS))
         with order_lock:
             order.append(f"export {instance_id} out")
-        return contracts.PlaybillFloorExport(
+        return contracts.FloorExport(
             tag="playbill-floor-export-v5", coordinate=_COORDINATE, manifest={}, files=[]
         )
 
-    def delta(instance_id: str, **_: object) -> PlaybillFloorDelta:
+    def delta(instance_id: str, **_: object) -> FloorDelta:
         with order_lock:
             order.append(f"delta {instance_id}")
         if instance_id == "inst_b":
@@ -360,7 +360,7 @@ def test_an_in_process_floor_holder_on_a_thread_excludes_that_instances_routes(
             resolved.append(instance_id)
         return instance_id
 
-    def delta(instance_id: str, **_: object) -> PlaybillFloorDelta:
+    def delta(instance_id: str, **_: object) -> FloorDelta:
         with order_lock:
             order.append(f"delta {instance_id}")
         if instance_id == "inst_b":
@@ -423,8 +423,8 @@ def test_a_route_cancelled_mid_render_keeps_its_instance_until_the_render_ends(
     import asyncio
 
     from cruxible_core.server.playbill_request_models import (
-        PlaybillFloorDeltaRequest,
-        PlaybillFloorExportRequest,
+        FloorDeltaRequest,
+        FloorExportRequest,
     )
 
     export_entered = threading.Event()
@@ -448,16 +448,16 @@ def test_a_route_cancelled_mid_render_keeps_its_instance_until_the_render_ends(
             running -= 1
             order.append(f"{name} out")
 
-    def blocking_export(instance_id: str, **_: object) -> contracts.PlaybillFloorExport:
+    def blocking_export(instance_id: str, **_: object) -> contracts.FloorExport:
         enter("export")
         export_entered.set()
         release.wait(_FAILURE_BOUND_SECONDS)
         leave("export")
-        return contracts.PlaybillFloorExport(
+        return contracts.FloorExport(
             tag="playbill-floor-export-v5", coordinate=_COORDINATE, manifest={}, files=[]
         )
 
-    def delta(instance_id: str, **_: object) -> PlaybillFloorDelta:
+    def delta(instance_id: str, **_: object) -> FloorDelta:
         enter("delta")
         leave("delta")
         return floor_v5_delta({}, coordinate=_COORDINATE, generation=1)
@@ -473,12 +473,12 @@ def test_a_route_cancelled_mid_render_keeps_its_instance_until_the_render_ends(
 
     async def scenario() -> None:
         export = asyncio.create_task(
-            playbill_routes.export_floor("inst_cancel", PlaybillFloorExportRequest())
+            playbill_routes.export_floor("inst_cancel", FloorExportRequest())
         )
         while not export_entered.is_set():
             await asyncio.sleep(0.005)
         queued = asyncio.create_task(
-            playbill_routes.floor_delta("inst_cancel", PlaybillFloorDeltaRequest())
+            playbill_routes.floor_delta("inst_cancel", FloorDeltaRequest())
         )
         thread = threading.Thread(target=consumer)
         thread.start()
@@ -568,9 +568,9 @@ def test_attachment_and_delivery_requests_wait_without_worker_tokens(monkeypatch
     for routes in (playbill_routes, hosted_instances):
         monkeypatch.setattr(routes, "resolve_server_instance_id", lambda value: value)
     delta = floor_v5_delta({}, coordinate=_COORDINATE, generation=1)
-    delivered = contracts.PlaybillFloorDeliveryResult(
+    delivered = contracts.FloorDeliveryResult(
         delta=delta,
-        written=contracts.PlaybillWorkspaceFloorWriteResult(
+        written=contracts.WorkspaceFloorWriteResult(
             path=".playbill/floor",
             destination="/workspace/.playbill/floor",
             floor_digest=_DIGEST,
@@ -583,7 +583,7 @@ def test_attachment_and_delivery_requests_wait_without_worker_tokens(monkeypatch
     monkeypatch.setattr(
         playbill_api,
         "playbill_export_floor",
-        lambda *a, **kw: contracts.PlaybillFloorExport(
+        lambda *a, **kw: contracts.FloorExport(
             tag="playbill-floor-export-v5", coordinate=_COORDINATE, manifest={}, files=[]
         ),
     )

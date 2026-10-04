@@ -20,7 +20,7 @@ from cruxible_core.service.discovery.curation import (
     PlaybillCurationListRequestV1,
     service_list_playbill_curation,
 )
-from cruxible_core.service.discovery.next import PlaybillNextWorkspaceObservation
+from cruxible_core.service.discovery.next import NextWorkspaceObservation
 from tests.core_support._claim_authoring_support import service_propose_playbill_claim
 from tests.core_support._knowledge_loop_support import TIMESTAMP, authoring, seed_claims
 
@@ -225,7 +225,7 @@ def test_restricted_curation_profile_short_circuits_without_count_leakage(
                 permitted_access_classes=("public",),
                 disclose_restricted_existence=False,
             ),
-            workspace_observation=PlaybillNextWorkspaceObservation(source_observations=()),
+            workspace_observation=NextWorkspaceObservation(source_observations=()),
         ),
         actor_context=GovernedActorContext(
             actor_type="human_user",

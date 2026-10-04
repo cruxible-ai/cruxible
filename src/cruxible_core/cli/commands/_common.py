@@ -188,7 +188,7 @@ def _echo_creation_write_target(params: Mapping[str, Any]) -> None:
     obj = _root_ctx_obj()
     transport = _transport_target(obj)
     if transport is not None:
-        target = params.get("instance_id") or "<new Playbill host>"
+        target = params.get("instance_id") or "<new Cruxible host>"
         transport_source = str(obj.get("target_transport_source") or "explicit")
         click.echo(
             f"target: {target} @ {transport} (transport={transport_source})",

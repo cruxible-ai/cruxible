@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.errors import PlaybillJournalIntegrityError
+from cruxible_client.contracts.errors import JournalIntegrityError
 from cruxible_core.exhaust.backends import LocalJournalBackend
 from cruxible_core.exhaust.journal_index import JournalIndex
 from tests.test_storage.test_journal_backends import _activate, _append, _backend, _stream
@@ -64,5 +64,5 @@ def test_selected_bytes_are_verified_not_served_from_sql(tmp_path: Path) -> None
     path = backend._record_log_path_for_testing(_stream(), "runs-2026-08")
     raw = path.read_bytes()
     path.write_bytes(raw.replace(b'"run-a"', b'"run-b"'))
-    with pytest.raises(PlaybillJournalIntegrityError):
+    with pytest.raises(JournalIntegrityError):
         backend.select_records(_stream(), run_id="run-a")

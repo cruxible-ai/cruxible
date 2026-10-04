@@ -9,7 +9,7 @@ from pathlib import Path, PurePath
 from typing import Iterable, Mapping
 from urllib.parse import urlsplit
 
-from cruxible_client.contracts.errors import PlaybillReseedRequired
+from cruxible_client.contracts.errors import ReseedRequired
 from cruxible_core.errors import ConfigError
 
 _VOLATILE_STATE_ROOTS = (
@@ -199,7 +199,7 @@ def _refuse_legacy_state_file(path: Path) -> None:
     if not head:
         return
     if head == _SQLITE_HEADER:
-        raise PlaybillReseedRequired(found=str(path))
+        raise ReseedRequired(found=str(path))
     raise ServerStateConfigurationError(
         f"{path} sits where the layout from before PC-HR kept a database, but it is "
         "neither empty nor a SQLite database; repair: move it out of the state root"

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.authoring.context import resolve_playbill_context
+from cruxible_client.authoring.context import resolve_context
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 ALLOWED_DEVELOPER_PATHS = {
@@ -82,7 +82,7 @@ def test_state_root_fallback_marker_still_uses_an_isolated_home() -> None:
 def test_no_test_reads_a_workspace_binding_it_did_not_create() -> None:
     """Workspace discovery must not find the developer's own governed checkout.
 
-    A checkout that is itself a Playbill workspace carries
+    A checkout that is itself a Cruxible workspace carries
     `.playbill/coverage.json`, and discovery walks up from the current directory
     to find exactly that -- so a suite run inside one silently retargets at a
     live instance and fails on a machine where nothing is wrong with the code.
@@ -90,7 +90,7 @@ def test_no_test_reads_a_workspace_binding_it_did_not_create() -> None:
     does not chdir, and it is never a directory a test created.
     """
 
-    resolved = resolve_playbill_context(cwd=REPOSITORY_ROOT, remembered={})
+    resolved = resolve_context(cwd=REPOSITORY_ROOT, remembered={})
 
     assert resolved.workspace_binding_path is None
     assert resolved.workspace_source == "local"
@@ -114,7 +114,7 @@ def test_a_workspace_binding_a_test_creates_is_still_read(tmp_path: Path) -> Non
         encoding="utf-8",
     )
 
-    resolved = resolve_playbill_context(cwd=tmp_path, remembered={}, home=tmp_path.parent)
+    resolved = resolve_context(cwd=tmp_path, remembered={}, home=tmp_path.parent)
 
     assert resolved.workspace_binding_path == binding_dir / "coverage.json"
     assert resolved.workspace_source == "workspace"

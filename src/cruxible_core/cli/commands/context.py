@@ -41,7 +41,7 @@ def context_show(output_json: bool) -> None:
             client = _get_client()
             if client is None:
                 raise RuntimeError("server transport is not configured")
-            observed = client.playbill_host_workspace_registration(str(obj["instance_id"]))
+            observed = client.host_workspace_registration(str(obj["instance_id"]))
             registration = {
                 "tag": "playbill-daemon-host-registration-status-v1",
                 **observed.model_dump(mode="json", exclude={"tag"}),

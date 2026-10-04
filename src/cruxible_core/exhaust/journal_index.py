@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, Callable, ParamSpec, TypeVar
 from uuid import uuid4
 
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.errors import PlaybillJournalIntegrityError
+from cruxible_client.contracts.errors import JournalIntegrityError
 from cruxible_client.contracts.temporal import format_datetime
 from cruxible_core.exhaust.records import (
     JournalPartitionHeadV1,
@@ -119,7 +119,7 @@ class JournalIndex:
     def connection(self) -> Iterator[sqlite3.Connection]:
         with _LOCK:
             if self.path.is_symlink():
-                raise PlaybillJournalIntegrityError("journal index must be a regular file")
+                raise JournalIntegrityError("journal index must be a regular file")
             conn = sqlite3.connect(self.path)
             conn.row_factory = sqlite3.Row
             try:
@@ -282,12 +282,10 @@ class JournalIndex:
         try:
             _, size, stored = next(frames)
             if size != row["size"] or stored.record_digest != row["digest"]:
-                raise PlaybillJournalIntegrityError(
-                    "indexed journal record differs from retained bytes"
-                )
+                raise JournalIntegrityError("indexed journal record differs from retained bytes")
             return stored
         except StopIteration as exc:
-            raise PlaybillJournalIntegrityError("indexed journal record is missing") from exc
+            raise JournalIntegrityError("indexed journal record is missing") from exc
         finally:
             frames.close()
 
@@ -489,7 +487,7 @@ class JournalIndex:
                 "SELECT identity FROM index_identity WHERE singleton=1"
             ).fetchone()[0]
             if after["generation"] != generation or through["generation"] != generation:
-                raise PlaybillJournalIntegrityError(
+                raise JournalIntegrityError(
                     "live event reader position was invalidated by an index rebuild"
                 )
             rows = conn.execute(
@@ -543,9 +541,7 @@ class JournalIndex:
                     or payload.get("tag") != "playbill-procedure-produced-capture-v1"
                     or not isinstance(payload.get("capture_contract_digest"), str)
                 ):
-                    raise PlaybillJournalIntegrityError(
-                        "produced Capture payload lacks its typed contract"
-                    )
+                    raise JournalIntegrityError("produced Capture payload lacks its typed contract")
                 conn.execute(
                     "INSERT INTO capture_selectors VALUES (?,?)",
                     (row["id"], payload["capture_contract_digest"]),
@@ -571,7 +567,7 @@ class JournalIndex:
                     or after is None
                     or after["generation"] != generation
                 ):
-                    raise PlaybillJournalIntegrityError(
+                    raise JournalIntegrityError(
                         "live event reader position was invalidated by an index rebuild"
                     )
                 where.extend(("r.id>?", "r.id<=?"))

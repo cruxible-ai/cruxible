@@ -18,8 +18,8 @@ from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.service.discovery.next import (
     DEFAULT_EXPIRING_WITHIN_MICROSECONDS,
-    PlaybillNextRequest,
-    PlaybillNextRequestV1,
+    NextRequest,
+    NextRequestV1,
     claim_unsure_holds,
     service_playbill_next,
     summarize_playbill_next,
@@ -71,7 +71,7 @@ def _stored(instance, at: datetime, version: int = 2):  # type: ignore[no-untype
 
 def _assert_equivalent(instance, at: datetime, *, expect_stored: bool) -> None:  # type: ignore[no-untyped-def]
     claims = _all_claims(instance)
-    for version, model in ((1, PlaybillNextRequestV1), (2, PlaybillNextRequest)):
+    for version, model in ((1, NextRequestV1), (2, NextRequest)):
         if version == 2:
             assert (_stored(instance, at, version) is not None) == expect_stored
         for surface, rung in ((None, None), ("sdk", 0), ("mcp", 1)):
@@ -82,7 +82,7 @@ def _assert_equivalent(instance, at: datetime, *, expect_stored: bool) -> None: 
                 live = service_playbill_next(instance, request=request, caller_rung=rung)
             assert served.model_dump_json() == live.model_dump_json()
             assert served.items == live.items and served.result_digest == live.result_digest
-    request = PlaybillNextRequest(evaluation_time=at, access_profile=_access())
+    request = NextRequest(evaluation_time=at, access_profile=_access())
     served_summary = summarize_playbill_next(instance, request=request)
     held = claim_unsure_holds(
         instance, coordinate=instance.accepted_coordinate(), claims=claims, evaluation_time=at
@@ -285,9 +285,7 @@ def test_queue_equivalence_across_histories_and_interval_edges(
 def test_serving_skips_claim_folds_and_keeps_paging_and_delta(tmp_path: Path) -> None:
     instance, _owner, *_rest = _foreign_world(tmp_path, bind=False)
     _drain(instance)
-    request = PlaybillNextRequest(
-        evaluation_time=EVALUATION_TIME, access_profile=_access(), limit=1
-    )
+    request = NextRequest(evaluation_time=EVALUATION_TIME, access_profile=_access(), limit=1)
     with patch(
         "cruxible_core.service.discovery.next._claim_rows", side_effect=AssertionError("live")
     ):
@@ -338,7 +336,7 @@ def test_door_movement_recomputes_and_health_reports_lag(tmp_path: Path) -> None
     statuses = consumer_statuses(SimpleNamespace(open_instances=lambda: (("inst", instance),)))
     assert any(row.kind == "next" and row.state == "running" for row in statuses)
     _assert_equivalent(instance, EVALUATION_TIME, expect_stored=True)
-    request = PlaybillNextRequest(
+    request = NextRequest(
         evaluation_time=EVALUATION_TIME,
         access_profile=_access(),
         at_attestation_head_digest=old_door,
@@ -359,7 +357,7 @@ def test_accepted_movement_recomputes_and_serving_guards_fall_back(tmp_path: Pat
     assert WORKER.health(instance, now=EVALUATION_TIME)[0].state == "lagging"
     _drain(instance)
     assert _stored(instance, EVALUATION_TIME) is not None
-    request = PlaybillNextRequest(evaluation_time=EVALUATION_TIME, access_profile=_access())
+    request = NextRequest(evaluation_time=EVALUATION_TIME, access_profile=_access())
     for update in (
         {"at": AcceptedCoordinate.from_internal(before)},
         {
@@ -391,7 +389,7 @@ def test_library_reads_create_no_worker_state_and_disabled_worker_is_not_served(
     assert _stored(instance, EVALUATION_TIME) is None
     service_playbill_next(
         instance,
-        request=PlaybillNextRequest(evaluation_time=EVALUATION_TIME, access_profile=_access()),
+        request=NextRequest(evaluation_time=EVALUATION_TIME, access_profile=_access()),
     )
     assert not consumer._STATE.path(instance).exists()
     _drain(instance)
@@ -420,7 +418,7 @@ def test_cas_movement_recomputes_without_an_accepted_or_door_change(tmp_path: Pa
     ):
         service_playbill_next(
             instance,
-            request=PlaybillNextRequest(
+            request=NextRequest(
                 evaluation_time=EVALUATION_TIME,
                 access_profile=_access(),
             ),
@@ -506,7 +504,7 @@ def test_a_queue_behind_head_is_never_used_by_a_read(tmp_path: Path) -> None:
     instance, owner = _freshness_world(tmp_path)
     _drain(instance)
     _refresh_claim(instance, owner, timestamp="2026-08-24T18:00:00.000000Z")
-    request = PlaybillNextRequest(evaluation_time=EVALUATION_TIME, access_profile=_access())
+    request = NextRequest(evaluation_time=EVALUATION_TIME, access_profile=_access())
     with patch.object(next_module, "_claim_rows", wraps=next_module._claim_rows) as live:
         service_playbill_next(instance, request=request)
         assert live.called
@@ -589,7 +587,7 @@ def test_orient_profile_reuses_inside_the_interval_and_falls_back_at_valid_until
     _drain(instance, at)
     snapshot = _stored(instance, at)
     assert snapshot is not None and snapshot.valid_until is not None
-    request = PlaybillNextRequest(evaluation_time=at, access_profile=_NEXT_PROFILE)
+    request = NextRequest(evaluation_time=at, access_profile=_NEXT_PROFILE)
     with patch.object(next_module, "_claim_rows", side_effect=AssertionError("live")):
         service_playbill_next(instance, request=request)
         summarize_playbill_next(instance, request=request)
@@ -604,7 +602,7 @@ def test_orient_profile_reuses_inside_the_interval_and_falls_back_at_valid_until
 
 
 def _next_outcome(instance, version: int):  # type: ignore[no-untyped-def]
-    model = PlaybillNextRequestV1 if version == 1 else PlaybillNextRequest
+    model = NextRequestV1 if version == 1 else NextRequest
     request = model(evaluation_time=EVALUATION_TIME, access_profile=_access())
     try:
         return service_playbill_next(instance, request=request).model_dump_json()
@@ -627,7 +625,7 @@ def _rewrite_backing(instance, *, keep_mtime: bool) -> None:  # type: ignore[no-
 
 def _assert_stalled_without_retry(instance) -> None:  # type: ignore[no-untyped-def]
     (health,) = WORKER.health(instance, now=EVALUATION_TIME)
-    assert health.state == "stalled" and "PlaybillCasError" in health.detail["last_error"]
+    assert health.state == "stalled" and "CasError" in health.detail["last_error"]
     WORKER.match(instance, now=EVALUATION_TIME, daemon_id="restart")
     assert tuple(WORKER.due(instance, now=EVALUATION_TIME)) == ()
 
@@ -648,7 +646,7 @@ def test_a_body_rewritten_in_place_is_never_served_from_the_stored_queue(
     served = _next_outcome(instance, version)
     with patch.object(consumer, "stored_claim_queue", return_value=None):
         assert served == _next_outcome(instance, version)
-    assert served[0] == "PlaybillCasError"
+    assert served[0] == "CasError"
 
     # Matching withdraws the queue and asks for one rebuild; a rebuild that fails
     # on the same inputs is not retried until an input changes.
@@ -685,7 +683,7 @@ def test_a_body_rewritten_during_a_fold_is_not_published(tmp_path: Path, version
     served = _next_outcome(instance, version)
     with patch.object(consumer, "stored_claim_queue", return_value=None):
         assert served == _next_outcome(instance, version)
-    assert served[0] == "PlaybillCasError"
+    assert served[0] == "CasError"
     (work,) = WORKER.due(instance, now=EVALUATION_TIME)
     with pytest.raises(Exception, match="CAS object bytes"):
         WORKER.run(SimpleNamespace(get=lambda _id: instance), "instance", work, now=EVALUATION_TIME)
@@ -767,7 +765,7 @@ _DERIVED_AT = datetime.fromisoformat("2026-10-02T00:00:00+00:00")
 
 
 def _derived_outcome(instance, version: int):  # type: ignore[no-untyped-def]
-    model = PlaybillNextRequestV1 if version == 1 else PlaybillNextRequest
+    model = NextRequestV1 if version == 1 else NextRequest
     request = model(evaluation_time=_DERIVED_AT, access_profile=_access())
     try:
         return service_playbill_next(instance, request=request).model_dump_json()
@@ -794,7 +792,7 @@ def test_a_retired_dependency_capture_rewritten_after_publish_is_not_served(
     served = _derived_outcome(instance, version)
     with patch.object(consumer, "stored_claim_queue", return_value=None):
         assert served == _derived_outcome(instance, version)
-    assert served[0] == "PlaybillCasError"
+    assert served[0] == "CasError"
 
 
 @pytest.mark.parametrize("version", (1, 2))

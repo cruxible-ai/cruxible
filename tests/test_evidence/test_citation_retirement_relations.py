@@ -15,7 +15,7 @@ from cruxible_core.evidence.citation_relations import (
 from cruxible_core.service.claims.claims import service_explain_playbill_claim
 from cruxible_core.service.claims.retirement_context import ClaimRetirementContextV1
 from cruxible_core.service.discovery.next import (
-    PlaybillNextRequestV1,
+    NextRequestV1,
     service_playbill_next,
 )
 from tests.core_support._citation_relations_oracle import (
@@ -48,7 +48,7 @@ def _retire_claim(instance, owner, claim_id: str) -> None:  # type: ignore[no-un
 def _next(instance):  # type: ignore[no-untyped-def]
     return service_playbill_next(
         instance,
-        request=PlaybillNextRequestV1(evaluation_time=EVALUATION_TIME, access_profile=_access()),
+        request=NextRequestV1(evaluation_time=EVALUATION_TIME, access_profile=_access()),
     )
 
 

@@ -5,13 +5,13 @@ from __future__ import annotations
 from typing import get_args
 
 from cruxible_client.contracts import (
-    PlaybillNextReason,
-    PlaybillNextRefusalCode,
+    NextReason,
+    NextRefusalCode,
     ProviderLaneUnavailableCode,
 )
 from cruxible_client.contracts.authoring.models import (
-    PlaybillBlockSyncReadReason,
-    PlaybillBlockSyncReason,
+    BlockSyncReadReason,
+    BlockSyncReason,
 )
 from cruxible_client.contracts.predictions import PredictionRefusalCode
 from cruxible_client.contracts.procedures.readings import ProcedureMeasurementRefusalCode
@@ -31,12 +31,12 @@ from cruxible_client.contracts.repairs import (
 from cruxible_client.contracts.workspace_advertisement import WorkspaceAdvertisementFailureCode
 
 CLOSED_SERVED_REFUSAL_VOCABULARIES: dict[str, frozenset[str]] = {
-    "playbill_next_reason": frozenset(get_args(PlaybillNextReason)),
-    "playbill_next_refusal": frozenset(get_args(PlaybillNextRefusalCode)),
+    "playbill_next_reason": frozenset(get_args(NextReason)),
+    "playbill_next_refusal": frozenset(get_args(NextRefusalCode)),
     "provider_lane_unavailable": frozenset(get_args(ProviderLaneUnavailableCode)),
     "workspace_advertisement_failure": frozenset(get_args(WorkspaceAdvertisementFailureCode)),
-    "block_sync_read_reason": frozenset(get_args(PlaybillBlockSyncReadReason)),
-    "block_sync_reason": frozenset(get_args(PlaybillBlockSyncReason)),
+    "block_sync_read_reason": frozenset(get_args(BlockSyncReadReason)),
+    "block_sync_reason": frozenset(get_args(BlockSyncReason)),
     "procedure_admission_refusal": frozenset(get_args(ProcedureAdmissionRefusalCode)),
     "procedure_node_refusal": frozenset(get_args(ProcedureNodeRefusalCode)),
     "procedure_operational_failure": frozenset(get_args(ProcedureOperationalFailureCode)),

@@ -9,7 +9,7 @@ import pytest
 
 from cruxible_client.contracts.captures import DirectForeignSourceSelection
 from cruxible_client.contracts.semantic import ContentSpan
-from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+from cruxible_core.service.authoring.documents import AcceptedCoordinate
 from cruxible_core.service.discovery import claim_status as playbill_search
 from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
 from tests.core_support._candidate_support import submit_query_definition_candidate
@@ -34,7 +34,7 @@ def _derive(instance, *, when=EVALUATION_TIME, fresh: bool):
     statuses = playbill_search.claim_resolution_statuses(
         instance,
         claims=context.claims(),
-        at=PlaybillAcceptedCoordinate.from_internal(coordinate),
+        at=AcceptedCoordinate.from_internal(coordinate),
         evaluation_time=when,
         verdicts_by_identity=verdicts,
         read_context=context,
@@ -239,7 +239,7 @@ def _remembered_derivation(instance):  # type: ignore[no-untyped-def]
     return playbill_search.claim_resolution_statuses(
         instance,
         claims=context.claims(),
-        at=PlaybillAcceptedCoordinate.from_internal(coordinate),
+        at=AcceptedCoordinate.from_internal(coordinate),
         evaluation_time=EVALUATION_TIME,
         read_context=context,
     )
@@ -264,15 +264,15 @@ def test_a_remembered_derivation_is_not_served_over_a_body_rewritten_in_place(
     warm = _outcome(lambda: _remembered_derivation(instance))
     cold = _outcome(lambda: _derive(instance, fresh=True))
     assert warm == cold
-    assert warm[0] == "PlaybillCasError"
+    assert warm[0] == "CasError"
 
 
 @pytest.mark.parametrize("keep_mtime", [False, True], ids=["rewrite", "rewrite-keep-mtime"])
 def test_get_does_not_serve_a_stale_verdict_after_a_ruling_is_rewritten_in_place(
     tmp_path: Path, keep_mtime: bool
 ) -> None:
-    from cruxible_client.contracts.get_reads import PlaybillGetRequest
-    from cruxible_client.contracts.write import PlaybillWriteRequest
+    from cruxible_client.contracts.get_reads import GetRequest
+    from cruxible_client.contracts.write import WriteRequest
     from cruxible_core.service.authoring.write_verbs import service_playbill_write
     from cruxible_core.service.discovery.get import service_playbill_get
     from cruxible_core.storage.cas import BodyAccessContext
@@ -281,7 +281,7 @@ def test_get_does_not_serve_a_stale_verdict_after_a_ruling_is_rewritten_in_place
     instance, _owner = seed_write_surface(tmp_path)
     outcome = service_playbill_write(
         instance,
-        request=PlaybillWriteRequest.model_validate(
+        request=WriteRequest.model_validate(
             {
                 "because": "The ruling as written.",
                 "changes": [
@@ -293,7 +293,7 @@ def test_get_does_not_serve_a_stale_verdict_after_a_ruling_is_rewritten_in_place
     )
     assert outcome.status == "accepted", outcome
     claim_id = outcome.changes[0].claim
-    request = PlaybillGetRequest(ref=str(claim_id))
+    request = GetRequest(ref=str(claim_id))
     access = BodyAccessContext(principal_id="owner")
 
     def read() -> object:
@@ -309,7 +309,7 @@ def test_get_does_not_serve_a_stale_verdict_after_a_ruling_is_rewritten_in_place
     warm = _outcome(read)
     playbill_search.reset_claim_resolution_memo()
     assert warm == _outcome(read)
-    assert warm[0] == "PlaybillCasError"
+    assert warm[0] == "CasError"
 
 
 def _capture_and_source(instance, capture: str) -> tuple[str, str]:  # type: ignore[no-untyped-def]
@@ -368,7 +368,7 @@ def test_a_body_rewritten_after_its_read_but_before_the_memo_insert_is_not_remem
     warm = _outcome(lambda: _remembered_derivation(instance))
     cold = _outcome(lambda: _derive(instance, fresh=True))
     assert warm == cold
-    assert warm[0] == "PlaybillCasError"
+    assert warm[0] == "CasError"
 
 
 @pytest.mark.parametrize("which", ["capture", "source"])
@@ -406,4 +406,4 @@ def test_an_availability_evicted_before_the_insert_keeps_every_dependency(
     warm = _outcome(lambda: _remembered_derivation(instance))
     cold = _outcome(lambda: _derive(instance, fresh=True))
     assert warm == cold
-    assert warm[0] == "PlaybillCasError"
+    assert warm[0] == "CasError"

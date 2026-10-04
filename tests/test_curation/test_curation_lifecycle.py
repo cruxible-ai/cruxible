@@ -32,9 +32,9 @@ from cruxible_core.curation.curation_detectors import CurationDetectorResult
 from cruxible_core.curation.review_operational import ReviewOperationalConcurrentChangeError
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.service.discovery.curation import (
+    CurationError,
+    CurationItemAlreadyResolved,
     PlaybillCurationAcceptFixedRequestV1,
-    PlaybillCurationError,
-    PlaybillCurationItemAlreadyResolved,
     PlaybillCurationListRequestV1,
     PlaybillCurationOverruleRequestV1,
     PlaybillCurationSuppressRequestV1,
@@ -285,7 +285,7 @@ def test_changed_detector_laws_quarantine_old_items_without_bricking_curation(
         actor_context=_actor(),
     )
     assert overruled.item.status == "overruled"
-    with pytest.raises(PlaybillCurationItemAlreadyResolved, match="quarantined"):
+    with pytest.raises(CurationItemAlreadyResolved, match="quarantined"):
         service_accept_fixed_playbill_curation(
             instance,
             request=PlaybillCurationAcceptFixedRequestV1(
@@ -1006,7 +1006,7 @@ def test_every_accepted_public_curation_action_preserves_replay(
                 generation=3,
                 detections=(_matrix_detection(target),),
             )
-    except PlaybillCurationError:
+    except CurationError:
         assert len(store.events(family="curation")) == before_count
 
     after_action_count = len(store.events(family="curation"))

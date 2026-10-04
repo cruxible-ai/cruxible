@@ -58,7 +58,7 @@ from cruxible_client.contracts.provider_contracts import ProviderOperationContra
 from cruxible_client.contracts.records import RecordConstructor
 
 if TYPE_CHECKING:
-    from cruxible_client.contracts import PlaybillProviderInterfaceEntry
+    from cruxible_client.contracts import ProviderInterfaceEntry
 
 Contract: TypeAlias = CarriedContractInput
 
@@ -128,7 +128,7 @@ class ProviderBinding(BaseModel):
 
     @classmethod
     def from_interface(
-        cls, entry: PlaybillProviderInterfaceEntry, *, provider: str | None = None
+        cls, entry: ProviderInterfaceEntry, *, provider: str | None = None
     ) -> ProviderBinding:
         identity = (
             None if provider is None else _accepted(provider, "Provider", "provider")["target"]

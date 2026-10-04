@@ -1,7 +1,7 @@
 """Coverage delivery: what an ordinary source read has to do with accepted state.
 
 Coverage is delivered, not fetched. Every module here answers one question --
-"how does this working occurrence relate to accepted Playbill state?" -- and
+"how does this working occurrence relate to accepted Cruxible state?" -- and
 none of them may answer it by writing anything down. The package is deliberately
 import-poor: it reads the frozen source/evidence grammar and the accepted
 projection coordinate, and it never reaches the proposal, settlement,

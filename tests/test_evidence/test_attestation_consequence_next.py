@@ -36,8 +36,8 @@ from cruxible_core.service.claims.claims import (
     service_list_playbill_claims,
 )
 from cruxible_core.service.discovery.next import (
-    PlaybillNextRequest,
-    PlaybillNextRequestV1,
+    NextRequest,
+    NextRequestV1,
     service_playbill_next,
 )
 from cruxible_core.service.evidence.claim_attestations import service_append_claim_attestation
@@ -192,7 +192,7 @@ def _rows(instance) -> tuple:  # type: ignore[no-untyped-def]
         item
         for item in service_playbill_next(
             instance,
-            request=PlaybillNextRequestV1(
+            request=NextRequestV1(
                 evaluation_time=EVALUATION_TIME,
                 access_profile=_access(),
             ),
@@ -303,7 +303,7 @@ def test_latest_door_record_supersedes_all_legacy_for_that_principal(
             item
             for item in service_playbill_next(
                 instance,
-                request=PlaybillNextRequest(
+                request=NextRequest(
                     evaluation_time=EVALUATION_TIME,
                     access_profile=_access(),
                 ),

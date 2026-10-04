@@ -18,7 +18,7 @@ WorkspaceAdvertisementFailureCode: TypeAlias = Literal[
 ]
 
 
-class PlaybillWorkspaceAdvertisement(BaseModel):
+class WorkspaceAdvertisement(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-workspace-advertisement-v1"] = "playbill-workspace-advertisement-v1"
@@ -31,7 +31,7 @@ class PlaybillWorkspaceAdvertisement(BaseModel):
     failure_code: WorkspaceAdvertisementFailureCode | None = None
 
     @model_validator(mode="after")
-    def _status_shape(self) -> "PlaybillWorkspaceAdvertisement":
+    def _status_shape(self) -> "WorkspaceAdvertisement":
         if self.status == "updated" and (
             self.workspace_path is None or self.failure_code is not None
         ):
@@ -49,7 +49,7 @@ class PlaybillWorkspaceAdvertisement(BaseModel):
         return self
 
 
-NOT_ATTACHED_ADVERTISEMENT = PlaybillWorkspaceAdvertisement(
+NOT_ATTACHED_ADVERTISEMENT = WorkspaceAdvertisement(
     status="not_attached",
     workspace_path=None,
 )
@@ -57,6 +57,6 @@ NOT_ATTACHED_ADVERTISEMENT = PlaybillWorkspaceAdvertisement(
 
 __all__ = [
     "NOT_ATTACHED_ADVERTISEMENT",
-    "PlaybillWorkspaceAdvertisement",
+    "WorkspaceAdvertisement",
     "WorkspaceAdvertisementFailureCode",
 ]

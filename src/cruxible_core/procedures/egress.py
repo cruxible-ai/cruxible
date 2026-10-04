@@ -50,7 +50,7 @@ from cruxible_client.contracts.captures import (
     build_procedure_capture_v2,
     capture_contract_digest,
 )
-from cruxible_client.contracts.errors import PlaybillFormatError, ProjectionIntegrityError
+from cruxible_client.contracts.errors import FormatError, ProjectionIntegrityError
 from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandate,
     ProcedureMandateAny,
@@ -192,7 +192,7 @@ SELECTOR_PRIVACY_CEILINGS: dict[str, int] = {
 RECOGNIZED_EFFECT_GRANT_TAGS: frozenset[str] = frozenset()
 
 
-class TerminalEgressError(PlaybillFormatError):
+class TerminalEgressError(FormatError):
     """A terminal egress request, receipt, or rung binding is not admissible."""
 
 

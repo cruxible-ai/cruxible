@@ -86,9 +86,9 @@ def test_playbill_openapi_exposes_typed_coordinate_and_host_results() -> None:
     host_schema = spec["paths"]["/api/v1/runtime/instances"]["post"]["responses"]["200"]["content"][
         "application/json"
     ]["schema"]
-    assert _component_ref_name(host_schema) == "PlaybillHostResult"
+    assert _component_ref_name(host_schema) == "HostResult"
 
-    coordinate = spec["components"]["schemas"]["PlaybillAcceptedCoordinate"]
+    coordinate = spec["components"]["schemas"]["AcceptedCoordinate"]
     assert set(coordinate["properties"]) == {
         "tag",
         "git_oid",

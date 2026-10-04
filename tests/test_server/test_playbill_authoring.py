@@ -17,7 +17,7 @@ from cruxible_core.claims.claim_type_inputs import (
 )
 from tests.core_support._claim_type_support import claim_type_input_example
 
-COORDINATE = contracts.PlaybillAcceptedCoordinate(
+COORDINATE = contracts.AcceptedCoordinate(
     git_oid="1" * 64,
     semantic_root="sha256:" + "2" * 64,
     generation_root="sha256:" + "3" * 64,
@@ -97,7 +97,7 @@ def test_http_compile_and_submit_keep_the_frozen_request_boundary(
     def compile_stub(selected: str, *, payload: object, intent_id: str | None = None):
         seen.append((selected, payload))
         assert intent_id is None
-        return contracts.PlaybillAuthoringPreflightResult(
+        return contracts.AuthoringPreflightResult(
             verdict="refused",
             certificate={"certificate_digest": "sha256:" + "6" * 64},
             frontier={"diagnostics": [{"code": "example"}]},
@@ -105,11 +105,11 @@ def test_http_compile_and_submit_keep_the_frozen_request_boundary(
 
     def submit_stub(selected: str, intent_id: str):
         seen.append((selected, intent_id))
-        status = contracts.PlaybillCandidateStatus(
+        status = contracts.CandidateStatusRecord(
             state="draft",
             current_accepted_coordinate=COORDINATE,
         )
-        return contracts.PlaybillAuthoringSubmitResult(
+        return contracts.AuthoringSubmitResultRecord(
             intent={"intent_id": intent_id},
             status=status,
         )
@@ -242,7 +242,7 @@ def test_http_input_variants_delegate_without_exposing_a_base(
 
     def create_stub(selected: str, *, input: object):
         seen.append((selected, input))
-        return contracts.PlaybillAuthoringIntentView(intent={"intent_id": INTENT_ID})
+        return contracts.AuthoringIntentViewRecord(intent={"intent_id": INTENT_ID})
 
     monkeypatch.setattr(
         "cruxible_core.runtime.playbill_api.playbill_authoring_create_input",
@@ -379,7 +379,7 @@ def test_http_authoring_openapi_exposes_frozen_union_and_rejects_removed_brief_i
     client, instance_id, _private_key = playbill_http
     schemas = client.app.openapi()["components"]["schemas"]
 
-    for name in ("PlaybillAuthoringInputCreateRequest", "PlaybillAuthoringInputCompileRequest"):
+    for name in ("AuthoringInputCreateRequest", "AuthoringInputCompileRequest"):
         mapping = schemas[name]["properties"]["input"]["discriminator"]["mapping"]
         assert set(mapping) == {
             "approval_policy",
@@ -425,11 +425,11 @@ def test_http_migration_route_delegates_the_typed_request(
 
     def migrate_stub(selected: str, *, request: object):
         seen.append((selected, request))
-        return contracts.PlaybillClaimTypeMigrationResultV1(
+        return contracts.ClaimTypeMigrationResultV1(
             operation_digest="sha256:" + "1" * 64,
             semantic_delta=[],
             dependents=[],
-            proposal=contracts.PlaybillProposalInspection(
+            proposal=contracts.ProposalInspection(
                 proposal={},
                 accepted_coordinate=COORDINATE,
             ),
@@ -572,11 +572,11 @@ def test_http_claim_type_routes_preserve_optional_lint_payload(
         "contract_digest": "sha256:" + "7" * 64,
         "replacement_rule_fragment": {"capture_contract_digests": ["sha256:" + "7" * 64]},
     }
-    lint = contracts.PlaybillClaimTypeProposalLint(warnings=[warning])
+    lint = contracts.ClaimTypeProposalLint(warnings=[warning])
     if operation == "expert_propose":
         monkeypatch.setattr(
             "cruxible_core.runtime.playbill_api.playbill_propose_claim_type",
-            lambda _selected, **_values: contracts.PlaybillProposalInspection(
+            lambda _selected, **_values: contracts.ProposalInspection(
                 proposal={"proposal_id": "sha256:" + "8" * 64},
                 accepted_coordinate=COORDINATE,
                 lint=lint,
@@ -592,7 +592,7 @@ def test_http_claim_type_routes_preserve_optional_lint_payload(
     else:
         monkeypatch.setattr(
             "cruxible_core.runtime.playbill_api.playbill_migrate_claim_type",
-            lambda _selected, **_values: contracts.PlaybillClaimTypeMigrationPreflight(
+            lambda _selected, **_values: contracts.ClaimTypeMigrationPreflight(
                 coordinate=COORDINATE,
                 successor_artifact_digest="sha256:" + "9" * 64,
                 dependents=[],
@@ -638,7 +638,7 @@ def test_http_whoami_and_proposal_inventory_are_typed_reads(
 ) -> None:  # type: ignore[no-untyped-def]
     client, instance_id, _private_key = playbill_http
     seen: list[tuple[str, str | None]] = []
-    who = contracts.PlaybillWhoAmI(
+    who = contracts.WhoAmI(
         actor_id="operator",
         credential_label=None,
         actor_id_source="local_operator",
@@ -650,12 +650,12 @@ def test_http_whoami_and_proposal_inventory_are_typed_reads(
         can_author=True,
         authoring_refusal=None,
     )
-    proposals = contracts.PlaybillProposalList(
+    proposals = contracts.ProposalList(
         coordinate=COORDINATE,
         status_filter="open",
         entries=[],
     )
-    selector = contracts.PlaybillProposalSelectorResult(
+    selector = contracts.ProposalSelectorResult(
         selector="refs/proposals/operator/example",
         proposal_id="sha256:" + "5" * 64,
     )
@@ -756,7 +756,7 @@ def test_http_insertion_abandon_is_typed(
     def abandon_stub(selected: str, intent_id: str, *, expectation_id: str | None = None):
         assert (selected, intent_id) == (instance_id, INTENT_ID)
         seen.append("abandon")
-        return contracts.PlaybillInsertionAbandonResult(
+        return contracts.InsertionAbandonResultRecord(
             intent={"intent_id": intent_id},
             expectation={"state": "abandoned"},
         )
@@ -786,7 +786,7 @@ def test_http_list_routes_bound_their_page_size(
     )
     oversized = client.get(
         f"/api/v1/{instance_id}/playbill/orient",
-        params={"section": "policies", "limit": contracts.PLAYBILL_ORIENT_MAX_LIMIT + 1},
+        params={"section": "policies", "limit": contracts.ORIENT_MAX_LIMIT + 1},
     )
     foreign = client.get(
         f"/api/v1/{instance_id}/playbill/proposals",

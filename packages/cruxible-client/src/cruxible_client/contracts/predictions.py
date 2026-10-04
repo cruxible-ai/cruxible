@@ -53,12 +53,12 @@ class ResolutionContractInput(ResolutionContract):
     hypothesis: ClaimVersionInput  # type: ignore[assignment]
 
 
-class PlaybillPredictRequest(_StrictPredictionModel):
+class PredictRequest(_StrictPredictionModel):
     tag: Literal["playbill-predict-request-v2"] = "playbill-predict-request-v2"
     contract: ResolutionContract | ResolutionContractInput
 
 
-class PlaybillPredictResult(_StrictPredictionModel):
+class PredictResult(_StrictPredictionModel):
     tag: Literal["playbill-predict-result-v2"] = "playbill-predict-result-v2"
     contract_identity: str
     contract_digest: str
@@ -94,7 +94,7 @@ PredictionSettlementEvidence: TypeAlias = Annotated[
 ]
 
 
-class PlaybillSettleRequest(_StrictPredictionModel):
+class SettleRequest(_StrictPredictionModel):
     """Settle one prediction; usually just the observation's Claim ID.
 
     The route names the prediction (its contract name or a bound window's
@@ -120,13 +120,13 @@ class PlaybillSettleRequest(_StrictPredictionModel):
     )
 
     @model_validator(mode="after")
-    def _one_evidence(self) -> PlaybillSettleRequest:
+    def _one_evidence(self) -> SettleRequest:
         if (self.observation is None) == (self.evidence is None):
             raise ValueError("settle takes exactly one of observation (a Claim ID) or evidence")
         return self
 
 
-class PlaybillSettleResult(_StrictPredictionModel):
+class SettleResult(_StrictPredictionModel):
     tag: Literal["playbill-settle-result-v2"] = "playbill-settle-result-v2"
     prediction_id: str
     status: Literal["settled"] = "settled"

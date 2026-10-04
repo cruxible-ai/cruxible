@@ -1,4 +1,4 @@
-"""Ed25519 generation and custody helpers for Playbill bootstrap."""
+"""Ed25519 generation and custody helpers for Cruxible bootstrap."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
-from cruxible_client.contracts.errors import PlaybillKeyError
+from cruxible_client.contracts.errors import SigningKeyError
 from cruxible_client.contracts.types import PrincipalKind, PrincipalRecord
 
 DAEMON_PRIVATE_KEY_FILE = "daemon_ed25519"
@@ -56,9 +56,9 @@ def assert_outside_roots(path: Path, forbidden_roots: Sequence[Path]) -> None:
     for raw_root in forbidden_roots:
         root = _resolved(raw_root)
         if _is_within(resolved, root):
-            raise PlaybillKeyError(
+            raise SigningKeyError(
                 "client approval/recovery keys must remain outside workspaces and "
-                "managed Playbill instance storage; "
+                "managed Cruxible instance storage; "
                 f"custody path={str(resolved)!r}, forbidden root={str(root)!r}"
             )
 
@@ -74,10 +74,10 @@ def _key_directory_mode_refusal(path: Path) -> str:
 def _secure_directory(path: Path) -> None:
     if path.exists():
         if path.is_symlink() or not path.is_dir():
-            raise PlaybillKeyError(f"key directory is not a real directory: {path}")
+            raise SigningKeyError(f"key directory is not a real directory: {path}")
         mode = stat.S_IMODE(path.stat().st_mode)
         if mode & 0o077:
-            raise PlaybillKeyError(_key_directory_mode_refusal(path))
+            raise SigningKeyError(_key_directory_mode_refusal(path))
         return
     path.mkdir(parents=True, mode=0o700)
     os.chmod(path, 0o700)
@@ -128,7 +128,7 @@ def _generate_key_material(
     private_path = directory / private_filename
     public_path = directory / public_filename
     if private_path.exists() or public_path.exists():
-        raise PlaybillKeyError(f"refusing to overwrite existing key material for {principal_id}")
+        raise SigningKeyError(f"refusing to overwrite existing key material for {principal_id}")
     private_key = Ed25519PrivateKey.generate()
     try:
         _exclusive_write(private_path, _serialize_private(private_key), 0o600)
@@ -162,7 +162,7 @@ def generate_daemon_key(credentials_directory: Path) -> GeneratedKeyMaterial:
     )
     public_fields = material.public_key_path.read_bytes().split()
     if len(public_fields) < 2:
-        raise PlaybillKeyError("generated daemon public key is malformed")
+        raise SigningKeyError("generated daemon public key is malformed")
     _exclusive_write(
         credentials_directory / ALLOWED_SIGNERS_FILE,
         b"daemon " + b" ".join(public_fields[:2]) + b"\n",
@@ -181,7 +181,7 @@ def generate_client_principal_key(
     """Generate a client-held approval/recovery key outside daemon storage."""
 
     if principal_id == "daemon" or kind == "daemon":
-        raise PlaybillKeyError("client keys cannot claim daemon identity or kind")
+        raise SigningKeyError("client keys cannot claim daemon identity or kind")
     assert_outside_roots(key_directory, forbidden_roots)
     # Validate identifier and sorted roles before using either in a filename.
     placeholder = PrincipalRecord(
@@ -217,7 +217,7 @@ def preview_client_principal(
         key_directory, principal_id=principal_id, kind=kind, forbidden_roots=forbidden_roots
     )
     if target.private_key_path.exists() or target.public_key_path.exists():
-        raise PlaybillKeyError(f"refusing to overwrite existing key material for {principal_id}")
+        raise SigningKeyError(f"refusing to overwrite existing key material for {principal_id}")
     return target.principal.model_copy(
         update={"public_key": _public_key_hex(Ed25519PrivateKey.generate())}
     )
@@ -233,7 +233,7 @@ def validate_client_principal_key_target(
     """Validate one custody target without creating directories or key material."""
 
     if principal_id == "daemon" or kind == "daemon":
-        raise PlaybillKeyError("client keys cannot claim daemon identity or kind")
+        raise SigningKeyError("client keys cannot claim daemon identity or kind")
     directory = _resolved(key_directory)
     assert_outside_roots(directory, forbidden_roots)
     principal = PrincipalRecord(
@@ -243,9 +243,9 @@ def validate_client_principal_key_target(
     )
     if directory.exists():
         if directory.is_symlink() or not directory.is_dir():
-            raise PlaybillKeyError(f"key directory is not a real directory: {directory}")
+            raise SigningKeyError(f"key directory is not a real directory: {directory}")
         if stat.S_IMODE(directory.stat().st_mode) & 0o077:
-            raise PlaybillKeyError(_key_directory_mode_refusal(directory))
+            raise SigningKeyError(_key_directory_mode_refusal(directory))
     return ClientPrincipalKeyTarget(
         directory=directory,
         principal=principal,
@@ -271,21 +271,21 @@ def adopt_client_principal_key(
     )
     for path in (target.private_key_path, target.public_key_path):
         if path.is_symlink() or not path.is_file():
-            raise PlaybillKeyError(
+            raise SigningKeyError(
                 f"retry adoption requires a complete regular key pair for {principal_id}"
             )
     if stat.S_IMODE(target.private_key_path.stat().st_mode) & 0o077:
-        raise PlaybillKeyError(
+        raise SigningKeyError(
             f"private key permissions must exclude group/world access: {target.private_key_path}"
         )
     private_public = public_key_hex_from_private_file(target.private_key_path)
     try:
         public_content = target.public_key_path.read_bytes()
     except OSError as exc:
-        raise PlaybillKeyError("client public key is missing or unreadable") from exc
+        raise SigningKeyError("client public key is missing or unreadable") from exc
     public_hex = raw_public_key_hex_from_openssh(public_content)
     if private_public != public_hex:
-        raise PlaybillKeyError("client public/private key pair does not correspond")
+        raise SigningKeyError("client public/private key pair does not correspond")
     return GeneratedKeyMaterial(
         principal=target.principal.model_copy(update={"public_key": public_hex}),
         private_key_path=target.private_key_path,
@@ -299,9 +299,9 @@ def public_key_hex_from_private_file(path: Path) -> str:
     try:
         private_key = serialization.load_ssh_private_key(path.read_bytes(), password=None)
     except (OSError, ValueError) as exc:
-        raise PlaybillKeyError("daemon private key is missing or unreadable") from exc
+        raise SigningKeyError("daemon private key is missing or unreadable") from exc
     if not isinstance(private_key, Ed25519PrivateKey):
-        raise PlaybillKeyError("Playbill requires an Ed25519 daemon private key")
+        raise SigningKeyError("Cruxible requires an Ed25519 daemon private key")
     return _public_key_hex(private_key)
 
 
@@ -310,13 +310,13 @@ def raw_public_key_hex_from_openssh(content: bytes) -> str:
 
     fields = content.split()
     if len(fields) < 2:
-        raise PlaybillKeyError("OpenSSH public key is malformed")
+        raise SigningKeyError("OpenSSH public key is malformed")
     try:
         public_key = serialization.load_ssh_public_key(b" ".join(fields[:2]))
     except ValueError as exc:
-        raise PlaybillKeyError("OpenSSH public key is malformed") from exc
+        raise SigningKeyError("OpenSSH public key is malformed") from exc
     if not isinstance(public_key, Ed25519PublicKey):
-        raise PlaybillKeyError("Playbill requires an Ed25519 public key")
+        raise SigningKeyError("Cruxible requires an Ed25519 public key")
     return public_key.public_bytes_raw().hex()
 
 

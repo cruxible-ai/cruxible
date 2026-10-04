@@ -24,7 +24,7 @@ from cruxible_client.contracts.claims import (
     claim_artifact_digest,
     claim_statement_digest,
 )
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.procedures.windows import (
     BoundObservationWindow,
     ObservationWindow,
@@ -66,7 +66,7 @@ class ClaimVersionReference(_ContractModel):
             or claim_artifact_digest(claim).tagged != self.artifact_digest
             or claim_statement_digest(claim.statement).tagged != self.statement_digest
         ):
-            raise PlaybillFormatError("resolution hypothesis does not reproduce its exact Claim")
+            raise FormatError("resolution hypothesis does not reproduce its exact Claim")
 
 
 _CLAIM_ID_INPUT_RE = re.compile(r"^(?:Claim:)?CLM-[0-9a-f]{32}$")
@@ -121,11 +121,9 @@ class ResolutionContract(_ContractModel):
         self.hypothesis.verify(claim)
         obj = claim.statement.object
         if not isinstance(obj, LiteralClaimObject):
-            raise PlaybillFormatError(
-                "mechanical resolution requires a canonical literal hypothesis"
-            )
+            raise FormatError("mechanical resolution requires a canonical literal hypothesis")
         if self.rule.operator in {"threshold", "presence"} and not isinstance(obj.value, bool):
-            raise PlaybillFormatError("threshold and presence hypotheses must predict a boolean")
+            raise FormatError("threshold and presence hypotheses must predict a boolean")
 
     @property
     def pins(self) -> tuple[ArtifactPin, ...]:
@@ -136,7 +134,7 @@ class ResolutionContract(_ContractModel):
 
 def resolution_contract_path(name: str) -> str:
     if not _NAME.fullmatch(name):
-        raise PlaybillFormatError("ResolutionContract identity is not path-addressable")
+        raise FormatError("ResolutionContract identity is not path-addressable")
     return f"resolution-contracts/{name}.json"
 
 
@@ -156,13 +154,13 @@ def parse_resolution_contract(
     try:
         contract = ResolutionContract.model_validate(json.loads(content))
     except (ValueError, UnicodeDecodeError) as exc:
-        raise PlaybillFormatError("ResolutionContract failed strict validation") from exc
+        raise FormatError("ResolutionContract failed strict validation") from exc
     if not artifact_path_matches(
         resolution_contract_path(contract.identity.name), path, codec=codec
     ):
-        raise PlaybillFormatError("ResolutionContract identity/path disagreement")
+        raise FormatError("ResolutionContract identity/path disagreement")
     if artifact_bytes_for_path(render_resolution_contract(contract), path, codec=codec) != content:
-        raise PlaybillFormatError("ResolutionContract bytes are not canonical")
+        raise FormatError("ResolutionContract bytes are not canonical")
     return contract
 
 

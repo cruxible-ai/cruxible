@@ -1,6 +1,6 @@
 # Cruxible architecture
 
-Playbill separates accepted authority from storage, projections, and high-rate
+Cruxible separates accepted authority from storage, projections, and high-rate
 exhaust. That separation is the core invariant.
 
 ## Components
@@ -10,11 +10,11 @@ exhaust. That separation is the core invariant.
 | Git ledger | Accepted envelopes, principal state, proposals, approvals, generations | Yes |
 | Content-addressed storage | Exact immutable body and artifact bytes referenced by digest | For those bytes only |
 | SQLite | Query indexes, operational metadata, rebuildable projections | No |
-| Source systems | Databases, APIs, files, and services Playbill references | Yes, for their own records |
+| Source systems | Databases, APIs, files, and services Cruxible references | Yes, for their own records |
 | Event/exhaust stream | High-rate observations, actions, and processing exhaust | Evidence/input, not accepted state |
 | Compiler | Deterministically turns accepted envelopes and source bundles into semantic projections | Pinned interpreter |
 
-A source database does not become subordinate to Playbill. Playbill may accept a
+A source database does not become subordinate to Cruxible. Cruxible may accept a
 Claim about a row, pin a source coordinate, or record an attestation concerning
 it without copying the table or claiming authority over the source record.
 
@@ -65,7 +65,7 @@ generation.
 ## Keys and credentials
 
 Runtime bearer credentials authenticate API transport and impose a capability
-ceiling. Playbill principals represent governance authority. Their Ed25519
+ceiling. Cruxible principals represent governance authority. Their Ed25519
 private keys stay with the client; the ledger stores public keys and key
 history. A separate daemon key signs ledger mechanics. Recovery authority can
 repair principal state but cannot approve ordinary content.

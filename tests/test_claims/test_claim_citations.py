@@ -52,7 +52,6 @@ from cruxible_client.contracts.subjects import render_subject, subject_digest, s
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.proposals.settlement import ChangeActorBinding
-from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.claims.claims import service_get_playbill_claim
 from cruxible_core.service.discovery.coverage import build_accepted_evidence_index_v2
 from tests.core_support._pc_c_support import capture_contract as _capture_contract
@@ -443,11 +442,11 @@ def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
     )
     coverage_index = build_accepted_evidence_index_v2(
         instance,
-        at=PlaybillAcceptedCoordinate.from_internal(accepted_v2),
+        at=AcceptedCoordinate.from_internal(accepted_v2),
     )
     rebuilt_coverage_index = build_accepted_evidence_index_v2(
         instance,
-        at=PlaybillAcceptedCoordinate.from_internal(accepted_v2),
+        at=AcceptedCoordinate.from_internal(accepted_v2),
     )
     assert canonical_bytes(coverage_index.model_dump(mode="json")) == canonical_bytes(
         rebuilt_coverage_index.model_dump(mode="json")

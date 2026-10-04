@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from typing import Protocol
 
 from cruxible_client.contracts.canonical import CanonicalValue
-from cruxible_client.contracts.errors import PlaybillExecutionError
+from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.provider_interfaces import (
     AcceptedProviderInterfaceRegistration,
     ProviderBucketClassifierInstallation,
@@ -43,7 +43,7 @@ class ProviderBucketClassifierProtocol(Protocol):
     def classify(self, canonical_input: CanonicalValue) -> str: ...
 
 
-class ProviderClassifierInstallationRefused(PlaybillExecutionError):
+class ProviderClassifierInstallationRefused(ExecutionError):
     """An installed classifier failed identity or fixture re-proof."""
 
     def __init__(self, code: str, message: str) -> None:

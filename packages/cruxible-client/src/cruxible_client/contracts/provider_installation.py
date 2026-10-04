@@ -33,7 +33,7 @@ class ProviderWheelObject(_Strict):
         return value
 
 
-class PlaybillProviderInstallRequest(_Strict):
+class ProviderInstallRequest(_Strict):
     package: str | None = None
     # An exact release of a package installed by name from the provider index;
     # omitted, the newest final release. A configured repository has one version.
@@ -57,7 +57,7 @@ class PlaybillProviderInstallRequest(_Strict):
         return value
 
     @model_validator(mode="after")
-    def _source(self) -> "PlaybillProviderInstallRequest":
+    def _source(self) -> "ProviderInstallRequest":
         if self.package is not None:
             if self.wheel is not None or self.lock_digest is not None or self.dependencies:
                 raise ValueError("choose a catalog package or transferred wheel and lock")
@@ -98,7 +98,7 @@ class ProviderOperationReadiness(_Strict):
 ProviderInstallPreviewStep = Literal["package_preparation", "deployment_readiness", "registration"]
 
 
-class PlaybillProviderInstallResult(_Strict):
+class ProviderInstallResult(_Strict):
     tag: Literal["playbill-provider-install-result-v1"] = "playbill-provider-install-result-v1"
     installation_id: str
     provider_id: str
@@ -119,7 +119,7 @@ class PlaybillProviderInstallResult(_Strict):
     coordinate: AcceptedCoordinate | None = None
 
     @model_validator(mode="after")
-    def _preview_label(self) -> "PlaybillProviderInstallResult":
+    def _preview_label(self) -> "ProviderInstallResult":
         previewed = self.status == "would_install"
         if previewed != (self.preview_scope == "validation_only"):
             raise ValueError("exactly an install preview is labelled validation_only")
@@ -136,7 +136,7 @@ class ProviderPackageSummary(_Strict):
     interfaces: tuple[str, ...]
 
 
-class PlaybillProviderCatalog(_Strict):
+class ProviderCatalog(_Strict):
     tag: Literal["playbill-provider-catalog-v1"] = "playbill-provider-catalog-v1"
     packages: tuple[ProviderPackageSummary, ...] = ()
     detail: str | None = None

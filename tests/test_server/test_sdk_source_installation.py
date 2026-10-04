@@ -7,7 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-from cruxible_client import Disposition, Playbill
+from cruxible_client import Cruxible, Disposition
 from cruxible_client.authoring.inputs import CarriedContractInput
 from cruxible_client.authoring.source import (
     claim_candidate,
@@ -40,11 +40,9 @@ from tests.test_server.test_provider_installation import installer_http  # noqa:
 
 
 def _proof(client: CruxibleClient, instance_id: str, ref: str) -> dict[str, Any]:
-    from cruxible_client.contracts.get_reads import PlaybillGetRequest
+    from cruxible_client.contracts.get_reads import GetRequest
 
-    proof = client.playbill_get(
-        instance_id, request=PlaybillGetRequest(ref=ref, detail="proof")
-    ).proof
+    proof = client.get(instance_id, request=GetRequest(ref=ref, detail="proof")).proof
     assert proof is not None
     return dict(proof)
 
@@ -67,7 +65,7 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
         extras=("browser",),
     )
     assert installed.registered, installed
-    pb = Playbill._from_client(client, instance_id=instance_id, workspace=tmp_path)
+    pb = Cruxible._from_client(client, instance_id=instance_id, workspace=tmp_path)
 
     def accept(draft):
         prepared = draft.prepare()

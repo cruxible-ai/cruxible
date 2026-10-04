@@ -23,7 +23,7 @@ def _accept_document(client: TestClient, instance_id: str, key: Path) -> None:
     shell = DocumentShell(
         identity="document:design",
         document_kind="design",
-        title="Playbill design",
+        title="Cruxible design",
         media_type="text/markdown",
         body_digest=stored.json()["digest"],
         authority=DocumentAuthority(required_tier="graph_write"),
@@ -75,7 +75,7 @@ def test_get_serves_cards_details_and_coded_refusals(
     assert card.status_code == 200, card.text
     payload = card.json()
     assert payload["kind"] == "document" and payload["ref"] == "Document:design"
-    assert payload["card"]["title"] == "Playbill design"
+    assert payload["card"]["title"] == "Cruxible design"
     assert payload["card"]["size"] == len(_BODY)
     # Absent sections are omitted, not null.
     assert "evidence" not in payload and "proof" not in payload

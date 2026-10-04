@@ -819,7 +819,7 @@ def test_retry_requires_one_explicit_occurrence():
     "failure", ["selector", "record", "run", "absent", "payload_absent", "future", "backend"]
 )
 def test_event_refusals_close_only_unusable_occurrences(tmp_path, monkeypatch, failure):
-    from cruxible_client.contracts.errors import PlaybillExecutionError
+    from cruxible_client.contracts.errors import ExecutionError
     from cruxible_client.contracts.line_dispatch import LineTriggerOccurrence
     from cruxible_client.contracts.procedures.line_specs import line_identity_digest
     from cruxible_client.contracts.procedures.windows import (
@@ -904,7 +904,7 @@ def test_event_refusals_close_only_unusable_occurrences(tmp_path, monkeypatch, f
     if failure == "backend":
 
         def unavailable(*args, **kwargs):
-            raise PlaybillExecutionError("temporary execution backend failure")
+            raise ExecutionError("temporary execution backend failure")
 
         monkeypatch.setattr(
             "cruxible_core.service.procedures.procedure_runs.capture_event_time", unavailable

@@ -1,4 +1,4 @@
-"""Wire-error laws for the surviving host, auth, and Playbill surface."""
+"""Wire-error laws for the surviving host, auth, and Cruxible surface."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cruxible_client import errors as client_errors
-from cruxible_client.contracts.compact_query import PlaybillQueryRequest
+from cruxible_client.contracts.compact_query import QueryRequest
 from cruxible_client.contracts.errors import (
     ProposalEvaluationIntegrityError,
     ProposalIntegrityError,
@@ -38,7 +38,7 @@ from cruxible_core.server.errors import response_to_error as compat_response_to_
             {"errors": ["missing setting"]},
         ),
         (
-            DataValidationError("bad Playbill request", errors=["invalid coordinate"]),
+            DataValidationError("bad Cruxible request", errors=["invalid coordinate"]),
             400,
             client_errors.DataValidationError,
             {"errors": ["invalid coordinate"]},
@@ -303,7 +303,7 @@ def test_a_frozen_model_failing_inside_a_service_stays_a_generic_server_error(
     client, instance_id, _private_key = playbill_http
 
     def exploding_head(*_args: object, **_kwargs: object) -> object:
-        PlaybillQueryRequest(kind="x", limit=0)  # below the model's own floor
+        QueryRequest(kind="x", limit=0)  # below the model's own floor
         raise AssertionError("unreachable")
 
     monkeypatch.setattr("cruxible_core.runtime.playbill_api.playbill_head", exploding_head)
@@ -317,7 +317,7 @@ def test_a_frozen_model_failing_inside_a_service_stays_a_generic_server_error(
     assert body["error_type"] == "InternalServerError"
     assert body["message"] == "internal server error"
     # The internal model name never reaches the client.
-    assert "PlaybillQueryRequest" not in response.text
+    assert "QueryRequest" not in response.text
 
 
 def test_nearest_predicates_cover_typos_and_bare_leaf_names() -> None:

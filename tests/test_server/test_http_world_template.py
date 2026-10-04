@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from cruxible_client.contracts.types import PlaybillTrustRoot
+from cruxible_client.contracts.types import TrustRoot
 from cruxible_core.runtime import playbill_api
 from cruxible_core.runtime.instance import PlaybillInstance
 from tests.core_support._world_templates import FRESH_WORLDS_ENV, WorldTemplates, copy_template
@@ -27,9 +27,7 @@ def _registered(state: Path) -> list[tuple[str, str]]:
 
 
 def _opened(state: Path, instance_id: str) -> PlaybillInstance:
-    trust = PlaybillTrustRoot.model_validate_json(
-        (state / "trust" / f"{instance_id}.json").read_bytes()
-    )
+    trust = TrustRoot.model_validate_json((state / "trust" / f"{instance_id}.json").read_bytes())
     return PlaybillInstance.open(state / "instances" / instance_id, trust_root=trust)
 
 

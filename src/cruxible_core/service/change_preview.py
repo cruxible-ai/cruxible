@@ -21,7 +21,7 @@ proposal service); an operation on an instance checks it under the lock its
 write holds.
 
 A change to state outside the accepted ledger -- a runtime credential, a host's
-worktree binding -- is pinned instead to a ``PlaybillStateCoordinate``: a
+worktree binding -- is pinned instead to a ``StateCoordinate``: a
 digest of exactly the records it changes, read where it writes
 (``state_change_scope`` and ``StateChange.observe``). The ledger can move
 without changing them, and a host before genesis has no head at all.
@@ -47,9 +47,9 @@ from typing import Literal
 from cruxible_client import contracts
 from cruxible_client.contracts.actor_types import TransportCapability
 from cruxible_client.contracts.candidates import CandidateRecordAnyVersion
-from cruxible_client.contracts.change_control import ChangeKind, PlaybillStateCoordinate
+from cruxible_client.contracts.change_control import ChangeKind, StateCoordinate
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
-from cruxible_client.contracts.get_reads import PlaybillGetCoordinate
+from cruxible_client.contracts.get_reads import GetCoordinate
 from cruxible_core.errors import ChangeRefusedError
 from cruxible_core.indexes.history.history_index import detached_history_reads
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
@@ -89,7 +89,7 @@ class ChangeMode:
         self._describe = describe
         self._instance = instance
         self._head: AcceptedProjectionCoordinate | None = None
-        self._coordinate: PlaybillGetCoordinate | None = None
+        self._coordinate: GetCoordinate | None = None
 
     @property
     def head(self) -> AcceptedProjectionCoordinate | None:
@@ -98,7 +98,7 @@ class ChangeMode:
         return self._head
 
     @property
-    def coordinate(self) -> PlaybillGetCoordinate | None:
+    def coordinate(self) -> GetCoordinate | None:
         head = self.head
         if self._coordinate is None and self._instance is not None and head is not None:
             self._coordinate = compact_coordinate(self._instance, head)
@@ -154,9 +154,9 @@ class StateChange:
         self.at = at
         self._operation = operation
         self._describe = describe
-        self.coordinate: PlaybillStateCoordinate | None = None
+        self.coordinate: StateCoordinate | None = None
 
-    def observe(self, coordinate: PlaybillStateCoordinate) -> None:
+    def observe(self, coordinate: StateCoordinate) -> None:
         self.coordinate = coordinate
         if self.previewing or self.at is None:
             return
@@ -175,19 +175,19 @@ def previews_by_default(kind: ChangeKind) -> bool:
 
 def compact_coordinate(
     instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate
-) -> PlaybillGetCoordinate:
+) -> GetCoordinate:
     """The 12-hex git oid and generation every outcome is pinned to."""
 
     public = AcceptedCoordinate.from_internal(coordinate)
     with instance.accepted_history_reader(at=public) as history:
         generation = int(history.sequence)
-    return PlaybillGetCoordinate(git_oid=public.git_oid[:12], generation=generation)
+    return GetCoordinate(git_oid=public.git_oid[:12], generation=generation)
 
 
-def full_coordinate(instance: PlaybillInstance) -> contracts.PlaybillAcceptedCoordinate:
+def full_coordinate(instance: PlaybillInstance) -> contracts.AcceptedCoordinate:
     """The whole accepted coordinate, for an outcome that reports it in full."""
 
-    return contracts.PlaybillAcceptedCoordinate.model_validate(
+    return contracts.AcceptedCoordinate.model_validate(
         AcceptedCoordinate.from_internal(instance.accepted_coordinate()).model_dump(mode="json")
     )
 

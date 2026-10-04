@@ -9,7 +9,7 @@ import pytest
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.claim_types import claim_type_path
 from cruxible_client.contracts.errors import ClaimNotFoundError
-from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+from cruxible_core.service.authoring.documents import AcceptedCoordinate
 from cruxible_core.service.claims.claim_types import (
     service_get_playbill_claim_type,
     service_propose_playbill_claim_type,
@@ -69,7 +69,7 @@ def test_new_claim_type_preserves_but_does_not_enforce_authority_bytes(tmp_path:
 
 def test_claim_type_read_is_pinned_to_the_requested_accepted_coordinate(tmp_path: Path) -> None:
     instance, _owner = seed_claims(tmp_path)
-    accepted = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    accepted = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
 
     pinned = service_get_playbill_claim_type(instance, predicate=PREDICATE, at=accepted)
 

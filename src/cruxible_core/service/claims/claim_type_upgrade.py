@@ -38,7 +38,7 @@ from cruxible_client.contracts.claim_types import (
     parse_claim_type,
     render_claim_type,
 )
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeDependentDisposition,
     ClaimTypeMigrationError,
@@ -137,7 +137,7 @@ def _upgrade(
     for predicate in sorted(wanted, key=lambda item: item.encode("utf-8")):
         try:
             present = claim_type_path(predicate) in tree
-        except PlaybillFormatError:
+        except FormatError:
             present = False
         if not present:
             refused.append(
@@ -162,7 +162,7 @@ def _upgrade(
             continue
         try:
             successor, entry = _to_v7(claim_type, lineages, request)
-        except (_Refused, PlaybillFormatError, ValueError) as error:
+        except (_Refused, FormatError, ValueError) as error:
             refused.append(
                 ClaimTypeUpgradeRefusal(claim_type=claim_type.identity.qualified, reason=str(error))
             )

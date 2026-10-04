@@ -1,4 +1,4 @@
-"""Persistent loader for opt-in Playbill substrates attached to governed instances."""
+"""Persistent loader for opt-in Cruxible substrates attached to governed instances."""
 
 from __future__ import annotations
 
@@ -11,18 +11,18 @@ from pydantic import ValidationError
 
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.errors import (
-    PlaybillBootstrapError,
-    PlaybillFormatError,
-    PlaybillObjectFormatConflict,
-    PlaybillReseedRequired,
+    BootstrapError,
+    FormatError,
+    ObjectFormatConflict,
+    ReseedRequired,
 )
 from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_client.contracts.temporal import utc_now
 from cruxible_client.contracts.types import (
     GitObjectFormat,
     OperatingProfile,
-    PlaybillTrustRoot,
     PrincipalRecord,
+    TrustRoot,
 )
 from cruxible_core.documents.workspace_file import WorkspaceFileReader
 from cruxible_core.errors import (
@@ -61,7 +61,7 @@ def _fsync_directory(path: Path) -> None:
 
 
 class PlaybillInstanceManager:
-    """Open Playbill only from a registry-owned root and pinned trust-root file."""
+    """Open Cruxible only from a registry-owned root and pinned trust-root file."""
 
     def __init__(self) -> None:
         self._instances: dict[str, PlaybillInstance] = {}
@@ -85,10 +85,10 @@ class PlaybillInstanceManager:
         legacy_root = managed_root / ".cruxible"
         for legacy in (legacy_root / "playbill-v1", legacy_root / "playbill-trust-root-v1.json"):
             if legacy.exists():
-                raise PlaybillReseedRequired(found=str(legacy))
+                raise ReseedRequired(found=str(legacy))
         trust_root = registry.state_root / "trust" / f"{instance_id}.json"
         if managed_root.exists() != trust_root.exists():
-            raise PlaybillReseedRequired()
+            raise ReseedRequired()
         workspaces = (
             (Path(record.workspace_root).resolve(strict=False),)
             if record.workspace_root is not None
@@ -150,8 +150,8 @@ class PlaybillInstanceManager:
                     or instance.descriptor.operating_profile != operating_profile
                     or instance.inspect().approval_policy_mode != expected_policy
                 ):
-                    raise PlaybillBootstrapError(
-                        "Playbill is already initialized with a different principal set, "
+                    raise BootstrapError(
+                        "Cruxible is already initialized with a different principal set, "
                         "operating profile, or bootstrap approval policy"
                     )
                 return instance
@@ -160,7 +160,7 @@ class PlaybillInstanceManager:
                     workspace_git_object_format(workspaces[0]) if workspaces else None
                 )
             except ValueError as exc:
-                raise PlaybillBootstrapError(
+                raise BootstrapError(
                     "attached workspace must be one exact local Git worktree"
                 ) from exc
             # An attached workspace's own format wins, because the advisory
@@ -173,8 +173,8 @@ class PlaybillInstanceManager:
                 and workspace_format is not None
                 and git_object_format != workspace_format
             ):
-                raise PlaybillObjectFormatConflict(
-                    f"{PlaybillObjectFormatConflict.error_code}: the requested Git object "
+                raise ObjectFormatConflict(
+                    f"{ObjectFormatConflict.error_code}: the requested Git object "
                     f"format differs from the attached workspace's {workspace_format!r}; "
                     "repair: omit --object-format to inherit the workspace, or attach a "
                     "workspace in the requested format",
@@ -208,11 +208,11 @@ class PlaybillInstanceManager:
                 while view:
                     written = os.write(descriptor, view)
                     if written <= 0:  # pragma: no cover - defensive OS contract
-                        raise PlaybillBootstrapError("trust-root write made no progress")
+                        raise BootstrapError("trust-root write made no progress")
                     view = view[written:]
                 os.fsync(descriptor)
             except OSError as exc:
-                raise PlaybillBootstrapError("failed to persist Playbill trust root") from exc
+                raise BootstrapError("failed to persist Cruxible trust root") from exc
             finally:
                 if descriptor is not None:
                     os.close(descriptor)
@@ -229,14 +229,14 @@ class PlaybillInstanceManager:
                 return known
             managed_root, trust_path, _workspaces = self._paths(instance_id)
             if trust_path.is_symlink() or not trust_path.is_file() or not managed_root.is_dir():
-                raise PlaybillBootstrapError("Playbill is not initialized for this instance")
+                raise BootstrapError("Cruxible is not initialized for this instance")
             try:
                 raw = trust_path.read_bytes()
-                trust = PlaybillTrustRoot.model_validate_json(raw)
+                trust = TrustRoot.model_validate_json(raw)
             except (OSError, ValidationError, ValueError) as exc:
-                raise PlaybillFormatError("persisted Playbill trust root is malformed") from exc
+                raise FormatError("persisted Cruxible trust root is malformed") from exc
             if canonical_bytes(trust.model_dump(mode="json")) + b"\n" != raw:
-                raise PlaybillFormatError("persisted Playbill trust root is not canonical")
+                raise FormatError("persisted Cruxible trust root is not canonical")
             instance = self._open(instance_id, managed_root, trust)
             instance.bind_receive_limits(
                 load_proposal_receive_config(get_server_state_root()).limits()
@@ -246,7 +246,7 @@ class PlaybillInstanceManager:
             return instance
 
     @staticmethod
-    def _open(instance_id: str, managed_root: Path, trust: PlaybillTrustRoot) -> PlaybillInstance:
+    def _open(instance_id: str, managed_root: Path, trust: TrustRoot) -> PlaybillInstance:
         """Open one instance; inside a preview, refuse rather than repair on disk.
 
         Reopening replays accepted history and repairs derived files a crash
@@ -271,11 +271,11 @@ class PlaybillInstanceManager:
             ) from exc
 
     def initialized(self, instance_id: str) -> PlaybillInstance | None:
-        """The instance, or None while Playbill is not initialized under the host."""
+        """The instance, or None while Cruxible is not initialized under the host."""
 
         try:
             return self.get(instance_id)
-        except (PlaybillBootstrapError, InstanceNotFoundError):
+        except (BootstrapError, InstanceNotFoundError):
             return None
 
     def rebind_workspace(self, instance_id: str) -> None:
@@ -442,8 +442,8 @@ class PlaybillInstanceManager:
             try:
                 instance = self.get(record.instance_id)
             except (
-                PlaybillBootstrapError,
-                PlaybillReseedRequired,
+                BootstrapError,
+                ReseedRequired,
                 InstanceNotFoundError,
                 InstanceLocationRefusedError,
             ) as exc:
@@ -511,8 +511,8 @@ class PlaybillInstanceManager:
             try:
                 instance = self.get(record.instance_id)
             except (
-                PlaybillBootstrapError,
-                PlaybillReseedRequired,
+                BootstrapError,
+                ReseedRequired,
                 InstanceNotFoundError,
                 InstanceLocationRefusedError,
             ) as exc:

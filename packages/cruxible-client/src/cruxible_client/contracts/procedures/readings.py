@@ -257,7 +257,7 @@ class ProcedureMeasurementRow(_StrictReadingWireModel):
     detail: str | None = None
 
 
-class PlaybillProcedureMeasureRequest(_StrictReadingWireModel):
+class ProcedureMeasureRequest(_StrictReadingWireModel):
     """Evaluate the due measurements of one accepted Procedure, optionally for one run.
 
     ``evaluation_time`` is the explicit OBSERVATION INSTANT; ``at`` is the
@@ -289,7 +289,7 @@ class PlaybillProcedureMeasureRequest(_StrictReadingWireModel):
         return format_datetime(value)
 
 
-class PlaybillProcedureMeasureResult(_StrictReadingWireModel):
+class ProcedureMeasureResult(_StrictReadingWireModel):
     tag: Literal["playbill-procedure-measure-result-v1"] = "playbill-procedure-measure-result-v1"
     procedure_identity: ArtifactIdentity
     procedure_artifact_digest: str
@@ -333,7 +333,7 @@ class ProcedureMeasurementContractStatus(_StrictReadingWireModel):
     reading_count: int = Field(ge=0)
 
 
-class PlaybillProcedureReadingsRequest(_StrictReadingWireModel):
+class ProcedureReadingsRequest(_StrictReadingWireModel):
     """Bounded, paginated inspection of retained readings. Never writes."""
 
     tag: Literal["playbill-procedure-readings-request-v1"] = (
@@ -364,7 +364,7 @@ class PlaybillProcedureReadingsRequest(_StrictReadingWireModel):
         return format_datetime(value)
 
 
-class PlaybillProcedureReadingsResult(_StrictReadingWireModel):
+class ProcedureReadingsResult(_StrictReadingWireModel):
     tag: Literal["playbill-procedure-readings-result-v1"] = "playbill-procedure-readings-result-v1"
     procedure_identity: ArtifactIdentity
     procedure_artifact_digest: str
@@ -392,10 +392,10 @@ class PlaybillProcedureReadingsResult(_StrictReadingWireModel):
 
 
 __all__ = [
-    "PlaybillProcedureMeasureRequest",
-    "PlaybillProcedureMeasureResult",
-    "PlaybillProcedureReadingsRequest",
-    "PlaybillProcedureReadingsResult",
+    "ProcedureMeasureRequest",
+    "ProcedureMeasureResult",
+    "ProcedureReadingsRequest",
+    "ProcedureReadingsResult",
     "ProcedureMeasurementContractStatus",
     "ProcedureMeasurementEligibility",
     "ProcedureMeasurementRefusalCode",

@@ -2,7 +2,7 @@
 
 This is intentionally the narrow, byte-compatible Contract subset, not an
 import of the legacy config schema. Owner-carried Contracts are accepted
-Playbill artifacts and the served Playbill closure may not initialize the
+Cruxible artifacts and the served Cruxible closure may not initialize the
 mutable-core config donor merely to validate their fields.
 """
 

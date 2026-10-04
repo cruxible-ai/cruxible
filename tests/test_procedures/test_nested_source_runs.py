@@ -202,16 +202,14 @@ def test_child_occurrences_have_exact_bindings_and_replay_without_execution(
     from cruxible_client.authoring.sdk import ProcedureRun
 
     class Client:
-        def get_playbill_procedure_run(self, instance_id, run_id):
+        def get_procedure_run(self, instance_id, run_id):
             assert instance_id == instance.descriptor.instance_id
-            return api.PlaybillProcedureRunState.model_validate(
+            return api.ProcedureRunState.model_validate(
                 service_get_playbill_procedure_run(instance, run_id=run_id).model_dump(mode="json")
             )
 
     pb = SimpleNamespace(_client=Client(), _instance_id=instance.descriptor.instance_id)
-    wrapped = ProcedureRun(
-        pb, api.PlaybillProcedureRunState.model_validate(result.model_dump(mode="json"))
-    )
+    wrapped = ProcedureRun(pb, api.ProcedureRunState.model_validate(result.model_dump(mode="json")))
     assert [child.run_id for child in wrapped.children] == [
         item["receipt"]["run_id"] for item in children
     ]
@@ -404,7 +402,7 @@ def test_line_child_inherits_authority_and_recovery_rebuilds_only_the_recorded_d
         acquisition_policy_path,
         render_acquisition_policy,
     )
-    from cruxible_client.contracts.errors import PlaybillExecutionError
+    from cruxible_client.contracts.errors import ExecutionError
     from cruxible_client.contracts.procedure_mandates import (
         procedure_mandate_path,
         render_procedure_mandate,
@@ -464,14 +462,14 @@ def test_line_child_inherits_authority_and_recovery_rebuilds_only_the_recorded_d
         assert admission.journal_partition_id != result.receipt.partition_id
         proof = retained_delegation(instance, admission)
         assert authority_procedure(admission, proof).target.name == "parent"
-        with pytest.raises(PlaybillExecutionError, match="verified parent"):
+        with pytest.raises(ExecutionError, match="verified parent"):
             authority_procedure(admission)
         forged = admission.model_copy(
             update={
                 "actor_context": admission.actor_context.model_copy(update={"actor_id": "another"})
             }
         )
-        with pytest.raises(PlaybillExecutionError, match="parent"):
+        with pytest.raises(ExecutionError, match="parent"):
             authority_procedure(forged, proof)
         assert (
             service_get_playbill_procedure_run(instance, run_id=admission.run_id).status

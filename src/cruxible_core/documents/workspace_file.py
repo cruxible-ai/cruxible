@@ -138,7 +138,7 @@ class WorkspaceFileReader:
             raise WorkspaceFileReadRefused("git_metadata", "Git metadata is never readable")
         if any(part == ".playbill" for part in folded):
             raise WorkspaceFileReadRefused(
-                "playbill_control", "Playbill control paths are never readable"
+                "playbill_control", "Cruxible control paths are never readable"
             )
         leaf = folded[-1]
         if (
@@ -166,7 +166,7 @@ class WorkspaceFileReader:
     def _check_managed_root(self, candidate: Path) -> None:
         if any(self._within_folded(candidate, root) for root in self._managed_roots):
             raise WorkspaceFileReadRefused(
-                "managed_root", "Playbill managed roots are never readable"
+                "managed_root", "Cruxible managed roots are never readable"
             )
 
     @staticmethod

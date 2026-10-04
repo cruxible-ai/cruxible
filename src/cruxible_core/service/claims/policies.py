@@ -1,4 +1,4 @@
-"""Coordinate-pinned inventory of governed Playbill policies in force."""
+"""Coordinate-pinned inventory of governed Cruxible policies in force."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ from cruxible_core.compiler.compiler import (
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.list_pages import (
-    PlaybillListCursorMismatch,
+    ListCursorMismatch,
     decode_list_cursor,
     encode_list_cursor,
     list_snapshot,
@@ -48,7 +48,7 @@ from cruxible_core.service.list_pages import (
 
 def _coordinate(
     instance: PlaybillInstance,
-    at: contracts.PlaybillAcceptedCoordinate | None,
+    at: contracts.AcceptedCoordinate | None,
 ) -> AcceptedProjectionCoordinate:
     if at is None:
         return instance.accepted_coordinate()
@@ -63,15 +63,15 @@ def _coordinate(
 def _row(
     *,
     placement: Literal["embedded", "standalone"],
-    policy_kind: contracts.PlaybillPolicyKind,
+    policy_kind: contracts.PolicyKind,
     identity: str,
     artifact_kind: str,
     digest: str,
     path: str,
     field_path: str,
     policy: Mapping[str, object],
-) -> contracts.PlaybillPolicyInForce:
-    return contracts.PlaybillPolicyInForce(
+) -> contracts.PolicyInForce:
+    return contracts.PolicyInForce(
         placement=placement,
         policy_kind=policy_kind,
         declaring_artifact_identity=identity,
@@ -85,14 +85,14 @@ def _row(
 
 def _embedded(
     *,
-    policy_kind: contracts.PlaybillPolicyKind,
+    policy_kind: contracts.PolicyKind,
     identity: str,
     artifact_kind: str,
     digest: str,
     path: str,
     field_path: str,
     value: object,
-) -> contracts.PlaybillPolicyInForce:
+) -> contracts.PolicyInForce:
     policy = value if isinstance(value, Mapping) else {field_path.rsplit("/", 1)[-1]: value}
     return _row(
         placement="embedded",
@@ -109,10 +109,10 @@ def _embedded(
 def service_playbill_policies_in_force(
     instance: PlaybillInstance,
     *,
-    at: contracts.PlaybillAcceptedCoordinate | None = None,
+    at: contracts.AcceptedCoordinate | None = None,
     limit: int | None = None,
     cursor: str | None = None,
-) -> contracts.PlaybillPolicyInForceList:
+) -> contracts.PolicyInForceList:
     """List every live accepted policy carrier at exactly one coordinate.
 
     ``limit`` bounds the page (``None`` reads them all). A cursor continues its
@@ -123,10 +123,10 @@ def service_playbill_policies_in_force(
         None if cursor is None else decode_list_cursor(cursor, list_name=_POLICY_LIST, selection={})
     )
     if continuation is not None:
-        pinned = contracts.PlaybillAcceptedCoordinate.model_validate(continuation.coordinate)
+        pinned = contracts.AcceptedCoordinate.model_validate(continuation.coordinate)
         if at is not None and at != pinned:
-            raise PlaybillListCursorMismatch(
-                f"{PlaybillListCursorMismatch.error_code}: the cursor continues a different "
+            raise ListCursorMismatch(
+                f"{ListCursorMismatch.error_code}: the cursor continues a different "
                 "coordinate; list the policies again without a cursor"
             )
         at = pinned
@@ -149,7 +149,7 @@ def service_playbill_policies_in_force(
             for kind in kinds
             for row in projection.typed.envelopes(kind=kind)
         ]
-    rows: list[contracts.PlaybillPolicyInForce] = []
+    rows: list[contracts.PolicyInForce] = []
     for path, kind, content in selected:
         if kind == "approval-policy":
             approval_policy = parse_approval_policy(content, path=path, codec=artifact_codec)
@@ -202,7 +202,7 @@ def service_playbill_policies_in_force(
             if claim_type.lifecycle.state != "live":
                 continue
             digest = claim_type_digest(claim_type).tagged
-            values: tuple[tuple[contracts.PlaybillPolicyKind, str, object | None], ...] = (
+            values: tuple[tuple[contracts.PolicyKind, str, object | None], ...] = (
                 (
                     "claim_evidence_admission_policy",
                     "/evidence_admission_policy",
@@ -338,13 +338,13 @@ def service_playbill_policies_in_force(
         limit=len(rows) if limit is None else limit,
         list_name=_POLICY_LIST,
     )
-    served = contracts.PlaybillAcceptedCoordinate(
+    served = contracts.AcceptedCoordinate(
         git_oid=coordinate.git_oid,
         semantic_root=coordinate.semantic_root,
         generation_root=coordinate.generation_root,
         compiler_digest=coordinate.compiler.rule_digest,
     )
-    return contracts.PlaybillPolicyInForceList(
+    return contracts.PolicyInForceList(
         coordinate=served,
         policies=list(page),
         truncated=truncated,

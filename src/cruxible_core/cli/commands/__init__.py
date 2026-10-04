@@ -1,4 +1,4 @@
-"""Lazy exports for the surviving Playbill CLI command modules."""
+"""Lazy exports for the surviving Cruxible CLI command modules."""
 
 from __future__ import annotations
 

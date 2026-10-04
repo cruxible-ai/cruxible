@@ -325,7 +325,7 @@ def test_empty_playbill_init_reaches_the_typed_bootstrap_refusal(
     )
 
     assert response.status_code == 409
-    assert response.json()["error_type"] == "PlaybillBootstrapError"
+    assert response.json()["error_type"] == "BootstrapError"
 
 
 def test_bootstrap_secret_runtime_request_log_does_not_include_secret(

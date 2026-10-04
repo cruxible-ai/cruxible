@@ -299,7 +299,7 @@ def test_status_answers_an_instance_scoped_token_with_its_own_host(
     """A pure read must not send an instance admin hunting for the bootstrap secret."""
     from cruxible_client.errors import DaemonOperationScopeError
 
-    coordinate = contracts.PlaybillAcceptedCoordinate(
+    coordinate = contracts.AcceptedCoordinate(
         git_oid="1" * 40,
         semantic_root="sha256:" + "2" * 64,
         generation_root="sha256:" + "3" * 64,
@@ -313,9 +313,9 @@ def test_status_answers_an_instance_scoped_token_with_its_own_host(
         def version(self) -> str:
             return "0.5.1"
 
-        def show_playbill_host(self, instance_id: str) -> contracts.PlaybillHostInspection:
+        def show_host(self, instance_id: str) -> contracts.HostInspection:
             assert instance_id == "inst_scoped"
-            return contracts.PlaybillHostInspection(
+            return contracts.HostInspection(
                 instance_id=instance_id,
                 managed_root=None,
                 workspace_root=None,
@@ -323,9 +323,9 @@ def test_status_answers_an_instance_scoped_token_with_its_own_host(
                 writable=True,
             )
 
-        def playbill_whoami(self, instance_id: str) -> contracts.PlaybillWhoAmI:
+        def whoami(self, instance_id: str) -> contracts.WhoAmI:
             assert instance_id == "inst_scoped"
-            return contracts.PlaybillWhoAmI(
+            return contracts.WhoAmI(
                 actor_id="agent",
                 credential_label="agent",
                 actor_id_source="runtime_credential",

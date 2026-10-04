@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Callable, Final, Literal
+from typing import Callable, Final
 
 from cruxible_client.authoring.inputs import (
     AcquisitionPolicyInput,
@@ -29,6 +29,7 @@ from cruxible_client.authoring.inputs import (
     TriggerInput,
     WorkingSelectionInput,
 )
+from cruxible_client.contracts import AuthoringExampleName as AuthoringExampleName
 from cruxible_client.contracts.acquisition_policies import (
     IndependentCoherence,
     InputAcquisitionRule,
@@ -64,31 +65,6 @@ from cruxible_client.contracts.query.grammar import (
 )
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.triggers import CronSchedule
-
-AuthoringExampleName = Literal[
-    "claim-existing-capture",
-    "claim-flow-a",
-    "claim-self-source",
-    "claim-subject-relation",
-    "claim-exact-content",
-    "claim-revision",
-    "procedure",
-    "claim-adjudicate-contradicting-evidence",
-    "claim-cite-supporting-evidence",
-    "claim-adjudicate-unreviewed-evidence",
-    "query-claims-by-type",
-    "query-ontology",
-    "query-procedures",
-    "subject",
-    "approval-policy",
-    "procedure-runtime-policy",
-    "procedure-mandate",
-    "line",
-    "trigger",
-    "acquisition-policy",
-    "change-set",
-    "claim-type-succession",
-]
 
 
 def subject_example() -> SubjectInput:

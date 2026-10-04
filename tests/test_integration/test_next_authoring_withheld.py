@@ -14,7 +14,7 @@ import pytest
 from pydantic import ValidationError
 
 from cruxible_client import contracts
-from cruxible_client.contracts.principals import PlaybillAuthoringRefusal
+from cruxible_client.contracts.principals import AuthoringRefusal
 from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.next import (
@@ -27,7 +27,7 @@ from tests.test_integration.test_next_caller_view import (
     _conflict_with_uncovered_member,
 )
 
-UNBOUND = PlaybillAuthoringRefusal(
+UNBOUND = AuthoringRefusal(
     code="playbill.identity.credential_unbound",
     detail="this bearer credential (manager) acts as no principal; repair: mint one",
     repair=RepairOperation(
@@ -40,7 +40,7 @@ def _view(
     *,
     surface: str = "cli",
     caller_rung: int | None = 3,
-    refusal: PlaybillAuthoringRefusal | None = UNBOUND,
+    refusal: AuthoringRefusal | None = UNBOUND,
     tools: tuple[str, ...] | None = None,
 ) -> _CallerView:
     return _CallerView(
@@ -79,7 +79,7 @@ def test_the_identity_gate_joins_the_tier_and_profile_gates() -> None:
     dumped = kept.repair_requires.model_dump(mode="json")
     assert dumped["authoring_refusal"]["code"] == "playbill.identity.credential_unbound"
     # The served model reads it back.
-    served = contracts.PlaybillNextRepairRequirement.model_validate(dumped)
+    served = contracts.NextRepairRequirement.model_validate(dumped)
     assert served.authoring_refusal is not None
     assert served.authoring_refusal.repair == UNBOUND.repair
 
@@ -118,7 +118,7 @@ def test_the_requirement_names_the_refusal_exactly_when_authoring_gates_it() -> 
 def test_the_cli_hint_leads_with_the_identity_repair() -> None:
     from cruxible_core.cli.commands.playbill import _next_requirement_hint
 
-    requires = contracts.PlaybillNextRepairRequirement.model_validate(
+    requires = contracts.NextRepairRequirement.model_validate(
         PlaybillNextRepairRequirementV1(
             operation="playbill.set",
             tool="cruxible_playbill_set",

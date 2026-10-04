@@ -39,7 +39,7 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.claim_type_structure import ClaimRole, ClaimTypeStructure
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier, governance_identifier
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
@@ -52,7 +52,7 @@ from cruxible_client.contracts.policies import (
 _PREDICATE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})+$")
 
 
-class ClaimTypeFormatError(PlaybillFormatError):
+class ClaimTypeFormatError(FormatError):
     """The ClaimType envelope or its canonical path is invalid."""
 
 

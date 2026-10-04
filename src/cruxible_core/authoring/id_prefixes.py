@@ -10,12 +10,12 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 
 MINIMUM_PREFIX_HEX = 8
 
 
-class AmbiguousIdPrefix(PlaybillFormatError):
+class AmbiguousIdPrefix(FormatError):
     """A short id prefix named more than one accepted artifact."""
 
     error_code = "playbill.id.prefix_ambiguous"

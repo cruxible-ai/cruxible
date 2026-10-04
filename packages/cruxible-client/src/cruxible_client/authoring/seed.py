@@ -77,7 +77,7 @@ from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, ty
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.claims import ClaimStatement
 from cruxible_client.contracts.documents import DocumentShell
-from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.query.definitions import QueryDefinition
 from cruxible_client.contracts.query.grammar import byte_sorted
 from cruxible_client.contracts.subjects import SubjectShell
@@ -139,7 +139,7 @@ ClaimType digests it projects, so it comes last. Documents depend on nothing in
 the bundle but their own stored body, and sort where they are harmless."""
 
 
-class SeedBundleError(PlaybillError):
+class SeedBundleError(CruxibleError):
     """A bundle could not be read, or could not be legally grouped."""
 
 

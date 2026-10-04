@@ -15,9 +15,9 @@ from typing import Any
 
 import pytest
 
-from cruxible_client.contracts.get_reads import PlaybillGetRequest
+from cruxible_client.contracts.get_reads import GetRequest
 from cruxible_client.contracts.line_dispatch import LineArmPrincipal
-from cruxible_client.contracts.operational_reads import PlaybillGetLineCard
+from cruxible_client.contracts.operational_reads import GetLineCard
 from cruxible_core.runtime import line_arms
 from cruxible_core.service.discovery.get import service_playbill_get
 from cruxible_core.service.discovery.operational import OperationalViewer
@@ -41,11 +41,11 @@ class _LegacyArmPrincipal:
 def _card(instance: Any, line: Any, when: Any, viewer: OperationalViewer | None = None) -> Any:
     card = service_playbill_get(
         instance,
-        request=PlaybillGetRequest(ref=line.identity.qualified, evaluation_time=when),
+        request=GetRequest(ref=line.identity.qualified, evaluation_time=when),
         access=_ACCESS,
         viewer=viewer,
     ).card
-    assert isinstance(card, PlaybillGetLineCard)
+    assert isinstance(card, GetLineCard)
     (arm,) = card.arms
     return arm
 

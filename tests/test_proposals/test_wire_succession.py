@@ -92,7 +92,7 @@ def _document_tree(instance: Any) -> tuple[dict[str, bytes], dict[str, bytes]]:
     shell = DocumentShell(
         identity="document:playbill-design",
         document_kind="design",
-        title="Playbill design",
+        title="Cruxible design",
         media_type="text/markdown",
         body_digest=body.digest,
         authority=DocumentAuthority(

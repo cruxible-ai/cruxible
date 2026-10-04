@@ -47,7 +47,7 @@ from cruxible_client.contracts.claims import (
     render_claim,
 )
 from cruxible_client.contracts.declared_blocks import parse_projection_blocks
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.insertions import (
@@ -68,10 +68,10 @@ from cruxible_core.service.authoring.documents import (
 )
 from cruxible_core.service.discovery.coverage import service_resolve_playbill_coverage
 from cruxible_core.service.discovery.next import (
-    PlaybillNextRequestV1,
-    PlaybillNextSourceObservation,
-    PlaybillNextSourceObservationV3,
-    PlaybillNextWorkspaceObservation,
+    NextRequestV1,
+    NextSourceObservation,
+    NextSourceObservationV3,
+    NextWorkspaceObservation,
     _registered_publication_blocks,
     _registrations_released_by_retirement,
     service_playbill_next,
@@ -334,16 +334,16 @@ def _published_publication_next_request(tmp_path: Path):  # type: ignore[no-unty
             source_id=bound.preparation.source_id,
         )
     )
-    request = PlaybillNextRequestV1(
+    request = NextRequestV1(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         evaluation_time=datetime(2026, 8, 23, 12, tzinfo=UTC),
         access_profile=CoverageAccessProfile(
             profile_id="publication-orphan-test",
             permitted_access_classes=("instance", "public"),
         ),
-        workspace_observation=PlaybillNextWorkspaceObservation(
+        workspace_observation=NextWorkspaceObservation(
             source_observations=(
-                PlaybillNextSourceObservationV3(
+                NextSourceObservationV3(
                     tag="playbill-next-source-observation-v3",
                     source_id="repo.work-items",
                     observed_source_digest=_digest(landed),
@@ -723,7 +723,7 @@ def test_bound_publication_marker_corruption_surfaces_exact_blocking_repair(
     assert marker_notes == ("projection_marker_invalid",)
     assert request.workspace_observation is not None
     if observation_version == 3:
-        source_observation = PlaybillNextSourceObservationV3(
+        source_observation = NextSourceObservationV3(
             tag="playbill-next-source-observation-v3",
             source_id=source_id,
             observed_source_digest=_digest(corrupted),
@@ -736,7 +736,7 @@ def test_bound_publication_marker_corruption_surfaces_exact_blocking_repair(
             marker_notes=marker_notes,
         )
     else:
-        source_observation = PlaybillNextSourceObservation(
+        source_observation = NextSourceObservation(
             source_id=source_id,
             observed_source_digest=_digest(corrupted),
             byte_length=len(corrupted),
@@ -749,7 +749,7 @@ def test_bound_publication_marker_corruption_surfaces_exact_blocking_repair(
         )
     corrupted_request = request.model_copy(
         update={
-            "workspace_observation": PlaybillNextWorkspaceObservation(
+            "workspace_observation": NextWorkspaceObservation(
                 source_observations=(source_observation,)
             )
         }
@@ -1004,7 +1004,7 @@ def test_depublishing_a_block_no_registration_names_refuses_by_name(
         tmp_path
     )
 
-    with pytest.raises(PlaybillFormatError, match="playbill.block.not_registered"):
+    with pytest.raises(FormatError, match="playbill.block.not_registered"):
         service_depublish_playbill_block(
             instance,
             coordinator=coordinator,
@@ -1048,16 +1048,16 @@ def test_a_retired_backing_releases_the_marker_it_backed(tmp_path: Path) -> None
     assert registered in _registrations_released_by_retirement(after_fold, tree=after_tree)
 
     # And the block's absence from the page is no longer a blocking row.
-    request = PlaybillNextRequestV1(
+    request = NextRequestV1(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         evaluation_time=datetime(2026, 8, 23, 12, tzinfo=UTC),
         access_profile=CoverageAccessProfile(
             profile_id="publication-retirement-test",
             permitted_access_classes=("instance", "public"),
         ),
-        workspace_observation=PlaybillNextWorkspaceObservation(
+        workspace_observation=NextWorkspaceObservation(
             source_observations=(
-                PlaybillNextSourceObservationV3(
+                NextSourceObservationV3(
                     tag="playbill-next-source-observation-v3",
                     source_id=preparation.source_id,
                     observed_source_digest=_digest(preimage),
@@ -1106,16 +1106,16 @@ def test_depublishing_releases_the_registration_and_leaves_the_marker_to_remove(
     assert [summary["stamp"]["block_id"] for summary in marker_summaries] == [preparation.block_id]
 
     def _next_items():  # type: ignore[no-untyped-def]
-        request = PlaybillNextRequestV1(
+        request = NextRequestV1(
             at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
             evaluation_time=datetime(2026, 8, 23, 12, tzinfo=UTC),
             access_profile=CoverageAccessProfile(
                 profile_id="depublication-sequence-test",
                 permitted_access_classes=("instance", "public"),
             ),
-            workspace_observation=PlaybillNextWorkspaceObservation(
+            workspace_observation=NextWorkspaceObservation(
                 source_observations=(
-                    PlaybillNextSourceObservationV3(
+                    NextSourceObservationV3(
                         tag="playbill-next-source-observation-v3",
                         source_id=preparation.source_id,
                         observed_source_digest=_digest(landed),

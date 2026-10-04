@@ -30,8 +30,8 @@ from cruxible_core.proposals.proposals import (
 )
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import (
-    PlaybillAcceptedCoordinate,
-    PlaybillProposalInspection,
+    AcceptedCoordinate,
+    ProposalInspection,
     admit_proposal,
 )
 from cruxible_core.service.proposals.proposal_names import canonical_playbill_proposal_name
@@ -45,7 +45,7 @@ class _StrictClaimTypeServiceModel(BaseModel):
 
 class PlaybillClaimTypeView(_StrictClaimTypeServiceModel):
     tag: Literal["playbill-claim-type-read-v1"] = "playbill-claim-type-read-v1"
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     path: str
     predicate: str
     identity: str
@@ -55,7 +55,7 @@ class PlaybillClaimTypeView(_StrictClaimTypeServiceModel):
 
 def _resolve_coordinate(
     instance: PlaybillInstance,
-    at: PlaybillAcceptedCoordinate | None,
+    at: AcceptedCoordinate | None,
 ) -> AcceptedProjectionCoordinate:
     if at is None:
         return instance.accepted_coordinate()
@@ -74,7 +74,7 @@ def _view(
     coordinate: AcceptedProjectionCoordinate,
 ) -> PlaybillClaimTypeView:
     return PlaybillClaimTypeView(
-        coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
+        coordinate=AcceptedCoordinate.from_internal(coordinate),
         path=path,
         predicate=claim_type.predicate,
         identity=claim_type.identity.qualified,
@@ -90,11 +90,11 @@ def service_propose_playbill_claim_type(
     actor_id: str,
     proposal_name: str,
     timestamp: str,
-    base: PlaybillAcceptedCoordinate | None = None,
+    base: AcceptedCoordinate | None = None,
     capabilities: tuple[TransportCapability, ...] = ("propose",),
     dry_run: bool | None = None,
     at: str | None = None,
-) -> PlaybillProposalInspection:
+) -> ProposalInspection:
     """Submit (or preview) one ClaimType candidate through the generic proposal path."""
 
     proposed_base = _resolve_coordinate(instance, base)
@@ -166,7 +166,7 @@ def service_get_playbill_claim_type(
     instance: PlaybillInstance,
     *,
     predicate: str,
-    at: PlaybillAcceptedCoordinate | None = None,
+    at: AcceptedCoordinate | None = None,
 ) -> PlaybillClaimTypeView:
     """Return one accepted ClaimType, refusing when the predicate is absent."""
 

@@ -613,7 +613,7 @@ def test_an_armed_capture_triggered_line_settles_or_falls_back_on_its_own(
 
 def _stale_row(instance, proposal_id: str):  # type: ignore[no-untyped-def]
     from cruxible_core.coverage.contracts import CoverageAccessProfile
-    from cruxible_core.service.discovery.next import PlaybillNextRequestV1, service_playbill_next
+    from cruxible_core.service.discovery.next import NextRequestV1, service_playbill_next
 
     # Head moves past the proposal's base, so it can no longer activate.
     moved = _subject().model_copy(
@@ -630,7 +630,7 @@ def _stale_row(instance, proposal_id: str):  # type: ignore[no-untyped-def]
     )
     result = service_playbill_next(
         instance,
-        request=PlaybillNextRequestV1(
+        request=NextRequestV1(
             evaluation_time=fixtures.NOW,
             access_profile=CoverageAccessProfile(
                 profile_id="settle-stale", permitted_access_classes=("instance",)

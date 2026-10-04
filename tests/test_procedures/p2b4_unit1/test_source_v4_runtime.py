@@ -34,9 +34,9 @@ from cruxible_client.contracts.captures import (
     verify_capture,
 )
 from cruxible_client.contracts.errors import (
-    PlaybillCasError,
-    PlaybillExecutionError,
-    PlaybillJournalError,
+    CasError,
+    ExecutionError,
+    JournalError,
 )
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
@@ -783,10 +783,10 @@ def test_capture_reservation_precedes_the_first_body_write(
     )
 
     def fail_store(_content: bytes):  # type: ignore[no-untyped-def]
-        raise PlaybillCasError("simulated body-store loss")
+        raise CasError("simulated body-store loss")
 
     monkeypatch.setattr(fixture.bodies, "store", fail_store)
-    with pytest.raises(PlaybillCasError, match="simulated"):
+    with pytest.raises(CasError, match="simulated"):
         reserved_store.store(b'{"size":3}')
 
     active = ProcedureMaterialReservationStore(fixture.bodies.reservation_root).active()
@@ -819,7 +819,7 @@ def test_crash_after_capture_cas_before_produced_event_retains_both_reservations
 
     def crash_before_produced_event(admission, records, event_kind, payload):  # type: ignore[no-untyped-def]
         if event_kind == "produced_capture":
-            raise PlaybillJournalError("simulated journal loss")
+            raise JournalError("simulated journal loss")
         return original_append(admission, records, event_kind, payload)
 
     monkeypatch.setattr(executor, "_append_event", crash_before_produced_event)
@@ -896,7 +896,7 @@ def test_incomplete_source_closure_refuses_before_attempt_or_invoker_constructio
         capture_contracts={},
     )
 
-    with pytest.raises(PlaybillExecutionError, match="Source closure does not reproduce"):
+    with pytest.raises(ExecutionError, match="Source closure does not reproduce"):
         executor.execute(prepared, accepted)
 
     assert (invoker.bind_calls, invoker.spawn_calls) == (0, 0)
@@ -910,7 +910,7 @@ def test_currency_refusal_precedes_source_closure_preflight(tmp_path: Path) -> N
     accepted, prepared, fixture, policy, _contract = _source_fixture(tmp_path)
     authority = _Authority(digest("procedure", "superseded"))
 
-    with pytest.raises(PlaybillExecutionError, match="current"):
+    with pytest.raises(ExecutionError, match="current"):
         ProcedureExecutor(
             journal=fixture.journal,
             bodies=fixture.bodies,

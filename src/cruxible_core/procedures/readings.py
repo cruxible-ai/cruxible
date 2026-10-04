@@ -17,7 +17,7 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
     typed_digest,
 )
-from cruxible_client.contracts.errors import PlaybillExecutionError
+from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
@@ -282,7 +282,7 @@ def _grain_fields(
             "arm_subtree_digest": None,
         }
     if node_id is None or node_id not in digests:
-        raise PlaybillExecutionError("reading node_id does not name a Procedure node")
+        raise ExecutionError("reading node_id does not name a Procedure node")
     if grain == "node":
         return {
             "subject": SemanticAddress.procedure_node(accepted.path, node_id),
@@ -294,12 +294,12 @@ def _grain_fields(
             "arm_subtree_digest": None,
         }
     if from_node_id is None or arm_label is None or from_node_id not in digests:
-        raise PlaybillExecutionError("arm reading lacks a valid source endpoint")
+        raise ExecutionError("arm reading lacks a valid source endpoint")
     graph_edges = {node.node_id: node for node in accepted.procedure.definition.nodes}
     source = graph_edges[from_node_id]
     actual_target = getattr(source, arm_label)
     if actual_target != node_id:
-        raise PlaybillExecutionError("arm reading does not name an authored graph edge")
+        raise ExecutionError("arm reading does not name an authored graph edge")
     arm_digest = procedure_arm_content_digest(
         from_node_id=from_node_id,
         from_node_local_digest=digests[from_node_id].local_digest,
@@ -513,7 +513,7 @@ def _replay_existing(
     reading: ProcedureReadingV1,
 ) -> StoredProcedureJournalRecordV1:
     if procedure_reading_digest(existing) != procedure_reading_digest(reading):
-        raise PlaybillExecutionError(
+        raise ExecutionError(
             "Procedure reading idempotency key was retried with a different payload"
         )
     return stored
@@ -556,7 +556,7 @@ def append_procedure_reading(
         resolution_book=resolution_book,
     )
     if law.verdict == "refused":
-        raise PlaybillExecutionError(law.message or "Procedure reading law refused")
+        raise ExecutionError(law.message or "Procedure reading law refused")
 
     replay = reading_replay_key(reading)
     if replay is not None and replay_index is not None:

@@ -14,8 +14,8 @@ import time
 from pathlib import Path
 
 from cruxible_client import contracts
-from cruxible_client.authoring.workspace import materialize_playbill_floor
-from cruxible_client.contracts.types import PlaybillTrustRoot
+from cruxible_client.authoring.workspace import materialize_floor
+from cruxible_client.contracts.types import TrustRoot
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.floor.floor import service_export_playbill_floor
 
@@ -31,7 +31,7 @@ def main() -> None:
     start = time.perf_counter()
     instance = PlaybillInstance.open(
         args.copied_instance,
-        trust_root=PlaybillTrustRoot.model_validate_json(args.trust_root.read_bytes()),
+        trust_root=TrustRoot.model_validate_json(args.trust_root.read_bytes()),
     )
     opened = time.perf_counter() - start
     args.workspace.mkdir(parents=True, exist_ok=True)
@@ -45,19 +45,19 @@ def main() -> None:
         )
         service_seconds = time.perf_counter() - start
         manifest = json.loads(files["manifest.json"])
-        export = contracts.PlaybillFloorExport(
+        export = contracts.FloorExport(
             tag=manifest["format"],
             coordinate=manifest["coordinate"],
             manifest=manifest,
             files=[
-                contracts.PlaybillFloorFile(
+                contracts.FloorFile(
                     path=path, content_base64=base64.b64encode(content).decode("ascii")
                 )
                 for path, content in files.items()
             ],
         )
         start = time.perf_counter()
-        materialize_playbill_floor(args.workspace, export=export)
+        materialize_floor(args.workspace, export=export)
         samples.append(
             {
                 "service_seconds": service_seconds,

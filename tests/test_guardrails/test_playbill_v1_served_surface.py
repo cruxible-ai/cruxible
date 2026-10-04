@@ -1,4 +1,4 @@
-"""Ratified v1 inventory guardrails for every public Playbill surface."""
+"""Ratified v1 inventory guardrails for every public Cruxible surface."""
 
 from __future__ import annotations
 

@@ -1,10 +1,10 @@
 """Client package for talking to a governed Cruxible daemon.
 
-Start with ``pb = Playbill.connect()``, then read: ``pb.orient()`` maps
-accepted state, ``pb.query(kind, ...)`` answers questions over it, ``pb.get(ref)``
+Start with ``cx = Cruxible.connect()``, then read: ``cx.orient()`` maps
+accepted state, ``cx.query(kind, ...)`` answers questions over it, ``cx.get(ref)``
 opens one thing, and the exported floor (``.playbill/floor/current/``) is
-greppable. ``pb.world().describe()`` names every verb and the vocabulary;
-``pb.next(...)`` says what needs attention.
+greppable. ``cx.world().describe()`` names every verb and the vocabulary;
+``cx.next(...)`` says what needs attention.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
         LocalEd25519ClaimAttestationSigner,
     )
     from cruxible_client.authoring.compact_query import CompactQuery, QueryNameError, QueryResult
-    from cruxible_client.authoring.sdk import Playbill, Prediction, PredictionSettlement
+    from cruxible_client.authoring.sdk import Cruxible, Prediction, PredictionSettlement
     from cruxible_client.authoring.sdk_types import (
         AbsentSubject,
         AccessProfile,
@@ -53,11 +53,11 @@ if TYPE_CHECKING:
     )
     from cruxible_client.authoring.signing import ApprovalSigner, LocalEd25519ApprovalSigner
     from cruxible_client.authoring.workspace import (
-        PlaybillWorkspaceError,
+        WorkspaceError,
         activate_with_workspace_refresh,
         inspect_workspace_floor,
-        materialize_playbill_floor,
-        observe_playbill_next_workspace,
+        materialize_floor,
+        observe_next_workspace,
     )
     from cruxible_client.authoring.world import (
         KindNamespace,
@@ -137,16 +137,15 @@ __all__ = [
     "LocalEd25519ClaimAttestationSigner",
     "PendingClaimTypeRef",
     "PendingSubjectRef",
-    "Playbill",
+    "Cruxible",
     "Prediction",
     "PredictionSettlement",
-    "PlaybillInsertionApplication",
-    "PlaybillInsertionApplyError",
-    "PlaybillWorkspaceError",
+    "InsertionApplyError",
+    "WorkspaceError",
     "activate_with_workspace_refresh",
     "inspect_workspace_floor",
-    "observe_playbill_next_workspace",
-    "materialize_playbill_floor",
+    "observe_next_workspace",
+    "materialize_floor",
     "ProcedureRef",
     "ProcedureBudget",
     "ProcedureDefinition",
@@ -179,7 +178,7 @@ __version__ = "0.5.1"
 def __dir__() -> list[str]:
     """Every public name, though most load only on first use.
 
-    Next: ``Playbill.connect(...)`` to open a connection, then ``pb.orient()``.
+    Next: ``Cruxible.connect(...)`` to open a connection, then ``cx.orient()``.
     """
 
     return sorted({*__all__, "__version__"})
@@ -199,7 +198,7 @@ def __getattr__(name: str) -> Any:
         from cruxible_client.transport.http import CruxibleClient
 
         return CruxibleClient
-    if name in {"Playbill", "Prediction", "PredictionSettlement"}:
+    if name in {"Cruxible", "Prediction", "PredictionSettlement"}:
         from cruxible_client.authoring import sdk
 
         return getattr(sdk, name)
@@ -294,18 +293,17 @@ def __getattr__(name: str) -> Any:
 
         return getattr(models, name)
     if name in {
-        "PlaybillInsertionApplication",
-        "PlaybillInsertionApplyError",
+        "InsertionApplyError",
     }:
         from cruxible_client.authoring import insertions
 
         return getattr(insertions, name)
     if name in {
-        "PlaybillWorkspaceError",
+        "WorkspaceError",
         "activate_with_workspace_refresh",
         "inspect_workspace_floor",
-        "observe_playbill_next_workspace",
-        "materialize_playbill_floor",
+        "observe_next_workspace",
+        "materialize_floor",
     }:
         from cruxible_client.authoring import workspace
 

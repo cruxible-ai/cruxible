@@ -4,7 +4,7 @@ import subprocess
 
 import pytest
 
-from cruxible_client.contracts.errors import PlaybillGitError
+from cruxible_client.contracts.errors import GitError
 from cruxible_core.ledger.git import PROPOSAL_ARCHIVE_REF as ARCHIVE
 from tests.test_ledger import test_git_mirror_snapshots as mirror_fixtures
 from tests.test_ledger.test_git_mirror_snapshots import MAIN, PROPOSAL, commit, refs
@@ -54,7 +54,7 @@ def test_archive_cas_failure_does_not_delete_review_branch(repos, monkeypatch, a
         return original(args, **kwargs)
 
     monkeypatch.setattr(local, "_git", race)
-    with pytest.raises(PlaybillGitError):
+    with pytest.raises(GitError):
         local.replace_proposal_review_refs({})
     assert local.mirror_refs()[PROPOSAL] == candidate
     assert local.mirror_refs()[ARCHIVE] == competitor

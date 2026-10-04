@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from cruxible_client.contracts.errors import PlaybillExecutionError
+from cruxible_client.contracts.errors import ExecutionError
 from cruxible_core.exhaust.backends import LocalJournalBackend
 from cruxible_core.exhaust.records import (
     JournalEventKindV1,
@@ -124,9 +124,7 @@ class ProcedureExhaustWriter:
                     body_digest=stored.record.payload_digest,
                 )
             ):
-                raise PlaybillExecutionError(
-                    "journal append did not reproduce its material reservation"
-                )
+                raise ExecutionError("journal append did not reproduce its material reservation")
             self.material_reservations.release_locked(reservation.reservation_id)
             return stored
 

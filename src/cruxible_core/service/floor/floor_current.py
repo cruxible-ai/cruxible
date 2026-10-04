@@ -55,7 +55,7 @@ from cruxible_client.contracts.claims import (
     ExactContentClaimObject,
     SubjectClaimObject,
 )
-from cruxible_client.contracts.errors import PlaybillError, ProjectionIntegrityError
+from cruxible_client.contracts.errors import CruxibleError, ProjectionIntegrityError
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.exact_content import ExactContentReader
@@ -208,7 +208,7 @@ def body_available(instance: PlaybillInstance, digest: str) -> bool:
 
     try:
         return instance.body_store().verify(digest)
-    except (PlaybillError, OSError, ValueError):
+    except (CruxibleError, OSError, ValueError):
         return False
 
 

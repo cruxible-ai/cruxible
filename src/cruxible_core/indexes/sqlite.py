@@ -1,4 +1,4 @@
-"""Concrete immutable SQLite storage for Playbill projection contracts."""
+"""Concrete immutable SQLite storage for Cruxible projection contracts."""
 
 from __future__ import annotations
 

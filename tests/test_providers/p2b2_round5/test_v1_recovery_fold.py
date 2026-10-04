@@ -10,7 +10,7 @@ import pytest
 import cruxible_core.providers.provider_process_leases as lease_module
 import cruxible_core.runtime.playbill_manager as manager_module
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.errors import PlaybillBootstrapError
+from cruxible_client.contracts.errors import BootstrapError
 from cruxible_core.providers.provider_process_leases import ProviderLocalRuntimeRefused
 from cruxible_core.runtime.playbill_manager import PlaybillInstanceManager
 from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
@@ -164,7 +164,7 @@ def test_uninitialized_instance_is_a_non_owning_skip(
 
     def get(instance_id: str) -> str:
         if instance_id == "inst_bare":
-            raise PlaybillBootstrapError("Playbill is not initialized")
+            raise BootstrapError("Cruxible is not initialized")
         return instance_id
 
     monkeypatch.setattr(manager, "get", get)
@@ -196,9 +196,7 @@ def test_only_uninitialized_instances_make_the_record_terminally_unclaimed(
     monkeypatch.setattr(
         manager,
         "get",
-        lambda _instance_id: (_ for _ in ()).throw(
-            PlaybillBootstrapError("Playbill is not initialized")
-        ),
+        lambda _instance_id: (_ for _ in ()).throw(BootstrapError("Cruxible is not initialized")),
     )
     operator.bind_recovery_fold(lambda result: manager._fold_provider_recovery(operator, result))
     operator.mark_unavailable("provider_process_group_survived_recovery", "startup", retryable=True)

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.errors import PlaybillGitError
+from cruxible_client.contracts.errors import GitError
 from cruxible_core.ledger import git as ledger_git
 from cruxible_core.ledger.git import GitLedger
 
@@ -49,7 +49,7 @@ def test_resident_reader_matches_git_and_is_shared_across_handles(tmp_path, monk
 def test_missing_object_refuses_and_the_next_read_recovers(tmp_path):
     ledger = _ledger(tmp_path / "ledger.git")
     present = _write(ledger, b"present")
-    with pytest.raises(PlaybillGitError):
+    with pytest.raises(GitError):
         ledger.read_blobs(["0" * 40])
     assert ledger.read_blobs([present]) == {present: b"present"}
 
@@ -63,7 +63,7 @@ def test_a_repository_replaced_at_the_same_path_is_read_fresh(tmp_path):
     replacement = _ledger(path)
     second = _write(replacement, b"replacement")
     assert replacement.read_blobs([second]) == {second: b"replacement"}
-    with pytest.raises(PlaybillGitError):
+    with pytest.raises(GitError):
         replacement.read_blobs([first])
 
 
@@ -149,7 +149,7 @@ def test_extending_a_stored_tree_writes_the_same_tree_as_a_full_write(tmp_path):
             extended, with_sizes=sized, paths=None
         )
     # A tree that drops a base member is not an extension of it.
-    with pytest.raises(PlaybillGitError, match="every member"):
+    with pytest.raises(GitError, match="every member"):
         ledger._extend_tree(base_oid, {"a.json": b"1"})
 
 
@@ -262,9 +262,9 @@ def test_bytes_replaced_on_disk_are_refused_under_their_original_id(tmp_path, ob
     forged = b"forged!! value\n"  # same length: size checks alone cannot see it
     loose.write_bytes(zlib.compress(b"blob %d\x00" % len(forged) + forged))
     _BLOB_CACHE.clear()
-    with pytest.raises(PlaybillGitError, match="do not hash to their ID"):
+    with pytest.raises(GitError, match="do not hash to their ID"):
         ledger.read_blobs([oid])
     # A lazily held accepted tree re-reads through the same checked reader.
     tree = SnapshotTree({"claims/x.json": BlobRef(oid, len(original), ledger.read_blobs)})
-    with pytest.raises(PlaybillGitError, match="do not hash to their ID"):
+    with pytest.raises(GitError, match="do not hash to their ID"):
         tree["claims/x.json"]

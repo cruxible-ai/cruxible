@@ -73,7 +73,7 @@ class ClaimTypeStructure(_StrictClaimTypeStructureModel):
     ) -> dict[str, object] | None:
         if value is None:
             return None
-        # This proves the schema is an exact Playbill canonical value rather
+        # This proves the schema is an exact Cruxible canonical value rather
         # than a Python object whose floats or keys could canonicalize loosely.
         try:
             canonical_bytes(value)

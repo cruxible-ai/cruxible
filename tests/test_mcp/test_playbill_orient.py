@@ -13,7 +13,7 @@ from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.mcp import handlers
 from cruxible_core.mcp.server import create_server
 
-COORDINATE = contracts.PlaybillAcceptedCoordinate(
+COORDINATE = contracts.AcceptedCoordinate(
     git_oid="1" * 64,
     semantic_root="sha256:" + "2" * 64,
     generation_root="sha256:" + "3" * 64,
@@ -21,8 +21,8 @@ COORDINATE = contracts.PlaybillAcceptedCoordinate(
 )
 
 
-def _answer() -> contracts.PlaybillOrientResult:
-    return contracts.PlaybillOrientResult(
+def _answer() -> contracts.OrientResult:
+    return contracts.OrientResult(
         instance="inst",
         coordinate=AcceptedCoordinate.model_validate(COORDINATE.model_dump(mode="json")),
         generation=4,
@@ -36,7 +36,7 @@ def _answer() -> contracts.PlaybillOrientResult:
 def test_local_mcp_orient_renders_for_mcp_and_passes_typed_inputs(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     seen: dict[str, Any] = {}
 
-    def orient_stub(instance_id: str, **values: Any) -> contracts.PlaybillOrientResult:
+    def orient_stub(instance_id: str, **values: Any) -> contracts.OrientResult:
         seen.update(values, instance_id=instance_id)
         return _answer()
 
@@ -109,7 +109,7 @@ def test_mcp_orient_forwards_the_advertised_tools(
 ) -> None:
     seen: dict[str, Any] = {}
 
-    def orient_stub(instance_id: str, **values: Any) -> contracts.PlaybillOrientResult:
+    def orient_stub(instance_id: str, **values: Any) -> contracts.OrientResult:
         seen.update(values)
         return _answer()
 
@@ -118,7 +118,7 @@ def test_mcp_orient_forwards_the_advertised_tools(
     monkeypatch.setattr(
         handlers,
         "_get_client",
-        lambda: SimpleNamespace(orient_playbill=orient_stub) if remote else None,
+        lambda: SimpleNamespace(orient=orient_stub) if remote else None,
     )
     monkeypatch.setattr(handlers.playbill_api, "playbill_orient", orient_stub)
     monkeypatch.setattr("cruxible_core.mcp.curation.session_tool_names", lambda: set(tools))
@@ -143,4 +143,4 @@ def test_mcp_orient_reports_the_mcp_workspace_floor(monkeypatch, tmp_path) -> No
 
     result = handlers.handle_playbill_orient("inst")
 
-    assert result.floor == contracts.PlaybillOrientFloor(at="9" * 64, generations_behind=3)
+    assert result.floor == contracts.OrientFloor(at="9" * 64, generations_behind=3)

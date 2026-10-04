@@ -46,7 +46,7 @@ def test_public_create_get_resume_pending_and_submit_preserve_intent_version(
     )
     for response in (got, resumed, pending, submitted):
         assert response.status_code == 200, response.text
-    assert contracts.PlaybillAuthoringIntentView.model_validate(got.json()).intent == expected
+    assert contracts.AuthoringIntentViewRecord.model_validate(got.json()).intent == expected
     assert resumed.json()["intent"] == expected
     assert pending.json()["intents"] == [expected]
     # Missing Subject/ClaimType refuses this unseeded fixture; its response must

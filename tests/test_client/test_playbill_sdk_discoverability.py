@@ -2,8 +2,8 @@
 
 An agent in a REPL has ``dir()``, ``help()`` and ``repr()``. Every public SDK
 member therefore carries a docstring that names the next call, written against
-the read verbs that survive the surface cut (``pb.orient``, ``pb.query``,
-``pb.get`` and the greppable floor) and never against the read tools it cut.
+the read verbs that survive the surface cut (``cx.orient``, ``cx.query``,
+``cx.get`` and the greppable floor) and never against the read tools it cut.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 
 #: What an SDK user is handed and reads ``help()`` on.
 _SDK_CLASSES: tuple[type, ...] = (
-    sdk.Playbill,
+    sdk.Cruxible,
     sdk.Intent,
     sdk.Proposal,
     sdk.Publication,
@@ -128,7 +128,7 @@ def test_no_sdk_docstring_sends_the_reader_to_a_cut_read_tool() -> None:
 def test_the_package_dir_lists_every_lazily_loaded_name() -> None:
     listed = dir(cruxible_client)
 
-    assert {"Playbill", "World", "SubjectRef", "CruxibleClient", "__version__"} <= set(listed)
+    assert {"Cruxible", "World", "SubjectRef", "CruxibleClient", "__version__"} <= set(listed)
     assert set(cruxible_client.__all__) <= set(listed)
     assert listed == sorted(listed)
     assert "Next:" in (cruxible_client.__dir__.__doc__ or "")
@@ -179,7 +179,7 @@ def test_a_capture_ref_reprs_as_its_handle() -> None:
 
 
 class _Client:
-    def playbill_whoami(self, _instance_id: str) -> object:
+    def whoami(self, _instance_id: str) -> object:
         from types import SimpleNamespace
 
         return SimpleNamespace(coordinate=_COORDINATE)
@@ -191,7 +191,7 @@ class _Client:
 def test_playbill_intent_and_proposal_repr_without_io(tmp_path: Path) -> None:
     from cruxible_client import contracts as api
 
-    pb = sdk.Playbill(
+    pb = sdk.Cruxible(
         client=_Client(),  # type: ignore[arg-type]
         instance_id="inst_demo",
         workspace=tmp_path,
@@ -202,13 +202,13 @@ def test_playbill_intent_and_proposal_repr_without_io(tmp_path: Path) -> None:
         ),
         clock=lambda: datetime(2026, 9, 30, tzinfo=UTC),
     )
-    assert repr(pb) == "Playbill('inst_demo', no coordinate yet, live)"
+    assert repr(pb) == "Cruxible('inst_demo', no coordinate yet, live)"
     pinned = pb.at(_COORDINATE)
-    assert repr(pinned) == "Playbill('inst_demo', at 0123456789ab, pinned)"
+    assert repr(pinned) == "Cruxible('inst_demo', at 0123456789ab, pinned)"
 
     intent = sdk.Intent(pinned, None, {"intent_id": "int-1", "intent_revision": 2})
     assert repr(intent) == "Intent('int-1', revision=2, not observed)"
-    intent._candidate_status = api.PlaybillCandidateStatus.model_construct(
+    intent._candidate_status = api.CandidateStatusRecord.model_construct(
         state="awaiting_approval", proposal_id="sha256:" + "d" * 64
     )
     assert repr(intent) == (

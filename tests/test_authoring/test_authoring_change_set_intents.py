@@ -47,7 +47,7 @@ from cruxible_client.contracts.claims import (
     claim_path,
     parse_claim,
 )
-from cruxible_client.contracts.errors import PlaybillExecutionError
+from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.proposal_models import (
     CHANGE_SET_RECORD_BYTES_PER_MEMBER,
@@ -713,7 +713,7 @@ def test_the_daemon_receive_ceiling_reads_its_file_or_refuses_loudly(tmp_path: P
     assert load_proposal_receive_config(tmp_path).limits().max_changed_members == 12
 
     config.write_text("{", encoding="utf-8")
-    with pytest.raises(PlaybillExecutionError):
+    with pytest.raises(ExecutionError):
         load_proposal_receive_config(tmp_path)
 
 

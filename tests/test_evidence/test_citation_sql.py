@@ -30,7 +30,7 @@ from cruxible_client.contracts.claims import (
     parse_claim,
     render_claim,
 )
-from cruxible_client.contracts.errors import PlaybillCasError, ProjectionFormatError
+from cruxible_client.contracts.errors import CasError, ProjectionFormatError
 from cruxible_client.contracts.source_references import (
     EvidenceCommitment,
     ExternalSourceReference,
@@ -323,7 +323,7 @@ def test_failed_cas_population_rolls_back_relationships_and_does_not_commit_oute
     missing = world.capture(2)
     world.store._path(missing).unlink()
     changed = world.claim(1, [digest, missing])
-    with pytest.raises(PlaybillCasError):
+    with pytest.raises(CasError):
         world.publish(changed)
     assert world.reader.owner_uses("Claim", claim.identity.qualified) == before
     assert world.connection.in_transaction
@@ -375,7 +375,7 @@ def test_coverage_exports_match_frozen_versions_and_recheck_availability(world):
         assert sql == cold
         assert evidence_citation_index_digest(sql) == evidence_citation_index_digest(cold)
     world.store._path(a).unlink()
-    with pytest.raises(PlaybillCasError):
+    with pytest.raises(CasError):
         coverage_rows(world.reader, bodies=world.store, at=AT)
 
 
@@ -589,7 +589,7 @@ def test_retirement_relations_survive_unavailable_cas_like_retained_facts(
     assert _retirement_relations(old_reader, identity) == expected
     assert _retirement_relations(world.reader, identity) == expected
     assert world.reader.conflicts() == conflicts
-    with pytest.raises(PlaybillCasError):
+    with pytest.raises(CasError):
         coverage_rows(world.reader, bodies=world.store, at=AT)
 
 

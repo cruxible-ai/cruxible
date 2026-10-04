@@ -1,4 +1,4 @@
-"""Typed service operations for the governed Playbill Document lifecycle."""
+"""Typed service operations for the governed Cruxible Document lifecycle."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ from cruxible_client.contracts.repairs import hand_edit_repair
 from cruxible_client.contracts.types import CompilerCoordinate, PrincipalRecord
 from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
-    PlaybillWorkspaceAdvertisement,
+    WorkspaceAdvertisement,
 )
 from cruxible_core.documents.projection_documents import DocumentProjectionView
 from cruxible_core.errors import RequestRefusedError
@@ -61,27 +61,24 @@ class _StrictServiceModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-PlaybillAcceptedCoordinate = AcceptedCoordinate
-
-
 class PlaybillDocumentView(_StrictServiceModel):
     tag: Literal["playbill-document-read-v1"] = "playbill-document-read-v1"
     coordinate_kind: Literal["canonical"] = "canonical"
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     envelope: dict[str, object]
     facts: tuple[dict[str, object], ...]
 
 
 class PlaybillDocumentList(_StrictServiceModel):
     tag: Literal["playbill-document-list-v1"] = "playbill-document-list-v1"
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     documents: tuple[PlaybillDocumentView, ...]
 
 
 class PlaybillBodyRead(_StrictServiceModel):
     tag: Literal["playbill-document-body-v1"] = "playbill-document-body-v1"
     identity: str
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     body_digest: str
     media_type: str
     content_base64: str
@@ -89,7 +86,7 @@ class PlaybillBodyRead(_StrictServiceModel):
 
 class PlaybillDocumentHistoryEntry(_StrictServiceModel):
     sequence: int
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     envelope_digest: str
     body_digest: str
     predecessor_digest: str | None
@@ -105,7 +102,7 @@ class PlaybillDocumentHistory(_StrictServiceModel):
     entries: tuple[PlaybillDocumentHistoryEntry, ...]
 
 
-class PlaybillProposalInspection(_StrictServiceModel):
+class ProposalInspection(_StrictServiceModel):
     tag: Literal["playbill-proposal-inspection-v1"] = "playbill-proposal-inspection-v1"
     #: ``admitted``: ``proposal`` is the admitted proposal (its own verdict says
     #: whether it passed). ``would_propose``/``would_block``: a preview, which
@@ -114,11 +111,11 @@ class PlaybillProposalInspection(_StrictServiceModel):
     proposal: ProposalResult | ProposalPreview
     #: The accepted coordinate after the call; a preview's is the one it was
     #: evaluated at, which a commit passes back as ``at``.
-    accepted_coordinate: PlaybillAcceptedCoordinate
-    workspace_advertisement: PlaybillWorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
+    accepted_coordinate: AcceptedCoordinate
+    workspace_advertisement: WorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
 
 
-class PlaybillApprovalReceipt(_StrictServiceModel):
+class ApprovalReceipt(_StrictServiceModel):
     tag: Literal["playbill-approval-receipt-v1"] = "playbill-approval-receipt-v1"
     proposal_id: str
     candidate_digest: str
@@ -129,16 +126,16 @@ class PlaybillApprovalReceipt(_StrictServiceModel):
     key_history_ref: str
 
 
-class PlaybillActivationReceipt(_StrictServiceModel):
+class ActivationReceipt(_StrictServiceModel):
     tag: Literal["playbill-activation-receipt-v1"] = "playbill-activation-receipt-v1"
     proposal_id: str
     activated_by: str
     status: Literal["accepted", "lost_cas"]
-    accepted_coordinate: PlaybillAcceptedCoordinate | None
-    workspace_advertisement: PlaybillWorkspaceAdvertisement
+    accepted_coordinate: AcceptedCoordinate | None
+    workspace_advertisement: WorkspaceAdvertisement
 
 
-class PlaybillRefusalInspection(_StrictServiceModel):
+class RefusalInspection(_StrictServiceModel):
     tag: Literal["playbill-refusal-v1"] = "playbill-refusal-v1"
     proposal_id: str
     verdict: Literal["candidate", "refused"]
@@ -152,7 +149,7 @@ def _public_document(view: DocumentProjectionView) -> PlaybillDocumentView:
     ):
         raise ProposalIntegrityError("canonical Document service received a provisional view")
     return PlaybillDocumentView(
-        coordinate=PlaybillAcceptedCoordinate.from_internal(view.coordinate),
+        coordinate=AcceptedCoordinate.from_internal(view.coordinate),
         envelope=view.envelope.model_dump(mode="json"),
         facts=tuple(fact.model_dump(mode="json") for fact in view.facts),
     )
@@ -160,7 +157,7 @@ def _public_document(view: DocumentProjectionView) -> PlaybillDocumentView:
 
 def _resolve_coordinate(
     instance: PlaybillInstance,
-    at: PlaybillAcceptedCoordinate | None,
+    at: AcceptedCoordinate | None,
 ) -> AcceptedProjectionCoordinate:
     if at is None:
         return instance.accepted_coordinate()
@@ -195,7 +192,7 @@ def admit_proposal(
     candidate_tree: Mapping[str, bytes],
     timestamp: str,
     capabilities: tuple[TransportCapability, ...] = ("propose",),
-) -> PlaybillProposalInspection:
+) -> ProposalInspection:
     """Admit one directly authored change set, or preview it (R12)."""
 
     with change_scope(
@@ -212,18 +209,16 @@ def admit_proposal(
         )
         if admitted.preview is not None:
             assert mode.head is not None
-            return PlaybillProposalInspection(
+            return ProposalInspection(
                 status="would_propose" if admitted.admitted else "would_block",
                 proposal=admitted.preview,
-                accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(mode.head),
+                accepted_coordinate=AcceptedCoordinate.from_internal(mode.head),
             )
     assert admitted.result is not None
-    return PlaybillProposalInspection(
+    return ProposalInspection(
         proposal=admitted.result,
         workspace_advertisement=admitted.result.workspace_advertisement,
-        accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
-            instance.accepted_coordinate()
-        ),
+        accepted_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
     )
 
 
@@ -234,11 +229,11 @@ def service_propose_playbill_document(
     actor_id: str,
     proposal_name: str,
     timestamp: str,
-    base: PlaybillAcceptedCoordinate | None = None,
+    base: AcceptedCoordinate | None = None,
     source_compilation_digest: str | None = None,
     dry_run: bool | None = None,
     at: str | None = None,
-) -> PlaybillProposalInspection:
+) -> ProposalInspection:
     """Admit and deterministically evaluate one exact Document envelope change."""
 
     proposed_base = _resolve_coordinate(instance, base)
@@ -270,10 +265,10 @@ def service_propose_playbill_principal_change(
     actor_id: str,
     proposal_name: str,
     timestamp: str,
-    base: PlaybillAcceptedCoordinate | None = None,
+    base: AcceptedCoordinate | None = None,
     dry_run: bool | None = None,
     at: str | None = None,
-) -> PlaybillProposalInspection:
+) -> ProposalInspection:
     """Use the distinct principal-lifecycle law; never the ordinary Document path."""
 
     proposed_base = _resolve_coordinate(instance, base)
@@ -301,7 +296,7 @@ def service_inspect_playbill_proposal(
     instance: PlaybillInstance,
     *,
     proposal_id: str,
-) -> PlaybillProposalInspection:
+) -> ProposalInspection:
     evidence = instance.proposal_evidence()
     admission = evidence.read_admission(proposal_id)
     evaluation = evidence.read_evaluation(admission.proposal_id)
@@ -310,16 +305,14 @@ def service_inspect_playbill_proposal(
         if evaluation.candidate_digest is not None
         else None
     )
-    return PlaybillProposalInspection(
+    return ProposalInspection(
         proposal=ProposalResult(
             admission=admission,
             evaluation=evaluation,
             candidate=candidate,
         ),
         workspace_advertisement=NOT_ATTACHED_ADVERTISEMENT,
-        accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
-            instance.accepted_coordinate()
-        ),
+        accepted_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
     )
 
 
@@ -327,9 +320,9 @@ def service_inspect_playbill_refusal(
     instance: PlaybillInstance,
     *,
     proposal_id: str,
-) -> PlaybillRefusalInspection:
+) -> RefusalInspection:
     evaluation = instance.proposal_evidence().read_evaluation(proposal_id)
-    return PlaybillRefusalInspection(
+    return RefusalInspection(
         proposal_id=proposal_id,
         verdict=evaluation.verdict,
         diagnostics=evaluation.diagnostics,
@@ -367,7 +360,7 @@ def service_submit_playbill_approval(
     proposal_id: str,
     attestation: ApprovalAttestation,
     authenticated_submitter: str,
-) -> PlaybillApprovalReceipt:
+) -> ApprovalReceipt:
     """Verify and persist only a public attestation under historical key state."""
 
     instance.require_writable()
@@ -429,8 +422,8 @@ def _approval_receipt(
     proposal_id: str,
     candidate: CandidateRecordAnyVersion,
     verified: VerifiedApproval,
-) -> PlaybillApprovalReceipt:
-    return PlaybillApprovalReceipt(
+) -> ApprovalReceipt:
+    return ApprovalReceipt(
         proposal_id=proposal_id,
         candidate_digest=candidate.candidate_digest,
         signer_id=verified.signer_id,
@@ -513,7 +506,7 @@ def service_activate_playbill_proposal(
     proposal_id: str,
     activated_by: str,
     mandate_digest: str | None = None,
-) -> PlaybillActivationReceipt:
+) -> ActivationReceipt:
     """Settle, prebuild, and atomically activate one admitted candidate.
 
     ``mandate_digest`` is passed only by the settle terminal for a candidate it
@@ -576,12 +569,12 @@ def service_activate_playbill_proposal(
     advertisement = instance.advertise_workspace()
     # Publish accepted main and remove the closed review branch.
     instance.request_ledger_mirror()
-    return PlaybillActivationReceipt(
+    return ActivationReceipt(
         proposal_id=proposal_id,
         activated_by=activated_by,
         status=status,
         accepted_coordinate=(
-            PlaybillAcceptedCoordinate.from_internal(activation.accepted)
+            AcceptedCoordinate.from_internal(activation.accepted)
             if activation.status == "accepted" and activation.accepted is not None
             else None
         ),
@@ -611,7 +604,7 @@ def service_get_playbill_document(
     *,
     identity: str,
     access: BodyAccessContext,
-    at: PlaybillAcceptedCoordinate | None = None,
+    at: AcceptedCoordinate | None = None,
 ) -> PlaybillDocumentView:
     coordinate = _resolve_coordinate(instance, at)
     with instance.bind_accepted_projection(coordinate) as projection:
@@ -625,7 +618,7 @@ def service_list_playbill_documents(
     instance: PlaybillInstance,
     *,
     access: BodyAccessContext,
-    at: PlaybillAcceptedCoordinate | None = None,
+    at: AcceptedCoordinate | None = None,
 ) -> PlaybillDocumentList:
     coordinate = _resolve_coordinate(instance, at)
     with instance.bind_accepted_projection(coordinate) as projection:
@@ -633,7 +626,7 @@ def service_list_playbill_documents(
             _public_document(item) for item in projection.list_documents(access=access)
         )
     return PlaybillDocumentList(
-        coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
+        coordinate=AcceptedCoordinate.from_internal(coordinate),
         documents=documents,
     )
 
@@ -654,7 +647,7 @@ def service_dereference_playbill_document(
     *,
     identity: str,
     access: BodyAccessContext,
-    at: PlaybillAcceptedCoordinate | None = None,
+    at: AcceptedCoordinate | None = None,
 ) -> PlaybillBodyRead:
     document = service_get_playbill_document(instance, identity=identity, access=access, at=at)
     subject = _fact_value(document, "playbill.document.subject", "whole_document")
@@ -710,7 +703,7 @@ def service_playbill_document_history(
             entries.append(
                 PlaybillDocumentHistoryEntry(
                     sequence=generation.sequence,
-                    coordinate=PlaybillAcceptedCoordinate(
+                    coordinate=AcceptedCoordinate(
                         git_oid=generation.git_oid,
                         semantic_root=generation.semantic_root,
                         generation_root=generation.generation_root,
@@ -777,10 +770,10 @@ def service_propose_compiler_upgrade(
     actor_id: str,
     proposal_name: str,
     timestamp: str,
-    base: PlaybillAcceptedCoordinate,
+    base: AcceptedCoordinate,
     dry_run: bool | None = None,
     preview_at: str | None = None,
-) -> PlaybillProposalInspection:
+) -> ProposalInspection:
     """Propose an exact forward transition using the normal evidence and review path.
 
     ``preview_at`` is the request's ``at``: the coordinate of a preview this
@@ -832,16 +825,16 @@ def service_propose_compiler_upgrade(
 
 
 __all__ = [
-    "PlaybillAcceptedCoordinate",
-    "PlaybillActivationReceipt",
-    "PlaybillApprovalReceipt",
+    "AcceptedCoordinate",
+    "ActivationReceipt",
+    "ApprovalReceipt",
     "PlaybillBodyRead",
     "PlaybillDocumentHistory",
     "PlaybillDocumentHistoryEntry",
     "PlaybillDocumentList",
     "PlaybillDocumentView",
-    "PlaybillProposalInspection",
-    "PlaybillRefusalInspection",
+    "ProposalInspection",
+    "RefusalInspection",
     "service_activate_playbill_proposal",
     "service_dereference_playbill_document",
     "service_get_playbill_document",

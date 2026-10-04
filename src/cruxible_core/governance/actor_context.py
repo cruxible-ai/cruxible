@@ -1,4 +1,4 @@
-"""Request attribution and transport capabilities for Playbill operations."""
+"""Request attribution and transport capabilities for Cruxible operations."""
 
 from __future__ import annotations
 

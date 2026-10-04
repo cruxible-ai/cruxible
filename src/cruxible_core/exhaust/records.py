@@ -1,4 +1,4 @@
-"""Packing-independent identities and records for Playbill operational journals."""
+"""Packing-independent identities and records for Cruxible operational journals."""
 
 from __future__ import annotations
 
@@ -29,8 +29,8 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.errors import (
-    PlaybillJournalError,
-    PlaybillJournalIntegrityError,
+    JournalError,
+    JournalIntegrityError,
 )
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 from cruxible_core.governance.actor_context import GovernedActorContext
@@ -383,16 +383,14 @@ def verify_journal_head_manifest(
     """Verify one journal-writer assertion without granting witness semantics."""
 
     if not re.fullmatch(r"[0-9a-f]{64}", expected_public_key):
-        raise PlaybillJournalIntegrityError(
-            "journal-head public key must be 32 bytes of lowercase hex"
-        )
+        raise JournalIntegrityError("journal-head public key must be 32 bytes of lowercase hex")
     try:
         Ed25519PublicKey.from_public_bytes(bytes.fromhex(expected_public_key)).verify(
             bytes.fromhex(manifest.signature),
             journal_head_statement_bytes(manifest.statement),
         )
     except (InvalidSignature, ValueError) as exc:
-        raise PlaybillJournalIntegrityError("journal-head signature verification failed") from exc
+        raise JournalIntegrityError("journal-head signature verification failed") from exc
 
 
 class ProcedureJournalRecordDraftV1(_StrictJournalModel):
@@ -554,7 +552,7 @@ class ProcedureJournalRecordV1(_StrictJournalModel):
         """Return the Procedure artifact digest a Procedure exhaust record always names."""
 
         if self.procedure_artifact_digest is None:
-            raise PlaybillJournalError(
+            raise JournalError(
                 "this journal record is a query receipt and names no Procedure artifact"
             )
         return self.procedure_artifact_digest
@@ -635,7 +633,7 @@ def verify_journal_range(
 
     expected_count = journal_range.last_sequence - journal_range.first_sequence + 1
     if len(records) != expected_count:
-        raise PlaybillJournalIntegrityError("journal range record count is incomplete")
+        raise JournalIntegrityError("journal range record count is incomplete")
     previous = journal_range.expected_previous_digest
     for offset, stored in enumerate(records):
         record = stored.record
@@ -645,14 +643,12 @@ def verify_journal_range(
             or record.partition_id != journal_range.partition_id
             or record.sequence != sequence
         ):
-            raise PlaybillJournalIntegrityError(
-                "journal range contains a substituted record coordinate"
-            )
+            raise JournalIntegrityError("journal range contains a substituted record coordinate")
         if record.previous_record_digest != previous:
-            raise PlaybillJournalIntegrityError("journal range chain continuity failed")
+            raise JournalIntegrityError("journal range chain continuity failed")
         previous = stored.record_digest
     if previous != journal_range.expected_head_digest:
-        raise PlaybillJournalIntegrityError("journal range does not reach its expected head digest")
+        raise JournalIntegrityError("journal range does not reach its expected head digest")
     return JournalPartitionHeadV1(
         stream=journal_range.stream,
         partition_id=journal_range.partition_id,
@@ -684,11 +680,11 @@ def parse_journal_payload(content: bytes) -> CanonicalValue:
     try:
         raw = json.loads(content)
     except (UnicodeDecodeError, ValueError) as exc:
-        raise PlaybillJournalIntegrityError("journal payload is malformed") from exc
+        raise JournalIntegrityError("journal payload is malformed") from exc
     if not isinstance(raw, dict) or raw.get("tag") != "playbill-procedure-journal-payload-v1":
-        raise PlaybillJournalIntegrityError("journal payload has an unknown domain tag")
+        raise JournalIntegrityError("journal payload has an unknown domain tag")
     if set(raw) != {"tag", "payload"} or canonical_bytes(raw) != content:
-        raise PlaybillJournalIntegrityError("journal payload is not in exact canonical form")
+        raise JournalIntegrityError("journal payload is not in exact canonical form")
     return normalize_canonical(raw["payload"])
 
 

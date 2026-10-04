@@ -10,7 +10,7 @@ from cruxible_client import CruxibleClient, contracts
 from cruxible_client.contracts.errors import ProposalSelectorAmbiguousError
 from cruxible_core.cli.main import cli
 
-COORDINATE = contracts.PlaybillAcceptedCoordinate(
+COORDINATE = contracts.AcceptedCoordinate(
     git_oid="1" * 64,
     semantic_root="sha256:" + "2" * 64,
     generation_root="sha256:" + "3" * 64,
@@ -22,12 +22,12 @@ NEW_ID = "sha256:" + "22" * 32
 OPERATION = "sha256:" + "33" * 32
 
 
-def _result() -> contracts.PlaybillProposalReadmitResult:
-    return contracts.PlaybillProposalReadmitResult(
+def _result() -> contracts.ProposalReadmitResult:
+    return contracts.ProposalReadmitResult(
         tag="playbill-proposal-readmit-result-v1",
         source_proposal_id=SOURCE_ID,
         operation_digest=OPERATION,
-        proposal=contracts.PlaybillProposalInspection(
+        proposal=contracts.ProposalInspection(
             proposal={
                 "admission": {"proposal_id": NEW_ID},
                 "evaluation": {"verdict": "candidate"},
@@ -49,7 +49,7 @@ def test_client_sends_the_frozen_tag_only_request() -> None:
     client = CruxibleClient(base_url="https://playbill.invalid")
     client._client = StubTransport()  # type: ignore[assignment]
 
-    assert client.readmit_playbill_proposal("inst_test", SOURCE_ID) == _result()
+    assert client.readmit_proposal("inst_test", SOURCE_ID) == _result()
     assert calls == [
         (
             f"/api/v1/inst_test/playbill/proposals/{SOURCE_ID}/readmit",
@@ -60,13 +60,11 @@ def test_client_sends_the_frozen_tag_only_request() -> None:
 
 def test_cli_reports_the_new_proposal_without_hiding_its_source(monkeypatch) -> None:
     class StubClient:
-        def resolve_playbill_proposal_selector(self, instance_id, selector):
+        def resolve_proposal_selector(self, instance_id, selector):
             assert (instance_id, selector) == ("inst_test", SOURCE_ID)
-            return contracts.PlaybillProposalSelectorResult(
-                selector=selector, proposal_id=SOURCE_ID
-            )
+            return contracts.ProposalSelectorResult(selector=selector, proposal_id=SOURCE_ID)
 
-        def readmit_playbill_proposal(self, instance_id, proposal_id, **_control):
+        def readmit_proposal(self, instance_id, proposal_id, **_control):
             assert (instance_id, proposal_id) == ("inst_test", SOURCE_ID)
             return _result()
 
@@ -96,10 +94,10 @@ def test_cli_renders_typed_selector_candidates_and_repair(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class StubClient:
-        def readmit_playbill_proposal(self, *args: object, **kwargs: object) -> object:
+        def readmit_proposal(self, *args: object, **kwargs: object) -> object:
             raise AssertionError("selector refusal must precede readmission")
 
-        def resolve_playbill_proposal_selector(self, _instance_id: str, selector: str):
+        def resolve_proposal_selector(self, _instance_id: str, selector: str):
             raise ProposalSelectorAmbiguousError(selector, (SOURCE_ID, NEW_ID))
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
@@ -127,7 +125,7 @@ def test_proposal_list_rows_match_the_labelled_columns(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class StubClient:
-        def list_playbill_proposals(
+        def list_proposals(
             self,
             _instance_id: str,
             *,
@@ -136,11 +134,11 @@ def test_proposal_list_rows_match_the_labelled_columns(
             cursor: str | None = None,
         ):
             assert status is None
-            return contracts.PlaybillProposalList(
+            return contracts.ProposalList(
                 coordinate=COORDINATE,
                 status_filter=None,
                 entries=[
-                    contracts.PlaybillProposalListEntry(
+                    contracts.ProposalListEntry(
                         proposal_id=SOURCE_ID,
                         actor_id="operator",
                         target_ref="refs/proposals/operator/open",
@@ -150,7 +148,7 @@ def test_proposal_list_rows_match_the_labelled_columns(
                         status="open",
                         terminal_reason=None,
                     ),
-                    contracts.PlaybillProposalListEntry(
+                    contracts.ProposalListEntry(
                         proposal_id=NEW_ID,
                         actor_id="operator",
                         target_ref="refs/proposals/operator/refused",
@@ -160,7 +158,7 @@ def test_proposal_list_rows_match_the_labelled_columns(
                         status="settled",
                         terminal_reason="refused",
                     ),
-                    contracts.PlaybillProposalListEntry(
+                    contracts.ProposalListEntry(
                         proposal_id="sha256:" + "9" * 64,
                         actor_id=None,
                         target_ref=None,
@@ -198,8 +196,8 @@ def test_proposal_list_rows_match_the_labelled_columns(
     )
 
 
-def _withdraw_result(*, already: bool = False) -> contracts.PlaybillProposalWithdrawResult:
-    return contracts.PlaybillProposalWithdrawResult(
+def _withdraw_result(*, already: bool = False) -> contracts.ProposalWithdrawResult:
+    return contracts.ProposalWithdrawResult(
         proposal_id=SOURCE_ID,
         actor_id="operator",
         reason="its change-set record exceeds the ledger blob ceiling",
@@ -220,7 +218,7 @@ def test_withdraw_client_sends_the_reason_it_records() -> None:
     client._client = StubTransport()  # type: ignore[assignment]
 
     assert (
-        client.withdraw_playbill_proposal(
+        client.withdraw_proposal(
             "inst_test",
             SOURCE_ID,
             reason="its change-set record exceeds the ledger blob ceiling",
@@ -242,13 +240,11 @@ def test_withdraw_cli_resolves_the_selector_and_reports_the_recorded_reason(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class StubClient:
-        def resolve_playbill_proposal_selector(self, instance_id, selector):
+        def resolve_proposal_selector(self, instance_id, selector):
             assert (instance_id, selector) == ("inst_test", "sha256:11111111")
-            return contracts.PlaybillProposalSelectorResult(
-                selector=selector, proposal_id=SOURCE_ID
-            )
+            return contracts.ProposalSelectorResult(selector=selector, proposal_id=SOURCE_ID)
 
-        def withdraw_playbill_proposal(self, instance_id, proposal_id, *, reason, **_control):
+        def withdraw_proposal(self, instance_id, proposal_id, *, reason, **_control):
             assert (instance_id, proposal_id) == ("inst_test", SOURCE_ID)
             assert reason == "its change-set record exceeds the ledger blob ceiling"
             return _withdraw_result()
@@ -283,12 +279,10 @@ def test_withdraw_cli_says_when_the_answer_is_the_earlier_one(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class StubClient:
-        def resolve_playbill_proposal_selector(self, _instance_id, selector):
-            return contracts.PlaybillProposalSelectorResult(
-                selector=selector, proposal_id=SOURCE_ID
-            )
+        def resolve_proposal_selector(self, _instance_id, selector):
+            return contracts.ProposalSelectorResult(selector=selector, proposal_id=SOURCE_ID)
 
-        def withdraw_playbill_proposal(self, _instance_id, _proposal_id, *, reason, **_control):
+        def withdraw_proposal(self, _instance_id, _proposal_id, *, reason, **_control):
             assert reason == "second thoughts"
             return _withdraw_result(already=True)
 

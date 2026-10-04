@@ -11,8 +11,8 @@ from __future__ import annotations
 from typing import Literal, cast
 
 from cruxible_client.contracts.principals import (
+    AuthoringRefusal,
     AuthoringRefusalCode,
-    PlaybillAuthoringRefusal,
 )
 from cruxible_client.contracts.repairs import RepairOperation, hand_edit_repair
 from cruxible_core.actor_vocabulary import LOCAL_OPERATOR_ACTOR_ID
@@ -138,7 +138,7 @@ def authoring_refusal(
     credential_id: str | None,
     credential_label: str | None,
     permission_mode: PermissionMode,
-) -> PlaybillAuthoringRefusal | None:
+) -> AuthoringRefusal | None:
     """Why this actor cannot author here, or None when it can.
 
     The first applicable reason wins, in the order a write meets them: a
@@ -149,7 +149,7 @@ def authoring_refusal(
     refusal: PrincipalRefusedError | None
     terminal = instance.descriptor.decommissioned
     if terminal is not None:
-        return PlaybillAuthoringRefusal(
+        return AuthoringRefusal(
             code="playbill.instance.decommissioned",
             detail=(
                 f"the instance was decommissioned at {terminal.decommissioned_at} "
@@ -183,7 +183,7 @@ def authoring_refusal(
     if refusal is None:
         return None
     assert refusal.repair is not None
-    return PlaybillAuthoringRefusal(
+    return AuthoringRefusal(
         code=cast(AuthoringRefusalCode, refusal.error_code),
         detail=str(refusal).removeprefix(f"{refusal.error_code}: "),
         repair=refusal.repair,

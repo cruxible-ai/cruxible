@@ -45,7 +45,7 @@ from cruxible_client.contracts.claim_types import (
     effective_revision_evidence,
     parse_claim_type,
 )
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
     ClaimEvidenceAdmissionPolicy,
@@ -55,14 +55,14 @@ from cruxible_client.contracts.types import CompilerCoordinate
 from cruxible_core.compiler.compiler import AUTHORITY_VERBS_COMPILER, GOVERNED_TRIGGERS_COMPILER
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.authoring.documents import PlaybillProposalInspection
+from cruxible_core.service.authoring.documents import ProposalInspection
 
 
 class _StrictClaimTypeInputModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class ClaimTypeInputValidationError(PlaybillFormatError):
+class ClaimTypeInputValidationError(FormatError):
     """A decision-only ClaimType input violates its final artifact contract."""
 
     error_code = "playbill.claim_type.input_invalid"
@@ -224,7 +224,7 @@ class ClaimTypeInputProposalResultV1(_StrictClaimTypeInputModel):
     tag: Literal["playbill-claim-type-input-proposal-result-v1"] = (
         "playbill-claim-type-input-proposal-result-v1"
     )
-    proposal: PlaybillProposalInspection
+    proposal: ProposalInspection
     lint: ClaimTypeProposalLintV1
 
 
@@ -370,19 +370,19 @@ def _digest_evidence_policy(
     return {**raw, "rules": rules}
 
 
-class ClaimTypeInputReferenceError(PlaybillFormatError):
+class ClaimTypeInputReferenceError(FormatError):
     """An authored evidence rule names a contract that cannot be referenced."""
 
     error_code = "playbill.claim_type.input_invalid"
 
 
-class ClaimTypeMemberDescriptionsStale(PlaybillFormatError):
+class ClaimTypeMemberDescriptionsStale(FormatError):
     """Member descriptions name values the edited enum no longer admits."""
 
     error_code = "playbill.claim_type.member_descriptions_stale"
 
 
-class ClaimTypeDefaultRoleNotPermitted(PlaybillFormatError):
+class ClaimTypeDefaultRoleNotPermitted(FormatError):
     """The default role is not one of the edited ClaimType's authorable roles."""
 
     error_code = "playbill.claim_type.default_role_not_permitted"
@@ -568,7 +568,7 @@ def lint_claim_type_input(
         for item in raw_rule.get("capture_contracts", []) or []:
             try:
                 named.append(_contract_ref(item).target.qualified)
-            except (PlaybillFormatError, ValueError):
+            except (FormatError, ValueError):
                 continue
         admitted_identities.update(named)
         for identity in named:

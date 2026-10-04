@@ -1,4 +1,4 @@
-# Isolated Playbill deployment
+# Isolated Cruxible deployment
 
 Run the daemon with a durable state root, explicit network boundary, and
 least-capable credentials.
@@ -28,7 +28,7 @@ or root and not writable by others (except a sticky root-owned directory such
 as `/tmp`): anyone who could replace the socket would receive the bearer
 tokens clients send. After binding it re-checks that the path still names the
 directory it validated, and removes the socket and refuses otherwise. Protect the state root with operating-system ownership and
-permissions. The daemon state includes bearer credential records, Playbill Git
+permissions. The daemon state includes bearer credential records, Cruxible Git
 ledgers, CAS objects, projections, and daemon signing keys.
 
 ## Bound TCP service
@@ -151,11 +151,11 @@ For cloud deployments:
 Do not mount an entire enterprise source estate into the daemon merely so it can
 compile files. Compile source catalogs client-side and submit path-free bundles.
 For APIs and databases, record stable source coordinates and evidence rather
-than copying whole tables into Playbill.
+than copying whole tables into Cruxible.
 
 ## Recovery
 
-Runtime admin recovery is a local filesystem-ownership operation. Playbill
+Runtime admin recovery is a local filesystem-ownership operation. Cruxible
 principal recovery is a governed ledger operation. They are distinct and should
 have different custody and audit procedures.
 

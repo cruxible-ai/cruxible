@@ -12,7 +12,7 @@ accepted, is a persisted-format break to be reviewed under a new format tag --
 never a regeneration event.
 
 What is deliberately not frozen is exception prose: Core publishes
-``PlaybillJournalError`` and no typed journal diagnostic codes, so each negative
+``JournalError`` and no typed journal diagnostic codes, so each negative
 fixture names a stable law category and the stage that must refuse it, and the
 tests assert refusal by that error type alone.
 """
@@ -27,7 +27,7 @@ from typing import Any
 import pytest
 
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.errors import PlaybillJournalError
+from cruxible_client.contracts.errors import JournalError
 from cruxible_core.exhaust import (
     JournalExportBundleV1,
     JournalHeadManifestV1,
@@ -348,12 +348,12 @@ def test_every_negative_fixture_is_refused_at_its_declared_stage(
     raw = _corpus_bytes(fixture["path"])
 
     if fixture["refusal_stage"] == "parse":
-        with pytest.raises(PlaybillJournalError):
+        with pytest.raises(JournalError):
             parse_journal_export(raw)
         return
 
     bundle = parse_journal_export(raw)
-    with pytest.raises(PlaybillJournalError):
+    with pytest.raises(JournalError):
         import_journal_export(
             _backend(tmp_path, "home"),
             bundle,
@@ -379,7 +379,7 @@ def test_an_expected_head_gap_refuses_a_missing_prefix(tmp_path: Path) -> None:
     assert vector["prerequisites"], "the scenario needs a vector that extends a prefix"
     bundle = parse_journal_export(_corpus_bytes(vector["path"]))
 
-    with pytest.raises(PlaybillJournalError):
+    with pytest.raises(JournalError):
         import_journal_export(
             _backend(tmp_path, "empty"),
             bundle,
@@ -405,7 +405,7 @@ def test_an_unknown_fencing_token_refuses_an_append(tmp_path: Path) -> None:
     assert scenario["vector_id"] == "export-alpha-a-1-3"
     backend, draft, head = _fenced_home(tmp_path)
 
-    with pytest.raises(PlaybillJournalError):
+    with pytest.raises(JournalError):
         backend.append(
             draft,
             expected_head=head,
@@ -424,7 +424,7 @@ def test_a_superseded_fencing_token_refuses_an_append(tmp_path: Path) -> None:
     )
     backend.fence_writer(draft.stream, draft.partition_id, expected_fencing_token=token)
 
-    with pytest.raises(PlaybillJournalError):
+    with pytest.raises(JournalError):
         backend.append(draft, expected_head=head, fencing_token=token)
 
 
@@ -454,7 +454,7 @@ def test_the_head_signer_role_is_distinct_from_the_witness() -> None:
     )
 
     verify_journal_head_manifest(manifest, expected_public_key=HEAD_PUBLIC_KEY)
-    with pytest.raises(PlaybillJournalError):
+    with pytest.raises(JournalError):
         verify_journal_head_manifest(manifest, expected_public_key=WITNESS_PUBLIC_KEY)
 
 
@@ -463,7 +463,7 @@ def test_an_export_carrying_a_foreign_head_key_never_imports(tmp_path: Path) -> 
         _corpus_bytes(_vector("export-alpha-a-1-3")["path"])
     )
 
-    with pytest.raises(PlaybillJournalError):
+    with pytest.raises(JournalError):
         import_journal_export(
             _backend(tmp_path, "home"),
             bundle,

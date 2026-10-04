@@ -14,7 +14,7 @@ from cruxible_client.contracts.documents import (
     parse_document,
     render_document,
 )
-from cruxible_client.contracts.errors import PlaybillFormatError, ProposalIntegrityError
+from cruxible_client.contracts.errors import FormatError, ProposalIntegrityError
 from cruxible_client.contracts.source_catalog import (
     CompiledSourceDocument,
     SourceAlignment,
@@ -27,8 +27,8 @@ from cruxible_client.contracts.source_catalog import (
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import (
-    PlaybillAcceptedCoordinate,
-    PlaybillProposalInspection,
+    AcceptedCoordinate,
+    ProposalInspection,
     service_propose_playbill_document,
     service_store_playbill_body,
 )
@@ -39,18 +39,18 @@ class _StrictSourceServiceModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class PlaybillSourceCheckResult(_StrictSourceServiceModel):
+class SourceCheckResult(_StrictSourceServiceModel):
     tag: Literal["playbill-source-check-v1"] = "playbill-source-check-v1"
     compilation_digest: str
-    accepted_coordinate: PlaybillAcceptedCoordinate
+    accepted_coordinate: AcceptedCoordinate
     alignments: tuple[SourceAlignment, ...]
 
 
-class PlaybillSourceContext(_StrictSourceServiceModel):
+class SourceContext(_StrictSourceServiceModel):
     """Path-free accepted inputs needed for deterministic client-side compilation."""
 
     tag: Literal["playbill-source-context-v1"] = "playbill-source-context-v1"
-    accepted_coordinate: PlaybillAcceptedCoordinate
+    accepted_coordinate: AcceptedCoordinate
     documents: tuple[DocumentShell, ...]
 
 
@@ -67,11 +67,11 @@ def _accepted_documents(
         return documents
 
 
-def service_playbill_source_context(instance: PlaybillInstance) -> PlaybillSourceContext:
+def service_playbill_source_context(instance: PlaybillInstance) -> SourceContext:
     coordinate = instance.accepted_coordinate()
     documents = _accepted_documents(instance, coordinate)
-    return PlaybillSourceContext(
-        accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
+    return SourceContext(
+        accepted_coordinate=AcceptedCoordinate.from_internal(coordinate),
         documents=tuple(
             documents[key] for key in sorted(documents, key=lambda item: item.encode())
         ),
@@ -92,7 +92,7 @@ def service_compile_playbill_sources(
         catalog,
         repository_root=repository_root,
         root_aliases=root_aliases or {},
-        accepted_base=PlaybillAcceptedCoordinate.from_internal(coordinate),
+        accepted_base=AcceptedCoordinate.from_internal(coordinate),
         accepted_documents=_accepted_documents(instance, coordinate),
     )
 
@@ -104,7 +104,7 @@ def _pending_body_digests(
     evidence = instance.proposal_evidence()
     assert evidence.index is not None
     with instance.accepted_history_reader(
-        at=PlaybillAcceptedCoordinate.from_internal(coordinate)
+        at=AcceptedCoordinate.from_internal(coordinate)
     ) as history:
         # A missing candidate is an interrupted operation, not pending document work.
         with evidence.index.read(evidence) as connection:
@@ -143,11 +143,11 @@ def service_check_playbill_source_bundle(
     instance: PlaybillInstance,
     *,
     bundle: SourceCompilationBundle,
-) -> PlaybillSourceCheckResult:
+) -> SourceCheckResult:
     """Compare one exact frozen compile with current accepted and pending coordinates."""
 
     coordinate = instance.accepted_coordinate()
-    current_coordinate = PlaybillAcceptedCoordinate.from_internal(coordinate)
+    current_coordinate = AcceptedCoordinate.from_internal(coordinate)
     accepted = _accepted_documents(instance, coordinate)
     pending = _pending_body_digests(instance, coordinate)
     alignments: list[SourceAlignment] = []
@@ -186,7 +186,7 @@ def service_check_playbill_source_bundle(
                 accepted_coordinate=current_coordinate,
             )
         )
-    return PlaybillSourceCheckResult(
+    return SourceCheckResult(
         compilation_digest=bundle.manifest.compilation_digest,
         accepted_coordinate=current_coordinate,
         alignments=tuple(alignments),
@@ -199,7 +199,7 @@ def _compiled_document(
 ) -> CompiledSourceDocument:
     matches = tuple(item for item in bundle.documents if item.source.name == source_name)
     if len(matches) != 1:
-        raise PlaybillFormatError("source compilation does not contain exactly one named source")
+        raise FormatError("source compilation does not contain exactly one named source")
     return matches[0]
 
 
@@ -213,7 +213,7 @@ def service_propose_playbill_source_bundle(
     timestamp: str,
     dry_run: bool | None = None,
     at: str | None = None,
-) -> PlaybillProposalInspection:
+) -> ProposalInspection:
     """Submit only the bundle's frozen bytes; no source path is accepted or read here.
 
     ``dry_run`` runs the same path behind the preview guards: the body is held
@@ -251,8 +251,8 @@ def service_propose_playbill_source_bundle(
 
 
 __all__ = [
-    "PlaybillSourceContext",
-    "PlaybillSourceCheckResult",
+    "SourceContext",
+    "SourceCheckResult",
     "service_check_playbill_source_bundle",
     "service_compile_playbill_sources",
     "service_propose_playbill_source_bundle",

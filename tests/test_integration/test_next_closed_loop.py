@@ -1,4 +1,4 @@
-"""Every Playbill next row names a repair that can close that row."""
+"""Every Cruxible next row names a repair that can close that row."""
 
 from __future__ import annotations
 
@@ -59,11 +59,11 @@ from cruxible_core.claims.claim_type_migrations import (
     service_migrate_claim_type,
 )
 from cruxible_core.coverage.contracts import (
+    CitationWindowObservation,
     CoverageAccessProfile,
     CoverageCommitmentScanProof,
     CoverageLineOverlay,
     LogicalSourceIdentity,
-    PlaybillCitationWindowObservation,
     occurrence_identity_digest,
 )
 from cruxible_core.coverage.indexes import WorkingOccurrence
@@ -79,12 +79,12 @@ from cruxible_core.service.claims.claims import (
     service_list_playbill_claims,
 )
 from cruxible_core.service.discovery.next import (
+    NextDriftObservation,
     NextReason,
-    PlaybillNextDriftObservation,
-    PlaybillNextRequestV1,
-    PlaybillNextSourceObservation,
-    PlaybillNextSourceObservationV3,
-    PlaybillNextWorkspaceObservation,
+    NextRequestV1,
+    NextSourceObservation,
+    NextSourceObservationV3,
+    NextWorkspaceObservation,
     service_playbill_next,
 )
 from cruxible_core.service.proposals.proposals import service_readmit_playbill_proposal
@@ -208,9 +208,9 @@ def _request(
     *,
     evaluation_time: datetime = EVALUATION_TIME,
     expiring_within: int = 604_800_000_000,
-    workspace: PlaybillNextWorkspaceObservation | None = None,
-) -> PlaybillNextRequestV1:
-    return PlaybillNextRequestV1(
+    workspace: NextWorkspaceObservation | None = None,
+) -> NextRequestV1:
+    return NextRequestV1(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         evaluation_time=evaluation_time,
         access_profile=_access(),
@@ -219,7 +219,7 @@ def _request(
     )
 
 
-def _row(instance, reason: str, request: PlaybillNextRequestV1, **caller: Any):  # type: ignore[no-untyped-def]
+def _row(instance, reason: str, request: NextRequestV1, **caller: Any):  # type: ignore[no-untyped-def]
     return next(
         item
         for item in service_playbill_next(instance, request=request, **caller).items
@@ -227,7 +227,7 @@ def _row(instance, reason: str, request: PlaybillNextRequestV1, **caller: Any): 
     )
 
 
-def _assert_gone(instance, reason: str, request: PlaybillNextRequestV1, **caller: Any) -> None:  # type: ignore[no-untyped-def]
+def _assert_gone(instance, reason: str, request: NextRequestV1, **caller: Any) -> None:  # type: ignore[no-untyped-def]
     assert all(
         item.reason != reason
         for item in service_playbill_next(instance, request=request, **caller).items
@@ -255,7 +255,7 @@ def _item_key(item: object) -> ClosedLoopKey:
 def _row_by_key(
     instance,
     key: ClosedLoopKey,
-    request: PlaybillNextRequestV1,  # type: ignore[no-untyped-def]
+    request: NextRequestV1,  # type: ignore[no-untyped-def]
 ):  # type: ignore[no-untyped-def]
     return next(
         item
@@ -267,7 +267,7 @@ def _row_by_key(
 def _assert_key_gone(
     instance,
     key: ClosedLoopKey,
-    request: PlaybillNextRequestV1,  # type: ignore[no-untyped-def]
+    request: NextRequestV1,  # type: ignore[no-untyped-def]
 ) -> None:
     assert all(
         _item_key(item) != key for item in service_playbill_next(instance, request=request).items
@@ -648,9 +648,9 @@ def _citation_drifted_changed(root: Path, _monkeypatch: pytest.MonkeyPatch) -> N
     assert observed != commitment
     before = _request(
         instance,
-        workspace=PlaybillNextWorkspaceObservation(
+        workspace=NextWorkspaceObservation(
             drift_observations=(
-                PlaybillNextDriftObservation(
+                NextDriftObservation(
                     citation_id=citation.citation_id,
                     expected_commitment_digest=commitment,
                     observed_commitment_digest=observed,
@@ -669,9 +669,9 @@ def _citation_drifted_changed(root: Path, _monkeypatch: pytest.MonkeyPatch) -> N
         key,
         _request(
             instance,
-            workspace=PlaybillNextWorkspaceObservation(
+            workspace=NextWorkspaceObservation(
                 drift_observations=(
-                    PlaybillNextDriftObservation(
+                    NextDriftObservation(
                         citation_id=rebound_citation.citation_id,
                         expected_commitment_digest=rebound_envelope.commitment.digest,
                         observed_commitment_digest=observed,
@@ -703,7 +703,7 @@ def _v4_citation_observation(
     citation_id: str,
     envelope,  # type: ignore[no-untyped-def]
     state: str,
-) -> PlaybillNextSourceObservation:
+) -> NextSourceObservation:
     source = LogicalSourceIdentity(plane="external", identity=source_id)
     selector = envelope.source.selector
     assert isinstance(selector, Mapping)
@@ -752,7 +752,7 @@ def _v4_citation_observation(
         )
     windows = (
         (
-            PlaybillCitationWindowObservation(
+            CitationWindowObservation(
                 source=source,
                 citation_id=citation_id,
                 commitment_digest=commitment,
@@ -765,7 +765,7 @@ def _v4_citation_observation(
         if state == "gone"
         else ()
     )
-    return PlaybillNextSourceObservation(
+    return NextSourceObservation(
         source_id=source_id,
         observed_source_digest=source_digest,
         byte_length=len(source_bytes),
@@ -801,7 +801,7 @@ def _citation_drifted_v4(
     key = ("citation_drifted", drift_state)
     before = _request(
         instance,
-        workspace=PlaybillNextWorkspaceObservation(source_observations=(before_observation,)),
+        workspace=NextWorkspaceObservation(source_observations=(before_observation,)),
     )
     row = _row_by_key(instance, key, before)
     assert row.repair.operation == _expected_operation(key)
@@ -858,7 +858,7 @@ def _citation_drifted_v4(
         key,
         _request(
             instance,
-            workspace=PlaybillNextWorkspaceObservation(source_observations=(current_observation,)),
+            workspace=NextWorkspaceObservation(source_observations=(current_observation,)),
         ),
     )
 
@@ -875,13 +875,13 @@ def _citation_source_unobserved(root: Path, _monkeypatch: pytest.MonkeyPatch) ->
     instance, _owner, _successor, source_id, _source_digest = _foreign_world(root, bind=True)
     before = _request(
         instance,
-        workspace=PlaybillNextWorkspaceObservation(source_observations=()),
+        workspace=NextWorkspaceObservation(source_observations=()),
     )
     row = _row(instance, "citation_source_unobserved", before)
     assert row.repair.operation == EXPECTED_OPERATIONS["citation_source_unobserved"]
 
     _current, citation, envelope = _foreign_citation(instance)
-    observed = PlaybillNextWorkspaceObservation(
+    observed = NextWorkspaceObservation(
         source_observations=(
             _v4_citation_observation(
                 instance=instance,
@@ -898,11 +898,11 @@ def _citation_source_unobserved(root: Path, _monkeypatch: pytest.MonkeyPatch) ->
 def _floor_case(root: Path, reason: str) -> None:
     instance, _owner = initialize_local(root)
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    before_workspace = PlaybillNextWorkspaceObservation(floor_status="invalid")
+    before_workspace = NextWorkspaceObservation(floor_status="invalid")
     row = _row(instance, reason, _request(instance, workspace=before_workspace))
     assert row.repair.operation == EXPECTED_OPERATIONS[reason]
 
-    current = PlaybillNextWorkspaceObservation(
+    current = NextWorkspaceObservation(
         floor_status="current",
         installed_coordinate=coordinate,
     )
@@ -1112,9 +1112,9 @@ def _document_modified(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
         phase="closed-loop-document",
     )
     instance.refresh()
-    changed_observation = PlaybillNextWorkspaceObservation(
+    changed_observation = NextWorkspaceObservation(
         source_observations=(
-            PlaybillNextSourceObservationV3(
+            NextSourceObservationV3(
                 tag="playbill-next-source-observation-v3",
                 source_id="corpus.runbook",
                 document_id="runbook",
@@ -1220,7 +1220,7 @@ def _claim_attestation_door(
 
 
 def _workspace_binding_missing(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
-    from cruxible_client.authoring.workspace import observe_playbill_next_workspace
+    from cruxible_client.authoring.workspace import observe_next_workspace
 
     (root / "instance").mkdir()
     instance, _owner = initialize_local(root / "instance")
@@ -1240,15 +1240,13 @@ def _workspace_binding_missing(root: Path, _monkeypatch: pytest.MonkeyPatch) -> 
         encoding="utf-8",
     )
 
-    def observed() -> PlaybillNextWorkspaceObservation:
+    def observed() -> NextWorkspaceObservation:
         # What the client observes of its catalog's bindings; the per-source
         # scans are the coverage enrichment's, and not this row's concern.
-        return PlaybillNextWorkspaceObservation.model_validate(
+        return NextWorkspaceObservation.model_validate(
             {
                 "source_observations": [],
-                "missing_bindings": observe_playbill_next_workspace(workspace).get(
-                    "missing_bindings", []
-                ),
+                "missing_bindings": observe_next_workspace(workspace).get("missing_bindings", []),
             }
         )
 
@@ -1307,7 +1305,7 @@ def _proposal_stale(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     # Only the author may readmit, so only the author's queue carries the row.
     _assert_gone(instance, "proposal_stale", _request(instance), caller_principal_id="reviewer")
     _assert_gone(instance, "proposal_stale", _request(instance))
-    hidden = PlaybillNextRequestV1(
+    hidden = NextRequestV1(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         evaluation_time=EVALUATION_TIME,
         access_profile=CoverageAccessProfile(
@@ -1358,7 +1356,7 @@ def _proposal_awaiting_approval(root: Path, _monkeypatch: pytest.MonkeyPatch) ->
     assert governed.candidate is not None
     proposal_id = governed.admission.proposal_id
 
-    def rows(caller: str | None, request: PlaybillNextRequestV1) -> list[object]:
+    def rows(caller: str | None, request: NextRequestV1) -> list[object]:
         return [
             item
             for item in service_playbill_next(
@@ -1380,7 +1378,7 @@ def _proposal_awaiting_approval(root: Path, _monkeypatch: pytest.MonkeyPatch) ->
     assert rows("owner", _request(instance)) == []
     assert rows("stranger", _request(instance)) == []
     assert rows(None, _request(instance)) == []
-    hidden = PlaybillNextRequestV1(
+    hidden = NextRequestV1(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         evaluation_time=EVALUATION_TIME,
         access_profile=CoverageAccessProfile(
@@ -1451,7 +1449,7 @@ def _mandate_expiring(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     assert row.repair.operation == EXPECTED_OPERATIONS["mandate_expiring"]
     assert row.repair.command == "cruxible playbill authoring create --example procedure-mandate"
     assert datetime.fromisoformat(row.detail["expires_at"]) == lapsing.expires_at
-    hidden = PlaybillNextRequestV1(
+    hidden = NextRequestV1(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         evaluation_time=EVALUATION_TIME,
         access_profile=CoverageAccessProfile(
@@ -1503,7 +1501,7 @@ def _evidence_unavailable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
         item.startswith("Claim:") for item in row.related_identities
     )
     assert row.repair.operation == EXPECTED_OPERATIONS["evidence_unavailable"]
-    hidden = PlaybillNextRequestV1(
+    hidden = NextRequestV1(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         evaluation_time=EVALUATION_TIME,
         access_profile=CoverageAccessProfile(
@@ -1565,7 +1563,7 @@ def _consumer_stalled(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 def _prediction_settleable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     from datetime import timedelta
 
-    from cruxible_client.contracts.predictions import PlaybillSettleRequest
+    from cruxible_client.contracts.predictions import SettleRequest
     from cruxible_core.service.procedures.predictions import PredictionRefused
     from tests.test_consumers import test_prediction_settlement as worker
 
@@ -1581,7 +1579,7 @@ def _prediction_settleable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None
     assert row.related_identities and row.related_identities[0].startswith("Claim:")
     assert row.detail["anchor_event"] is None and row.detail["bound_contract_id"]
     assert row.repair.operation == EXPECTED_OPERATIONS["prediction_settleable"]
-    hidden = PlaybillNextRequestV1(
+    hidden = NextRequestV1(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         evaluation_time=worker.FIXED_CLOSES,
         access_profile=CoverageAccessProfile(
@@ -1599,7 +1597,7 @@ def _prediction_settleable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None
     bound = row.detail["bound_contract_id"]
     assert row.repair.command == f"cruxible playbill settle {bound}"
     observation = worker.observe(instance, owner, capture, at="2026-09-02T12:02:00.000000Z")
-    filled = PlaybillSettleRequest(observation=observation.identity.name)
+    filled = SettleRequest(observation=observation.identity.name)
     # A window id the worker does not hold names no prediction.
     with pytest.raises(PredictionRefused, match="No bound prediction window") as refused:
         worker.served.service_settle_playbill_prediction(
@@ -1639,7 +1637,7 @@ def _prediction_window_unbindable(root: Path, _monkeypatch: pytest.MonkeyPatch) 
     assert row.detail["anchor_event"] == event.model_dump(mode="json")
     assert row.detail["code"] == "trigger_capture_unavailable"
     assert row.repair.operation == EXPECTED_OPERATIONS["prediction_window_unbindable"]
-    hidden = PlaybillNextRequestV1(
+    hidden = NextRequestV1(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         evaluation_time=EVALUATION_TIME,
         access_profile=CoverageAccessProfile(

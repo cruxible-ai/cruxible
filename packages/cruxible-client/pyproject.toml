@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "cruxible-client"
 version = "0.5.1"
-description = "Typed HTTP client for a governed Cruxible Playbill daemon."
+description = "Typed HTTP client for a governed Cruxible daemon."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11"

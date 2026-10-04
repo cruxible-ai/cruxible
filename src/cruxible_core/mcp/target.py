@@ -7,8 +7,8 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from cruxible_client.authoring.context import (
-    PlaybillContextResolutionError,
-    resolve_playbill_context,
+    ContextResolutionError,
+    resolve_context,
 )
 from cruxible_core.errors import ConfigError
 from cruxible_core.mcp.workspace import mcp_workspace_root
@@ -17,7 +17,7 @@ MCP_INSTANCE_ENV = "CRUXIBLE_INSTANCE_ID"
 _TARGET_ENV = ("CRUXIBLE_SERVER_URL", "CRUXIBLE_SERVER_SOCKET", MCP_INSTANCE_ENV)
 
 NO_INSTANCE_MESSAGE = (
-    "No Playbill instance selected: pass instance_id, or launch the MCP server with "
+    "No Cruxible instance selected: pass instance_id, or launch the MCP server with "
     f"{MCP_INSTANCE_ENV}=<instance id> in its environment (the `env` block of the MCP "
     "client config), or run it in a workspace whose .playbill/coverage.json binds an "
     "instance on this server's daemon."
@@ -41,13 +41,13 @@ def _workspace_instance_id(env: Mapping[str, str]) -> str | None:
 
     bare = {key: value for key, value in env.items() if key not in _TARGET_ENV}
     try:
-        binding = resolve_playbill_context(
+        binding = resolve_context(
             environ=bare,
             remembered={},
             workspace=mcp_workspace_root(env),
         )
     except (
-        PlaybillContextResolutionError,
+        ContextResolutionError,
         ConfigError,
         OSError,
         RuntimeError,
@@ -84,13 +84,13 @@ def configured_instance_id(
     """
 
     try:
-        resolved = resolve_playbill_context(
+        resolved = resolve_context(
             instance_id=instance_id,
             environ=environ,
             remembered={},
             no_workspace=True,
         )
-    except PlaybillContextResolutionError as exc:
+    except ContextResolutionError as exc:
         raise ConfigError(f"{exc}. {NO_INSTANCE_MESSAGE}") from exc
     if resolved.instance_id is not None:
         return resolved.instance_id

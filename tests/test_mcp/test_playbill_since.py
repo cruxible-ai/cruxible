@@ -5,13 +5,13 @@ from __future__ import annotations
 import pytest
 
 from cruxible_client import contracts
-from cruxible_client.contracts.errors import PlaybillSinceRequestInvalid
+from cruxible_client.contracts.errors import SinceRequestInvalid
 from cruxible_core.mcp import handlers
 
 
 def test_mcp_since_delegates_the_frozen_request(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     seen: dict[str, object] = {}
-    coordinate = contracts.PlaybillAcceptedCoordinate(
+    coordinate = contracts.AcceptedCoordinate(
         git_oid="1" * 64,
         semantic_root="sha256:" + "2" * 64,
         generation_root="sha256:" + "3" * 64,
@@ -24,7 +24,7 @@ def test_mcp_since_delegates_the_frozen_request(monkeypatch) -> None:  # type: i
         "next_cursor": None,
         "truncated": False,
     }
-    result = contracts.PlaybillSinceResult.model_validate(
+    result = contracts.SinceResult.model_validate(
         {
             **values,
             "result_digest": contracts._since_digest(  # type: ignore[attr-defined]
@@ -33,7 +33,7 @@ def test_mcp_since_delegates_the_frozen_request(monkeypatch) -> None:  # type: i
         }
     )
 
-    def stub(instance_id: str, *, request: contracts.PlaybillSinceRequest):
+    def stub(instance_id: str, *, request: contracts.SinceRequest):
         assert instance_id == "inst_since"
         seen.update(request.model_dump(mode="json"))
         return result
@@ -62,7 +62,7 @@ def test_mcp_since_delegates_the_frozen_request(monkeypatch) -> None:  # type: i
 
 
 def test_mcp_since_maps_request_validation_to_the_typed_refusal() -> None:
-    with pytest.raises(PlaybillSinceRequestInvalid) as raised:
+    with pytest.raises(SinceRequestInvalid) as raised:
         handlers.handle_playbill_since(
             "inst_since",
             generation=2,

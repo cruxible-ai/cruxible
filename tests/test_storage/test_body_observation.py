@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from cruxible_client.contracts.errors import PlaybillCasError
+from cruxible_client.contracts.errors import CasError
 from cruxible_core.storage import cas
 from cruxible_core.storage.cas import (
     BodyAccessContext,
@@ -53,7 +53,7 @@ def _observed(call: Callable[[], Any]) -> BodyObservation:
     with observe_bodies() as observation:
         try:
             call()
-        except PlaybillCasError:
+        except CasError:
             pass  # a refusal still rests on the object it refused
     return observation
 

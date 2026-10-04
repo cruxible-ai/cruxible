@@ -38,7 +38,7 @@ from cruxible_client.contracts.discovery import (
     normalize_discovery_term,
     reject_locator_or_secret,
 )
-from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpec
 from cruxible_client.contracts.query.definitions import AcceptedQueryDefinition
@@ -119,7 +119,7 @@ _DESCRIPTOR_RELATION_PREDICATES = frozenset({"semantic.distinct_from", "semantic
 _TOKEN_SPLIT_RE = re.compile(r"[^0-9a-z]+")
 
 
-class DiscoveryError(PlaybillError):
+class DiscoveryError(CruxibleError):
     """A discovery request could not be answered deterministically."""
 
 

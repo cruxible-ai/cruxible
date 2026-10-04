@@ -28,7 +28,7 @@ from cruxible_client.contracts.captures import (
     capture_digest,
     render_capture_envelope,
 )
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.providers import ProviderV1
 from cruxible_client.contracts.source_references import (
     EvidenceCommitment,
@@ -36,7 +36,7 @@ from cruxible_client.contracts.source_references import (
 )
 
 
-class ExternalSourceError(PlaybillFormatError):
+class ExternalSourceError(FormatError):
     """An external source could not satisfy its accepted acquisition contract."""
 
 

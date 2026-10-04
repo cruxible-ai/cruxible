@@ -49,6 +49,7 @@ from cruxible_client.contracts.source_references import CoverageDescriptor
 from cruxible_core.coverage.contracts import (
     COVERAGE_HEALTH_PROVES_FRESHNESS,
     COVERAGE_MATCH_STATES,
+    CitationWindowObservation,
     CoverageAccessProfile,
     CoverageBatchSummaryV3,
     CoverageCardV2,
@@ -60,7 +61,6 @@ from cruxible_core.coverage.contracts import (
     CoverageSpanRequestV1,
     CoverageSpanResultV3,
     LogicalSourceIdentity,
-    PlaybillCitationWindowObservation,
     coverage_span_match_state,
     weakest_health,
 )
@@ -239,7 +239,7 @@ def _resolve_span_v3(
     manifest_floor: CoverageHealthV1,
     manifest_reasons: tuple[str, ...],
     manifest: CoverageManifestBodyV2 | None,
-    window_observations: tuple[PlaybillCitationWindowObservation, ...],
+    window_observations: tuple[CitationWindowObservation, ...],
     additional_window_citation_ids: frozenset[str],
     publication_observations: tuple[BoundPublicationObservation, ...],
 ) -> CoverageSpanResultV3:
@@ -615,7 +615,7 @@ def resolve_coverage_v3(
     overlay: WorkingOccurrenceOverlayV2,
     access: CoverageAccessProfile,
     manifest: CoverageManifestBodyV2 | None = None,
-    window_observations: tuple[PlaybillCitationWindowObservation, ...] = (),
+    window_observations: tuple[CitationWindowObservation, ...] = (),
     additional_window_citation_ids: frozenset[str] = frozenset(),
     publication_observations: tuple[BoundPublicationObservation, ...] = (),
 ) -> CoverageResultV3:

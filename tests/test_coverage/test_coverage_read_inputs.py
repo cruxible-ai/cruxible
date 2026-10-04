@@ -19,14 +19,14 @@ from cruxible_client.contracts.claims import (
     claim_artifact_digest,
     claim_statement_digest,
 )
-from cruxible_client.contracts.errors import PlaybillCasError, PlaybillFormatError
+from cruxible_client.contracts.errors import CasError, FormatError
 from cruxible_core.coverage.adapter import (
     WorkingSourceObservation,
     observe_working_source,
 )
 from cruxible_core.coverage.contracts import LogicalSourceIdentity
 from cruxible_core.indexes.evidence import citation_sql
-from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+from cruxible_core.service.authoring.documents import AcceptedCoordinate
 from cruxible_core.service.claims.claims import _claim_from_view, service_list_playbill_claims
 from cruxible_core.service.discovery import coverage as coverage
 from cruxible_core.storage.cas import BodyAccessContext
@@ -88,12 +88,12 @@ def _projected_index(instance, *, at):  # type: ignore[no-untyped-def]
 
 def test_tree_inputs_equal_projection_inputs_before_and_after_retirement(tmp_path: Path) -> None:
     instance, owner, _actor, first, _second, *_rest = shared_capture_world(tmp_path)
-    previous = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    previous = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     before = coverage.build_accepted_evidence_index_v2(instance, at=previous)
     assert before == _projected_index(instance, at=previous)
 
     _retire_claim(instance, owner, first)
-    current = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    current = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     assert coverage.build_accepted_evidence_index_v2(instance, at=previous) == before
     after = coverage.build_accepted_evidence_index_v2(instance, at=current)
     assert after == _projected_index(instance, at=current)
@@ -103,7 +103,7 @@ def test_tree_inputs_equal_projection_inputs_before_and_after_retirement(tmp_pat
         d for row in before.citations for d in row.capture_digests
     }
     forged = current.model_copy(update={"semantic_root": "sha256:" + "f" * 64})
-    with pytest.raises(PlaybillFormatError):
+    with pytest.raises(FormatError):
         coverage.build_accepted_evidence_index_v2(instance, at=forged)
 
 
@@ -114,7 +114,7 @@ def test_service_reuses_captures_and_matches_projection_route(
     observation = observe_working_source(
         LogicalSourceIdentity(plane="external", identity="corpus.runbook"), source.read_bytes()
     )
-    at = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    at = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     expected_index = _projected_index(instance, at=at)
     capture_count = len({d for row in expected_index.citations for d in row.capture_digests})
     original_parse = citation_sql.parse_capture_envelope
@@ -161,7 +161,7 @@ def test_subsequent_reads_recheck_source_bytes_and_capture_cas(tmp_path: Path) -
     )
     assert before.at == after.at
     assert before != after
-    at = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    at = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     index, first = coverage._accepted_evidence_inputs_v2(instance, at=at)
     digest = next(iter(first))
     first[digest].source.selector["test_mutation"] = True
@@ -170,10 +170,10 @@ def test_subsequent_reads_recheck_source_bytes_and_capture_cas(tmp_path: Path) -
     path = instance.body_store()._path(digest)
     content = path.read_bytes()
     path.unlink()
-    with pytest.raises(PlaybillCasError):
+    with pytest.raises(CasError):
         coverage.build_accepted_evidence_index_v2(instance, at=at)
     path.write_bytes(b"corrupt")
-    with pytest.raises(PlaybillCasError):
+    with pytest.raises(CasError):
         coverage.build_accepted_evidence_index_v2(instance, at=at)
     path.write_bytes(content)
     assert coverage.build_accepted_evidence_index_v2(instance, at=at) == index
@@ -183,7 +183,7 @@ def test_many_citation_windows_decode_each_source_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     instance, source, _workspace = _foreign_world(tmp_path)
-    at = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    at = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     index, envelopes = coverage._accepted_evidence_inputs_v2(instance, at=at)
     logical = LogicalSourceIdentity(plane="external", identity="corpus.runbook")
     observation = observe_working_source(logical, source.read_bytes())

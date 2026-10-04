@@ -28,29 +28,29 @@ from cruxible_client.contracts.claims import (
     ExactContentClaimObject,
     SubjectClaimObject,
 )
-from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.get_reads import summary_value
 from cruxible_client.contracts.operational_reads import (
     CAPTURE_HANDLE_HEX,
     LINE_CARD_ARMS,
     LINE_CARD_RUNS,
     OPERATIONAL_CARD_LIST_LIMIT,
-    PlaybillGetCaptureCard,
-    PlaybillGetLineArm,
-    PlaybillGetLineCard,
-    PlaybillGetLineOccurrence,
-    PlaybillGetMandateCard,
-    PlaybillGetPredictionWindow,
-    PlaybillGetResolutionContractCard,
-    PlaybillLineArmState,
-    PlaybillLiveHead,
-    PlaybillLiveView,
-    PlaybillMandateState,
-    PlaybillOrientCapture,
-    PlaybillOrientCaptureContract,
-    PlaybillOrientLine,
-    PlaybillOrientMandate,
-    PlaybillOrientPrediction,
+    GetCaptureCard,
+    GetLineArm,
+    GetLineCard,
+    GetLineOccurrence,
+    GetMandateCard,
+    GetPredictionWindow,
+    GetResolutionContractCard,
+    LineArmState,
+    LiveHead,
+    LiveView,
+    MandateState,
+    OrientCapture,
+    OrientCaptureContract,
+    OrientLine,
+    OrientMandate,
+    OrientPrediction,
     capture_handle,
 )
 from cruxible_client.contracts.procedure_mandates import (
@@ -107,15 +107,15 @@ _LINE_DIGEST = re.compile(r"^sha256:[0-9a-f]{12,64}$")
 RenderGet = Callable[[str, str | None], str]
 
 
-def live_view(instance: PlaybillInstance, fields: tuple[str, ...]) -> PlaybillLiveView:
+def live_view(instance: PlaybillInstance, fields: tuple[str, ...]) -> LiveView:
     """The marker an answer carries for the parts of it read live, at the current head."""
 
     head = instance.accepted_coordinate()
     generation = next(
         item.sequence for item in reversed(instance.accepted_history()) if item.oid == head.git_oid
     )
-    return PlaybillLiveView(
-        as_of=PlaybillLiveHead(git_oid=head.git_oid[:12], generation=generation),
+    return LiveView(
+        as_of=LiveHead(git_oid=head.git_oid[:12], generation=generation),
         fields=fields,
     )
 
@@ -196,7 +196,7 @@ def uncited_capture_present(instance: PlaybillInstance, digest: str) -> bool:
         if not instance.body_store().metadata(digest, access=_SERVICE_ACCESS).present:
             return False
         parse_capture_envelope(instance.body_store().read(digest, access=_SERVICE_ACCESS))
-    except (PlaybillError, ValueError):
+    except (CruxibleError, ValueError):
         return False
     return True
 
@@ -298,14 +298,14 @@ def _line_stall_after() -> timedelta:
 class LineOperations:
     """What the Line dispatch projection holds for one Line, as of ``now``."""
 
-    arms: tuple[PlaybillGetLineArm, ...] = ()
+    arms: tuple[GetLineArm, ...] = ()
     arms_total: int = 0
     due: int = 0
     waiting: int = 0
-    occurrences: tuple[PlaybillGetLineOccurrence, ...] = ()
+    occurrences: tuple[GetLineOccurrence, ...] = ()
 
     @property
-    def arm_state(self) -> PlaybillLineArmState | None:
+    def arm_state(self) -> LineArmState | None:
         return self.arms[0].state if self.arms else None
 
 
@@ -316,7 +316,7 @@ def _arm(
     *,
     now: datetime,
     viewer: OperationalViewer | None,
-) -> PlaybillGetLineArm:
+) -> GetLineArm:
     active = data["stops_at"] is None
     automatic = (
         int(
@@ -335,7 +335,7 @@ def _arm(
         ).fetchone()[0]
     )
     view = store.arm_view(data, pending_automatic=automatic, pending_explicit=total - automatic)
-    state: PlaybillLineArmState
+    state: LineArmState
     if active:
         oldest = conn.execute(
             "SELECT min(eligible_at) FROM pending WHERE session_id=? AND disposition='pending'",
@@ -346,7 +346,7 @@ def _arm(
     else:
         state = "disarmed" if view.stop_reason in {None, "disarmed"} else "stopped"
     visible = may_see_arming(viewer, view.armed_by)
-    return PlaybillGetLineArm(
+    return GetLineArm(
         arm=view.arm_id,
         state=state,
         principal_kind=arm_principal_kind(data["armed_by"], view.armed_by),
@@ -424,7 +424,7 @@ def _line_operations(
         (stamp, line_digest),
     ).fetchone()
     occurrences = tuple(
-        PlaybillGetLineOccurrence(
+        GetLineOccurrence(
             occurrence=str(occurrence_id),
             eligible_at=_instant(str(eligible_at)),
             state="due" if str(eligible_at) <= stamp else "waiting",
@@ -453,7 +453,7 @@ def line_card(
     evaluation_time: datetime,
     render: RenderGet,
     viewer: OperationalViewer | None = None,
-) -> PlaybillGetLineCard:
+) -> GetLineCard:
     with instance.bind_accepted_projection(coordinate) as projection:
         line = cast(LineSpecAny, projection.typed.source(identity))
         triggers = aimed_triggers(projection, (line.identity.qualified,))
@@ -475,7 +475,7 @@ def line_card(
     )
     next_steps.extend(render(f"ProcedureRun:{row.run}", None) for row in runs[:1])
     next_steps.append(render(line.identity.qualified, "history"))
-    return PlaybillGetLineCard(
+    return GetLineCard(
         line=line.identity.qualified,
         identity_digest=digest,
         lifecycle=line.lifecycle.state,
@@ -494,7 +494,7 @@ def line_rows(
     coordinate: AcceptedProjectionCoordinate,
     *,
     evaluation_time: datetime,
-) -> tuple[PlaybillOrientLine, ...]:
+) -> tuple[OrientLine, ...]:
     """Every accepted Line as a compact row, with its live arm state and pending counts."""
 
     with instance.bind_accepted_projection(coordinate) as projection:
@@ -519,11 +519,11 @@ def line_rows(
                     arm_limit=1,
                     occurrence_limit=0,
                 )
-    rows: list[PlaybillOrientLine] = []
+    rows: list[OrientLine] = []
     for line in lines:
         operations = operations_by_line.get(line.identity.qualified, LineOperations())
         rows.append(
-            PlaybillOrientLine(
+            OrientLine(
                 line=line.identity.qualified,
                 lifecycle="retired" if line.lifecycle.state == "retired" else "live",
                 procedure=line.procedure.target.qualified,
@@ -565,7 +565,7 @@ def capture_card(
     *,
     render: RenderGet,
     read_capture: Callable[[str], str],
-) -> PlaybillGetCaptureCard:
+) -> GetCaptureCard:
     """One Capture: cited ones from the accepted index, an uncited one from its envelope."""
 
     with instance.bind_accepted_projection(coordinate) as projection:
@@ -625,7 +625,7 @@ def capture_card(
     status, status_detail = _availability(instance, digest)
     next_steps = [render(claim, None) for claim in citing[:1]]
     next_steps.append(read_capture(digest))
-    return PlaybillGetCaptureCard(
+    return GetCaptureCard(
         capture=capture_handle(digest),
         digest=digest,
         contract=contract,
@@ -658,7 +658,7 @@ def capture_rows(
     *,
     limit: int,
     after: CaptureKey | None,
-) -> tuple[tuple[PlaybillOrientCapture, ...], CaptureKey | None]:
+) -> tuple[tuple[OrientCapture, ...], CaptureKey | None]:
     """Cited Captures, newest observation first, one keyset page and where it stopped."""
 
     with instance.bind_accepted_projection(coordinate) as projection:
@@ -680,7 +680,7 @@ def capture_rows(
             args,
         ).fetchall()
         page = [
-            PlaybillOrientCapture(
+            OrientCapture(
                 capture=capture_handle(str(digest)),
                 contract=names.name(str(contract_digest), qualified=True),
                 observed_at=_from_microseconds(int(observed_us)),
@@ -702,7 +702,7 @@ def capture_count(instance: PlaybillInstance, coordinate: AcceptedProjectionCoor
 
 def capture_contract_rows(
     instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate
-) -> tuple[PlaybillOrientCaptureContract, ...]:
+) -> tuple[OrientCaptureContract, ...]:
     """Every accepted CaptureContract, with its version and how many ClaimTypes admit it."""
 
     from cruxible_client.contracts.captures import CaptureContract
@@ -724,12 +724,12 @@ def capture_contract_rows(
             )
         ]
         admitted = [set(names.admitted(item, qualified=True)) for item in claim_types]
-    rows: list[PlaybillOrientCaptureContract] = []
+    rows: list[OrientCaptureContract] = []
     for identity, digest, contract in contracts:
         if not isinstance(contract, CaptureContract):
             continue
         rows.append(
-            PlaybillOrientCaptureContract(
+            OrientCaptureContract(
                 contract=identity,
                 version=names.version_number(identity, digest),
                 lifecycle=contract.lifecycle.state,
@@ -773,7 +773,7 @@ def resolution_contract_card(
     *,
     evaluation_time: datetime,
     render: RenderGet,
-) -> PlaybillGetResolutionContractCard:
+) -> GetResolutionContractCard:
     from cruxible_core.consumers.next.predictions import contract_windows
 
     with instance.bind_accepted_projection(coordinate) as projection:
@@ -791,7 +791,7 @@ def resolution_contract_card(
     if found is not None:
         windows, counts = found
         fields["windows"] = tuple(
-            PlaybillGetPredictionWindow(
+            GetPredictionWindow(
                 window=window_id,
                 starts_at=window.starts_at,
                 ends_at=window.ends_at,
@@ -800,7 +800,7 @@ def resolution_contract_card(
             for window_id, window, status in windows
         )
         fields["windows_total"] = sum(counts.values())
-    return PlaybillGetResolutionContractCard(
+    return GetResolutionContractCard(
         contract=identity,
         lifecycle=contract.lifecycle.state,
         hypothesis=claim_id,
@@ -822,7 +822,7 @@ def prediction_rows(
     coordinate: AcceptedProjectionCoordinate,
     *,
     evaluation_time: datetime,
-) -> tuple[PlaybillOrientPrediction, ...]:
+) -> tuple[OrientPrediction, ...]:
     """Every live ResolutionContract with its bound windows counted by status."""
 
     from cruxible_core.consumers.next.predictions import window_tallies
@@ -839,11 +839,11 @@ def prediction_rows(
         [item.identity.qualified for item in contracts],
         evaluation_time=evaluation_time,
     )
-    rows: list[PlaybillOrientPrediction] = []
+    rows: list[OrientPrediction] = []
     for contract in contracts:
         tally = tallies.get(contract.identity.qualified)
         rows.append(
-            PlaybillOrientPrediction(
+            OrientPrediction(
                 contract=contract.identity.qualified,
                 hypothesis=contract.hypothesis.identity.name,
                 window=contract.window.kind,
@@ -859,9 +859,7 @@ def prediction_rows(
 # -- mandates ----------------------------------------------------------------------------
 
 
-def mandate_state(
-    mandate: ProcedureMandateV1 | ProcedureMandate, *, now: datetime
-) -> PlaybillMandateState:
+def mandate_state(mandate: ProcedureMandateV1 | ProcedureMandate, *, now: datetime) -> MandateState:
     if mandate.lifecycle.state == "retired":
         return "retired"
     if isinstance(mandate, ProcedureMandate) and mandate.suspended:
@@ -882,11 +880,11 @@ def mandate_card(
     *,
     evaluation_time: datetime,
     render: RenderGet,
-) -> PlaybillGetMandateCard:
+) -> GetMandateCard:
     with instance.bind_accepted_projection(coordinate) as projection:
         mandate = cast(ProcedureMandateV1 | ProcedureMandate, projection.typed.source(identity))
     procedure = mandate.procedure.target.qualified
-    return PlaybillGetMandateCard(
+    return GetMandateCard(
         mandate=identity,
         procedure=procedure,
         grants=mandate_grant(mandate),
@@ -904,7 +902,7 @@ def mandate_rows(
     coordinate: AcceptedProjectionCoordinate,
     *,
     evaluation_time: datetime,
-) -> tuple[PlaybillOrientMandate, ...]:
+) -> tuple[OrientMandate, ...]:
     with instance.bind_accepted_projection(coordinate) as projection:
         mandates = [
             cast(ProcedureMandateV1 | ProcedureMandate, projection.typed.source(str(identity)))
@@ -913,7 +911,7 @@ def mandate_rows(
             )
         ]
     return tuple(
-        PlaybillOrientMandate(
+        OrientMandate(
             mandate=mandate.identity.qualified,
             procedure=mandate.procedure.target.qualified,
             grants=mandate_grant(mandate),

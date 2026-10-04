@@ -26,7 +26,7 @@ from cruxible_core.derived.memo import memo_clear
 from cruxible_core.procedures import graph_digests
 from cruxible_core.runtime import instance as instance_module
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+from cruxible_core.service.authoring.documents import AcceptedCoordinate
 from cruxible_core.service.discovery import claim_status
 from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
 from cruxible_core.service.procedures import measurements
@@ -173,7 +173,7 @@ def test_claim_resolution_memos(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     instance, _owner = seed_claims(tmp_path)
     coordinate = instance.accepted_coordinate()
     claims = ClaimVerdictReadContext(instance, coordinate).claims()
-    at = PlaybillAcceptedCoordinate.from_internal(coordinate)
+    at = AcceptedCoordinate.from_internal(coordinate)
 
     def resolve() -> dict[str, Any]:
         return claim_status.claim_resolution_statuses(

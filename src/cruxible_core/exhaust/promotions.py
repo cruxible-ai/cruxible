@@ -29,9 +29,9 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.errors import (
-    PlaybillCasError,
-    PlaybillFormatError,
-    PlaybillJournalError,
+    CasError,
+    FormatError,
+    JournalError,
 )
 from cruxible_client.contracts.governance import ActivationPolicy, PermissionTier
 from cruxible_client.contracts.projection_extensions import ProjectionFact
@@ -49,7 +49,7 @@ _STREAM_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$")
 _PARTITION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 
 
-class ExhaustPromotionError(PlaybillFormatError):
+class ExhaustPromotionError(FormatError):
     """An ExhaustPromotion artifact or its exact operational basis is invalid."""
 
 
@@ -364,7 +364,7 @@ def evaluate_exhaust_promotion_law(
             ),
             records,
         )
-    except (ValueError, PlaybillJournalError):
+    except (ValueError, JournalError):
         return _refused("promotion.chain_invalid", "Promoted journal chain does not verify.")
     manifest = ExhaustReceiptSetManifestV1(
         stream_id=promotion.stream_id,
@@ -382,7 +382,7 @@ def evaluate_exhaust_promotion_law(
     access = BodyAccessContext(principal_id="exhaust-promotion-law", can_read_body=True)
     try:
         stored_manifest = bodies.read(promotion.receipt_set_manifest_digest, access=access)
-    except PlaybillCasError:
+    except CasError:
         return _refused(
             "promotion.receipt_set_missing",
             "Promotion receipt-set manifest CAS object is unavailable.",
@@ -438,7 +438,7 @@ def evaluate_exhaust_promotion_law(
         return _refused("promotion.output_mismatch", "Promotion output does not reproduce.")
     try:
         stored_output = bodies.read(promotion.output_digest, access=access)
-    except PlaybillCasError:
+    except CasError:
         return _refused("promotion.output_missing", "Promotion output CAS object is unavailable.")
     if stored_output != canonical_bytes(output):
         return _refused("promotion.output_cas_mismatch", "Promotion output CAS bytes differ.")

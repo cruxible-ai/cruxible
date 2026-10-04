@@ -114,7 +114,7 @@ if any(_MAPPING[code] != ("node_refusal", "input") for code in ABSORBABLE_PROVID
 
 
 def provider_canonical_value(value: Any) -> CanonicalValue:
-    """Translate the wider finite-number runtime JSON law into Playbill canonical values."""
+    """Translate the wider finite-number runtime JSON law into Cruxible canonical values."""
 
     if value is None or isinstance(value, bool | int | str):
         return value

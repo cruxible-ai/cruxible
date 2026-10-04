@@ -30,8 +30,8 @@ from cruxible_core.service.discovery.curation import (
     service_list_playbill_curation,
 )
 from cruxible_core.service.discovery.next import (
-    PlaybillNextSourceObservationV3,
-    PlaybillNextWorkspaceObservation,
+    NextSourceObservationV3,
+    NextWorkspaceObservation,
 )
 from tests.core_support._knowledge_loop_support import accept_proposal
 from tests.core_support._support import initialize_local
@@ -112,8 +112,8 @@ def _v3(
     *,
     complete: bool = True,
     document_id: str | None = "runbook",
-) -> PlaybillNextSourceObservationV3:
-    return PlaybillNextSourceObservationV3(
+) -> NextSourceObservationV3:
+    return NextSourceObservationV3(
         tag="playbill-next-source-observation-v3",
         source_id="docs.runbook",
         document_id=document_id,
@@ -136,9 +136,7 @@ def test_valid_stamped_v3_observation_persists_once_and_remains_client_observed(
     request = PlaybillCurationListRequestV1(
         evaluation_time=NOW,
         access_profile=ACCESS,
-        workspace_observation=PlaybillNextWorkspaceObservation(
-            source_observations=(_v3(coordinate),)
-        ),
+        workspace_observation=NextWorkspaceObservation(source_observations=(_v3(coordinate),)),
     )
 
     first = service_list_playbill_curation(instance, request=request, actor_context=_actor())
@@ -162,7 +160,7 @@ def test_incomplete_and_unresolved_document_sources_are_coverage_omissions(
     request = PlaybillCurationListRequestV1(
         evaluation_time=NOW,
         access_profile=ACCESS,
-        workspace_observation=PlaybillNextWorkspaceObservation(
+        workspace_observation=NextWorkspaceObservation(
             source_observations=(
                 _v3(coordinate, complete=False),
                 _v3(coordinate, document_id="missing").model_copy(
@@ -210,7 +208,7 @@ def test_bootstrap_and_malformed_markers_are_explicit_coverage_omissions(
         request=PlaybillCurationListRequestV1(
             evaluation_time=NOW,
             access_profile=ACCESS,
-            workspace_observation=PlaybillNextWorkspaceObservation(source_observations=(source,)),
+            workspace_observation=NextWorkspaceObservation(source_observations=(source,)),
         ),
         actor_context=_actor(),
     )
@@ -234,9 +232,7 @@ def test_unaccepted_marker_coordinate_is_an_explicit_coverage_omission(
         request=PlaybillCurationListRequestV1(
             evaluation_time=NOW,
             access_profile=ACCESS,
-            workspace_observation=PlaybillNextWorkspaceObservation(
-                source_observations=(_v3(unaccepted),)
-            ),
+            workspace_observation=NextWorkspaceObservation(source_observations=(_v3(unaccepted),)),
         ),
         actor_context=_actor(),
     )

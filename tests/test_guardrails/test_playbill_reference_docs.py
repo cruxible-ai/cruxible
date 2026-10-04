@@ -1,4 +1,4 @@
-"""Keep the concise Playbill references synchronized with served surfaces."""
+"""Keep the concise Cruxible references synchronized with served surfaces."""
 
 from __future__ import annotations
 

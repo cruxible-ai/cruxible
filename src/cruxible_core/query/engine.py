@@ -37,7 +37,7 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.claim_verdicts import EvidenceRelativeClaimVerdictV1
 from cruxible_client.contracts.claims import ExactContentClaimObject, SubjectClaimObject
-from cruxible_client.contracts.errors import CanonicalEncodingError, PlaybillError
+from cruxible_client.contracts.errors import CanonicalEncodingError, CruxibleError
 from cruxible_client.contracts.query.definitions import (
     AcceptedQueryDefinition,
     QueryDefinition,
@@ -199,7 +199,7 @@ def _render_time(value: datetime) -> str:
     return utc.isoformat(timespec=timespec).replace("+00:00", "Z")
 
 
-class ClaimQueryError(PlaybillError):
+class ClaimQueryError(CruxibleError):
     """An evaluation input has no representation in a canonical query result.
 
     A result always states the exact instant it was evaluated at, so an

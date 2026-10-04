@@ -11,39 +11,36 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from cruxible_client.contracts.approval_policy import ApprovalPolicyMode
 from cruxible_client.contracts.authoring.inputs import AuthoringInput
 from cruxible_client.contracts.authoring.models import (
-    PlaybillBlockSyncItem as PlaybillBlockSyncItem,
+    BlockSyncItem as BlockSyncItem,
 )
 from cruxible_client.contracts.authoring.models import (
-    PlaybillBlockSyncReadRequest as PlaybillBlockSyncReadRequest,
+    BlockSyncReadRequest as BlockSyncReadRequest,
 )
 from cruxible_client.contracts.authoring.models import (
-    PlaybillBlockSyncReadResult as PlaybillBlockSyncReadResult,
+    BlockSyncReadResult as BlockSyncReadResult,
 )
 from cruxible_client.contracts.authoring.models import (
-    PlaybillBlockSyncResult as PlaybillBlockSyncResult,
+    BlockSyncResult as BlockSyncResult,
 )
 from cruxible_client.contracts.authoring.models import (
-    PlaybillBlockSyncSuccessorCandidate as PlaybillBlockSyncSuccessorCandidate,
+    BlockSyncSuccessorCandidate as BlockSyncSuccessorCandidate,
 )
 from cruxible_client.contracts.authoring.models import (
-    PlaybillProjectionCheckRequest as PlaybillProjectionCheckRequest,
+    ProjectionCheckRequest as ProjectionCheckRequest,
 )
 from cruxible_client.contracts.authoring.models import (
-    PlaybillProjectionCheckResult as PlaybillProjectionCheckResult,
+    ProjectionCheckResult as ProjectionCheckResult,
 )
 from cruxible_client.contracts.canonical import Sha256Value
-from cruxible_client.contracts.change_control import PlaybillStateCoordinate
+from cruxible_client.contracts.change_control import StateCoordinate
 from cruxible_client.contracts.claims import ClaimStatementCard as ClaimStatementCard
 from cruxible_client.contracts.compact_query import (
-    PLAYBILL_QUERY_DEFAULT_LIMIT as PLAYBILL_QUERY_DEFAULT_LIMIT,
+    QUERY_DEFAULT_LIMIT as QUERY_DEFAULT_LIMIT,
 )
 from cruxible_client.contracts.compact_query import (
-    PLAYBILL_QUERY_MAX_LIMIT as PLAYBILL_QUERY_MAX_LIMIT,
+    QUERY_MAX_LIMIT as QUERY_MAX_LIMIT,
 )
-from cruxible_client.contracts.compact_query import PlaybillQueryColumn as PlaybillQueryColumn
-from cruxible_client.contracts.compact_query import PlaybillQueryReceipt as PlaybillQueryReceipt
-from cruxible_client.contracts.compact_query import PlaybillQueryRequest as PlaybillQueryRequest
-from cruxible_client.contracts.compact_query import PlaybillQueryResult as PlaybillQueryResult
+from cruxible_client.contracts.compact_query import QueryColumn as QueryColumn
 from cruxible_client.contracts.compact_query import QueryFilterContains as QueryFilterContains
 from cruxible_client.contracts.compact_query import QueryFilterEq as QueryFilterEq
 from cruxible_client.contracts.compact_query import QueryFilterExists as QueryFilterExists
@@ -54,7 +51,10 @@ from cruxible_client.contracts.compact_query import QueryFilterLt as QueryFilter
 from cruxible_client.contracts.compact_query import QueryFilterLte as QueryFilterLte
 from cruxible_client.contracts.compact_query import QueryFilterNe as QueryFilterNe
 from cruxible_client.contracts.compact_query import QueryFollow as QueryFollow
-from cruxible_client.contracts.floor import PlaybillFloorDelta
+from cruxible_client.contracts.compact_query import QueryReceipt as QueryReceipt
+from cruxible_client.contracts.compact_query import QueryRequest as QueryRequest
+from cruxible_client.contracts.compact_query import QueryResultRecord as QueryResultRecord
+from cruxible_client.contracts.floor import FloorDelta
 from cruxible_client.contracts.line_dispatch import (
     LineArm as LineArm,
 )
@@ -92,37 +92,31 @@ from cruxible_client.contracts.line_dispatch import (
     LineTriggerVersion as LineTriggerVersion,
 )
 from cruxible_client.contracts.orient import (
-    PLAYBILL_ORIENT_DEFAULT_LIMIT as PLAYBILL_ORIENT_DEFAULT_LIMIT,
+    ORIENT_DEFAULT_LIMIT as ORIENT_DEFAULT_LIMIT,
 )
 from cruxible_client.contracts.orient import (
-    PLAYBILL_ORIENT_MAX_LIMIT as PLAYBILL_ORIENT_MAX_LIMIT,
+    ORIENT_MAX_LIMIT as ORIENT_MAX_LIMIT,
 )
 from cruxible_client.contracts.orient import (
-    PlaybillHead as PlaybillHead,
+    Head as Head,
 )
 from cruxible_client.contracts.orient import (
-    PlaybillOrientFloor as PlaybillOrientFloor,
+    OrientFloor as OrientFloor,
 )
 from cruxible_client.contracts.orient import (
-    PlaybillOrientResult as PlaybillOrientResult,
+    OrientResult as OrientResult,
 )
 from cruxible_client.contracts.orient import (
-    PlaybillOrientSection as PlaybillOrientSection,
+    OrientSection as OrientSection,
 )
 from cruxible_client.contracts.orient import (
-    PlaybillOrientSurface as PlaybillOrientSurface,
+    OrientSurface as OrientSurface,
 )
-from cruxible_client.contracts.policy_rows import PlaybillPolicyInForce as PlaybillPolicyInForce
-from cruxible_client.contracts.policy_rows import PlaybillPolicyKind as PlaybillPolicyKind
+from cruxible_client.contracts.policy_rows import PolicyInForce as PolicyInForce
+from cruxible_client.contracts.policy_rows import PolicyKind as PolicyKind
 from cruxible_client.contracts.predictions import (
     ObservationSettlementEvidence as ObservationSettlementEvidence,
 )
-from cruxible_client.contracts.predictions import (
-    PlaybillPredictRequest as PlaybillPredictRequest,
-)
-from cruxible_client.contracts.predictions import PlaybillPredictResult as PlaybillPredictResult
-from cruxible_client.contracts.predictions import PlaybillSettleRequest as PlaybillSettleRequest
-from cruxible_client.contracts.predictions import PlaybillSettleResult as PlaybillSettleResult
 from cruxible_client.contracts.predictions import (
     PredictionEqualityRule as PredictionEqualityRule,
 )
@@ -136,27 +130,21 @@ from cruxible_client.contracts.predictions import (
     PredictionThresholdRule as PredictionThresholdRule,
 )
 from cruxible_client.contracts.predictions import (
+    PredictRequest as PredictRequest,
+)
+from cruxible_client.contracts.predictions import PredictResult as PredictResult
+from cruxible_client.contracts.predictions import (
     ResolutionContractInput as ResolutionContractInput,
 )
+from cruxible_client.contracts.predictions import SettleRequest as SettleRequest
+from cruxible_client.contracts.predictions import SettleResult as SettleResult
 from cruxible_client.contracts.predictions import (
     TerminalSettlementEvidence as TerminalSettlementEvidence,
 )
 from cruxible_client.contracts.primitives import canonical_json
-from cruxible_client.contracts.principals import PlaybillAuthoringRefusal
+from cruxible_client.contracts.principals import AuthoringRefusal
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifactAny as _ProcedureArtifactAny,
-)
-from cruxible_client.contracts.procedures.readings import (
-    PlaybillProcedureMeasureRequest as PlaybillProcedureMeasureRequest,
-)
-from cruxible_client.contracts.procedures.readings import (
-    PlaybillProcedureMeasureResult as PlaybillProcedureMeasureResult,
-)
-from cruxible_client.contracts.procedures.readings import (
-    PlaybillProcedureReadingsRequest as PlaybillProcedureReadingsRequest,
-)
-from cruxible_client.contracts.procedures.readings import (
-    PlaybillProcedureReadingsResult as PlaybillProcedureReadingsResult,
 )
 from cruxible_client.contracts.procedures.readings import (
     ProcedureMeasurementContractStatus as ProcedureMeasurementContractStatus,
@@ -172,6 +160,18 @@ from cruxible_client.contracts.procedures.readings import (
 )
 from cruxible_client.contracts.procedures.readings import (
     ProcedureMeasurementRow as ProcedureMeasurementRow,
+)
+from cruxible_client.contracts.procedures.readings import (
+    ProcedureMeasureRequest as ProcedureMeasureRequest,
+)
+from cruxible_client.contracts.procedures.readings import (
+    ProcedureMeasureResult as ProcedureMeasureResult,
+)
+from cruxible_client.contracts.procedures.readings import (
+    ProcedureReadingsRequest as ProcedureReadingsRequest,
+)
+from cruxible_client.contracts.procedures.readings import (
+    ProcedureReadingsResult as ProcedureReadingsResult,
 )
 from cruxible_client.contracts.procedures.readings import (
     ProcedureReadingSummary as ProcedureReadingSummary,
@@ -197,17 +197,18 @@ from cruxible_client.contracts.procedures.windows import (
 from cruxible_client.contracts.procedures.windows import (
     TriggerEventReference as TriggerEventReference,
 )
+from cruxible_client.contracts.projection import AcceptedCoordinate as AcceptedCoordinate
 from cruxible_client.contracts.provider_contracts import (
     ProviderOperationContract as _ProviderOperationContractV1,
 )
 from cruxible_client.contracts.provider_installation import (
-    PlaybillProviderCatalog as PlaybillProviderCatalog,
+    ProviderCatalog as ProviderCatalog,
 )
 from cruxible_client.contracts.provider_installation import (
-    PlaybillProviderInstallRequest as PlaybillProviderInstallRequest,
+    ProviderInstallRequest as ProviderInstallRequest,
 )
 from cruxible_client.contracts.provider_installation import (
-    PlaybillProviderInstallResult as PlaybillProviderInstallResult,
+    ProviderInstallResult as ProviderInstallResult,
 )
 from cruxible_client.contracts.provider_installation import (
     ProviderOperationReadiness as ProviderOperationReadiness,
@@ -265,7 +266,7 @@ from cruxible_client.contracts.triggers import (
 )
 from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
-    PlaybillWorkspaceAdvertisement,
+    WorkspaceAdvertisement,
 )
 from cruxible_client.contracts.workspace_file import (
     SourceReadReceipt as SourceReadReceipt,
@@ -274,9 +275,9 @@ from cruxible_client.contracts.workspace_file import (
     WorkspaceFileSourceRequest as WorkspaceFileSourceRequest,
 )
 
-PlaybillHostStatus = Literal["created", "already_exists", "would_create"]
-PlaybillHostWorkspaceRegistrationStatus = Literal["registered", "not_registered"]
-PlaybillAuthoringExampleName = Literal[
+HostStatus = Literal["created", "already_exists", "would_create"]
+HostWorkspaceRegistrationStatus = Literal["registered", "not_registered"]
+AuthoringExampleName = Literal[
     "claim-existing-capture",
     "claim-flow-a",
     "claim-self-source",
@@ -300,7 +301,7 @@ PlaybillAuthoringExampleName = Literal[
     "change-set",
     "claim-type-succession",
 ]
-PlaybillNextReason: TypeAlias = Literal[
+NextReason: TypeAlias = Literal[
     "claim_conflicted",
     "claim_uncovered",
     "claim_stale_evidence",
@@ -327,8 +328,8 @@ PlaybillNextReason: TypeAlias = Literal[
     "prediction_settleable",
     "prediction_window_unbindable",
 ]
-PlaybillNextSeverity: TypeAlias = Literal["blocking", "repair", "warning"]
-PlaybillNextRepairOperation: TypeAlias = Literal[
+NextSeverity: TypeAlias = Literal["blocking", "repair", "warning"]
+NextRepairOperation: TypeAlias = Literal[
     "playbill.authoring.create",
     "playbill.authoring.bind",
     "playbill.claim.retire",
@@ -350,17 +351,17 @@ PlaybillNextRepairOperation: TypeAlias = Literal[
 # The next queue's own refusals that carry a declared repair. A page cursor
 # names the whole queue it continues; once that queue moves, re-reading page
 # one is the repair.
-PlaybillNextRefusalCode: TypeAlias = Literal["playbill.next.cursor_mismatch"]
+NextRefusalCode: TypeAlias = Literal["playbill.next.cursor_mismatch"]
 #: Rows per next page when the request names none, and the most one page carries.
-PLAYBILL_NEXT_DEFAULT_LIMIT = 100
-PLAYBILL_NEXT_MAX_LIMIT = 1000
+NEXT_DEFAULT_LIMIT = 100
+NEXT_MAX_LIMIT = 1000
 #: Rows per page of the proposal, policies-in-force and curation lists when the
 #: request names none, and the most one page carries. A cut page says
 #: `truncated` and carries the `next_cursor` that continues it.
-PLAYBILL_PROPOSAL_LIST_DEFAULT_LIMIT = 50
-PLAYBILL_PROPOSAL_LIST_MAX_LIMIT = 500
-PLAYBILL_CURATION_LIST_DEFAULT_LIMIT = 25
-PLAYBILL_CURATION_LIST_MAX_LIMIT = 200
+PROPOSAL_LIST_DEFAULT_LIMIT = 50
+PROPOSAL_LIST_MAX_LIMIT = 500
+CURATION_LIST_DEFAULT_LIMIT = 25
+CURATION_LIST_MAX_LIMIT = 200
 ProviderLaneUnavailableCode: TypeAlias = Literal[
     "provider_process_lease_invalid",
     "provider_process_lease_missing",
@@ -381,18 +382,18 @@ class GitWorkspaceNote(BaseModel):
     inherited_workspace_root: str
 
 
-class PlaybillHostResult(BaseModel):
+class HostResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     instance_id: str
-    status: PlaybillHostStatus
+    status: HostStatus
     git_workspace_note: GitWorkspaceNote | None = None
     #: The host's registry row the allocation was checked against (absent, for
     #: a new host), read where it is written; commit a preview with ``at``.
-    coordinate: PlaybillStateCoordinate | None = None
+    coordinate: StateCoordinate | None = None
 
 
-class PlaybillHostWorkspaceRegistration(BaseModel):
+class HostWorkspaceRegistration(BaseModel):
     """Whether one daemon host has a daemon-local workspace registration."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -401,15 +402,15 @@ class PlaybillHostWorkspaceRegistration(BaseModel):
         "playbill-host-workspace-registration-v1"
     )
     instance_id: str
-    status: PlaybillHostWorkspaceRegistrationStatus
+    status: HostWorkspaceRegistrationStatus
     workspace_path: str | None = None
     floor_delivery: bool = False
 
 
-PlaybillHostCompatibility: TypeAlias = Literal[
+HostCompatibility: TypeAlias = Literal[
     "uninitialized", "writable", "reseed_required", "decommissioned", "refused"
 ]
-PlaybillHostCompatibilityReasonCode: TypeAlias = Literal[
+HostCompatibilityReasonCode: TypeAlias = Literal[
     "legacy_layout_requires_reseed",
     "host_state_incomplete",
     "host_state_malformed",
@@ -419,15 +420,15 @@ PlaybillHostCompatibilityReasonCode: TypeAlias = Literal[
 ]
 
 
-class PlaybillHostCompatibilityReason(BaseModel):
+class HostCompatibilityReason(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    code: PlaybillHostCompatibilityReasonCode
+    code: HostCompatibilityReasonCode
     detail: str
     repair_commands: tuple[str, ...]
 
 
-class PlaybillHostInspection(BaseModel):
+class HostInspection(BaseModel):
     """Credential-safe compatibility view of one governed daemon host."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -439,12 +440,12 @@ class PlaybillHostInspection(BaseModel):
     floor_delivery: bool = False
     compiler_coordinate: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
     compiler_revision: str | None = None
-    compatibility: PlaybillHostCompatibility
+    compatibility: HostCompatibility
     writable: bool
-    reason: PlaybillHostCompatibilityReason | None = None
+    reason: HostCompatibilityReason | None = None
 
     @model_validator(mode="after")
-    def _compatibility_fields_agree(self) -> PlaybillHostInspection:
+    def _compatibility_fields_agree(self) -> HostInspection:
         if self.writable != (self.compatibility == "writable"):
             raise ValueError("writable must agree with compatibility")
         if self.compatibility == "uninitialized" and (
@@ -470,7 +471,7 @@ class RuntimeCredentialBootstrapResult(BaseModel):
     token: str | None = None
     #: The host's credentials the claim was checked against (none, for a
     #: claimable host), read where the claim is written.
-    coordinate: PlaybillStateCoordinate | None = None
+    coordinate: StateCoordinate | None = None
 
 
 class RuntimeCredentialMetadata(BaseModel):
@@ -507,8 +508,8 @@ class RuntimeCredentialResult(BaseModel):
     #: The credential state the change was checked against (the credential
     #: itself, or for a mint or recovery the credentials it adds to), read where
     #: it writes. A commit of a revoke or rotate (which cannot be undone)
-    #: passes its digest as ``at``; it exists before Playbill is initialized.
-    coordinate: PlaybillStateCoordinate | None = None
+    #: passes its digest as ``at``; it exists before Cruxible is initialized.
+    coordinate: StateCoordinate | None = None
 
 
 class RuntimeCredentialListResult(BaseModel):
@@ -572,7 +573,7 @@ class ServerInfoResult(BaseModel):
     provider_lane: ProviderLaneStatus
     compiler_coordinate: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
     compiler_revision: str | None = None
-    hosts: tuple[PlaybillHostInspection, ...] = ()
+    hosts: tuple[HostInspection, ...] = ()
     consumers: tuple[ConsumerStatus, ...] = ()
 
 
@@ -614,30 +615,20 @@ class IsolatedExecutorRegistration(BaseModel):
     capabilities: tuple[str, ...] = ()
 
 
-class PlaybillAcceptedCoordinate(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-accepted-coordinate-v1"] = "playbill-accepted-coordinate-v1"
-    git_oid: str = Field(pattern=r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
-    semantic_root: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
-    generation_root: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
-    compiler_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
-
-
-class PlaybillInitResult(BaseModel):
+class InitResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-init-v1"] = "playbill-init-v1"
     instance_id: str
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     trust_root: dict[str, Any]
     recovery_posture: str
     approval_policy_mode: ApprovalPolicyMode
-    workspace_advertisement: PlaybillWorkspaceAdvertisement
+    workspace_advertisement: WorkspaceAdvertisement
     git_workspace_note: GitWorkspaceNote | None = None
 
 
-class PlaybillCasObjectResult(BaseModel):
+class CasObjectResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     digest: str
@@ -646,7 +637,7 @@ class PlaybillCasObjectResult(BaseModel):
     redacted: bool
 
 
-class PlaybillProposalInspection(BaseModel):
+class ProposalInspection(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-proposal-inspection-v1"] = "playbill-proposal-inspection-v1"
@@ -657,15 +648,15 @@ class PlaybillProposalInspection(BaseModel):
     proposal: dict[str, Any]
     #: After the call; a preview's is the head it evaluated at, which a commit
     #: passes back as ``at`` (its git oid).
-    accepted_coordinate: PlaybillAcceptedCoordinate
-    workspace_advertisement: PlaybillWorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
-    lint: PlaybillClaimTypeProposalLint | None = Field(
+    accepted_coordinate: AcceptedCoordinate
+    workspace_advertisement: WorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
+    lint: ClaimTypeProposalLint | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
     )
 
 
-class PlaybillProposalListEntry(BaseModel):
+class ProposalListEntry(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-proposal-list-entry-v1"] = "playbill-proposal-list-entry-v1"
@@ -683,18 +674,18 @@ class PlaybillProposalListEntry(BaseModel):
     withdrawal_present: bool = False
 
 
-class PlaybillProposalList(BaseModel):
+class ProposalList(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-proposal-list-v1"] = "playbill-proposal-list-v1"
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     status_filter: Literal["open", "settled", "incomplete"] | None = None
-    entries: list[PlaybillProposalListEntry]
+    entries: list[ProposalListEntry]
     truncated: bool = False
     next_cursor: str | None = None
 
 
-class PlaybillProposalSelectorResult(BaseModel):
+class ProposalSelectorResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-proposal-selector-result-v1"] = "playbill-proposal-selector-result-v1"
@@ -702,16 +693,16 @@ class PlaybillProposalSelectorResult(BaseModel):
     proposal_id: str
 
 
-class PlaybillProposalReadmitResult(BaseModel):
+class ProposalReadmitResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-proposal-readmit-result-v1"]
     source_proposal_id: str
     operation_digest: str
-    proposal: PlaybillProposalInspection
+    proposal: ProposalInspection
 
 
-class PlaybillProposalWithdrawResult(BaseModel):
+class ProposalWithdrawResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-proposal-withdraw-result-v1"] = "playbill-proposal-withdraw-result-v1"
@@ -723,10 +714,10 @@ class PlaybillProposalWithdrawResult(BaseModel):
     withdrawn_at: str
     already_withdrawn: bool = False
     #: The accepted coordinate the withdrawal was checked at; ``at`` pins a commit.
-    coordinate: PlaybillAcceptedCoordinate | None = None
+    coordinate: AcceptedCoordinate | None = None
 
 
-class PlaybillWhoAmI(BaseModel):
+class WhoAmI(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-whoami-v1"] = "playbill-whoami-v1"
@@ -744,14 +735,14 @@ class PlaybillWhoAmI(BaseModel):
     # None when the request names no principal (an unbound credential).
     principal_registration_status: Literal["active", "revoked", "absent"] | None
     active_principal_ids: list[str]
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     # Whether authoring create would accept this actor, and the refusal it
     # would return otherwise: the same code, detail and repair.
     can_author: bool
-    authoring_refusal: PlaybillAuthoringRefusal | None
+    authoring_refusal: AuthoringRefusal | None
 
 
-class PlaybillRefusalInspection(BaseModel):
+class RefusalInspection(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-refusal-v1"] = "playbill-refusal-v1"
@@ -760,29 +751,29 @@ class PlaybillRefusalInspection(BaseModel):
     diagnostics: list[dict[str, Any]]
 
 
-class PlaybillSemanticFieldValue(BaseModel):
+class SemanticFieldValue(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     state: Literal["absent", "present"]
     value: Any
 
     @model_validator(mode="after")
-    def _absent_has_no_value(self) -> "PlaybillSemanticFieldValue":
+    def _absent_has_no_value(self) -> "SemanticFieldValue":
         if self.state == "absent" and self.value is not None:
             raise ValueError("an absent semantic field value must carry JSON null")
         return self
 
 
-class PlaybillSemanticFieldDelta(BaseModel):
+class SemanticFieldDelta(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-semantic-field-delta-v1"] = "playbill-semantic-field-delta-v1"
     field_path: str
-    before: PlaybillSemanticFieldValue
-    after: PlaybillSemanticFieldValue
+    before: SemanticFieldValue
+    after: SemanticFieldValue
 
 
-class PlaybillReviewedMember(BaseModel):
+class ReviewedMember(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     path: str
@@ -793,14 +784,14 @@ class PlaybillReviewedMember(BaseModel):
     candidate_artifact_digest: str | None
     base_semantic_artifact: dict[str, Any] | None
     candidate_semantic_artifact: dict[str, Any] | None
-    semantic_delta: list[PlaybillSemanticFieldDelta]
+    semantic_delta: list[SemanticFieldDelta]
     law_identifier: str
     law_digest: str
     law_evidence: dict[str, Any]
     dependency_proof_refs: list[dict[str, Any]]
 
 
-class PlaybillProjectionAdvisory(BaseModel):
+class ProjectionAdvisory(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-projection-advisory-v1"] = "playbill-projection-advisory-v1"
@@ -816,20 +807,20 @@ class PlaybillProjectionAdvisory(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _count(self) -> "PlaybillProjectionAdvisory":
+    def _count(self) -> "ProjectionAdvisory":
         if self.unprojected_count != len(self.artifact_identities):
             raise ValueError("projection advisory count must match its identities")
         return self
 
 
-class PlaybillProjectionEvidence(BaseModel):
+class ProjectionEvidence(BaseModel):
     """Whether one bounded workspace projection observation informed review."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-projection-evidence-v1"] = "playbill-projection-evidence-v1"
     status: Literal["used", "rejected"]
-    coordinate: PlaybillAcceptedCoordinate | None = None
+    coordinate: AcceptedCoordinate | None = None
     reason: (
         Literal[
             "observation_invalid",
@@ -842,7 +833,7 @@ class PlaybillProjectionEvidence(BaseModel):
     ) = None
 
     @model_validator(mode="after")
-    def _shape(self) -> "PlaybillProjectionEvidence":
+    def _shape(self) -> "ProjectionEvidence":
         if self.status == "used" and (self.coordinate is None or self.reason is not None):
             raise ValueError("used projection evidence requires a coordinate and no reason")
         if self.status == "rejected" and self.reason is None:
@@ -850,7 +841,7 @@ class PlaybillProjectionEvidence(BaseModel):
         return self
 
 
-class PlaybillProposalReview(BaseModel):
+class ProposalReview(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-proposal-review-v1"] = "playbill-proposal-review-v1"
@@ -859,20 +850,20 @@ class PlaybillProposalReview(BaseModel):
     candidate: dict[str, Any]
     candidate_digest: str
     parent_semantic_root: str
-    settlement_base: PlaybillAcceptedCoordinate
+    settlement_base: AcceptedCoordinate
     base_oid: str
     complete_members: list[dict[str, Any]]
-    members: list[PlaybillReviewedMember]
+    members: list[ReviewedMember]
     governance: dict[str, Any]
     provenance: dict[str, Any]
     attestation_coverage: dict[str, Any]
     documents: list[dict[str, Any]]
     redactions: list[str]
-    projection_advisory: PlaybillProjectionAdvisory | None = None
-    projection_evidence: PlaybillProjectionEvidence | None = None
+    projection_advisory: ProjectionAdvisory | None = None
+    projection_evidence: ProjectionEvidence | None = None
 
 
-class PlaybillApprovalChallenge(BaseModel):
+class ApprovalChallenge(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-approval-challenge-v1"] = "playbill-approval-challenge-v1"
@@ -880,10 +871,10 @@ class PlaybillApprovalChallenge(BaseModel):
     signer_principal: dict[str, Any]
     signer_key_history_ref: str
     statement: dict[str, Any]
-    review: PlaybillProposalReview
+    review: ProposalReview
 
 
-class PlaybillApprovalReceipt(BaseModel):
+class ApprovalReceipt(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-approval-receipt-v1"] = "playbill-approval-receipt-v1"
@@ -897,18 +888,18 @@ class PlaybillApprovalReceipt(BaseModel):
     git_workspace_note: GitWorkspaceNote | None = None
 
 
-class PlaybillActivationReceipt(BaseModel):
+class ActivationReceipt(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-activation-receipt-v1"] = "playbill-activation-receipt-v1"
     proposal_id: str
     activated_by: str
     status: Literal["accepted", "lost_cas"]
-    accepted_coordinate: PlaybillAcceptedCoordinate | None
-    workspace_advertisement: PlaybillWorkspaceAdvertisement
+    accepted_coordinate: AcceptedCoordinate | None
+    workspace_advertisement: WorkspaceAdvertisement
 
 
-class PlaybillFloorRefreshResult(BaseModel):
+class FloorRefreshResult(BaseModel):
     """Client-owned truth about the optional workspace floor refresh."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -918,35 +909,35 @@ class PlaybillFloorRefreshResult(BaseModel):
     path: str | None = None
     destination: str | None = None
     floor_digest: str | None = None
-    coordinate: PlaybillAcceptedCoordinate | None = None
+    coordinate: AcceptedCoordinate | None = None
     message: str | None = None
 
 
-class PlaybillWorkspaceActivationResult(PlaybillActivationReceipt):
+class WorkspaceActivationResult(ActivationReceipt):
     """Activation receipt plus the independent client-workspace refresh outcome."""
 
-    floor_refresh: PlaybillFloorRefreshResult
-    block_sync: PlaybillBlockSyncResult | None = None
+    floor_refresh: FloorRefreshResult
+    block_sync: BlockSyncResult | None = None
 
 
-class PlaybillSourceContext(BaseModel):
+class SourceContext(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-source-context-v1"] = "playbill-source-context-v1"
-    accepted_coordinate: PlaybillAcceptedCoordinate
+    accepted_coordinate: AcceptedCoordinate
     documents: list[dict[str, Any]]
 
 
-class PlaybillSourceCheckResult(BaseModel):
+class SourceCheckResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-source-check-v1"] = "playbill-source-check-v1"
     compilation_digest: str
-    accepted_coordinate: PlaybillAcceptedCoordinate
+    accepted_coordinate: AcceptedCoordinate
     alignments: list[dict[str, Any]]
 
 
-class PlaybillInstanceDecommissionResult(BaseModel):
+class InstanceDecommissionResult(BaseModel):
     """Receipt for the terminal lifecycle state of one governed instance."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -961,10 +952,10 @@ class PlaybillInstanceDecommissionResult(BaseModel):
     reason: str
     decommissioned_at: str
     decommissioned_by: str
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
 
 
-class PlaybillLedgerMirror(BaseModel):
+class LedgerMirror(BaseModel):
     """Where one instance publishes its ledger, and whether that copy is current.
 
     `ledger set-mirror` binds a remote and waits boundedly for initial publication;
@@ -984,7 +975,7 @@ class PlaybillLedgerMirror(BaseModel):
     status: Literal["current", "behind", "pending", "publishing", "would_publish"]
     #: A preview's accepted coordinate; binding a mirror commits only with
     #: ``at`` set to its git oid.
-    coordinate: PlaybillAcceptedCoordinate | None = None
+    coordinate: AcceptedCoordinate | None = None
     attempted_at: str | None = None
     published_main_oid: str | None = None
     requested_sequence: int = Field(default=0, ge=0)
@@ -995,24 +986,24 @@ class PlaybillLedgerMirror(BaseModel):
     detail: str | None = None
 
 
-class PlaybillClaimTypeProposalLint(BaseModel):
+class ClaimTypeProposalLint(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-claim-type-proposal-lint-v1"] = "playbill-claim-type-proposal-lint-v1"
     warnings: list[dict[str, Any]]
 
 
-class PlaybillClaimTypeInputProposalResult(BaseModel):
+class ClaimTypeInputProposalResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-claim-type-input-proposal-result-v1"] = (
         "playbill-claim-type-input-proposal-result-v1"
     )
-    proposal: PlaybillProposalInspection
-    lint: PlaybillClaimTypeProposalLint
+    proposal: ProposalInspection
+    lint: ClaimTypeProposalLint
 
 
-class PlaybillClaimTypeMigrationResultV1(BaseModel):
+class ClaimTypeMigrationResultV1(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-claim-type-migration-result-v1"] = (
@@ -1020,33 +1011,33 @@ class PlaybillClaimTypeMigrationResultV1(BaseModel):
     )
     operation_digest: str
     dependents: list[dict[str, Any]]
-    proposal: PlaybillProposalInspection
-    semantic_delta: list[PlaybillSemanticFieldDelta]
+    proposal: ProposalInspection
+    semantic_delta: list[SemanticFieldDelta]
     warnings: list[dict[str, Any]] = []
-    lint: PlaybillClaimTypeProposalLint | None = Field(
+    lint: ClaimTypeProposalLint | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
     )
 
 
-class PlaybillClaimTypeMigrationPreflight(BaseModel):
+class ClaimTypeMigrationPreflight(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-claim-type-migration-preflight-v1"] = (
         "playbill-claim-type-migration-preflight-v1"
     )
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     successor_artifact_digest: str
     dependents: list[dict[str, Any]]
-    semantic_delta: list[PlaybillSemanticFieldDelta]
+    semantic_delta: list[SemanticFieldDelta]
     warnings: list[dict[str, Any]] = []
-    lint: PlaybillClaimTypeProposalLint | None = Field(
+    lint: ClaimTypeProposalLint | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
     )
 
 
-class PlaybillClaimTypeMigrationResultV2(BaseModel):
+class ClaimTypeMigrationResultV2(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-claim-type-migration-result-v2"] = (
@@ -1054,16 +1045,16 @@ class PlaybillClaimTypeMigrationResultV2(BaseModel):
     )
     operation_digest: str
     dependents: list[dict[str, Any]]
-    proposal: PlaybillProposalInspection
-    semantic_delta: list[PlaybillSemanticFieldDelta]
+    proposal: ProposalInspection
+    semantic_delta: list[SemanticFieldDelta]
     warnings: list[dict[str, Any]] = []
-    lint: PlaybillClaimTypeProposalLint | None = Field(
+    lint: ClaimTypeProposalLint | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
     )
 
 
-class PlaybillClaimTypeMigrationResult(BaseModel):
+class ClaimTypeMigrationResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-claim-type-migration-result-v3"] = (
@@ -1071,24 +1062,24 @@ class PlaybillClaimTypeMigrationResult(BaseModel):
     )
     operation_digest: str
     dependents: list[dict[str, Any]]
-    proposal: PlaybillProposalInspection
-    semantic_delta: list[PlaybillSemanticFieldDelta]
+    proposal: ProposalInspection
+    semantic_delta: list[SemanticFieldDelta]
     warnings: list[dict[str, Any]] = []
-    lint: PlaybillClaimTypeProposalLint | None = Field(
+    lint: ClaimTypeProposalLint | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
     )
 
 
-PlaybillClaimTypeMigrationResponse: TypeAlias = (
-    PlaybillClaimTypeMigrationResultV1
-    | PlaybillClaimTypeMigrationPreflight
-    | PlaybillClaimTypeMigrationResultV2
-    | PlaybillClaimTypeMigrationResult
+ClaimTypeMigrationResponse: TypeAlias = (
+    ClaimTypeMigrationResultV1
+    | ClaimTypeMigrationPreflight
+    | ClaimTypeMigrationResultV2
+    | ClaimTypeMigrationResult
 )
 
 
-class PlaybillCaptureEvidenceKindAdmission(BaseModel):
+class CaptureEvidenceKindAdmission(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-capture-evidence-kind-admission-v1"]
@@ -1100,7 +1091,7 @@ class PlaybillCaptureEvidenceKindAdmission(BaseModel):
     closest_rule_id: str | None = None
 
 
-class PlaybillCaptureAdmissionAccount(BaseModel):
+class CaptureAdmissionAccount(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-capture-admission-account-v1"]
@@ -1111,7 +1102,7 @@ class PlaybillCaptureAdmissionAccount(BaseModel):
     capture_contract_identity: str
     capture_contract_digest: str
     status: Literal["admitted", "not_admitted", "not_evidence"]
-    decisions: list[PlaybillCaptureEvidenceKindAdmission]
+    decisions: list[CaptureEvidenceKindAdmission]
 
 
 class ClaimViewRecord(BaseModel):
@@ -1119,15 +1110,15 @@ class ClaimViewRecord(BaseModel):
 
     tag: Literal["playbill-claim-read-v2"]
     coordinate_kind: Literal["canonical"]
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     envelope: dict[str, Any]
     facts: list[dict[str, Any]]
     admission_evaluation_time: str
-    admission_accounts: list[PlaybillCaptureAdmissionAccount]
+    admission_accounts: list[CaptureAdmissionAccount]
     statement: ClaimStatementCard
 
 
-class PlaybillCandidateStatus(BaseModel):
+class CandidateStatusRecord(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-candidate-status-v1"] = "playbill-candidate-status-v1"
@@ -1145,38 +1136,38 @@ class PlaybillCandidateStatus(BaseModel):
     ]
     proposal_id: str | None = None
     candidate_digest: str | None = None
-    current_accepted_coordinate: PlaybillAcceptedCoordinate
+    current_accepted_coordinate: AcceptedCoordinate
     path_to_acceptance: list[dict[str, Any]] = Field(default_factory=list)
-    accepted_generation: PlaybillAcceptedCoordinate | None = None
+    accepted_generation: AcceptedCoordinate | None = None
 
 
-class PlaybillAuthoringIntentView(BaseModel):
+class AuthoringIntentViewRecord(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-authoring-intent-view-v1"] = "playbill-authoring-intent-view-v1"
     intent: dict[str, Any]
 
 
-class PlaybillAuthoringExampleResult(BaseModel):
+class AuthoringExampleResult(BaseModel):
     """One model-constructed, executable authoring input example."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-authoring-example-result-v1"] = "playbill-authoring-example-result-v1"
-    name: PlaybillAuthoringExampleName
+    name: AuthoringExampleName
     payload: AuthoringInput
     #: A line to read beside the payload, such as that cron is evaluated in UTC.
     note: str | None = None
 
 
-class PlaybillAuthoringIntentList(BaseModel):
+class AuthoringIntentListRecord(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-authoring-intent-list-v1"] = "playbill-authoring-intent-list-v1"
     intents: list[dict[str, Any]] = Field(default_factory=list)
 
 
-class PlaybillAuthoringPreflightResult(BaseModel):
+class AuthoringPreflightResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-authoring-preflight-result-v1"] = (
@@ -1185,19 +1176,19 @@ class PlaybillAuthoringPreflightResult(BaseModel):
     verdict: Literal["passed", "refused"]
     certificate: dict[str, Any]
     frontier: dict[str, Any]
-    lint: PlaybillClaimTypeProposalLint | None = Field(
+    lint: ClaimTypeProposalLint | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
     )
 
 
-class PlaybillAuthoringSubmitResult(BaseModel):
+class AuthoringSubmitResultRecord(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-authoring-submit-result-v1"] = "playbill-authoring-submit-result-v1"
     intent: dict[str, Any]
-    status: PlaybillCandidateStatus
-    workspace_advertisement: PlaybillWorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
+    status: CandidateStatusRecord
+    workspace_advertisement: WorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
     # True when this submit amends an existing Claim identity in place.
     identity_stable: bool = False
     claim_revision: int | None = None
@@ -1206,13 +1197,13 @@ class PlaybillAuthoringSubmitResult(BaseModel):
     members: tuple[dict[str, Any], ...] = ()
     # The preflight this submit ran, when the request compiled and submitted in
     # one call; a refused verdict carries the diagnostics compile would have.
-    preflight: PlaybillAuthoringPreflightResult | None = Field(
+    preflight: AuthoringPreflightResult | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
     )
 
 
-class PlaybillInsertionAbandonResult(BaseModel):
+class InsertionAbandonResultRecord(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-insertion-abandon-result-v1"] = "playbill-insertion-abandon-result-v1"
@@ -1220,7 +1211,7 @@ class PlaybillInsertionAbandonResult(BaseModel):
     expectation: dict[str, Any]
 
 
-class PlaybillBlockDeclareResult(BaseModel):
+class BlockDeclareResult(BaseModel):
     """One projection block registered with the instance that governs its page.
 
     A block declared with `block repin` was known only to the bytes in the page:
@@ -1238,10 +1229,10 @@ class PlaybillBlockDeclareResult(BaseModel):
     block_id: str
     outcome: Literal["declared", "redeclared"]
     declared_generation: int = Field(ge=0)
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
 
 
-class PlaybillBlockDepublishResult(BaseModel):
+class BlockDepublishResult(BaseModel):
     """One published block released from the registration that demanded it.
 
     A publication registration was terminal at `bound`: publish once, and that
@@ -1265,10 +1256,10 @@ class PlaybillBlockDepublishResult(BaseModel):
     #: ``would_depublish`` answers a preview, which released nothing.
     outcome: Literal["depublished", "already_depublished", "would_depublish"]
     claim_identity: str | None = None
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
 
     @model_validator(mode="after")
-    def _origin_shape(self) -> "PlaybillBlockDepublishResult":
+    def _origin_shape(self) -> "BlockDepublishResult":
         publication = (self.intent_id, self.expectation_id, self.claim_identity)
         if self.origin == "publication":
             if any(value is None for value in publication):
@@ -1278,11 +1269,11 @@ class PlaybillBlockDepublishResult(BaseModel):
         return self
 
 
-class PlaybillQueryDefinitionView(BaseModel):
+class QueryDefinitionView(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-query-definition-read-v1"] = "playbill-query-definition-read-v1"
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     path: str
     name: str
     identity: str
@@ -1290,7 +1281,7 @@ class PlaybillQueryDefinitionView(BaseModel):
     envelope: dict[str, Any]
 
 
-class PlaybillQueryRun(BaseModel):
+class QueryRun(BaseModel):
     """One executed query: its replayable result beside its execution receipt.
 
     ``receipt`` carries the whole ``playbill-query-execution-receipt-v1``; its
@@ -1301,7 +1292,7 @@ class PlaybillQueryRun(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-query-run-v1"] = "playbill-query-run-v1"
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     name: str
     definition_path: str
     definition_digest: str
@@ -1331,13 +1322,13 @@ class PlaybillQueryRun(BaseModel):
         return tuple(row.artifact for row in self.result.rows if row.artifact is not None)
 
 
-class PlaybillProcedureReadiness(BaseModel):
+class ProcedureReadiness(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-procedure-readiness-result-v1"] = (
         "playbill-procedure-readiness-result-v1"
     )
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     evaluation_time: str
     procedure_identity: dict[str, Any]
     procedure_artifact_digest: str
@@ -1349,27 +1340,27 @@ class PlaybillProcedureReadiness(BaseModel):
     next_operation: dict[str, Any]
 
 
-class PlaybillPolicyInForceList(BaseModel):
+class PolicyInForceList(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-policy-in-force-list-v1"] = "playbill-policy-in-force-list-v1"
-    coordinate: PlaybillAcceptedCoordinate
-    policies: list[PlaybillPolicyInForce]
+    coordinate: AcceptedCoordinate
+    policies: list[PolicyInForce]
     truncated: bool = False
     next_cursor: str | None = None
 
 
-class PlaybillProcedureBindResult(BaseModel):
+class ProcedureBindResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-procedure-bind-result-v2"] = "playbill-procedure-bind-result-v2"
     accepted_digest: str
-    accepted_readiness: PlaybillProcedureReadiness
+    accepted_readiness: ProcedureReadiness
     pending: "ProcedurePendingSuccessor | None" = None
-    workspace_advertisement: PlaybillWorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
+    workspace_advertisement: WorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
 
 
-class PlaybillProcedureRunState(BaseModel):
+class ProcedureRunState(BaseModel):
     investigation: InvestigationBinding | None = None
     trigger_binding: LineTriggerBinding | None = None
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -1378,8 +1369,8 @@ class PlaybillProcedureRunState(BaseModel):
     run_id: str | None
     procedure_identity: dict[str, Any]
     procedure_artifact_digest: str
-    bound_coordinate: PlaybillAcceptedCoordinate
-    head_at_admission: PlaybillAcceptedCoordinate
+    bound_coordinate: AcceptedCoordinate
+    head_at_admission: AcceptedCoordinate
     lane: Literal["current", "replay"]
     evaluation_time: str
     status: Literal[
@@ -1422,14 +1413,14 @@ class PlaybillProcedureRunState(BaseModel):
     terminal_egress: list[ProcedureTerminalEgress] = Field(default_factory=list)
 
     @property
-    def coordinate(self) -> PlaybillAcceptedCoordinate:
+    def coordinate(self) -> AcceptedCoordinate:
         return self.bound_coordinate
 
 
-class PlaybillNextRepair(BaseModel):
+class NextRepair(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    operation: PlaybillNextRepairOperation
+    operation: NextRepairOperation
     target: str
     required_change: str
     arguments: Any = Field(default_factory=dict)
@@ -1438,7 +1429,7 @@ class PlaybillNextRepair(BaseModel):
     command: str | None = None
 
 
-class PlaybillNextRepairRequirement(BaseModel):
+class NextRepairRequirement(BaseModel):
     """What running a withheld repair needs that this caller does not have.
 
     The row stays in the queue; only its repair is withheld. ``because`` names
@@ -1451,48 +1442,48 @@ class PlaybillNextRepairRequirement(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-next-repair-requirement-v1"] = "playbill-next-repair-requirement-v1"
-    operation: PlaybillNextRepairOperation
+    operation: NextRepairOperation
     tool: str
     tier: Literal["read_only", "governed_write", "graph_write", "admin"]
     profile: Literal["full"] | None = None
     because: list[Literal["tier", "profile", "authoring"]]
-    authoring_refusal: PlaybillAuthoringRefusal | None = None
+    authoring_refusal: AuthoringRefusal | None = None
 
 
-class PlaybillNextFinding(BaseModel):
+class NextFinding(BaseModel):
     """One more finding about the same underlying fact as the row that carries it."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-next-finding-v1"] = "playbill-next-finding-v1"
-    severity: PlaybillNextSeverity
-    reason: PlaybillNextReason
+    severity: NextSeverity
+    reason: NextReason
     subject_identity: str
     related_identities: list[str] = Field(default_factory=list)
     detail: Any = Field(default_factory=dict)
     # None when this caller cannot run it; `repair_requires` then says why.
-    repair: PlaybillNextRepair | None
-    repair_requires: PlaybillNextRepairRequirement | None = None
+    repair: NextRepair | None
+    repair_requires: NextRepairRequirement | None = None
 
 
-class PlaybillNextItem(BaseModel):
+class NextItem(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-next-item-v1"] = "playbill-next-item-v1"
     item_id: str
-    severity: PlaybillNextSeverity
-    reason: PlaybillNextReason
+    severity: NextSeverity
+    reason: NextReason
     subject_identity: str
     related_identities: list[str] = Field(default_factory=list)
     detail: Any = Field(default_factory=dict)
     # None when this caller's surface, tool profile or tier cannot run it: the
     # row stays, and `repair_requires` says what running it needs.
-    repair: PlaybillNextRepair | None
-    findings: list[PlaybillNextFinding] = Field(
+    repair: NextRepair | None
+    findings: list[NextFinding] = Field(
         default_factory=list,
         exclude_if=lambda value: not value,
     )
-    repair_requires: PlaybillNextRepairRequirement | None = None
+    repair_requires: NextRepairRequirement | None = None
 
     @field_validator("item_id")
     @classmethod
@@ -1501,7 +1492,7 @@ class PlaybillNextItem(BaseModel):
         return value
 
 
-class PlaybillNextHealth(BaseModel):
+class NextHealth(BaseModel):
     """One environment facet: its state, what it saw, and the repair if it needs one."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -1509,39 +1500,39 @@ class PlaybillNextHealth(BaseModel):
     tag: Literal["playbill-next-health-v1"] = "playbill-next-health-v1"
     state: str
     detail: Any = Field(default_factory=dict)
-    repair: PlaybillNextRepair | None = None
+    repair: NextRepair | None = None
     # The facet needs a repair this caller cannot perform, so it was dropped.
     repair_hidden: bool = False
-    repair_requires: PlaybillNextRepairRequirement | None = None
+    repair_requires: NextRepairRequirement | None = None
 
 
-class PlaybillNextStatus(BaseModel):
+class NextStatus(BaseModel):
     """The environment the queue was read in, beside the work rather than in it."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-next-status-v1"] = "playbill-next-status-v1"
     blocking: bool
-    instance: PlaybillNextHealth
-    floor: PlaybillNextHealth
-    ledger_mirror: PlaybillNextHealth
-    provider_lane: PlaybillNextHealth
-    procedure_catalog: PlaybillNextHealth
-    compiler: PlaybillNextHealth
-    line_dispatch: PlaybillNextHealth
-    consumers: PlaybillNextHealth
+    instance: NextHealth
+    floor: NextHealth
+    ledger_mirror: NextHealth
+    provider_lane: NextHealth
+    procedure_catalog: NextHealth
+    compiler: NextHealth
+    line_dispatch: NextHealth
+    consumers: NextHealth
     #: Whether a live Trigger schedules every internal action.
-    triggers: PlaybillNextHealth
+    triggers: NextHealth
     #: Rows parked by a current ``unsure`` attestation. No row is left out for
     #: the caller: one whose repair it cannot run keeps `repair_requires`.
     held: int = Field(default=0, ge=0)
 
 
-class PlaybillNextResult(BaseModel):
+class NextResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-next-result-v1", "playbill-next-result-v2"] = "playbill-next-result-v1"
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     evaluation_time: str
     observed_domains: list[
         Literal[
@@ -1561,8 +1552,8 @@ class PlaybillNextResult(BaseModel):
     ]
     # The environment the queue was read in: instance, floor, ledger mirror,
     # provider lane and Procedure catalog health, beside the work items.
-    status: PlaybillNextStatus
-    items: list[PlaybillNextItem]
+    status: NextStatus
+    items: list[NextItem]
     # Every row the whole answer carries -- the queue, or on a delta its
     # changed rows -- of which `items` is one page. `result_digest` names the
     # whole queue on every page; `next_cursor` continues this answer.
@@ -1588,7 +1579,7 @@ class PlaybillNextResult(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _attestation_coordinate(self) -> "PlaybillNextResult":
+    def _attestation_coordinate(self) -> "NextResult":
         if (self.tag == "playbill-next-result-v2") != (self.attestation_head_digest is not None):
             raise ValueError("Next v2 alone requires an attestation evidence head")
         if self.attestation_head_digest is not None:
@@ -1607,13 +1598,13 @@ class PlaybillNextResult(BaseModel):
         return self
 
 
-class PlaybillCurationListResult(BaseModel):
+class CurationListResult(BaseModel):
     """G9 curation queue plus request-bound observation accounting."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-curation-list-result-v1"] = "playbill-curation-list-result-v1"
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     generation: int = Field(ge=0)
     evaluation_time: str
     operational_head_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
@@ -1625,7 +1616,7 @@ class PlaybillCurationListResult(BaseModel):
     result_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
 
 
-class PlaybillCurationActionResult(BaseModel):
+class CurationActionResult(BaseModel):
     """One attributed append-only curation lifecycle transition."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -1634,13 +1625,13 @@ class PlaybillCurationActionResult(BaseModel):
     #: ``would_record`` answers a preview, which appended nothing; ``item`` is
     #: then the item as it stands.
     status: Literal["recorded", "would_record"] = "recorded"
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     generation: int = Field(ge=0)
     operational_head_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     item: dict[str, Any]
 
 
-class PlaybillAuditFactors(BaseModel):
+class AuditFactors(BaseModel):
     """Exact integer factors behind one audit row's rank."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -1659,7 +1650,7 @@ class PlaybillAuditFactors(BaseModel):
     staleness: int = Field(ge=1)
 
 
-class PlaybillAuditEvidenceRef(BaseModel):
+class AuditEvidenceRef(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     kind: Literal[
@@ -1676,7 +1667,7 @@ class PlaybillAuditEvidenceRef(BaseModel):
     facts: dict[str, Any] = Field(default_factory=dict)
 
 
-class PlaybillAuditRow(BaseModel):
+class AuditRow(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-audit-claim-row-v1"] = "playbill-audit-claim-row-v1"
@@ -1688,12 +1679,12 @@ class PlaybillAuditRow(BaseModel):
     claim_type_identity: dict[str, Any]
     verdict: str
     currency: str
-    factors: PlaybillAuditFactors
+    factors: AuditFactors
     rank_score: int = Field(ge=1)
-    evidence_refs: list[PlaybillAuditEvidenceRef]
+    evidence_refs: list[AuditEvidenceRef]
 
 
-class PlaybillAuditScope(BaseModel):
+class AuditScope(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-audit-scope-v1"] = "playbill-audit-scope-v1"
@@ -1701,31 +1692,31 @@ class PlaybillAuditScope(BaseModel):
     subject_kinds: list[str] = Field(default_factory=list)
 
 
-class PlaybillAuditCoveredClaim(BaseModel):
+class AuditCoveredClaim(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     claim_identity: dict[str, Any]
     artifact_digest: str
 
 
-class PlaybillAuditCoverage(BaseModel):
+class AuditCoverage(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-audit-coverage-v1"] = "playbill-audit-coverage-v1"
     access_permitted: bool
-    declared_scope: PlaybillAuditScope
-    covered_claims: list[PlaybillAuditCoveredClaim]
+    declared_scope: AuditScope
+    covered_claims: list[AuditCoveredClaim]
     candidate_claim_count: int = Field(ge=0)
     returned_claim_count: int = Field(ge=0)
     omitted_claim_count: int = Field(ge=0)
     omission_reasons: list[Literal["byte_budget_exceeded", "row_budget_exceeded"]]
 
 
-class PlaybillAuditCursor(BaseModel):
+class AuditCursor(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-audit-cursor-v1"] = "playbill-audit-cursor-v1"
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     evaluation_time: str
     operational_input_head_digest: str
     scope_digest: str
@@ -1733,20 +1724,20 @@ class PlaybillAuditCursor(BaseModel):
     cursor_digest: str
 
 
-class PlaybillAuditResult(BaseModel):
+class AuditResult(BaseModel):
     """Read-only ranked Claim patrol plus completed-run coverage accounting."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-audit-result-v1"] = "playbill-audit-result-v1"
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     generation: int = Field(ge=0)
     evaluation_time: str
     operational_input_head_digest: str
     audited_through_generation: int | None = Field(default=None, ge=0)
-    rows: list[PlaybillAuditRow]
-    coverage: PlaybillAuditCoverage
-    next_cursor: PlaybillAuditCursor | None = None
+    rows: list[AuditRow]
+    coverage: AuditCoverage
+    next_cursor: AuditCursor | None = None
     result_digest: str
 
 
@@ -1786,13 +1777,13 @@ def _validate_since_access_profile(value: dict[str, Any]) -> dict[str, Any]:
     return value
 
 
-class PlaybillSinceCursor(BaseModel):
+class SinceCursor(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-since-cursor-v1"] = "playbill-since-cursor-v1"
     instance_id: str
     lower_generation: int = Field(ge=0)
-    head_coordinate: PlaybillAcceptedCoordinate
+    head_coordinate: AcceptedCoordinate
     access_profile: dict[str, Any]
     max_rows: int = Field(ge=1, le=1000)
     max_bytes: int = Field(ge=1, le=1_048_576)
@@ -1803,7 +1794,7 @@ class PlaybillSinceCursor(BaseModel):
     _profile = field_validator("access_profile")(_validate_since_access_profile)
 
     @model_validator(mode="after")
-    def _digest(self) -> "PlaybillSinceCursor":
+    def _digest(self) -> "SinceCursor":
         payload = self.model_dump(mode="json")
         payload.pop("tag")
         payload.pop("cursor_digest")
@@ -1812,21 +1803,21 @@ class PlaybillSinceCursor(BaseModel):
         return self
 
 
-class PlaybillSinceRequest(BaseModel):
+class SinceRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-since-request-v1"] = "playbill-since-request-v1"
     generation: int = Field(ge=0)
-    at: PlaybillAcceptedCoordinate | None = None
+    at: AcceptedCoordinate | None = None
     access_profile: dict[str, Any]
     max_rows: int = Field(default=100, ge=1, le=1000)
     max_bytes: int = Field(default=65_536, ge=1, le=1_048_576)
-    cursor: PlaybillSinceCursor | None = None
+    cursor: SinceCursor | None = None
 
     _profile = field_validator("access_profile")(_validate_since_access_profile)
 
 
-class PlaybillSinceRow(BaseModel):
+class SinceRow(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-since-row-v1"] = "playbill-since-row-v1"
@@ -1860,19 +1851,19 @@ class PlaybillSinceRow(BaseModel):
         return value
 
 
-class PlaybillSinceResult(BaseModel):
+class SinceResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-since-result-v1"] = "playbill-since-result-v1"
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     generation: int = Field(ge=0)
-    rows: list[PlaybillSinceRow]
-    next_cursor: PlaybillSinceCursor | None = None
+    rows: list[SinceRow]
+    next_cursor: SinceCursor | None = None
     truncated: bool
     result_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
 
     @model_validator(mode="after")
-    def _digest(self) -> "PlaybillSinceResult":
+    def _digest(self) -> "SinceResult":
         payload = self.model_dump(mode="json")
         payload.pop("tag")
         payload.pop("result_digest")
@@ -1881,7 +1872,7 @@ class PlaybillSinceResult(BaseModel):
         return self
 
 
-class PlaybillProviderInterfaceImplementation(BaseModel):
+class ProviderInterfaceImplementation(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-provider-interface-implementation-v1"] = (
@@ -1892,7 +1883,7 @@ class PlaybillProviderInterfaceImplementation(BaseModel):
     implementation_digest: str
 
 
-class PlaybillProviderInterfaceEntry(BaseModel):
+class ProviderInterfaceEntry(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-provider-interface-entry-v1"]
@@ -1906,11 +1897,11 @@ class PlaybillProviderInterfaceEntry(BaseModel):
     effect_class: Literal["none", "external_read", "external_mutation"]
     classifier_status: Literal["installed", "not_installed"]
     interface_basis: Literal["accepted_registration"]
-    providers: list[PlaybillProviderInterfaceImplementation] = Field(default_factory=list)
+    providers: list[ProviderInterfaceImplementation] = Field(default_factory=list)
     operation_contract: _ProviderOperationContractV1 | None = None
 
 
-class PlaybillCoverageResult(BaseModel):
+class CoverageResult(BaseModel):
     """One resolved coverage answer: the whole `playbill-coverage-result-v1`.
 
     ``result`` carries the frozen coverage grammar verbatim -- span results,
@@ -1924,18 +1915,18 @@ class PlaybillCoverageResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-coverage-result-v1"] = "playbill-coverage-result-v1"
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     result: dict[str, Any]
 
 
-class PlaybillFloorFile(BaseModel):
+class FloorFile(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     path: str
     content_base64: str
 
 
-PlaybillFloorExportPart = Literal["discovery"]
+FloorExportPart = Literal["discovery"]
 """An opt-in part of a v5 floor export.
 
 ``discovery`` adds the discovery cards (``subjects/``, ``claim-types/``,
@@ -1943,7 +1934,7 @@ PlaybillFloorExportPart = Literal["discovery"]
 """
 
 
-class PlaybillFloorExport(BaseModel):
+class FloorExport(BaseModel):
     """The deterministic greppable floor as base64 bytes keyed by floor path.
 
     ``manifest`` is the decoded root ``manifest.json``: it binds every file to
@@ -1956,12 +1947,12 @@ class PlaybillFloorExport(BaseModel):
     tag: Literal[
         "playbill-floor-export-v1", "playbill-floor-export-v2", "playbill-floor-export-v5"
     ] = "playbill-floor-export-v2"
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     manifest: dict[str, Any]
-    files: list[PlaybillFloorFile]
+    files: list[FloorFile]
 
 
-class PlaybillWorkspaceFloorWriteResult(BaseModel):
+class WorkspaceFloorWriteResult(BaseModel):
     """A verified floor export materialized by the workspace writer."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -1974,22 +1965,22 @@ class PlaybillWorkspaceFloorWriteResult(BaseModel):
     path: str
     destination: str
     floor_digest: str
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     file_count: int = Field(ge=1)
     git_workspace_note: GitWorkspaceNote | None = None
 
 
-class PlaybillFloorDeliveryResult(BaseModel):
+class FloorDeliveryResult(BaseModel):
     """The same floor delta and write receipt returned by a daemon delivery."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
     tag: Literal["playbill-floor-delivery-result-v1"] = "playbill-floor-delivery-result-v1"
-    delta: PlaybillFloorDelta
-    written: PlaybillWorkspaceFloorWriteResult
-    export: PlaybillFloorExport | None = None
+    delta: FloorDelta
+    written: WorkspaceFloorWriteResult
+    export: FloorExport | None = None
 
 
-class PlaybillFloorConsumerOutcome(BaseModel):
+class FloorConsumerOutcome(BaseModel):
     """One floor refresh at an accepted head, including a typed stalled outcome."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -2000,18 +1991,18 @@ class PlaybillFloorConsumerOutcome(BaseModel):
     error: str | None = None
 
 
-class PlaybillFloorDeliverNowRequest(BaseModel):
+class FloorDeliverNowRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-    include: tuple[PlaybillFloorExportPart, ...] = ()
-    at: PlaybillAcceptedCoordinate | None = None
+    include: tuple[FloorExportPart, ...] = ()
+    at: AcceptedCoordinate | None = None
 
 
-class PlaybillFloorDeliveryRequest(BaseModel):
+class FloorDeliveryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     enabled: bool
 
 
-class PlaybillWorkspaceAttachResult(BaseModel):
+class WorkspaceAttachResult(BaseModel):
     """Client-owned result of binding local config to an existing daemon host."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -2024,7 +2015,7 @@ class PlaybillWorkspaceAttachResult(BaseModel):
     git_workspace_note: GitWorkspaceNote | None = None
 
 
-class PlaybillWorkspaceDetachResult(BaseModel):
+class WorkspaceDetachResult(BaseModel):
     """One daemon host released from the Git worktree it was attached to.
 
     The registry exclusivity is a UNIQUE index on (backend, workspace_root), so
@@ -2043,10 +2034,10 @@ class PlaybillWorkspaceDetachResult(BaseModel):
     workspace_root: str | None = None
     #: The host's worktree binding this was checked against; commit a preview
     #: with ``at`` set to its digest.
-    coordinate: PlaybillStateCoordinate | None = None
+    coordinate: StateCoordinate | None = None
 
 
-class PlaybillHostWorkspaceAttachResult(BaseModel):
+class HostWorkspaceAttachResult(BaseModel):
     """One daemon host attached to a Git worktree, before or after its init.
 
     An initialized host attaches when the worktree is in the ledger's own Git
@@ -2062,14 +2053,14 @@ class PlaybillHostWorkspaceAttachResult(BaseModel):
     instance_id: str
     status: Literal["attached", "already_attached", "would_attach"]
     workspace_root: str
-    #: Whether Playbill is already initialized under the host.
+    #: Whether Cruxible is already initialized under the host.
     initialized: bool
     #: The host's worktree binding this was checked against, read where the
     #: attach writes it; commit a preview with ``at`` set to its digest.
-    coordinate: PlaybillStateCoordinate | None = None
+    coordinate: StateCoordinate | None = None
 
 
-class PlaybillWorkspaceFloorStatus(BaseModel):
+class WorkspaceFloorStatus(BaseModel):
     """Freshness of the configured local floor against a daemon coordinate."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -2078,6 +2069,6 @@ class PlaybillWorkspaceFloorStatus(BaseModel):
     status: Literal["not_configured", "missing", "current", "stale", "invalid"]
     path: str | None = None
     destination: str | None = None
-    installed_coordinate: PlaybillAcceptedCoordinate | None = None
-    current_coordinate: PlaybillAcceptedCoordinate | None = None
+    installed_coordinate: AcceptedCoordinate | None = None
+    current_coordinate: AcceptedCoordinate | None = None
     message: str | None = None

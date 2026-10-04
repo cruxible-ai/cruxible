@@ -8,8 +8,8 @@ import click
 from annotated_types import Ge, Le
 
 from cruxible_client import CruxibleClient
-from cruxible_client.authoring.sdk import Playbill
-from cruxible_client.contracts import PlaybillAuditFactors
+from cruxible_client.authoring.sdk import Cruxible
+from cruxible_client.contracts import AuditFactors
 from cruxible_core.cli.main import cli
 from cruxible_core.curation.audit import AuditBudgetV1
 from cruxible_core.curation.curation_calibration import (
@@ -25,7 +25,7 @@ from cruxible_core.curation.curation_calibration import (
     AUDIT_WEAKNESS_SIGNAL_COUNT,
     AUDIT_WEAKNESS_SIGNAL_WEIGHT,
 )
-from cruxible_core.server.playbill_request_models import PlaybillAuditRequest
+from cruxible_core.server.playbill_request_models import AuditRequest
 
 
 def _audit_cli_option(name: str) -> click.Option:
@@ -42,7 +42,7 @@ def _audit_cli_option(name: str) -> click.Option:
 def _ge_bound(field_name: str) -> int:
     return next(
         constraint.ge
-        for constraint in PlaybillAuditFactors.model_fields[field_name].metadata
+        for constraint in AuditFactors.model_fields[field_name].metadata
         if isinstance(constraint, Ge)
     )
 
@@ -50,19 +50,19 @@ def _ge_bound(field_name: str) -> int:
 def _le_bound(field_name: str) -> int:
     return next(
         constraint.le
-        for constraint in PlaybillAuditFactors.model_fields[field_name].metadata
+        for constraint in AuditFactors.model_fields[field_name].metadata
         if isinstance(constraint, Le)
     )
 
 
 def test_audit_budget_calibration_is_coherent_across_public_surfaces() -> None:
     core = AuditBudgetV1()
-    server = PlaybillAuditRequest(
+    server = AuditRequest(
         evaluation_time="2026-08-27T00:00:00Z",
         access_profile={"profile_id": "test"},
     )
-    transport_parameters = signature(CruxibleClient.audit_playbill).parameters
-    sdk_parameters = signature(Playbill.audit).parameters
+    transport_parameters = signature(CruxibleClient.audit).parameters
+    sdk_parameters = signature(Cruxible.audit).parameters
     rows_option = _audit_cli_option("max_rows")
     bytes_option = _audit_cli_option("max_bytes")
 

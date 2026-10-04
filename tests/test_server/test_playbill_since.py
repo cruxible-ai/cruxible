@@ -1,4 +1,4 @@
-"""HTTP parity for the frozen Playbill since request."""
+"""HTTP parity for the frozen Cruxible since request."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ def test_http_since_delegates_the_exact_request(
 ) -> None:  # type: ignore[no-untyped-def]
     client, instance_id, _private_key = playbill_http
     seen: dict[str, object] = {}
-    coordinate = contracts.PlaybillAcceptedCoordinate(
+    coordinate = contracts.AcceptedCoordinate(
         git_oid="1" * 64,
         semantic_root="sha256:" + "2" * 64,
         generation_root="sha256:" + "3" * 64,
@@ -28,7 +28,7 @@ def test_http_since_delegates_the_exact_request(
         "next_cursor": None,
         "truncated": False,
     }
-    result = contracts.PlaybillSinceResult.model_validate(
+    result = contracts.SinceResult.model_validate(
         {
             **values,
             "result_digest": contracts._since_digest(  # type: ignore[attr-defined]
@@ -37,7 +37,7 @@ def test_http_since_delegates_the_exact_request(
         }
     )
 
-    def stub(selected: str, *, request: contracts.PlaybillSinceRequest):
+    def stub(selected: str, *, request: contracts.SinceRequest):
         assert selected == instance_id
         seen.update(request.model_dump(mode="json"))
         return result
@@ -87,7 +87,7 @@ def test_http_since_refuses_oversized_limits(
     )
     assert response.status_code == 400
     assert response.json() == {
-        "error_type": "PlaybillSinceRequestInvalid",
+        "error_type": "SinceRequestInvalid",
         "message": (
             "playbill.since.request_invalid: request field $.max_rows is invalid: "
             "Input should be less than or equal to 1000"
@@ -144,7 +144,7 @@ def test_http_since_unknown_generation_is_a_typed_400(
     )
     assert response.status_code == 400, response.text
     payload = response.json()
-    assert payload["error_type"] == "PlaybillSinceGenerationUnknown"
+    assert payload["error_type"] == "SinceGenerationUnknown"
     assert payload["error_code"] == "playbill.since.generation_unknown"
 
 

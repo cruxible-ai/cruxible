@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client import Playbill
+from cruxible_client import Cruxible
 from cruxible_client.authoring.projection_manifests import (
     load_projection_manifests,
     retain_local_manifests,
@@ -107,7 +107,7 @@ def test_manifest_limits_and_server_observation() -> None:
 def test_sdk_body_refresh_compact_page_and_failed_cas(tmp_path: Path) -> None:
     path = _workspace(tmp_path)
     client = _RepinClient()
-    pb = Playbill._from_client(
+    pb = Cruxible._from_client(
         client, instance_id="inst_projection", workspace=tmp_path, clock=lambda: NOW
     )
     first = pb.block.repin(
@@ -142,7 +142,7 @@ def test_compact_sync_and_coverage_preserve_manifest_binding(tmp_path: Path) -> 
     from datetime import UTC, datetime
 
     from cruxible_client.authoring.blocks import repin_projection_block, sync_projection_blocks
-    from cruxible_client.authoring.workspace import observe_playbill_projection_coverage
+    from cruxible_client.authoring.workspace import observe_projection_coverage
     from tests.test_client.test_playbill_block_sync import (
         INSTANCE_ID,
         NEW_COORDINATE,
@@ -170,9 +170,7 @@ def test_compact_sync_and_coverage_preserve_manifest_binding(tmp_path: Path) -> 
     )
     assert result.items[0].outcome == "unchanged"
     assert path.read_bytes() == before
-    coverage = observe_playbill_projection_coverage(
-        tmp_path, coordinate=NEW_COORDINATE.model_dump()
-    )
+    coverage = observe_projection_coverage(tmp_path, coordinate=NEW_COORDINATE.model_dump())
     assert coverage is not None and "Claim" in coverage["complete_kinds"]
     assert len(coverage["bindings"]) == 1
     key = next(iter(load_projection_manifests(tmp_path, path.read_bytes())))
@@ -181,9 +179,7 @@ def test_compact_sync_and_coverage_preserve_manifest_binding(tmp_path: Path) -> 
         client, INSTANCE_ID, workspace=tmp_path, paths=(path,), check=True
     )
     assert missing.items[0].outcome == "refused"
-    coverage = observe_playbill_projection_coverage(
-        tmp_path, coordinate=NEW_COORDINATE.model_dump()
-    )
+    coverage = observe_projection_coverage(tmp_path, coordinate=NEW_COORDINATE.model_dump())
     assert coverage is not None and "Claim" not in coverage["complete_kinds"]
 
 

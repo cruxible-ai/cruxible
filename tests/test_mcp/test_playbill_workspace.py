@@ -17,7 +17,7 @@ from cruxible_client.contracts.declared_blocks import (
     ProjectionClaimBacking,
     frame_projection_block,
 )
-from cruxible_client.contracts.floor import PlaybillFloorDelta
+from cruxible_client.contracts.floor import FloorDelta
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.mcp import handlers
@@ -25,8 +25,8 @@ from cruxible_core.mcp.workspace import resolve_workspace_path
 from tests.support.floor_exports import delta_from_export, floor_v5_export
 
 
-def _coordinate(seed: str = "1") -> contracts.PlaybillAcceptedCoordinate:
-    return contracts.PlaybillAcceptedCoordinate(
+def _coordinate(seed: str = "1") -> contracts.AcceptedCoordinate:
+    return contracts.AcceptedCoordinate(
         git_oid=seed * 40,
         semantic_root="sha256:" + "2" * 64,
         generation_root="sha256:" + "3" * 64,
@@ -34,15 +34,13 @@ def _coordinate(seed: str = "1") -> contracts.PlaybillAcceptedCoordinate:
     )
 
 
-def _export() -> contracts.PlaybillFloorExport:
+def _export() -> contracts.FloorExport:
     return floor_v5_export({"cards/fresh.json": b'{"fresh":true}\n'}, coordinate=_coordinate())
 
 
 class _StubClient:
-    def activate_playbill_proposal(
-        self, instance_id: str, proposal_id: str
-    ) -> contracts.PlaybillActivationReceipt:
-        return contracts.PlaybillActivationReceipt(
+    def activate_proposal(self, instance_id: str, proposal_id: str) -> contracts.ActivationReceipt:
+        return contracts.ActivationReceipt(
             proposal_id=proposal_id,
             activated_by="owner",
             status="accepted",
@@ -50,26 +48,26 @@ class _StubClient:
             workspace_advertisement={"status": "not_attached", "workspace_path": None},
         )
 
-    def export_playbill_floor(
+    def export_floor(
         self,
         instance_id: str,
         *,
         at=None,  # type: ignore[no-untyped-def]
-    ) -> contracts.PlaybillFloorExport:
+    ) -> contracts.FloorExport:
         return _export()
 
-    def playbill_floor_delta(
+    def floor_delta(
         self,
         instance_id: str,
         *,
         at=None,  # type: ignore[no-untyped-def]
         base_generation: int | None = None,
         base_renderer: str | None = None,
-    ) -> PlaybillFloorDelta:
+    ) -> FloorDelta:
         return delta_from_export(_export())
 
-    def playbill_head(self, instance_id: str) -> contracts.PlaybillHead:
-        return contracts.PlaybillHead(
+    def head(self, instance_id: str) -> contracts.Head:
+        return contracts.Head(
             instance=instance_id,
             coordinate=_coordinate().model_dump(mode="json"),  # type: ignore[arg-type]
             generation=3,
@@ -195,7 +193,7 @@ def test_library_mode_activate_checks_an_attached_workspace(
     monkeypatch.setattr(
         handlers.playbill_api,
         "playbill_activate",
-        lambda instance_id, proposal_id: contracts.PlaybillActivationReceipt(
+        lambda instance_id, proposal_id: contracts.ActivationReceipt(
             proposal_id=proposal_id,
             activated_by="owner",
             status="accepted",
@@ -210,13 +208,13 @@ def test_library_mode_activate_checks_an_attached_workspace(
         lambda _instance, **_kwargs: delta_from_export(_export()),
     )
 
-    checked: list[contracts.PlaybillProjectionCheckRequest] = []
+    checked: list[contracts.ProjectionCheckRequest] = []
 
     def check_blocks(
         instance_id: str,
         *,
-        request: contracts.PlaybillProjectionCheckRequest,
-    ) -> contracts.PlaybillProjectionCheckResult:
+        request: contracts.ProjectionCheckRequest,
+    ) -> contracts.ProjectionCheckResult:
         # Block sync asks the daemon for every stamp's currency in one batch.
         assert instance_id == "inst_test"
         checked.append(request)
@@ -228,7 +226,7 @@ def test_library_mode_activate_checks_an_attached_workspace(
                 statement_digest="sha256:" + "a" * 64,
             )
             results.append(
-                contracts.PlaybillBlockSyncReadResult(
+                contracts.BlockSyncReadResult(
                     status="successor",
                     original_artifact_digest="sha256:" + "8" * 64,
                     artifact_digest="sha256:" + "9" * 64,
@@ -238,7 +236,7 @@ def test_library_mode_activate_checks_an_attached_workspace(
                     moved_backings=(moved,),
                 )
             )
-        return contracts.PlaybillProjectionCheckResult(
+        return contracts.ProjectionCheckResult(
             coordinate=coordinate,
             evaluation_time=datetime(2026, 9, 16, tzinfo=UTC),
             results=tuple(results),
@@ -382,7 +380,7 @@ def test_workspace_path_refuses_symlink_escape(tmp_path: Path) -> None:
         resolve_workspace_path("escape/source.md", root=workspace, kind="file")
 
 
-def _export_files(files: dict[str, bytes]) -> contracts.PlaybillFloorExport:
+def _export_files(files: dict[str, bytes]) -> contracts.FloorExport:
     return floor_v5_export(files, coordinate=_coordinate())
 
 
@@ -392,27 +390,27 @@ class _PartsClient(_StubClient):
     def __init__(self) -> None:
         self.includes: list[tuple[str, ...]] = []
 
-    def export_playbill_floor(  # type: ignore[override]
+    def export_floor(  # type: ignore[override]
         self,
         instance_id: str,
         *,
         at=None,
         include=(),  # type: ignore[no-untyped-def]
-    ) -> contracts.PlaybillFloorExport:
+    ) -> contracts.FloorExport:
         self.includes.append(tuple(include))
         files = {"current/k/a.yaml": b"# k/a  kind=k\n"}
         if "discovery" in include:
             files["subjects/k/a.profile.json"] = b"{}\n"
         return _export_files(files)
 
-    def playbill_floor_delta(  # type: ignore[override]
+    def floor_delta(  # type: ignore[override]
         self,
         instance_id: str,
         *,
         at=None,  # type: ignore[no-untyped-def]
         base_generation: int | None = None,
         base_renderer: str | None = None,
-    ) -> PlaybillFloorDelta:
+    ) -> FloorDelta:
         # The default floor travels as a delta, never with the discovery cards.
         self.includes.append(())
         return delta_from_export(_export_files({"current/k/a.yaml": b"# k/a  kind=k\n"}))

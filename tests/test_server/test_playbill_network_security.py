@@ -1,4 +1,4 @@
-"""Network-security laws on the surviving Playbill host surface."""
+"""Network-security laws on the surviving Cruxible host surface."""
 
 from __future__ import annotations
 

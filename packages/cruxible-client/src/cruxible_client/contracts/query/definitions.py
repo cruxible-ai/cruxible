@@ -38,7 +38,7 @@ from cruxible_client.contracts.claim_verdicts import (
     EvidenceRelativeClaimVerdictV1,
 )
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
-from cruxible_client.contracts.errors import CanonicalEncodingError, PlaybillFormatError
+from cruxible_client.contracts.errors import CanonicalEncodingError, FormatError
 from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.query.grammar import (
     QueryArtifactsEntry,
@@ -70,7 +70,7 @@ QueryDedupe = Literal["subject", "path", "none", "artifact"]
 QueryConflictBehavior = Literal["surface_conflicts", "refuse_on_conflict"]
 
 
-class QueryDefinitionFormatError(PlaybillFormatError):
+class QueryDefinitionFormatError(FormatError):
     """A QueryDefinition envelope, path, or declaration grammar is invalid."""
 
 

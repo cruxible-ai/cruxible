@@ -11,11 +11,11 @@ import pytest
 from cruxible_client.contracts.approval_policy import ApprovalPolicy
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.errors import (
-    PlaybillBootstrapError,
-    PlaybillFormatError,
-    PlaybillKeyError,
+    BootstrapError,
+    FormatError,
+    SigningKeyError,
 )
-from cruxible_client.contracts.types import PlaybillTrustRoot, PrincipalRecord
+from cruxible_client.contracts.types import PrincipalRecord, TrustRoot
 from cruxible_core.governance.keys import (
     ALLOWED_SIGNERS_FILE,
     generate_daemon_key,
@@ -44,7 +44,7 @@ def test_sha1_and_sha256_ledgers_share_semantic_roots_but_not_generation_roots(
     )
     credentials = tmp_path / "daemon-custody"
     daemon = generate_daemon_key(credentials)
-    trust = PlaybillTrustRoot(
+    trust = TrustRoot(
         instance_id="inst_cross_format",
         daemon_public_key=daemon.principal.public_key,
         principals=tuple(
@@ -137,7 +137,7 @@ def test_reopen_refuses_out_of_band_instance_id_or_principal_substitution(
 ) -> None:
     instance, _owner = initialize_local(tmp_path)
     wrong_instance = instance.trust_root.model_copy(update={"instance_id": "inst_other"})
-    with pytest.raises(PlaybillBootstrapError, match="instance ID"):
+    with pytest.raises(BootstrapError, match="instance ID"):
         PlaybillInstance.open(instance.root, trust_root=wrong_instance)
 
     substitute = generate_client(
@@ -156,12 +156,12 @@ def test_reopen_refuses_out_of_band_instance_id_or_principal_substitution(
         for record in instance.trust_root.principals
     )
     changed_principals = tuple(sorted(changed_principals, key=lambda item: item.principal_id))
-    changed_trust = PlaybillTrustRoot(
+    changed_trust = TrustRoot(
         instance_id=instance.trust_root.instance_id,
         daemon_public_key=instance.trust_root.daemon_public_key,
         principals=changed_principals,
     )
-    with pytest.raises(PlaybillBootstrapError, match="differs from trust root"):
+    with pytest.raises(BootstrapError, match="differs from trust root"):
         PlaybillInstance.open(instance.root, trust_root=changed_trust)
 
 
@@ -172,12 +172,12 @@ def test_reopen_refuses_out_of_band_daemon_substitution(tmp_path: Path) -> None:
         replacement.principal if record.principal_id == "daemon" else record
         for record in instance.trust_root.principals
     )
-    changed_trust = PlaybillTrustRoot(
+    changed_trust = TrustRoot(
         instance_id=instance.trust_root.instance_id,
         daemon_public_key=replacement.principal.public_key,
         principals=changed_principals,
     )
-    with pytest.raises(PlaybillBootstrapError, match="descriptor daemon key"):
+    with pytest.raises(BootstrapError, match="descriptor daemon key"):
         PlaybillInstance.open(instance.root, trust_root=changed_trust)
 
 
@@ -188,7 +188,7 @@ def test_reopen_refuses_daemon_private_key_replacement(tmp_path: Path) -> None:
     private_path.write_bytes(replacement.private_key_path.read_bytes())
     os.chmod(private_path, 0o600)
 
-    with pytest.raises(PlaybillKeyError, match="does not match"):
+    with pytest.raises(SigningKeyError, match="does not match"):
         PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
 
 
@@ -199,7 +199,7 @@ def test_reopen_refuses_allowed_signer_replacement(tmp_path: Path) -> None:
     instance._ledger._allowed_signers_path.write_bytes(replacement_line)
     os.chmod(instance._ledger._allowed_signers_path, 0o600)
 
-    with pytest.raises(PlaybillBootstrapError, match="allowed daemon signer"):
+    with pytest.raises(BootstrapError, match="allowed daemon signer"):
         PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
 
 
@@ -213,13 +213,13 @@ def test_descriptor_rejects_unknown_version_and_object_format_mismatch(
     unknown = dict(original)
     unknown["format_version"] = 2
     descriptor_path.write_bytes(canonical_bytes(unknown) + b"\n")
-    with pytest.raises(PlaybillFormatError, match="unsupported"):
+    with pytest.raises(FormatError, match="unsupported"):
         PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
 
     mismatch = dict(original)
     mismatch["git_object_format"] = "sha1"
     descriptor_path.write_bytes(canonical_bytes(mismatch) + b"\n")
-    with pytest.raises(PlaybillFormatError, match="object format differs"):
+    with pytest.raises(FormatError, match="object format differs"):
         PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
 
 
@@ -230,17 +230,17 @@ def test_descriptor_root_tampering_is_refused(tmp_path: Path) -> None:
     payload["genesis"]["semantic_root"] = "sha256:" + "00" * 32
     descriptor_path.write_bytes(canonical_bytes(payload) + b"\n")
 
-    with pytest.raises(PlaybillBootstrapError, match="do not reproduce"):
+    with pytest.raises(BootstrapError, match="do not reproduce"):
         PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
 
 
 @pytest.mark.parametrize(
     ("field", "expected_error", "match"),
     (
-        ("compiler", PlaybillFormatError, "compiler coordinate"),
-        ("authority", PlaybillBootstrapError, "authority matrix"),
-        ("storage", PlaybillFormatError, "storage layout"),
-        ("recovery", PlaybillBootstrapError, "recovery posture"),
+        ("compiler", FormatError, "compiler coordinate"),
+        ("authority", BootstrapError, "authority matrix"),
+        ("storage", FormatError, "storage layout"),
+        ("recovery", BootstrapError, "recovery posture"),
     ),
 )
 def test_unsigned_operational_descriptor_fields_are_cross_verified(
@@ -272,7 +272,7 @@ def test_noncanonical_descriptor_is_refused(tmp_path: Path) -> None:
     payload = json.loads(descriptor_path.read_bytes())
     descriptor_path.write_text(json.dumps(payload, indent=2) + "\n")
 
-    with pytest.raises(PlaybillFormatError, match="not canonical"):
+    with pytest.raises(FormatError, match="not canonical"):
         PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
 
 
@@ -280,5 +280,5 @@ def test_reopen_refuses_world_readable_daemon_private_key(tmp_path: Path) -> Non
     instance, _owner = initialize_local(tmp_path)
     private_path = instance._ledger._signing_key_path
     os.chmod(private_path, 0o644)
-    with pytest.raises(PlaybillKeyError, match="permissions"):
+    with pytest.raises(SigningKeyError, match="permissions"):
         PlaybillInstance.open(instance.root, trust_root=instance.trust_root)

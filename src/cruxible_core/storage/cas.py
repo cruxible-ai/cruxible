@@ -24,7 +24,7 @@ from cruxible_client.contracts.cas_contracts import (
     CasObjectMetadata,
     digest_bytes,
 )
-from cruxible_client.contracts.errors import PlaybillCasError
+from cruxible_client.contracts.errors import CasError
 
 # Objects already hashed against their address, with the file identity observed
 # when they were: (device, inode, size, mtime, ctime). Bytes are reused without
@@ -208,7 +208,7 @@ class ContentAddressedBodyStore:
 
     def __init__(self, root: Path, *, reservation_root: Path | None = None) -> None:
         if root.is_symlink() or not root.is_dir():
-            raise PlaybillCasError("CAS root must be an existing regular directory")
+            raise CasError("CAS root must be an existing regular directory")
         self.root = root.resolve(strict=True)
         self.reservation_root = (
             root.parent / "leases" / "procedure-material"
@@ -218,14 +218,14 @@ class ContentAddressedBodyStore:
         algorithm = self.root / "sha256"
         algorithm.mkdir(mode=0o700, exist_ok=True)
         if algorithm.is_symlink() or not algorithm.is_dir():
-            raise PlaybillCasError("CAS algorithm directory is not trustworthy")
+            raise CasError("CAS algorithm directory is not trustworthy")
         os.chmod(algorithm, 0o700)
         self._algorithm_root = algorithm.resolve(strict=True)
         descriptor = os.open(self._algorithm_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         opened, named = os.fstat(descriptor), self._algorithm_root.lstat()
         if (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino):
             os.close(descriptor)
-            raise PlaybillCasError("CAS algorithm directory changed while it was opened")
+            raise CasError("CAS algorithm directory changed while it was opened")
         self._root_fd = descriptor
         weakref.finalize(self, os.close, descriptor)
 
@@ -254,17 +254,17 @@ class ContentAddressedBodyStore:
             if not create:
                 return None
         except OSError as exc:
-            raise PlaybillCasError("CAS shard directory is not trustworthy") from exc
+            raise CasError("CAS shard directory is not trustworthy") from exc
         try:
             os.mkdir(shard, 0o700, dir_fd=self._root_fd)
         except FileExistsError:
             pass
         except OSError as exc:
-            raise PlaybillCasError("CAS shard directory could not be created") from exc
+            raise CasError("CAS shard directory could not be created") from exc
         try:
             descriptor = os.open(shard, flags, dir_fd=self._root_fd)
         except OSError as exc:
-            raise PlaybillCasError("CAS shard directory is not trustworthy") from exc
+            raise CasError("CAS shard directory is not trustworthy") from exc
         os.fsync(self._root_fd)
         return descriptor
 
@@ -334,7 +334,7 @@ class ContentAddressedBodyStore:
         """
 
         if not _HEX_PREFIX.fullmatch(hex_prefix):
-            raise PlaybillCasError("a digest prefix is lowercase hex")
+            raise CasError("a digest prefix is lowercase hex")
         found: list[str] = []
         closest: list[tuple[int, str]] = []
         examined = 0
@@ -417,14 +417,14 @@ class ContentAddressedBodyStore:
                     while view:
                         written = os.write(descriptor, view)
                         if written <= 0:  # pragma: no cover - defensive OS contract
-                            raise PlaybillCasError("CAS write made no progress")
+                            raise CasError("CAS write made no progress")
                         view = view[written:]
                     os.fchmod(descriptor, 0o600)
                     os.fsync(descriptor)
                 except FileExistsError:
                     self._verified_bytes(digest.tagged)
                 except OSError as exc:
-                    raise PlaybillCasError("CAS body could not be stored durably") from exc
+                    raise CasError("CAS body could not be stored durably") from exc
                 finally:
                     if descriptor is not None:
                         os.close(descriptor)
@@ -459,7 +459,7 @@ class ContentAddressedBodyStore:
         directory = self._shard(shard)
         if directory is None:
             _observe(digest, None)
-            raise PlaybillCasError("CAS object is missing")
+            raise CasError("CAS object is missing")
         try:
             key = self._memo_key(digest)
             with _VERIFIED_LOCK:
@@ -470,11 +470,11 @@ class ContentAddressedBodyStore:
                     status = os.stat(name, dir_fd=directory, follow_symlinks=False)
                 except FileNotFoundError as exc:
                     _observe(digest, None)
-                    raise PlaybillCasError("CAS object is missing") from exc
+                    raise CasError("CAS object is missing") from exc
                 _observe(digest, status)
                 if not stat.S_ISREG(status.st_mode):
-                    raise PlaybillCasError("CAS object must be a regular file")
-                raise PlaybillCasError("CAS object cannot be read")
+                    raise CasError("CAS object must be a regular file")
+                raise CasError("CAS object cannot be read")
             before, content, after = read
         finally:
             os.close(directory)
@@ -484,7 +484,7 @@ class ContentAddressedBodyStore:
         if known is not None and _file_identity(before) == known == _file_identity(after):
             return content
         if self.digest_bytes(content).tagged != digest:
-            raise PlaybillCasError("CAS object bytes do not match their content address")
+            raise CasError("CAS object bytes do not match their content address")
         if _file_identity(before) == _file_identity(after):
             with _VERIFIED_LOCK:
                 _VERIFIED[key] = _file_identity(after)
@@ -549,9 +549,9 @@ class ContentAddressedBodyStore:
 
     def read(self, digest: str, *, access: BodyAccessContext) -> bytes:
         if not access.can_read_body:
-            raise PlaybillCasError("body access is denied")
+            raise CasError("body access is denied")
         if self._object_status(digest) is None:
-            raise PlaybillCasError("CAS object is missing")
+            raise CasError("CAS object is missing")
         return self._verified_bytes(digest)
 
     def metadata(self, digest: str, *, access: BodyAccessContext) -> CasObjectMetadata:
@@ -584,7 +584,7 @@ class ContentAddressedBodyStore:
             os.unlink(name, dir_fd=directory)
             os.fsync(directory)
         except OSError as exc:
-            raise PlaybillCasError("CAS body could not be erased") from exc
+            raise CasError("CAS body could not be erased") from exc
         finally:
             os.close(directory)
         return True
@@ -651,7 +651,7 @@ class DryRunBodyStore:
         if held is None:
             return self._base.read(digest, access=access)
         if not access.can_read_body:
-            raise PlaybillCasError("body access is denied")
+            raise CasError("body access is denied")
         return held
 
     def metadata(self, digest: str, *, access: BodyAccessContext) -> CasObjectMetadata:
@@ -682,7 +682,7 @@ class DryRunBodyStore:
         )
 
     def erase(self, digest: str) -> bool:
-        raise PlaybillCasError("a dry run erases nothing")
+        raise CasError("a dry run erases nothing")
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._base, name)

@@ -14,7 +14,7 @@ from cruxible_client.contracts.attestations import (
     ApprovalStatement,
     approval_statement_bytes,
 )
-from cruxible_client.contracts.errors import PlaybillKeyError
+from cruxible_client.contracts.errors import SigningKeyError
 from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.governance.keys import generate_client_principal_key
 from cruxible_core.mcp import handlers
@@ -129,6 +129,6 @@ def test_approve_refuses_a_key_directory_inside_the_workspace(tmp_path, monkeypa
     world = _world(tmp_path, monkeypatch, "reviewer")
     monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(tmp_path))
 
-    with pytest.raises(PlaybillKeyError, match="outside workspaces"):
+    with pytest.raises(SigningKeyError, match="outside workspaces"):
         handlers.handle_playbill_approve("inst_1", "PROP-1", signer_id=None, candidate_digest=None)
     assert world["calls"]["submitted"] == []

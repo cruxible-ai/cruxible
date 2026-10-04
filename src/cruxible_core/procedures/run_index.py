@@ -9,7 +9,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from cruxible_client.contracts.canonical import CanonicalValue, Sha256Value
-from cruxible_client.contracts.errors import PlaybillExecutionError
+from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.provider_execution import (
     ProviderInvocationCompleted,
     ProviderInvocationStarted,
@@ -86,9 +86,9 @@ class ProcedureRunIndex:
 
     def __init__(self, path: Path) -> None:
         if path.exists() and (path.is_symlink() or not path.is_file()):
-            raise PlaybillExecutionError("Procedure run index must be a regular file")
+            raise ExecutionError("Procedure run index must be a regular file")
         if not path.parent.is_dir() or path.parent.is_symlink():
-            raise PlaybillExecutionError("Procedure run index parent must be a regular directory")
+            raise ExecutionError("Procedure run index parent must be a regular directory")
         self.path = path
         self._conn = sqlite3.connect(path)
         self._conn.row_factory = sqlite3.Row
@@ -143,16 +143,14 @@ class ProcedureRunIndex:
     ) -> None:
         record = stored.record
         if record.run_id is None:
-            raise PlaybillExecutionError("Procedure run exhaust record lacks a run_id")
+            raise ExecutionError("Procedure run exhaust record lacks a run_id")
         admission = record.admission_binding_digest
         if admission is None:
-            raise PlaybillExecutionError("Procedure exhaust record lacks an admission binding")
+            raise ExecutionError("Procedure exhaust record lacks an admission binding")
         existing = self.get(record.run_id)
         if existing is None:
             if record.event_kind != "attempt_started":
-                raise PlaybillExecutionError(
-                    "Procedure run exhaust must begin with attempt_started"
-                )
+                raise ExecutionError("Procedure run exhaust must begin with attempt_started")
             self._conn.execute(
                 "INSERT INTO procedure_run_index "
                 "(run_id, admission_binding_digest, status, first_sequence, last_sequence) "
@@ -160,9 +158,9 @@ class ProcedureRunIndex:
                 (record.run_id, admission, record.sequence, record.sequence),
             )
         elif existing.admission_binding_digest != admission:
-            raise PlaybillExecutionError("run_id collides across distinct admission bindings")
+            raise ExecutionError("run_id collides across distinct admission bindings")
         elif existing.status != "running":
-            raise PlaybillExecutionError("Procedure run exhaust continues after finalization")
+            raise ExecutionError("Procedure run exhaust continues after finalization")
         else:
             self._conn.execute(
                 "UPDATE procedure_run_index SET last_sequence = ? WHERE run_id = ?",
@@ -178,7 +176,7 @@ class ProcedureRunIndex:
         elif record.event_kind == "effect_result":
             current = self.get(record.run_id)
             if current is None or current.effect_result_count >= current.effect_intent_count:
-                raise PlaybillExecutionError("effect result has no unmatched durable intent")
+                raise ExecutionError("effect result has no unmatched durable intent")
             self._conn.execute(
                 "UPDATE procedure_run_index SET effect_result_count = effect_result_count + 1 "
                 "WHERE run_id = ?",
@@ -188,16 +186,14 @@ class ProcedureRunIndex:
             try:
                 started = ProviderInvocationStarted.model_validate(payload)
             except ValueError as exc:
-                raise PlaybillExecutionError(
-                    "Provider invocation start payload is invalid"
-                ) from exc
+                raise ExecutionError("Provider invocation start payload is invalid") from exc
             prior = self._conn.execute(
                 "SELECT status FROM procedure_provider_invocation_index "
                 "WHERE run_id = ? AND invocation_id = ?",
                 (record.run_id, started.invocation_id),
             ).fetchone()
             if prior is not None:
-                raise PlaybillExecutionError("Provider invocation start is duplicated")
+                raise ExecutionError("Provider invocation start is duplicated")
             self._conn.execute(
                 "INSERT INTO procedure_provider_invocation_index "
                 "(run_id, invocation_id, status) VALUES (?, ?, 'started')",
@@ -212,16 +208,14 @@ class ProcedureRunIndex:
             try:
                 completed = ProviderInvocationCompleted.model_validate(payload)
             except ValueError as exc:
-                raise PlaybillExecutionError(
-                    "Provider invocation completion payload is invalid"
-                ) from exc
+                raise ExecutionError("Provider invocation completion payload is invalid") from exc
             prior = self._conn.execute(
                 "SELECT status FROM procedure_provider_invocation_index "
                 "WHERE run_id = ? AND invocation_id = ?",
                 (record.run_id, completed.invocation_id),
             ).fetchone()
             if prior is None or prior["status"] != "started":
-                raise PlaybillExecutionError(
+                raise ExecutionError(
                     "Provider invocation completion has no exact unmatched durable start"
                 )
             self._conn.execute(
@@ -265,18 +259,18 @@ class ProcedureRunIndex:
                 "budget_exhausted",
                 "halted",
             }:
-                raise PlaybillExecutionError("attempt-finalized payload has no valid status")
+                raise ExecutionError("attempt-finalized payload has no valid status")
             current = self.get(record.run_id)
             if (
                 current is None
                 or current.provider_invocation_started_count
                 != current.provider_invocation_completed_count
             ):
-                raise PlaybillExecutionError(
+                raise ExecutionError(
                     "provider_completion_not_durable: run has an unmatched invocation start"
                 )
             if current.terminal_egress_prepared_count != current.terminal_egress_resolved_count:
-                raise PlaybillExecutionError(
+                raise ExecutionError(
                     "terminal_egress_not_durable: run has an unresolved prepared terminal egress"
                 )
             self._conn.execute(
@@ -295,7 +289,7 @@ class ProcedureRunIndex:
     ) -> None:
         """Refresh one run without erasing an executing parent's cache entry."""
         if any(row.record.run_id != run_id for row in records):
-            raise PlaybillExecutionError("run index refresh contains another run")
+            raise ExecutionError("run index refresh contains another run")
         access = BodyAccessContext(principal_id="procedure-run-index", can_read_body=True)
         self._conn.execute("DELETE FROM procedure_run_index WHERE run_id=?", (run_id,))
         self._conn.execute(

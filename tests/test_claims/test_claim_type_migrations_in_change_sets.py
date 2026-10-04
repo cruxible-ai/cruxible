@@ -65,7 +65,7 @@ from cruxible_core.service.authoring.documents import (
 )
 from cruxible_core.service.claims.claims import service_explain_playbill_claim
 from cruxible_core.service.discovery.next import (
-    PlaybillNextRequestV1,
+    NextRequestV1,
     service_playbill_next,
 )
 from tests.core_support._support import initialize_local
@@ -386,7 +386,7 @@ def test_the_affects_package_migration_lands_as_one_generation(tmp_path: Path) -
 
     outstanding = service_playbill_next(
         instance,
-        request=PlaybillNextRequestV1(
+        request=NextRequestV1(
             evaluation_time=datetime(2026, 8, 23, 12, tzinfo=UTC),
             access_profile=CoverageAccessProfile(
                 profile_id="claim-type-succession",

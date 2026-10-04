@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 import cruxible_core.service.procedures.procedure_runs as procedure_run_service
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
-from cruxible_client.contracts.errors import PlaybillExecutionError
+from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     procedure_artifact_digest,
@@ -490,7 +490,7 @@ def test_graph_v4_provider_journals_completed_receipt_before_progress(
                 receipt=forged_receipt,
                 receipt_digest=provider_invocation_receipt_digest(forged_receipt),
             )
-            with pytest.raises(PlaybillExecutionError, match="exact unmatched durable start"):
+            with pytest.raises(ExecutionError, match="exact unmatched durable start"):
                 mismatch_index.apply_record(
                     stored,
                     payload=forged_completion.model_dump(mode="json"),
@@ -641,9 +641,9 @@ def test_started_without_completed_poison_is_never_auto_reissued(tmp_path: Path)
         provider_classifier_registry=registry,
     )
 
-    with pytest.raises(PlaybillExecutionError, match="provider_completion_not_durable"):
+    with pytest.raises(ExecutionError, match="provider_completion_not_durable"):
         executor.execute(prepared, accepted)
-    with pytest.raises(PlaybillExecutionError, match="incomplete Provider invocation"):
+    with pytest.raises(ExecutionError, match="incomplete Provider invocation"):
         executor.execute(prepared, accepted)
 
 
@@ -665,7 +665,7 @@ def test_startup_recovery_closes_the_exact_start_and_terminalizes_the_attempt(
         provider_runtime_invoker=_CrashingInvoker(),
         provider_classifier_registry=registry,
     )
-    with pytest.raises(PlaybillExecutionError, match="provider_completion_not_durable"):
+    with pytest.raises(ExecutionError, match="provider_completion_not_durable"):
         executor.execute(prepared, accepted)
     records = fixture.journal.all_records(
         prepared.admission.journal_stream,
@@ -753,7 +753,7 @@ def test_unclean_start_marks_recovery_required_without_completion_or_terminaliza
         provider_runtime_invoker=_CrashingInvoker(),
         provider_classifier_registry=registry,
     )
-    with pytest.raises(PlaybillExecutionError, match="provider_completion_not_durable"):
+    with pytest.raises(ExecutionError, match="provider_completion_not_durable"):
         executor.execute(prepared, accepted)
     records = fixture.journal.all_records(
         prepared.admission.journal_stream,
@@ -853,7 +853,7 @@ def test_recovery_aggregates_prior_provider_receipts_and_budget_observations(
         provider_runtime_invoker=_CrashingInvoker(),
         provider_classifier_registry=registry,
     )
-    with pytest.raises(PlaybillExecutionError, match="provider_completion_not_durable"):
+    with pytest.raises(ExecutionError, match="provider_completion_not_durable"):
         crashing.execute(prepared, accepted)
     orphan_records = fixture.journal.all_records(
         prepared.admission.journal_stream,

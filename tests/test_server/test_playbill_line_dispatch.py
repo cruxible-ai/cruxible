@@ -2,7 +2,7 @@
 
 from datetime import timedelta
 
-from cruxible_client import AccessProfile, CruxibleClient, Playbill
+from cruxible_client import AccessProfile, Cruxible, CruxibleClient
 from cruxible_client.contracts.triggers import CaptureLandingSchedule
 from cruxible_core.exhaust.line_dispatch import dispatch_root
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
@@ -28,7 +28,7 @@ def test_typed_sdk_http_check_listen_evaluate_and_dispatch(playbill_http, tmp_pa
     transport = CruxibleClient(base_url="http://testserver")
     transport._client.close()
     transport._client = http
-    sdk = Playbill(
+    sdk = Cruxible(
         client=transport,
         instance_id=instance_id,
         workspace=tmp_path,

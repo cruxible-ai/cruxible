@@ -44,7 +44,7 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.cron import CRON_UTC_HINT, CronExpressionError, parse_cron
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.procedures.windows import (
     CaptureEventSelector,
@@ -61,7 +61,7 @@ TRIGGER_LINE_REF_ROLE: Final = "line"
 TRIGGER_CAPTURE_CONTRACT_PIN_ROLE: Final = "trigger-capture-contract"
 
 
-class TriggerFormatError(PlaybillFormatError):
+class TriggerFormatError(FormatError):
     """A Trigger artifact or its successor transition is invalid."""
 
 

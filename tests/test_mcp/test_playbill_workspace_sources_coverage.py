@@ -14,8 +14,8 @@ from cruxible_core.errors import DataValidationError
 from cruxible_core.mcp import handlers
 
 
-def _coordinate() -> contracts.PlaybillAcceptedCoordinate:
-    return contracts.PlaybillAcceptedCoordinate(
+def _coordinate() -> contracts.AcceptedCoordinate:
+    return contracts.AcceptedCoordinate(
         git_oid="1" * 40,
         semantic_root="sha256:" + "2" * 64,
         generation_root="sha256:" + "3" * 64,
@@ -53,20 +53,20 @@ def test_workspace_source_compile_and_check_read_bytes_and_derive_bundle(
     checked: dict[str, Any] = {}
 
     class StubClient:
-        def playbill_source_context(self, instance_id: str) -> contracts.PlaybillSourceContext:
-            return contracts.PlaybillSourceContext(
+        def source_context(self, instance_id: str) -> contracts.SourceContext:
+            return contracts.SourceContext(
                 accepted_coordinate=_coordinate(),
                 documents=[],
             )
 
-        def check_playbill_source_bundle(
+        def check_source_bundle(
             self,
             instance_id: str,
             *,
             bundle: dict[str, Any],
-        ) -> contracts.PlaybillSourceCheckResult:
+        ) -> contracts.SourceCheckResult:
             checked.update(bundle)
-            return contracts.PlaybillSourceCheckResult(
+            return contracts.SourceCheckResult(
                 compilation_digest=bundle["manifest"]["compilation_digest"],
                 accepted_coordinate=_coordinate(),
                 alignments=[],
@@ -101,16 +101,16 @@ def test_workspace_coverage_derives_observations_from_decision_bearing_selection
     captured: list[dict[str, Any]] = []
 
     class StubClient:
-        def resolve_playbill_coverage(
+        def resolve_coverage(
             self,
             instance_id: str,
             *,
             observations: list[dict[str, Any]],
             budget: dict[str, Any] | None,
             scan_budget: dict[str, Any] | None,
-        ) -> contracts.PlaybillCoverageResult:
+        ) -> contracts.CoverageResult:
             captured.extend(observations)
-            return contracts.PlaybillCoverageResult(
+            return contracts.CoverageResult(
                 coordinate=_coordinate(),
                 result={"tag": "playbill-coverage-result-v2", "spans": []},
             )
@@ -146,16 +146,16 @@ def test_workspace_coverage_status_observes_every_declared_binding(
     counts: list[int] = []
 
     class StubClient:
-        def resolve_playbill_coverage(
+        def resolve_coverage(
             self,
             instance_id: str,
             *,
             observations: list[dict[str, Any]],
             budget: dict[str, Any] | None,
             scan_budget: dict[str, Any] | None,
-        ) -> contracts.PlaybillCoverageResult:
+        ) -> contracts.CoverageResult:
             counts.append(len(observations))
-            return contracts.PlaybillCoverageResult(
+            return contracts.CoverageResult(
                 coordinate=_coordinate(),
                 result={"tag": "playbill-coverage-result-v2", "spans": []},
             )

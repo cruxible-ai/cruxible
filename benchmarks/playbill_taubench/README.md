@@ -1,4 +1,4 @@
-# Playbill TauBench arm recipe
+# Cruxible TauBench arm recipe
 
 The executable setup for the four §11.8 arms. A TauBench integrator needs this
 directory and nothing else: `recipe.py` is every step, `seed-example/` is a small
@@ -15,11 +15,11 @@ takes seconds rather than minutes. It is the *setup* the measurement runs on.
 |---|---|---|
 | 1 | `files` | the task corpus, ordinary files and tools |
 | 2 | `files+scratchpad` | the same, plus a real scratchpad directory (the notebook control) |
-| 3 | `playbill-surface` | the same, plus the exported Playbill file surface; the coverage middleware is **constructed and never called** |
+| 3 | `playbill-surface` | the same, plus the exported Cruxible file surface; the coverage middleware is **constructed and never called** |
 | 4 | `playbill-surface+coverage-delivery` | byte-identical to arm 3; the middleware's `after_tool` is called |
 
 §11.8 requires that arms 3 and 4 "share the same model, harness loop, task
-corpus, accepted ledger, Playbill state, and tool implementations; only the
+corpus, accepted ledger, Cruxible state, and tool implementations; only the
 coverage-delivery adapter changes." That is enforced rather than intended:
 `build_arm` produces the two `ArmSetupV1` records through one code path and they
 differ in exactly one field, the boolean `deliver_coverage`. `run_turn` reads
@@ -116,12 +116,12 @@ Arm 4, same events, same edit, same turn:
 --- [Read] ---
 5	The reviewer accepted the migration plan on the second reading.
 exact  external:corpus.handbook.md  lines 5-5  commitment sha256:e0a5fa…  claims claims/83/CLM-…yaml  captures sha256:b42285…  at generation sha256:780279…  dependents 1
-Playbill coverage: 1 exact, 0 drifted, 0 candidates, 0 none
+Cruxible coverage: 1 exact, 0 drifted, 0 candidates, 0 none
 …
 --- [Edit] ---
 The file corpus/handbook.md has been updated successfully.
 drifted  external:corpus.handbook.md  expected sha256:e0a5fa…  observed sha256:808679…  claims claims/83/CLM-…yaml  captures sha256:b42285…  at generation sha256:780279…  dependents 1  [commitment_superseded]
-Playbill coverage: 0 exact, 1 drifted, 0 candidates, 0 none
+Cruxible coverage: 0 exact, 1 drifted, 0 candidates, 0 none
 …
 ```
 

@@ -34,7 +34,7 @@ import structlog
 from pydantic import ValidationError
 
 from cruxible_client.contracts.canonical import CanonicalValue
-from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.procedures.results import (
     ProcedureBudgetBoundaryObservation,
     ProcedureRunBudgetDeclaredV1,
@@ -201,7 +201,7 @@ def service_recover_proposal_egress(
                         prepared_payload=prepared_payload,
                         recorded_at=recorded_at,
                     )
-                except (PlaybillError, OSError, ValueError) as exc:
+                except (CruxibleError, OSError, ValueError) as exc:
                     # Corrupt or contradictory evidence under the operation's
                     # ref is not resolved by retrying; it is reported, the run
                     # stays `running` for an operator, and every other run in

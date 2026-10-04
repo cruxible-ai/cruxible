@@ -29,7 +29,7 @@ from cruxible_client.contracts.canonical import (
     Sha256Value,
     typed_digest,
 )
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpec
 from cruxible_client.contracts.procedures.models import (
@@ -64,7 +64,7 @@ _INPUT_PLANES: tuple[str, ...] = ("accepted_state", "landed_capture", "exhaust")
 _ITEM_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@=/+-]{0,255}$")
 
 
-class LineTrackRecordError(PlaybillFormatError):
+class LineTrackRecordError(FormatError):
     """A Line track record cannot be folded from this exact promoted range."""
 
 

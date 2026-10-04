@@ -103,7 +103,7 @@ def test_policies_in_force_lists_live_standalone_and_embedded_rows(tmp_path) -> 
     genesis = instance.accepted_history()[0]
     historical = service_playbill_policies_in_force(
         instance,
-        at=contracts.PlaybillAcceptedCoordinate(
+        at=contracts.AcceptedCoordinate(
             git_oid=genesis.oid,
             semantic_root=genesis.semantic_root.tagged,
             generation_root=genesis.generation_root.tagged,
@@ -165,7 +165,7 @@ def test_policy_inventory_skips_the_cards_an_accepted_change_leaves(tmp_path) ->
 @pytest.fixture(scope="module")
 def complete_policy_inventory(
     tmp_path_factory: pytest.TempPathFactory,
-) -> tuple[tuple[contracts.PlaybillPolicyInForce, ...], dict[str, tuple[str, str | None]]]:
+) -> tuple[tuple[contracts.PolicyInForce, ...], dict[str, tuple[str, str | None]]]:
     root = tmp_path_factory.mktemp("complete-policy-inventory")
     instance, _owner = initialize_local(root)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
@@ -327,11 +327,11 @@ def complete_policy_inventory(
 
 @pytest.mark.parametrize(
     "policy_kind",
-    contracts.PlaybillPolicyKind.__args__,  # type: ignore[attr-defined]
+    contracts.PolicyKind.__args__,  # type: ignore[attr-defined]
 )
 def test_each_policy_kind_lists_only_its_live_declaring_carrier(
     complete_policy_inventory: tuple[
-        tuple[contracts.PlaybillPolicyInForce, ...],
+        tuple[contracts.PolicyInForce, ...],
         dict[str, tuple[str, str | None]],
     ],
     policy_kind: str,

@@ -8,7 +8,7 @@ import pytest
 
 from cruxible_client.authoring.sdk_types import Duration
 from cruxible_client.authoring.selectors import WorkspaceSources
-from cruxible_client.authoring.workspace import observe_playbill_next_workspace
+from cruxible_client.authoring.workspace import observe_next_workspace
 from cruxible_client.contracts.source_catalog import SourceCatalog
 
 
@@ -121,7 +121,7 @@ def test_next_workspace_observes_confined_whole_source_bytes(tmp_path: Path) -> 
     source.parent.mkdir()
     source.write_bytes(b"# Runbook\nOriginal source.\n")
 
-    observation = observe_playbill_next_workspace(tmp_path)
+    observation = observe_next_workspace(tmp_path)
 
     assert observation["source_observations"] == [
         {
@@ -131,7 +131,7 @@ def test_next_workspace_observes_confined_whole_source_bytes(tmp_path: Path) -> 
         }
     ]
     source.write_bytes(b"# Runbook\nChanged source.\n")
-    changed = observe_playbill_next_workspace(tmp_path)
+    changed = observe_next_workspace(tmp_path)
     assert changed["source_observations"] != observation["source_observations"]
 
 
@@ -153,7 +153,7 @@ def test_next_workspace_upgrades_v1_archival_presentation_policy(tmp_path: Path)
         encoding="utf-8",
     )
 
-    observation = observe_playbill_next_workspace(tmp_path)
+    observation = observe_next_workspace(tmp_path)
 
     assert observation["presentation_policy"] == {
         "tag": "playbill-presentation-policy-v2",
@@ -186,7 +186,7 @@ def test_next_workspace_degrades_invalid_presentation_policy(
     _catalog(tmp_path)
     (tmp_path / ".playbill" / "presentation-policy.json").write_text(payload, encoding="utf-8")
 
-    observation = observe_playbill_next_workspace(tmp_path)
+    observation = observe_next_workspace(tmp_path)
 
     assert observation["presentation_policy"] is None
     assert observation["presentation_policy_notes"] == [expected_note]
@@ -210,7 +210,7 @@ def test_next_workspace_degrades_unreadable_presentation_policy(
 
     monkeypatch.setattr("cruxible_client._safe_files.os.open", unreadable)
 
-    observation = observe_playbill_next_workspace(tmp_path)
+    observation = observe_next_workspace(tmp_path)
 
     assert observation["presentation_policy"] is None
     assert observation["presentation_policy_notes"] == ["presentation_policy_unreadable"]
@@ -224,7 +224,7 @@ def test_next_workspace_degrades_escaping_presentation_policy(tmp_path: Path) ->
     outside.write_text('{"tag":"playbill-presentation-policy-v1"}', encoding="utf-8")
     os.symlink(outside, workspace / ".playbill" / "presentation-policy.json")
 
-    observation = observe_playbill_next_workspace(workspace)
+    observation = observe_next_workspace(workspace)
 
     assert observation["presentation_policy"] is None
     assert observation["presentation_policy_notes"] == ["presentation_policy_path_escape"]
@@ -233,7 +233,7 @@ def test_next_workspace_degrades_escaping_presentation_policy(tmp_path: Path) ->
 def test_next_workspace_without_a_catalog_does_not_claim_source_observation(
     tmp_path: Path,
 ) -> None:
-    observation = observe_playbill_next_workspace(tmp_path)
+    observation = observe_next_workspace(tmp_path)
 
     assert "source_observations" not in observation
 
@@ -249,7 +249,7 @@ def test_next_workspace_omits_portable_catalog_source_that_escapes_the_workspace
     (workspace / "corpus").mkdir()
     (workspace / "corpus" / "runbook.md").symlink_to(outside)
 
-    observation = observe_playbill_next_workspace(workspace)
+    observation = observe_next_workspace(workspace)
 
     assert observation["source_observations"] == []
 
@@ -264,7 +264,7 @@ def test_next_workspace_degrades_when_catalog_overlay_escapes_the_workspace(
     outside.write_text("secret: true\n", encoding="utf-8")
     (workspace / ".playbill" / "sources.local.yaml").symlink_to(outside)
 
-    observation = observe_playbill_next_workspace(workspace)
+    observation = observe_next_workspace(workspace)
 
     assert "source_observations" not in observation
 
@@ -281,7 +281,7 @@ def test_next_workspace_degrades_when_local_overlay_ambiguously_retargets_source
         encoding="utf-8",
     )
 
-    observation = observe_playbill_next_workspace(tmp_path)
+    observation = observe_next_workspace(tmp_path)
 
     assert "source_observations" not in observation
 
@@ -302,7 +302,7 @@ def test_next_workspace_observes_absolute_source_from_explicit_local_overlay(
         encoding="utf-8",
     )
 
-    observation = observe_playbill_next_workspace(workspace)
+    observation = observe_next_workspace(workspace)
 
     assert observation["source_observations"] == [
         {
@@ -323,7 +323,7 @@ def test_next_workspace_omits_unresolved_root_alias_without_failing(tmp_path: Pa
         encoding="utf-8",
     )
 
-    observation = observe_playbill_next_workspace(tmp_path)
+    observation = observe_next_workspace(tmp_path)
 
     assert observation["source_observations"] == []
 
@@ -331,7 +331,7 @@ def test_next_workspace_omits_unresolved_root_alias_without_failing(tmp_path: Pa
 def test_next_workspace_omits_missing_catalog_source_without_failing(tmp_path: Path) -> None:
     _catalog(tmp_path)
 
-    observation = observe_playbill_next_workspace(tmp_path)
+    observation = observe_next_workspace(tmp_path)
 
     assert observation["source_observations"] == []
 
@@ -343,7 +343,7 @@ def test_next_workspace_observes_root_level_source_catalog(tmp_path: Path) -> No
     source.parent.mkdir()
     source.write_bytes(b"Root-level portable source catalog.\n")
 
-    observation = observe_playbill_next_workspace(tmp_path)
+    observation = observe_next_workspace(tmp_path)
 
     assert observation["source_observations"] == [
         {
@@ -359,6 +359,6 @@ def test_next_workspace_degrades_when_both_catalog_layouts_exist(tmp_path: Path)
     portable = (tmp_path / ".playbill" / "sources.yaml").read_text(encoding="utf-8")
     (tmp_path / "sources.yaml").write_text(portable, encoding="utf-8")
 
-    observation = observe_playbill_next_workspace(tmp_path)
+    observation = observe_next_workspace(tmp_path)
 
     assert "source_observations" not in observation

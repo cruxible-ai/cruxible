@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.errors import PlaybillFormatError, PlaybillGitError
+from cruxible_client.contracts.errors import FormatError, GitError
 from cruxible_core.providers.provider_process_leases import ProviderLocalRuntimeRefused
 from cruxible_core.runtime.playbill_manager import PlaybillInstanceManager
 from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
@@ -82,8 +82,8 @@ def _operator_with_failing_instance_load(
 @pytest.mark.parametrize(
     "failure",
     [
-        pytest.param(PlaybillFormatError("malformed trust root"), id="format"),
-        pytest.param(PlaybillGitError("damaged ledger"), id="git"),
+        pytest.param(FormatError("malformed trust root"), id="format"),
+        pytest.param(GitError("damaged ledger"), id="git"),
         pytest.param(OSError("unreadable instance"), id="os"),
         pytest.param(Exception("unexpected instance failure"), id="bare"),
     ],

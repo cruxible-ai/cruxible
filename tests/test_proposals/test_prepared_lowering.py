@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from cruxible_client.contracts.claims import LiteralClaimObject
-from cruxible_client.contracts.errors import PlaybillCasError, ProposalAdmissionError
+from cruxible_client.contracts.errors import CasError, ProposalAdmissionError
 from cruxible_client.contracts.proposal_models import ProposalReceiveLimits
 from cruxible_client.contracts.subjects import render_subject, subject_path
 from cruxible_core.authoring import preflight as preflight_module
@@ -94,7 +94,7 @@ def test_missing_generated_body_recovers_and_corruption_refuses(tmp_path: Path) 
         assert lowering.call_count == 2
         body_path = instance.body_store()._path(digest)
         body_path.write_bytes(b"corrupt")
-        with pytest.raises(PlaybillCasError, match="content address"):
+        with pytest.raises(CasError, match="content address"):
             coordinator.preflight(intent.intent_id, actor=actor)
 
 

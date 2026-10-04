@@ -15,11 +15,11 @@ TargetSource = Literal["explicit", "environment", "workspace", "remembered", "lo
 WorkspaceSource = Literal["explicit", "environment", "workspace", "local"]
 
 
-class PlaybillContextResolutionError(ValueError):
+class ContextResolutionError(ValueError):
     """A selected workspace or target layer is not a safe context source."""
 
 
-class PlaybillWorkspaceBinding(BaseModel):
+class WorkspaceBinding(BaseModel):
     """The target-bearing subset of a workspace coverage configuration."""
 
     model_config = ConfigDict(extra="ignore", frozen=True)
@@ -40,7 +40,7 @@ class PlaybillWorkspaceBinding(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _one_transport(self) -> PlaybillWorkspaceBinding:
+    def _one_transport(self) -> WorkspaceBinding:
         if self.server_url is not None and self.server_socket is not None:
             raise ValueError("workspace binding cannot select both server URL and server socket")
         return self
@@ -53,7 +53,7 @@ class PlaybillWorkspaceBinding(BaseModel):
 
 
 @dataclass(frozen=True)
-class ResolvedPlaybillContext:
+class ResolvedContext:
     """Resolved workspace and independently sourced target components."""
 
     server_url: str | None
@@ -77,38 +77,38 @@ def _normalized_transport(server_url: object, server_socket: object) -> str | No
     return None
 
 
-def _workspace_binding(root: Path) -> tuple[PlaybillWorkspaceBinding | None, Path | None]:
+def _workspace_binding(root: Path) -> tuple[WorkspaceBinding | None, Path | None]:
     path = root / ".playbill" / "coverage.json"
     if not path.exists():
         return None, None
     try:
         resolved = path.resolve(strict=True)
     except OSError as exc:
-        raise PlaybillContextResolutionError(
+        raise ContextResolutionError(
             f"workspace binding selected from {path} cannot be resolved: {exc}"
         ) from exc
     if not resolved.is_relative_to(root):
-        raise PlaybillContextResolutionError(
+        raise ContextResolutionError(
             f"workspace binding selected from {path} escapes workspace {root}"
         )
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except OSError as exc:
-        raise PlaybillContextResolutionError(
+        raise ContextResolutionError(
             f"workspace binding selected from {path} cannot be read: {exc}"
         ) from exc
     except json.JSONDecodeError as exc:
-        raise PlaybillContextResolutionError(
+        raise ContextResolutionError(
             f"workspace binding selected from {path} is not valid JSON"
         ) from exc
     if not isinstance(payload, dict):
-        raise PlaybillContextResolutionError(
+        raise ContextResolutionError(
             f"workspace binding selected from {path} must contain one JSON object"
         )
     try:
-        return PlaybillWorkspaceBinding.model_validate(payload), path
+        return WorkspaceBinding.model_validate(payload), path
     except ValueError as exc:
-        raise PlaybillContextResolutionError(
+        raise ContextResolutionError(
             f"workspace binding selected from {path} is invalid: {exc}"
         ) from exc
 
@@ -119,7 +119,7 @@ def _walk_roots(start: Path, *, home: Path) -> tuple[Path, ...]:
         None,
     )
     if device is None:
-        raise PlaybillContextResolutionError(f"workspace discovery cannot inspect {start}")
+        raise ContextResolutionError(f"workspace discovery cannot inspect {start}")
     if start.is_relative_to(home):
         ceiling = home
     else:
@@ -162,7 +162,7 @@ def _binding_conflict(*, binding_path: Path | None, source_catalog_path: Path | 
         return
     if binding_path.parent.parent == source_catalog_path.parent.parent:
         return
-    raise PlaybillContextResolutionError(
+    raise ContextResolutionError(
         "workspace_binding_conflict: "
         f"coverage binding {binding_path} and source catalog {source_catalog_path} "
         "select different workspace roots; repair: move both files under the same "
@@ -180,7 +180,7 @@ def _selected_workspace(
 ) -> tuple[
     Path,
     WorkspaceSource,
-    PlaybillWorkspaceBinding | None,
+    WorkspaceBinding | None,
     Path | None,
     tuple[str, ...],
 ]:
@@ -202,13 +202,13 @@ def _selected_workspace(
         return root, "environment", binding, path, ()
 
     warnings: list[str] = []
-    selected: tuple[Path, PlaybillWorkspaceBinding, Path] | None = None
+    selected: tuple[Path, WorkspaceBinding, Path] | None = None
     source_catalog_path: Path | None = None
     for root in _walk_roots(start, home=home):
         source_catalog_path = source_catalog_path or _source_catalog_path(root)
         try:
             binding, path = _workspace_binding(root)
-        except PlaybillContextResolutionError as exc:
+        except ContextResolutionError as exc:
             if root == start:
                 raise
             warnings.append(f"skipped invalid ancestor workspace binding: {exc}")
@@ -239,11 +239,11 @@ def _transport(
     if server_url is None and server_socket is None:
         return None
     if server_url is not None and not isinstance(server_url, str):
-        raise PlaybillContextResolutionError(f"{source} server URL must be a string")
+        raise ContextResolutionError(f"{source} server URL must be a string")
     if server_socket is not None and not isinstance(server_socket, str):
-        raise PlaybillContextResolutionError(f"{source} server socket must be a string")
+        raise ContextResolutionError(f"{source} server socket must be a string")
     if server_url and server_socket:
-        raise PlaybillContextResolutionError(
+        raise ContextResolutionError(
             f"{source} target cannot select both server URL and server socket"
         )
     return server_url or None, server_socket or None, source
@@ -253,11 +253,11 @@ def _instance(value: object, *, source: TargetSource) -> tuple[str, TargetSource
     if value is None:
         return None
     if not isinstance(value, str) or not value:
-        raise PlaybillContextResolutionError(f"{source} instance ID must be a nonempty string")
+        raise ContextResolutionError(f"{source} instance ID must be a nonempty string")
     return value, source
 
 
-def resolve_playbill_context(
+def resolve_context(
     *,
     server_url: str | None = None,
     server_socket: str | None = None,
@@ -268,7 +268,7 @@ def resolve_playbill_context(
     cwd: Path | None = None,
     no_workspace: bool = False,
     home: Path | None = None,
-) -> ResolvedPlaybillContext:
+) -> ResolvedContext:
     """Resolve explicit > environment > workspace > remembered context.
 
     Transport and instance are selected independently. The workspace binding is
@@ -339,9 +339,7 @@ def resolve_playbill_context(
             if recorded_transport_coordinate is not None and not isinstance(
                 recorded_transport_coordinate, str
             ):
-                raise PlaybillContextResolutionError(
-                    "remembered instance transport must be a string"
-                )
+                raise ContextResolutionError("remembered instance transport must be a string")
             if recorded_transport_coordinate is not None and (
                 recorded_transport_coordinate.startswith("unix://")
             ):
@@ -368,7 +366,7 @@ def resolve_playbill_context(
     else:
         resolved_instance, instance_source = selected_instance
 
-    return ResolvedPlaybillContext(
+    return ResolvedContext(
         server_url=resolved_url,
         server_socket=resolved_socket,
         instance_id=resolved_instance,
@@ -384,10 +382,10 @@ def resolve_playbill_context(
 
 
 __all__ = [
-    "PlaybillContextResolutionError",
-    "PlaybillWorkspaceBinding",
-    "ResolvedPlaybillContext",
+    "ContextResolutionError",
+    "WorkspaceBinding",
+    "ResolvedContext",
     "TargetSource",
     "WorkspaceSource",
-    "resolve_playbill_context",
+    "resolve_context",
 ]

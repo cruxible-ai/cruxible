@@ -21,7 +21,7 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.cli.main import cli
 from cruxible_core.service.discovery.curation import PlaybillCurationListRequestV1
 
-COORDINATE = contracts.PlaybillAcceptedCoordinate(
+COORDINATE = contracts.AcceptedCoordinate(
     git_oid="1" * 64,
     semantic_root="sha256:" + "2" * 64,
     generation_root="sha256:" + "3" * 64,
@@ -37,7 +37,7 @@ def test_cli_curation_list_scans_then_calls_one_route(monkeypatch: pytest.Monkey
     calls: list[tuple[str, str, object, object]] = []
 
     class StubClient:
-        def list_playbill_curation(
+        def list_curation(
             self,
             instance_id: str,
             *,
@@ -46,11 +46,11 @@ def test_cli_curation_list_scans_then_calls_one_route(monkeypatch: pytest.Monkey
             workspace_observation: object,
             limit: int | None = None,
             cursor: str | None = None,
-        ) -> contracts.PlaybillCurationListResult:
+        ) -> contracts.CurationListResult:
             calls.append((instance_id, evaluation_time, access_profile, workspace_observation))
 
-            return contracts.PlaybillCurationListResult(
-                coordinate=contracts.PlaybillAcceptedCoordinate(
+            return contracts.CurationListResult(
+                coordinate=contracts.AcceptedCoordinate(
                     git_oid="1" * 64,
                     semantic_root="sha256:" + "2" * 64,
                     generation_root="sha256:" + "3" * 64,
@@ -73,11 +73,11 @@ def test_cli_curation_list_scans_then_calls_one_route(monkeypatch: pytest.Monkey
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
     monkeypatch.setattr(
-        "cruxible_core.cli.commands.playbill.observe_playbill_next_workspace",
+        "cruxible_core.cli.commands.playbill.observe_next_workspace",
         lambda _root: observation,
     )
     monkeypatch.setattr(
-        "cruxible_core.cli.commands.playbill.observe_playbill_next_workspace_with_coverage",
+        "cruxible_core.cli.commands.playbill.observe_next_workspace_with_coverage",
         lambda _client, _instance_id, _root, **_values: (observation, None),
     )
     result = CliRunner().invoke(
@@ -141,13 +141,11 @@ def test_cli_curation_list_enriches_a_real_catalog_and_declared_block_for_text_a
     seen: list[dict[str, object]] = []
 
     class CatalogClient:
-        def resolve_playbill_coverage(
-            self, instance_id: str, **values: Any
-        ) -> contracts.PlaybillCoverageResult:
+        def resolve_coverage(self, instance_id: str, **values: Any) -> contracts.CoverageResult:
             assert instance_id == "inst"
             (source,) = values["observations"]
             assert source["source"]["identity"] == "corpus.runbook"
-            return contracts.PlaybillCoverageResult(
+            return contracts.CoverageResult(
                 coordinate=COORDINATE,
                 result={
                     "tag": "playbill-coverage-result-v3",
@@ -173,7 +171,7 @@ def test_cli_curation_list_enriches_a_real_catalog_and_declared_block_for_text_a
                 },
             )
 
-        def list_playbill_curation(
+        def list_curation(
             self,
             instance_id: str,
             *,
@@ -182,7 +180,7 @@ def test_cli_curation_list_enriches_a_real_catalog_and_declared_block_for_text_a
             workspace_observation: object,
             limit: int | None = None,
             cursor: str | None = None,
-        ) -> contracts.PlaybillCurationListResult:
+        ) -> contracts.CurationListResult:
             assert instance_id == "inst"
             assert isinstance(workspace_observation, dict)
             (source,) = workspace_observation["source_observations"]
@@ -199,7 +197,7 @@ def test_cli_curation_list_enriches_a_real_catalog_and_declared_block_for_text_a
                 }
             )
             seen.append(workspace_observation)
-            return contracts.PlaybillCurationListResult(
+            return contracts.CurationListResult(
                 coordinate=COORDINATE,
                 generation=1,
                 evaluation_time=evaluation_time,
@@ -267,10 +265,10 @@ def test_cli_curation_lifecycle_commands_delegate_once(
     class StubClient:
         def _action(
             self, operation: str, values: dict[str, object]
-        ) -> contracts.PlaybillCurationActionResult:
+        ) -> contracts.CurationActionResult:
             calls.append((operation, values))
-            return contracts.PlaybillCurationActionResult(
-                coordinate=contracts.PlaybillAcceptedCoordinate(
+            return contracts.CurationActionResult(
+                coordinate=contracts.AcceptedCoordinate(
                     git_oid="1" * 64,
                     semantic_root="sha256:" + "2" * 64,
                     generation_root="sha256:" + "3" * 64,
@@ -281,19 +279,19 @@ def test_cli_curation_lifecycle_commands_delegate_once(
                 item={"item_id": values["item_id"], "status": "resolved"},
             )
 
-        def overrule_playbill_curation(
+        def overrule_curation(
             self, _instance_id: str, **values: object
-        ) -> contracts.PlaybillCurationActionResult:
+        ) -> contracts.CurationActionResult:
             return self._action("overrule", values)
 
-        def accept_fixed_playbill_curation(
+        def accept_fixed_curation(
             self, _instance_id: str, **values: object
-        ) -> contracts.PlaybillCurationActionResult:
+        ) -> contracts.CurationActionResult:
             return self._action("accept_fixed", values)
 
-        def suppress_playbill_curation(
+        def suppress_curation(
             self, _instance_id: str, **values: object
-        ) -> contracts.PlaybillCurationActionResult:
+        ) -> contracts.CurationActionResult:
             return self._action("suppress", values)
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())

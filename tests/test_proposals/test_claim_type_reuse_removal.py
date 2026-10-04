@@ -17,11 +17,11 @@ import pytest
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, render_claim_type
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.laws import (
+    ACCEPTANCE_LAWS,
     CLAIM_TYPE_LAW_V5_REVISION_4,
     CLAIM_TYPE_LAW_V5_REVISION_5,
     CLAIM_TYPE_V5_ACCEPTANCE_LAW,
     CLAIM_TYPE_V5_REVISION_4_ACCEPTANCE_LAW,
-    PLAYBILL_ACCEPTANCE_LAWS,
     AcceptanceLawRegistry,
 )
 from cruxible_core.claims.claim_type_inputs import (
@@ -144,10 +144,10 @@ def test_historical_reuse_law_generation_replays_byte_identically(
     instance, owner = initialize_local(tmp_path)
     # Judge the first generation under the pre-removal law, as deployed history was.
     monkeypatch.setitem(
-        PLAYBILL_ACCEPTANCE_LAWS._current_by_tag, TAG, CLAIM_TYPE_V5_REVISION_4_ACCEPTANCE_LAW
+        ACCEPTANCE_LAWS._current_by_tag, TAG, CLAIM_TYPE_V5_REVISION_4_ACCEPTANCE_LAW
     )
     _accept_tree(instance, owner, _with(instance, *_BATCH), timestamp=TIMESTAMP, proposal_name="b")
-    monkeypatch.setitem(PLAYBILL_ACCEPTANCE_LAWS._current_by_tag, TAG, CLAIM_TYPE_V5_ACCEPTANCE_LAW)
+    monkeypatch.setitem(ACCEPTANCE_LAWS._current_by_tag, TAG, CLAIM_TYPE_V5_ACCEPTANCE_LAW)
 
     historical = _claim_type_evidence(instance)
     assert len(historical) == 2
@@ -178,7 +178,7 @@ def test_pending_proposal_judged_under_the_historical_law_still_settles(
     tree = _with(instance, ("dev.track.owner", "dev.track", None))
 
     monkeypatch.setitem(
-        PLAYBILL_ACCEPTANCE_LAWS._current_by_tag, TAG, CLAIM_TYPE_V5_REVISION_4_ACCEPTANCE_LAW
+        ACCEPTANCE_LAWS._current_by_tag, TAG, CLAIM_TYPE_V5_REVISION_4_ACCEPTANCE_LAW
     )
     proposed = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id="owner"),
@@ -190,7 +190,7 @@ def test_pending_proposal_judged_under_the_historical_law_still_settles(
         timestamp=TIMESTAMP,
     )
     # The upgrade lands between submission and settlement.
-    monkeypatch.setitem(PLAYBILL_ACCEPTANCE_LAWS._current_by_tag, TAG, CLAIM_TYPE_V5_ACCEPTANCE_LAW)
+    monkeypatch.setitem(ACCEPTANCE_LAWS._current_by_tag, TAG, CLAIM_TYPE_V5_ACCEPTANCE_LAW)
     assert proposed.candidate is not None
     assert proposed.evaluation.evaluated_tree_oid is not None
     bundle = instance.prepare_generation(
@@ -239,7 +239,7 @@ def test_a_registry_without_the_current_law_refuses_its_generations(tmp_path: Pa
                 current=law is CLAIM_TYPE_V5_REVISION_4_ACCEPTANCE_LAW
                 or (law.current and law.artifact_tag != TAG),
             )
-            for law in PLAYBILL_ACCEPTANCE_LAWS._by_coordinate.values()
+            for law in ACCEPTANCE_LAWS._by_coordinate.values()
             if law is not CLAIM_TYPE_V5_ACCEPTANCE_LAW
         )
     )

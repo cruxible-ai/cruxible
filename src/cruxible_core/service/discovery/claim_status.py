@@ -27,7 +27,7 @@ from cruxible_client.contracts.claims import (
 from cruxible_core.claims.claim_slots import ClaimSlotClassification, classify_claim_slot
 from cruxible_core.derived.memo import memo_clear, memo_get, memo_put
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+from cruxible_core.service.authoring.documents import AcceptedCoordinate
 from cruxible_core.service.claims.claims import (
     PlaybillClaimGroupResolution,
     _resolve_coordinate,
@@ -104,7 +104,7 @@ def _resolution_memo_key(
     instance: PlaybillInstance,
     *,
     identities: tuple[str, ...],
-    at: PlaybillAcceptedCoordinate,
+    at: AcceptedCoordinate,
     input_fingerprint: str | None,
 ) -> tuple[str, str, str, str]:
     return memo_key(
@@ -119,7 +119,7 @@ def remembered_resolution_statuses(
     instance: PlaybillInstance,
     *,
     identities: tuple[str, ...],
-    at: PlaybillAcceptedCoordinate,
+    at: AcceptedCoordinate,
     evaluation_time: datetime,
 ) -> dict[str, ClaimStatus] | None:
     """A still-valid remembered answer for exactly these Claims, without reading them."""
@@ -146,7 +146,7 @@ def claim_resolution_statuses(
     instance: PlaybillInstance,
     *,
     claims: tuple[ClaimArtifactAny, ...],
-    at: PlaybillAcceptedCoordinate,
+    at: AcceptedCoordinate,
     evaluation_time: datetime,
     verdicts_by_identity: MutableMapping[str, ClaimVerdictResultAny] | None = None,
     read_context: ClaimVerdictReadContext | None = None,

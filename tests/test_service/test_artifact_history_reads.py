@@ -17,7 +17,7 @@ from cruxible_client.contracts.errors import (
 )
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_digest
 from cruxible_core.service.authoring.documents import (
-    PlaybillAcceptedCoordinate,
+    AcceptedCoordinate,
     service_get_playbill_document,
     service_list_playbill_documents,
     service_playbill_document_history,
@@ -86,7 +86,7 @@ def test_selected_history_preserves_receipts_and_ignores_unrelated_generations(
             timestamp=f"2026-08-20T12:00:0{index}.000000Z",
             proposal_name=f"selected-{index}",
         )
-        coordinates.append(PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate()))
+        coordinates.append(AcceptedCoordinate.from_internal(instance.accepted_coordinate()))
     for index in range(unrelated):
         shell = SubjectShell(
             identity=ArtifactIdentity(kind="Subject", name=f"project.other/item-{index}"),

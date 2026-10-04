@@ -8,7 +8,7 @@ from typing import Any
 import httpx
 import pytest
 
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 from tests.test_client.test_playbill_documents import COORDINATE, _client, _review
 
 
@@ -42,10 +42,10 @@ def test_client_signer_failure_stops_before_attestation_submission() -> None:
     client = _client(handler)
 
     def missing_signer(_statement: dict[str, Any]) -> dict[str, Any]:
-        raise PlaybillFormatError("client-held signer is unavailable")
+        raise FormatError("client-held signer is unavailable")
 
-    with pytest.raises(PlaybillFormatError, match="unavailable"):
-        client.approve_playbill_proposal(
+    with pytest.raises(FormatError, match="unavailable"):
+        client.approve_proposal(
             "inst_test",
             "sha256:" + "9" * 64,
             signer_id="owner",

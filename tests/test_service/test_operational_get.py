@@ -14,13 +14,13 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.get_reads import PlaybillGetRequest
+from cruxible_client.contracts.get_reads import GetRequest
 from cruxible_client.contracts.line_dispatch import LineDispatchRequest, LineEvaluateRequest
 from cruxible_client.contracts.operational_reads import (
-    PlaybillGetCaptureCard,
-    PlaybillGetLineCard,
-    PlaybillGetMandateCard,
-    PlaybillGetResolutionContractCard,
+    GetCaptureCard,
+    GetLineCard,
+    GetMandateCard,
+    GetResolutionContractCard,
 )
 from cruxible_client.contracts.procedures.line_specs import line_identity_digest
 from cruxible_core.service.discovery.get import service_playbill_get
@@ -40,9 +40,7 @@ _ACCESS = BodyAccessContext(principal_id="reader", can_read_body=True)
 
 
 def _get(instance, ref: str, **fields):  # type: ignore[no-untyped-def]
-    return service_playbill_get(
-        instance, request=PlaybillGetRequest(ref=ref, **fields), access=_ACCESS
-    )
+    return service_playbill_get(instance, request=GetRequest(ref=ref, **fields), access=_ACCESS)
 
 
 @pytest.fixture(scope="module")
@@ -86,7 +84,7 @@ def test_a_line_card_names_its_procedure_trigger_arms_and_runs(line_world) -> No
 
     assert result.kind == "line" and result.ref == line.identity.qualified
     card = result.card
-    assert isinstance(card, PlaybillGetLineCard)
+    assert isinstance(card, GetLineCard)
     assert card.identity_digest == line_identity_digest(line.identity)
     assert card.procedure == line.procedure.target.qualified
     assert card.trigger == "capture_landing"
@@ -121,7 +119,7 @@ def test_a_line_read_at_an_older_generation_shows_the_definition_only(line_world
     assert history.history is not None and history.history.revisions
 
     at_head = _get(instance, line.identity.qualified, at=head.git_oid, evaluation_time=when)
-    assert isinstance(at_head.card, PlaybillGetLineCard) and at_head.card.arms
+    assert isinstance(at_head.card, GetLineCard) and at_head.card.arms
 
 
 def test_a_mandate_reads_by_either_reference_form(line_world) -> None:  # type: ignore[no-untyped-def]
@@ -131,17 +129,17 @@ def test_a_mandate_reads_by_either_reference_form(line_world) -> None:  # type: 
         result = _get(instance, ref, evaluation_time=when)
         assert result.kind == "mandate" and result.ref == "Mandate:served-line-mandate"
         card = result.card
-        assert isinstance(card, PlaybillGetMandateCard)
+        assert isinstance(card, GetMandateCard)
         assert card.mandate == "ProcedureMandate:served-line-mandate"
         assert card.grants == "propose" and card.state == "active"
         assert card.namespace == ("claims",)
 
     name = "Mandate:served-line-mandate"
     expiring = _get(instance, name, evaluation_time=card.expires_at - timedelta(days=1))
-    assert isinstance(expiring.card, PlaybillGetMandateCard)
+    assert isinstance(expiring.card, GetMandateCard)
     assert expiring.card.state == "expiring"
     expired = _get(instance, name, evaluation_time=card.expires_at)
-    assert isinstance(expired.card, PlaybillGetMandateCard) and expired.card.state == "expired"
+    assert isinstance(expired.card, GetMandateCard) and expired.card.state == "expired"
 
 
 def test_wrong_operational_references_refuse_with_the_nearest_valid_ones(line_world) -> None:  # type: ignore[no-untyped-def]
@@ -189,7 +187,7 @@ def test_a_resolution_contract_card_names_its_hypothesis_window_and_state(
 
     card = result.card
     assert result.kind == "resolution_contract"
-    assert isinstance(card, PlaybillGetResolutionContractCard)
+    assert isinstance(card, GetResolutionContractCard)
     assert card.hypothesis.startswith("CLM-")
     assert card.hypothesis_value == "ready"
     assert card.state == "settleable"
@@ -212,7 +210,7 @@ def test_a_capture_reads_by_handle_prefix_or_full_digest(prediction_world) -> No
         result = _get(instance, ref, evaluation_time=when)
         assert result.kind == "capture" and result.ref == f"Capture:{capture_digest}"
     card = result.card
-    assert isinstance(card, PlaybillGetCaptureCard)
+    assert isinstance(card, GetCaptureCard)
     assert card.capture == "CAP-" + hex_digits[:12] and card.digest == capture_digest
     assert card.contract.startswith("CaptureContract:") and card.version == 1
     assert card.status == "available"
@@ -226,7 +224,7 @@ def test_a_capture_reads_by_handle_prefix_or_full_digest(prediction_world) -> No
     assert proof.proof is not None and proof.proof["capture_digest"] == capture_digest
 
     cli = _get(instance, "CAP-" + hex_digits[:12], surface="cli")
-    assert isinstance(cli.card, PlaybillGetCaptureCard)
+    assert isinstance(cli.card, GetCaptureCard)
     assert cli.card.next[-1] == f"cruxible playbill capture read {capture_digest}"
 
 
@@ -250,7 +248,7 @@ def test_a_capture_card_names_the_evidence_workers_finding(
 
     card = _get(instance, f"Capture:{capture_digest}").card
 
-    assert isinstance(card, PlaybillGetCaptureCard)
+    assert isinstance(card, GetCaptureCard)
     assert card.status == "unavailable"
     assert card.status_detail is not None and card.status_detail.startswith("body missing")
 
@@ -277,6 +275,6 @@ def test_a_stopped_arm_line_card_is_bounded(tmp_path: Path) -> None:
 
     card = _get(instance, line.identity.qualified, evaluation_time=start).card
 
-    assert isinstance(card, PlaybillGetLineCard)
+    assert isinstance(card, GetLineCard)
     assert card.recent_runs == () and card.runs_total == 0
     assert [arm.stop_reason for arm in card.arms] == ["permission_insufficient"]

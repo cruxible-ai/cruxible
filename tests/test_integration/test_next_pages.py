@@ -8,16 +8,16 @@ from typing import Any
 
 import pytest
 
-from cruxible_client.contracts import PLAYBILL_NEXT_DEFAULT_LIMIT, PLAYBILL_NEXT_MAX_LIMIT
+from cruxible_client.contracts import NEXT_DEFAULT_LIMIT, NEXT_MAX_LIMIT
 from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.service.discovery import next as next_module
 from cruxible_core.service.discovery.next import (
-    PlaybillNextAcceptedStateInvalid,
-    PlaybillNextCursorMismatch,
+    NextAcceptedStateInvalid,
+    NextCursorMismatch,
+    NextRequest,
+    NextRequestV1,
     PlaybillNextItemV1,
     PlaybillNextRepairV1,
-    PlaybillNextRequest,
-    PlaybillNextRequestV1,
     PlaybillNextResultV2,
     _item,
     service_playbill_next,
@@ -61,8 +61,8 @@ def queue(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, _Queue]
     return instance, rows
 
 
-def _request(**values: Any) -> PlaybillNextRequest:
-    return PlaybillNextRequest(
+def _request(**values: Any) -> NextRequest:
+    return NextRequest(
         evaluation_time=EVALUATION_TIME,
         access_profile=CoverageAccessProfile(
             profile_id="next-pages",
@@ -89,7 +89,7 @@ def _pages(instance: Any, *, limit: int, **values: Any) -> list[PlaybillNextResu
 
 def test_concatenated_pages_are_the_whole_queue_in_order(queue: tuple[Any, _Queue]) -> None:
     instance, _rows = queue
-    whole = service_playbill_next(instance, request=_request(limit=PLAYBILL_NEXT_MAX_LIMIT))
+    whole = service_playbill_next(instance, request=_request(limit=NEXT_MAX_LIMIT))
     assert whole.total_items == len(whole.items) == 7
     assert whole.next_cursor is None and whole.whole_queue
 
@@ -120,14 +120,14 @@ def test_the_default_page_is_the_whole_small_queue(queue: tuple[Any, _Queue]) ->
 
 
 def test_page_size_is_bounded_by_the_shared_convention() -> None:
-    assert (PLAYBILL_NEXT_DEFAULT_LIMIT, PLAYBILL_NEXT_MAX_LIMIT) == (100, 1000)
-    assert _request().limit == PLAYBILL_NEXT_DEFAULT_LIMIT
-    assert _request(limit=PLAYBILL_NEXT_MAX_LIMIT).limit == PLAYBILL_NEXT_MAX_LIMIT
+    assert (NEXT_DEFAULT_LIMIT, NEXT_MAX_LIMIT) == (100, 1000)
+    assert _request().limit == NEXT_DEFAULT_LIMIT
+    assert _request(limit=NEXT_MAX_LIMIT).limit == NEXT_MAX_LIMIT
     body = _request().model_dump(mode="json")
-    for limit in (0, PLAYBILL_NEXT_MAX_LIMIT + 1):
-        with pytest.raises(PlaybillNextAcceptedStateInvalid):
+    for limit in (0, NEXT_MAX_LIMIT + 1):
+        with pytest.raises(NextAcceptedStateInvalid):
             validate_playbill_next_request(body | {"limit": limit})
-    with pytest.raises(PlaybillNextCursorMismatch):
+    with pytest.raises(NextCursorMismatch):
         validate_playbill_next_request(body | {"cursor": "x" * 2049})
 
 
@@ -137,7 +137,7 @@ def test_a_cursor_from_another_queue_is_refused(queue: tuple[Any, _Queue]) -> No
     assert first.next_cursor is not None
 
     rows.names = (*rows.names, "doc-new")
-    with pytest.raises(PlaybillNextCursorMismatch, match="queue moved"):
+    with pytest.raises(NextCursorMismatch, match="queue moved"):
         service_playbill_next(instance, request=_request(limit=2, cursor=first.next_cursor))
     # The refusal names the repair: page one of the queue as it now stands.
     fresh = service_playbill_next(instance, request=_request(limit=2))
@@ -150,7 +150,7 @@ def test_a_cursor_that_is_not_a_next_cursor_is_refused(
 ) -> None:
     instance, _rows = queue
 
-    with pytest.raises(PlaybillNextCursorMismatch, match="not a next page cursor"):
+    with pytest.raises(NextCursorMismatch, match="not a next page cursor"):
         service_playbill_next(instance, request=_request(cursor=cursor))
 
 
@@ -177,14 +177,14 @@ def test_a_cursor_with_a_mistyped_field_is_refused(
     payload[field] = value
     forged = base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
 
-    with pytest.raises(PlaybillNextCursorMismatch, match="not a next page cursor"):
+    with pytest.raises(NextCursorMismatch, match="not a next page cursor"):
         service_playbill_next(instance, request=_request(cursor=forged))
 
 
 def test_a_cursor_does_not_cross_request_versions(queue: tuple[Any, _Queue]) -> None:
     instance, _rows = queue
     v2 = service_playbill_next(instance, request=_request(limit=2))
-    v1_request = PlaybillNextRequestV1(
+    v1_request = NextRequestV1(
         evaluation_time=EVALUATION_TIME,
         access_profile=_request().access_profile,
         limit=2,
@@ -192,11 +192,11 @@ def test_a_cursor_does_not_cross_request_versions(queue: tuple[Any, _Queue]) -> 
     v1 = service_playbill_next(instance, request=v1_request)
     assert v1.next_cursor is not None and v2.next_cursor is not None
 
-    with pytest.raises(PlaybillNextCursorMismatch, match="v2 queue"):
+    with pytest.raises(NextCursorMismatch, match="v2 queue"):
         service_playbill_next(
             instance, request=v1_request.model_copy(update={"cursor": v2.next_cursor})
         )
-    with pytest.raises(PlaybillNextCursorMismatch, match="v1 queue"):
+    with pytest.raises(NextCursorMismatch, match="v1 queue"):
         service_playbill_next(instance, request=_request(limit=2, cursor=v1.next_cursor))
 
 
@@ -209,7 +209,7 @@ def test_a_delta_pages_its_changed_rows_under_the_whole_queue_digest(
 
     delta = service_playbill_next(
         instance,
-        request=_request(limit=PLAYBILL_NEXT_MAX_LIMIT, since_result_digest=before.result_digest),
+        request=_request(limit=NEXT_MAX_LIMIT, since_result_digest=before.result_digest),
     )
     pages = _pages(instance, limit=2, since_result_digest=before.result_digest)
 
@@ -240,5 +240,5 @@ def test_a_delta_cursor_refuses_once_its_base_is_forgotten(queue: tuple[Any, _Qu
             next_module._QUEUE_MEMO.pop(key)
     # Without its base the delta would silently become the whole queue; paging
     # that at the delta's offset would skip rows, so the cursor refuses instead.
-    with pytest.raises(PlaybillNextCursorMismatch, match="delta base"):
+    with pytest.raises(NextCursorMismatch, match="delta base"):
         service_playbill_next(instance, request=_request(limit=2, cursor=first.next_cursor))

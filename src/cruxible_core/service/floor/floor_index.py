@@ -31,9 +31,9 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, parse_claim_type
 from cruxible_client.contracts.claims import ClaimArtifactAny, SubjectClaimObject, parse_claim
-from cruxible_client.contracts.errors import PlaybillError, ProjectionIntegrityError
+from cruxible_client.contracts.errors import CruxibleError, ProjectionIntegrityError
 from cruxible_client.contracts.floor import (
-    PlaybillFloorManifest,
+    FloorManifest,
     build_floor_manifest,
     content_digest,
     floor_notes_digest,
@@ -156,7 +156,7 @@ class FloorRender:
     def generation(self) -> int:
         return self.inputs.generation
 
-    def manifest(self) -> PlaybillFloorManifest:
+    def manifest(self) -> FloorManifest:
         return build_floor_manifest(
             renderer=self.renderer,
             coordinate=self.inputs.coordinate,
@@ -440,7 +440,7 @@ class _Stamps:
 def _type_path(predicate: str) -> str | None:
     try:
         return claim_type_path(predicate)
-    except PlaybillError:
+    except CruxibleError:
         return None
 
 

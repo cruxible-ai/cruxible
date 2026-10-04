@@ -16,7 +16,7 @@ from typing import Any
 
 from cruxible_client.contracts.canonical import CARD_NAMESPACE, normalize_ledger_path
 from cruxible_client.contracts.claims import ClaimArtifactAny, ClaimStatement, parse_claim
-from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.persistent import PersistentMap
 from cruxible_core.derived.derived_runtime import BoundedCache, Lease, Registry
 
@@ -90,7 +90,7 @@ def resolve_blobs(values: Sequence[bytes | BlobRef]) -> list[bytes]:
         for oid, ref in refs.items():
             content = loaded[oid]
             if len(content) != ref.size:
-                raise PlaybillError(f"ledger blob size changed while reading: {oid}")
+                raise CruxibleError(f"ledger blob size changed while reading: {oid}")
             found[oid] = content
             _remember_blob(oid, content)
     return [value if isinstance(value, bytes) else found[value.oid] for value in values]
@@ -722,7 +722,7 @@ def snapshot_against(tree: Mapping[str, bytes], parent: SnapshotTree) -> Snapsho
         if parent.get(path) != content:
             try:
                 builder[path] = content
-            except (PlaybillError, ValueError):
+            except (CruxibleError, ValueError):
                 # External full trees preserve the original normalization and
                 # refusal boundary; only internal canonical edits get a delta.
                 return SnapshotTree(tree)
@@ -831,7 +831,7 @@ def path_facts(root: SnapshotTree) -> PathFacts:
 def _canonical(path: str) -> bool:
     try:
         return normalize_ledger_path(path) == path
-    except (PlaybillError, ValueError):
+    except (CruxibleError, ValueError):
         return False
 
 

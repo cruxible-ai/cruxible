@@ -32,7 +32,7 @@ from cruxible_client.contracts.capture_journal import (
     CaptureLandingEventV1,
 )
 from cruxible_client.contracts.captures import (
-    PLAYBILL_CAPTURE_COMPONENTS,
+    CAPTURE_COMPONENTS,
     CanonicalDuration,
     CaptureEnvelopeAny,
     CaptureEnvelopeV1,
@@ -40,7 +40,7 @@ from cruxible_client.contracts.captures import (
     capture_digest,
 )
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.semantic import SemanticAddress
 
@@ -54,7 +54,7 @@ _POLICY_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 ACQUISITION_POLICY_PIN_ROLE = "acquisition-policy"
 
 
-class SourceAcquisitionPolicyError(PlaybillFormatError):
+class SourceAcquisitionPolicyError(FormatError):
     """A SourceAcquisitionPolicy artifact or acceptance transition is invalid."""
 
 
@@ -316,7 +316,7 @@ def evaluate_acquisition_policy_law(
             any(
                 pin.role == role
                 and pin.artifact_digest == digest
-                and PLAYBILL_CAPTURE_COMPONENTS.resolves(pin)
+                and CAPTURE_COMPONENTS.resolves(pin)
                 for pin in policy.pins
             )
             for role, digest in required

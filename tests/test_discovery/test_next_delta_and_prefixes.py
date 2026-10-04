@@ -303,7 +303,7 @@ def test_v2_removed_item_ids_are_presentation_only_and_shape_checked() -> None:
     full = _v2_result(("one",))
     internal_dump = full.model_dump(mode="json")
     assert "removed_item_ids" not in internal_dump
-    public = contracts.PlaybillNextResult.model_validate(internal_dump)
+    public = contracts.NextResult.model_validate(internal_dump)
     assert "removed_item_ids" not in public.model_dump(mode="json")
 
 

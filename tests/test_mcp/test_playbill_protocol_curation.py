@@ -1,4 +1,4 @@
-"""Curation enforcement over the real Playbill MCP protocol."""
+"""Curation enforcement over the real Cruxible MCP protocol."""
 
 from __future__ import annotations
 

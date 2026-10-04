@@ -55,7 +55,7 @@ from cruxible_client.contracts.claims import (
     parse_claim,
 )
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
-from cruxible_client.contracts.errors import PlaybillError, ProposalAdmissionError
+from cruxible_client.contracts.errors import CruxibleError, ProposalAdmissionError
 from cruxible_client.contracts.procedures.artifacts import (
     parse_procedure,
     procedure_artifact_digest,
@@ -215,7 +215,7 @@ def _existing_capture_contract_matches_reference(
             )
         )
         contract = parse_capture_contract(artifact_content, path=artifact_path)
-    except (PlaybillError, ValueError):
+    except (CruxibleError, ValueError):
         return False
     return capture_contract_digest(contract).tagged == envelope.capture_contract_digest
 
@@ -368,7 +368,7 @@ def _reference_diagnostics(
                 compiler_digest=expectation.minted_coordinate.compiler_digest,
             )
             minted_content = instance.blob_at(minted.git_oid, path)
-        except (OSError, PlaybillError, ValueError):
+        except (OSError, CruxibleError, ValueError):
             diagnostics.append(
                 _diagnostic(
                     code="playbill.authoring.reference_coordinate_unavailable",

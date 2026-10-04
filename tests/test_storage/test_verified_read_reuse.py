@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.errors import PlaybillCasError, PlaybillFormatError
+from cruxible_client.contracts.errors import CasError, FormatError
 from cruxible_core.ledger import git as ledger_git
 from cruxible_core.ledger.git import GitLedger
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -39,7 +39,7 @@ def test_a_file_replaced_just_before_a_warm_read_is_refused(tmp_path, monkeypatc
         return opened(target, flags, *args, **kwargs)
 
     monkeypatch.setattr(cas.os, "open", replace_then_open)
-    with pytest.raises(PlaybillCasError, match="do not match"):
+    with pytest.raises(CasError, match="do not match"):
         store.read(digest, access=READ)
 
 
@@ -48,7 +48,7 @@ def test_a_file_rewritten_in_place_after_warming_is_refused(tmp_path):
     path.chmod(0o600)
     with path.open("r+b") as handle:  # same inode, same size, new bytes
         handle.write(b"evil")
-    with pytest.raises(PlaybillCasError, match="do not match"):
+    with pytest.raises(CasError, match="do not match"):
         store.read(digest, access=READ)
 
 
@@ -83,7 +83,7 @@ def test_a_symlinked_shard_or_object_is_refused(tmp_path):
     shard = path.parent
     os.replace(shard, tmp_path / "moved-shard")
     shard.symlink_to(elsewhere, target_is_directory=True)
-    with pytest.raises(PlaybillCasError, match="not trustworthy"):
+    with pytest.raises(CasError, match="not trustworthy"):
         store.read(digest, access=READ)
 
 
@@ -101,7 +101,7 @@ def test_a_swapped_ancestor_of_a_warm_storage_path_is_refused(tmp_path):
     outside.mkdir()
     os.replace(root / "a", outside / "a")
     (root / "a").symlink_to(outside / "a", target_is_directory=True)
-    with pytest.raises(PlaybillFormatError, match="escapes"):
+    with pytest.raises(FormatError, match="escapes"):
         PlaybillInstance._validated_paths(root, layout)
 
 
@@ -196,7 +196,7 @@ def test_scan_streams_a_bounded_prefix_including_a_dry_runs_held_bodies(
     absent = first[:2] + ("0" if first[2] != "0" else "1") * 10
     near = store.scan(absent, budget=1000, nearest=3)
     assert near.complete and near.digests == () and len(near.nearest) <= 3
-    with pytest.raises(PlaybillCasError):
+    with pytest.raises(CasError):
         store.scan("A", budget=10)
     assert store.peek(stored[0], 4) == b"body"
     held: dict[str, bytes] = {}

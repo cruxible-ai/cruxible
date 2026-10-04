@@ -75,9 +75,9 @@ def test_contract_acceptance_projection_and_history(tmp_path: Path) -> None:
     request = ResolutionContractsRequest(hypothesis=contract.hypothesis)
     view = service_resolution_contracts(instance, request)
     assert tuple(item.contract for item in view.contracts) == (contract,)
-    from cruxible_client.contracts.errors import PlaybillFormatError
+    from cruxible_client.contracts.errors import FormatError
 
-    with pytest.raises(PlaybillFormatError, match="exact Claim"):
+    with pytest.raises(FormatError, match="exact Claim"):
         service_resolution_contracts(
             instance,
             request.model_copy(
@@ -114,12 +114,12 @@ def test_contract_acceptance_projection_and_history(tmp_path: Path) -> None:
     )
     assert tuple(item.contract for item in historical.contracts) == (contract,)
     assert service_resolution_contracts(instance, request).contracts[0].contract == retired
-    from cruxible_client.contracts.errors import PlaybillExecutionError
+    from cruxible_client.contracts.errors import ExecutionError
 
     future = contract.hypothesis.model_copy(
         update={"coordinate": AcceptedCoordinate.from_internal(instance.accepted_coordinate())}
     )
-    with pytest.raises(PlaybillExecutionError, match="outside"):
+    with pytest.raises(ExecutionError, match="outside"):
         service_resolution_contracts(
             instance,
             ResolutionContractsRequest(
@@ -343,9 +343,9 @@ def test_run_binds_contract_and_replays_exact_history(tmp_path: Path) -> None:
         instance, owner, tree, timestamp="2026-08-24T17:00:00.000000Z", proposal_name="retire-test"
     )
     assert service_get_playbill_procedure_run(instance, run_id=results[0].run_id) == results[0]
-    from cruxible_client.contracts.errors import PlaybillExecutionError
+    from cruxible_client.contracts.errors import ExecutionError
 
-    with pytest.raises(PlaybillExecutionError, match="current live"):
+    with pytest.raises(ExecutionError, match="current live"):
         service_run_playbill_procedure(
             instance,
             name=procedure.identity.name,
@@ -359,7 +359,7 @@ def test_run_binds_contract_and_replays_exact_history(tmp_path: Path) -> None:
 def test_capture_trigger_uses_exact_retained_event_not_git_changes(tmp_path: Path) -> None:
     from datetime import timedelta
 
-    from cruxible_client.contracts.errors import PlaybillExecutionError
+    from cruxible_client.contracts.errors import ExecutionError
     from cruxible_core.exhaust.writer import ProcedureExhaustWriter
     from cruxible_core.service.procedures.procedure_runs import (
         PROCEDURE_RUN_FENCING_TOKEN,
@@ -422,7 +422,7 @@ def test_capture_trigger_uses_exact_retained_event_not_git_changes(tmp_path: Pat
     assert bind_window(
         instance, policy, ref, now=READ_TIME + timedelta(days=3)
     ).ends_at == READ_TIME + timedelta(days=1)
-    with pytest.raises(PlaybillExecutionError, match="selector"):
+    with pytest.raises(ExecutionError, match="selector"):
         capture_event_time(
             instance,
             CaptureEventSelector(
@@ -432,7 +432,7 @@ def test_capture_trigger_uses_exact_retained_event_not_git_changes(tmp_path: Pat
             ref,
             now=READ_TIME,
         )
-    with pytest.raises(PlaybillExecutionError):
+    with pytest.raises(ExecutionError):
         capture_event_time(
             instance,
             selector,
@@ -440,7 +440,7 @@ def test_capture_trigger_uses_exact_retained_event_not_git_changes(tmp_path: Pat
             now=READ_TIME,
         )
 
-    with pytest.raises(PlaybillExecutionError, match="has not occurred"):
+    with pytest.raises(ExecutionError, match="has not occurred"):
         capture_event_time(instance, selector, ref, now=READ_TIME - timedelta(seconds=1))
     from cruxible_client.contracts.procedures.windows import LineTriggerBinding
     from cruxible_client.contracts.resolution_contracts import ResolutionContractReference
@@ -618,14 +618,14 @@ from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
-from cruxible_client.contracts.types import PlaybillTrustRoot
+from cruxible_client.contracts.types import TrustRoot
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.procedures import procedure_runs
 
 args = json.load(sys.stdin)
 instance = PlaybillInstance.open(
-    Path(args["root"]), trust_root=PlaybillTrustRoot.model_validate(args["trust_root"])
+    Path(args["root"]), trust_root=TrustRoot.model_validate(args["trust_root"])
 )
 request = procedure_runs.LineRunRequest.model_validate(args["request"])
 
@@ -667,8 +667,8 @@ print(result.model_dump_json())
     assert journal_snapshot() == before
     assert service_get_playbill_procedure_run(instance, run_id=first.run_id) == first
     # A retry cannot quietly drop or replace the investigation.
-    from cruxible_client.contracts.errors import PlaybillExecutionError
+    from cruxible_client.contracts.errors import ExecutionError
 
-    with pytest.raises(PlaybillExecutionError, match="original investigation"):
+    with pytest.raises(ExecutionError, match="original investigation"):
         run(end + timedelta(days=2), None)
     assert journal_snapshot() == before

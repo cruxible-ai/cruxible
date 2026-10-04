@@ -1,4 +1,4 @@
-"""Shared isolation fixtures for Playbill MCP tests."""
+"""Shared isolation fixtures for Cruxible MCP tests."""
 
 from __future__ import annotations
 

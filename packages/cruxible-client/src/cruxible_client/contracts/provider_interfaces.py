@@ -23,7 +23,7 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.semantic import SemanticAddress
 
@@ -35,7 +35,7 @@ _HEX_RE = re.compile(r"^(?:[0-9a-f]{2})+$")
 ProviderEffectClass: TypeAlias = Literal["none", "external_read", "external_mutation"]
 
 
-class ProviderInterfaceFormatError(PlaybillFormatError):
+class ProviderInterfaceFormatError(FormatError):
     """A ProviderInterface artifact, vocabulary, or proof is invalid."""
 
 

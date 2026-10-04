@@ -15,9 +15,9 @@ from cruxible_client import (
     ClaimRef,
     ClaimRole,
     ClaimTypeRef,
+    Cruxible,
     Disposition,
     Duration,
-    Playbill,
     ReferentSensitivity,
     SubjectRef,
 )
@@ -41,7 +41,7 @@ from cruxible_client.contracts.captures import (
     render_capture_contract,
 )
 from cruxible_client.contracts.claim_types import claim_type_digest
-from cruxible_client.contracts.get_reads import PlaybillGetRequest
+from cruxible_client.contracts.get_reads import GetRequest
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
     ClaimResolutionPolicy,
@@ -202,13 +202,11 @@ def _install_direct_capture_contract(
 def _claim_proof(transport: CruxibleClient, instance_id: str, claim_id: str) -> ClaimViewRecord:
     """One accepted Claim's full read, through get(detail="proof")."""
 
-    proof = transport.playbill_get(
-        instance_id, request=PlaybillGetRequest(ref=claim_id, detail="proof")
-    ).proof
+    proof = transport.get(instance_id, request=GetRequest(ref=claim_id, detail="proof")).proof
     return ClaimViewRecord.model_validate(proof)
 
 
-def _accepted_claims(pb: Playbill, predicate: str) -> list[str]:
+def _accepted_claims(pb: Cruxible, predicate: str) -> list[str]:
     """Every accepted Claim of ``predicate`` across the demo's two Subject kinds."""
 
     return [
@@ -259,7 +257,7 @@ def test_empty_evidence_policy_is_candidate_through_cli_and_sdk(
     workspace = tmp_path / "sdk-workspace"
     workspace.mkdir()
     _catalog(workspace)
-    pb = Playbill._from_client(transport, instance_id=instance_id, workspace=workspace)
+    pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=workspace)
     sdk_proposal = pb.claim_type(
         predicate=input_value.predicate,
         subject_kinds=input_value.allowed_subject_kinds,
@@ -408,7 +406,7 @@ def test_sdk_cold_claim_delivers_source_lint_without_refusing_preflight(
     _catalog(workspace)
     transport = CruxibleClient(base_url="http://cruxible")
     transport._client = http  # type: ignore[assignment]
-    pb = Playbill._from_client(transport, instance_id=instance_id, workspace=workspace)
+    pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=workspace)
     subject = pb.subject(
         subject="secops.policy/patch-sla",
         pins=(),
@@ -472,7 +470,7 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
     _catalog(workspace)
     transport = CruxibleClient(base_url="http://cruxible")
     transport._client = http  # type: ignore[assignment]
-    pb = Playbill._from_client(transport, instance_id=instance_id, workspace=workspace)
+    pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=workspace)
     subject = pb.subject(
         subject="secops.policy/patch-sla",
         pins=(),
@@ -545,9 +543,7 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
 
     # A `revises` submit amends one Claim identity in place; the result says so
     # rather than reading like an ordinary create.
-    revision_submit = transport.submit_playbill_authoring_intent(
-        instance_id, prepared_revision.intent_id
-    )
+    revision_submit = transport.submit_authoring_intent(instance_id, prepared_revision.intent_id)
     assert revision_submit.identity_stable is True
     assert revision_submit.claim_revision == 2
 
@@ -722,7 +718,7 @@ def test_shipped_claim_type_and_flow_a_examples_compose_to_a_supported_claim(
     workspace = tmp_path / "example-workspace"
     workspace.mkdir()
     _catalog(workspace)
-    pb = Playbill._from_client(transport, instance_id=instance_id, workspace=workspace)
+    pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=workspace)
 
     subject = pb.subject(
         subject="project.work_item/replace-me",
@@ -742,7 +738,7 @@ def test_shipped_claim_type_and_flow_a_examples_compose_to_a_supported_claim(
     pb.refresh()
 
     claim_type_input = defaulted_claim_type_input_example()
-    claim_type_proposal = transport.propose_playbill_claim_type_input(
+    claim_type_proposal = transport.propose_claim_type_input(
         instance_id,
         input=claim_type_input.model_dump(mode="json"),
         proposal_name="example-claim-type",
@@ -763,13 +759,13 @@ def test_shipped_claim_type_and_flow_a_examples_compose_to_a_supported_claim(
         content=b"status: replace-me\n",
         anchor="replace-me",
     )
-    compiled = transport.compile_playbill_authoring(
+    compiled = transport.compile_authoring(
         instance_id,
         payload=bound.model_dump(mode="json"),
     )
     assert compiled.verdict == "passed", compiled.frontier
     intent_id = str(compiled.certificate["intent_id"])
-    submitted = transport.submit_playbill_authoring_intent(instance_id, intent_id)
+    submitted = transport.submit_authoring_intent(instance_id, intent_id)
     assert submitted.status.proposal_id is not None
     _approve_and_activate(
         http,
@@ -779,9 +775,7 @@ def test_shipped_claim_type_and_flow_a_examples_compose_to_a_supported_claim(
     )
 
     claim_id = str(submitted.intent["semantic_identity"])
-    explained = transport.playbill_get(
-        instance_id, request=PlaybillGetRequest(ref=claim_id, detail="why")
-    ).why
+    explained = transport.get(instance_id, request=GetRequest(ref=claim_id, detail="why")).why
     assert explained is not None and explained["verdict"]["verdict"] == "supported"
 
 
@@ -795,7 +789,7 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
     _catalog(workspace)
     transport = CruxibleClient(base_url="http://cruxible")
     transport._client = http  # type: ignore[assignment]
-    pb = Playbill._from_client(transport, instance_id=instance_id, workspace=workspace)
+    pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=workspace)
 
     policy_subject = pb.subject(
         subject="secops.policy/patch-sla",
@@ -999,7 +993,7 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
             ),
         ),
     )
-    query_preflight = transport.compile_playbill_authoring_input(
+    query_preflight = transport.compile_authoring_input(
         instance_id,
         input=QueryDefinitionInput(
             kind="query_definition",
@@ -1009,7 +1003,7 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
     assert query_preflight.verdict == "passed", query_preflight.frontier
     query_intent_id = query_preflight.certificate["intent_id"]
     assert isinstance(query_intent_id, str)
-    submitted_query = transport.submit_playbill_authoring_intent(
+    submitted_query = transport.submit_authoring_intent(
         instance_id,
         query_intent_id,
     )

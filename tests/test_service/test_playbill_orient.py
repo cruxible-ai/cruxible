@@ -18,7 +18,7 @@ from cruxible_core.runtime.permissions import PermissionMode
 from cruxible_core.service.discovery import orient as orient_module
 from cruxible_core.service.discovery.contract_names import CaptureContractNames
 from cruxible_core.service.discovery.orient import OrientCaller, service_playbill_orient
-from cruxible_core.service.list_pages import PlaybillListCursorMismatch
+from cruxible_core.service.list_pages import ListCursorMismatch
 from cruxible_core.service.read_refusals import ReadRefusalError
 from tests.core_support._candidate_support import submit_query_definition_candidate
 from tests.core_support._knowledge_loop_support import (
@@ -195,8 +195,8 @@ def test_next_suggestions_are_rendered_for_each_surface(seeded) -> None:  # type
         f"cruxible playbill query {SUBJECT_KIND} --select status --limit 10",
     )
     assert rendered["sdk"][:2] == (
-        f'pb.orient(kind="{SUBJECT_KIND}")',
-        f'pb.query(kind="{SUBJECT_KIND}", select=["status"], limit=10)',
+        f'cx.orient(kind="{SUBJECT_KIND}")',
+        f'cx.query(kind="{SUBJECT_KIND}", select=["status"], limit=10)',
     )
 
 
@@ -262,11 +262,11 @@ def test_a_section_pages_compact_rows_with_a_bound_cursor(seeded) -> None:  # ty
     assert second.coordinate == first.coordinate
 
     # A cursor continues its own view only, and only at its own coordinate.
-    with pytest.raises(PlaybillListCursorMismatch):
+    with pytest.raises(ListCursorMismatch):
         service_playbill_orient(seeded, section="documents", cursor=first.next_cursor)
-    with pytest.raises(PlaybillListCursorMismatch):
+    with pytest.raises(ListCursorMismatch):
         service_playbill_orient(seeded, cursor=first.next_cursor)
-    with pytest.raises(PlaybillListCursorMismatch, match="different coordinate"):
+    with pytest.raises(ListCursorMismatch, match="different coordinate"):
         service_playbill_orient(
             seeded,
             section="queries",
@@ -633,7 +633,7 @@ def test_orient_without_interfaces_counts_none_and_suggests_no_section(
 def test_modal_evidence_hoists_in_both_views_and_round_trips_empty_exceptions(
     seeded,  # type: ignore[no-untyped-def]
 ) -> None:
-    from cruxible_client.contracts.orient import PlaybillOrientKind
+    from cruxible_client.contracts.orient import OrientKind
 
     evidence = (("feed-a", "feed-b"), ("feed-a", "feed-b"), (), ("other",))
     types = tuple(
@@ -673,7 +673,7 @@ def test_modal_evidence_hoists_in_both_views_and_round_trips_empty_exceptions(
         )
         # Inheritance has the same typed meaning in the compact model.
         assert (
-            PlaybillOrientKind.model_validate(
+            OrientKind.model_validate(
                 {key: value for key, value in wire.items() if key != "sample_subject_ids"}
             )
             .predicates[0]
@@ -683,10 +683,10 @@ def test_modal_evidence_hoists_in_both_views_and_round_trips_empty_exceptions(
 
 
 def test_modal_evidence_ties_are_independent_of_predicate_order() -> None:
-    from cruxible_client.contracts.orient import PlaybillOrientPredicate
+    from cruxible_client.contracts.orient import OrientPredicate
 
     rows = tuple(
-        PlaybillOrientPredicate(
+        OrientPredicate(
             name=str(i), predicate=str(i), cardinality="one", type="string", evidence=value
         )
         for i, value in enumerate((("z",), ("a",)))
@@ -745,7 +745,7 @@ def test_attention_summary_preserves_complete_orient_bytes(
 def test_get_reads_one_provider_interface_card_and_its_inventory_entry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from cruxible_client.contracts.get_reads import PlaybillGetRequest
+    from cruxible_client.contracts.get_reads import GetRequest
     from cruxible_core.service.discovery.discovery import accepted_provider_interfaces
     from cruxible_core.service.discovery.get import service_playbill_get
     from cruxible_core.storage.cas import BodyAccessContext
@@ -755,7 +755,7 @@ def test_get_reads_one_provider_interface_card_and_its_inventory_entry(
 
     card = service_playbill_get(
         instance,
-        request=PlaybillGetRequest(ref="ProviderInterface:demo.interface"),
+        request=GetRequest(ref="ProviderInterface:demo.interface"),
         access=access,
     )
     assert card.kind == "provider_interface" and card.card is not None
@@ -763,7 +763,7 @@ def test_get_reads_one_provider_interface_card_and_its_inventory_entry(
     assert [item["provider"] for item in shown["providers"]] == ["demo-provider"]
     proof = service_playbill_get(
         instance,
-        request=PlaybillGetRequest(ref="ProviderInterface:demo.interface", detail="proof"),
+        request=GetRequest(ref="ProviderInterface:demo.interface", detail="proof"),
         access=access,
     )
     (entry,) = (

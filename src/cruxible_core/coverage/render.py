@@ -2,7 +2,7 @@
 
 §11.7 makes the CLI and the file-based context floor the *reference* surface --
 "reference," not "canonical," because canonical already means accepted state in
-Playbill -- and requires every adapter to reproduce their coverage semantics.
+Cruxible -- and requires every adapter to reproduce their coverage semantics.
 Rendering therefore lives here rather than in the CLI: an adapter that appends
 cards to a tool result renders the same bytes the CLI prints, from the same
 `CoverageResultV3`, without re-deriving anything.
@@ -55,9 +55,9 @@ from cruxible_core.coverage.contracts import (
     LogicalSourceIdentity,
 )
 
-BATCH_SUMMARY_PREFIX = "Playbill coverage:"
-MANIFEST_SUMMARY_PREFIX = "Playbill coverage manifest:"
-UNAVAILABLE_NOTE_PREFIX = "Playbill coverage: unavailable"
+BATCH_SUMMARY_PREFIX = "Cruxible coverage:"
+MANIFEST_SUMMARY_PREFIX = "Cruxible coverage manifest:"
+UNAVAILABLE_NOTE_PREFIX = "Cruxible coverage: unavailable"
 
 # The closed set of reasons an adapter may fail open. Deterministic by
 # construction: a note carries the class of failure and never an exception

@@ -12,11 +12,11 @@ The four arms, and the one thing that separates the last two
 
 1. a standard agent over ordinary files and tools;
 2. the same, plus a genuine notebook/scratchpad control;
-3. the Playbill reference floor, without transparent tool decoration;
+3. the Cruxible reference floor, without transparent tool decoration;
 4. the same, with transparent Read/Grep/Edit/Write coverage delivery.
 
 "Arms 3 and 4 share the same model, harness loop, task corpus, accepted ledger,
-Playbill state, and tool implementations; only the coverage-delivery adapter
+Cruxible state, and tool implementations; only the coverage-delivery adapter
 changes." That sentence is a *testable* claim and this module makes it one:
 :func:`build_arm` constructs arms 3 and 4 identically -- same workspace bytes,
 same configuration, same middleware object -- and the two `ArmSetupV1` records
@@ -120,7 +120,7 @@ def _resolver(client: Any, instance_id: str) -> ResolveCoverage:
     """The embedding recipe: observations in, one frozen coverage result out."""
 
     def resolve(observations: Sequence[WorkingSourceObservation]) -> CoverageResultV3:
-        answered = client.resolve_playbill_coverage(
+        answered = client.resolve_coverage(
             instance_id,
             observations=[item.model_dump(mode="json") for item in observations],
         )
@@ -133,9 +133,7 @@ def _floor_generation_resolver(client: Any, instance_id: str) -> ResolveFloorGen
     """Use the same head read as the CLI hook for floor freshness."""
 
     def generation(at: AcceptedCoordinate | None) -> int:
-        head = client.playbill_head(
-            instance_id, at=None if at is None else at.model_dump(mode="json")
-        )
+        head = client.head(instance_id, at=None if at is None else at.model_dump(mode="json"))
         return int(head.generation)
 
     def resolve(coordinate: AcceptedCoordinate) -> FloorGenerationPairV1:
@@ -478,7 +476,7 @@ def build_arm(
 
     Every arm gets the identical task corpus. Arm 2 adds a real scratchpad
     directory -- the notebook control, a place the agent may write freely that
-    grants nothing. Arms 3 and 4 additionally get the exported Playbill file
+    grants nothing. Arms 3 and 4 additionally get the exported Cruxible file
     surface and the binding configuration, and both construct the middleware:
     arm 3 holds it and never calls it, which is what makes "only the delivery
     adapter changes" true rather than approximately true.
@@ -500,7 +498,7 @@ def build_arm(
     middleware: CoverageMiddlewareV1 | None = None
     if arm in {3, 4}:
         if surface is None:
-            raise ValueError("arms 3 and 4 need the exported Playbill file surface")
+            raise ValueError("arms 3 and 4 need the exported Cruxible file surface")
         _copy_tree(surface, workspace / ".playbill/floor")
         config_path = workspace / CONFIG_RELATIVE_PATH
         config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -511,7 +509,7 @@ def build_arm(
         client = _common._get_client()
         instance_id = load_cli_context().instance_id
         if client is None or not instance_id:  # pragma: no cover - bootstrap ran first
-            raise RuntimeError("no remembered Playbill instance to resolve coverage against")
+            raise RuntimeError("no remembered Cruxible instance to resolve coverage against")
         middleware = coverage_middleware(
             root=workspace,
             config=CoverageWorkspaceConfigV2.model_validate(coverage_config(bundle_dir)),

@@ -6,12 +6,12 @@ import pytest
 
 from cruxible_client import contracts
 from cruxible_core.mcp import handlers
-from cruxible_core.service.discovery.next import PlaybillNextWorkspaceObservationInvalid
+from cruxible_core.service.discovery.next import NextWorkspaceObservationInvalid
 
 
-def _action_result(item_id: str) -> contracts.PlaybillCurationActionResult:
-    return contracts.PlaybillCurationActionResult(
-        coordinate=contracts.PlaybillAcceptedCoordinate(
+def _action_result(item_id: str) -> contracts.CurationActionResult:
+    return contracts.CurationActionResult(
+        coordinate=contracts.AcceptedCoordinate(
             git_oid="1" * 64,
             semantic_root="sha256:" + "2" * 64,
             generation_root="sha256:" + "3" * 64,
@@ -33,8 +33,8 @@ def test_mcp_curation_list_is_one_thin_read_delegate(monkeypatch) -> None:  # ty
     def stub(instance_id: str, *, request: dict[str, object]):  # type: ignore[no-untyped-def]
         seen["instance_id"] = instance_id
         seen["request"] = request
-        return contracts.PlaybillCurationListResult(
-            coordinate=contracts.PlaybillAcceptedCoordinate(
+        return contracts.CurationListResult(
+            coordinate=contracts.AcceptedCoordinate(
                 git_oid="1" * 64,
                 semantic_root="sha256:" + "2" * 64,
                 generation_root="sha256:" + "3" * 64,
@@ -78,7 +78,7 @@ def test_mcp_curation_list_is_one_thin_read_delegate(monkeypatch) -> None:  # ty
                 "disclose_restricted_existence": True,
             },
             "workspace_observation": observation,
-            "limit": contracts.PLAYBILL_CURATION_LIST_DEFAULT_LIMIT,
+            "limit": contracts.CURATION_LIST_DEFAULT_LIMIT,
             "cursor": None,
         },
     }
@@ -99,7 +99,7 @@ def test_mcp_curation_list_rejects_raw_source_observation_with_typed_error(
         ],
     }
 
-    with pytest.raises(PlaybillNextWorkspaceObservationInvalid):
+    with pytest.raises(NextWorkspaceObservationInvalid):
         handlers.handle_playbill_curation_list(
             "inst",
             evaluation_time="2026-08-26T16:00:00+00:00",
@@ -114,7 +114,7 @@ def test_mcp_curation_lifecycle_actions_are_thin_delegates(monkeypatch) -> None:
     def stub(operation: str):  # type: ignore[no-untyped-def]
         def invoke(
             instance_id: str, *, request: dict[str, object]
-        ) -> contracts.PlaybillCurationActionResult:
+        ) -> contracts.CurationActionResult:
             assert instance_id == "inst"
             seen.append((operation, request))
             return _action_result(str(request["item_id"]))

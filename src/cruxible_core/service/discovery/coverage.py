@@ -43,7 +43,7 @@ from cruxible_client.contracts.declared_blocks import (
     ProjectionProcessingLimitExceeded,
     parse_projection_blocks,
 )
-from cruxible_client.contracts.errors import PlaybillCasError, ProposalIntegrityError
+from cruxible_client.contracts.errors import CasError, ProposalIntegrityError
 from cruxible_client.contracts.source_references import (
     ExternalSourceReference,
     LedgerSourceReference,
@@ -55,6 +55,7 @@ from cruxible_core.coverage.adapter import (
     coverage_span_requests,
 )
 from cruxible_core.coverage.contracts import (
+    CitationWindowObservation,
     CoverageAccessProfile,
     CoverageCardBudget,
     CoverageCommitmentMaterializationCorrupt,
@@ -62,7 +63,6 @@ from cruxible_core.coverage.contracts import (
     CoverageRequestV1,
     CoverageResultV3,
     LogicalSourceIdentity,
-    PlaybillCitationWindowObservation,
 )
 from cruxible_core.coverage.indexes import (
     CoverageScanBudget,
@@ -84,7 +84,7 @@ from cruxible_core.coverage.resolver import (
 )
 from cruxible_core.indexes.evidence.citation_coverage import coverage_rows
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+from cruxible_core.service.authoring.documents import AcceptedCoordinate
 from cruxible_core.service.proposals.publications import bound_publication_registrations
 from cruxible_core.storage.cas import BodyAccessContext
 
@@ -110,13 +110,13 @@ def coverage_access_profile() -> CoverageAccessProfile:
 
 def _resolve_coordinate(
     instance: PlaybillInstance,
-    at: PlaybillAcceptedCoordinate | None,
-) -> PlaybillAcceptedCoordinate:
-    if at is not None and not isinstance(at, PlaybillAcceptedCoordinate):
+    at: AcceptedCoordinate | None,
+) -> AcceptedCoordinate:
+    if at is not None and not isinstance(at, AcceptedCoordinate):
         raise ProposalIntegrityError("coverage accepts only verified accepted coordinates")
     if at is None:
-        return PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    return PlaybillAcceptedCoordinate.from_internal(
+        return AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    return AcceptedCoordinate.from_internal(
         instance.resolve_accepted_coordinate(
             git_oid=at.git_oid,
             semantic_root=at.semantic_root,
@@ -129,7 +129,7 @@ def _resolve_coordinate(
 def build_accepted_evidence_index_v2(
     instance: PlaybillInstance,
     *,
-    at: PlaybillAcceptedCoordinate,
+    at: AcceptedCoordinate,
 ) -> EvidenceCitationIndexV2:
     """Export association-native coverage rows and verifier-owned trust."""
     index, _envelopes = _accepted_evidence_inputs_v2(instance, at=at)
@@ -139,7 +139,7 @@ def build_accepted_evidence_index_v2(
 def _accepted_evidence_inputs_v2(
     instance: PlaybillInstance,
     *,
-    at: PlaybillAcceptedCoordinate,
+    at: AcceptedCoordinate,
 ) -> tuple[EvidenceCitationIndexV2, dict[str, CaptureEnvelopeAny]]:
     """Retain only this request's exact envelopes and full digest export.
 
@@ -212,7 +212,7 @@ def _materialized_wanted_selections(
                     if not metadata.present:
                         continue
                     content = store.read(digest, access=access)
-                except PlaybillCasError as exc:
+                except CasError as exc:
                     raise CoverageCommitmentMaterializationCorrupt(
                         "retained commitment bytes failed CAS verification"
                     ) from exc
@@ -249,12 +249,12 @@ def _citation_window_observations(
     observations: Sequence[WorkingSourceObservation],
     envelopes: Mapping[str, CaptureEnvelopeAny],
     retired_associations: Sequence[tuple[LogicalSourceIdentity, str, str]] = (),
-) -> tuple[PlaybillCitationWindowObservation, ...]:
+) -> tuple[CitationWindowObservation, ...]:
     """Observe each accepted citation's original window in its named working source."""
 
     by_source = {item.source.sort_key: item for item in observations}
     source_content: dict[bytes, bytes] = {}
-    windows: dict[tuple[bytes, bytes, int, int], PlaybillCitationWindowObservation] = {}
+    windows: dict[tuple[bytes, bytes, int, int], CitationWindowObservation] = {}
     associations: list[tuple[LogicalSourceIdentity, str, str, str]] = []
     for citation in index.citations:
         if citation.accepted_source is None or citation.byte_length is None:
@@ -303,7 +303,7 @@ def _citation_window_observations(
             observed_digest = (
                 f"sha256:{hashlib.sha256(source_content[source_key][start:end]).hexdigest()}"
             )
-        item = PlaybillCitationWindowObservation(
+        item = CitationWindowObservation(
             source=accepted_source,
             citation_id=citation_id,
             commitment_digest=commitment_digest,
@@ -325,7 +325,7 @@ def _citation_window_observations(
 def _retired_citation_window_inputs(
     instance: PlaybillInstance,
     *,
-    coordinate: PlaybillAcceptedCoordinate,
+    coordinate: AcceptedCoordinate,
     observations: Sequence[WorkingSourceObservation],
 ) -> tuple[tuple[LogicalSourceIdentity, str, str], ...]:
     """Read retired citation windows from the coordinate-bound relation projection.
@@ -419,7 +419,7 @@ def _line_overlay(content: bytes, *, start_byte: int, end_byte: int) -> Coverage
 def _bound_publication_observations(
     instance: PlaybillInstance,
     *,
-    at: PlaybillAcceptedCoordinate,
+    at: AcceptedCoordinate,
     observations: Sequence[WorkingSourceObservation],
 ) -> tuple[BoundPublicationObservation, ...]:
     """Join confirmed publication protocol state to parsed working blocks."""
@@ -500,7 +500,7 @@ def service_resolve_playbill_coverage(
     *,
     instance_id: str,
     observations: Sequence[WorkingSourceObservation],
-    at: PlaybillAcceptedCoordinate | None = None,
+    at: AcceptedCoordinate | None = None,
     budget: CoverageCardBudget | None = None,
     scan_budget: CoverageScanBudget | None = None,
 ) -> CoverageResultV3:

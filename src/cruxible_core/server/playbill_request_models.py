@@ -8,11 +8,11 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from cruxible_client.contracts import (
-    PLAYBILL_CURATION_LIST_DEFAULT_LIMIT,
-    PLAYBILL_CURATION_LIST_MAX_LIMIT,
-    PLAYBILL_NEXT_DEFAULT_LIMIT,
-    PLAYBILL_NEXT_MAX_LIMIT,
-    PlaybillFloorExportPart,
+    CURATION_LIST_DEFAULT_LIMIT,
+    CURATION_LIST_MAX_LIMIT,
+    NEXT_DEFAULT_LIMIT,
+    NEXT_MAX_LIMIT,
+    FloorExportPart,
 )
 from cruxible_client.contracts.attestations import ApprovalAttestation
 from cruxible_client.contracts.authoring.inputs import AuthoringInput
@@ -24,11 +24,14 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringIntentCreateRequestV1,
     AuthoringIntentCreateRequestV2,
 )
+from cruxible_client.contracts.authoring.models import (
+    InsertionAbandonRequest as InsertionAbandonRequest,
+)
 from cruxible_client.contracts.change_control import DryRun, PreviewAt
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.declared_blocks import (
-    PlaybillReviewWorkspaceObservation,
     ProjectionBlockStampAny,
+    ReviewWorkspaceObservation,
 )
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.ledger_mirror import MIRROR_URL_MAX_LENGTH
@@ -67,7 +70,7 @@ PlaybillAuthoringCompileRequestV2 = AuthoringIntentCompileRequestV2
 PlaybillAuthoringCompileRequestV3 = AuthoringIntentCompileRequest
 
 
-class PlaybillInitRequest(_StrictPlaybillRequest):
+class InitRequest(_StrictPlaybillRequest):
     principals: tuple[PrincipalRecord, ...]
     operating_profile: OperatingProfile = "local"
     require_independent_approval: bool = False
@@ -82,7 +85,7 @@ class PlaybillInitRequest(_StrictPlaybillRequest):
     mirror_url: str | None = Field(default=None, max_length=MIRROR_URL_MAX_LENGTH)
 
 
-class PlaybillLedgerMirrorRequest(_StrictPlaybillRequest):
+class LedgerMirrorRequest(_StrictPlaybillRequest):
     """The remote this ledger publishes to. Never a URL carrying a credential."""
 
     url: str = Field(min_length=1, max_length=MIRROR_URL_MAX_LENGTH)
@@ -91,7 +94,7 @@ class PlaybillLedgerMirrorRequest(_StrictPlaybillRequest):
     at: PreviewAt = None
 
 
-class PlaybillLedgerPublishRequest(_StrictPlaybillRequest):
+class LedgerPublishRequest(_StrictPlaybillRequest):
     """Wait at most this many seconds for the configured mirror to acknowledge."""
 
     timeout: float = Field(default=60.0, ge=0.0, le=60.0, allow_inf_nan=False, strict=True)
@@ -99,7 +102,7 @@ class PlaybillLedgerPublishRequest(_StrictPlaybillRequest):
     at: PreviewAt = None
 
 
-class PlaybillInstanceDecommissionRequest(_StrictPlaybillRequest):
+class InstanceDecommissionRequest(_StrictPlaybillRequest):
     """The operator's stated reason for ending this instance's governed writes."""
 
     reason: str = Field(min_length=1, max_length=DECOMMISSION_REASON_MAX_LENGTH)
@@ -117,11 +120,11 @@ class PlaybillInstanceDecommissionRequest(_StrictPlaybillRequest):
         return validate_decommission_prose(value)
 
 
-class PlaybillStoreBodyRequest(_StrictPlaybillRequest):
+class StoreBodyRequest(_StrictPlaybillRequest):
     content_base64: str
 
 
-class PlaybillProposeDocumentRequest(_StrictPlaybillRequest):
+class ProposeDocumentRequest(_StrictPlaybillRequest):
     shell: DocumentShell
     proposal_name: str
     source_compilation_digest: str | None = None
@@ -130,7 +133,7 @@ class PlaybillProposeDocumentRequest(_StrictPlaybillRequest):
     at: PreviewAt = None
 
 
-class PlaybillCompilerUpgradeRequest(_StrictPlaybillRequest):
+class CompilerUpgradeRequest(_StrictPlaybillRequest):
     target: CompilerCoordinate
     base: AcceptedCoordinate
     proposal_name: str
@@ -138,7 +141,7 @@ class PlaybillCompilerUpgradeRequest(_StrictPlaybillRequest):
     at: PreviewAt = None
 
 
-class PlaybillProposePrincipalRequest(_StrictPlaybillRequest):
+class ProposePrincipalRequest(_StrictPlaybillRequest):
     principal: PrincipalRecord
     proposal_name: str
     base: AcceptedCoordinate | None = None
@@ -146,16 +149,16 @@ class PlaybillProposePrincipalRequest(_StrictPlaybillRequest):
     at: PreviewAt = None
 
 
-class PlaybillApprovalRequest(_StrictPlaybillRequest):
+class ApprovalRequest(_StrictPlaybillRequest):
     attestation: ApprovalAttestation
 
 
-class PlaybillReviewRequest(_StrictPlaybillRequest):
+class ReviewRequest(_StrictPlaybillRequest):
     include_body: bool = False
-    workspace_observation: PlaybillReviewWorkspaceObservation | None = None
+    workspace_observation: ReviewWorkspaceObservation | None = None
 
 
-class PlaybillApprovalChallengeRequest(_StrictPlaybillRequest):
+class ApprovalChallengeRequest(_StrictPlaybillRequest):
     signer_id: str
     include_body: bool = False
 
@@ -167,18 +170,18 @@ class PlaybillExplainRequest(_StrictPlaybillRequest):
     include_body: bool = False
 
 
-class PlaybillSourceBundleRequest(_StrictPlaybillRequest):
+class SourceBundleRequest(_StrictPlaybillRequest):
     bundle: SourceCompilationBundle
 
 
-class PlaybillSourceProposeRequest(PlaybillSourceBundleRequest):
+class SourceProposeRequest(SourceBundleRequest):
     source_name: str
     proposal_name: str
     dry_run: DryRun = None
     at: PreviewAt = None
 
 
-class PlaybillProposeClaimTypeRequest(_StrictPlaybillRequest):
+class ProposeClaimTypeRequest(_StrictPlaybillRequest):
     claim_type: ClaimType
     proposal_name: str
     base: AcceptedCoordinate | None = None
@@ -186,7 +189,7 @@ class PlaybillProposeClaimTypeRequest(_StrictPlaybillRequest):
     at: PreviewAt = None
 
 
-class PlaybillProposeClaimTypeInputRequest(_StrictPlaybillRequest):
+class ProposeClaimTypeInputRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-claim-type-input-propose-request-v1"] = (
         "playbill-claim-type-input-propose-request-v1"
     )
@@ -196,14 +199,14 @@ class PlaybillProposeClaimTypeInputRequest(_StrictPlaybillRequest):
     at: PreviewAt = None
 
 
-class PlaybillAuthoringInputCreateRequest(_StrictPlaybillRequest):
+class AuthoringInputCreateRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-authoring-input-create-request-v1"] = (
         "playbill-authoring-input-create-request-v1"
     )
     input: AuthoringInput
 
 
-class PlaybillAuthoringInputCompileRequest(_StrictPlaybillRequest):
+class AuthoringInputCompileRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-authoring-input-compile-request-v1"] = (
         "playbill-authoring-input-compile-request-v1"
     )
@@ -211,36 +214,31 @@ class PlaybillAuthoringInputCompileRequest(_StrictPlaybillRequest):
     intent_id: str | None = None
 
 
-class PlaybillAuthoringPreflightRequest(_StrictPlaybillRequest):
+class AuthoringPreflightRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-authoring-intent-preflight-request-v1"] = (
         "playbill-authoring-intent-preflight-request-v1"
     )
 
 
-class PlaybillAuthoringRebaseRequest(_StrictPlaybillRequest):
+class AuthoringRebaseRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-authoring-intent-rebase-request-v1"] = (
         "playbill-authoring-intent-rebase-request-v1"
     )
 
 
-class PlaybillAuthoringSubmitRequest(_StrictPlaybillRequest):
+class AuthoringSubmitRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-authoring-intent-submit-request-v1"] = (
         "playbill-authoring-intent-submit-request-v1"
     )
 
 
-class PlaybillInsertionAbandonRequest(_StrictPlaybillRequest):
-    tag: Literal["playbill-insertion-abandon-request-v1"] = "playbill-insertion-abandon-request-v1"
-    expectation_id: str | None = None
-
-
-class PlaybillBlockDeclareRequest(_StrictPlaybillRequest):
+class BlockDeclareRequest(_StrictPlaybillRequest):
     """The stamp a workspace just wrote, offered to the instance for registration."""
 
     stamp: ProjectionBlockStampAny
 
 
-class PlaybillBlockDepublishRequest(_StrictPlaybillRequest):
+class BlockDepublishRequest(_StrictPlaybillRequest):
     """The page block whose publication registration is being released."""
 
     source_id: str = Field(min_length=1)
@@ -249,20 +247,20 @@ class PlaybillBlockDepublishRequest(_StrictPlaybillRequest):
     at: PreviewAt = None
 
 
-class PlaybillProposalReadmitRequest(_StrictPlaybillRequest):
+class ProposalReadmitRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-proposal-readmit-request-v1"] = "playbill-proposal-readmit-request-v1"
     dry_run: DryRun = None
     at: PreviewAt = None
 
 
-class PlaybillProposalWithdrawRequest(_StrictPlaybillRequest):
+class ProposalWithdrawRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-proposal-withdraw-request-v1"] = "playbill-proposal-withdraw-request-v1"
     reason: str = Field(min_length=1, max_length=1_000)
     dry_run: DryRun = None
     at: PreviewAt = None
 
 
-class PlaybillNextRequestV1(_StrictPlaybillRequest):
+class NextRequestV1(_StrictPlaybillRequest):
     tag: Literal["playbill-next-request-v1"] = "playbill-next-request-v1"
     at: AcceptedCoordinate | None = None
     evaluation_time: datetime
@@ -270,7 +268,7 @@ class PlaybillNextRequestV1(_StrictPlaybillRequest):
     expiring_within: dict[str, Any] | None = None
     workspace_observation: dict[str, Any] | None = None
     since_result_digest: str | None = None
-    limit: int = Field(default=PLAYBILL_NEXT_DEFAULT_LIMIT, ge=1, le=PLAYBILL_NEXT_MAX_LIMIT)
+    limit: int = Field(default=NEXT_DEFAULT_LIMIT, ge=1, le=NEXT_MAX_LIMIT)
     cursor: str | None = Field(default=None, max_length=2048)
     # Who reads the queue: the surface a repair renders for, and the tools an
     # MCP session advertises. The daemon supplies the caller's tier itself.
@@ -278,7 +276,7 @@ class PlaybillNextRequestV1(_StrictPlaybillRequest):
     caller_tools: tuple[str, ...] | None = None
 
 
-class PlaybillNextRequest(_StrictPlaybillRequest):
+class NextRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-next-request-v2"] = "playbill-next-request-v2"
     at: AcceptedCoordinate | None = None
     evaluation_time: datetime
@@ -286,7 +284,7 @@ class PlaybillNextRequest(_StrictPlaybillRequest):
     expiring_within: dict[str, Any] | None = None
     workspace_observation: dict[str, Any] | None = None
     since_result_digest: str | None = None
-    limit: int = Field(default=PLAYBILL_NEXT_DEFAULT_LIMIT, ge=1, le=PLAYBILL_NEXT_MAX_LIMIT)
+    limit: int = Field(default=NEXT_DEFAULT_LIMIT, ge=1, le=NEXT_MAX_LIMIT)
     cursor: str | None = Field(default=None, max_length=2048)
     at_attestation_head_digest: str | None = Field(
         default=None,
@@ -296,18 +294,16 @@ class PlaybillNextRequest(_StrictPlaybillRequest):
     caller_tools: tuple[str, ...] | None = None
 
 
-class PlaybillCurationListRequest(_StrictPlaybillRequest):
+class CurationListRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-curation-list-request-v1"] = "playbill-curation-list-request-v1"
     evaluation_time: datetime
     access_profile: dict[str, Any]
     workspace_observation: dict[str, Any] | None = None
-    limit: int = Field(
-        default=PLAYBILL_CURATION_LIST_DEFAULT_LIMIT, ge=1, le=PLAYBILL_CURATION_LIST_MAX_LIMIT
-    )
+    limit: int = Field(default=CURATION_LIST_DEFAULT_LIMIT, ge=1, le=CURATION_LIST_MAX_LIMIT)
     cursor: str | None = Field(default=None, max_length=4096)
 
 
-class PlaybillAuditRequest(_StrictPlaybillRequest):
+class AuditRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-audit-request-v1"] = "playbill-audit-request-v1"
     at: AcceptedCoordinate | None = None
     evaluation_time: datetime
@@ -329,7 +325,7 @@ class PlaybillAuditRequest(_StrictPlaybillRequest):
     cursor: dict[str, Any] | None = None
 
 
-class PlaybillCurationOverruleRequest(_StrictPlaybillRequest):
+class CurationOverruleRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-curation-overrule-request-v1"] = "playbill-curation-overrule-request-v1"
     item_id: str
     expected_latest_event_digest: str
@@ -339,7 +335,7 @@ class PlaybillCurationOverruleRequest(_StrictPlaybillRequest):
     at: PreviewAt = None
 
 
-class PlaybillCurationAcceptFixedRequest(_StrictPlaybillRequest):
+class CurationAcceptFixedRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-curation-accept-fixed-request-v1"] = (
         "playbill-curation-accept-fixed-request-v1"
     )
@@ -353,7 +349,7 @@ class PlaybillCurationAcceptFixedRequest(_StrictPlaybillRequest):
     at: PreviewAt = None
 
 
-class PlaybillCurationSuppressRequest(_StrictPlaybillRequest):
+class CurationSuppressRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-curation-suppress-request-v1"] = "playbill-curation-suppress-request-v1"
     item_id: str
     expected_latest_event_digest: str
@@ -365,7 +361,7 @@ class PlaybillCurationSuppressRequest(_StrictPlaybillRequest):
     at: PreviewAt = None
 
 
-class PlaybillResolveCoverageRequest(_StrictPlaybillRequest):
+class ResolveCoverageRequest(_StrictPlaybillRequest):
     """The vendor-neutral coverage request (§11.7).
 
     Observations, never paths: the caller binds each working path to a declared
@@ -381,7 +377,7 @@ class PlaybillResolveCoverageRequest(_StrictPlaybillRequest):
     scan_budget: CoverageScanBudget | None = None
 
 
-class PlaybillFloorDeltaRequest(_StrictPlaybillRequest):
+class FloorDeltaRequest(_StrictPlaybillRequest):
     """Ask for what brings a floor at ``base_generation`` to ``at`` (default: head).
 
     ``base_generation`` and ``base_renderer`` come from the client's own floor
@@ -393,9 +389,9 @@ class PlaybillFloorDeltaRequest(_StrictPlaybillRequest):
     base_renderer: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
 
 
-class PlaybillFloorExportRequest(_StrictPlaybillRequest):
+class FloorExportRequest(_StrictPlaybillRequest):
     at: AcceptedCoordinate | None = None
     format_version: Literal[2, 5] = 5
     # Opt-in parts of a v5 floor; "discovery" adds the discovery cards.
-    include: tuple[PlaybillFloorExportPart, ...] = ()
+    include: tuple[FloorExportPart, ...] = ()
     review_notes_oid: str | None = None

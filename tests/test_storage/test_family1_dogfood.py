@@ -1,4 +1,4 @@
-"""Opt-in PB-E dogfood over the ratified Playbill design and program bytes."""
+"""Opt-in PB-E dogfood over the ratified Cruxible design and program bytes."""
 
 from __future__ import annotations
 
@@ -109,7 +109,7 @@ def test_ratified_specs_survive_supersession_and_projection_rebuild(tmp_path: Pa
     design_body = service_store_playbill_body(instance, content=design_bytes)
     design_v1 = _shell(
         document_id="design",
-        title="Playbill design v6",
+        title="Cruxible design v6",
         body_digest=design_body.digest,
         revision=1,
     )
@@ -118,7 +118,7 @@ def test_ratified_specs_survive_supersession_and_projection_rebuild(tmp_path: Pa
     program_body = service_store_playbill_body(instance, content=program_bytes)
     program_v1 = _shell(
         document_id="program",
-        title="Playbill implementation program v1",
+        title="Cruxible implementation program v1",
         body_digest=program_body.digest,
         revision=1,
     )
@@ -128,7 +128,7 @@ def test_ratified_specs_survive_supersession_and_projection_rebuild(tmp_path: Pa
     design_v2_body = service_store_playbill_body(instance, content=superseding_bytes)
     design_v2 = _shell(
         document_id="design",
-        title="Playbill design v6",
+        title="Cruxible design v6",
         body_digest=design_v2_body.digest,
         revision=2,
         predecessor_digest=document_digest(design_v1).tagged,

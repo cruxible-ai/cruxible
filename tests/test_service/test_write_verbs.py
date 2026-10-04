@@ -20,7 +20,7 @@ from cruxible_client.contracts.captures import COORDINATOR_SELF_SOURCE_CAPTURE_C
 from cruxible_client.contracts.claims import LiteralClaimObject
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import subject_path
-from cruxible_client.contracts.write import PlaybillWriteRequest, WriteOutcome
+from cruxible_client.contracts.write import WriteOutcome, WriteRequest
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring import write_verbs
@@ -55,9 +55,7 @@ def _write(
     who: WriteCaller | None = None,
     **options: Any,
 ) -> WriteOutcome:
-    request = PlaybillWriteRequest.model_validate(
-        {"because": because, "changes": list(changes), **options}
-    )
+    request = WriteRequest.model_validate({"because": because, "changes": list(changes), **options})
     return service_playbill_write(instance, request=request, caller=who or caller())
 
 
@@ -378,10 +376,10 @@ class _Sent(Exception):
 class _Recorder:
     """A client that keeps the request the SDK would send, and sends nothing."""
 
-    def playbill_set(self, _instance_id: str, *, request: Any) -> Any:
+    def set(self, _instance_id: str, *, request: Any) -> Any:
         raise _Sent(request)
 
-    def playbill_write(self, _instance_id: str, *, request: Any) -> Any:
+    def write(self, _instance_id: str, *, request: Any) -> Any:
         raise _Sent(request)
 
 
@@ -390,7 +388,7 @@ def test_every_sdk_evidence_repair_runs_against_the_real_builders(
 ) -> None:
     """The rendered repair is a call the SDK takes, and it sends the change it names."""
 
-    from cruxible_client.authoring.sdk import Playbill
+    from cruxible_client.authoring.sdk import Cruxible
     from cruxible_client.contracts.write import CaptureEvidence
 
     digest = "CAP-" + "b" * 12
@@ -406,7 +404,7 @@ def test_every_sdk_evidence_repair_runs_against_the_real_builders(
         assert warning.repair is not None
         placeholder = f"<CAP- handle of a Capture under {REPORTS.identity.name}>"
         assert placeholder in warning.repair
-        pb = Playbill(
+        pb = Cruxible(
             client=_Recorder(),  # type: ignore[arg-type]
             instance_id="inst",
             workspace=tmp_path,
@@ -416,7 +414,7 @@ def test_every_sdk_evidence_repair_runs_against_the_real_builders(
         with pytest.raises(_Sent) as sent:
             exec(  # noqa: S102 - the repair is the code under test
                 warning.repair.replace(placeholder, digest),
-                {"pb": pb, "CaptureEvidence": CaptureEvidence},
+                {"cx": pb, "CaptureEvidence": CaptureEvidence},
             )
         request = sent.value.request
         assert request.because == "The writer checked it."
@@ -634,13 +632,13 @@ def test_a_capture_handle_names_a_capture_no_accepted_claim_cites_yet(
     # One resolver: the handle the write verbs accept opens in get and
     # read_capture too, though no accepted Claim cites it yet.
     from cruxible_client.contracts.capture_reads import CaptureReadRequest
-    from cruxible_client.contracts.get_reads import PlaybillGetRequest
+    from cruxible_client.contracts.get_reads import GetRequest
     from cruxible_core.service.discovery.get import service_playbill_get
     from cruxible_core.service.evidence.capture_reads import service_read_playbill_capture
     from cruxible_core.storage.cas import BodyAccessContext
 
     reader = BodyAccessContext(principal_id="reader", can_read_body=True)
-    opened = service_playbill_get(instance, request=PlaybillGetRequest(ref=handle), access=reader)
+    opened = service_playbill_get(instance, request=GetRequest(ref=handle), access=reader)
     assert opened.ref == f"Capture:{fresh}"
     read = service_read_playbill_capture(
         instance, request=CaptureReadRequest(capture_digest=handle), access=reader
@@ -908,9 +906,7 @@ def test_a_handle_matching_more_captures_than_the_verification_budget_refuses(
         instance,
         head=head,
         read_at=head,
-        request=PlaybillWriteRequest.model_validate(
-            {"because": "x", "changes": [_set(WI1, "title", "x")]}
-        ),
+        request=WriteRequest.model_validate({"because": "x", "changes": [_set(WI1, "title", "x")]}),
     )
     from cruxible_core.service.evidence import capture_reads
 
@@ -1602,9 +1598,9 @@ def test_independent_approval_leaves_the_write_awaiting_the_named_approvers(
         ),
         (
             "sdk",
-            'pb.proposal("{pid}").approve(signer=<reviewer signer>, '
-            'reviewed=pb.proposal("{pid}").review())',
-            'pb.proposal("{pid}").accept()',
+            'cx.proposal("{pid}").approve(signer=<reviewer signer>, '
+            'reviewed=cx.proposal("{pid}").review())',
+            'cx.proposal("{pid}").accept()',
         ),
     ],
 )
@@ -1648,13 +1644,13 @@ def test_a_contest_row_offers_one_keep_option_per_contender_and_picks_none(
     from cruxible_client.contracts.captures import CanonicalDuration
     from cruxible_core.coverage.contracts import CoverageAccessProfile
     from cruxible_core.indexes.projection import AcceptedCoordinate
-    from cruxible_core.service.discovery.next import PlaybillNextRequestV1, service_playbill_next
+    from cruxible_core.service.discovery.next import NextRequestV1, service_playbill_next
 
     first = _write(instance, _set(WI1, "status", "ready")).changes[0].claim
     second = _write(instance, _set(WI1, "status", "blocked", contend=True)).changes[0].claim
 
     def conflict_rows() -> list[Any]:
-        request = PlaybillNextRequestV1(
+        request = NextRequestV1(
             at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
             evaluation_time=datetime.now(UTC),
             access_profile=CoverageAccessProfile(

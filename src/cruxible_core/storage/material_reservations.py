@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
-from cruxible_client.contracts.errors import PlaybillExecutionError
+from cruxible_client.contracts.errors import ExecutionError
 from cruxible_core.exhaust.records import (
     JournalEventKindV1,
     StoredProcedureJournalRecordV1,
@@ -37,7 +37,7 @@ _STORE_MARKER_NAME = ".procedure-material-store-v1"
 _STORE_MARKER_BYTES = b"playbill-procedure-material-store-v1\n"
 
 
-class ProcedureMaterialReservationError(PlaybillExecutionError):
+class ProcedureMaterialReservationError(ExecutionError):
     """Reservation storage is missing, corrupt, or inconsistent."""
 
 
@@ -626,7 +626,7 @@ class ReservedCaptureStore:
             self._reservations.reserve_locked(reservation)
             metadata = self._bodies.store(content)
         if metadata.digest != reservation.body_digest:
-            raise PlaybillExecutionError("reserved Capture material digest did not reproduce")
+            raise ExecutionError("reserved Capture material digest did not reproduce")
         if all(item.reservation_id != reservation.reservation_id for item in self.pending):
             self.pending.append(reservation)
         return metadata

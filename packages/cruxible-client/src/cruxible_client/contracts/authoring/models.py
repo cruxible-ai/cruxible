@@ -36,7 +36,7 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.captures import CaptureContract
-from cruxible_client.contracts.change_control import PlaybillStateCoordinate
+from cruxible_client.contracts.change_control import StateCoordinate
 from cruxible_client.contracts.claim_attestations import ClaimAttestation
 from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import ClaimType
@@ -76,7 +76,7 @@ from cruxible_client.contracts.triggers import InternalActionName, TriggerSchedu
 from cruxible_client.contracts.types import CompilerCoordinate
 from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
-    PlaybillWorkspaceAdvertisement,
+    WorkspaceAdvertisement,
 )
 
 AUTHORING_INTENT_ID_RE = re.compile(r"^AIT-[0-9a-f]{32}$")
@@ -1488,11 +1488,11 @@ class ChangeSetAuthoringPayload(_StrictAuthoringModel):
     )
     # One authoring intent is one changeset, so the builder that carries eighty
     # members must also carry one: a two-member floor made the SDK's uniform
-    # `pb.changes(...)` path refuse exactly the smallest set an author writes
+    # `cx.changes(...)` path refuse exactly the smallest set an author writes
     # first, and pushed them back onto a second, singular surface to say it.
     members: tuple[AuthoringChangeSetMember, ...] = Field(min_length=1)
     # Why this set exists, in the author's own words. It was already an argument
-    # to `pb.changes(rationale=...)` and it was already hashed into the program
+    # to `cx.changes(rationale=...)` and it was already hashed into the program
     # digest -- which meant the daemon could prove the author wrote SOMETHING and
     # could never read it, so the candidate commit fell back to a mechanical
     # subject. Absent from the canonical bytes when unset, so a payload written
@@ -2587,7 +2587,7 @@ class AuthoringSubmitResult(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-submit-result-v1"] = "playbill-authoring-submit-result-v1"
     intent: _AuthoringIntentResponse
     status: CandidateStatus
-    workspace_advertisement: PlaybillWorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
+    workspace_advertisement: WorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
     # A `revises` submit amends one Claim identity in place rather than adding a
     # second Claim, and nothing in the result said so: the caller saw an ordinary
     # submit and had to re-read the artifact to learn the identity was reused.
@@ -2717,6 +2717,7 @@ class InsertionConfirmResult(_StrictAuthoringModel):
 
 class InsertionAbandonRequest(_StrictAuthoringModel):
     tag: Literal["playbill-insertion-abandon-request-v1"] = "playbill-insertion-abandon-request-v1"
+    expectation_id: str | None = None
 
 
 class InsertionAbandonResult(_StrictAuthoringModel):
@@ -2725,14 +2726,14 @@ class InsertionAbandonResult(_StrictAuthoringModel):
     expectation: InsertionExpectation
 
 
-PlaybillBlockSyncReadStatus: TypeAlias = Literal[
+BlockSyncReadStatus: TypeAlias = Literal[
     "current",
     "successor",
     "refused",
     "unsyncable",
     "unchecked",
 ]
-PlaybillBlockSyncReadReason: TypeAlias = Literal[
+BlockSyncReadReason: TypeAlias = Literal[
     "block_workspace_instance_mismatch",
     "block_backing_missing",
     "block_backing_changed",
@@ -2743,7 +2744,7 @@ PlaybillBlockSyncReadReason: TypeAlias = Literal[
 ]
 
 
-class PlaybillBlockSyncSuccessorCandidate(_StrictAuthoringModel):
+class BlockSyncSuccessorCandidate(_StrictAuthoringModel):
     tag: Literal["playbill-block-sync-successor-candidate-v1"] = (
         "playbill-block-sync-successor-candidate-v1"
     )
@@ -2763,7 +2764,7 @@ def _projection_evaluation_time(value: datetime | None) -> datetime | None:
     return None if value is None else ensure_utc(value)
 
 
-class PlaybillBlockSyncReadRequest(_StrictAuthoringModel):
+class BlockSyncReadRequest(_StrictAuthoringModel):
     tag: Literal["playbill-block-sync-read-request-v1"] = "playbill-block-sync-read-request-v1"
     stamp: ProjectionBlockStampAny
     at: AcceptedCoordinate | None = None
@@ -2786,15 +2787,15 @@ class PlaybillBlockSyncReadRequest(_StrictAuthoringModel):
 class ProjectionDependencyIssue(_StrictAuthoringModel):
     identity: ArtifactIdentity
     status: Literal["stale", "unchecked", "invalid"]
-    reason: PlaybillBlockSyncReadReason
+    reason: BlockSyncReadReason
     detail: str
 
 
-class PlaybillBlockSyncReadResult(_StrictAuthoringModel):
+class BlockSyncReadResult(_StrictAuthoringModel):
     """A currency assessment; body rendering is owned by the author."""
 
     tag: Literal["playbill-block-sync-read-result-v1"] = "playbill-block-sync-read-result-v1"
-    status: PlaybillBlockSyncReadStatus
+    status: BlockSyncReadStatus
     original_artifact_digest: str | None = None
     artifact_digest: str | None = None
     coordinate: AcceptedCoordinate | None = None
@@ -2805,8 +2806,8 @@ class PlaybillBlockSyncReadResult(_StrictAuthoringModel):
     moved_backings: tuple[ProjectionBacking, ...] = ()
     issues: tuple[ProjectionDependencyIssue, ...] = ()
     current_backings: tuple[ProjectionBacking, ...] = ()
-    successor_candidates: tuple[PlaybillBlockSyncSuccessorCandidate, ...] = ()
-    reason: PlaybillBlockSyncReadReason | None = None
+    successor_candidates: tuple[BlockSyncSuccessorCandidate, ...] = ()
+    reason: BlockSyncReadReason | None = None
     detail: str | None = None
 
     @field_validator("original_artifact_digest", "artifact_digest")
@@ -2817,7 +2818,7 @@ class PlaybillBlockSyncReadResult(_StrictAuthoringModel):
         return value
 
     @model_validator(mode="after")
-    def _result_shape(self) -> "PlaybillBlockSyncReadResult":
+    def _result_shape(self) -> "BlockSyncReadResult":
         success = self.status in {"current", "successor"}
         if success != (self.coordinate is not None and self.generation is not None):
             raise ValueError("a block currency verdict names the coordinate it was read at")
@@ -2842,7 +2843,7 @@ class PlaybillBlockSyncReadResult(_StrictAuthoringModel):
         return self
 
 
-class PlaybillProjectionCheckRequest(_StrictAuthoringModel):
+class ProjectionCheckRequest(_StrictAuthoringModel):
     tag: Literal["playbill-projection-check-request-v1"] = "playbill-projection-check-request-v1"
     stamps: tuple[ProjectionBlockStampAny, ...] = Field(max_length=4096)
     at: AcceptedCoordinate | None = None
@@ -2854,14 +2855,14 @@ class PlaybillProjectionCheckRequest(_StrictAuthoringModel):
         return _projection_evaluation_time(value)
 
 
-class PlaybillProjectionCheckResult(_StrictAuthoringModel):
+class ProjectionCheckResult(_StrictAuthoringModel):
     tag: Literal["playbill-projection-check-result-v1"] = "playbill-projection-check-result-v1"
     coordinate: AcceptedCoordinate
     evaluation_time: datetime
-    results: tuple[PlaybillBlockSyncReadResult, ...]
+    results: tuple[BlockSyncReadResult, ...]
 
 
-PlaybillBlockSyncOutcome: TypeAlias = Literal[
+BlockSyncOutcome: TypeAlias = Literal[
     "unchanged",
     "stale",
     "dirty",
@@ -2871,7 +2872,7 @@ PlaybillBlockSyncOutcome: TypeAlias = Literal[
     "refused",
     "unchecked",
 ]
-PlaybillBlockSyncReason: TypeAlias = Literal[
+BlockSyncReason: TypeAlias = Literal[
     "workspace_not_attached",
     "workspace_binding_invalid",
     "workspace_instance_mismatch",
@@ -2894,14 +2895,14 @@ PlaybillBlockSyncReason: TypeAlias = Literal[
 ]
 
 
-class PlaybillBlockSyncItem(_StrictAuthoringModel):
+class BlockSyncItem(_StrictAuthoringModel):
     tag: Literal["playbill-block-sync-item-v1"] = "playbill-block-sync-item-v1"
     path: str
     source_id: str | None = None
     block_id: str | None = None
     currency_policy: Literal["warn", "require_current"] = "warn"
-    outcome: PlaybillBlockSyncOutcome
-    reason: PlaybillBlockSyncReason | None = None
+    outcome: BlockSyncOutcome
+    reason: BlockSyncReason | None = None
     # The prose ``repair_commands`` this replaced were free strings a caller had
     # to parse; the structured carrier names the served operation and its
     # arguments, and a producer that carries none projects the declared repair
@@ -2920,7 +2921,7 @@ class PlaybillBlockSyncItem(_StrictAuthoringModel):
         return {**value, "repair": served_repair_for_refusal(reason).model_dump(mode="python")}
 
     @model_validator(mode="after")
-    def _item_shape(self) -> "PlaybillBlockSyncItem":
+    def _item_shape(self) -> "BlockSyncItem":
         # `stale` and `dirty` are findings, not refusals, but they are just as
         # reasoned: a block whose held list moved names which reason moved it,
         # and a block whose prose moved names that. Every one of them carries a
@@ -2940,15 +2941,15 @@ class PlaybillBlockSyncItem(_StrictAuthoringModel):
         )
 
 
-class PlaybillBlockSyncResult(_StrictAuthoringModel):
+class BlockSyncResult(_StrictAuthoringModel):
     tag: Literal["playbill-block-sync-result-v1"] = "playbill-block-sync-result-v1"
-    items: tuple[PlaybillBlockSyncItem, ...]
+    items: tuple[BlockSyncItem, ...]
     changed_file_count: int = Field(ge=0)
     would_change: bool
     has_refusals: bool
 
     @model_validator(mode="after")
-    def _summary_shape(self) -> "PlaybillBlockSyncResult":
+    def _summary_shape(self) -> "BlockSyncResult":
         changed = {item.path for item in self.items if item.outcome == "detached"}
         prospective = any(item.outcome in {"detached", "would_detach"} for item in self.items)
         # Currency policy gates drift; integrity refusals always fail the check.
@@ -2960,7 +2961,7 @@ class PlaybillBlockSyncResult(_StrictAuthoringModel):
         return self
 
 
-class PlaybillBlockDetachResult(_StrictAuthoringModel):
+class BlockDetachResult(_StrictAuthoringModel):
     """Retired blocks' markers removed from pages, bodies kept; or (preview) which would be.
 
     ``coordinate`` digests the named pages' bytes as this call read them; a
@@ -2970,12 +2971,12 @@ class PlaybillBlockDetachResult(_StrictAuthoringModel):
 
     tag: Literal["playbill-block-detach-result-v1"] = "playbill-block-detach-result-v1"
     status: Literal["detached", "would_detach"]
-    sync: PlaybillBlockSyncResult
-    coordinate: PlaybillStateCoordinate
+    sync: BlockSyncResult
+    coordinate: StateCoordinate
 
 
 __all__ = [
-    "PlaybillBlockDetachResult",
+    "BlockDetachResult",
     "AUTHORING_CANDIDATE_TREE_DIGEST_DOMAIN",
     "AUTHORING_CREATE_FINGERPRINT_DOMAIN",
     "AUTHORING_FRONTIER_DIGEST_DOMAIN",
@@ -3062,18 +3063,18 @@ __all__ = [
     "PublicationPreparation",
     "PublicationPrepareWarning",
     "PublicationSourceObservation",
-    "PlaybillBlockSyncItem",
-    "PlaybillBlockSyncOutcome",
-    "PlaybillBlockSyncReadReason",
-    "PlaybillBlockSyncReadRequest",
-    "PlaybillProjectionCheckRequest",
-    "PlaybillProjectionCheckResult",
+    "BlockSyncItem",
+    "BlockSyncOutcome",
+    "BlockSyncReadReason",
+    "BlockSyncReadRequest",
+    "ProjectionCheckRequest",
+    "ProjectionCheckResult",
     "ProjectionDependencyIssue",
-    "PlaybillBlockSyncReadResult",
-    "PlaybillBlockSyncReadStatus",
-    "PlaybillBlockSyncReason",
-    "PlaybillBlockSyncResult",
-    "PlaybillBlockSyncSuccessorCandidate",
+    "BlockSyncReadResult",
+    "BlockSyncReadStatus",
+    "BlockSyncReason",
+    "BlockSyncResult",
+    "BlockSyncSuccessorCandidate",
     "PreflightCertificate",
     "PreflightResult",
     "ProcedureAuthoringPayloadV1",

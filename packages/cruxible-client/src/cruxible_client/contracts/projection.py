@@ -1,4 +1,4 @@
-"""Pure coordinate contracts for accepted and provisional Playbill state."""
+"""Pure coordinate contracts for accepted and provisional Cruxible state."""
 
 from __future__ import annotations
 

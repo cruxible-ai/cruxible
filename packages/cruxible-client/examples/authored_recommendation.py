@@ -6,7 +6,7 @@ or refs staged in the same ChangeSetDraft.
 The vocabulary must admit authored recommendations under its explicit evidence
 policy. Acceptance records the recommendation; it does not adopt the policy.
 
-Create with stage(pb, subject, fields, Recommendation(...)).prepare().submit().
+Create with stage(cx, subject, fields, Recommendation(...)).prepare().submit().
 Review intent.proposal through the ordinary governed workflow. After acceptance,
 read the two fields from a fresh world and pass those ClaimViews to render().
 Publish the resulting body using the existing block API. This renderer itself
@@ -24,7 +24,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from typing import Literal
 
-from cruxible_client import ClaimRef, ClaimRole, ClaimTypeRef, Disposition, Playbill, SubjectRef
+from cruxible_client import ClaimRef, ClaimRole, ClaimTypeRef, Cruxible, Disposition, SubjectRef
 from cruxible_client.authoring.sdk import ChangeSetDraft, ClaimView
 
 Field = Literal["rule", "rationale"]
@@ -42,7 +42,7 @@ class Recommendation:
 
 
 def stage(
-    pb: Playbill | ChangeSetDraft,
+    cx: Cruxible | ChangeSetDraft,
     subject: SubjectRef,
     fields: Mapping[Field, ClaimTypeRef],
     record: Recommendation,
@@ -77,7 +77,7 @@ def stage(
         sort_keys=True,
         separators=(",", ":"),
     )
-    change = pb if isinstance(pb, ChangeSetDraft) else pb.changes(rationale=record.rationale)
+    change = cx if isinstance(cx, ChangeSetDraft) else cx.changes(rationale=record.rationale)
     for name in changed:
         replaces = replacements.get(name)
         change.claim(

@@ -13,7 +13,7 @@ from cruxible_client.contracts.candidates import (
     CandidateMemberLawEvidence,
 )
 from cruxible_client.contracts.documents import render_document
-from cruxible_client.contracts.errors import PlaybillGitError
+from cruxible_client.contracts.errors import GitError
 from cruxible_core.proposals.proposal_message import (
     SUBJECT_LIMIT,
     generation_commit_message,
@@ -124,14 +124,14 @@ def test_an_oversize_summary_is_truncated_in_the_subject_and_kept_whole_below() 
 
 
 def test_a_refused_proposal_keeps_the_bare_ledger_subject() -> None:
-    assert proposal_commit_message(()) == "Record Playbill proposal\n"
+    assert proposal_commit_message(()) == "Record proposal\n"
 
 
 def test_a_generation_names_its_sequence_and_carries_the_same_member_roll() -> None:
     members = (_law_member(DOCUMENT_PATH),)
 
     assert generation_commit_message(members, sequence=4).splitlines() == [
-        "Accept Playbill generation 4",
+        "Accept generation 4",
         "",
         f"create document {DOCUMENT_PATH}",
     ]
@@ -210,7 +210,7 @@ def test_the_settled_generation_names_its_sequence_and_repeats_the_member_roll(
 
     assert receipt.status == "accepted"
     assert _message(instance._ledger.path, "refs/heads/main").splitlines() == [
-        "Accept Playbill generation 1",
+        "Accept generation 1",
         "",
         f"create document {DOCUMENT_PATH}",
     ]
@@ -224,7 +224,7 @@ def test_the_ledger_refuses_a_blank_commit_message(tmp_path: Path) -> None:
     tree = _proposal_tree(instance, _shell(body.digest))
     tree[DOCUMENT_PATH] = render_document(_shell(body.digest))
 
-    with pytest.raises(PlaybillGitError, match="nonblank prose summary"):
+    with pytest.raises(GitError, match="nonblank prose summary"):
         instance._ledger.create_proposal_commit(
             tree,
             base_oid=instance.inspect().head_oid,

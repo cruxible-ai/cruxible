@@ -6,12 +6,12 @@ import pytest
 from pydantic import ValidationError
 
 from cruxible_client import contracts
-from cruxible_client.contracts.ledger_mirror import PlaybillLedgerMirrorUnset
+from cruxible_client.contracts.ledger_mirror import LedgerMirrorUnset
 from cruxible_core.errors import PermissionDeniedError
 from cruxible_core.ledger.ledger_mirror import LedgerMirrorStateV1
 from cruxible_core.runtime import playbill_api
 from cruxible_core.runtime.permissions import PermissionMode, request_permission_scope
-from cruxible_core.server.playbill_request_models import PlaybillLedgerPublishRequest
+from cruxible_core.server.playbill_request_models import LedgerPublishRequest
 
 
 def _state(tmp_path):
@@ -31,14 +31,14 @@ def _state(tmp_path):
 @pytest.mark.parametrize("timeout", [-1, 61, True, "1", float("nan"), float("inf")])
 def test_publish_request_rejects_unbounded_or_coerced_wait(timeout):
     with pytest.raises(ValidationError):
-        PlaybillLedgerPublishRequest(timeout=timeout)
+        LedgerPublishRequest(timeout=timeout)
 
 
 def test_publish_request_defaults_and_zero_wait(tmp_path):
-    assert PlaybillLedgerPublishRequest().timeout == 60
-    assert PlaybillLedgerPublishRequest(timeout=0).timeout == 0
+    assert LedgerPublishRequest().timeout == 60
+    assert LedgerPublishRequest(timeout=0).timeout == 0
     with pytest.raises(ValidationError):
-        PlaybillLedgerPublishRequest(timeout=0, url=str(tmp_path / "not-configurable-here"))
+        LedgerPublishRequest(timeout=0, url=str(tmp_path / "not-configurable-here"))
 
 
 def test_runtime_barrier_preserves_own_acknowledgment_with_newer_request(monkeypatch, tmp_path):
@@ -78,7 +78,7 @@ def test_runtime_publish_requires_preconfigured_destination(monkeypatch):
         playbill_api, "get_playbill_manager", lambda: SimpleNamespace(get=lambda _: instance)
     )
     with request_permission_scope(PermissionMode.GOVERNED_WRITE):
-        with pytest.raises(PlaybillLedgerMirrorUnset):
+        with pytest.raises(LedgerMirrorUnset):
             playbill_api.playbill_ledger_publish("inst_test")
 
 
@@ -98,7 +98,7 @@ def test_http_publish_forwards_bounded_wait_and_returns_full_status(
     path = f"/api/v1/{instance_id}/playbill/ledger/publish"
     result = client.post(path, json={"timeout": 0})
     assert result.status_code == 200, result.text
-    assert contracts.PlaybillLedgerMirror.model_validate(result.json()) == receipt
+    assert contracts.LedgerMirror.model_validate(result.json()) == receipt
     assert calls == [(instance_id, 0)]
     assert client.post(path, json={"timeout": 61}).status_code == 422
     assert calls == [(instance_id, 0)]

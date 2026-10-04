@@ -17,7 +17,7 @@ from cruxible_client import contracts as api
 class ClaimTypeRead(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    coordinate: api.PlaybillAcceptedCoordinate
+    coordinate: api.AcceptedCoordinate
     path: str
     predicate: str
     identity: str
@@ -28,5 +28,5 @@ class ClaimTypeRead(BaseModel):
 class ClaimTypeListing(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    coordinate: api.PlaybillAcceptedCoordinate
+    coordinate: api.AcceptedCoordinate
     claim_types: list[ClaimTypeRead]

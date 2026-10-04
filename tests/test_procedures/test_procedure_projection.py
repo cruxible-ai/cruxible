@@ -179,7 +179,7 @@ def test_runtime_policy_artifact_kind_begins_at_the_p2_b0_compiler() -> None:
 def test_replay_registry_copies_the_authoritative_runtime_registry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime = projection_extensions_module.playbill_runtime_extension_registry()
+    runtime = projection_extensions_module.runtime_extension_registry()
 
     def classification_listing_is_not_a_copy(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("registry copy must not enumerate known classifications")
@@ -187,7 +187,7 @@ def test_replay_registry_copies_the_authoritative_runtime_registry(
     with monkeypatch.context() as guarded:
         guarded.setattr(
             projection_extensions_module,
-            "playbill_runtime_extension_registry",
+            "runtime_extension_registry",
             lambda: runtime,
         )
         guarded.setattr(
@@ -195,7 +195,7 @@ def test_replay_registry_copies_the_authoritative_runtime_registry(
             "declarations",
             classification_listing_is_not_a_copy,
         )
-        replay = projection_extensions_module.playbill_replay_extension_registry()
+        replay = projection_extensions_module.replay_extension_registry()
 
     for classification in get_args(ProjectionFactClassification):
         assert replay.declarations(classification) == runtime.declarations(classification)

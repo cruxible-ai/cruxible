@@ -36,7 +36,7 @@ from cruxible_client.contracts.candidates import (
     CandidateMemberLawEvidence,
     MemberLawEvaluation,
 )
-from cruxible_client.contracts.errors import PlaybillFormatError, ProjectionIntegrityError
+from cruxible_client.contracts.errors import FormatError, ProjectionIntegrityError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.compiler.projection_artifacts import ArtifactEnvelopeRow
 from cruxible_core.compiler.upgrades import compiler_after_record
@@ -272,7 +272,7 @@ class HistoryReader:
 
     def generation(self, sequence: int) -> AcceptedGenerationLocation:
         if sequence < 0 or sequence > self.sequence:
-            raise PlaybillFormatError("generation is outside requested accepted history")
+            raise FormatError("generation is outside requested accepted history")
         row = self._connection.execute(
             "SELECT * FROM accepted_generations WHERE sequence=?", (sequence,)
         ).fetchone()
@@ -287,7 +287,7 @@ class HistoryReader:
             (at.git_oid, self.sequence, at.semantic_root, at.generation_root, at.compiler_digest),
         ).fetchall()
         if len(rows) != 1:
-            raise PlaybillFormatError("coordinate is not one generation in requested history")
+            raise FormatError("coordinate is not one generation in requested history")
         return AcceptedGenerationLocation(*rows[0])
 
     def accepted_coordinates(self) -> frozenset[AcceptedCoordinate]:
@@ -342,7 +342,7 @@ class HistoryReader:
     def member_paths_after(self, sequence: int) -> frozenset[str]:
         """Every member path the change records after ``sequence`` touched, to this cutoff."""
         if sequence < 0 or sequence > self.sequence:
-            raise PlaybillFormatError("generation is outside requested accepted history")
+            raise FormatError("generation is outside requested accepted history")
         return frozenset(
             str(row[0])
             for row in self._connection.execute(
@@ -424,7 +424,7 @@ class HistoryReader:
         """Every member path the change records in ``(low, high]`` touched."""
 
         if not 0 <= low <= high <= self.sequence:
-            raise PlaybillFormatError("generation is outside requested accepted history")
+            raise FormatError("generation is outside requested accepted history")
         return frozenset(
             str(row[0])
             for row in self._connection.execute(
@@ -587,7 +587,7 @@ class HistoryReader:
                 (artifact_digest, self.sequence),
             ).fetchall()
             if len(identities) > 1:
-                raise PlaybillFormatError("one accepted artifact digest names multiple identities")
+                raise FormatError("one accepted artifact digest names multiple identities")
             if not identities:
                 return None
             identity = identities[0][0]
@@ -601,7 +601,7 @@ class HistoryReader:
     def versions_at(self, sequence: int) -> tuple[ArtifactVersionLocation, ...]:
         """The exact artifact versions one generation introduced, by its sequence index."""
         if sequence < 0 or sequence > self.sequence:
-            raise PlaybillFormatError("generation is outside requested accepted history")
+            raise FormatError("generation is outside requested accepted history")
         rows = self._connection.execute(
             "SELECT * FROM artifact_versions WHERE occurrence_sequence=? "
             "ORDER BY identity,artifact_digest",

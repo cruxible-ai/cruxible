@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from cruxible_client import Playbill
+from cruxible_client import Cruxible
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.authoring import coordinator as authoring_coordinator
 from tests.test_server.test_playbill_change_set_surfaces import (
@@ -17,7 +17,7 @@ from tests.test_server.test_playbill_change_set_surfaces import (
 )
 
 
-def _playbill(http: TestClient, instance_id: str, workspace: Path) -> tuple[Playbill, list[str]]:
+def _playbill(http: TestClient, instance_id: str, workspace: Path) -> tuple[Cruxible, list[str]]:
     transport = CruxibleClient(base_url="http://cruxible")
     transport._client = http  # type: ignore[assignment]
     requests: list[str] = []
@@ -29,7 +29,7 @@ def _playbill(http: TestClient, instance_id: str, workspace: Path) -> tuple[Play
 
     http.request = recorded  # type: ignore[method-assign]
     workspace.mkdir(exist_ok=True)
-    pb = Playbill._from_client(transport, instance_id=instance_id, workspace=workspace)
+    pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=workspace)
     return pb, requests
 
 

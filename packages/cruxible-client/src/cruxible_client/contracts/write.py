@@ -26,9 +26,9 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
 
-from cruxible_client.contracts import PlaybillAcceptedCoordinate
+from cruxible_client.contracts import AcceptedCoordinate
 from cruxible_client.contracts.authoring.models import WorkingSelectionObservation
-from cruxible_client.contracts.get_reads import PlaybillGetCoordinate, PlaybillReadSurface
+from cruxible_client.contracts.get_reads import GetCoordinate, ReadSurface
 
 SUBJECT_REF_PATTERN = r"^[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*/[a-z][a-z0-9_.-]{0,255}$"
 CLAIM_ID_PATTERN = r"^(?:Claim:)?CLM-[0-9a-f]{32}$"
@@ -305,27 +305,25 @@ class _WriteRequestBase(_StrictWriteModel):
         default="if_allowed",
         description="if_allowed: accept in this call when policy lets you; never: only propose.",
     )
-    at: PlaybillAcceptedCoordinate | str | None = Field(
+    at: AcceptedCoordinate | str | None = Field(
         default=None,
         description=(
             "The coordinate you read at (a git oid or a unique 12+ hex prefix). A "
             "set refuses if its slot changed since; default: the current head."
         ),
     )
-    surface: PlaybillReadSurface = "mcp"
+    surface: ReadSurface = "mcp"
     full_coordinate: bool = False
 
     @field_validator("at")
     @classmethod
-    def _at(
-        cls, value: PlaybillAcceptedCoordinate | str | None
-    ) -> PlaybillAcceptedCoordinate | str | None:
+    def _at(cls, value: AcceptedCoordinate | str | None) -> AcceptedCoordinate | str | None:
         if isinstance(value, str) and not _GIT_OID.fullmatch(value):
             raise ValueError("at must be an accepted coordinate or a lowercase hex git oid")
         return value
 
 
-class PlaybillSetRequest(_WriteRequestBase):
+class SetRequest(_WriteRequestBase):
     tag: Literal["playbill-set-request-v1"] = "playbill-set-request-v1"
     subject: SubjectRef
     field: FieldName
@@ -347,7 +345,7 @@ class PlaybillSetRequest(_WriteRequestBase):
         )
 
 
-class PlaybillRetireRequest(_WriteRequestBase):
+class RetireRequest(_WriteRequestBase):
     tag: Literal["playbill-retire-request-v1"] = "playbill-retire-request-v1"
     target: ClaimId | SlotRef
     reason: WriteRetireReason = "was-rescinded"
@@ -357,7 +355,7 @@ class PlaybillRetireRequest(_WriteRequestBase):
         return RetireChange(target=self.target, reason=self.reason, expect=self.expect)
 
 
-class PlaybillWriteRequest(_WriteRequestBase):
+class WriteRequest(_WriteRequestBase):
     tag: Literal["playbill-write-request-v1"] = "playbill-write-request-v1"
     subject: SubjectRef | None = Field(
         default=None,
@@ -370,17 +368,17 @@ class PlaybillWriteRequest(_WriteRequestBase):
 
 
 def as_write_request(
-    request: PlaybillSetRequest | PlaybillRetireRequest | PlaybillWriteRequest,
-) -> PlaybillWriteRequest:
+    request: SetRequest | RetireRequest | WriteRequest,
+) -> WriteRequest:
     """Every write is a batch; ``set`` and ``retire`` are batches of one."""
 
-    if isinstance(request, PlaybillWriteRequest):
+    if isinstance(request, WriteRequest):
         return request
     common = request.model_dump(
         include={"because", "dry_run", "accept", "at", "surface", "full_coordinate"}
     )
     common["at"] = request.at
-    return PlaybillWriteRequest(changes=(request.change(),), **common)
+    return WriteRequest(changes=(request.change(),), **common)
 
 
 # -- outcome --------------------------------------------------------------------
@@ -516,18 +514,18 @@ class WriteOutcome(_StrictWriteModel):
     changes: tuple[ChangeOutcome, ...] = ()
     subjects_added: tuple[str, ...] = Field(default=(), exclude_if=_omit_empty)
     proposal: WriteProposalRef | None = Field(default=None, exclude_if=_omit_none)
-    coordinate: PlaybillGetCoordinate = Field(
+    coordinate: GetCoordinate = Field(
         description=(
             "Accepted: the new generation. Otherwise the head this write was checked "
             "against; pass it back as `at` to pin a later write to it."
         )
     )
-    base: PlaybillGetCoordinate | None = Field(
+    base: GetCoordinate | None = Field(
         default=None,
         exclude_if=_omit_none,
         description="Accepted only: the head the write was checked against.",
     )
-    accepted_coordinate: PlaybillAcceptedCoordinate | None = Field(
+    accepted_coordinate: AcceptedCoordinate | None = Field(
         default=None,
         exclude_if=_omit_none,
         description="The full accepted coordinate, when the request asked for it.",
@@ -556,9 +554,9 @@ __all__ = [
     "FieldName",
     "FileEvidence",
     "NewerCaptureNotCitableWarning",
-    "PlaybillRetireRequest",
-    "PlaybillSetRequest",
-    "PlaybillWriteRequest",
+    "RetireRequest",
+    "SetRequest",
+    "WriteRequest",
     "RetireChange",
     "SelfEvidence",
     "SetChange",

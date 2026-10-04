@@ -18,9 +18,9 @@ from cruxible_client.contracts.documents import (
     DocumentShell,
 )
 from cruxible_client.contracts.errors import (
-    PlaybillBootstrapError,
-    PlaybillFormatError,
-    PlaybillReseedRequired,
+    BootstrapError,
+    FormatError,
+    ReseedRequired,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import utc_now
@@ -293,7 +293,7 @@ def test_workspace_dedupe_never_replaces_an_explicit_host_id(
     with pytest.raises(
         ConfigError,
         match=(
-            "already attached to Playbill host 'inst_workspace_owner'.*"
+            "already attached to Cruxible host 'inst_workspace_owner'.*"
             "before creating 'inst_workspace_other'"
         ),
     ):
@@ -302,7 +302,7 @@ def test_workspace_dedupe_never_replaces_an_explicit_host_id(
             workspace_root=str(workspace),
             workspace_attachment_authorized=True,
         )
-    with pytest.raises(ConfigError, match="already attached to Playbill host"):
+    with pytest.raises(ConfigError, match="already attached to Cruxible host"):
         host_api.create_playbill_host(
             workspace_root=str(workspace),
             workspace_attachment_authorized=True,
@@ -312,7 +312,7 @@ def test_workspace_dedupe_never_replaces_an_explicit_host_id(
     monkeypatch.setattr(registry, "get_governed_instance_by_workspace_root", lambda _path: None)
     with pytest.raises(
         ConfigError,
-        match="already attached to Playbill host 'inst_workspace_owner'",
+        match="already attached to Cruxible host 'inst_workspace_owner'",
     ):
         host_api.create_playbill_host(
             instance_id="inst_workspace_race",
@@ -383,7 +383,7 @@ def test_pre_pc_hr_nested_instance_requires_reseed(host_client: TestClient) -> N
     registered = get_registry().create_governed_instance_with_id("inst_legacy_nested")
     (Path(registered.record.location) / ".cruxible/playbill-v1").mkdir(parents=True)
 
-    with pytest.raises(PlaybillReseedRequired, match="playbill.instance.reseed_required"):
+    with pytest.raises(ReseedRequired, match="playbill.instance.reseed_required"):
         get_playbill_manager().get("inst_legacy_nested")
 
 
@@ -412,9 +412,9 @@ def test_managed_root_and_trust_root_must_be_archived_together(
     managed_root.rename(tmp_path / "archived-instance")
     get_playbill_manager().clear()
 
-    with pytest.raises(PlaybillReseedRequired):
+    with pytest.raises(ReseedRequired):
         get_playbill_manager().get("inst_archive_pair")
-    with pytest.raises(PlaybillReseedRequired):
+    with pytest.raises(ReseedRequired):
         get_playbill_manager().initialize(
             "inst_archive_pair",
             client_principals=(owner.principal,),
@@ -502,7 +502,7 @@ def test_playbill_init_retry_is_idempotent_only_for_the_exact_bootstrap_request(
         kind="ordinary",
         forbidden_roots=(Path(record.location),),
     )
-    with pytest.raises(PlaybillBootstrapError, match="different principal set"):
+    with pytest.raises(BootstrapError, match="different principal set"):
         playbill_api.playbill_init(
             "inst_exact_init_retry",
             principals=(different_owner.principal,),
@@ -1437,7 +1437,7 @@ def test_a_detach_refuses_while_the_host_still_registers_a_published_block(
     and that is the state with no repair from inside the workspace. It had no
     test at all.
 
-    The host's Playbill state is supplied through the manager's declared
+    The host's Cruxible state is supplied through the manager's declared
     testing seam so that the registration under test is a REAL bound
     publication -- the record an instance that published before the
     two-block-kinds ruling still holds -- rather than a stub standing in for
@@ -1511,7 +1511,7 @@ def test_a_host_that_cannot_be_opened_refuses_a_detach_instead_of_reading_as_emp
 ) -> None:
     """An unreadable host is not a host that published nothing.
 
-    Only "Playbill was never initialized here" means there are no registrations
+    Only "Cruxible was never initialized here" means there are no registrations
     to strand. Every other way of failing to open the host means they could not
     be READ, and treating that as an empty set would let a transient fault
     permit exactly the detach this refusal exists to prevent.
@@ -1534,7 +1534,7 @@ def test_a_host_that_cannot_be_opened_refuses_a_detach_instead_of_reading_as_emp
     manager.clear()
 
     def _fail(instance_id: str):  # type: ignore[no-untyped-def]
-        raise PlaybillFormatError("persisted Playbill trust root is malformed")
+        raise FormatError("persisted Cruxible trust root is malformed")
 
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(type(manager), "get", staticmethod(_fail))

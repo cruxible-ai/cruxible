@@ -1,4 +1,4 @@
-"""Reviewed intent descriptions for the Playbill MCP surface."""
+"""Reviewed intent descriptions for the Cruxible MCP surface."""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need adapter and daemon versions with state, auth, and host metadata."
     ),
     "cruxible_playbill_init": (
-        "Use when you need to bootstrap Playbill from client-generated public keys."
+        "Use when you need to bootstrap Cruxible from client-generated public keys."
     ),
     "cruxible_playbill_store_body": (
         "Use when you need to store exact Document bytes inertly before proposing them."
@@ -72,7 +72,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "activates. Pass the reviewed candidate_digest to bind it to what you read."
     ),
     "cruxible_playbill_activate": (
-        "Use when an admitted Playbill candidate has satisfied any committed requirements and "
+        "Use when an admitted Cruxible candidate has satisfied any committed requirements and "
         "is ready to settle."
     ),
     "cruxible_playbill_orient": (

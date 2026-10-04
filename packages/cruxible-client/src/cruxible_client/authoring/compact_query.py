@@ -26,13 +26,13 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
-from cruxible_client.authoring.sdk_types import LiteralValue, PlaybillSdkError, SubjectRef
+from cruxible_client.authoring.sdk_types import LiteralValue, SdkError, SubjectRef
 from cruxible_client.contracts.compact_query import (
     QUERY_FILTER_OPERATORS,
-    PlaybillQueryColumn,
-    PlaybillQueryRequest,
-    PlaybillQueryResult,
+    QueryColumn,
     QueryFilter,
+    QueryRequest,
+    QueryResultRecord,
     query_filter,
 )
 from cruxible_client.contracts.get_display import exact_content_marker_text
@@ -42,7 +42,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from cruxible_client.authoring.world import World
 
 
-class QueryNameError(PlaybillSdkError):
+class QueryNameError(SdkError):
     """A query names a field, operator or value the World's vocabulary does not hold."""
 
     code = "playbill.sdk.query_name_refused"
@@ -59,13 +59,13 @@ class QueryNameError(PlaybillSdkError):
 class QueryResult:
     """One page of a ``query`` answer, values first.
 
-    Iterate it for row dicts. Next: ``result.next_page()`` while ``truncated``; ``pb.get(ref)``
+    Iterate it for row dicts. Next: ``result.next_page()`` while ``truncated``; ``cx.get(ref)``
     on a row's ref or Claim ID for evidence and history.
     """
 
     def __init__(
         self,
-        page: PlaybillQueryResult,
+        page: QueryResultRecord,
         *,
         fetch: Callable[[str], QueryResult] | None = None,
     ) -> None:
@@ -81,7 +81,7 @@ class QueryResult:
         return [dict(row) for row in self.page.rows]
 
     @property
-    def columns(self) -> tuple[PlaybillQueryColumn, ...]:
+    def columns(self) -> tuple[QueryColumn, ...]:
         """What each column holds: field, predicate and value shape. Next: ``result.rows``."""
 
         return self.page.columns
@@ -111,7 +111,7 @@ class QueryResult:
     def receipt(self) -> Any:
         """The replay receipt: the request, coordinate and result digest.
 
-        Next: ``pb.at(...)`` with its coordinate to read the same state again.
+        Next: ``cx.at(...)`` with its coordinate to read the same state again.
         """
 
         return self.page.receipt
@@ -183,7 +183,7 @@ def _cell(value: object) -> str:
     return text if len(text) <= _CELL_WIDTH else text[: _CELL_WIDTH - 1] + "…"
 
 
-def render_query_table(page: PlaybillQueryResult) -> str:
+def render_query_table(page: QueryResultRecord) -> str:
     """An aligned table of the page's values and flags, then its notes."""
 
     names = [column.name for column in page.columns]
@@ -443,10 +443,10 @@ class CompactQuery:
 
         return self._with(limit=count)
 
-    def request(self) -> PlaybillQueryRequest:
-        """The ``pb.query`` request this builds, checked against the World.
+    def request(self) -> QueryRequest:
+        """The ``cx.query`` request this builds, checked against the World.
 
-        Next: ``.run()``, or pass it to ``pb.query(...)`` yourself.
+        Next: ``.run()``, or pass it to ``cx.query(...)`` yourself.
         """
 
         fields: dict[str, Any] = {
@@ -457,7 +457,7 @@ class CompactQuery:
         }
         if self._limit is not None:
             fields["limit"] = self._limit
-        return PlaybillQueryRequest(**fields)
+        return QueryRequest(**fields)
 
     def run(self) -> QueryResult:
         """Answer one page at the World's coordinate.

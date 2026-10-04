@@ -20,7 +20,7 @@ from cruxible_client.contracts.captures import (
     capture_contract_path,
     render_capture_contract,
 )
-from cruxible_client.contracts.errors import PlaybillExecutionError
+from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedure_mandates import (
     procedure_mandate_digest,
     procedure_mandate_path,
@@ -266,7 +266,7 @@ def test_line_identity_and_closure_select_only_bound_sources(tmp_path, monkeypat
     assert reads == []
     wrong_pin = pin.model_copy(update={"artifact_digest": "sha256:" + "ab" * 32})
     wrong = accepted.model_copy(update={"line": selected.model_copy(update={"pins": (wrong_pin,)})})
-    with pytest.raises(PlaybillExecutionError, match="does not reproduce"):
+    with pytest.raises(ExecutionError, match="does not reproduce"):
         _assert_line_closure_complete(instance, wrong, coordinate)
 
 

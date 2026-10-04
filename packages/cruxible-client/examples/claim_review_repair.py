@@ -16,10 +16,10 @@ from cruxible_client import (
     Cardinality,
     ClaimObjectKind,
     ClaimRole,
+    Cruxible,
     Disposition,
     Duration,
     LocalEd25519ApprovalSigner,
-    Playbill,
     ReferentSensitivity,
     ReviewedProposal,
 )
@@ -33,7 +33,7 @@ SOURCE = "corpus.sdk-demo"
 
 
 def run(
-    pb: Playbill,
+    cx: Cruxible,
     workspace: Path,
     signer: ApprovalSigner,
     *,
@@ -55,8 +55,8 @@ def run(
         encoding="utf-8",
     )
     source.write_text("Patch within forty-eight hours.\n", encoding="utf-8")
-    subject = pb.subject(subject=SUBJECT, pins=(), lifecycle=ArtifactLifecycle())
-    claim_type = pb.claim_type(
+    subject = cx.subject(subject=SUBJECT, pins=(), lifecycle=ArtifactLifecycle())
+    claim_type = cx.claim_type(
         predicate=PREDICATE,
         subject_kinds=("sdk.demo",),
         object_kind=ClaimObjectKind.LITERAL,
@@ -88,10 +88,10 @@ def run(
         proposal.approve(signer=signer, reviewed=reviewed)
         if not accept_decision(proposal_id):
             raise RuntimeError(f"Left approved proposal {proposal_id} pending acceptance")
-        receipt = pb.accept(proposal_id)
+        receipt = cx.accept(proposal_id)
         if receipt.status != "accepted":
             raise RuntimeError(f"Acceptance did not win: {receipt.status}")
-        world = pb.world()
+        world = cx.world()
         assert receipt.accepted_coordinate is not None
         assert world.coordinate.model_dump(mode="json") == receipt.accepted_coordinate.model_dump(
             mode="json"
@@ -102,35 +102,35 @@ def run(
         return rows[0]
 
     first = settle(
-        pb.claim(
+        cx.claim(
             subject=subject.address,
             predicate=claim_type.predicate,
             value=48,
             role=ClaimRole.NORMATIVE,
             rationale="Runbook gives the initial deadline.",
-            supported_by=pb.file("sdk-demo.md").anchor("forty-eight hours"),
+            supported_by=cx.file("sdk-demo.md").anchor("forty-eight hours"),
             subject_definition=subject,
             claim_type_definition=claim_type,
         ).prepare()
     )
-    pb.audit()  # Free deterministic audit worklist.
+    cx.audit()  # Free deterministic audit worklist.
     source.write_text("Patch within forty-nine hours.\n", encoding="utf-8")
-    drift = pb.next(expiring_within=Duration.days(count=7))
+    drift = cx.next(expiring_within=Duration.days(count=7))
     assert any(row.reason == "citation_drifted" for row in drift.items)
     repaired = settle(
-        pb.claim(
+        cx.claim(
             subject=SUBJECT,
             predicate=PREDICATE,
             value=49,
             role=ClaimRole.NORMATIVE,
             rationale="The source deadline changed; revise the same Claim with new evidence.",
-            supported_by=pb.file("sdk-demo.md").anchor("forty-nine hours"),
+            supported_by=cx.file("sdk-demo.md").anchor("forty-nine hours"),
             revises=first.claim_id,
             dispositions={first.claim_id: Disposition.CONTRADICT},
         ).prepare()
     )
     assert repaired.claim_id == first.claim_id and repaired.value == 49
-    after = pb.next(expiring_within=Duration.days(count=7))
+    after = cx.next(expiring_within=Duration.days(count=7))
     assert not any(row.reason == "citation_drifted" for row in after.items)
     return {
         "claim_id": repaired.claim_id,
@@ -158,14 +158,14 @@ def main() -> None:
         expected_public_key=args.public_key,
         forbidden_roots=(workspace, *args.forbidden_root),
     )
-    pb = Playbill.connect(target=args.target, instance=args.instance, workspace=workspace)
+    cx = Cruxible.connect(target=args.target, instance=args.instance, workspace=workspace)
 
     def decide(reviewed: ReviewedProposal) -> bool:
         print(reviewed.details.model_dump_json(indent=2))
         return input("Approve this exact reviewed candidate? [yes/no] ") == "yes"
 
     result = run(
-        pb,
+        cx,
         workspace,
         signer,
         review_decision=decide,

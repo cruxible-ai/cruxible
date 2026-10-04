@@ -947,7 +947,7 @@ def _claimed_host(client: TestClient, instance_id: str) -> str:
 def test_bootstrap_and_recovery_credentials_revoke_and_rotate_before_init(
     auth_daemon: TestClient, tmp_path: Path
 ) -> None:
-    """F-003: a host with no Playbill yet still confirms an irreversible credential change.
+    """F-003: a host with no Cruxible yet still confirms an irreversible credential change.
 
     The pin is the credential's own state, which exists before genesis.
     """

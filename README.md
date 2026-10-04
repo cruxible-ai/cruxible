@@ -7,14 +7,14 @@
   </a>
 </p>
 
-# Cruxible Playbill development core
+# Cruxible development core
 
 > This branch is an intentionally breaking development line. The former
 > config-authority, mutable graph product, bundled kits, snapshots, and state
 > distribution interfaces have been removed. Do not treat it as a compatible
 > release of the old Cruxible Core.
 
-Playbill is a governed state substrate for humans and AI agents. It makes
+Cruxible is a governed state substrate for humans and AI agents. It makes
 accepted state behave like reviewed code: proposals are deterministic,
 approvals bind to exact bytes, activation is compare-and-set, and every accepted
 generation has a reproducible coordinate.
@@ -26,7 +26,7 @@ Documents are the first implemented family and the source container from which
 more granular subjects will be compiled.
 
 No LLM runs inside the engine. Models and humans propose, review, and query;
-Playbill validates and settles deterministically.
+Cruxible validates and settles deterministically.
 
 ## What exists today
 
@@ -45,7 +45,7 @@ Family 1 is implemented end to end for governed Documents:
 Claims and Playbill-native Procedures are the next implementation program. The
 old Procedure, workflow, query, graph, receipt, and SQLite modules remain only as
 an explicit donor island while their deterministic behavior and goldens are
-transplanted. They are not served by the public Playbill API.
+transplanted. They are not served by the public Cruxible API.
 
 See [Architecture](docs/architecture.md).
 
@@ -78,7 +78,7 @@ intent, judgment, and settlement from collapsing into a second source of truth.
 The Git ledger is accepted authority. CAS stores referenced bytes. SQLite and
 rendered files are disposable projections that can be rebuilt from the ledger
 and pinned compiler. External systems remain authoritative for their own data:
-Playbill records governed semantic references, observations, proposals, and
+Cruxible records governed semantic references, observations, proposals, and
 attestations without copying entire tables or pretending to replace the source.
 
 Every accepted read names a coordinate:
@@ -103,10 +103,10 @@ cruxible playbill
 cruxible server
 ~~~
 
-Playbill exposes host allocation, initialization, body storage, Document
+Cruxible exposes host allocation, initialization, body storage, Document
 proposal/review/approval/activation, principal governance, source compilation,
 accepted reads, history, and explanation. HTTP, MCP, CLI, and the Python client
-delegate to the same Playbill service core.
+delegate to the same Cruxible service core.
 
 The old entity/relationship mutation, config reload, kit install, workflow,
 snapshot, overlay, feedback, decision, and state-distribution commands are
@@ -156,10 +156,10 @@ for a complete Document proposal and activation.
 
 ## Security boundaries
 
-Runtime bearer credentials and Playbill principals solve different problems:
+Runtime bearer credentials and Cruxible principals solve different problems:
 
 - bearer credentials authorize transport operations and carry a capability tier;
-- Playbill principals identify and attribute governed acts at exact coordinates;
+- Cruxible principals identify and attribute governed acts at exact coordinates;
 - on an auth-off Unix-socket daemon, the configured principal ID
   (`CRUXIBLE_PRINCIPAL_ID`) is a claim of identity, not authentication: every
   process of the same OS user is equally trusted. Approvals are still signed
@@ -191,7 +191,7 @@ donor manifest and architecture tests.
 
 ## Verification
 
-The minimum Playbill gate is:
+The minimum Cruxible gate is:
 
 ~~~bash
 uv run pytest -q tests/test_playbill tests/test_architecture/test_playbill_dp0_boundaries.py

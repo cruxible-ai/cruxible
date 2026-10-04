@@ -28,7 +28,7 @@ from cruxible_client.contracts.captures import (
     CanonicalDuration,
     CaptureRetentionErasurePolicy,
 )
-from cruxible_client.contracts.errors import PlaybillExecutionError
+from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     ProcedureArtifact,
@@ -1185,7 +1185,7 @@ def test_line_v3_admission_binds_the_exact_accepted_line_spec(tmp_path) -> None:
     bound = admission.model_copy(update={"line_spec_digest": accepted_line.artifact_digest})
 
     verify_line_admission_spec(bound, accepted_line)
-    with pytest.raises(PlaybillExecutionError, match="another accepted LineSpec"):
+    with pytest.raises(ExecutionError, match="another accepted LineSpec"):
         verify_line_admission_spec(
             bound.model_copy(update={"line_identity": ArtifactIdentity(kind="Line", name="other")}),
             accepted_line,
@@ -1728,7 +1728,7 @@ def test_executor_recognizes_graph_v4_source_as_a_landed_capture_input(tmp_path)
 
     executor._verify_input_planes(admission, source_accepted)  # noqa: SLF001
 
-    with pytest.raises(PlaybillExecutionError, match="names no Procedure input node"):
+    with pytest.raises(ExecutionError, match="names no Procedure input node"):
         executor._verify_input_planes(  # noqa: SLF001
             admission.model_copy(
                 update={
@@ -2638,7 +2638,7 @@ def test_existing_transform_kernel_matrix_refuses_malformed_inputs(
     spec: object,
     message: str,
 ) -> None:
-    with pytest.raises(PlaybillExecutionError, match=message):
+    with pytest.raises(ExecutionError, match=message):
         _apply_transform(kind, spec)
 
 
@@ -3294,7 +3294,7 @@ def test_noncurrent_procedure_refuses_before_any_journal_record(tmp_path) -> Non
     fixture = _fixture(tmp_path)
     accepted = _state_procedure()
     prepared = _prepare(accepted, fixture, _StateReader())
-    with pytest.raises(PlaybillExecutionError, match="not current"):
+    with pytest.raises(ExecutionError, match="not current"):
         ProcedureExecutor(
             journal=fixture.journal,
             bodies=fixture.bodies,
@@ -3392,7 +3392,7 @@ def test_incomplete_attempt_is_recovered_as_typed_no_redispatch_refusal(tmp_path
         crashing.execute(prepared, accepted)
     assert len(fixture.journal.all_records(fixture.stream, "runs")) == 1
 
-    with pytest.raises(PlaybillExecutionError, match="run_recovery_required"):
+    with pytest.raises(ExecutionError, match="run_recovery_required"):
         ProcedureExecutor(
             journal=fixture.journal,
             bodies=fixture.bodies,
@@ -3426,7 +3426,7 @@ def test_unmatched_effect_intent_never_redispatches_on_retry(tmp_path) -> None:
         ).execute(prepared, accepted)
     assert provider.calls == 1
 
-    with pytest.raises(PlaybillExecutionError, match="unresolved durable effect intent"):
+    with pytest.raises(ExecutionError, match="unresolved durable effect intent"):
         ProcedureExecutor(
             journal=fixture.journal,
             bodies=fixture.bodies,

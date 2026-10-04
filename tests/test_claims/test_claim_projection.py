@@ -6,7 +6,7 @@ from pathlib import Path
 
 from cruxible_core.indexes.claims.projection_claims import compile_provisional_claim_projection
 from cruxible_core.indexes.projection import ProvisionalProjectionCoordinate
-from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+from cruxible_core.service.authoring.documents import AcceptedCoordinate
 from cruxible_core.service.claims.claims import (
     service_get_playbill_claim,
 )
@@ -49,7 +49,7 @@ def test_provisional_and_rebuilt_canonical_claim_facts_match(tmp_path: Path) -> 
     canonical = service_get_playbill_claim(
         instance,
         identity=proposed.claim_identity,
-        at=PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
     )
     assert canonical.envelope["artifact_digest"] == provisional.envelope.artifact_digest
     statement_fact = next(

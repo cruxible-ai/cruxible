@@ -1,4 +1,4 @@
-"""Family-neutral governance contracts shared by Playbill acceptance laws."""
+"""Family-neutral governance contracts shared by Cruxible acceptance laws."""
 
 from __future__ import annotations
 

@@ -10,16 +10,16 @@ from typing import Literal
 from click.testing import CliRunner
 
 from cruxible_client import contracts
-from cruxible_client.authoring.workspace import observe_playbill_next_workspace
+from cruxible_client.authoring.workspace import observe_next_workspace
 from cruxible_client.contracts.errors import ProposalActivationRequestInvalid
-from cruxible_client.contracts.floor import PlaybillFloorDelta
+from cruxible_client.contracts.floor import FloorDelta
 from cruxible_core.cli.context import CliContextState, save_cli_context
 from cruxible_core.cli.main import cli
 from tests.support.floor_exports import delta_from_export, floor_v5_export
 
 
-def _coordinate() -> contracts.PlaybillAcceptedCoordinate:
-    return contracts.PlaybillAcceptedCoordinate(
+def _coordinate() -> contracts.AcceptedCoordinate:
+    return contracts.AcceptedCoordinate(
         git_oid="1" * 40,
         semantic_root="sha256:" + "2" * 64,
         generation_root="sha256:" + "3" * 64,
@@ -27,11 +27,11 @@ def _coordinate() -> contracts.PlaybillAcceptedCoordinate:
     )
 
 
-def _export() -> contracts.PlaybillFloorExport:
+def _export() -> contracts.FloorExport:
     return floor_v5_export({"cards/fresh.json": b'{"fresh":true}\n'}, coordinate=_coordinate())
 
 
-def _delta(*, corrupt: bool = False) -> PlaybillFloorDelta:
+def _delta(*, corrupt: bool = False) -> FloorDelta:
     return delta_from_export(_export(), corrupt="cards/fresh.json" if corrupt else None)
 
 
@@ -64,20 +64,20 @@ def _install_client(
     save_cli_context(CliContextState(server_url="http://test", instance_id="inst_test"))
 
     class StubClient:
-        def resolve_playbill_proposal_selector(
+        def resolve_proposal_selector(
             self, instance_id: str, selector: str
-        ) -> contracts.PlaybillProposalSelectorResult:
+        ) -> contracts.ProposalSelectorResult:
             assert instance_id == "inst_test"
-            return contracts.PlaybillProposalSelectorResult(
+            return contracts.ProposalSelectorResult(
                 selector=selector,
                 proposal_id=selector,
             )
 
-        def activate_playbill_proposal(
+        def activate_proposal(
             self, instance_id: str, proposal_id: str
-        ) -> contracts.PlaybillActivationReceipt:
+        ) -> contracts.ActivationReceipt:
             assert (instance_id, proposal_id) == ("inst_test", "proposal-1")
-            return contracts.PlaybillActivationReceipt(
+            return contracts.ActivationReceipt(
                 proposal_id=proposal_id,
                 activated_by="owner",
                 status=status,
@@ -85,14 +85,14 @@ def _install_client(
                 workspace_advertisement={"status": "not_attached", "workspace_path": None},
             )
 
-        def playbill_floor_delta(
+        def floor_delta(
             self,
             instance_id: str,
             *,
             at=None,  # type: ignore[no-untyped-def]
             base_generation: int | None = None,
             base_renderer: str | None = None,
-        ) -> PlaybillFloorDelta:
+        ) -> FloorDelta:
             assert instance_id == "inst_test"
             assert at == (_coordinate() if status == "accepted" else None)
             return _delta(corrupt=corrupt)
@@ -115,14 +115,14 @@ def test_floor_export_records_missing_config_and_clears_floor_missing(
     save_cli_context(CliContextState(server_url="http://test", instance_id="inst_test"))
 
     class StubClient:
-        def playbill_floor_delta(
+        def floor_delta(
             self,
             instance_id: str,
             *,
             at=None,  # type: ignore[no-untyped-def]
             base_generation: int | None = None,
             base_renderer: str | None = None,
-        ) -> PlaybillFloorDelta:
+        ) -> FloorDelta:
             assert instance_id == "inst_test"
             assert at is None
             return _delta()
@@ -137,7 +137,7 @@ def test_floor_export_records_missing_config_and_clears_floor_missing(
     assert result.exit_code == 0, result.output
     config = json.loads((workspace / ".playbill" / "coverage.json").read_text())
     assert config["floor_output"]["format"] == "playbill-floor-export-v5"
-    observation = observe_playbill_next_workspace(workspace)
+    observation = observe_next_workspace(workspace)
     assert observation["floor_status"] != "missing"
     assert observation["floor_status"] != "not_configured"
     assert observation["installed_coordinate"] == _coordinate().model_dump(mode="json")
@@ -186,25 +186,25 @@ def test_attached_sync_refusal_reports_accepted_truth_and_runnable_repair(
     save_cli_context(CliContextState(server_url="http://test", instance_id="inst_test"))
 
     class StubClient:
-        def resolve_playbill_proposal_selector(
+        def resolve_proposal_selector(
             self, instance_id: str, selector: str
-        ) -> contracts.PlaybillProposalSelectorResult:
-            return contracts.PlaybillProposalSelectorResult(
+        ) -> contracts.ProposalSelectorResult:
+            return contracts.ProposalSelectorResult(
                 selector=selector,
                 proposal_id=selector,
             )
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
-    activation = contracts.PlaybillWorkspaceActivationResult(
+    activation = contracts.WorkspaceActivationResult(
         proposal_id="proposal-1",
         activated_by="owner",
         status="accepted",
         accepted_coordinate=_coordinate(),
         workspace_advertisement={"status": "updated", "workspace_path": str(tmp_path)},
-        floor_refresh=contracts.PlaybillFloorRefreshResult(status="not_configured"),
-        block_sync=contracts.PlaybillBlockSyncResult(
+        floor_refresh=contracts.FloorRefreshResult(status="not_configured"),
+        block_sync=contracts.BlockSyncResult(
             items=(
-                contracts.PlaybillBlockSyncItem(
+                contracts.BlockSyncItem(
                     path="runbook.md",
                     outcome="refused",
                     reason="block_locally_modified",
@@ -299,17 +299,17 @@ def test_activation_renders_malformed_proposal_id_as_typed_refusal(
     save_cli_context(CliContextState(server_url="http://test", instance_id="inst_test"))
 
     class StubClient:
-        def resolve_playbill_proposal_selector(
+        def resolve_proposal_selector(
             self, instance_id: str, selector: str
-        ) -> contracts.PlaybillProposalSelectorResult:
-            return contracts.PlaybillProposalSelectorResult(
+        ) -> contracts.ProposalSelectorResult:
+            return contracts.ProposalSelectorResult(
                 selector=selector,
                 proposal_id=selector,
             )
 
-        def activate_playbill_proposal(
+        def activate_proposal(
             self, _instance_id: str, _proposal_id: str
-        ) -> contracts.PlaybillActivationReceipt:
+        ) -> contracts.ActivationReceipt:
             raise ProposalActivationRequestInvalid(
                 "playbill.proposal.activation_request_invalid: proposal_id must be a "
                 "canonical sha256 digest"

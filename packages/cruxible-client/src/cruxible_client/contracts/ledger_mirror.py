@@ -1,6 +1,6 @@
 """The grammar of a ledger mirror URL, and the two refusals it can produce.
 
-Client-side because the descriptor is: `PlaybillDescriptor.mirror_url` validates
+Client-side because the descriptor is: `Descriptor.mirror_url` validates
 through this function, so a URL that could never be pushed to cannot be written
 into an instance in the first place, and every door -- init, `ledger set-mirror`,
 a hand-edited descriptor a daemon reopens -- refuses it identically.
@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from typing import Final
 
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 
 MIRROR_URL_MAX_LENGTH: Final = 2048
 
@@ -43,7 +43,7 @@ _FILE_RE: Final = re.compile(r"^file:///[^\s]*$")
 _ABSOLUTE_PATH_RE: Final = re.compile(r"^/[^\s:]*$")
 
 
-class PlaybillLedgerMirrorUrlInvalid(PlaybillFormatError):
+class LedgerMirrorUrlInvalid(FormatError):
     """A proposed mirror URL is not a transport this daemon will push to."""
 
     error_code = "playbill.ledger.mirror_url_invalid"
@@ -53,7 +53,7 @@ class PlaybillLedgerMirrorUrlInvalid(PlaybillFormatError):
         super().__init__(f"{self.error_code}: {detail}")
 
 
-class PlaybillLedgerMirrorUnset(PlaybillFormatError):
+class LedgerMirrorUnset(FormatError):
     """This instance publishes its ledger nowhere, so there is no URL to print."""
 
     error_code = "playbill.ledger.mirror_unset"
@@ -84,23 +84,21 @@ def validate_mirror_url(value: str) -> str:
     """
 
     if value != value.strip() or not value:
-        raise PlaybillLedgerMirrorUrlInvalid("mirror URL must be nonblank and already normalized")
+        raise LedgerMirrorUrlInvalid("mirror URL must be nonblank and already normalized")
     if len(value) > MIRROR_URL_MAX_LENGTH:
-        raise PlaybillLedgerMirrorUrlInvalid(
-            f"mirror URL exceeds {MIRROR_URL_MAX_LENGTH} characters"
-        )
+        raise LedgerMirrorUrlInvalid(f"mirror URL exceeds {MIRROR_URL_MAX_LENGTH} characters")
     if any(character.isspace() or ord(character) < 0x20 for character in value):
-        raise PlaybillLedgerMirrorUrlInvalid("mirror URL must not contain whitespace or controls")
+        raise LedgerMirrorUrlInvalid("mirror URL must not contain whitespace or controls")
     if value.startswith("-"):
-        raise PlaybillLedgerMirrorUrlInvalid("mirror URL must not begin with an option dash")
+        raise LedgerMirrorUrlInvalid("mirror URL must not begin with an option dash")
     if value.startswith("http://"):
-        raise PlaybillLedgerMirrorUrlInvalid(
+        raise LedgerMirrorUrlInvalid(
             "mirror URL must be https, ssh, or a local path; plain http would send the "
             "daemon's credential in the clear"
         )
     if _HTTPS_RE.fullmatch(value) is not None:
         if "@" in value:
-            raise PlaybillLedgerMirrorUrlInvalid(
+            raise LedgerMirrorUrlInvalid(
                 "mirror URL must not embed credentials; the daemon reads its token from "
                 f"{LEDGER_MIRROR_CREDENTIAL_ENV}"
             )
@@ -112,15 +110,15 @@ def validate_mirror_url(value: str) -> str:
         authority = value.removeprefix("ssh://").split("/")[0]
         userinfo, separator, _host = authority.rpartition("@")
         if authority.count("@") > 1 or (separator and ":" in userinfo):
-            raise PlaybillLedgerMirrorUrlInvalid(
+            raise LedgerMirrorUrlInvalid(
                 "mirror URL must not embed credentials; SSH authenticates as the daemon itself"
             )
         return value
     if _FILE_RE.fullmatch(value) is not None or _ABSOLUTE_PATH_RE.fullmatch(value) is not None:
         if ".." in value.split("/"):
-            raise PlaybillLedgerMirrorUrlInvalid("local mirror path must not traverse upwards")
+            raise LedgerMirrorUrlInvalid("local mirror path must not traverse upwards")
         return value
-    raise PlaybillLedgerMirrorUrlInvalid(
+    raise LedgerMirrorUrlInvalid(
         "mirror URL must be https://, ssh://, user@host:path, file:///path, or an absolute path"
     )
 
@@ -128,7 +126,7 @@ def validate_mirror_url(value: str) -> str:
 __all__ = [
     "LEDGER_MIRROR_CREDENTIAL_ENV",
     "MIRROR_URL_MAX_LENGTH",
-    "PlaybillLedgerMirrorUnset",
-    "PlaybillLedgerMirrorUrlInvalid",
+    "LedgerMirrorUnset",
+    "LedgerMirrorUrlInvalid",
     "validate_mirror_url",
 ]

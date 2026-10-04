@@ -14,10 +14,10 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from cruxible_client.authoring.sdk import Playbill
+from cruxible_client.authoring.sdk import Cruxible
 from cruxible_client.authoring.sdk_types import AbsentSubject
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
-from cruxible_client.contracts.compact_query import PlaybillQueryRequest
+from cruxible_client.contracts.compact_query import QueryRequest
 from cruxible_client.contracts.subjects import (
     parse_subject,
     render_subject,
@@ -66,7 +66,7 @@ def _retire_subject(instance: PlaybillInstance, subject_id: str, *, actor_id: st
 
 
 @pytest.fixture
-def pb(playbill_http: tuple[TestClient, str, Path], tmp_path: Path) -> Playbill:
+def pb(playbill_http: tuple[TestClient, str, Path], tmp_path: Path) -> Cruxible:
     """wi-1, wi-2 and wi-3 accepted, then wi-3 retired."""
 
     client, instance_id, _key = playbill_http
@@ -78,7 +78,7 @@ def pb(playbill_http: tuple[TestClient, str, Path], tmp_path: Path) -> Playbill:
     transport._client._client = client  # type: ignore[attr-defined]  # noqa: SLF001
     workspace = tmp_path / "sdk-workspace"
     workspace.mkdir()
-    return Playbill._from_client(  # noqa: SLF001
+    return Cruxible._from_client(  # noqa: SLF001
         transport,
         instance_id=instance_id,
         workspace=workspace,
@@ -86,14 +86,14 @@ def pb(playbill_http: tuple[TestClient, str, Path], tmp_path: Path) -> Playbill:
     )
 
 
-def _query(pb: Playbill, **fields: object) -> object:
-    return pb._client.query_playbill(  # noqa: SLF001
+def _query(pb: Cruxible, **fields: object) -> object:
+    return pb._client.query(  # noqa: SLF001
         pb._instance_id,  # noqa: SLF001
-        request=PlaybillQueryRequest.model_validate(fields),
+        request=QueryRequest.model_validate(fields),
     )
 
 
-def test_a_world_does_not_resurrect_a_retired_subject(pb: Playbill) -> None:
+def test_a_world_does_not_resurrect_a_retired_subject(pb: Cruxible) -> None:
     world = pb.world()
     items = world.project.work_item
 
@@ -104,7 +104,7 @@ def test_a_world_does_not_resurrect_a_retired_subject(pb: Playbill) -> None:
     assert absent.value.subject_id == "wi-3"
 
 
-def test_query_lists_live_subjects_and_marks_retired_ones_on_request(pb: Playbill) -> None:
+def test_query_lists_live_subjects_and_marks_retired_ones_on_request(pb: Cruxible) -> None:
     live = _query(pb, kind=KIND, select=["subject_id"])
     assert [row["subject_id"] for row in live.rows] == ["wi-1", "wi-2"]  # type: ignore[attr-defined]
     assert all("lifecycle" not in row for row in live.rows)  # type: ignore[attr-defined]
@@ -118,7 +118,7 @@ def test_query_lists_live_subjects_and_marks_retired_ones_on_request(pb: Playbil
 
 
 def test_a_world_reads_every_subject_past_the_server_ceiling(
-    pb: Playbill, monkeypatch: pytest.MonkeyPatch
+    pb: Cruxible, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A capped answer continues as a new window; it is never taken as complete."""
 
@@ -132,7 +132,7 @@ def test_a_world_reads_every_subject_past_the_server_ceiling(
 
 
 def test_a_retired_subject_takes_no_place_under_the_ceiling(
-    pb: Playbill,
+    pb: Cruxible,
     playbill_http: tuple[TestClient, str, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

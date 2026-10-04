@@ -16,13 +16,13 @@ from cruxible_client.contracts.canonical import (
     pretty_canonical_bytes,
     typed_digest,
 )
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 
 PROCEDURE_RUNTIME_POLICY_PATH = "governance/procedure-runtime-policy.json"
 PROCEDURE_RUNTIME_POLICY_IDENTITY = "ProcedureRuntimePolicy:instance"
 
 
-class ProcedureRuntimePolicyFormatError(PlaybillFormatError):
+class ProcedureRuntimePolicyFormatError(FormatError):
     """The governed Procedure-runtime-policy singleton is absent or malformed."""
 
 

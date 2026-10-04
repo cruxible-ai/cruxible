@@ -1,4 +1,4 @@
-"""Frozen Playbill canonical encoding and domain-separated SHA-256 values."""
+"""Frozen Cruxible canonical encoding and domain-separated SHA-256 values."""
 
 from __future__ import annotations
 
@@ -46,9 +46,9 @@ def _normalize_string(value: str) -> str:
 
 
 def normalize_canonical(value: object, *, location: str = "$") -> CanonicalValue:
-    """Return the closed Playbill JSON value set or refuse.
+    """Return the closed Cruxible JSON value set or refuse.
 
-    Playbill narrows the repository-wide canonical JSON primitive by refusing
+    Cruxible narrows the repository-wide canonical JSON primitive by refusing
     floats, runtime bytes, non-list sequences, non-string keys, and Unicode
     normalization collisions before serialization.
     """

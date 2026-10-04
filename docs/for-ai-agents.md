@@ -1,6 +1,6 @@
-# Operating Playbill as an AI agent
+# Operating Cruxible as an AI agent
 
-Playbill is designed so first-order discovery is cheap and exact. Start with
+Cruxible is designed so first-order discovery is cheap and exact. Start with
 the orient map, refs and values. Go deeper into evidence, governance and
 history with `get`'s `detail` only when the task requires it.
 
@@ -43,14 +43,14 @@ contracts, and recall-only tags are the intended “double-click” points.
 
 ## The world is typed
 
-Prefer typed references where the SDK offers them. `pb.world()` reads the
+Prefer typed references where the SDK offers them. `cx.world()` reads the
 accepted vocabulary and hands it back as objects, so names and constrained
 values come from the daemon's accepted ontology. APIs that accept canonical
 addresses still support strings; typed references additionally carry their
 observed coordinate:
 
 ~~~python
-w = pb.world()
+w = cx.world()
 
 w.sec.package.cryptography              # SubjectRef, by attribute
 w.sec.vulnerability["cve-2026-69247"]   # SubjectRef, by index for any ID
@@ -60,12 +60,12 @@ w.sec.vuln.severity.cardinality         # object_kind, cardinality, permitted_ro
                                         # allowed_object_subject_kinds, referent_sensitivity
 ~~~
 
-`print(w.describe())` lists the verbs that act on the world -- `pb.orient()`,
-`pb.query(...)`, `pb.get(ref)`, grepping the exported floor, and the writes --
+`print(w.describe())` lists the verbs that act on the world -- `cx.orient()`,
+`cx.query(...)`, `cx.get(ref)`, grepping the exported floor, and the writes --
 then every Subject kind with its fields. `w.kinds` and `w.predicates` answer as
 attributes or as calls (`w.kinds()`), `dir(cruxible_client)` lists every public
 name, every public SDK member's docstring ends by naming the next call
-(`help(pb.query)`), and refs print short: `SubjectRef('sec.package/click' @
+(`help(cx.query)`), and refs print short: `SubjectRef('sec.package/click' @
 0123456789ab)`.
 
 Dotted kinds nest, so `w.sec.package` and `w.dev.batch` are namespaces on the
@@ -85,7 +85,7 @@ vulnerability.claims            # every live Claim about this Subject
 vulnerability.explain()         # the governance and provenance context
 ~~~
 
-On a live client, `pb.world()` selects current accepted state; on `pb.at(coordinate)`
+On a live client, `cx.world()` selects current accepted state; on `cx.at(coordinate)`
 it selects that fixed coordinate. Each World owns a pinned reading context and
 remains readable when the live client advances. This does not make old references
 current for authoring: preparation still checks the references against its base.
@@ -103,7 +103,7 @@ verdict, status and role without full Claim views. The CLI
 (`cruxible_playbill_query` with `claims: true`) expose the same read for every
 Subject of one kind; `status` adds Claims resolution overturned or refused, or
 retired ones.
-To read one thing you have a reference to, use `get`: `pb.get(ref,
+To read one thing you have a reference to, use `get`: `cx.get(ref,
 detail=...)`, `cruxible playbill get REF`, or `cruxible_playbill_get`. It takes
 any reference form you have seen (a Claim id or prefix, `kind/id`, a predicate,
 `Document:<name>`, `Principal:<id>`, `ProviderInterface:<name>`, a proposal id,
@@ -112,19 +112,19 @@ and refuses a wrong name with the nearest names. `detail` goes deeper:
 `evidence`, `why`, `history` (newest first, paged), `proof`, or a Document
 `body` by byte range. A summary cuts a long string value to 500 characters and
 marks it `truncated`; `evidence` and `proof` read it whole.
-Use `pb.run_query(name_or_ref, parameters=...)` for a named query's replay
+Use `cx.run_query(name_or_ref, parameters=...)` for a named query's replay
 receipt (the Claims each row read, paths, verdict), checking truncation before
 assuming completeness; `query(name=..., receipt="full")` carries the same
 receipt.
 To ask any question over accepted state in one call, use `query`: MCP
 `cruxible_playbill_query`, CLI `cruxible playbill query KIND --where 'f=v'`, SDK
-`pb.query(kind, where=[{"field": ..., "eq": ...}], select=[...])` or the typed
+`cx.query(kind, where=[{"field": ..., "eq": ...}], select=[...])` or the typed
 `w.<ns>.<kind>.where(field=value, other__ne=value).select("field")`. Rows lead
 with values and carry `flags` (`stale`, `contested`, `contradicted`,
 `unsure_hold`); a truncated page carries `next_cursor`. A wrong kind, field or
 enum member refuses with the nearest valid names instead of answering empty.
 
-`pb.world()` reads vocabulary, not Subjects. The current first Subject access
+`cx.world()` reads vocabulary, not Subjects. The current first Subject access
 loads the Subject listing; ordinary uncached field reads page the relevant Claim
 listing and load the matching live Claim views. Prefetch uses the batch reader.
 An incomplete or non-advancing selection refuses instead of masquerading as a
@@ -151,8 +151,8 @@ over the next.
 
 ## Write lifecycle
 
-One authoring intent is one changeset. `pb.claim(...)` authors exactly one
-Claim; `pb.changes(rationale=...)` opens a changeset that `.claim(...)`,
+One authoring intent is one changeset. `cx.claim(...)` authors exactly one
+Claim; `cx.changes(rationale=...)` opens a changeset that `.claim(...)`,
 `.claim_type(...)`, `.subject(...)` and `.retire(...)` write into, and
 `.submit()` compiles the whole set as one intent and submits it in one request.
 `.prepare()` compiles and preflights without submitting, for when you want the
@@ -163,7 +163,7 @@ on a refused intent, so it is the default. `.subject(...)` and
 says something about it never retypes the address:
 
 ~~~python
-draft = pb.changes(rationale="Name the package this advisory affects.")
+draft = cx.changes(rationale="Name the package this advisory affects.")
 package = draft.subject(w.sec.package.define("click"))       # a ref, in this set
 draft.claim(
     subject=w.sec.vulnerability["cve-2026-69247"],
@@ -279,7 +279,7 @@ ClaimType becoming subject-valued, which took three generations days apart --
 is one set:
 
 ~~~python
-edges = pb.changes(rationale="Name the package instead of spelling it.")
+edges = cx.changes(rationale="Name the package instead of spelling it.")
 for work_item, claim in affected:                      # each existing Claim
     edges.claim(
         subject=work_item,
@@ -307,7 +307,7 @@ outstanding about the vocabulary afterwards.
 
 Subject-valued Claims are typed relationships, not string literals. Pass an accepted
 `SubjectRef` -- `w.sec.package.cryptography` is one -- or a canonical
-`<subject-kind>/<subject-id>` address as `Playbill.claim(value=...)`; preflight refuses a missing endpoint with the
+`<subject-kind>/<subject-id>` address as `Cruxible.claim(value=...)`; preflight refuses a missing endpoint with the
 `propose_subject` repair and refuses endpoint kinds outside the accepted ClaimType.
 
 For Documents:
@@ -369,7 +369,7 @@ pending work and reports it in the `ledger_mirror` facet of `playbill next`'s
 `status` (`publishing` while in flight, `behind` after a failure). Publication receipts name the exact acknowledged ref snapshot.
 
 The change set's own summary reaches that commit only if a door carried one.
-`pb.changes(rationale="...")` and the `rationale` field on the tagless
+`cx.changes(rationale="...")` and the `rationale` field on the tagless
 change-set input both send it, and the daemon writes it as the candidate
 commit's subject. Say why the set exists; what it does is already the roll
 underneath.
@@ -388,9 +388,9 @@ proposal and activation, plus any candidate-committed approval requirements.
 
 The implemented authoring API accepts a `ProcedureInput` or a typed `Sequence`
 from `cruxible_client.authoring.procedures`. Sequence supports blueprint-first
-composition, accepted provider selection with `pb.provider_binding(...)`,
+composition, accepted provider selection with `cx.provider_binding(...)`,
 immutable `.bind(...)`, and a structured `.preview()` before preparation.
-`pb.procedure(definition=blueprint).prepare()` uses the same authoring lifecycle
+`cx.procedure(definition=blueprint).prepare()` uses the same authoring lifecycle
 as other definitions. Preview does not invoke providers or grant authority.
 See the [SDK reference](../packages/cruxible-client/README.md#procedure-composition-and-execution)
 for constructors, a complete local example, and execution methods.
@@ -406,7 +406,7 @@ Terminals end their path and cannot have successors. Capture emission retains
 evidence; it does not assert or accept a Claim. Proposal emission submits through
 governed authoring; it does not approve or accept the proposal. Direct readiness
 can report capture/proposal terminals as unsupported because those require the
-Line lane. Use `pb.run_line(...)` for an accepted, authorized Line occurrence.
+Line lane. Use `cx.run_line(...)` for an accepted, authorized Line occurrence.
 
 Retained Python source works today: decorate a function with `@procedure` from
 `cruxible_client.authoring.source` to get a `ProcedureBlueprint`, then
@@ -448,7 +448,7 @@ the read, not guessed before it.
 Each successful Source occurrence retains its acquisition evidence and capture
 references. Receipt details depend on the provider: a workspace-file read and a
 web fetch do not describe the same source substrate. Cite the retained evidence,
-not an agent's later retelling. `pb.capture(digest)` reads the retained body under
+not an agent's later retelling. `cx.capture(digest)` reads the retained body under
 the current access rules; it never refetches the external source.
 
 Use the run ID to read retained execution status (`run.refresh()` in the SDK).
@@ -467,7 +467,7 @@ run or a poll. Evaluating is a separate, explicit step, so delayed measurements
 complete after the run that they will credit has returned:
 
 ~~~python
-proc = pb.accepted_procedure("release-guard")
+proc = cx.accepted_procedure("release-guard")
 run = proc.run(input=proc.input(release="2.4.0"))  # execution outcome: run.status
 
 batch = proc.measure(run=run)             # observation instant = pb's clock
@@ -513,9 +513,9 @@ definition = definition.model_copy(update={
     "definition": {**definition.definition, "measurements": [measurement]},
     "activation_policy": "abort",
 })
-draft = pb.procedure(definition=definition)
+draft = cx.procedure(definition=definition)
 # ... submit and approve the change set as usual; acceptance activates the window
-proc = pb.accepted_procedure("release-guard")
+proc = cx.accepted_procedure("release-guard")
 run = proc.run()
 batch = proc.measure(run=run)             # "resolved" + "recorded" once due
 batch = proc.measure(run=run)             # fresh request attribution: "replayed"

@@ -15,9 +15,9 @@ from typing import Any
 import pytest
 
 from cruxible_client.contracts.write import (
-    PlaybillRetireRequest,
-    PlaybillSetRequest,
-    PlaybillWriteRequest,
+    RetireRequest,
+    SetRequest,
+    WriteRequest,
 )
 from cruxible_core.errors import PrincipalRefusedError
 from cruxible_core.proposals.proposals import AuthenticatedActor
@@ -34,8 +34,8 @@ def instance(tmp_path: Path) -> PlaybillInstance:
     return seed_write_surface(tmp_path)[0]
 
 
-def _request(*changes: dict[str, Any], **options: Any) -> PlaybillWriteRequest:
-    return PlaybillWriteRequest.model_validate(
+def _request(*changes: dict[str, Any], **options: Any) -> WriteRequest:
+    return WriteRequest.model_validate(
         {"because": "The writer checked it.", "changes": list(changes), **options}
     )
 
@@ -178,7 +178,7 @@ def test_the_runtime_refuses_an_unbound_credential_with_the_mint_repair(
         if verb == "set":
             playbill_api.playbill_set(
                 instance_id,
-                request=PlaybillSetRequest.model_validate(
+                request=SetRequest.model_validate(
                     {
                         "because": "b",
                         **{k: v for k, v in _SET.items() if k != "op"},
@@ -189,7 +189,7 @@ def test_the_runtime_refuses_an_unbound_credential_with_the_mint_repair(
         elif verb == "retire":
             playbill_api.playbill_retire(
                 instance_id,
-                request=PlaybillRetireRequest.model_validate(
+                request=RetireRequest.model_validate(
                     {
                         "because": "b",
                         "target": {"subject": WI1, "field": "status"},

@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from cruxible_client.authoring.floor_apply import read_floor_manifest
-from cruxible_client.authoring.workspace import PlaybillWorkspaceError
+from cruxible_client.authoring.workspace import WorkspaceError
 from cruxible_core.consumers import floor
 from cruxible_core.consumers.floor import FLOOR, floor_outcomes, refresh_floor
 from cruxible_core.runtime.admission import FLOOR_ADMISSION
@@ -142,10 +142,10 @@ def test_failed_target_stalls_until_head_or_registration_changes(world, monkeypa
 
     def fail(*args, **kwargs):
         attempts.append(True)
-        raise PlaybillWorkspaceError("persistent apply failure")
+        raise WorkspaceError("persistent apply failure")
 
     monkeypatch.setattr(floor, "sync_floor_directory", fail)
-    with pytest.raises(PlaybillWorkspaceError, match="persistent"):
+    with pytest.raises(WorkspaceError, match="persistent"):
         refresh_floor(instance, instance.descriptor.instance_id)
     health = FLOOR.health(instance, now=NOW)
     assert health[0].state == "stalled"
@@ -176,7 +176,7 @@ def test_symlinked_delivery_subtree_is_refused(world, tmp_path, component):
     else:
         link = workspace / component
     link.symlink_to(outside, target_is_directory=True)
-    with pytest.raises(PlaybillWorkspaceError, match="symlink"):
+    with pytest.raises(WorkspaceError, match="symlink"):
         refresh_floor(instance, instance.descriptor.instance_id)
     assert list(outside.iterdir()) == []
     assert floor_outcomes(instance)[-1].status == "failed"
@@ -253,7 +253,7 @@ def test_delivery_and_deliver_now_share_admission_but_instances_proceed(
     import asyncio
 
     from cruxible_core.runtime import host_api
-    from cruxible_core.server.playbill_request_models import PlaybillFloorDeltaRequest
+    from cruxible_core.server.playbill_request_models import FloorDeltaRequest
     from cruxible_core.server.routes import playbill as routes
 
     instance, _, registry = world
@@ -294,9 +294,7 @@ def test_delivery_and_deliver_now_share_admission_but_instances_proceed(
     monkeypatch.setattr(routes.playbill_api, "playbill_floor_delta", delta)
 
     def delta_route():  # type: ignore[no-untyped-def]
-        return asyncio.run(
-            routes.floor_delta(instance.descriptor.instance_id, PlaybillFloorDeltaRequest())
-        )
+        return asyncio.run(routes.floor_delta(instance.descriptor.instance_id, FloorDeltaRequest()))
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         first = pool.submit(refresh_floor, instance, instance.descriptor.instance_id)
@@ -323,7 +321,7 @@ def test_delivery_and_deliver_now_share_admission_but_instances_proceed(
 
 def test_persistent_base_mismatch_retries_once_and_stalls(world, monkeypatch):
     from cruxible_client.authoring import workspace as adapter
-    from cruxible_client.contracts.floor import PlaybillFloorApplyResult
+    from cruxible_client.contracts.floor import FloorApplyResult
 
     instance, _, registry = world
     registry.set_floor_delivery(instance.descriptor.instance_id, True)
@@ -331,12 +329,12 @@ def test_persistent_base_mismatch_retries_once_and_stalls(world, monkeypatch):
 
     def mismatch(_, delta):
         calls.append(True)
-        return PlaybillFloorApplyResult(
+        return FloorApplyResult(
             status="base_mismatch", kind=delta.kind, generation=delta.head.generation
         )
 
     monkeypatch.setattr(adapter, "apply_floor_delta", mismatch)
-    with pytest.raises(PlaybillWorkspaceError, match="full floor"):
+    with pytest.raises(WorkspaceError, match="full floor"):
         refresh_floor(instance, instance.descriptor.instance_id)
     assert len(calls) == 2
     assert FLOOR.health(instance, now=NOW)[0].state == "stalled"
@@ -360,14 +358,14 @@ def test_delivery_authority_requires_the_local_attachment_gate(world, monkeypatc
 
 
 def test_deliver_now_keeps_opt_in_cards_under_the_same_writer(world):
-    from cruxible_client.authoring.workspace import record_playbill_floor_output
+    from cruxible_client.authoring.workspace import record_floor_output
 
     instance, workspace, registry = world
     registry.set_floor_delivery(instance.descriptor.instance_id, True)
     result = refresh_floor(instance, instance.descriptor.instance_id, include=("discovery",))
     assert result.export is not None
     assert any(item.path.startswith("subjects/") for item in result.export.files)
-    record_playbill_floor_output(
+    record_floor_output(
         workspace,
         instance_id=instance.descriptor.instance_id,
         server_socket=str(workspace.parent / "socket"),
@@ -402,13 +400,13 @@ def test_new_routes_deliver_synchronously_and_refuse_tcp_callers(world, monkeypa
     )
     local = Request({"type": "http", "client": None})
     tcp = Request({"type": "http", "client": ("127.0.0.1", 1234)})
-    request = contracts.PlaybillFloorDeliveryRequest(enabled=True)
+    request = contracts.FloorDeliveryRequest(enabled=True)
     with pytest.raises(ConfigError, match="Unix socket"):
         asyncio.run(routes.set_playbill_floor_delivery(instance_id, request, tcp))
     assert asyncio.run(
         routes.set_playbill_floor_delivery(instance_id, request, local)
     ).floor_delivery
-    deliver = contracts.PlaybillFloorDeliverNowRequest()
+    deliver = contracts.FloorDeliverNowRequest()
     result = asyncio.run(routes.deliver_playbill_floor_now(instance_id, local, deliver))
     assert result.written.status == "written"
     with pytest.raises(ConfigError, match="Unix socket"):
@@ -465,10 +463,10 @@ def test_retired_floor_trigger_is_active_only_until_outstanding_work_finishes(wo
     assert not FLOOR.active(instance)
 
     def fail(*_):
-        raise PlaybillWorkspaceError("render failed")
+        raise WorkspaceError("render failed")
 
     monkeypatch.setattr(floor, "advance_floor_index", fail)
-    with pytest.raises(PlaybillWorkspaceError, match="render failed"):
+    with pytest.raises(WorkspaceError, match="render failed"):
         refresh_floor(instance, instance.descriptor.instance_id)
     assert not FLOOR.active(instance)  # No runnable work remains for a retired Trigger.
     live.append(SimpleNamespace(action="floor.refresh"))
@@ -486,7 +484,7 @@ def test_deliver_now_refuses_a_pinned_coordinate_with_a_runnable_repair(world, m
 
     instance, workspace, registry = world
     instance_id = instance.descriptor.instance_id
-    pinned = contracts.PlaybillAcceptedCoordinate.model_validate(
+    pinned = contracts.AcceptedCoordinate.model_validate(
         AcceptedCoordinate.from_internal(instance.accepted_coordinate()).model_dump(mode="json")
     )
     registry.set_floor_delivery(instance_id, True)
@@ -513,7 +511,7 @@ def test_deliver_now_refuses_a_pinned_coordinate_with_a_runnable_repair(world, m
 
 
 def test_daemon_delivery_writes_the_local_indexes_the_client_writes(tmp_path, monkeypatch):
-    from cruxible_client.authoring.workspace import materialize_playbill_floor
+    from cruxible_client.authoring.workspace import materialize_floor
     from cruxible_core.service.floor.floor import service_export_playbill_floor
     from tests.core_support._write_support import report_evidence
     from tests.test_floor.test_floor_current import NOTE, _add_document, _export_envelope
@@ -549,9 +547,7 @@ def test_daemon_delivery_writes_the_local_indexes_the_client_writes(tmp_path, mo
 
     client = tmp_path / "client"
     report_evidence(client, "Count: 3")
-    materialize_playbill_floor(
-        client, export=_export_envelope(service_export_playbill_floor(instance))
-    )
+    materialize_floor(client, export=_export_envelope(service_export_playbill_floor(instance)))
     assert delivered == {path: (client / ".playbill/floor" / path).read_bytes() for path in local}
 
 
@@ -624,7 +620,7 @@ def test_fifo_local_input_stalls_delivery_promptly_and_releases_admission(world,
     fifo = workspace / ".playbill" / relative
     fifo.unlink(missing_ok=True)
     os.mkfifo(fifo)
-    with pytest.raises(PlaybillWorkspaceError, match="not a regular file"):
+    with pytest.raises(WorkspaceError, match="not a regular file"):
         call_with_fifo_timeout(fifo, lambda: refresh_floor(instance, instance_id))
     assert FLOOR_ADMISSION.active_keys() == 0
     with FLOOR_ADMISSION.hold(instance_id):

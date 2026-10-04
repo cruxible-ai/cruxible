@@ -42,7 +42,7 @@ def test_client_proposes_principal_public_record_on_existing_route() -> None:
         "status": "active",
     }
 
-    result = client.propose_playbill_principal_change(
+    result = client.propose_principal_change(
         "inst_principals",
         principal=principal,
         proposal_name="register-reviewer",

@@ -1,4 +1,4 @@
-"""Shared lowering for human proposal labels at Playbill service boundaries."""
+"""Shared lowering for human proposal labels at Cruxible service boundaries."""
 
 from cruxible_client.contracts.proposal_models import canonical_proposal_ref_name
 from cruxible_core.errors import DataValidationError
@@ -11,7 +11,7 @@ def canonical_playbill_proposal_name(display_name: str, *, family: str) -> str:
         return canonical_proposal_ref_name(display_name)
     except ValueError as exc:
         raise DataValidationError(
-            f"Playbill {family} proposal name is invalid",
+            f"Cruxible {family} proposal name is invalid",
             errors=[str(exc)],
         ) from exc
 

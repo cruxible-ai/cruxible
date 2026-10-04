@@ -30,7 +30,7 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.types import GitObjectFormat
 from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
-    PlaybillWorkspaceAdvertisement,
+    WorkspaceAdvertisement,
 )
 
 _ACTOR_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
@@ -566,7 +566,7 @@ class ProposalResult(_StrictProposalModel):
     admission: ProposalAdmissionRecord
     evaluation: ProposalEvaluationRecord
     candidate: CandidateRecordAnyVersion | None = None
-    workspace_advertisement: PlaybillWorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
+    workspace_advertisement: WorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
 
     @model_validator(mode="after")
     def _result_shape(self) -> "ProposalResult":

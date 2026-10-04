@@ -15,7 +15,7 @@ from cruxible_client.contracts.claims import claim_statement_digest
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.service.discovery.next import (
     DEFAULT_UNSURE_HOLD,
-    PlaybillNextRequest,
+    NextRequest,
     service_playbill_next,
 )
 from cruxible_core.service.evidence.claim_attestations import service_append_claim_attestation
@@ -39,7 +39,7 @@ from tests.test_integration.test_next_closed_loop import (
 def _next(instance, *, at: datetime = EVALUATION_TIME):  # type: ignore[no-untyped-def]
     return service_playbill_next(
         instance,
-        request=PlaybillNextRequest(
+        request=NextRequest(
             at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
             evaluation_time=at,
             access_profile=_access(),
@@ -282,7 +282,7 @@ def test_a_delta_never_names_rows_the_callers_own_access_withholds(tmp_path: Pat
 
     public = service_playbill_next(
         instance,
-        request=PlaybillNextRequest(
+        request=NextRequest(
             at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
             evaluation_time=EVALUATION_TIME,
             access_profile=CoverageAccessProfile(

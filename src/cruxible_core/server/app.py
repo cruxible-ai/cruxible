@@ -25,7 +25,7 @@ from cruxible_client.contracts.authoring.models import (
 )
 from cruxible_client.contracts.errors import (
     ClaimAttestationRequestInvalid,
-    PlaybillSinceRequestInvalid,
+    SinceRequestInvalid,
 )
 from cruxible_client.contracts.repairs import hand_edit_repair
 from cruxible_client.contracts.temporal import ISO_8601_FORMAT_HINT
@@ -157,7 +157,7 @@ def create_app() -> FastAPI:
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
         if request.url.path.endswith("/playbill/since"):
-            typed = PlaybillSinceRequestInvalid.from_validation_errors(exc.errors())
+            typed = SinceRequestInvalid.from_validation_errors(exc.errors())
             request.state.error_type = typed.__class__.__name__
             status_code, body = error_to_response(typed)
             content = body.model_dump(mode="json")

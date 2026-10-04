@@ -1,4 +1,4 @@
-"""Guardrails for the surviving Playbill transport-permission posture."""
+"""Guardrails for the surviving Cruxible transport-permission posture."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ def test_permission_module_separates_transport_reachability_from_semantic_author
     doc = _flat(permissions_module.__doc__ or "")
 
     assert "endpoint reachability only" in doc
-    assert "playbill principals and acceptance laws determine semantic authority" in doc
+    assert "cruxible principals and acceptance laws determine semantic authority" in doc
     assert "local cli is still an operator process" in doc
 
 
@@ -25,7 +25,7 @@ def test_mcp_instructions_publish_the_same_transport_semantic_boundary() -> None
     instructions = _flat(BASE_INSTRUCTIONS)
 
     assert "only control endpoint reachability" in instructions
-    assert "playbill principals and acceptance laws control semantic authority" in instructions
+    assert "cruxible principals and acceptance laws control semantic authority" in instructions
     assert "a proposal is not accepted state" in instructions
     assert "an approval is not activation" in instructions
 

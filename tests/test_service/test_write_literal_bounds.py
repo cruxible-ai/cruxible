@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
-from cruxible_client.contracts.write import PlaybillWriteRequest
+from cruxible_client.contracts.write import WriteRequest
 from cruxible_core.proposals.proposals import ProposalAdmissionRequest
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
@@ -48,7 +48,7 @@ def instance(tmp_path_factory: pytest.TempPathFactory) -> PlaybillInstance:
 
 
 def _refused(instance: PlaybillInstance, field: str, value: object) -> Any:
-    request = PlaybillWriteRequest.model_validate(
+    request = WriteRequest.model_validate(
         {
             "because": "The writer checked it.",
             "changes": [{"op": "set", "subject": WI1, "field": field, "value": value}],
@@ -88,7 +88,7 @@ def test_a_long_refused_value_is_quoted_short(instance: PlaybillInstance) -> Non
 
 
 def test_a_value_within_every_bound_is_written(instance: PlaybillInstance) -> None:
-    request = PlaybillWriteRequest.model_validate(
+    request = WriteRequest.model_validate(
         {
             "because": "The writer checked it.",
             "changes": [

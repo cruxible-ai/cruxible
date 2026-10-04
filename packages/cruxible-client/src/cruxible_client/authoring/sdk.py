@@ -1,4 +1,4 @@
-"""Synchronous, agent-oriented authoring facade over the Playbill wire ISA."""
+"""Synchronous, agent-oriented authoring facade over the Cruxible wire ISA."""
 
 from __future__ import annotations
 
@@ -31,8 +31,8 @@ from cruxible_client.authoring.blocks import (
 )
 from cruxible_client.authoring.compact_query import QueryResult, filters_from_mappings
 from cruxible_client.authoring.context import (
-    PlaybillContextResolutionError,
-    resolve_playbill_context,
+    ContextResolutionError,
+    resolve_context,
 )
 from cruxible_client.authoring.procedures import ProviderBinding, procedure_record_constructor
 from cruxible_client.authoring.procedures import Sequence as ProcedureSequence
@@ -85,8 +85,8 @@ from cruxible_client.authoring.source_map import (
 )
 from cruxible_client.authoring.workspace import (
     activate_with_workspace_refresh,
-    observe_playbill_next_workspace,
-    observe_playbill_next_workspace_with_coverage,
+    observe_next_workspace,
+    observe_next_workspace_with_coverage,
     refresh_workspace_floor,
     workspace_floor_freshness,
 )
@@ -193,14 +193,14 @@ from cruxible_client.contracts.declared_blocks import (
 from cruxible_client.contracts.errors import WriteRefusalError
 from cruxible_client.contracts.get_reads import (
     GET_BATCH_MAX_REFS,
-    PlaybillByteRange,
-    PlaybillExactContentRef,
-    PlaybillGetBatchRequest,
-    PlaybillGetDetail,
-    PlaybillGetProcedureCard,
-    PlaybillGetProcedureTrackRecord,
-    PlaybillGetRequest,
-    PlaybillGetResult,
+    ByteRange,
+    ExactContentRef,
+    GetBatchRequest,
+    GetDetail,
+    GetProcedureCard,
+    GetProcedureTrackRecord,
+    GetRequest,
+    GetResult,
 )
 from cruxible_client.contracts.line_dispatch import (
     LineTriggerCheckRequest,
@@ -214,7 +214,7 @@ from cruxible_client.contracts.policies import (
 )
 from cruxible_client.contracts.predictions import (
     ObservationSettlementEvidence,
-    PlaybillPredictRequest,
+    PredictRequest,
     ResolutionContractInput,
     TerminalSettlementEvidence,
 )
@@ -245,14 +245,14 @@ from cruxible_client.contracts.write import (
     ClaimValue,
     Evidence,
     ExpectedValue,
-    PlaybillRetireRequest,
-    PlaybillSetRequest,
-    PlaybillWriteRequest,
     RetireChange,
+    RetireRequest,
     SetChange,
+    SetRequest,
     SlotRef,
     WriteAccept,
     WriteOutcome,
+    WriteRequest,
     WriteRetireReason,
     WriteRole,
 )
@@ -274,12 +274,12 @@ _CLAIM_TYPE_OBJECT_KINDS = frozenset({"literal", "subject", "exact_content"})
 _CLAIM_ADAPTER: TypeAdapter[ClaimArtifactAny] = TypeAdapter(ClaimArtifactAny)
 
 
-def _coordinate(value: api.PlaybillAcceptedCoordinate | Mapping[str, object]) -> AcceptedCoordinate:
+def _coordinate(value: api.AcceptedCoordinate | Mapping[str, object]) -> AcceptedCoordinate:
     payload = value.model_dump(mode="json") if hasattr(value, "model_dump") else dict(value)
     return AcceptedCoordinate.model_validate(payload)
 
 
-def _get_coordinate(result: PlaybillGetResult) -> AcceptedCoordinate:
+def _get_coordinate(result: GetResult) -> AcceptedCoordinate:
     """The full accepted coordinate a ``get`` answered at (requested by the SDK)."""
 
     if result.accepted_coordinate is None:  # pragma: no cover - the SDK always asks for it
@@ -287,8 +287,8 @@ def _get_coordinate(result: PlaybillGetResult) -> AcceptedCoordinate:
     return _coordinate(result.accepted_coordinate)
 
 
-def _api_coordinate(value: AcceptedCoordinate) -> api.PlaybillAcceptedCoordinate:
-    return api.PlaybillAcceptedCoordinate.model_validate(value.model_dump(mode="json"))
+def _api_coordinate(value: AcceptedCoordinate) -> api.AcceptedCoordinate:
+    return api.AcceptedCoordinate.model_validate(value.model_dump(mode="json"))
 
 
 def _subject_parts(value: str) -> tuple[str, str]:
@@ -333,7 +333,7 @@ class ClaimView:
     role: str
     object_kind: str
     # The object's value: a literal, a Subject path, or an exact-content
-    # Claim's text (a PlaybillExactContentRef marker when it is not text).
+    # Claim's text (a ExactContentRef marker when it is not text).
     value: object
     lifecycle_state: str
     verdict: str
@@ -518,11 +518,11 @@ def _claim_from_public_view(view: api.ClaimViewRecord) -> ClaimArtifactAny:
 
 @dataclass(frozen=True)
 class KnowledgeCard:
-    """What ``pb.get(ref)`` answered: the kind, identity and coordinate, and the value.
+    """What ``cx.get(ref)`` answered: the kind, identity and coordinate, and the value.
 
     ``value`` is a ``ClaimView`` for a Claim summary, the values-first card for any other
     summary, and the detail's payload otherwise. Next: ``card.ref`` to pass the thing on as a
-    typed ref, or ``pb.get(card.identity, detail=...)`` for another detail.
+    typed ref, or ``cx.get(card.identity, detail=...)`` for another detail.
     """
 
     kind: RefKind
@@ -535,7 +535,7 @@ class KnowledgeCard:
         """This thing as a typed ref at the coordinate it was read at.
 
         Raises ``ReferenceKindError`` for a kind that mints no ref (an operational card).
-        Next: pass it as ``subject=``, ``predicate=`` or ``value=``, or back to ``pb.get``.
+        Next: pass it as ``subject=``, ``predicate=`` or ``value=``, or back to ``cx.get``.
         """
 
         constructors = {
@@ -554,22 +554,22 @@ class KnowledgeCard:
 
 @dataclass(frozen=True)
 class NextPage:
-    """The whole ``pb.next(...)`` queue for this caller: iterate it for the items.
+    """The whole ``cx.next(...)`` queue for this caller: iterate it for the items.
 
     ``status`` is the environment the queue was read in. A row whose repair this caller cannot
     run stays with ``repair_requires`` set. Next: run an item's ``repair.command``, or
-    ``pb.get(item.subject_identity)`` to look first.
+    ``cx.get(item.subject_identity)`` to look first.
     """
 
     coordinate: AcceptedCoordinate
     evaluation_time: str
-    items: tuple[api.PlaybillNextItem, ...]
+    items: tuple[api.NextItem, ...]
     result_digest: str
     observed_domains: tuple[str, ...]
     unobserved_domains: tuple[str, ...]
     # The environment the queue was read in. A row whose repair this caller
     # cannot perform stays in `items` with `repair_requires` set.
-    status: api.PlaybillNextStatus
+    status: api.NextStatus
     attestation_head_digest: str | None = None
 
     def __iter__(self):  # type: ignore[no-untyped-def]
@@ -578,13 +578,13 @@ class NextPage:
 
 @dataclass(frozen=True)
 class ClaimTypeDraft:
-    """A ClaimType definition built by ``pb.claim_type(...)``, not yet proposed.
+    """A ClaimType definition built by ``cx.claim_type(...)``, not yet proposed.
 
     Next: ``draft.propose(proposal_name=...)``, or
-    ``pb.changes(rationale=...).claim_type(draft)`` to define it beside Claims that use it.
+    ``cx.changes(rationale=...).claim_type(draft)`` to define it beside Claims that use it.
     """
 
-    _playbill: Playbill = field(repr=False, compare=False)
+    _playbill: Cruxible = field(repr=False, compare=False)
     definition: ClaimType
 
     @property
@@ -600,7 +600,7 @@ class ClaimTypeDraft:
         ``proposal.accept()``.
         """
 
-        result = self._playbill._client.propose_playbill_claim_type(
+        result = self._playbill._client.propose_claim_type(
             self._playbill._instance_id,
             claim_type=self.definition.model_dump(mode="json"),
             proposal_name=proposal_name,
@@ -611,7 +611,7 @@ class ClaimTypeDraft:
 
 @dataclass(frozen=True)
 class _IntentDraft:
-    _playbill: Playbill = field(repr=False, compare=False)
+    _playbill: Cruxible = field(repr=False, compare=False)
     payload: (
         ClaimAuthoringPayloadV1
         | ClaimAuthoringPayloadV2
@@ -633,7 +633,7 @@ class _IntentDraft:
         ``intent.submit()``.
         """
 
-        result = self._playbill._client.compile_playbill_authoring(
+        result = self._playbill._client.compile_authoring(
             self._playbill._instance_id,
             payload=self.payload.model_dump(mode="json"),
             reference_expectations=[
@@ -654,7 +654,7 @@ class _IntentDraft:
         ``intent.diagnostics`` if it was refused.
         """
 
-        result = self._playbill._client.submit_playbill_authoring(
+        result = self._playbill._client.submit_authoring(
             self._playbill._instance_id,
             payload=self.payload.model_dump(mode="json"),
             reference_expectations=[
@@ -673,7 +673,7 @@ class _IntentDraft:
 
 @dataclass(frozen=True)
 class ClaimDraft(_IntentDraft):
-    """One Claim drafted by ``pb.claim(...)``.
+    """One Claim drafted by ``cx.claim(...)``.
 
     Next: ``draft.submit()``, or ``draft.prepare()`` first.
     """
@@ -696,10 +696,10 @@ class ClaimDraft(_IntentDraft):
 class Prediction:
     """A proposed governed test; its hypothesis already exists in accepted state.
 
-    Next: ``prediction.proposal.review()``; once accepted, ``pb.settle(...)`` settles it.
+    Next: ``prediction.proposal.review()``; once accepted, ``cx.settle(...)`` settles it.
     """
 
-    _playbill: Playbill = field(repr=False, compare=False)
+    _playbill: Cruxible = field(repr=False, compare=False)
     contract_identity: str
     contract_digest: str
     intent_id: str
@@ -719,7 +719,7 @@ class Prediction:
 class PredictionSettlement:
     """How one prediction settled: its outcome and the relation that decided it.
 
-    Next: ``pb.get(prediction_id)`` for the settled window.
+    Next: ``cx.get(prediction_id)`` for the settled window.
     """
 
     prediction_id: str
@@ -729,9 +729,9 @@ class PredictionSettlement:
 
 @dataclass(frozen=True)
 class ProcedureDraft(_IntentDraft):
-    """One Procedure drafted by ``pb.procedure(definition=...)``.
+    """One Procedure drafted by ``cx.procedure(definition=...)``.
 
-    Next: ``draft.submit()``; once accepted, ``pb.accepted_procedure(name).run(...)``.
+    Next: ``draft.submit()``; once accepted, ``cx.accepted_procedure(name).run(...)``.
     """
 
     pass
@@ -739,9 +739,9 @@ class ProcedureDraft(_IntentDraft):
 
 @dataclass(frozen=True)
 class QueryDraft(_IntentDraft):
-    """One named query drafted by ``pb.query_definition(definition=...)``.
+    """One named query drafted by ``cx.query_definition(definition=...)``.
 
-    Next: ``draft.submit()``; once accepted, ``pb.query(name=..., params={...})``.
+    Next: ``draft.submit()``; once accepted, ``cx.query(name=..., params={...})``.
     """
 
     pass
@@ -841,7 +841,7 @@ class ChangeSetDraft:
     ``.submit()``.
     """
 
-    _playbill: Playbill = field(repr=False, compare=False)
+    _playbill: Cruxible = field(repr=False, compare=False)
     rationale: str | None = None
     _members: list[_ChangeSetMember] = field(default_factory=list, repr=False)
 
@@ -863,7 +863,7 @@ class ChangeSetDraft:
         subject_definition: SubjectDraft | None = None,
         claim_type_definition: ClaimTypeDraft | None = None,
     ) -> ChangeSetDraft:
-        """Add one Claim to this changeset; the signature is `Playbill.claim`'s.
+        """Add one Claim to this changeset; the signature is `Cruxible.claim`'s.
 
         Next: more members, then ``.submit()``.
         """
@@ -1115,7 +1115,7 @@ class ChangeSetDraft:
         ProcedureMandate covering its Procedure before it can run or be armed;
         an observe-only Line needs none.
 
-        Next: ``.submit()``; once accepted, ``pb.arm_line(name)`` or ``pb.run_line(name)``.
+        Next: ``.submit()``; once accepted, ``cx.arm_line(name)`` or ``cx.run_line(name)``.
         """
 
         self._members.append(
@@ -1181,7 +1181,7 @@ class ChangeSetDraft:
     ) -> ChangeSetDraft:
         """Add a named query after its vocabulary definitions in this changeset.
 
-        Next: ``.submit()``; once accepted, ``pb.query(name=..., params={...})``.
+        Next: ``.submit()``; once accepted, ``cx.query(name=..., params={...})``.
         """
         draft = self._playbill.query_definition(definition=definition, vocabulary=vocabulary)
         assert isinstance(draft.payload, QueryDefinitionAuthoringPayload)
@@ -1236,7 +1236,7 @@ class ChangeSetDraft:
         Takes a Claim ID in either spelling the SDK's rows and refs use
         (`CLM-...` or `Claim:CLM-...`). The member carries the one canonical bare
         spelling as `retires`, which is what keeps two spellings of one
-        retirement on one member identity and one digest. `Playbill.retire` is
+        retirement on one member identity and one digest. `Cruxible.retire` is
         the typed write verb for the common case: it computes the closure.
 
         Next: more members, then ``.submit()``.
@@ -1377,7 +1377,7 @@ class _Unset(Enum):
 
 
 _UNSET = _Unset.TOKEN
-WriteAt = AcceptedCoordinate | api.PlaybillAcceptedCoordinate | str | None
+WriteAt = AcceptedCoordinate | api.AcceptedCoordinate | str | None
 
 
 def _write_subject(subject: str | SubjectRef) -> str:
@@ -1447,20 +1447,20 @@ def _batch_operands(
 
 
 class WriteBatch:
-    """Changes that are written together, as one change set: ``pb.changes(because=...)``.
+    """Changes that are written together, as one change set: ``cx.changes(because=...)``.
 
     ``set`` replaces a single-value field, ``add`` puts one more value in a
     many-valued field, and ``retire`` ends one live Claim; ``write()`` sends them
     all and returns the outcome, raising ``WriteRefusalError`` on a refusal.
 
-    ``pb.changes(because=..., subject="kind/id")`` names the Subject once:
+    ``cx.changes(because=..., subject="kind/id")`` names the Subject once:
     ``.set(field, value)`` and ``.add(field, value)`` are about it, and
     ``.retire(SlotRef(field=...))`` ends one of its fields. A change that names
     its own subject overrides the default.
     """
 
     def __init__(
-        self, playbill: Playbill, *, because: str, subject: _WriteSubject | None = None
+        self, playbill: Cruxible, *, because: str, subject: _WriteSubject | None = None
     ) -> None:
         self._playbill = playbill
         self.because = because
@@ -1619,7 +1619,7 @@ class WriteBatch:
         if not self.changes:
             raise ValueError("a write needs at least one change")
         return self._playbill._write(
-            PlaybillWriteRequest(
+            WriteRequest(
                 because=self.because,
                 subject=self.subject,
                 changes=tuple(self.changes),
@@ -1644,9 +1644,9 @@ class WriteBatch:
 
 @dataclass(frozen=True)
 class SubjectDraft(_IntentDraft):
-    """One Subject definition drafted by ``pb.subject(...)`` or ``w.<kind>.define(id)``.
+    """One Subject definition drafted by ``cx.subject(...)`` or ``w.<kind>.define(id)``.
 
-    Next: ``draft.submit()``, or ``pb.changes(rationale=...).subject(draft)`` with other
+    Next: ``draft.submit()``, or ``cx.changes(rationale=...).subject(draft)`` with other
     members.
     """
 
@@ -1654,7 +1654,7 @@ class SubjectDraft(_IntentDraft):
 
     @property
     def address(self) -> str:
-        """The Subject's ``kind/id``. Next: ``draft.submit()``, then ``pb.get(draft.address)``."""
+        """The Subject's ``kind/id``. Next: ``draft.submit()``, then ``cx.get(draft.address)``."""
 
         return self.shell.identity.name
 
@@ -1668,12 +1668,12 @@ class Intent:
 
     def __init__(
         self,
-        playbill: Playbill,
+        playbill: Cruxible,
         draft: _IntentDraft | None,
         raw: Mapping[str, object],
         *,
-        preflight: api.PlaybillAuthoringPreflightResult | None = None,
-        candidate_status: api.PlaybillCandidateStatus | None = None,
+        preflight: api.AuthoringPreflightResult | None = None,
+        candidate_status: api.CandidateStatusRecord | None = None,
     ) -> None:
         self._playbill = playbill
         self._draft = draft
@@ -1684,18 +1684,16 @@ class Intent:
     @classmethod
     def from_preflight(
         cls,
-        playbill: Playbill,
+        playbill: Cruxible,
         draft: _IntentDraft,
-        result: api.PlaybillAuthoringPreflightResult,
+        result: api.AuthoringPreflightResult,
     ) -> Intent:
         """Build the handle for an intent a preflight just named. Next: ``intent.submit()``."""
 
         intent_id = result.certificate.get("intent_id")
         if not isinstance(intent_id, str):
             raise ValueError("preflight certificate did not name an intent")
-        raw = playbill._client.get_playbill_authoring_intent(
-            playbill._instance_id, intent_id
-        ).intent
+        raw = playbill._client.get_authoring_intent(playbill._instance_id, intent_id).intent
         return cls(playbill, draft, raw, preflight=result)
 
     def __repr__(self) -> str:
@@ -1721,7 +1719,7 @@ class Intent:
 
     @property
     def intent_id(self) -> str:
-        """The intent's ID. Next: ``pb.resume_intent(intent_id)`` from another process."""
+        """The intent's ID. Next: ``cx.resume_intent(intent_id)`` from another process."""
 
         value = self._raw.get("intent_id")
         if not isinstance(value, str):
@@ -1744,7 +1742,7 @@ class Intent:
         return self._preflight is not None and self._preflight.verdict == "refused"
 
     @property
-    def lint(self) -> api.PlaybillClaimTypeProposalLint | None:
+    def lint(self) -> api.ClaimTypeProposalLint | None:
         """The ClaimType lint the last preflight returned, if any. Next: ``intent.warnings``."""
 
         return None if self._preflight is None else self._preflight.lint
@@ -1852,7 +1850,7 @@ class Intent:
         )
 
     def _refresh_raw(self) -> None:
-        self._raw = self._playbill._client.get_playbill_authoring_intent(
+        self._raw = self._playbill._client.get_authoring_intent(
             self._playbill._instance_id, self.intent_id
         ).intent
 
@@ -1863,11 +1861,11 @@ class Intent:
         """
 
         self._candidate_status = None
-        result = self._playbill._client.preflight_playbill_authoring_intent(
+        result = self._playbill._client.preflight_authoring_intent(
             self._playbill._instance_id, self.intent_id
         )
         self._preflight = result
-        self._raw = self._playbill._client.get_playbill_authoring_intent(
+        self._raw = self._playbill._client.get_authoring_intent(
             self._playbill._instance_id, self.intent_id
         ).intent
         return self
@@ -1879,9 +1877,9 @@ class Intent:
         """
 
         if draft._playbill is not self._playbill:
-            raise ValueError("replacement draft belongs to another Playbill connection")
+            raise ValueError("replacement draft belongs to another Cruxible connection")
         self._candidate_status = None
-        result = self._playbill._client.compile_playbill_authoring(
+        result = self._playbill._client.compile_authoring(
             self._playbill._instance_id,
             payload=draft.payload.model_dump(mode="json"),
             intent_id=self.intent_id,
@@ -1892,7 +1890,7 @@ class Intent:
         )
         self._draft = draft
         self._preflight = result
-        self._raw = self._playbill._client.get_playbill_authoring_intent(
+        self._raw = self._playbill._client.get_authoring_intent(
             self._playbill._instance_id, self.intent_id
         ).intent
         return self
@@ -1905,21 +1903,21 @@ class Intent:
         """
 
         self._candidate_status = None
-        result = self._playbill._client.submit_playbill_authoring_intent(
+        result = self._playbill._client.submit_authoring_intent(
             self._playbill._instance_id, self.intent_id
         )
         self._raw = result.intent
         self._candidate_status = result.status
         return self
 
-    def status(self) -> api.PlaybillCandidateStatus:
+    def status(self) -> api.CandidateStatusRecord:
         """Read this intent's candidate state fresh from the daemon.
 
         Next: ``intent.path_to_acceptance`` for what remains, or ``intent.rebase()`` if head
         moved past it.
         """
 
-        status = self._playbill._client.playbill_authoring_intent_status(
+        status = self._playbill._client.authoring_intent_status(
             self._playbill._instance_id, self.intent_id
         )
         self._candidate_status = status
@@ -1932,7 +1930,7 @@ class Intent:
         """
 
         self._candidate_status = None
-        self._raw = self._playbill._client.rebase_playbill_authoring_intent(
+        self._raw = self._playbill._client.rebase_authoring_intent(
             self._playbill._instance_id, self.intent_id
         ).intent
         self._preflight = None
@@ -1944,14 +1942,14 @@ class Intent:
         *,
         timeout: Duration,
         poll_interval: Duration,
-    ) -> api.PlaybillCandidateStatus:
+    ) -> api.CandidateStatusRecord:
         """Poll ``status()`` until accepted, terminal or superseded, or until ``timeout``.
 
-        Next: ``pb.get(ref)`` to read what was accepted.
+        Next: ``cx.get(ref)`` to read what was accepted.
         """
 
         return cast(
-            api.PlaybillCandidateStatus,
+            api.CandidateStatusRecord,
             _wait_for_status(self.status, timeout=timeout, poll_interval=poll_interval),
         )
 
@@ -1965,19 +1963,17 @@ class Proposal:
 
     def __init__(
         self,
-        playbill: Playbill,
+        playbill: Cruxible,
         proposal_id: str,
         *,
-        lint: api.PlaybillClaimTypeProposalLint | None = None,
+        lint: api.ClaimTypeProposalLint | None = None,
     ) -> None:
         self._playbill = playbill
         self.proposal_id = proposal_id
         self.lint = lint
 
     @classmethod
-    def from_inspection(
-        cls, playbill: Playbill, inspection: api.PlaybillProposalInspection
-    ) -> Proposal:
+    def from_inspection(cls, playbill: Cruxible, inspection: api.ProposalInspection) -> Proposal:
         """The handle for a proposal an inspection names. Next: ``proposal.review()``."""
 
         proposal_id = inspection.proposal.get("admission", {}).get("proposal_id")
@@ -1994,10 +1990,10 @@ class Proposal:
         """
         return review_proposal(self._playbill, self.proposal_id)
 
-    def accept(self) -> api.PlaybillActivationReceipt:
-        """Accept this proposal once its approvals are in: ``Playbill.accept`` by handle.
+    def accept(self) -> api.ActivationReceipt:
+        """Accept this proposal once its approvals are in: ``Cruxible.accept`` by handle.
 
-        Next: ``pb.at(receipt.accepted_coordinate)`` to read exactly what was accepted.
+        Next: ``cx.at(receipt.accepted_coordinate)`` to read exactly what was accepted.
         """
         return self._playbill.accept(self.proposal_id)
 
@@ -2005,9 +2001,7 @@ class Proposal:
         warnings = "" if not self.warnings else f", warnings={len(self.warnings)}"
         return f"Proposal({self.proposal_id!r}{warnings})"
 
-    def approve(
-        self, *, signer: ApprovalSigner, reviewed: ReviewedProposal
-    ) -> api.PlaybillApprovalReceipt:
+    def approve(self, *, signer: ApprovalSigner, reviewed: ReviewedProposal) -> api.ApprovalReceipt:
         """Sign this exact review with caller-configured custody; never activate.
 
         Next: ``proposal.accept()`` once enough approvals are in.
@@ -2020,24 +2014,22 @@ class Proposal:
 
         return () if self.lint is None else tuple(self.lint.warnings)
 
-    def status(self) -> api.PlaybillProposalListEntry:
+    def status(self) -> api.ProposalListEntry:
         """This proposal's current status, read by ID.
 
-        Next: ``proposal.accept()`` while open, or ``pb.next(...)`` if it went stale.
+        Next: ``proposal.accept()`` while open, or ``cx.next(...)`` if it went stale.
         """
-        return self._playbill._client.playbill_proposal_status(
-            self._playbill._instance_id, self.proposal_id
-        )
+        return self._playbill._client.proposal_status(self._playbill._instance_id, self.proposal_id)
 
     def wait_for_acceptance(
         self,
         *,
         timeout: Duration,
         poll_interval: Duration,
-    ) -> api.PlaybillProposalListEntry:
+    ) -> api.ProposalListEntry:
         """Poll ``status()`` until the proposal settles, or until ``timeout``.
 
-        Next: ``pb.get(ref)`` to read what was accepted.
+        Next: ``cx.get(ref)`` to read what was accepted.
         """
 
         deadline = time.monotonic_ns() + timeout.value * 1_000
@@ -2097,7 +2089,7 @@ class Publication:
     def abandon(self) -> Publication:
         """Abandon (depublish) this expectation. Next: ``publication.status()``."""
 
-        result = self._intent._playbill._client.abandon_playbill_authoring_insertion(
+        result = self._intent._playbill._client.abandon_authoring_insertion(
             self._intent._playbill._instance_id,
             self._intent.intent_id,
             expectation_id=self.expectation_id,
@@ -2118,15 +2110,15 @@ def _wait_for_status(call: Any, *, timeout: Duration, poll_interval: Duration) -
         time.sleep(poll_interval.value / 1_000_000)
 
 
-class Playbill:
-    """One connection to one Playbill instance: read, write, see what needs doing.
+class Cruxible:
+    """One connection to one Cruxible instance: read, write, see what needs doing.
 
-    Open one with ``Playbill.connect()``. Reading: ``pb.orient()`` maps what exists,
-    ``pb.query(kind, ...)`` answers questions over it, ``pb.get(ref)`` opens one thing, and the
-    exported floor under ``.playbill/floor/current/`` is plain files to grep. ``pb.world()``
-    hands back the vocabulary as objects; ``pb.world().describe()`` lists every verb and field.
-    Writing: ``pb.set``, ``pb.retire`` and ``pb.changes(because=...)``; authoring anything else:
-    ``pb.changes(rationale=...)``. Next: ``pb.next(expiring_within=...)`` for what needs
+    Open one with ``Cruxible.connect()``. Reading: ``cx.orient()`` maps what exists,
+    ``cx.query(kind, ...)`` answers questions over it, ``cx.get(ref)`` opens one thing, and the
+    exported floor under ``.playbill/floor/current/`` is plain files to grep. ``cx.world()``
+    hands back the vocabulary as objects; ``cx.world().describe()`` lists every verb and field.
+    Writing: ``cx.set``, ``cx.retire`` and ``cx.changes(because=...)``; authoring anything else:
+    ``cx.changes(rationale=...)``. Next: ``cx.next(expiring_within=...)`` for what needs
     attention.
     """
 
@@ -2165,8 +2157,8 @@ class Playbill:
         principal_id: str | None = None,
         workspace: Path | None = None,
         access_profile: AccessProfile | None = None,
-        at: AcceptedCoordinate | api.PlaybillAcceptedCoordinate | None = None,
-    ) -> Playbill:
+        at: AcceptedCoordinate | api.AcceptedCoordinate | None = None,
+    ) -> Cruxible:
         """Open a connection to one instance on a daemon.
 
         The context file fills whatever is not passed. ``target`` is an ``http(s)://`` URL
@@ -2174,7 +2166,7 @@ class Playbill:
         (default ``CRUXIBLE_SERVER_BEARER_TOKEN``); ``principal_id`` the principal of an
         auth-off daemon. ``at`` pins every read to one accepted coordinate; without it the
         connection is live and reads current head. One identity read names the head; nothing
-        else is read. Use it as a context manager to close it. Next: ``pb.orient()`` to see
+        else is read. Use it as a context manager to close it. Next: ``cx.orient()`` to see
         what exists.
         """
 
@@ -2194,14 +2186,14 @@ class Playbill:
         if context_path.is_file():
             loaded = json.loads(context_path.read_text(encoding="utf-8"))
             if not isinstance(loaded, dict):
-                raise ValueError("Playbill context must contain a JSON object")
+                raise ValueError("Cruxible context must contain a JSON object")
             remembered = loaded
         explicit_url = target
         explicit_socket = None
         if target is not None and target.startswith("unix:"):
             explicit_url = None
             explicit_socket = target.removeprefix("unix:")
-        resolved = resolve_playbill_context(
+        resolved = resolve_context(
             server_url=explicit_url,
             server_socket=explicit_socket,
             instance_id=instance,
@@ -2209,11 +2201,11 @@ class Playbill:
             remembered=remembered,
         )
         if resolved.server_url is None and resolved.server_socket is None:
-            raise ValueError("Playbill connection requires a server target")
+            raise ValueError("Cruxible connection requires a server target")
         if not resolved.instance_id:
             if resolved.instance_transport_mismatch:
-                raise PlaybillContextResolutionError(resolved.instance_transport_mismatch)
-            raise ValueError("Playbill connection requires an instance")
+                raise ContextResolutionError(resolved.instance_transport_mismatch)
+            raise ValueError("Cruxible connection requires an instance")
         raw_token = (
             token.get_secret_value()
             if token is not None
@@ -2244,7 +2236,7 @@ class Playbill:
             # explicitly (``orient()`` / ``refresh()``) when the overview is wanted.
             if at is None:
                 result._coordinate = AcceptedCoordinate.model_validate(
-                    client.playbill_whoami(resolved.instance_id).coordinate.model_dump(mode="json")
+                    client.whoami(resolved.instance_id).coordinate.model_dump(mode="json")
                 )
             else:
                 result._coordinate = AcceptedCoordinate.model_validate(at.model_dump(mode="json"))
@@ -2263,7 +2255,7 @@ class Playbill:
         workspace: Path | None,
         access_profile: AccessProfile | None = None,
         clock: Any = None,
-    ) -> Playbill:
+    ) -> Cruxible:
         result = cls(
             client=client,
             instance_id=instance_id,
@@ -2284,19 +2276,19 @@ class Playbill:
         coordinate = getattr(self, "_coordinate", None)
         at = "no coordinate yet" if coordinate is None else f"at {coordinate.git_oid[:12]}"
         mode = "pinned" if getattr(self, "_pinned", False) else "live"
-        return f"Playbill({getattr(self, '_instance_id', '?')!r}, {at}, {mode})"
+        return f"Cruxible({getattr(self, '_instance_id', '?')!r}, {at}, {mode})"
 
     def close(self) -> None:
         """Close the transport this connection owns.
 
-        A borrowed ``at()`` context leaves it open. Next: ``Playbill.connect()`` to open
+        A borrowed ``at()`` context leaves it open. Next: ``Cruxible.connect()`` to open
         another.
         """
 
         if self._owns_client:
             self._client.close()
 
-    def __enter__(self) -> Playbill:
+    def __enter__(self) -> Cruxible:
         return self
 
     def __exit__(self, *_args: object) -> None:
@@ -2334,14 +2326,14 @@ class Playbill:
         This property performs no I/O. Live reads resolve current head in their
         own request, so this value is not a freshness check.
 
-        Next: ``pb.at(pb.coordinate)`` to pin later reads to it, or ``pb.orient()`` to read
+        Next: ``cx.at(cx.coordinate)`` to pin later reads to it, or ``cx.orient()`` to read
         current head.
         """
         if self._coordinate is None:
-            raise ValueError("Playbill has not installed an orientation coordinate")
+            raise ValueError("Cruxible has not installed an orientation coordinate")
         return self._coordinate
 
-    def at(self, coordinate: AcceptedCoordinate | api.PlaybillAcceptedCoordinate) -> Playbill:
+    def at(self, coordinate: AcceptedCoordinate | api.AcceptedCoordinate) -> Cruxible:
         """Borrow an explicitly pinned reading/authoring context, without I/O.
 
         Accepted reads, including World construction, stay at this coordinate.
@@ -2349,9 +2341,9 @@ class Playbill:
         The owning connection must remain open; closing this borrowed context
         does not close its parent's transport. Operational queues remain live.
 
-        Next: any read on the returned context, e.g. ``pb.at(coordinate).get(ref)``.
+        Next: any read on the returned context, e.g. ``cx.at(coordinate).get(ref)``.
         """
-        result = Playbill(
+        result = Cruxible(
             client=self._client,
             instance_id=self._instance_id,
             workspace=self._workspace,
@@ -2365,7 +2357,7 @@ class Playbill:
 
     def _read_at(
         self, coordinate: AcceptedCoordinate | None = None
-    ) -> api.PlaybillAcceptedCoordinate | None:
+    ) -> api.AcceptedCoordinate | None:
         if coordinate is not None:
             if self._pinned:
                 self._assert_coordinate(coordinate)
@@ -2376,7 +2368,7 @@ class Playbill:
         self,
         coordinate: AcceptedCoordinate,
         *,
-        expected: api.PlaybillAcceptedCoordinate | None,
+        expected: api.AcceptedCoordinate | None,
     ) -> None:
         if expected is not None and coordinate != _coordinate(expected):
             raise ValueError("accepted read returned a different requested coordinate")
@@ -2387,7 +2379,7 @@ class Playbill:
     def block(self) -> ProjectionBlocks:
         """Client-only declaration stamps; prose remains wholly agent-owned.
 
-        Next: ``pb.block.sync()`` to check every declared block.
+        Next: ``cx.block.sync()`` to check every declared block.
         """
 
         return ProjectionBlocks(self)
@@ -2399,7 +2391,7 @@ class Playbill:
         "what does this Claim say, and is it believed" means walking that array
         by hand every time. This is that walk, once.
 
-        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
+        Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
         """
 
         identity = _address(claim, RefKind.CLAIM) if isinstance(claim, ClaimRef) else claim
@@ -2427,7 +2419,7 @@ class Playbill:
             return view
         value: object = evidence.value
         if isinstance(value, Mapping) and "exact_content" in value:
-            value = PlaybillExactContentRef.model_validate(value)
+            value = ExactContentRef.model_validate(value)
         digest = evidence.content_digest
         return replace(
             view,
@@ -2501,7 +2493,7 @@ class Playbill:
         """
         if isinstance(capture, CaptureRef):
             self._assert_coordinate(capture.coordinate)
-        result = self._client.read_playbill_capture(
+        result = self._client.read_capture(
             self._instance_id,
             CaptureReadRequest(
                 capture_digest=capture.capture_digest
@@ -2519,7 +2511,7 @@ class Playbill:
         The complete batch preserves input order and all single-view fields.
         Use explicit batches for larger selections; no population read is implied.
 
-        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
+        Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
         """
         from cruxible_client.contracts.claim_reads import ClaimReadBatchRequest
 
@@ -2535,7 +2527,7 @@ class Playbill:
             ),
             evaluation_time=datetime.fromisoformat(self._evaluation_time()),
         )
-        result = self._client.read_playbill_claim_batch(self._instance_id, request=request)
+        result = self._client.read_claim_batch(self._instance_id, request=request)
         result_coordinate = _coordinate(result.coordinate)
         if result.truncated or result.cursor is not None or len(result.claims) != len(claims):
             raise ValueError("identity batch did not return a complete Claim selection")
@@ -2560,7 +2552,7 @@ class Playbill:
         ``hypothesis`` is a Claim ID (``CLM-...``); the daemon resolves its
         accepted version. An exact ``ClaimVersionReference`` is the advanced form.
 
-        Next: ``pb.settle(contract, observation=...)`` once an observation is accepted.
+        Next: ``cx.settle(contract, observation=...)`` once an observation is accepted.
         """
         return self._client.resolution_contracts(
             self._instance_id,
@@ -2575,9 +2567,7 @@ class Playbill:
 
         Next: ``prediction.proposal.review()``, then approve and ``accept()`` it.
         """
-        result = self._client.predict_playbill(
-            self._instance_id, request=PlaybillPredictRequest(contract=contract)
-        )
+        result = self._client.predict(self._instance_id, request=PredictRequest(contract=contract))
         view = AuthoringIntentView.model_validate(result.intent)
         return Prediction(
             self,
@@ -2603,14 +2593,14 @@ class Playbill:
         daemon resolves the exact contract, window and Claim version. Exact
         references are accepted as the advanced form.
 
-        Next: ``pb.next(expiring_within=...)``; a settled window leaves the queue.
+        Next: ``cx.next(expiring_within=...)``; a settled window leaves the queue.
         """
         if (terminal_run_id is None) != (terminal_record_digest is None):
             raise ValueError("terminal settlement requires its run and record digest")
         contract = None if isinstance(prediction, str) else prediction
         route = prediction if isinstance(prediction, str) else prediction.identity.name
         if terminal_run_id is None and isinstance(observation, str):
-            request = api.PlaybillSettleRequest(
+            request = api.SettleRequest(
                 observation=observation, contract=contract, trigger_event=trigger_event
             )
         else:
@@ -2623,10 +2613,10 @@ class Playbill:
                     terminal_record_digest=cast(str, terminal_record_digest),
                 )
             )
-            request = api.PlaybillSettleRequest(
+            request = api.SettleRequest(
                 contract=contract, trigger_event=trigger_event, evidence=evidence
             )
-        result = self._client.settle_playbill_prediction(self._instance_id, route, request=request)
+        result = self._client.settle_prediction(self._instance_id, route, request=request)
         outcome = result.resolution.get("settlement_outcome")
         if not isinstance(outcome, bool):
             raise ValueError("settlement response omitted its mechanical outcome")
@@ -2643,7 +2633,7 @@ class Playbill:
 
         Next: ``intent.status()``, then ``intent.submit()`` if it was never submitted.
         """
-        raw = self._client.resume_playbill_authoring_intent(self._instance_id, intent_id).intent
+        raw = self._client.resume_authoring_intent(self._instance_id, intent_id).intent
         preflight = raw.get("last_preflight")
         return Intent(
             self,
@@ -2652,9 +2642,9 @@ class Playbill:
             preflight=(
                 None
                 if preflight is None
-                else api.PlaybillAuthoringPreflightResult.model_validate(preflight)
+                else api.AuthoringPreflightResult.model_validate(preflight)
             ),
-            candidate_status=api.PlaybillCandidateStatus.model_validate(raw["candidate_status"]),
+            candidate_status=api.CandidateStatusRecord.model_validate(raw["candidate_status"]),
         )
 
     def proposal(self, proposal_id: str) -> Proposal:
@@ -2665,7 +2655,7 @@ class Playbill:
         """
         return Proposal(self, proposal_id)
 
-    def accept(self, proposal_id: str) -> api.PlaybillActivationReceipt:
+    def accept(self, proposal_id: str) -> api.ActivationReceipt:
         """Request durable acceptance without refreshing local reading surfaces.
 
         The daemon's publication, recovery and workspace-advertisement protocol
@@ -2674,11 +2664,11 @@ class Playbill:
         Subsequent live reads select current head; use at(receipt.accepted_coordinate)
         for exact readback. Explicitly pinned contexts and World snapshots stay fixed.
 
-        Next: ``pb.at(receipt.accepted_coordinate)`` to read exactly what was accepted, or
-        ``pb.refresh_workspace(at=...)`` to export the floor there.
+        Next: ``cx.at(receipt.accepted_coordinate)`` to read exactly what was accepted, or
+        ``cx.refresh_workspace(at=...)`` to export the floor there.
         """
 
-        receipt = self._client.activate_playbill_proposal(self._instance_id, proposal_id)
+        receipt = self._client.activate_proposal(self._instance_id, proposal_id)
         if receipt.status == "accepted" and receipt.accepted_coordinate is not None:
             self._observe_read(_coordinate(receipt.accepted_coordinate), expected=None)
         return receipt
@@ -2686,8 +2676,8 @@ class Playbill:
     def refresh_workspace(
         self,
         *,
-        at: AcceptedCoordinate | api.PlaybillAcceptedCoordinate,
-    ) -> api.PlaybillFloorRefreshResult:
+        at: AcceptedCoordinate | api.AcceptedCoordinate,
+    ) -> api.FloorRefreshResult:
         """Materialize the configured floor at an explicit accepted coordinate.
 
         Reports the coordinate written, or a failed/not_configured status.
@@ -2697,7 +2687,7 @@ class Playbill:
         Next: grep ``.playbill/floor/current/`` for what it wrote.
         """
 
-        coordinate = api.PlaybillAcceptedCoordinate.model_validate(at.model_dump(mode="json"))
+        coordinate = api.AcceptedCoordinate.model_validate(at.model_dump(mode="json"))
         return refresh_workspace_floor(
             self._client, self._instance_id, workspace=self._workspace_root, at=coordinate
         )
@@ -2707,7 +2697,7 @@ class Playbill:
         proposal_id: str,
         *,
         no_sync: bool = False,
-    ) -> api.PlaybillWorkspaceActivationResult:
+    ) -> api.WorkspaceActivationResult:
         """Activate one proposal and refresh this workspace's configured floor.
 
         Convenience path: accepts, exports the floor at the accepted coordinate,
@@ -2716,7 +2706,7 @@ class Playbill:
         separately. A live connection remembers the acceptance coordinate; pinned
         contexts and existing World snapshots stay fixed.
 
-        Next: grep ``.playbill/floor/current/``, or ``pb.get(ref)`` to read the accepted
+        Next: grep ``.playbill/floor/current/``, or ``cx.get(ref)`` to read the accepted
         change.
         """
 
@@ -2747,7 +2737,7 @@ class Playbill:
         proposes nothing; commit that preview with ``dry_run=False,
         at=result.coordinate.git_oid``. Approve as usual.
 
-        Next: ``pb.proposal(result.proposal_id).review()`` and approve it.
+        Next: ``cx.proposal(result.proposal_id).review()`` and approve it.
         """
 
         for item in claim_types:
@@ -2759,16 +2749,16 @@ class Playbill:
             dry_run=dry_run,
             at=at,
         )
-        return self._client.upgrade_playbill_claim_types(self._instance_id, request)
+        return self._client.upgrade_claim_types(self._instance_id, request)
 
-    def refresh(self) -> api.PlaybillHead:
+    def refresh(self) -> api.Head:
         """Re-read the accepted head (a pinned context re-reads its own coordinate).
 
-        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
+        Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
         """
 
         requested = self._read_at() if self._pinned else None
-        head = self._client.playbill_head(self._instance_id, at=requested)
+        head = self._client.head(self._instance_id, at=requested)
         self._observe_read(_coordinate(head.coordinate.model_dump(mode="json")), expected=requested)
         self._coordinate = _coordinate(head.coordinate.model_dump(mode="json"))
         return head
@@ -2776,7 +2766,7 @@ class Playbill:
     def file(self, path: str | Path) -> FileSelector:
         """Select text from a catalogued workspace file, to cite as evidence.
 
-        Next: ``pb.file(path).anchor("text found once")`` and pass it as ``supported_by=``.
+        Next: ``cx.file(path).anchor("text found once")`` and pass it as ``supported_by=``.
         """
 
         return self._sources.select(path)
@@ -2792,7 +2782,7 @@ class Playbill:
 
         A write that names a missing Subject of a known kind adds it for you; this is for
         defining one explicitly, or alongside other members of a change set. Next:
-        ``draft.submit()``, or ``pb.changes(rationale=...).subject(draft)`` to define it
+        ``draft.submit()``, or ``cx.changes(rationale=...).subject(draft)`` to define it
         with other members.
         """
 
@@ -2839,7 +2829,7 @@ class Playbill:
     ) -> ClaimTypeDraft:
         """Draft a ClaimType, reading its accepted definition through get.
 
-        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
+        Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
         """
 
         kind = _enum(object_kind, ClaimObjectKind, label="claim-type object kind")
@@ -2928,7 +2918,7 @@ class Playbill:
         Subjects therefore costs the vocabulary at `world()` and that one list
         the first time any Subject is named.
 
-        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
+        Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
         """
 
         from cruxible_client.authoring.world import build_world
@@ -2938,10 +2928,10 @@ class Playbill:
         cursor: str | None = None
         coordinate: AcceptedCoordinate | None = None
         while True:
-            page = self._client.orient_playbill(
+            page = self._client.orient(
                 self._instance_id,
                 section="claim_types",
-                limit=api.PLAYBILL_ORIENT_MAX_LIMIT,
+                limit=api.ORIENT_MAX_LIMIT,
                 cursor=cursor,
                 at=requested if coordinate is None else _api_coordinate(coordinate),
                 surface="sdk",
@@ -2955,9 +2945,9 @@ class Playbill:
         self._observe_read(coordinate, expected=requested)
         envelopes: list[Mapping[str, object]] = []
         for start in range(0, len(names), GET_BATCH_MAX_REFS):
-            batch = self._client.playbill_get_batch(
+            batch = self._client.get_batch(
                 self._instance_id,
-                request=PlaybillGetBatchRequest(
+                request=GetBatchRequest(
                     refs=tuple(names[start : start + GET_BATCH_MAX_REFS]),
                     at=_api_coordinate(coordinate),
                     evaluation_time=datetime.fromisoformat(self._evaluation_time()),
@@ -2995,7 +2985,7 @@ class Playbill:
         ``.write()``; ``subject=`` names the Subject of every change that names
         none. ``changes(rationale=...)`` is the full authoring changeset.
 
-        `pb.claim(...)` still authors exactly one Claim. This is the same
+        `cx.claim(...)` still authors exactly one Claim. This is the same
         authoring surface for an intent that carries more than one: it lowers
         once, proposes once, and admits or refuses whole. The draft retains the
         last observed coordinate for its vocabulary lookups and typed references;
@@ -3017,22 +3007,22 @@ class Playbill:
 
     # -- the write verbs -------------------------------------------------------
 
-    def _write_at(self, at: WriteAt | _Unset) -> api.PlaybillAcceptedCoordinate | str | None:
+    def _write_at(self, at: WriteAt | _Unset) -> api.AcceptedCoordinate | str | None:
         """The read coordinate a write names: by default this context's own."""
 
         if isinstance(at, _Unset):
             return None if self._coordinate is None else _api_coordinate(self.coordinate)
         if at is None or isinstance(at, str):
             return at
-        return api.PlaybillAcceptedCoordinate.model_validate(at.model_dump(mode="json"))
+        return api.AcceptedCoordinate.model_validate(at.model_dump(mode="json"))
 
-    def _write(self, request: PlaybillWriteRequest) -> WriteOutcome:
+    def _write(self, request: WriteRequest) -> WriteOutcome:
         """Send one write and answer its outcome, or raise its refusal."""
 
         request = request.model_copy(
             update={"changes": observe_changes(request.changes, workspace=self._workspace_root)}
         )
-        outcome = self._client.playbill_write(self._instance_id, request=request)
+        outcome = self._client.write(self._instance_id, request=request)
         return self._written(outcome)
 
     def _written(self, outcome: WriteOutcome) -> WriteOutcome:
@@ -3082,11 +3072,11 @@ class Playbill:
         none). A refusal raises ``WriteRefusalError``; check
         ``outcome.warnings`` for a verdict that is not supported.
 
-        Next: ``outcome.next`` names what is still needed; ``pb.get(f"{subject}")`` reads
+        Next: ``outcome.next`` names what is still needed; ``cx.get(f"{subject}")`` reads
         the value back with its verdict.
         """
 
-        request = PlaybillSetRequest(
+        request = SetRequest(
             subject=_write_subject(subject),
             field=_write_field(field),
             value=_write_value(value),
@@ -3104,7 +3094,7 @@ class Playbill:
         if request.evidence is not None:
             (change,) = observe_changes((request.change(),), workspace=self._workspace_root)
             request = request.model_copy(update={"evidence": cast(SetChange, change).evidence})
-        return self._written(self._client.playbill_set(self._instance_id, request=request))
+        return self._written(self._client.set(self._instance_id, request=request))
 
     def retire(
         self,
@@ -3123,11 +3113,11 @@ class Playbill:
         refuses unless its field holds that value now (every live value, as a
         list, for a many-valued field).
 
-        Next: ``outcome.next`` names what is still needed; ``pb.get(ref, detail="history")``
+        Next: ``outcome.next`` names what is still needed; ``cx.get(ref, detail="history")``
         shows the retirement.
         """
 
-        request = PlaybillRetireRequest(
+        request = RetireRequest(
             target=_write_target(target),
             because=because,
             reason=reason,
@@ -3138,7 +3128,7 @@ class Playbill:
             surface="sdk",
             full_coordinate=True,
         )
-        return self._written(self._client.playbill_retire(self._instance_id, request=request))
+        return self._written(self._client.retire(self._instance_id, request=request))
 
     def claim(
         self,
@@ -3160,11 +3150,11 @@ class Playbill:
     ) -> ClaimDraft:
         """Author exactly one Claim, as a draft to submit.
 
-        The write verbs (``pb.set``, ``pb.changes(because=...)``) cover the common case and
+        The write verbs (``cx.set``, ``cx.changes(because=...)``) cover the common case and
         infer the role, revision and evidence; this is the full authoring surface: role,
         rationale, qualifiers, effective periods, explicit revisions, dispositions and
         Subject or ClaimType definitions in the same intent. Evidence is ``supported_by=``
-        (a ``pb.file(...).anchor(...)`` selection or a ``CaptureRef``), ``copied_from=``, or
+        (a ``cx.file(...).anchor(...)`` selection or a ``CaptureRef``), ``copied_from=``, or
         ``self_source=`` text. Next: ``draft.submit()`` (or ``draft.prepare()`` to preflight
         first), then ``intent.proposal.review()``.
         """
@@ -3210,7 +3200,7 @@ class Playbill:
         """Build one authored Claim from decisions plus its caller's call sites.
 
         The call sites arrive as an argument so a Claim authored inside
-        `pb.changes(...)` still points its diagnostics at the author's own
+        `cx.changes(...)` still points its diagnostics at the author's own
         keyword, not at the builder that forwarded it.
         """
 
@@ -3614,7 +3604,7 @@ class Playbill:
         after sibling definitions. Both ontology and relationship queries use
         this path, including declarative CLI/MCP inputs.
 
-        Next: ``draft.submit()``; once accepted, ``pb.query(name=..., params={...})`` runs
+        Next: ``draft.submit()``; once accepted, ``cx.query(name=..., params={...})`` runs
         it.
         """
         payload = lower_authoring_input(definition)
@@ -3653,7 +3643,7 @@ class Playbill:
         Discovery never installs a provider or authorizes its execution. Multiple
         implementations require an explicit selection rather than an arbitrary default.
 
-        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
+        Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
         """
         identity = (
             interface
@@ -3663,7 +3653,7 @@ class Playbill:
         read = self._get(identity, "proof", None, None)
         if read.proof is None or read.accepted_coordinate is None:
             raise ValueError(f"No accepted provider interface {identity!r}")
-        entry = api.PlaybillProviderInterfaceEntry.model_validate(read.proof["entry"])
+        entry = api.ProviderInterfaceEntry.model_validate(read.proof["entry"])
         return ProviderBinding.from_interface(entry, provider=provider).model_copy(
             update={
                 "coordinate": AcceptedCoordinate.model_validate(
@@ -3693,7 +3683,7 @@ class Playbill:
         also carried by this input. The daemon resolves the policy at the same
         base as the graph's other dependencies.
 
-        Next: ``draft.submit()``, then ``pb.accepted_procedure(name).run(...)`` once
+        Next: ``draft.submit()``, then ``cx.accepted_procedure(name).run(...)`` once
         accepted.
         """
 
@@ -3777,7 +3767,7 @@ class Playbill:
     def query_binding(self, query: str | QueryRef) -> QueryBinding:
         """Read an exact query and its parameter types through accepted discovery.
 
-        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
+        Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
         """
         name = _address(query, RefKind.QUERY)
         proof = self._get(
@@ -3786,7 +3776,7 @@ class Playbill:
             None,
             query.coordinate if isinstance(query, QueryRef) else None,
         ).proof
-        view = api.PlaybillQueryDefinitionView.model_validate(proof)
+        view = api.QueryDefinitionView.model_validate(proof)
         coordinate = _coordinate(view.coordinate)
         return QueryBinding(
             QueryRef(view.name, coordinate),
@@ -3800,10 +3790,10 @@ class Playbill:
         *,
         parameters: Mapping[str, object] | None = None,
         budgets: QueryBudgets | None = None,
-    ) -> api.PlaybillQueryRun:
+    ) -> api.QueryRun:
         """Run a named query at this SDK view's coordinate with a replay receipt.
 
-        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
+        Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
         """
         if isinstance(query, QueryBinding):
             if parameters is not None and not isinstance(parameters, Record):
@@ -3814,9 +3804,9 @@ class Playbill:
         requested = self._read_at(query.coordinate if isinstance(query, QueryRef) else None)
         # The named query's full receipt is the run: its replayable result and
         # execution receipt; one rendered row is enough beside it.
-        page = self._client.query_playbill(
+        page = self._client.query(
             self._instance_id,
-            request=api.PlaybillQueryRequest.model_validate(
+            request=api.QueryRequest.model_validate(
                 {
                     "name": name,
                     "params": None if parameters is None else dict(parameters),
@@ -3834,8 +3824,8 @@ class Playbill:
         replay = page.receipt.replay
         if replay is None:  # pragma: no cover - a full receipt always carries its replay
             raise ValueError("the named query answered no replay receipt")
-        return api.PlaybillQueryRun(
-            coordinate=api.PlaybillAcceptedCoordinate.model_validate(
+        return api.QueryRun(
+            coordinate=api.AcceptedCoordinate.model_validate(
                 page.receipt.coordinate.model_dump(mode="json")
             ),
             name=name,
@@ -3860,7 +3850,7 @@ class Playbill:
         ]
         | None = None,
         order_by: Sequence[str] | None = None,
-        limit: int = api.PLAYBILL_QUERY_DEFAULT_LIMIT,
+        limit: int = api.QUERY_DEFAULT_LIMIT,
         cursor: str | None = None,
         spec: QueryDefinitionSpec | None = None,
         name: str | QueryRef | None = None,
@@ -3885,7 +3875,7 @@ class Playbill:
         "reverse")`` from ``dev.roadmap_item``; a mapping or ``QueryFollow``
         with ``direction`` works too.
 
-        Next: ``result.next_page()`` while truncated; ``pb.get(ref)`` on any row's ref or
+        Next: ``result.next_page()`` while truncated; ``cx.get(ref)`` on any row's ref or
         Claim ID for its evidence and history.
         """
 
@@ -3895,7 +3885,7 @@ class Playbill:
             else item
             for item in follow or ()
         ]
-        request = api.PlaybillQueryRequest.model_validate(
+        request = api.QueryRequest.model_validate(
             {
                 "kind": kind,
                 "where": filters_from_mappings(where or ()),
@@ -3923,7 +3913,7 @@ class Playbill:
 
     def _run_query_request(
         self,
-        request: api.PlaybillQueryRequest,
+        request: api.QueryRequest,
         *,
         at: AcceptedCoordinate | str | None = None,
         evaluation_time: datetime | str | None = None,
@@ -3952,7 +3942,7 @@ class Playbill:
                 ),
             }
         )
-        page = self._client.query_playbill(self._instance_id, request=prepared)
+        page = self._client.query(self._instance_id, request=prepared)
         coordinate = AcceptedCoordinate.model_validate(
             page.receipt.coordinate.model_dump(mode="json")
         )
@@ -3970,7 +3960,7 @@ class Playbill:
     def accepted_procedure(self, procedure: str | ProcedureRef) -> Procedure:
         """A handle on one accepted Procedure, read lazily.
 
-        Next: ``procedure.run(input=procedure.input(...))``, or ``pb.get(procedure.ref)``
+        Next: ``procedure.run(input=procedure.input(...))``, or ``cx.get(procedure.ref)``
         for its readiness and track record.
         """
 
@@ -3991,10 +3981,10 @@ class Playbill:
     ) -> LineTriggerCheckResult:
         """Inspect trigger eligibility and retained admissions without starting work.
 
-        Next: ``pb.evaluate_line(...)`` for a missed range, or ``pb.dispatch_line(line)``
+        Next: ``cx.evaluate_line(...)`` for a missed range, or ``cx.dispatch_line(line)``
         for pending work.
         """
-        return self._client.check_playbill_line(
+        return self._client.check_line(
             self._instance_id,
             line,
             request=LineTriggerCheckRequest(since=since, until=until, limit=limit, cursor=cursor),
@@ -4011,10 +4001,10 @@ class Playbill:
         `dry_run=True` previews it (`would_arm`) and records nothing; commit
         exactly that with `at=` the preview's `coordinate.git_oid`.
 
-        Next: ``pb.line_status(line)``, or ``pb.get(f"Line:{line}")`` for its occurrences
+        Next: ``cx.line_status(line)``, or ``cx.get(f"Line:{line}")`` for its occurrences
         and runs.
         """
-        return self._client.arm_playbill_line(self._instance_id, line, dry_run=dry_run, at=at)
+        return self._client.arm_line(self._instance_id, line, dry_run=dry_run, at=at)
 
     def disarm_line(
         self, line: str, *, dry_run: bool | None = None, at: str | None = None
@@ -4024,17 +4014,17 @@ class Playbill:
         A Line whose arm already stopped returns `outcome="already_disarmed"`.
         `dry_run=True` previews it (`would_disarm`); `at` pins the commit.
 
-        Next: ``pb.arm_line(line)`` to resume it.
+        Next: ``cx.arm_line(line)`` to resume it.
         """
-        return self._client.disarm_playbill_line(self._instance_id, line, dry_run=dry_run, at=at)
+        return self._client.disarm_line(self._instance_id, line, dry_run=dry_run, at=at)
 
     def line_status(self, line: str) -> api.LineArm:
         """The Line's current arm, or its last one and why it stopped.
 
-        Next: ``pb.arm_line(line)`` if it stopped, or ``pb.get(f"Line:{line}")`` for its
+        Next: ``cx.arm_line(line)`` if it stopped, or ``cx.get(f"Line:{line}")`` for its
         runs.
         """
-        return self._client.playbill_line_status(self._instance_id, line)
+        return self._client.line_status(self._instance_id, line)
 
     def evaluate_line(
         self,
@@ -4047,9 +4037,9 @@ class Playbill:
     ) -> api.LineTriggerCheckResult:
         """Explicitly turn a missed range into pending occurrences.
 
-        Next: ``pb.dispatch_line(line)`` to admit what it found.
+        Next: ``cx.dispatch_line(line)`` to admit what it found.
         """
-        return self._client.evaluate_playbill_line(
+        return self._client.evaluate_line(
             self._instance_id,
             line,
             request=api.LineEvaluateRequest(since=since, until=until, limit=limit, cursor=cursor),
@@ -4060,9 +4050,9 @@ class Playbill:
     ) -> api.LineDispatchResult:
         """Admit pending work using this connection's current actor and authority.
 
-        Next: ``pb.get(f"ProcedureRun:{item.run_id}")`` for each admitted run.
+        Next: ``cx.get(f"ProcedureRun:{item.run_id}")`` for each admitted run.
         """
-        return self._client.dispatch_playbill_line(
+        return self._client.dispatch_line(
             self._instance_id,
             line,
             request=api.LineDispatchRequest(occurrence_id=occurrence_id, limit=limit, retry=retry),
@@ -4083,10 +4073,10 @@ class Playbill:
         a Line no live Trigger aims at, which runs when run explicitly.
 
         Next: ``run.succeeded`` and ``run.result``, or
-        ``pb.get(f"ProcedureRun:{run.run_id}")``.
+        ``cx.get(f"ProcedureRun:{run.run_id}")``.
         """
 
-        result = self._client.run_playbill_line(
+        result = self._client.run_line(
             self._instance_id,
             line,
             trigger=trigger,
@@ -4101,7 +4091,7 @@ class Playbill:
         self,
         ref: str | TypedRef,
         *,
-        detail: PlaybillGetDetail = "summary",
+        detail: GetDetail = "summary",
         range: tuple[int, int] | str | None = None,
     ) -> KnowledgeCard:
         """Read one governed thing by reference, resolved directly by the daemon.
@@ -4139,11 +4129,11 @@ class Playbill:
             if ref.kind not in prefixes:
                 raise ReferenceKindError(f"get does not read {ref.kind.value} references")
             text = prefixes[ref.kind] + ref.address
-        window: PlaybillByteRange | None = None
+        window: ByteRange | None = None
         if isinstance(range, str):
-            window = PlaybillByteRange.parse(range)
+            window = ByteRange.parse(range)
         elif range is not None:
-            window = PlaybillByteRange(start=range[0], end=range[1])
+            window = ByteRange(start=range[0], end=range[1])
         claim_summary = detail == "summary" and (
             (not isinstance(ref, str) and ref.kind is RefKind.CLAIM)
             or (isinstance(ref, str) and ref.removeprefix("Claim:").startswith("CLM-"))
@@ -4184,12 +4174,12 @@ class Playbill:
     def _get(
         self,
         ref: str,
-        detail: PlaybillGetDetail,
-        window: PlaybillByteRange | None,
+        detail: GetDetail,
+        window: ByteRange | None,
         coordinate: AcceptedCoordinate | None,
-    ) -> PlaybillGetResult:
+    ) -> GetResult:
         requested = self._read_at(coordinate)
-        request = PlaybillGetRequest(
+        request = GetRequest(
             ref=ref,
             detail=detail,
             range=window,
@@ -4200,7 +4190,7 @@ class Playbill:
             # that summary answers otherwise leave out.
             full_coordinate=True,
         )
-        result = self._client.playbill_get(self._instance_id, request=request)
+        result = self._client.get(self._instance_id, request=request)
         self._observe_read(_get_coordinate(result), expected=requested)
         if result.history is not None:
             # History pages newest first; the SDK reads every page, pinned to
@@ -4209,7 +4199,7 @@ class Playbill:
             revisions = list(result.history.revisions)
             page = result
             while page.truncated and page.next_cursor is not None:
-                page = self._client.playbill_get(
+                page = self._client.get(
                     self._instance_id,
                     request=request.model_copy(update={"at": None, "cursor": page.next_cursor}),
                 )
@@ -4226,7 +4216,7 @@ class Playbill:
 
     def _source_card(self, ref: SourceRef) -> KnowledgeCard:
         self._read_at(ref.coordinate)
-        context = self._client.playbill_source_context(self._instance_id)
+        context = self._client.source_context(self._instance_id)
         if _coordinate(context.accepted_coordinate) != ref.coordinate:
             raise ValueError("source context no longer matches the explicit reference coordinate")
         matches = [item for item in context.documents if item.get("source_id") == ref.address]
@@ -4243,10 +4233,10 @@ class Playbill:
         self,
         *,
         kind: str | None = None,
-        section: api.PlaybillOrientSection | None = None,
-        limit: int = api.PLAYBILL_ORIENT_DEFAULT_LIMIT,
+        section: api.OrientSection | None = None,
+        limit: int = api.ORIENT_DEFAULT_LIMIT,
         cursor: str | None = None,
-    ) -> api.PlaybillOrientResult:
+    ) -> api.OrientResult:
         """Map accepted state in one call, at this context's coordinate.
 
         With no arguments: each Subject kind with its count and predicates,
@@ -4262,12 +4252,12 @@ class Playbill:
         exported floor, ``floor`` says the coordinate it is at and how many
         generations it is behind this answer.
 
-        Next: the answer's own ``next`` calls; ``pb.query(kind, ...)`` for values,
-        ``pb.get(ref)`` for one thing.
+        Next: the answer's own ``next`` calls; ``cx.query(kind, ...)`` for values,
+        ``cx.get(ref)`` for one thing.
         """
 
         requested = self._read_at()
-        result = self._client.orient_playbill(
+        result = self._client.orient(
             self._instance_id,
             kind=kind,
             section=section,
@@ -4310,7 +4300,7 @@ class Playbill:
     ) -> ClaimAttestationAppendResult:
         """Sign that the caller examined the current exact Claim and append it once.
 
-        Next: ``pb.get(claim)`` shows the attestation among the Claim's flags;
+        Next: ``cx.get(claim)`` shows the attestation among the Claim's flags;
         ``detail="evidence"`` lists it.
         """
 
@@ -4342,7 +4332,7 @@ class Playbill:
     ) -> ClaimAttestationAppendResult:
         """Append a pre-staged new-Capture observation after exact client signing.
 
-        Next: ``pb.get(claim, detail="evidence")`` to see it among the Claim's attestations.
+        Next: ``cx.get(claim, detail="evidence")`` to see it among the Claim's attestations.
         """
 
         if request.attestation_basis != "new_capture":
@@ -4358,33 +4348,33 @@ class Playbill:
         is about and its ``repair``, rendered as an SDK call this caller can run
         (``repair_requires`` names what a withheld one needs). ``page.status`` reports the
         environment: the floor, the ledger mirror, providers, Line dispatch. Next: run an
-        item's ``repair.command``, or ``pb.get(item.subject_identity)`` to look first.
+        item's ``repair.command``, or ``cx.get(item.subject_identity)`` to look first.
         """
 
         requested_coordinate = self._read_at()
         access_profile = self._access_profile.model_dump()
-        observation, scanned_coordinate = observe_playbill_next_workspace_with_coverage(
+        observation, scanned_coordinate = observe_next_workspace_with_coverage(
             self._client,
             self._instance_id,
             self._workspace_root,
-            observation=observe_playbill_next_workspace(self._workspace_root),
+            observation=observe_next_workspace(self._workspace_root),
             coordinate=requested_coordinate,
             access_profile=access_profile,
             # Only procedure-projection-only workspaces need a separate head
             # binding. Resolve metadata, not a whole-world orientation page.
-            resolve_coordinate=lambda: self._client.playbill_whoami(self._instance_id).coordinate,
+            resolve_coordinate=lambda: self._client.whoami(self._instance_id).coordinate,
         )
         evaluation_time = self._evaluation_time()
 
-        def page(cursor: str | None) -> api.PlaybillNextResult:
-            return self._client.next_playbill(
+        def page(cursor: str | None) -> api.NextResult:
+            return self._client.next(
                 self._instance_id,
                 evaluation_time=evaluation_time,
                 access_profile=access_profile,
                 at=scanned_coordinate or requested_coordinate,
                 expiring_within=expiring_within.model_dump(),
                 workspace_observation=observation,
-                limit=api.PLAYBILL_NEXT_MAX_LIMIT,
+                limit=api.NEXT_MAX_LIMIT,
                 cursor=cursor,
                 # Repairs render as SDK calls, not CLI commands.
                 caller_surface="sdk",
@@ -4417,15 +4407,15 @@ class Playbill:
         *,
         max_rows: int = 100,
         max_bytes: int = 65_536,
-        cursor: api.PlaybillSinceCursor | Mapping[str, object] | None = None,
-    ) -> api.PlaybillSinceResult:
+        cursor: api.SinceCursor | Mapping[str, object] | None = None,
+    ) -> api.SinceResult:
         """Read accepted changes at current head, a pinned context, or the cursor's snapshot.
 
         Next: pass ``result.next_cursor`` back as ``cursor`` while truncated;
-        ``pb.get(ref)`` on a changed artifact.
+        ``cx.get(ref)`` on a changed artifact.
         """
 
-        result = self._client.since_playbill(
+        result = self._client.since(
             self._instance_id,
             generation=generation,
             access_profile=self._access_profile.model_dump(),
@@ -4439,24 +4429,24 @@ class Playbill:
 
     def curation_list(
         self, *, limit: int | None = None, cursor: str | None = None
-    ) -> api.PlaybillCurationListResult:
+    ) -> api.CurationListResult:
         """Read one page of the curation queue with one explicit attributed workspace scan.
 
         A truncated page carries ``next_cursor``; pass it back as ``cursor``.
 
-        Next: ``pb.curation_overrule(...)``, ``pb.curation_accept_fixed(...)`` or
-        ``pb.curation_suppress(...)`` on an item.
+        Next: ``cx.curation_overrule(...)``, ``cx.curation_accept_fixed(...)`` or
+        ``cx.curation_suppress(...)`` on an item.
         """
 
         access_profile = self._access_profile.model_dump()
-        observation, _coordinate = observe_playbill_next_workspace_with_coverage(
+        observation, _coordinate = observe_next_workspace_with_coverage(
             self._client,
             self._instance_id,
             self._workspace_root,
-            observation=observe_playbill_next_workspace(self._workspace_root),
+            observation=observe_next_workspace(self._workspace_root),
             access_profile=access_profile,
         )
-        return self._client.list_playbill_curation(
+        return self._client.list_curation(
             self._instance_id,
             evaluation_time=self._evaluation_time(),
             access_profile=access_profile,
@@ -4472,15 +4462,15 @@ class Playbill:
         subject_kinds: tuple[str, ...] = (),
         max_rows: int = 100,
         max_bytes: int = 65_536,
-        cursor: api.PlaybillAuditCursor | Mapping[str, object] | None = None,
-    ) -> api.PlaybillAuditResult:
+        cursor: api.AuditCursor | Mapping[str, object] | None = None,
+    ) -> api.AuditResult:
         """Rank visible Claim verification work without changing governed state.
 
-        Next: ``pb.get(row's Claim ID, detail="evidence")``, then ``pb.attest(...)`` once
+        Next: ``cx.get(row's Claim ID, detail="evidence")``, then ``cx.attest(...)`` once
         examined.
         """
 
-        result = self._client.audit_playbill(
+        result = self._client.audit(
             self._instance_id,
             evaluation_time=self._evaluation_time(),
             access_profile=self._access_profile.model_dump(),
@@ -4501,13 +4491,13 @@ class Playbill:
         expected_latest_event_digest: str,
         reason: str,
         attribution_refs: tuple[str, ...] = (),
-    ) -> api.PlaybillCurationActionResult:
+    ) -> api.CurationActionResult:
         """Record that a detector pattern is mechanically inapplicable.
 
-        Next: ``pb.curation_list()``; the item no longer asks.
+        Next: ``cx.curation_list()``; the item no longer asks.
         """
 
-        return self._client.overrule_playbill_curation(
+        return self._client.overrule_curation(
             self._instance_id,
             item_id=item_id,
             expected_latest_event_digest=expected_latest_event_digest,
@@ -4524,13 +4514,13 @@ class Playbill:
         accepted_proposal_id: str,
         accepted_changeset_digest: str,
         attribution_refs: tuple[str, ...] = (),
-    ) -> api.PlaybillCurationActionResult:
+    ) -> api.CurationActionResult:
         """Link an item to an exact already-accepted resolving ChangeSet.
 
-        Next: ``pb.curation_list()``; the item is resolved.
+        Next: ``cx.curation_list()``; the item is resolved.
         """
 
-        return self._client.accept_fixed_playbill_curation(
+        return self._client.accept_fixed_curation(
             self._instance_id,
             item_id=item_id,
             expected_latest_event_digest=expected_latest_event_digest,
@@ -4549,13 +4539,13 @@ class Playbill:
         scope: Literal["item", "pattern", "instance"],
         until_generation: int | None = None,
         attribution_refs: tuple[str, ...] = (),
-    ) -> api.PlaybillCurationActionResult:
+    ) -> api.CurationActionResult:
         """Hide matching open work without resolving or stopping detection.
 
-        Next: ``pb.curation_list()``; matching work is hidden until it lapses.
+        Next: ``cx.curation_list()``; matching work is hidden until it lapses.
         """
 
-        return self._client.suppress_playbill_curation(
+        return self._client.suppress_curation(
             self._instance_id,
             item_id=item_id,
             expected_latest_event_digest=expected_latest_event_digest,
@@ -4579,10 +4569,10 @@ class Playbill:
 class ProjectionBlocks:
     """Declared projection blocks: client-side stamps over accepted Claims in workspace files.
 
-    Next: ``pb.block.sync()`` to check every block.
+    Next: ``cx.block.sync()`` to check every block.
     """
 
-    def __init__(self, playbill: Playbill) -> None:
+    def __init__(self, playbill: Cruxible) -> None:
         self._playbill = playbill
 
     def repin(
@@ -4607,7 +4597,7 @@ class ProjectionBlocks:
         repins preserve that format. ``dry_run`` returns the stamp it would write and
         writes nothing.
 
-        Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
+        Next: Cruxible.orient() to map state, Cruxible.query() for rows, or Cruxible.get().
         """
         source_id = _address(source, RefKind.SOURCE)
         if isinstance(source, SourceRef):
@@ -4650,10 +4640,10 @@ class ProjectionBlocks:
         all: bool = False,
         check: bool = False,
         detach: Sequence[str | Path] = (),
-    ) -> api.PlaybillBlockSyncResult:
+    ) -> api.BlockSyncResult:
         """Check every block; policy controls whether drift fails the check.
 
-        Next: ``pb.next(...)`` names each drifted block with its repair.
+        Next: ``cx.next(...)`` names each drifted block with its repair.
         """
 
         return sync_projection_blocks(
@@ -4696,7 +4686,7 @@ class MeasurementBatch:
     observation_coordinate: AcceptedCoordinate
     observation_time: datetime
     outcomes: tuple[MeasurementOutcome, ...]
-    raw: api.PlaybillProcedureMeasureResult
+    raw: api.ProcedureMeasureResult
 
     def __getitem__(self, measurement_name: str) -> MeasurementOutcome:
         for outcome in self.outcomes:
@@ -4705,7 +4695,7 @@ class MeasurementBatch:
         raise KeyError(measurement_name)
 
 
-def _measurement_batch(raw: api.PlaybillProcedureMeasureResult) -> MeasurementBatch:
+def _measurement_batch(raw: api.ProcedureMeasureResult) -> MeasurementBatch:
     return MeasurementBatch(
         run_id=raw.run_id,
         activation_coordinate=raw.activation_coordinate,
@@ -4731,12 +4721,12 @@ def _measurement_batch(raw: api.PlaybillProcedureMeasureResult) -> MeasurementBa
 class Procedure:
     """A handle on one accepted Procedure by name, read lazily.
 
-    Next: ``procedure.run(input=procedure.input(...))``, or ``pb.get(procedure.ref)`` for its
+    Next: ``procedure.run(input=procedure.input(...))``, or ``cx.get(procedure.ref)`` for its
     readiness and track record.
     """
 
     def __init__(
-        self, playbill: Playbill, name: str, coordinate: AcceptedCoordinate | None
+        self, playbill: Cruxible, name: str, coordinate: AcceptedCoordinate | None
     ) -> None:
         self._playbill = playbill
         self._name = name
@@ -4773,19 +4763,19 @@ class Procedure:
 
     @property
     def ref(self) -> ProcedureRef:
-        """This Procedure as a typed ref. Next: ``pb.get(procedure.ref)``."""
+        """This Procedure as a typed ref. Next: ``cx.get(procedure.ref)``."""
 
         coordinate = self._coordinate or _coordinate(self.readiness().coordinate)
         return ProcedureRef(self._name, coordinate)
 
-    def readiness(self) -> api.PlaybillProcedureReadiness:
+    def readiness(self) -> api.ProcedureReadiness:
         """Whether this Procedure can run now, and which slots still need binding.
 
         Next: ``procedure.bind(bindings=...)`` for open slots, else ``procedure.run(...)``.
         """
 
         requested = self._playbill._read_at(self._coordinate)
-        result = self._playbill._client.playbill_procedure_readiness(
+        result = self._playbill._client.procedure_readiness(
             self._playbill._instance_id,
             self._name,
             evaluation_time=self._playbill._evaluation_time(),
@@ -4796,7 +4786,7 @@ class Procedure:
 
     def bind(
         self, *, bindings: Mapping[str | ProcedureSlotRef, TypedRef]
-    ) -> api.PlaybillProcedureBindResult:
+    ) -> api.ProcedureBindResult:
         # Binding is a current-state write with the existing daemon admission
         # contract, not a snapshot read. Preserve its observed-reference guard.
         """Bind this Procedure's open slots to accepted things.
@@ -4825,7 +4815,7 @@ class Procedure:
                 }
             )
         rows.sort(key=lambda item: str(item["slot_name"]).encode("utf-8"))
-        result = self._playbill._client.bind_playbill_procedure(
+        result = self._playbill._client.bind_procedure(
             self._playbill._instance_id, self._name, bindings=rows
         )
         return result
@@ -4841,7 +4831,7 @@ class Procedure:
         """Run this Procedure on a typed input and return the run.
 
         Next: ``run.succeeded`` and ``run.result``, or
-        ``pb.get(f"ProcedureRun:{run.run_id}")``.
+        ``cx.get(f"ProcedureRun:{run.run_id}")``.
         """
 
         if at is not None and self._coordinate is not None and at != self._coordinate:
@@ -4852,7 +4842,7 @@ class Procedure:
             raise TypeError("Procedure.run requires a record made by procedure.input")
         constructor = self.input
         normalized = constructor() if input is None else constructor.from_wire(input)
-        result = self._playbill._client.run_playbill_procedure(
+        result = self._playbill._client.run_procedure(
             self._playbill._instance_id,
             self._name,
             evaluation_time=self._playbill._evaluation_time(),
@@ -4889,10 +4879,10 @@ class Procedure:
             raise ValueError(
                 "a run without a run_id was refused at admission and cannot be measured"
             )
-        result = self._playbill._client.measure_playbill_procedure(
+        result = self._playbill._client.measure_procedure(
             self._playbill._instance_id,
             self._name,
-            request=api.PlaybillProcedureMeasureRequest(
+            request=api.ProcedureMeasureRequest(
                 run_id=run_id,
                 measurement_names=tuple(sorted(set(measurements), key=lambda item: item.encode())),
                 evaluation_time=datetime.fromisoformat(self._playbill._evaluation_time()),
@@ -4910,7 +4900,7 @@ class Procedure:
         limit: int = 50,
         cursor: str | None = None,
         at: AcceptedCoordinate | None = None,
-    ) -> api.PlaybillProcedureReadingsResult:
+    ) -> api.ProcedureReadingsResult:
         """Inspect measurement standing and retained readings. Never writes.
 
         A page's ``cursor`` continues that page's selection: the observation
@@ -4925,10 +4915,10 @@ class Procedure:
             raise ValueError("readings coordinate differs from the pinned Procedure")
         requested = self._playbill._read_at(at or self._coordinate)
         run_id = run.run_id if isinstance(run, ProcedureRun) else run
-        result = self._playbill._client.list_playbill_procedure_readings(
+        result = self._playbill._client.list_procedure_readings(
             self._playbill._instance_id,
             self._name,
-            request=api.PlaybillProcedureReadingsRequest(
+            request=api.ProcedureReadingsRequest(
                 run_id=run_id,
                 measurement_names=tuple(sorted(set(measurements), key=lambda item: item.encode())),
                 evaluation_time=datetime.fromisoformat(self._playbill._evaluation_time()),
@@ -4944,14 +4934,14 @@ class Procedure:
 class ProcedureRun:
     """One Procedure run as the daemon reported it.
 
-    Next: ``run.result`` once ``run.succeeded``; ``pb.get(f"ProcedureRun:{run.run_id}")`` for
+    Next: ``run.result`` once ``run.succeeded``; ``cx.get(f"ProcedureRun:{run.run_id}")`` for
     its card.
     """
 
     def __init__(
         self,
-        playbill: Playbill,
-        raw: api.PlaybillProcedureRunState,
+        playbill: Cruxible,
+        raw: api.ProcedureRunState,
         *,
         output: RecordConstructor | None = None,
     ) -> None:
@@ -4963,7 +4953,7 @@ class ProcedureRun:
     def run_id(self) -> str | None:
         """The run's ID; None when admission refused it.
 
-        Next: ``pb.get(f"ProcedureRun:{run.run_id}")``.
+        Next: ``cx.get(f"ProcedureRun:{run.run_id}")``.
         """
 
         return self._raw.run_id
@@ -4984,7 +4974,7 @@ class ProcedureRun:
     def result(self) -> Record:
         """The run's output record, typed by the Procedure's output contract.
 
-        Raises unless the run succeeded. Next: write what it found with ``pb.set(...)``.
+        Raises unless the run succeeded. Next: write what it found with ``cx.set(...)``.
         """
 
         if not self.succeeded:
@@ -4997,7 +4987,7 @@ class ProcedureRun:
         return self._output.from_wire(self._raw.result)
 
     @property
-    def outcome(self) -> api.PlaybillProcedureRunState:
+    def outcome(self) -> api.ProcedureRunState:
         """The run's full served state. Next: ``run.terminal_egress`` for what its terminals
         did.
         """
@@ -5012,13 +5002,13 @@ class ProcedureRun:
         `accepted_git_oid`, or `proposed` with its `proposal_id` and
         `fallback_reason`.
 
-        Next: ``pb.proposal(egress.proposal_id).review()`` for a proposed settle.
+        Next: ``cx.proposal(egress.proposal_id).review()`` for a proposed settle.
         """
         return tuple(item.model_copy(deep=True) for item in self._raw.terminal_egress)
 
     @property
     def receipt(self) -> str | None:
-        """The run receipt's digest. Next: ``pb.get(f"ProcedureRun:{run.run_id}",
+        """The run receipt's digest. Next: ``cx.get(f"ProcedureRun:{run.run_id}",
         detail="proof")``.
         """
 
@@ -5028,7 +5018,7 @@ class ProcedureRun:
     def coordinate(self) -> AcceptedCoordinate:
         """The coordinate the run was bound to.
 
-        Next: ``pb.at(run.coordinate)`` to read what it read.
+        Next: ``cx.at(run.coordinate)`` to read what it read.
         """
 
         return _coordinate(self._raw.coordinate)
@@ -5042,27 +5032,25 @@ class ProcedureRun:
         return tuple(
             ProcedureRun(
                 self._playbill,
-                self._playbill._client.get_playbill_procedure_run(
-                    self._playbill._instance_id, link.run_id
-                ),
+                self._playbill._client.get_procedure_run(self._playbill._instance_id, link.run_id),
             )
             for link in self._raw.children
         )
 
     @property
-    def track_record(self) -> tuple[PlaybillGetProcedureTrackRecord, ...]:
+    def track_record(self) -> tuple[GetProcedureTrackRecord, ...]:
         """This run's Procedure's accepted track record: one entry per promotion.
 
-        Read from ``pb.get("Procedure:<name>")`` in this connection's context
+        Read from ``cx.get("Procedure:<name>")`` in this connection's context
         (its live head, or the coordinate it is pinned to), so promotions
         accepted after this run count too. Empty until a promotion of the
-        Procedure's run exhaust is accepted. Next: ``pb.get(...)`` with
+        Procedure's run exhaust is accepted. Next: ``cx.get(...)`` with
         ``detail="proof"`` for the Procedure's full accepted definition.
         """
 
         name = str(self._raw.procedure_identity["name"])
         card = self._playbill._get(f"Procedure:{name}", "summary", None, None).card
-        if not isinstance(card, PlaybillGetProcedureCard):
+        if not isinstance(card, GetProcedureCard):
             raise ValueError(f"get did not answer Procedure:{name} with a Procedure card")
         return card.track_record
 
@@ -5071,7 +5059,7 @@ class ProcedureRun:
 
         if self.run_id is None:
             return self
-        self._raw = self._playbill._client.get_playbill_procedure_run(
+        self._raw = self._playbill._client.get_procedure_run(
             self._playbill._instance_id, self.run_id
         )
         return self
@@ -5101,7 +5089,7 @@ __all__ = [
     "MeasurementBatch",
     "MeasurementOutcome",
     "NextPage",
-    "Playbill",
+    "Cruxible",
     "Prediction",
     "PredictionSettlement",
     "Procedure",

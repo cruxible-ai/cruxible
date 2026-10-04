@@ -20,7 +20,7 @@ from cruxible_client.contracts.documents import (
     DocumentShell,
     render_document,
 )
-from cruxible_client.contracts.errors import PlaybillExecutionError
+from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,
     ProcedureArtifactV1,
@@ -462,7 +462,7 @@ def test_resolution_contract_reopens_only_after_latest_answer_is_overturned(tmp_
         recorded_at=NOW + timedelta(seconds=3),
         actor_context=_actor(),
     )
-    with pytest.raises(PlaybillExecutionError, match="closed until"):
+    with pytest.raises(ExecutionError, match="closed until"):
         append_procedure_resolution(
             writer,
             activation=activation,

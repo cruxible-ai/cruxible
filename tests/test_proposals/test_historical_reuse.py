@@ -14,12 +14,12 @@ from collections.abc import Callable, Iterator, Mapping
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, render_claim_type
 from cruxible_client.contracts.laws import (
+    ACCEPTANCE_LAWS,
     CLAIM_TYPE_ACCEPTANCE_LAW,
     CLAIM_TYPE_V3_ACCEPTANCE_LAW,
     CLAIM_TYPE_V4_ACCEPTANCE_LAW,
     CLAIM_TYPE_V5_ACCEPTANCE_LAW,
     CLAIM_TYPE_V6_ACCEPTANCE_LAW,
-    PLAYBILL_ACCEPTANCE_LAWS,
 )
 from cruxible_client.contracts.projection import AcceptedProjectionCoordinate
 from cruxible_core.compiler.compiler import AUTHORITY_VERBS_COMPILER
@@ -138,7 +138,7 @@ def test_only_the_retired_claim_type_revisions_run_the_reproducer() -> None:
 
     historical = {
         (law.coordinate.identifier, law.coordinate.digest)
-        for law in PLAYBILL_ACCEPTANCE_LAWS._by_coordinate.values()
+        for law in ACCEPTANCE_LAWS._by_coordinate.values()
         if law.artifact_kind == "claim-type" and not law.current
     }
     assert historical == HISTORICAL_REUSE_CLAIM_TYPE_LAWS

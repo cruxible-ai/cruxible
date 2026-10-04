@@ -1,4 +1,4 @@
-"""System-Git ledger primitives for Playbill generation zero."""
+"""System-Git ledger primitives for Cruxible generation zero."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from cruxible_client.contracts.canonical import CandidateDigest, normalize_manifest_paths
-from cruxible_client.contracts.errors import PlaybillGitError
+from cruxible_client.contracts.errors import GitError
 from cruxible_client.contracts.primitives import new_id
 from cruxible_client.contracts.types import GitObjectFormat
 from cruxible_core.derived.derived_state import (
@@ -53,7 +53,7 @@ PROPOSAL_ARCHIVE_REF: Final = "refs/settled/archive"
 _LEGACY_SETTLED_RE = re.compile(r"^refs/settled/[0-9a-f]{64}$")
 _MIRROR_PREFIXES: Final = ("refs/heads/proposals/",)
 
-# Every Playbill note ref, in one table. The generation descriptor was the
+# Every Cruxible note ref, in one table. The generation descriptor was the
 # first; the proposal evaluation and the approval list are projections of the
 # evidence store that reach Git through exactly the same write, so a note a
 # reviewer reads is never a second mechanism with its own persistence rules.
@@ -127,14 +127,14 @@ def _validate_commit_message(message: str) -> None:
     """
 
     if not message.strip():
-        raise PlaybillGitError("commit message must be a nonblank prose summary")
+        raise GitError("commit message must be a nonblank prose summary")
     if "\x00" in message:
-        raise PlaybillGitError("commit message must not contain a NUL byte")
+        raise GitError("commit message must not contain a NUL byte")
 
 
 def _entry_size(entry: GitTreeEntry) -> int:
     if entry.size is None:
-        raise PlaybillGitError(f"ledger blob has no size: {entry.path}")
+        raise GitError(f"ledger blob has no size: {entry.path}")
     return entry.size
 
 
@@ -142,13 +142,13 @@ def _proven_blob_entries(entries: tuple[GitTreeEntry, ...]) -> tuple[GitTreeEntr
     """Refuse a tree member that is anything but a plain committed file.
 
     A symlink, a submodule or an executable bit reaches a reader as something
-    other than the bytes the ledger claims to carry, so every path Playbill
+    other than the bytes the ledger claims to carry, so every path Cruxible
     hands out — read, listed, or fetched by name — passes this one proof.
     """
 
     for entry in entries:
         if entry.object_type != "blob" or entry.mode != "100644":
-            raise PlaybillGitError(
+            raise GitError(
                 f"ledger tree contains unsupported {entry.mode} {entry.object_type}: {entry.path}"
             )
     return entries
@@ -179,7 +179,7 @@ class GitLedger:
         allowed_signers_path: Path,
     ) -> "GitLedger":
         if path.exists():
-            raise PlaybillGitError(f"ledger path already exists: {path}")
+            raise GitError(f"ledger path already exists: {path}")
         _command(["git", "init", "--bare", f"--object-format={object_format}", str(path)])
         ledger = cls(
             path,
@@ -189,7 +189,7 @@ class GitLedger:
         ledger.configure_signing()
         ledger._git(["symbolic-ref", "HEAD", "refs/heads/main"])
         if ledger.object_format() != object_format:
-            raise PlaybillGitError("initialized ledger object format does not match request")
+            raise GitError("initialized ledger object format does not match request")
         return ledger
 
     def configure_signing(self) -> None:
@@ -210,7 +210,7 @@ class GitLedger:
             return self._object_format_cache
         value = self._git(["rev-parse", "--show-object-format"]).decode().strip()
         if value not in {"sha1", "sha256"}:
-            raise PlaybillGitError(f"unsupported Git object format: {value!r}")
+            raise GitError(f"unsupported Git object format: {value!r}")
         self._object_format_cache = cast(GitObjectFormat, value)
         return self._object_format_cache
 
@@ -237,7 +237,7 @@ class GitLedger:
         }
         oid = (
             self._git(
-                ["commit-tree", "-S", tree_oid, "-m", "Initialize Playbill instance"],
+                ["commit-tree", "-S", tree_oid, "-m", "Initialize Cruxible instance"],
                 environment=commit_environment,
             )
             .decode()
@@ -245,9 +245,9 @@ class GitLedger:
         )
         self._validate_oid(oid)
         if self.parent_of(oid) is not None:
-            raise PlaybillGitError("genesis commit unexpectedly has a parent")
+            raise GitError("genesis commit unexpectedly has a parent")
         if not self.verify_commit(oid):
-            raise PlaybillGitError("new genesis commit signature does not verify")
+            raise GitError("new genesis commit signature does not verify")
         return oid
 
     def create_signed_generation(
@@ -272,7 +272,7 @@ class GitLedger:
 
         self._validate_oid(parent_oid)
         if sequence < 1:
-            raise PlaybillGitError("non-genesis generation sequence must be positive")
+            raise GitError("non-genesis generation sequence must be positive")
         _validate_commit_message(message)
         tree_oid = (
             self._write_tree(tree, accepted_parent=parent_oid)
@@ -324,9 +324,9 @@ class GitLedger:
         pending.unlink()
         _fsync_directory(pending.parent)
         if self.parent_of(oid) != parent_oid:
-            raise PlaybillGitError("new generation commit parent differs from settlement base")
+            raise GitError("new generation commit parent differs from settlement base")
         if not self.verify_commit(oid):
-            raise PlaybillGitError("new generation commit signature does not verify")
+            raise GitError("new generation commit signature does not verify")
         return oid
 
     def _blob_oid(self, content: bytes) -> str:
@@ -365,7 +365,7 @@ class GitLedger:
         touched: set[Path] = set()
         for oid, (kind, body) in objects.items():
             if self._object_oid(kind, body) != oid:
-                raise PlaybillGitError("object bytes differ from their content address")
+                raise GitError("object bytes differ from their content address")
             directory = root / oid[:2]
             final = directory / oid[2:]
             if final.exists():
@@ -392,11 +392,11 @@ class GitLedger:
     def _tree_entries_of(self, tree_oid: str) -> dict[str, tuple[bytes, str]]:
         found = _batch_reader(self.path).objects((tree_oid,))[tree_oid]
         if found is None or found[0] != "tree":
-            raise PlaybillGitError(f"ledger tree object is unavailable: {tree_oid}")
+            raise GitError(f"ledger tree object is unavailable: {tree_oid}")
         raw_length = 20 if self.object_format() == "sha1" else 32
         entries = _tree_entries(found[1], raw_length=raw_length)
         if entries is None:
-            raise PlaybillGitError(f"ledger tree object is malformed: {tree_oid}")
+            raise GitError(f"ledger tree object is malformed: {tree_oid}")
         return entries
 
     def _apply_to_tree(
@@ -433,7 +433,7 @@ class GitLedger:
         for name, nested in subtrees.items():
             current = entries.get(name)
             if current is not None and current[0] != b"40000":
-                raise PlaybillGitError(f"ledger path is both a file and a directory: {name}")
+                raise GitError(f"ledger path is both a file and a directory: {name}")
             child = self._apply_to_tree(None if current is None else current[1], nested, written)
             if child is None:
                 entries.pop(name, None)
@@ -444,7 +444,7 @@ class GitLedger:
                 continue
             current = entries.get(name)
             if current is not None and current[0] == b"40000":
-                raise PlaybillGitError(f"ledger path is both a file and a directory: {name}")
+                raise GitError(f"ledger path is both a file and a directory: {name}")
             entries[name] = (b"100644", oid)
         if not entries:
             return None
@@ -515,7 +515,7 @@ class GitLedger:
         for raw_path in tree:
             normalized = normalize_manifest_paths([raw_path])[0]
             if normalized in normalized_to_raw:
-                raise PlaybillGitError(collision_message)
+                raise GitError(collision_message)
             normalized_to_raw[normalized] = raw_path
 
         ordered = normalize_manifest_paths(list(tree))
@@ -563,7 +563,7 @@ class GitLedger:
                 continue
             content = tree[normalized_to_raw[path]]
             if blob_oid in blobs and blobs[blob_oid] != content:
-                raise PlaybillGitError("different blob bytes share a computed content address")
+                raise GitError("different blob bytes share a computed content address")
             blobs[blob_oid] = content
         oid = self._commit_changes_to_tree(
             start,
@@ -619,7 +619,7 @@ class GitLedger:
                 continue
             blob_oid = self._blob_oid(new)
             if blob_oid in blobs and blobs[blob_oid] != new:
-                raise PlaybillGitError("different blob bytes share a computed content address")
+                raise GitError("different blob bytes share a computed content address")
             blobs[blob_oid] = new
             changes[path], sizes[path] = blob_oid, len(new)
         oid = self._commit_changes_to_tree(self._commit_tree(accepted_parent), changes, blobs)
@@ -666,23 +666,23 @@ class GitLedger:
         base: tuple[GitTreeEntry, ...] | None = None
         if base_rows is not None and shared is not None:
             if any(path in base_rows and path not in tree for path in shared):
-                raise PlaybillGitError("extended tree does not carry every member of its base")
+                raise GitError("extended tree does not carry every member of its base")
             added = [path for path in shared if path in tree and path not in base_rows]
         else:
             base = self._list_tree(base_tree, with_sizes=True)
             base_paths = {entry.path for entry in base}
             if any(entry.object_type != "blob" for entry in base) or not base_paths <= set(tree):
-                raise PlaybillGitError("extended tree does not carry every member of its base")
+                raise GitError("extended tree does not carry every member of its base")
             added = [path for path in tree if path not in base_paths]
         ordered_added = normalize_manifest_paths(added)
         if set(ordered_added) != set(added):
-            raise PlaybillGitError("extended tree adds a path that is not normalized")
+            raise GitError("extended tree adds a path that is not normalized")
         oids = {path: self._blob_oid(tree[path]) for path in ordered_added}
         blobs: dict[str, bytes] = {}
         for path in ordered_added:
             blob_oid = oids[path]
             if blob_oid in blobs and blobs[blob_oid] != tree[path]:
-                raise PlaybillGitError("different blob bytes share a computed content address")
+                raise GitError("different blob bytes share a computed content address")
             blobs[blob_oid] = tree[path]
         oid = self._commit_changes_to_tree(base_tree, dict(oids), blobs)
         self._validate_oid(oid)
@@ -714,13 +714,13 @@ class GitLedger:
         self._validate_oid(base_oid)
         _validate_commit_message(message)
         if not _PROPOSAL_REF_RE.fullmatch(target_ref):
-            raise PlaybillGitError("proposal transport may update only canonical proposal refs")
+            raise GitError("proposal transport may update only canonical proposal refs")
         actor_namespace = target_ref.split("/")[2]
         if actor_namespace != actor_id:
-            raise PlaybillGitError("proposal ref namespace differs from authenticated actor")
+            raise GitError("proposal ref namespace differs from authenticated actor")
         current = self.read_proposal_ref(target_ref)
         if current != expected_ref_oid:
-            raise PlaybillGitError("proposal ref moved before its parent-bound update")
+            raise GitError("proposal ref moved before its parent-bound update")
 
         tree_oid = self._write_tree(
             tree,
@@ -760,14 +760,14 @@ class GitLedger:
 
     def read_proposal_ref(self, target_ref: str) -> str | None:
         if not _PROPOSAL_REF_RE.fullmatch(target_ref):
-            raise PlaybillGitError("proposal transport may read only canonical proposal refs")
+            raise GitError("proposal transport may read only canonical proposal refs")
         return self._resolve_ref(target_ref)
 
     def retain_proposal_review(self, proposal_id: str, oid: str) -> None:
         """Protect a completed active admission independently of its reusable author ref."""
         ref = "refs/heads/proposals/" + proposal_id.removeprefix("sha256:")
         if not _PROPOSAL_REVIEW_REF_RE.fullmatch(ref):
-            raise PlaybillGitError("proposal review ref name is malformed")
+            raise GitError("proposal review ref name is malformed")
         self._validate_oid(oid)
         self._git(["update-ref", ref, oid])
 
@@ -800,7 +800,7 @@ class GitLedger:
                 not self.object_exists(oid)
                 or self._git(["cat-file", "-t", oid]).strip() != b"commit"
             ):
-                raise PlaybillGitError("proposal archive target is not a retained commit")
+                raise GitError("proposal archive target is not a retained commit")
             if empty_tree is None:
                 empty_tree = self._git(["mktree"], input_bytes=b"").decode().strip()
             parents = ([tip] if tip else []) + [oid]
@@ -840,7 +840,7 @@ class GitLedger:
         for proposal_id, oid in refs.items():
             ref = f"refs/heads/proposals/{proposal_id}"
             if not _PROPOSAL_REVIEW_REF_RE.fullmatch(ref):
-                raise PlaybillGitError("proposal review ref name is malformed")
+                raise GitError("proposal review ref name is malformed")
             self._validate_oid(oid)
             normalized[ref] = oid
         current = {
@@ -855,7 +855,7 @@ class GitLedger:
         retired = {ref: oid for ref, oid in current.items() if ref not in normalized}
         for ref, oid in (retired_targets or {}).items():
             if not _PROPOSAL_REF_RE.fullmatch(ref):
-                raise PlaybillGitError("proposal ref name is malformed")
+                raise GitError("proposal ref name is malformed")
             self._validate_oid(oid)
             retired[ref] = oid
         # One local conversion only: fold old per-proposal pins into the same
@@ -869,7 +869,7 @@ class GitLedger:
             if ref == PROPOSAL_ARCHIVE_REF:
                 continue
             if not _LEGACY_SETTLED_RE.fullmatch(ref):
-                raise PlaybillGitError("unrecognized local proposal archive ref")
+                raise GitError("unrecognized local proposal archive ref")
             retired[ref] = oid
         commands = self._archive_update(tuple(retired.values()))
         commands.extend(
@@ -915,21 +915,21 @@ class GitLedger:
         self, refs: Mapping[str, str], *, require_main: bool = True
     ) -> dict[str, str]:
         if len(refs) > _MIRROR_MAX_REFS:
-            raise PlaybillGitError("mirror snapshot exceeds the ref count limit")
+            raise GitError("mirror snapshot exceeds the ref count limit")
         result = dict(refs)
         for ref, oid in result.items():
             if _LEGACY_SETTLED_RE.fullmatch(ref):
-                raise PlaybillGitError(
+                raise GitError(
                     "mirror state uses retired per-proposal archive refs; "
                     "bind a new mirror URL to start a fresh publication snapshot"
                 )
             valid = ref in (_MIRROR_MAIN, PROPOSAL_ARCHIVE_REF) or ref in NOTE_REFS.values()
             valid = valid or bool(_PROPOSAL_REVIEW_REF_RE.fullmatch(ref))
             if not valid:
-                raise PlaybillGitError("mirror snapshot contains an unowned or malformed ref")
+                raise GitError("mirror snapshot contains an unowned or malformed ref")
             self._validate_oid(oid)
         if require_main and _MIRROR_MAIN not in result:
-            raise PlaybillGitError("mirror snapshot omits accepted main")
+            raise GitError("mirror snapshot omits accepted main")
         return result
 
     @contextmanager
@@ -991,9 +991,7 @@ class GitLedger:
             if PROPOSAL_ARCHIVE_REF not in desired and (
                 PROPOSAL_ARCHIVE_REF in expected or PROPOSAL_ARCHIVE_REF in attempted
             ):
-                raise PlaybillGitError(
-                    "local proposal archive is missing; restore it before publication"
-                )
+                raise GitError("local proposal archive is missing; restore it before publication")
             owned = set(desired) | set(expected) | set(attempted)
             # Refuse rather than split the atomic update across commands.
             planned = [f"{desired.get(ref, '')}:{ref}" for ref in owned]
@@ -1002,7 +1000,7 @@ class GitLedger:
                 sum(len(arg.encode()) + 1 for arg in [url, str(self.path), *planned])
                 > _MIRROR_ARG_BYTES
             ):
-                raise PlaybillGitError("mirror snapshot exceeds the atomic push argument limit")
+                raise GitError("mirror snapshot exceeds the atomic push argument limit")
             with self._retain_mirror_snapshot(desired):
                 result = _command(
                     [
@@ -1027,12 +1025,12 @@ class GitLedger:
                 for line in result.stdout.decode("utf-8").splitlines():
                     oid, separator, ref = line.partition("\t")
                     if _LEGACY_SETTLED_RE.fullmatch(ref):
-                        raise PlaybillGitError(
+                        raise GitError(
                             "remote mirror still has per-proposal archive refs; "
                             "bind a new mirror URL or explicitly migrate/reset this remote"
                         )
                     if not separator or not self._mirror_owned_ref(ref) or ref in remote:
-                        raise PlaybillGitError("remote mirror advertisement is malformed")
+                        raise GitError("remote mirror advertisement is malformed")
                     remote[ref] = oid
                 remote = self._validate_mirror_snapshot(remote, require_main=False)
                 for ref in set(remote) | owned:
@@ -1060,22 +1058,20 @@ class GitLedger:
                     ):
                         owned.add(ref)
                         continue
-                    raise PlaybillGitError(f"remote mirror ref diverged: {ref}")
+                    raise GitError(f"remote mirror ref diverged: {ref}")
                 remote_archive = remote.get(PROPOSAL_ARCHIVE_REF)
                 if remote_archive is not None and (
                     PROPOSAL_ARCHIVE_REF not in desired
                     or not self.is_ancestor(remote_archive, desired[PROPOSAL_ARCHIVE_REF])
                 ):
-                    raise PlaybillGitError(
+                    raise GitError(
                         "proposal archive cannot be deleted or rewound; "
                         "restore its retained history"
                     )
                 remote_main = remote.get(_MIRROR_MAIN)
                 if remote_main is not None and remote_main != desired[_MIRROR_MAIN]:
                     if not self.is_ancestor(remote_main, desired[_MIRROR_MAIN]):
-                        raise PlaybillGitError(
-                            "remote accepted main is not an ancestor of the snapshot"
-                        )
+                        raise GitError("remote accepted main is not an ancestor of the snapshot")
                 leases: list[str] = []
                 refspecs: list[str] = []
                 for ref in sorted(owned, key=str.encode):
@@ -1086,7 +1082,7 @@ class GitLedger:
                     sum(len(arg.encode()) + 1 for arg in [url, str(self.path), *leases, *refspecs])
                     > _MIRROR_ARG_BYTES
                 ):
-                    raise PlaybillGitError("mirror snapshot exceeds the atomic push argument limit")
+                    raise GitError("mirror snapshot exceeds the atomic push argument limit")
                 result = _command(
                     [
                         "git",
@@ -1109,7 +1105,7 @@ class GitLedger:
                 f"mirror transport did not finish within {MIRROR_PUSH_TIMEOUT_SECONDS:g}s "
                 "and was killed; local state is durable, remote publication is unconfirmed"
             )
-        except (PlaybillGitError, OSError, UnicodeError) as exc:
+        except (GitError, OSError, UnicodeError) as exc:
             return str(exc)[:500]
 
     @staticmethod
@@ -1212,7 +1208,7 @@ class GitLedger:
         author = values.get("GIT_AUTHOR_IDENT")
         committer = values.get("GIT_COMMITTER_IDENT")
         if author is None or committer is None:
-            raise PlaybillGitError("Git omitted review commit identities")
+            raise GitError("Git omitted review commit identities")
         headers = [
             f"tree {tree_oid}",
             f"parent {base_oid}",
@@ -1269,9 +1265,9 @@ class GitLedger:
             message=message,
         )
         if oid != expected:
-            raise PlaybillGitError("Git review commit differs from its derived representation")
+            raise GitError("Git review commit differs from its derived representation")
         if self.tree_oid(oid) != tree_oid or self.parent_of(oid) != base_oid:
-            raise PlaybillGitError("proposal review commit does not reproduce its evidence")
+            raise GitError("proposal review commit does not reproduce its evidence")
         return oid
 
     def read_review_projection(
@@ -1291,16 +1287,16 @@ class GitLedger:
         expected = {oid: "commit" for oid in oids}
         for oid, kind in dependencies.items():
             if kind not in {"tree", "commit"} or expected.get(oid, kind) != kind:
-                raise PlaybillGitError("review object has conflicting expected types")
+                raise GitError("review object has conflicting expected types")
             expected[oid] = kind
         objects = self._read_review_objects(expected)
         if any(oid not in objects for oid in dependencies):
-            raise PlaybillGitError("review commit tree or parent is missing")
+            raise GitError("review commit tree or parent is missing")
         presence = {oid: oid in objects for oid in oids}
         note_oids = self._review_note_oids(tuple(oid for oid, exists in presence.items() if exists))
         blobs = self._read_review_objects({oid: "blob" for oid in note_oids.values()})
         if len(blobs) != len(set(note_oids.values())):
-            raise PlaybillGitError("review note body is missing")
+            raise GitError("review note body is missing")
         notes = {
             (kind, oid): blobs[note_oids[kind, oid]] if (kind, oid) in note_oids else None
             for kind in ("evaluation", "approval")
@@ -1318,7 +1314,7 @@ class GitLedger:
                 input_bytes=("\n".join(batch) + "\n").encode("ascii"),
             ).splitlines()
             if len(rows) != len(batch):
-                raise PlaybillGitError("Git note lookup returned an incomplete batch")
+                raise GitError("Git note lookup returned an incomplete batch")
             for expression, row in zip(batch, rows):
                 if row == (expression + " missing").encode("ascii"):
                     continue
@@ -1327,9 +1323,9 @@ class GitLedger:
                     self._validate_oid(oid)
                     valid = actual_kind == kind and int(size) >= 0
                 except (UnicodeError, ValueError) as exc:
-                    raise PlaybillGitError("Git note lookup returned malformed metadata") from exc
+                    raise GitError("Git note lookup returned malformed metadata") from exc
                 if not valid:
-                    raise PlaybillGitError("Git note lookup returned the wrong object type")
+                    raise GitError("Git note lookup returned the wrong object type")
                 found[expression] = oid
         return found
 
@@ -1345,7 +1341,7 @@ class GitLedger:
             root = roots.get(self._note_ref(kind) + "^{tree}")
             if root is None:
                 if self._ref_exists(self._note_ref(kind)):
-                    raise PlaybillGitError("review notes ref has no retained tree")
+                    raise GitError("review notes ref has no retained tree")
                 continue
             for target in targets:
                 # Git notes uses zero or more two-hex-digit fanout directories
@@ -1360,7 +1356,7 @@ class GitLedger:
         for expression, oid in self._batch_paths(tuple(paths), "blob").items():
             for key in paths[expression]:
                 if key in found:
-                    raise PlaybillGitError("review notes repeat an annotated object")
+                    raise GitError("review notes repeat an annotated object")
                 found[key] = oid
         return found
 
@@ -1380,7 +1376,7 @@ class GitLedger:
             for oid in batch:
                 end = output.find(b"\n", position)
                 if end < 0:
-                    raise PlaybillGitError("Git review object output has no header")
+                    raise GitError("Git review object output has no header")
                 header = output[position:end]
                 position = end + 1
                 if header == f"{oid} missing".encode("ascii"):
@@ -1389,12 +1385,12 @@ class GitLedger:
                     actual, kind, raw_size = header.decode("ascii").split()
                     size = int(raw_size)
                 except (UnicodeDecodeError, ValueError) as exc:
-                    raise PlaybillGitError("Git review object metadata is malformed") from exc
+                    raise GitError("Git review object metadata is malformed") from exc
                 if actual != oid or kind != expected[oid] or size < 0:
-                    raise PlaybillGitError("Git review object differs from the requested object")
+                    raise GitError("Git review object differs from the requested object")
                 end = position + size
                 if end >= len(output) or output[end : end + 1] != b"\n":
-                    raise PlaybillGitError("Git review object payload is truncated")
+                    raise GitError("Git review object payload is truncated")
                 body = output[position:end]
                 preimage = f"{kind} {size}".encode("ascii") + b"\x00" + body
                 digest = (
@@ -1403,11 +1399,11 @@ class GitLedger:
                     else hashlib.sha256(preimage).hexdigest()
                 )
                 if digest != oid:
-                    raise PlaybillGitError("Git review object bytes do not reproduce its OID")
+                    raise GitError("Git review object bytes do not reproduce its OID")
                 objects[oid] = body
                 position = end + 1
             if position != len(output):
-                raise PlaybillGitError("Git review object output has trailing bytes")
+                raise GitError("Git review object output has trailing bytes")
         return objects
 
     def tree_oid(self, commit_oid: str) -> str:
@@ -1419,7 +1415,7 @@ class GitLedger:
             return tree
         found = _batch_reader(self.path).objects((commit_oid,))[commit_oid]
         if found is None or found[0] != "tree":
-            raise PlaybillGitError(f"ledger object names no tree: {commit_oid}")
+            raise GitError(f"ledger object names no tree: {commit_oid}")
         return commit_oid
 
     def set_main_genesis(self, oid: str) -> None:
@@ -1433,7 +1429,7 @@ class GitLedger:
         self._validate_oid(oid)
         self._validate_oid(expected_oid)
         if self.parent_of(oid) != expected_oid:
-            raise PlaybillGitError("main CAS target is not parented by the expected OID")
+            raise GitError("main CAS target is not parented by the expected OID")
         result = _command(
             [
                 "git",
@@ -1450,7 +1446,7 @@ class GitLedger:
         if self.read_main() != expected_oid:
             return False
         detail = result.stderr.decode("utf-8", errors="replace").strip()
-        raise PlaybillGitError(f"main CAS failed without a competing ref update: {detail}")
+        raise GitError(f"main CAS failed without a competing ref update: {detail}")
 
     @contextmanager
     def activation_lock(self) -> Iterator[None]:
@@ -1634,10 +1630,10 @@ class GitLedger:
 
         self._validate_oid(oid)
         if self.read_main() == oid:
-            raise PlaybillGitError("refusing to collect the accepted main generation")
+            raise GitError("refusing to collect the accepted main generation")
         reachable_commits = set(self._git(["rev-list", "--all"]).decode().splitlines())
         if oid in reachable_commits:
-            raise PlaybillGitError("refusing to collect a generation reachable from refs")
+            raise GitError("refusing to collect a generation reachable from refs")
         candidate_objects = {
             row.split()[0]
             for row in self._git(["rev-list", "--objects", oid]).decode().splitlines()
@@ -1650,7 +1646,7 @@ class GitLedger:
         }
         object_ids = tuple(sorted(candidate_objects - protected_objects))
         if oid not in object_ids:
-            raise PlaybillGitError("losing generation is not an independently collectable object")
+            raise GitError("losing generation is not an independently collectable object")
         for object_id in object_ids:
             self._validate_oid(object_id)
         deleted: list[str] = []
@@ -1660,7 +1656,7 @@ class GitLedger:
             if not path.exists():
                 continue
             if path.is_symlink() or not path.is_file():
-                raise PlaybillGitError("loose Git object cleanup target is not a regular file")
+                raise GitError("loose Git object cleanup target is not a regular file")
             path.unlink()
             deleted.append(object_id)
             fsync_directories.add(path.parent)
@@ -1695,7 +1691,7 @@ class GitLedger:
     def _note_ref(self, kind: str) -> str:
         ref = NOTE_REFS.get(kind)
         if ref is None:
-            raise PlaybillGitError(f"unknown Playbill note kind: {kind!r}")
+            raise GitError(f"unknown Cruxible note kind: {kind!r}")
         return ref
 
     def _write_note(self, kind: str, oid: str, content: bytes, *, replace: bool) -> None:
@@ -1718,7 +1714,7 @@ class GitLedger:
         with self._note_lock():
             self._git(arguments, input_bytes=content)
         if self._read_note(kind, oid) != content:
-            raise PlaybillGitError(f"{kind} note did not persist exactly")
+            raise GitError(f"{kind} note did not persist exactly")
 
     def _read_note(self, kind: str, oid: str) -> bytes | None:
         self._validate_oid(oid)
@@ -1784,9 +1780,9 @@ class GitLedger:
 
         self._validate_oid(oid)
         if self.read_main() != oid:
-            raise PlaybillGitError("generation note target is not the current main ref")
+            raise GitError("generation note target is not the current main ref")
         if self.read_generation_note(oid) is not None:
-            raise PlaybillGitError("generation already carries a descriptor note")
+            raise GitError("generation already carries a descriptor note")
         self._write_note("generation", oid, content, replace=False)
 
     def write_recovered_generation_note(self, oid: str, content: bytes) -> None:
@@ -1794,9 +1790,9 @@ class GitLedger:
 
         self._validate_oid(oid)
         if not self.is_ancestor(oid, self.read_main()):
-            raise PlaybillGitError("recovered generation note target is outside main history")
+            raise GitError("recovered generation note target is outside main history")
         if self.read_generation_note(oid) is not None:
-            raise PlaybillGitError("generation already carries a descriptor note")
+            raise GitError("generation already carries a descriptor note")
         self._write_note("generation", oid, content, replace=False)
 
     def read_generation_note(self, oid: str) -> bytes | None:
@@ -1812,12 +1808,12 @@ class GitLedger:
         """
 
         if kind not in {"evaluation", "approval"}:
-            raise PlaybillGitError(f"unknown Playbill proposal note kind: {kind!r}")
+            raise GitError(f"unknown Cruxible proposal note kind: {kind!r}")
         self._write_note(kind, oid, content, replace=True)
 
     def read_proposal_note(self, kind: str, oid: str) -> bytes | None:
         if kind not in {"evaluation", "approval"}:
-            raise PlaybillGitError(f"unknown Playbill proposal note kind: {kind!r}")
+            raise GitError(f"unknown Cruxible proposal note kind: {kind!r}")
         return self._read_note(kind, oid)
 
     def read_proposal_notes(
@@ -1836,7 +1832,7 @@ class GitLedger:
         wanted: dict[str, tuple[str, str]] = {}
         for kind, oid in pairs:
             if kind not in {"evaluation", "approval"}:
-                raise PlaybillGitError(f"unknown Playbill proposal note kind: {kind!r}")
+                raise GitError(f"unknown Cruxible proposal note kind: {kind!r}")
             self._validate_oid(oid)
             ref = notes_commit or self._note_ref(kind)
             for split in range(0, len(oid), 2):
@@ -1853,7 +1849,7 @@ class GitLedger:
             for expression in ordered:
                 end = output.find(b"\n", position)
                 if end < 0:
-                    raise PlaybillGitError("Git note output has no header")
+                    raise GitError("Git note output has no header")
                 header = output[position:end]
                 position = end + 1
                 if header == f"{expression} missing".encode("ascii"):
@@ -1862,25 +1858,25 @@ class GitLedger:
                     _oid, object_type, raw_size = header.decode("ascii").split()
                     size = int(raw_size)
                 except (UnicodeDecodeError, ValueError) as exc:
-                    raise PlaybillGitError("Git note metadata is malformed") from exc
+                    raise GitError("Git note metadata is malformed") from exc
                 if object_type != "blob" or size < 0:
-                    raise PlaybillGitError("Git note is not a blob")
+                    raise GitError("Git note is not a blob")
                 end = position + size
                 if end >= len(output) or output[end : end + 1] != b"\n":
-                    raise PlaybillGitError("Git note payload is truncated")
+                    raise GitError("Git note payload is truncated")
                 key = wanted[expression]
                 if key in found:
-                    raise PlaybillGitError("Git notes repeat an annotated object")
+                    raise GitError("Git notes repeat an annotated object")
                 found[key] = output[position:end]
                 position = end + 1
             if position != len(output):
-                raise PlaybillGitError("Git note output has trailing bytes")
+                raise GitError("Git note output has trailing bytes")
         return {pair: found.get(pair) for pair in pairs}
 
     def read_main(self) -> str:
         oid = self._resolve_ref("refs/heads/main")
         if oid is None:
-            raise PlaybillGitError("ledger has no main ref")
+            raise GitError("ledger has no main ref")
         return oid
 
     def parent_of(self, oid: str) -> str | None:
@@ -1889,7 +1885,7 @@ class GitLedger:
         # through the resident reader instead of spawning `rev-list`.
         found = _batch_reader(self.path).objects((oid,))[oid]
         if found is None or found[0] != "commit":
-            raise PlaybillGitError(f"ledger object is not a commit: {oid}")
+            raise GitError(f"ledger object is not a commit: {oid}")
         headers = found[1].split(b"\n\n", 1)[0].split(b"\n")
         parents = [
             line[len(b"parent ") :].decode("ascii")
@@ -1901,7 +1897,7 @@ class GitLedger:
         if len(parents) == 1:
             self._validate_oid(parents[0])
             return parents[0]
-        raise PlaybillGitError("Playbill refuses merge commits on main")
+        raise GitError("Cruxible refuses merge commits on main")
 
     def changed_tree_paths(self, before: str, after: str) -> tuple[str, ...]:
         """Exact physical path delta between two caller-verified accepted commits.
@@ -1931,11 +1927,11 @@ class GitLedger:
         changes = self.changed_entries(parent_oid, oid)
         for change in changes:
             if change.oid is not None and change.mode != "100644":
-                raise PlaybillGitError(
+                raise GitError(
                     f"ledger tree contains unsupported {change.mode} member: {change.path}"
                 )
             if (change.status == "A") != (change.path not in parent_tree):
-                raise PlaybillGitError(f"tree delta differs from its proven parent: {change.path}")
+                raise GitError(f"tree delta differs from its proven parent: {change.path}")
         blobs = self.read_blobs([c.oid for c in changes if c.oid is not None])
         if isinstance(parent_tree, SnapshotTree):
             # A snapshot parent yields a fork of it: only changed bytes are read
@@ -1975,7 +1971,7 @@ class GitLedger:
         changes = self.changed_entries(parent_oid, oid)
         for change in changes:
             if change.oid is not None and change.mode != "100644":
-                raise PlaybillGitError(
+                raise GitError(
                     f"ledger tree contains unsupported {change.mode} member: {change.path}"
                 )
         infos = self.object_sizes([c.oid for c in changes if c.oid is not None])
@@ -1987,9 +1983,7 @@ class GitLedger:
                 continue
             info = infos.get(change.oid)
             if info is None or info[0] != "blob":
-                raise PlaybillGitError(
-                    f"ledger tree names a missing or non-blob object: {change.path}"
-                )
+                raise GitError(f"ledger tree names a missing or non-blob object: {change.path}")
             result[change.path] = BlobRef(change.oid, info[1], load)
         return result
 
@@ -2015,7 +2009,7 @@ class GitLedger:
 
         self._validate_oid(oid)
         if not path.startswith("changesets/") or "\n" in path:
-            raise PlaybillGitError("record reads name a change-set path")
+            raise GitError("record reads name a change-set path")
         return _batch_reader(self.path).path_blob(oid, path)
 
     def blob_at(self, oid: str, path: str) -> bytes | None:
@@ -2038,7 +2032,7 @@ class GitLedger:
         if not ordered:
             return {}
         if any(not path for path in ordered):
-            raise PlaybillGitError("ledger blob read requires an exact path")
+            raise GitError("ledger blob read requires an exact path")
         # Each path is found by reading only the tree objects above it, which
         # are remembered by object ID, so the cost follows the paths asked for.
         selected: list[GitTreeEntry] = []
@@ -2199,7 +2193,7 @@ class GitLedger:
 
         self._validate_oid(oid)
         if not literal or not paths:
-            raise PlaybillGitError("ledger literal search requires text and scoped paths")
+            raise GitError("ledger literal search requires text and scoped paths")
         result = _command(
             [
                 "git",
@@ -2218,20 +2212,18 @@ class GitLedger:
         if result.returncode == 1:
             return ()
         if result.returncode != 0:
-            raise PlaybillGitError(
-                f"system Git operation 'grep' failed with exit code {result.returncode}"
-            )
+            raise GitError(f"system Git operation 'grep' failed with exit code {result.returncode}")
         prefix = f"{oid}:".encode("ascii")
         found: list[str] = []
         for raw_path in result.stdout.split(b"\x00"):
             if not raw_path:
                 continue
             if not raw_path.startswith(prefix):
-                raise PlaybillGitError("ledger literal search returned an unexpected coordinate")
+                raise GitError("ledger literal search returned an unexpected coordinate")
             try:
                 found.append(raw_path[len(prefix) :].decode("utf-8"))
             except UnicodeDecodeError as exc:
-                raise PlaybillGitError("ledger literal search returned a malformed path") from exc
+                raise GitError("ledger literal search returned a malformed path") from exc
         return tuple(found)
 
     def object_sizes(self, oids: Sequence[str]) -> dict[str, tuple[str, int] | None]:
@@ -2383,7 +2375,7 @@ class GitLedger:
             return None
         first = found[1].split(b"\n", 1)[0]
         if not first.startswith(b"tree "):
-            raise PlaybillGitError(f"ledger commit has no tree header: {oid}")
+            raise GitError(f"ledger commit has no tree header: {oid}")
         tree = first[len(b"tree ") :].decode("ascii")
         self._validate_oid(tree)
         return tree
@@ -2438,10 +2430,10 @@ class GitLedger:
             for prefix, tree in level:
                 found_tree = trees[tree]
                 if found_tree is None or found_tree[0] != "tree":
-                    raise PlaybillGitError(f"ledger tree object is unavailable: {tree}")
+                    raise GitError(f"ledger tree object is unavailable: {tree}")
                 entries = _tree_entries(found_tree[1], raw_length=raw_length)
                 if entries is None:
-                    raise PlaybillGitError(f"ledger tree object is malformed: {tree}")
+                    raise GitError(f"ledger tree object is malformed: {tree}")
                 for name, entry in entries.items():
                     path = _listing_path(prefix, name)
                     if entry[0] == _TREE_MODE:
@@ -2462,9 +2454,7 @@ class GitLedger:
             if with_sizes and object_type == "blob":
                 info = sizes.get(object_oid)
                 if info is None or info[0] != "blob":
-                    raise PlaybillGitError(
-                        f"ledger tree names a missing or non-blob object: {path}"
-                    )
+                    raise GitError(f"ledger tree names a missing or non-blob object: {path}")
                 size = info[1]
             result.append(
                 GitTreeEntry(
@@ -2540,7 +2530,7 @@ class GitLedger:
         try:
             public_key = Ed25519PublicKey.from_public_bytes(bytes.fromhex(public_key_hex))
         except ValueError as exc:
-            raise PlaybillGitError("historical daemon public key is malformed") from exc
+            raise GitError("historical daemon public key is malformed") from exc
         openssh = public_key.public_bytes(
             encoding=serialization.Encoding.OpenSSH,
             format=serialization.PublicFormat.OpenSSH,
@@ -2584,13 +2574,13 @@ class GitLedger:
             self._validate_oid(oid)
             found = reader.objects((oid,))[oid]
             if found is None or found[0] != "commit":
-                raise PlaybillGitError(f"ledger object is not a commit: {oid}")
+                raise GitError(f"ledger object is not a commit: {oid}")
             parents = _commit_parents(found[1])
             if len(parents) > 1:
-                raise PlaybillGitError("Playbill refuses merge commits on main")
+                raise GitError("Cruxible refuses merge commits on main")
             newest_first.append(oid)
             if len(newest_first) > _MAIN_HISTORY_LIMIT:
-                raise PlaybillGitError("Playbill main history is not a single parent chain")
+                raise GitError("Cruxible main history is not a single parent chain")
             oid = parents[0] if parents else None
         return tuple(reversed(newest_first))
 
@@ -2600,7 +2590,7 @@ class GitLedger:
         self._validate_oid(oid)
         found = _batch_reader(self.path).objects((oid,))[oid]
         if found is None or found[0] != "commit":
-            raise PlaybillGitError(f"ledger object is not a commit: {oid}")
+            raise GitError(f"ledger object is not a commit: {oid}")
         content = found[1].split(b"\n\n", 1)[0].decode("utf-8")
         timestamps: dict[str, datetime] = {}
         for line in content.splitlines():
@@ -2613,20 +2603,20 @@ class GitLedger:
                 continue
             fields = line.rsplit(" ", 2)
             if len(fields) != 3:
-                raise PlaybillGitError("Git commit identity timestamp is malformed")
+                raise GitError("Git commit identity timestamp is malformed")
             try:
                 seconds = int(fields[-2])
                 zone = fields[-1]
                 if not re.fullmatch(r"[+-][0-9]{4}", zone):
                     raise ValueError
             except (ValueError, IndexError) as exc:
-                raise PlaybillGitError("Git commit identity timestamp is malformed") from exc
+                raise GitError("Git commit identity timestamp is malformed") from exc
             timestamps[kind] = datetime.fromtimestamp(
                 seconds,
                 tz=timezone.utc,
             )
         if set(timestamps) != {"author", "committer"}:
-            raise PlaybillGitError("Git commit omits an identity timestamp")
+            raise GitError("Git commit omits an identity timestamp")
         return timestamps["author"], timestamps["committer"]
 
     def is_ancestor(self, ancestor_oid: str, descendant_oid: str) -> bool:
@@ -2652,9 +2642,7 @@ class GitLedger:
             if len(fields) >= 3 and fields[0].decode("utf-8") == principal_id:
                 matches.append(b" ".join(fields[:3]))
         if len(matches) != 1:
-            raise PlaybillGitError(
-                f"allowed signers must contain exactly one key for {principal_id!r}"
-            )
+            raise GitError(f"allowed signers must contain exactly one key for {principal_id!r}")
         return matches[0]
 
     def allowed_signer_public_key_hex(self, principal_id: str) -> str:
@@ -2705,10 +2693,10 @@ class GitLedger:
 
     def _validate_oid(self, oid: str) -> None:
         if not _OID_RE.fullmatch(oid):
-            raise PlaybillGitError(f"malformed Git OID: {oid!r}")
+            raise GitError(f"malformed Git OID: {oid!r}")
         expected_length = 40 if self.object_format() == "sha1" else 64
         if len(oid) != expected_length:
-            raise PlaybillGitError("Git OID length does not match repository object format")
+            raise GitError("Git OID length does not match repository object format")
 
     def _git(
         self,
@@ -2760,7 +2748,7 @@ def _listing_path(prefix: str, name: str) -> str:
     try:
         name.encode("utf-8")
     except UnicodeEncodeError as exc:
-        raise PlaybillGitError("ledger tree contains malformed metadata") from exc
+        raise GitError("ledger tree contains malformed metadata") from exc
     return prefix + name
 
 
@@ -2770,7 +2758,7 @@ def _listing_mode(raw_mode: bytes) -> str:
     try:
         return raw_mode.decode("ascii").rjust(6, "0")
     except UnicodeDecodeError as exc:
-        raise PlaybillGitError("ledger tree contains malformed metadata") from exc
+        raise GitError("ledger tree contains malformed metadata") from exc
 
 
 def _listing_type(raw_mode: bytes) -> str:
@@ -2912,7 +2900,7 @@ def _command_environment(environment: Mapping[str, str] | None = None) -> dict[s
     if environment is not None:
         unexpected = set(environment) - _COMMAND_ENVIRONMENT
         if unexpected:
-            raise PlaybillGitError(
+            raise GitError(
                 "unsupported Git command environment override: " + ", ".join(sorted(unexpected))
             )
         merged_environment.update(environment)
@@ -3015,19 +3003,19 @@ class _BatchBlobReader:
                 process.stdin.flush()
                 header = process.stdout.readline()
                 if not header.endswith(b"\n"):
-                    raise PlaybillGitError("Git batch output ended before its header")
+                    raise GitError("Git batch output ended before its header")
                 if header == expression + b" missing\n":
                     return None
                 try:
                     object_oid, object_type, raw_size = header[:-1].decode("ascii").split()
                     size = int(raw_size)
                 except (UnicodeDecodeError, ValueError) as exc:
-                    raise PlaybillGitError("Git batch output has malformed metadata") from exc
+                    raise GitError("Git batch output has malformed metadata") from exc
                 payload = process.stdout.read(size + 1)
                 if len(payload) != size + 1 or payload[-1:] != b"\n":
-                    raise PlaybillGitError("Git batch output has a truncated payload")
+                    raise GitError("Git batch output has a truncated payload")
                 if object_type != "blob":
-                    raise PlaybillGitError(f"ledger path is not a regular blob: {path}")
+                    raise GitError(f"ledger path is not a regular blob: {path}")
                 _require_object_hash(object_oid, object_type, payload[:-1])
                 return payload[:-1]
             except BaseException:
@@ -3072,7 +3060,7 @@ class _BatchBlobReader:
                     process.stdin.flush()
                     header = process.stdout.readline()
                     if not header.endswith(b"\n"):
-                        raise PlaybillGitError("Git batch blob output ended before its header")
+                        raise GitError("Git batch blob output ended before its header")
                     if header == expected_oid.encode("ascii") + b" missing\n":
                         found[expected_oid] = None
                         continue
@@ -3080,16 +3068,12 @@ class _BatchBlobReader:
                         actual_oid, object_type, raw_size = header[:-1].decode("ascii").split()
                         size = int(raw_size)
                     except (UnicodeDecodeError, ValueError) as exc:
-                        raise PlaybillGitError(
-                            "Git batch blob output has malformed metadata"
-                        ) from exc
+                        raise GitError("Git batch blob output has malformed metadata") from exc
                     if actual_oid != expected_oid or size < 0:
-                        raise PlaybillGitError(
-                            "Git batch blob output differs from the requested blob"
-                        )
+                        raise GitError("Git batch blob output differs from the requested blob")
                     payload = process.stdout.read(size + 1)
                     if len(payload) != size + 1 or payload[-1:] != b"\n":
-                        raise PlaybillGitError("Git batch blob output has a truncated payload")
+                        raise GitError("Git batch blob output has a truncated payload")
                     _require_object_hash(expected_oid, object_type, payload[:-1])
                     found[expected_oid] = (object_type, payload[:-1])
             except BaseException:
@@ -3101,9 +3085,9 @@ class _BatchBlobReader:
         blobs: dict[str, bytes] = {}
         for oid, value in self.objects(oids).items():
             if value is None:
-                raise PlaybillGitError("Git batch blob output has malformed metadata")
+                raise GitError("Git batch blob output has malformed metadata")
             if value[0] != "blob":
-                raise PlaybillGitError("Git batch blob output differs from the requested blob")
+                raise GitError("Git batch blob output differs from the requested blob")
             blobs[oid] = value[1]
         return blobs
 
@@ -3113,16 +3097,16 @@ _OBJECT_INFO_CHUNK: Final = 256
 
 def _object_info_row(header: bytes, expected_oid: str) -> tuple[str, int] | None:
     if not header.endswith(b"\n"):
-        raise PlaybillGitError("Git object metadata ended before its header")
+        raise GitError("Git object metadata ended before its header")
     if header == expected_oid.encode("ascii") + b" missing\n":
         return None
     try:
         actual_oid, object_type, raw_size = header[:-1].decode("ascii").split()
         size = int(raw_size)
     except (UnicodeDecodeError, ValueError) as exc:
-        raise PlaybillGitError("Git object metadata is malformed") from exc
+        raise GitError("Git object metadata is malformed") from exc
     if actual_oid != expected_oid or size < 0:
-        raise PlaybillGitError("Git object metadata differs from its request")
+        raise GitError("Git object metadata differs from its request")
     return (object_type, size)
 
 
@@ -3136,12 +3120,12 @@ def _require_object_hash(oid: str, object_type: str, body: bytes) -> None:
 
     algorithm = {40: "sha1", 64: "sha256"}.get(len(oid))
     if algorithm is None:
-        raise PlaybillGitError(f"ledger object ID has an unknown length: {oid}")
+        raise GitError(f"ledger object ID has an unknown length: {oid}")
     digest = hashlib.new(algorithm)
     digest.update(f"{object_type} {len(body)}".encode("ascii") + b"\x00")
     digest.update(body)
     if digest.hexdigest() != oid:
-        raise PlaybillGitError(f"ledger object bytes do not hash to their ID: {oid}")
+        raise GitError(f"ledger object bytes do not hash to their ID: {oid}")
 
 
 # A generation commit is marked here from before it exists until it is on main
@@ -3468,7 +3452,7 @@ def _command(
         # Do not echo command arguments or stderr: Git signing failures can
         # include managed credential paths, which inspection/logging must not expose.
         command = next((arg for arg in arguments[1:] if not arg.startswith("-")), "git")
-        raise PlaybillGitError(
+        raise GitError(
             f"system Git operation {command!r} failed with exit code {result.returncode}"
         )
     return result

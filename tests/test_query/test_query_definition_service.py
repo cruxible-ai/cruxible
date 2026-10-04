@@ -13,7 +13,7 @@ from cruxible_client.contracts.query.definitions import (
     query_definition_path,
 )
 from cruxible_core.indexes.typed_state import TypedStateReader
-from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+from cruxible_core.service.authoring.documents import AcceptedCoordinate
 from cruxible_core.service.discovery.query_definitions import (
     service_get_playbill_query_definition,
 )
@@ -93,7 +93,7 @@ def test_query_definition_read_is_pinned_to_the_requested_accepted_coordinate(
     tmp_path: Path,
 ) -> None:
     instance, _owner = _accept_query(tmp_path)
-    accepted = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    accepted = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
 
     pinned = service_get_playbill_query_definition(instance, name=QUERY_NAME, at=accepted)
 

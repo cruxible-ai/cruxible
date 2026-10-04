@@ -18,7 +18,7 @@ from click.testing import CliRunner
 from cruxible_client import contracts
 from cruxible_core.cli.main import cli
 
-COORDINATE = contracts.PlaybillAcceptedCoordinate(
+COORDINATE = contracts.AcceptedCoordinate(
     git_oid="1" * 64,
     semantic_root="sha256:" + "2" * 64,
     generation_root="sha256:" + "3" * 64,
@@ -44,9 +44,9 @@ class _SubmitClient:
         self.state = state
         self.activations: list[str] = []
 
-    def submit_playbill_authoring_intent(
+    def submit_authoring_intent(
         self, instance_id: str, intent_id: str
-    ) -> contracts.PlaybillAuthoringSubmitResult:
+    ) -> contracts.AuthoringSubmitResultRecord:
         intent: dict[str, object] = {"intent_id": intent_id}
         if self.state == "preflight_refused":
             intent["last_preflight"] = {
@@ -66,16 +66,16 @@ class _SubmitClient:
                     ],
                 }
             }
-        return contracts.PlaybillAuthoringSubmitResult(
+        return contracts.AuthoringSubmitResultRecord(
             intent=intent,
-            status=contracts.PlaybillCandidateStatus(
+            status=contracts.CandidateStatusRecord(
                 state=self.state,
                 proposal_id=PROPOSAL_ID,
                 current_accepted_coordinate=COORDINATE,
             ),
         )
 
-    def activate_playbill_proposal(self, instance_id: str, proposal_id: str, **_: Any) -> object:
+    def activate_proposal(self, instance_id: str, proposal_id: str, **_: Any) -> object:
         self.activations.append(proposal_id)
         raise AssertionError("this candidate must never be activated")
 
@@ -145,13 +145,13 @@ def test_and_activate_brief_prints_the_accepted_coordinate_and_receipt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = _SubmitClient("ready_to_activate")
-    activation = contracts.PlaybillWorkspaceActivationResult(
+    activation = contracts.WorkspaceActivationResult(
         proposal_id=PROPOSAL_ID,
         activated_by="owner",
         status="accepted",
         accepted_coordinate=COORDINATE,
         workspace_advertisement={"status": "not_attached", "workspace_path": None},
-        floor_refresh=contracts.PlaybillFloorRefreshResult(status="not_configured"),
+        floor_refresh=contracts.FloorRefreshResult(status="not_configured"),
     )
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
     monkeypatch.setattr(

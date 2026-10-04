@@ -18,8 +18,8 @@ from cruxible_core.service.discovery.curation import (
     service_list_playbill_curation,
 )
 from cruxible_core.service.list_pages import (
-    PlaybillListCursorMismatch,
-    PlaybillListCursorStale,
+    ListCursorMismatch,
+    ListCursorStale,
     encode_list_cursor,
     list_snapshot,
 )
@@ -71,9 +71,9 @@ def test_a_proposal_cursor_is_bound_to_its_selection(tmp_path: Path) -> None:
     first = service_list_playbill_proposals(instance, limit=1)
     assert first.next_cursor is not None
 
-    with pytest.raises(PlaybillListCursorMismatch, match="different selection"):
+    with pytest.raises(ListCursorMismatch, match="different selection"):
         service_list_playbill_proposals(instance, status="open", limit=1, cursor=first.next_cursor)
-    with pytest.raises(PlaybillListCursorMismatch, match="not a list cursor"):
+    with pytest.raises(ListCursorMismatch, match="not a list cursor"):
         service_list_playbill_proposals(instance, limit=1, cursor="not-a-cursor")
 
 
@@ -100,7 +100,7 @@ def test_withdrawing_an_unseen_proposal_between_pages_makes_the_cursor_stale(
         withdrawn_at=TIMESTAMP,
     )
 
-    with pytest.raises(PlaybillListCursorStale, match="listing changed") as caught:
+    with pytest.raises(ListCursorStale, match="listing changed") as caught:
         service_list_playbill_proposals(instance, status="open", limit=1, cursor=first.next_cursor)
     assert caught.value.error_code == "playbill.list.cursor_stale"
 
@@ -121,15 +121,15 @@ def test_policy_pages_walk_the_whole_inventory(tmp_path: Path) -> None:
         cursor = page.next_cursor
     assert walked == list(whole.policies)
 
-    other = contracts.PlaybillAcceptedCoordinate(
+    other = contracts.AcceptedCoordinate(
         git_oid="1" * 64,
         semantic_root="sha256:" + "2" * 64,
         generation_root="sha256:" + "3" * 64,
         compiler_digest="sha256:" + "4" * 64,
     )
-    with pytest.raises(PlaybillListCursorMismatch, match="different coordinate"):
+    with pytest.raises(ListCursorMismatch, match="different coordinate"):
         service_playbill_policies_in_force(instance, at=other, cursor=first.next_cursor)
-    with pytest.raises(PlaybillListCursorMismatch, match="policies-in-force"):
+    with pytest.raises(ListCursorMismatch, match="policies-in-force"):
         service_list_playbill_proposals(instance, cursor=first.next_cursor)
 
 
@@ -212,7 +212,7 @@ def test_a_curation_cursor_refuses_once_the_queue_changes(tmp_path: Path) -> Non
     assert grown.coordinate == whole.coordinate
     assert len(grown.items) > len(whole.items)
 
-    with pytest.raises(PlaybillListCursorStale, match="listing changed") as caught:
+    with pytest.raises(ListCursorStale, match="listing changed") as caught:
         _curation(instance, limit=1, cursor=cursor)
     assert caught.value.error_code == "playbill.list.cursor_stale"
 
@@ -222,5 +222,5 @@ def test_a_curation_cursor_refuses_once_accepted_state_moves(tmp_path: Path) -> 
     cursor = _curation_cursor(_curation(instance, limit=200))
 
     activate(instance, owner, _propose(instance, "moves-state", "wi-60"))
-    with pytest.raises(PlaybillListCursorStale, match="accepted state moved"):
+    with pytest.raises(ListCursorStale, match="accepted state moved"):
         _curation(instance, limit=1, cursor=cursor)

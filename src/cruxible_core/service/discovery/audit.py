@@ -31,7 +31,7 @@ from cruxible_client.contracts.claims import (
     parse_claim,
     parse_claim_law_evidence,
 )
-from cruxible_client.contracts.errors import PlaybillError, ProposalIntegrityError
+from cruxible_client.contracts.errors import CruxibleError, ProposalIntegrityError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.providers import ProviderV1
 from cruxible_client.contracts.query.definitions import QueryEvaluationPolicy
@@ -102,7 +102,7 @@ _AUDIT_VISIBILITY_POLICY = QueryEvaluationPolicy(
 )
 
 
-class PlaybillAuditError(PlaybillError):
+class AuditError(CruxibleError):
     code = "playbill.audit.invalid"
 
     @property
@@ -113,23 +113,23 @@ class PlaybillAuditError(PlaybillError):
         super().__init__(f"{self.code}: {message}")
 
 
-class PlaybillAuditCoordinateNotAccepted(PlaybillAuditError):
+class AuditCoordinateNotAccepted(AuditError):
     code = "playbill.audit.coordinate_not_accepted"
 
 
-class PlaybillAuditCursorInvalid(PlaybillAuditError):
+class AuditCursorInvalid(AuditError):
     code = "playbill.audit.cursor_invalid"
 
 
-class PlaybillAuditAccessProfileInvalid(PlaybillAuditError):
+class AuditAccessProfileInvalid(AuditError):
     code = "playbill.audit.access_profile_invalid"
 
 
-class PlaybillAuditBudgetInvalid(PlaybillAuditError):
+class AuditBudgetInvalid(AuditError):
     code = "playbill.audit.budget_invalid"
 
 
-class PlaybillAuditOperationalStoreInvalid(PlaybillAuditError):
+class AuditOperationalStoreInvalid(AuditError):
     code = "playbill.audit.operational_store_invalid"
 
 
@@ -201,7 +201,7 @@ def _generation(instance: PlaybillInstance, coordinate: AcceptedCoordinate) -> i
         item.sequence for item in instance.accepted_history() if item.oid == coordinate.git_oid
     )
     if len(matches) != 1:
-        raise PlaybillAuditCoordinateNotAccepted("audit coordinate is not accepted here")
+        raise AuditCoordinateNotAccepted("audit coordinate is not accepted here")
     return matches[0]
 
 
@@ -218,8 +218,8 @@ def _resolve_coordinate(
             generation_root=requested.generation_root,
             compiler_digest=requested.compiler_digest,
         )
-    except (KeyError, PlaybillError, ValueError) as exc:
-        raise PlaybillAuditCoordinateNotAccepted("audit coordinate is not accepted here") from exc
+    except (KeyError, CruxibleError, ValueError) as exc:
+        raise AuditCoordinateNotAccepted("audit coordinate is not accepted here") from exc
     return internal, requested
 
 
@@ -424,8 +424,8 @@ def _logical_source_keys(
     for capture in captures:
         try:
             envelope = parse_capture_envelope(store.read(capture.capture_digest, access=access))
-        except (OSError, PlaybillError, ValueError) as exc:
-            raise PlaybillAuditError(
+        except (OSError, CruxibleError, ValueError) as exc:
+            raise AuditError(
                 f"supporting Capture cannot be reproduced: {capture.capture_digest}"
             ) from exc
         source = accepted_logical_source(envelope.source)
@@ -631,9 +631,7 @@ def _cursor_offset(
         or cursor.operational_input_head_digest != operational_input_head_digest
         or cursor.scope_digest != audit_scope_digest(request.scope)
     ):
-        raise PlaybillAuditCursorInvalid(
-            "audit cursor is stale or belongs to a different request scope"
-        )
+        raise AuditCursorInvalid("audit cursor is stale or belongs to a different request scope")
     return cursor.next_offset
 
 
@@ -683,9 +681,7 @@ def completed_audit_runs(instance: PlaybillInstance) -> tuple[AuditRunV1, ...]:
             for _event, payload in instance.review_operational_store().events(family="audit")
         )
     except ValueError as exc:
-        raise PlaybillAuditOperationalStoreInvalid(
-            "completed audit run payload is malformed"
-        ) from exc
+        raise AuditOperationalStoreInvalid("completed audit run payload is malformed") from exc
 
 
 def _service_playbill_audit(
@@ -813,7 +809,7 @@ def _service_playbill_audit(
         operational_input_head_digest=input_head.head_digest,
     )
     if offset > len(ranked):
-        raise PlaybillAuditCursorInvalid("audit cursor offset exceeds the ranked worklist")
+        raise AuditCursorInvalid("audit cursor offset exceeds the ranked worklist")
     kept = ranked[offset : offset + request.budget.max_rows]
     reasons: set[Literal["byte_budget_exceeded", "row_budget_exceeded"]] = set()
     if len(kept) < len(ranked) - offset or offset:
@@ -902,14 +898,14 @@ def validate_playbill_audit_request(
     except ValidationError as exc:
         roots = {str(item["loc"][0]) for item in exc.errors() if item["loc"]}
         if "access_profile" in roots:
-            raise PlaybillAuditAccessProfileInvalid(
+            raise AuditAccessProfileInvalid(
                 "audit access profile is not a valid closed profile"
             ) from exc
         if "budget" in roots:
-            raise PlaybillAuditBudgetInvalid("audit budget is outside the frozen ceilings") from exc
+            raise AuditBudgetInvalid("audit budget is outside the frozen ceilings") from exc
         if "cursor" in roots:
-            raise PlaybillAuditCursorInvalid("audit cursor is malformed") from exc
-        raise PlaybillAuditError("audit request is malformed") from exc
+            raise AuditCursorInvalid("audit cursor is malformed") from exc
+        raise AuditError("audit request is malformed") from exc
 
 
 def service_playbill_audit(
@@ -925,18 +921,18 @@ def service_playbill_audit(
             actor_context=actor_context,
         )
     except ReviewOperationalStoreError as exc:
-        raise PlaybillAuditOperationalStoreInvalid(
+        raise AuditOperationalStoreInvalid(
             f"audit operational inputs or completion store failed verification: {exc}"
         ) from exc
 
 
 __all__ = [
-    "PlaybillAuditCoordinateNotAccepted",
-    "PlaybillAuditCursorInvalid",
-    "PlaybillAuditAccessProfileInvalid",
-    "PlaybillAuditBudgetInvalid",
-    "PlaybillAuditError",
-    "PlaybillAuditOperationalStoreInvalid",
+    "AuditCoordinateNotAccepted",
+    "AuditCursorInvalid",
+    "AuditAccessProfileInvalid",
+    "AuditBudgetInvalid",
+    "AuditError",
+    "AuditOperationalStoreInvalid",
     "PlaybillAuditRequestV1",
     "PlaybillAuditResultV1",
     "completed_audit_runs",

@@ -10,7 +10,7 @@ from click.testing import CliRunner
 from cruxible_client import contracts
 from cruxible_core.cli.main import cli
 
-COORDINATE = contracts.PlaybillAcceptedCoordinate(
+COORDINATE = contracts.AcceptedCoordinate(
     git_oid="1" * 40,
     semantic_root="sha256:" + "2" * 64,
     generation_root="sha256:" + "3" * 64,
@@ -29,25 +29,25 @@ def test_cli_review_sends_bounded_coordinate_bound_projection_observation(
     }
 
     class StubClient:
-        def resolve_playbill_proposal_selector(
+        def resolve_proposal_selector(
             self, instance_id: str, selector: str
-        ) -> contracts.PlaybillProposalSelectorResult:
+        ) -> contracts.ProposalSelectorResult:
             assert instance_id == "inst_review"
-            return contracts.PlaybillProposalSelectorResult(
+            return contracts.ProposalSelectorResult(
                 selector=selector,
                 proposal_id=selector,
             )
 
-        def playbill_head(self, instance_id: str) -> SimpleNamespace:
+        def head(self, instance_id: str) -> SimpleNamespace:
             assert instance_id == "inst_review"
             return SimpleNamespace(coordinate=COORDINATE)
 
-        def review_playbill_proposal(
+        def review_proposal(
             self,
             instance_id: str,
             proposal_id: str,
             **values: object,
-        ) -> contracts.PlaybillProposalReview:
+        ) -> contracts.ProposalReview:
             assert instance_id == "inst_review"
             assert proposal_id == "sha256:" + "a" * 64
             observation = values["workspace_observation"]
@@ -55,7 +55,7 @@ def test_cli_review_sends_bounded_coordinate_bound_projection_observation(
             assert "source_observations" not in observation
             assert observation["tag"] == "playbill-review-workspace-observation-v1"
             assert observation["projection_coverage"] == projection
-            return contracts.PlaybillProposalReview(
+            return contracts.ProposalReview(
                 proposal_id=proposal_id,
                 candidate={},
                 candidate_digest="sha256:" + "b" * 64,
@@ -69,7 +69,7 @@ def test_cli_review_sends_bounded_coordinate_bound_projection_observation(
                 attestation_coverage={},
                 documents=[],
                 redactions=[],
-                projection_advisory=contracts.PlaybillProjectionAdvisory(
+                projection_advisory=contracts.ProjectionAdvisory(
                     unprojected_count=1,
                     artifact_identities=["Procedure:release-guard"],
                     message=(
@@ -81,14 +81,14 @@ def test_cli_review_sends_bounded_coordinate_bound_projection_observation(
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
     monkeypatch.setattr(
-        "cruxible_core.cli.commands.playbill.observe_playbill_next_workspace",
+        "cruxible_core.cli.commands.playbill.observe_next_workspace",
         lambda _workspace: {
             "tag": "playbill-next-workspace-observation-v1",
             "source_observations": [{"source_id": "not-yet-enriched"}],
         },
     )
     monkeypatch.setattr(
-        "cruxible_core.cli.commands.playbill.observe_playbill_projection_coverage",
+        "cruxible_core.cli.commands.playbill.observe_projection_coverage",
         lambda _workspace, *, coordinate: projection,
     )
 

@@ -1,4 +1,4 @@
-"""The SDK write verbs over a daemon: pb.set, pb.retire, pb.changes(because=...), World writes."""
+"""The SDK write verbs over a daemon: cx.set, cx.retire, cx.changes(because=...), World writes."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from cruxible_client.authoring.sdk import ChangeSetDraft, Playbill, WriteBatch
+from cruxible_client.authoring.sdk import ChangeSetDraft, Cruxible, WriteBatch
 from cruxible_client.contracts.errors import WriteRefusalError
 from cruxible_client.contracts.write import SlotRef, WriteOutcome
 from cruxible_client.transport.http import CruxibleClient
@@ -25,12 +25,12 @@ from tests.core_support._write_support import (
 WI1 = f"{KIND}/wi-1"
 
 
-def _sdk(client: TestClient, instance_id: str, tmp_path: Path, name: str = "sdk") -> Playbill:
+def _sdk(client: TestClient, instance_id: str, tmp_path: Path, name: str = "sdk") -> Cruxible:
     transport = CruxibleClient(base_url="http://testserver")
     transport._client._client = client  # type: ignore[attr-defined]  # noqa: SLF001
     workspace = tmp_path / f"{name}-workspace"
     workspace.mkdir()
-    return Playbill._from_client(  # noqa: SLF001
+    return Cruxible._from_client(  # noqa: SLF001
         transport,
         instance_id=instance_id,
         workspace=workspace,
@@ -39,14 +39,14 @@ def _sdk(client: TestClient, instance_id: str, tmp_path: Path, name: str = "sdk"
 
 
 @pytest.fixture
-def pb(playbill_http: tuple[TestClient, str, Path], tmp_path: Path) -> Playbill:
+def pb(playbill_http: tuple[TestClient, str, Path], tmp_path: Path) -> Cruxible:
     client, instance_id, _key = playbill_http
     actor = client.get(f"/api/v1/{instance_id}/playbill/whoami").json()["actor_id"]
     seed_write_vocabulary(get_playbill_manager().get(instance_id), actor_id=actor)
     return _sdk(client, instance_id, tmp_path)
 
 
-def test_set_accepts_revises_and_advances_the_connection(pb: Playbill) -> None:
+def test_set_accepts_revises_and_advances_the_connection(pb: Cruxible) -> None:
     first = pb.set(WI1, "status", "ready", because="Checked.")
     assert isinstance(first, WriteOutcome) and first.status == "accepted"
     assert first.accepted_coordinate is not None
@@ -58,7 +58,7 @@ def test_set_accepts_revises_and_advances_the_connection(pb: Playbill) -> None:
 
 
 def test_a_stale_set_refuses_then_setting_again_replaces_the_value_it_showed(
-    pb: Playbill, playbill_http: tuple[TestClient, str, Path], tmp_path: Path
+    pb: Cruxible, playbill_http: tuple[TestClient, str, Path], tmp_path: Path
 ) -> None:
     first = pb.set(WI1, "status", "ready", because="Checked.")
     client, instance_id, _key = playbill_http
@@ -75,7 +75,7 @@ def test_a_stale_set_refuses_then_setting_again_replaces_the_value_it_showed(
     assert again.changes[0].revises == first.changes[0].claim
 
 
-def test_a_refusal_raises_a_typed_error_carrying_the_outcome(pb: Playbill) -> None:
+def test_a_refusal_raises_a_typed_error_carrying_the_outcome(pb: Cruxible) -> None:
     with pytest.raises(WriteRefusalError) as caught:
         pb.set(WI1, "status", "dne", because="x")
     error = caught.value
@@ -85,7 +85,7 @@ def test_a_refusal_raises_a_typed_error_carrying_the_outcome(pb: Playbill) -> No
     assert isinstance(error.outcome, WriteOutcome) and error.outcome.status == "refused"
 
 
-def test_a_batch_writes_two_adds_and_a_retire_as_one_change_set(pb: Playbill) -> None:
+def test_a_batch_writes_two_adds_and_a_retire_as_one_change_set(pb: Cruxible) -> None:
     status = pb.set(WI1, "status", "ready", because="x").changes[0].claim
     batch = pb.changes(because="Linked and cleaned.")
     assert isinstance(batch, WriteBatch)
@@ -105,7 +105,7 @@ def test_a_batch_writes_two_adds_and_a_retire_as_one_change_set(pb: Playbill) ->
 
 
 def test_expect_compares_by_value_on_set_retire_and_a_batch(
-    pb: Playbill, playbill_http: tuple[TestClient, str, Path], tmp_path: Path
+    pb: Cruxible, playbill_http: tuple[TestClient, str, Path], tmp_path: Path
 ) -> None:
     pb.set(WI1, "status", "ready", because="Checked.", expect=[])
     client, instance_id, _key = playbill_http
@@ -137,7 +137,7 @@ def test_expect_compares_by_value_on_set_retire_and_a_batch(
     assert batch.write().status == "accepted"
 
 
-def test_a_batch_names_its_subject_once(pb: Playbill) -> None:
+def test_a_batch_names_its_subject_once(pb: Cruxible) -> None:
     pb.set(WI1, "title", "Old", because="x")
     batch = pb.changes(because="Triaged.", subject=WI1)
     batch.set("status", "ready").add("governs", f"{KIND}/wi-2")
@@ -156,7 +156,7 @@ def test_a_batch_names_its_subject_once(pb: Playbill) -> None:
 
 
 def test_capture_handles_and_contract_evidence_from_the_sdk(
-    pb: Playbill, playbill_http: tuple[TestClient, str, Path], tmp_path: Path
+    pb: Cruxible, playbill_http: tuple[TestClient, str, Path], tmp_path: Path
 ) -> None:
     from cruxible_client.contracts.write import (
         CaptureEvidence,
@@ -198,7 +198,7 @@ def test_capture_handles_and_contract_evidence_from_the_sdk(
     assert caught.value.error_code == "playbill.write.capture_not_found"
 
 
-def test_retire_dry_run_and_proposal_accept(pb: Playbill) -> None:
+def test_retire_dry_run_and_proposal_accept(pb: Cruxible) -> None:
     claim = pb.set(WI1, "title", "Old", because="x").changes[0].claim
     assert claim is not None
     preview = pb.retire(claim, because="Gone.", dry_run=True)
@@ -212,7 +212,7 @@ def test_retire_dry_run_and_proposal_accept(pb: Playbill) -> None:
 
 
 def test_world_writes_keep_references_valid_after_their_own_write(
-    pb: Playbill, playbill_http: tuple[TestClient, str, Path], tmp_path: Path
+    pb: Cruxible, playbill_http: tuple[TestClient, str, Path], tmp_path: Path
 ) -> None:
     world = pb.world()
     item = world.project.work_item["wi-1"]
@@ -244,7 +244,7 @@ def test_world_writes_keep_references_valid_after_their_own_write(
     assert world.project.work_item["wi-3"].set(status="ready", because="x").status == "accepted"
 
 
-def test_the_world_stub_types_set_with_enum_literals(pb: Playbill) -> None:
+def test_the_world_stub_types_set_with_enum_literals(pb: Cruxible) -> None:
     stub = pb.world().stub()
     ast.parse(stub)
     assert "def set(" in stub and "def add(" in stub and "def retire(" in stub

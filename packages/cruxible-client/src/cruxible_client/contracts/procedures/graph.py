@@ -9,7 +9,7 @@ from typing import Iterator
 from pydantic import BaseModel
 
 from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.procedures.models import (
     TERMINAL_NODE_KINDS,
     TERMINAL_REQUIRED_RUNGS,
@@ -44,7 +44,7 @@ from cruxible_client.contracts.procedures.models import (
 _ALIAS_RE = re.compile(r"^[a-z][a-z0-9_]{0,127}$")
 
 
-class ProcedureGraphFormatError(PlaybillFormatError):
+class ProcedureGraphFormatError(FormatError):
     """A graph-format-v3 definition fails a static law."""
 
 

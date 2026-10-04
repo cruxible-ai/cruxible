@@ -52,22 +52,22 @@ def test_cli_approval_signs_exact_challenge_without_transmitting_key(
     submitted: list[dict[str, Any]] = []
 
     class StubClient:
-        def resolve_playbill_proposal_selector(
+        def resolve_proposal_selector(
             self, instance_id: str, selector: str
-        ) -> contracts.PlaybillProposalSelectorResult:
-            return contracts.PlaybillProposalSelectorResult(
+        ) -> contracts.ProposalSelectorResult:
+            return contracts.ProposalSelectorResult(
                 selector=selector,
                 proposal_id=selector,
             )
 
-        def prepare_playbill_approval(
+        def prepare_approval(
             self,
             instance_id: str,
             selected_proposal_id: str,
             *,
             signer_id: str,
             include_body: bool,
-        ) -> contracts.PlaybillApprovalChallenge:
+        ) -> contracts.ApprovalChallenge:
             assert instance_id == "inst_cli"
             challenge = service_prepare_playbill_approval(
                 instance,
@@ -78,17 +78,15 @@ def test_cli_approval_signs_exact_challenge_without_transmitting_key(
                     can_read_body=include_body,
                 ),
             )
-            return contracts.PlaybillApprovalChallenge.model_validate(
-                challenge.model_dump(mode="json")
-            )
+            return contracts.ApprovalChallenge.model_validate(challenge.model_dump(mode="json"))
 
-        def submit_playbill_approval(
+        def submit_approval(
             self,
             instance_id: str,
             selected_proposal_id: str,
             *,
             attestation: dict[str, Any],
-        ) -> contracts.PlaybillApprovalReceipt:
+        ) -> contracts.ApprovalReceipt:
             assert instance_id == "inst_cli"
             submitted.append(attestation)
             receipt = service_submit_playbill_approval(
@@ -97,7 +95,7 @@ def test_cli_approval_signs_exact_challenge_without_transmitting_key(
                 attestation=ApprovalAttestation.model_validate(attestation),
                 authenticated_submitter="reviewer",
             )
-            return contracts.PlaybillApprovalReceipt.model_validate(receipt.model_dump(mode="json"))
+            return contracts.ApprovalReceipt.model_validate(receipt.model_dump(mode="json"))
 
     monkeypatch.setattr(
         "cruxible_core.cli.commands._common._get_client",
@@ -161,22 +159,22 @@ def test_cli_missing_signer_never_falls_back_to_daemon(
     submitted = False
 
     class StubClient:
-        def resolve_playbill_proposal_selector(
+        def resolve_proposal_selector(
             self, instance_id: str, selector: str
-        ) -> contracts.PlaybillProposalSelectorResult:
-            return contracts.PlaybillProposalSelectorResult(
+        ) -> contracts.ProposalSelectorResult:
+            return contracts.ProposalSelectorResult(
                 selector=selector,
                 proposal_id=selector,
             )
 
-        def prepare_playbill_approval(
+        def prepare_approval(
             self,
             _instance_id: str,
             proposal_id: str,
             *,
             signer_id: str,
             include_body: bool,
-        ) -> contracts.PlaybillApprovalChallenge:
+        ) -> contracts.ApprovalChallenge:
             challenge = service_prepare_playbill_approval(
                 instance,
                 proposal_id=proposal_id,
@@ -186,11 +184,9 @@ def test_cli_missing_signer_never_falls_back_to_daemon(
                     can_read_body=include_body,
                 ),
             )
-            return contracts.PlaybillApprovalChallenge.model_validate(
-                challenge.model_dump(mode="json")
-            )
+            return contracts.ApprovalChallenge.model_validate(challenge.model_dump(mode="json"))
 
-        def submit_playbill_approval(self, *args: Any, **kwargs: Any) -> Any:
+        def submit_approval(self, *args: Any, **kwargs: Any) -> Any:
             nonlocal submitted
             submitted = True
 

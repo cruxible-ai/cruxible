@@ -283,7 +283,7 @@ def test_one_governed_instance_without_playbill_is_skipped_as_a_non_owner(
 ) -> None:
     """V-1: an opt-out governed instance cannot poison Provider recovery."""
 
-    from cruxible_client.contracts.errors import PlaybillBootstrapError
+    from cruxible_client.contracts.errors import BootstrapError
 
     operator = ProviderRuntimeOperator(short_root)
     invocation = "sha256:" + "3" * 64
@@ -302,7 +302,7 @@ def test_one_governed_instance_without_playbill_is_skipped_as_a_non_owner(
     )
     monkeypatch.setattr("cruxible_core.runtime.playbill_manager.get_registry", lambda: registry)
     manager = PlaybillInstanceManager()  # the REAL get(), no stub
-    with pytest.raises(PlaybillBootstrapError):
+    with pytest.raises(BootstrapError):
         manager.get("inst_bare")
     monkeypatch.setattr(manager, "provider_runtime_operator", lambda: operator)
     operator.bind_recovery_fold(lambda result: manager._fold_provider_recovery(operator, result))
@@ -339,9 +339,9 @@ def test_a_healthy_fold_is_acknowledged_when_a_sibling_instance_lacks_playbill(
 
     def service(instance: object, **kwargs: object) -> tuple[str, ...]:
         if instance == "inst_bare":
-            from cruxible_client.contracts.errors import PlaybillBootstrapError
+            from cruxible_client.contracts.errors import BootstrapError
 
-            raise PlaybillBootstrapError("Playbill is not initialized for this instance")
+            raise BootstrapError("Cruxible is not initialized for this instance")
         ids = tuple(str(item) for item in kwargs["invocation_ids"])  # type: ignore[arg-type]
         folded.extend(ids)
         return ids

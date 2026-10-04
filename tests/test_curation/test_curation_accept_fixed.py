@@ -30,9 +30,9 @@ from cruxible_core.curation.curation import (
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.service.authoring.documents import service_propose_playbill_document
 from cruxible_core.service.discovery.curation import (
+    CurationResolvingChangeUnrelated,
     PlaybillCurationAcceptFixedRequestV1,
     PlaybillCurationListRequestV1,
-    PlaybillCurationResolvingChangeUnrelated,
     _accepted_retirements_for_items,
     service_accept_fixed_playbill_curation,
     service_list_playbill_curation,
@@ -206,7 +206,7 @@ def test_accept_fixed_refuses_an_unrelated_accepted_changeset(tmp_path: Path) ->
     record = instance.accepted_history()[-1].record
     assert record is not None
 
-    with pytest.raises(PlaybillCurationResolvingChangeUnrelated):
+    with pytest.raises(CurationResolvingChangeUnrelated):
         service_accept_fixed_playbill_curation(
             instance,
             request=PlaybillCurationAcceptFixedRequestV1(

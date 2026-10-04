@@ -46,7 +46,7 @@ from cruxible_client.contracts.cas_contracts import (
     CasObjectMetadata,
 )
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
-from cruxible_client.contracts.errors import PlaybillCasError, PlaybillFormatError
+from cruxible_client.contracts.errors import CasError, FormatError
 from cruxible_client.contracts.governance import PermissionTier, governance_identifier
 from cruxible_client.contracts.provider_execution import (
     ProviderEgressObservation,
@@ -117,7 +117,7 @@ FOREIGN_SOURCE_SUBJECT_MAPPING = "playbill.external.claim-statement-span-v1"
 FOREIGN_SOURCE_MAX_BYTES = 1024 * 1024
 
 
-class CaptureFormatError(PlaybillFormatError):
+class CaptureFormatError(FormatError):
     """A Capture contract/envelope or its canonical location is invalid."""
 
 
@@ -332,7 +332,7 @@ class CaptureComponentRegistry:
         return self._entries.get((pin.role, pin.target.qualified)) == pin.artifact_digest
 
 
-PLAYBILL_CAPTURE_COMPONENTS = CaptureComponentRegistry(
+CAPTURE_COMPONENTS = CaptureComponentRegistry(
     tuple(capture_component_pin(role, name) for role, name in _CAPTURE_COMPONENT_PIN_NAMES)
 )
 
@@ -797,7 +797,7 @@ def evaluate_capture_contract_law(
         *(pin for pin in contract.pins if pin.target.kind == "Contract"),
     )
     unresolved_components = tuple(
-        pin for pin in component_pins if not PLAYBILL_CAPTURE_COMPONENTS.resolves(pin)
+        pin for pin in component_pins if not CAPTURE_COMPONENTS.resolves(pin)
     )
     if unresolved_components and contract != DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT:
         return CaptureContractLawResult(
@@ -1536,7 +1536,7 @@ def capture_is_direct_self_source(
             access=BodyAccessContext(principal_id="playbill-compiler", can_read_body=True),
         )
         source = DirectClaimSource.model_validate_json(content)
-    except (PlaybillCasError, ValidationError):
+    except (CasError, ValidationError):
         return False
     return (
         source.claim_id == claim_id and canonical_bytes(source.model_dump(mode="json")) == content
@@ -1705,7 +1705,7 @@ def _store_capture_envelope(
     stored_envelope = store.store(envelope_bytes)
     expected_capture_digest = capture_digest(envelope).tagged
     if stored_envelope.digest != expected_capture_digest:
-        raise PlaybillCasError("Capture envelope CAS digest did not reproduce")
+        raise CasError("Capture envelope CAS digest did not reproduce")
     return DirectCaptureBuildResult(
         contract=contract,
         contract_digest=envelope.capture_contract_digest,
@@ -1757,7 +1757,7 @@ def build_direct_claim_capture(
     if materialize_source:
         stored = store.store(source_bytes)
         if stored.digest != source_digest:
-            raise PlaybillCasError("direct source CAS digest did not reproduce")
+            raise CasError("direct source CAS digest did not reproduce")
         source_reference: CasSourceReference | ExternalSourceReference = CasSourceReference(
             content_digest=source_digest
         )
@@ -1950,7 +1950,7 @@ def build_foreign_source_capture(
     selection_digest = CasDigest(hashlib.sha256(selected).hexdigest()).tagged
     stored = store.store(selected)
     if stored.digest != selection_digest:
-        raise PlaybillCasError("foreign source selection CAS digest did not reproduce")
+        raise CasError("foreign source selection CAS digest did not reproduce")
     binding_digest = _direct_binding_digest(
         actor_id=actor_id,
         accepted_coordinate=accepted_coordinate,
@@ -2113,7 +2113,7 @@ def _store_general_capture(
     metadata = store.store(render_capture_envelope(envelope))
     expected = capture_digest(envelope).tagged
     if metadata.digest != expected:
-        raise PlaybillCasError("Capture envelope CAS digest did not reproduce")
+        raise CasError("Capture envelope CAS digest did not reproduce")
     return CaptureBuildResult(
         contract_digest=capture_contract_digest(contract).tagged,
         envelope=envelope,
@@ -2238,7 +2238,7 @@ def build_provider_external_capture_v2(
             raise CaptureFormatError("workspace.file result mixes source attempts")
     stored = store.store(content)
     if stored.digest != result.bytes_digest:
-        raise PlaybillCasError("Provider Capture material CAS digest did not reproduce")
+        raise CasError("Provider Capture material CAS digest did not reproduce")
     occurrence_digest = provider_external_occurrence_plan_digest(occurrence)
     receipt_digest = provider_invocation_receipt_digest(receipt)
     evidence = ProviderInvocationCaptureEvidence(
@@ -2516,7 +2516,7 @@ def build_derived_cas_capture(
     stored_manifest = store.store(manifest_bytes)
     expected_manifest = input_receipt_set_manifest_digest(manifest).tagged
     if stored_manifest.digest != expected_manifest:
-        raise PlaybillCasError("input receipt-set manifest CAS digest did not reproduce")
+        raise CasError("input receipt-set manifest CAS digest did not reproduce")
     output = store.store(output_body)
     envelope = CaptureEnvelopeV1(
         capture_contract_digest=capture_contract_digest(contract).tagged,
@@ -2859,7 +2859,7 @@ __all__ = [
     "FOREIGN_SOURCE_REPLAY_POLICY",
     "FOREIGN_SOURCE_SELECTOR_TYPE",
     "FOREIGN_SOURCE_SUBJECT_MAPPING",
-    "PLAYBILL_CAPTURE_COMPONENTS",
+    "CAPTURE_COMPONENTS",
     "CaptureProductionEvidence",
     "DirectCaptureBuildResult",
     "DirectByteSpanSelection",

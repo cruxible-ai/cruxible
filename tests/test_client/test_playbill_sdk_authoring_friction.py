@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cruxible_client import ClaimRole, Playbill
+from cruxible_client import ClaimRole, Cruxible
 from cruxible_client import contracts as api
 from tests.test_client.test_playbill_sdk import _COORDINATE, _Client, _workspace
 
@@ -13,7 +13,7 @@ from tests.test_client.test_playbill_sdk import _COORDINATE, _Client, _workspace
 @pytest.fixture
 def pb(tmp_path: Path):
     _workspace(tmp_path)
-    return Playbill._from_client(_Client(), instance_id="inst_test", workspace=tmp_path)
+    return Cruxible._from_client(_Client(), instance_id="inst_test", workspace=tmp_path)
 
 
 def claim_args():
@@ -90,7 +90,7 @@ def test_noncanonical_read_subject_paths_are_refused(pb, subject):
 def test_proposal_uses_submit_result_without_status_read(pb, monkeypatch):
     intent = pb.claim(**claim_args(), self_source="affected package").prepare()
     assert intent.proposal is None
-    status = api.PlaybillCandidateStatus(
+    status = api.CandidateStatusRecord(
         state="ready_to_activate",
         proposal_id="proposal-one",
         current_accepted_coordinate=_COORDINATE,
@@ -99,14 +99,14 @@ def test_proposal_uses_submit_result_without_status_read(pb, monkeypatch):
 
     def submit(*args):
         calls.append("submit")
-        return api.PlaybillAuthoringSubmitResult(intent=intent._raw, status=status)
+        return api.AuthoringSubmitResultRecord(intent=intent._raw, status=status)
 
     def refresh(*args):
         calls.append("status")
         return status.model_copy(update={"proposal_id": "proposal-two"})
 
-    monkeypatch.setattr(pb._client, "submit_playbill_authoring_intent", submit, raising=False)
-    monkeypatch.setattr(pb._client, "playbill_authoring_intent_status", refresh, raising=False)
+    monkeypatch.setattr(pb._client, "submit_authoring_intent", submit, raising=False)
+    monkeypatch.setattr(pb._client, "authoring_intent_status", refresh, raising=False)
     intent.submit()
     original = intent.proposal
     assert original.proposal_id == "proposal-one"
@@ -125,14 +125,14 @@ def test_mutations_clear_previous_candidate_even_on_uncertain_failure(
 ):
     draft = pb.claim(**claim_args(), self_source="affected package")
     intent = draft.prepare()
-    intent._candidate_status = api.PlaybillCandidateStatus(
+    intent._candidate_status = api.CandidateStatusRecord(
         state="ready_to_activate", proposal_id="old", current_accepted_coordinate=_COORDINATE
     )
     methods = {
-        "prepare": "preflight_playbill_authoring_intent",
-        "reprepare": "compile_playbill_authoring",
-        "rebase": "rebase_playbill_authoring_intent",
-        "submit": "submit_playbill_authoring_intent",
+        "prepare": "preflight_authoring_intent",
+        "reprepare": "compile_authoring",
+        "rebase": "rebase_authoring_intent",
+        "submit": "submit_authoring_intent",
     }
 
     def response(*args, **kwargs):
@@ -156,12 +156,12 @@ def test_mutations_clear_previous_candidate_even_on_uncertain_failure(
 def test_resume_restores_server_revision_without_repeating_work(pb, monkeypatch, state):
     preflight = None
     if state != "draft":
-        preflight = api.PlaybillAuthoringPreflightResult(
+        preflight = api.AuthoringPreflightResult(
             verdict="refused" if state == "preflight_refused" else "passed",
             certificate={"intent_id": "saved-intent"},
             frontier={"diagnostics": [{"code": "example", "message": "Recorded diagnostic"}]},
         ).model_dump(mode="json")
-    status = api.PlaybillCandidateStatus(
+    status = api.CandidateStatusRecord(
         state=state,
         proposal_id="saved-proposal" if state == "accepted" else None,
         accepted_generation=_COORDINATE if state == "accepted" else None,
@@ -177,17 +177,17 @@ def test_resume_restores_server_revision_without_repeating_work(pb, monkeypatch,
 
     def resume(instance_id, intent_id):
         calls.append((instance_id, intent_id))
-        return api.PlaybillAuthoringIntentView(intent=raw)
+        return api.AuthoringIntentViewRecord(intent=raw)
 
     def forbidden(*args, **kwargs):
         pytest.fail("Reopening must not compile, prepare, submit, or query status again")
 
-    monkeypatch.setattr(pb._client, "resume_playbill_authoring_intent", resume, raising=False)
+    monkeypatch.setattr(pb._client, "resume_authoring_intent", resume, raising=False)
     for name in (
-        "compile_playbill_authoring",
-        "preflight_playbill_authoring_intent",
-        "submit_playbill_authoring_intent",
-        "playbill_authoring_intent_status",
+        "compile_authoring",
+        "preflight_authoring_intent",
+        "submit_authoring_intent",
+        "authoring_intent_status",
     ):
         monkeypatch.setattr(pb._client, name, forbidden, raising=False)
     intent = pb.resume_intent("saved-intent")

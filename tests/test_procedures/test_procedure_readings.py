@@ -6,7 +6,7 @@ from datetime import timedelta
 
 import pytest
 
-from cruxible_client.contracts.errors import PlaybillExecutionError
+from cruxible_client.contracts.errors import ExecutionError
 from cruxible_core.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
     JournalStreamIdentityV1,
@@ -268,7 +268,7 @@ def test_reading_idempotency_domain_replays_and_refuses_payload_drift(tmp_path) 
 
     changed = build_procedure_reading(accepted, value={"count": 2}, **common)
     assert changed.reading_id == first.reading_id
-    with pytest.raises(PlaybillExecutionError, match="different payload"):
+    with pytest.raises(ExecutionError, match="different payload"):
         append_procedure_reading(
             writer,
             reading=changed,

@@ -14,10 +14,10 @@ from cruxible_client import (
     ClaimObjectKind,
     ClaimRole,
     ClaimTypeRef,
+    Cruxible,
     Disposition,
     ExactContent,
     ExactContentTypeError,
-    Playbill,
     ReferentSensitivity,
     SubjectRef,
 )
@@ -60,7 +60,7 @@ from cruxible_core import __version__ as DAEMON_VERSION
 from tests.test_client._read_fakes import ClaimTypeRead
 
 _DIGEST = "sha256:" + "1" * 64
-_COORDINATE = api.PlaybillAcceptedCoordinate(
+_COORDINATE = api.AcceptedCoordinate(
     git_oid="a" * 40,
     semantic_root=_DIGEST,
     generation_root="sha256:" + "2" * 64,
@@ -78,19 +78,19 @@ class _Client:
         self.claim_type_object_kinds: dict[str, str] = {"sec.vuln.affects_package": "subject"}
         self.claim_type_reads = 0
 
-    def playbill_head(self, instance_id: str, *, at: object = None) -> api.PlaybillHead:
-        return api.PlaybillHead(
+    def head(self, instance_id: str, *, at: object = None) -> api.Head:
+        return api.Head(
             instance=instance_id,
             coordinate=_COORDINATE.model_dump(mode="json"),  # type: ignore[arg-type]
             generation=4,
         )
 
-    def playbill_get(self, instance_id: str, *, request: Any) -> Any:
+    def get(self, instance_id: str, *, request: Any) -> Any:
         """``get(detail="proof")`` over this fake's ClaimType and Claim views."""
 
         from cruxible_client.contracts.get_reads import (
-            PlaybillGetCoordinate,
-            PlaybillGetResult,
+            GetCoordinate,
+            GetResult,
         )
 
         assert request.detail == "proof"
@@ -102,12 +102,12 @@ class _Client:
         else:
             kind = "claim"
             view = self._claim_view(instance_id, request.ref, at=request.at)
-        return PlaybillGetResult(
+        return GetResult(
             ref=request.ref,
             kind=kind,  # type: ignore[arg-type]
             detail="proof",
             proof=view.model_dump(mode="json"),
-            coordinate=PlaybillGetCoordinate(git_oid=view.coordinate.git_oid[:12], generation=4),
+            coordinate=GetCoordinate(git_oid=view.coordinate.git_oid[:12], generation=4),
             accepted_coordinate=view.coordinate,
             evaluation_time=request.evaluation_time or datetime(2026, 9, 1, tzinfo=UTC),
         )
@@ -120,7 +120,7 @@ class _Client:
         _instance_id: str,
         predicate: str,
         *,
-        at: api.PlaybillAcceptedCoordinate,
+        at: api.AcceptedCoordinate,
     ) -> ClaimTypeRead:
         self.claim_type_reads += 1
         return ClaimTypeRead(
@@ -132,12 +132,12 @@ class _Client:
             envelope={"object_kind": self.claim_type_object_kinds.get(predicate, "literal")},
         )
 
-    def playbill_whoami(self, _instance_id: str) -> object:
+    def whoami(self, _instance_id: str) -> object:
         from types import SimpleNamespace
 
         return SimpleNamespace(coordinate=_COORDINATE)
 
-    def since_playbill(self, _instance_id: str, **values: object) -> api.PlaybillSinceResult:
+    def since(self, _instance_id: str, **values: object) -> api.SinceResult:
         result_values: dict[str, object] = {
             "coordinate": _COORDINATE.model_dump(mode="json"),
             "generation": 4,
@@ -145,7 +145,7 @@ class _Client:
             "next_cursor": None,
             "truncated": False,
         }
-        return api.PlaybillSinceResult.model_validate(
+        return api.SinceResult.model_validate(
             {
                 **result_values,
                 "result_digest": api._since_digest(  # type: ignore[attr-defined]
@@ -154,11 +154,9 @@ class _Client:
             }
         )
 
-    def resolve_playbill_coverage(
-        self, _instance_id: str, **values: object
-    ) -> api.PlaybillCoverageResult:
+    def resolve_coverage(self, _instance_id: str, **values: object) -> api.CoverageResult:
         self.coverage_observations = values["observations"]
-        return api.PlaybillCoverageResult(
+        return api.CoverageResult(
             coordinate=_COORDINATE,
             result={
                 "at": _COORDINATE.model_dump(mode="json"),
@@ -172,11 +170,9 @@ class _Client:
             },
         )
 
-    def list_playbill_curation(
-        self, _instance_id: str, **values: object
-    ) -> api.PlaybillCurationListResult:
+    def list_curation(self, _instance_id: str, **values: object) -> api.CurationListResult:
         self.curation_observation = values["workspace_observation"]
-        return api.PlaybillCurationListResult(
+        return api.CurationListResult(
             coordinate=_COORDINATE,
             generation=4,
             evaluation_time=str(values["evaluation_time"]),
@@ -193,18 +189,18 @@ class _Client:
             result_digest="sha256:" + "7" * 64,
         )
 
-    def audit_playbill(self, _instance_id: str, **values: object) -> api.PlaybillAuditResult:
+    def audit(self, _instance_id: str, **values: object) -> api.AuditResult:
         self.audit_request = values
-        return api.PlaybillAuditResult(
+        return api.AuditResult(
             coordinate=_COORDINATE,
             generation=4,
             evaluation_time=str(values["evaluation_time"]),
             operational_input_head_digest="sha256:" + "6" * 64,
             audited_through_generation=4,
             rows=[],
-            coverage=api.PlaybillAuditCoverage(
+            coverage=api.AuditCoverage(
                 access_permitted=True,
-                declared_scope=api.PlaybillAuditScope(
+                declared_scope=api.AuditScope(
                     claim_type_identities=list(values["claim_type_identities"]),
                     subject_kinds=list(values["subject_kinds"]),
                 ),
@@ -219,45 +215,41 @@ class _Client:
 
     def _curation_action(
         self, operation: str, values: dict[str, object]
-    ) -> api.PlaybillCurationActionResult:
+    ) -> api.CurationActionResult:
         self.curation_actions.append((operation, values))
-        return api.PlaybillCurationActionResult(
+        return api.CurationActionResult(
             coordinate=_COORDINATE,
             generation=4,
             operational_head_digest="sha256:" + "6" * 64,
             item={"item_id": values["item_id"], "status": "resolved"},
         )
 
-    def overrule_playbill_curation(
-        self, _instance_id: str, **values: object
-    ) -> api.PlaybillCurationActionResult:
+    def overrule_curation(self, _instance_id: str, **values: object) -> api.CurationActionResult:
         return self._curation_action("overrule", values)
 
-    def accept_fixed_playbill_curation(
+    def accept_fixed_curation(
         self, _instance_id: str, **values: object
-    ) -> api.PlaybillCurationActionResult:
+    ) -> api.CurationActionResult:
         return self._curation_action("accept_fixed", values)
 
-    def suppress_playbill_curation(
-        self, _instance_id: str, **values: object
-    ) -> api.PlaybillCurationActionResult:
+    def suppress_curation(self, _instance_id: str, **values: object) -> api.CurationActionResult:
         return self._curation_action("suppress", values)
 
-    def compile_playbill_authoring(
+    def compile_authoring(
         self, _instance_id: str, **values: object
-    ) -> api.PlaybillAuthoringPreflightResult:
+    ) -> api.AuthoringPreflightResult:
         self.compiled = dict(values)
-        return api.PlaybillAuthoringPreflightResult(
+        return api.AuthoringPreflightResult(
             verdict="passed",
             certificate={"intent_id": "AIT-" + "1" * 32},
             frontier={"diagnostics": []},
         )
 
-    def get_playbill_authoring_intent(
+    def get_authoring_intent(
         self, _instance_id: str, _intent_id: str
-    ) -> api.PlaybillAuthoringIntentView:
+    ) -> api.AuthoringIntentViewRecord:
         assert self.compiled is not None
-        return api.PlaybillAuthoringIntentView(
+        return api.AuthoringIntentViewRecord(
             intent={
                 "intent_id": "AIT-" + "1" * 32,
                 "intent_revision": 1,
@@ -297,7 +289,7 @@ entries:
 
 def test_sdk_since_uses_its_active_orientation(tmp_path: Path) -> None:
     _workspace(tmp_path)
-    pb = Playbill._from_client(  # type: ignore[arg-type]
+    pb = Cruxible._from_client(  # type: ignore[arg-type]
         _Client(),
         instance_id="inst_test",
         workspace=tmp_path,
@@ -315,7 +307,7 @@ def test_sdk_curation_list_uses_the_existing_explicit_workspace_scanner(
 ) -> None:
     _workspace(tmp_path)
     client = _Client()
-    pb = Playbill._from_client(  # type: ignore[arg-type]
+    pb = Cruxible._from_client(  # type: ignore[arg-type]
         client,
         instance_id="inst_test",
         workspace=tmp_path,
@@ -336,7 +328,7 @@ def test_sdk_curation_list_uses_the_existing_explicit_workspace_scanner(
 def test_sdk_audit_uses_current_head_and_explicit_time(tmp_path: Path) -> None:
     _workspace(tmp_path)
     client = _Client()
-    pb = Playbill._from_client(  # type: ignore[arg-type]
+    pb = Cruxible._from_client(  # type: ignore[arg-type]
         client,
         instance_id="inst_test",
         workspace=tmp_path,
@@ -360,7 +352,7 @@ def test_sdk_audit_uses_current_head_and_explicit_time(tmp_path: Path) -> None:
 def test_sdk_curation_lifecycle_methods_are_thin_typed_delegates(tmp_path: Path) -> None:
     _workspace(tmp_path)
     client = _Client()
-    pb = Playbill._from_client(  # type: ignore[arg-type]
+    pb = Cruxible._from_client(  # type: ignore[arg-type]
         client,
         instance_id="inst_test",
         workspace=tmp_path,
@@ -423,7 +415,7 @@ def test_sdk_declared_block_refuses_every_citation_role_inside_it(
         + b"<!-- /playbill:block:policy -->\n"
     )
     source.write_bytes(page)
-    pb = Playbill._from_client(  # type: ignore[arg-type]
+    pb = Cruxible._from_client(  # type: ignore[arg-type]
         _Client(),
         instance_id="inst_test",
         workspace=tmp_path,
@@ -494,8 +486,8 @@ def test_sdk_procedure_run_binds_its_typed_input_contract_coordinate(tmp_path: P
     ).procedure
 
     class ProcedureClient(_Client):
-        def playbill_procedure_readiness(self, *args, **kwargs):
-            return api.PlaybillProcedureReadiness.model_construct(
+        def procedure_readiness(self, *args, **kwargs):
+            return api.ProcedureReadiness.model_construct(
                 coordinate=_COORDINATE,
                 artifact=artifact,
                 procedure_artifact_digest=procedure_artifact_digest(artifact).tagged,
@@ -505,15 +497,15 @@ def test_sdk_procedure_run_binds_its_typed_input_contract_coordinate(tmp_path: P
             super().__init__()
             self.runs: list[dict[str, object]] = []
 
-        def run_playbill_procedure(
+        def run_procedure(
             self,
             _instance_id: str,
             name: str,
             **values: object,
-        ) -> api.PlaybillProcedureRunState:
+        ) -> api.ProcedureRunState:
             self.runs.append(values)
             lane = "replay" if values["at"] is not None else "current"
-            return api.PlaybillProcedureRunState(
+            return api.ProcedureRunState(
                 run_id="RUN-" + "a" * 64,
                 procedure_identity={"kind": "Procedure", "name": name},
                 procedure_artifact_digest=_DIGEST,
@@ -529,7 +521,7 @@ def test_sdk_procedure_run_binds_its_typed_input_contract_coordinate(tmp_path: P
             )
 
     client = ProcedureClient()
-    pb = Playbill._from_client(  # type: ignore[arg-type]
+    pb = Cruxible._from_client(  # type: ignore[arg-type]
         client,
         instance_id="inst_test",
         workspace=tmp_path,
@@ -563,14 +555,14 @@ def test_sdk_line_run_carries_the_asserted_identity_and_occurrence(tmp_path: Pat
             super().__init__()
             self.line_request: dict[str, object] = {}
 
-        def run_playbill_line(
+        def run_line(
             self,
             _instance_id: str,
             line: str,
             **values: object,
-        ) -> api.PlaybillProcedureRunState:
+        ) -> api.ProcedureRunState:
             self.line_request = {"line": line, **values}
-            return api.PlaybillProcedureRunState(
+            return api.ProcedureRunState(
                 run_id="RUN-" + "b" * 64,
                 procedure_identity={"kind": "Procedure", "name": "daily-summary"},
                 procedure_artifact_digest=_DIGEST,
@@ -586,7 +578,7 @@ def test_sdk_line_run_carries_the_asserted_identity_and_occurrence(tmp_path: Pat
             )
 
     client = LineClient()
-    pb = Playbill._from_client(  # type: ignore[arg-type]
+    pb = Cruxible._from_client(  # type: ignore[arg-type]
         client,
         instance_id="inst_test",
         workspace=tmp_path,
@@ -631,13 +623,13 @@ def test_procedure_run_track_record_reads_the_procedure_card_from_get(tmp_path: 
 
     _workspace(tmp_path)
     from cruxible_client.contracts.get_reads import (
-        PlaybillGetCoordinate,
-        PlaybillGetProcedureCard,
-        PlaybillGetProcedureTrackRecord,
-        PlaybillGetResult,
+        GetCoordinate,
+        GetProcedureCard,
+        GetProcedureTrackRecord,
+        GetResult,
     )
 
-    entry = PlaybillGetProcedureTrackRecord(
+    entry = GetProcedureTrackRecord(
         promotion="daily-summary-runs",
         first_sequence=1,
         last_sequence=4,
@@ -651,25 +643,25 @@ def test_procedure_run_track_record_reads_the_procedure_card_from_get(tmp_path: 
             super().__init__()
             self.gets: list[Any] = []
 
-        def playbill_get(self, _instance_id: str, *, request: Any) -> PlaybillGetResult:
+        def get(self, _instance_id: str, *, request: Any) -> GetResult:
             self.gets.append(request)
-            return PlaybillGetResult(
+            return GetResult(
                 ref=request.ref,
                 kind="procedure",
                 detail=request.detail,
-                card=PlaybillGetProcedureCard(
+                card=GetProcedureCard(
                     procedure="daily-summary",
                     inputs={"input": "daily-summary-input"},
                     readiness="ready",
                     track_record=(entry,),
                 ),
-                coordinate=PlaybillGetCoordinate(git_oid="a" * 12, generation=3),
+                coordinate=GetCoordinate(git_oid="a" * 12, generation=3),
                 accepted_coordinate=_COORDINATE,
                 evaluation_time=datetime(2026, 8, 24, 12, tzinfo=UTC),
             )
 
     client = TrackRecordClient()
-    pb = Playbill._from_client(  # type: ignore[arg-type]
+    pb = Cruxible._from_client(  # type: ignore[arg-type]
         client,
         instance_id="inst_test",
         workspace=tmp_path,
@@ -679,7 +671,7 @@ def test_procedure_run_track_record_reads_the_procedure_card_from_get(tmp_path: 
 
     run = ProcedureRun(
         pb,
-        api.PlaybillProcedureRunState(
+        api.ProcedureRunState(
             run_id="RUN-" + "a" * 64,
             procedure_identity={"kind": "Procedure", "name": "daily-summary"},
             procedure_artifact_digest=_DIGEST,
@@ -704,7 +696,7 @@ def test_procedure_run_track_record_reads_the_procedure_card_from_get(tmp_path: 
 def test_subject_draft_prepares_through_the_authoring_coordinator(tmp_path: Path) -> None:
     _workspace(tmp_path)
     client = _Client()
-    pb = Playbill._from_client(  # type: ignore[arg-type]
+    pb = Cruxible._from_client(  # type: ignore[arg-type]
         client,
         instance_id="inst_test",
         workspace=tmp_path,
@@ -732,7 +724,7 @@ def test_cold_claim_prepares_one_payload_with_dependencies_and_program_stamp(
 ) -> None:
     _workspace(tmp_path)
     client = _Client()
-    pb = Playbill._from_client(  # type: ignore[arg-type]
+    pb = Cruxible._from_client(  # type: ignore[arg-type]
         client,
         instance_id="inst_test",
         workspace=tmp_path,
@@ -795,7 +787,7 @@ def test_subject_values_build_typed_objects_and_only_refs_pin_a_coordinate(
     tmp_path: Path,
 ) -> None:
     _workspace(tmp_path)
-    pb = Playbill._from_client(  # type: ignore[arg-type]
+    pb = Cruxible._from_client(  # type: ignore[arg-type]
         _Client(),
         instance_id="inst_test",
         workspace=tmp_path,
@@ -842,7 +834,7 @@ def test_address_shaped_strings_follow_the_accepted_claim_type_object_kind(
             "sec.vuln.affects_package": "subject",
         }
     )
-    pb = Playbill._from_client(  # type: ignore[arg-type]
+    pb = Cruxible._from_client(  # type: ignore[arg-type]
         client,
         instance_id="inst_test",
         workspace=tmp_path,
@@ -875,7 +867,7 @@ def test_address_shaped_strings_follow_the_accepted_claim_type_object_kind(
     )
 
 
-# Every keyword `Playbill.claim` requires but the object-kind oracles do not vary.
+# Every keyword `Cruxible.claim` requires but the object-kind oracles do not vary.
 _OBJECT_KIND_CLAIM_DEFAULTS: dict[str, Any] = {
     "subject": "sec.vuln/cve-2026-0001",
     "role": ClaimRole.OBSERVATION,
@@ -905,7 +897,7 @@ def test_address_shaped_string_on_an_exact_content_type_defers_to_the_daemon(
     _workspace(tmp_path)
     client = _Client()
     client.claim_type_object_kinds.update({"docs.exact": "exact_content"})
-    pb = Playbill._from_client(  # type: ignore[arg-type]
+    pb = Cruxible._from_client(  # type: ignore[arg-type]
         client,
         instance_id="inst_test",
         workspace=tmp_path,
@@ -929,7 +921,7 @@ def test_an_unknown_claim_type_object_kind_falls_back_to_the_literal_shape(
     _workspace(tmp_path)
     client = _Client()
     client.claim_type_object_kinds.update({"docs.future": "kind_from_a_newer_daemon"})
-    pb = Playbill._from_client(  # type: ignore[arg-type]
+    pb = Cruxible._from_client(  # type: ignore[arg-type]
         client,
         instance_id="inst_test",
         workspace=tmp_path,
@@ -948,7 +940,7 @@ def test_an_unknown_claim_type_object_kind_falls_back_to_the_literal_shape(
 
 def test_claim_type_builder_preserves_attestation_consequences_in_v5(tmp_path: Path) -> None:
     _workspace(tmp_path)
-    pb = Playbill._from_client(  # type: ignore[arg-type]
+    pb = Cruxible._from_client(  # type: ignore[arg-type]
         _Client(),
         instance_id="inst_test",
         workspace=tmp_path,
@@ -991,7 +983,7 @@ def test_claim_type_builder_preserves_attestation_consequences_in_v5(tmp_path: P
 
 def test_claim_requires_exactly_one_explicit_source_role(tmp_path: Path) -> None:
     _workspace(tmp_path)
-    pb = Playbill._from_client(  # type: ignore[arg-type]
+    pb = Cruxible._from_client(  # type: ignore[arg-type]
         _Client(), instance_id="inst_test", workspace=tmp_path
     )
     try:
@@ -1022,7 +1014,7 @@ def test_typed_refs_emit_coordinate_assertions_without_entering_the_payload(
 ) -> None:
     _workspace(tmp_path)
     client = _Client()
-    pb = Playbill._from_client(  # type: ignore[arg-type]
+    pb = Cruxible._from_client(  # type: ignore[arg-type]
         client, instance_id="inst_test", workspace=tmp_path
     )
     coordinate = AcceptedCoordinate.model_validate(_COORDINATE.model_dump(mode="json"))
@@ -1071,7 +1063,7 @@ def test_plain_strings_never_forge_coordinate_assertions_or_change_yaml_shorthan
 ) -> None:
     _workspace(tmp_path)
     client = _Client()
-    pb = Playbill._from_client(  # type: ignore[arg-type]
+    pb = Cruxible._from_client(  # type: ignore[arg-type]
         client, instance_id="inst_test", workspace=tmp_path
     )
     claim_id = "CLM-" + "1" * 32
@@ -1109,7 +1101,7 @@ def test_capture_ref_builds_v3_authoring_and_owns_the_contract_expectation(
     tmp_path: Path,
 ) -> None:
     _workspace(tmp_path)
-    pb = Playbill._from_client(  # type: ignore[arg-type]
+    pb = Cruxible._from_client(  # type: ignore[arg-type]
         _Client(),
         instance_id="inst_test",
         workspace=tmp_path,
@@ -1192,7 +1184,7 @@ def test_claim_view_mints_capture_refs_from_typed_admission_accounts(tmp_path: P
                     lifecycle="live",
                 ),
                 admission_accounts=[
-                    api.PlaybillCaptureAdmissionAccount(
+                    api.CaptureAdmissionAccount(
                         tag="playbill-capture-admission-account-v1",
                         citation_id="sha256:" + "6" * 64,
                         capture_digest="sha256:" + "7" * 64,
@@ -1206,7 +1198,7 @@ def test_claim_view_mints_capture_refs_from_typed_admission_accounts(tmp_path: P
                 ],
             )
 
-    pb = Playbill._from_client(  # type: ignore[arg-type]
+    pb = Cruxible._from_client(  # type: ignore[arg-type]
         ClaimClient(),
         instance_id="inst_test",
         workspace=tmp_path,
@@ -1223,7 +1215,7 @@ def test_capture_ref_from_a_copy_cannot_be_promoted_to_independent_evidence(
     tmp_path: Path,
 ) -> None:
     _workspace(tmp_path)
-    pb = Playbill._from_client(  # type: ignore[arg-type]
+    pb = Cruxible._from_client(  # type: ignore[arg-type]
         _Client(),
         instance_id="inst_test",
         workspace=tmp_path,
@@ -1277,7 +1269,7 @@ def test_connect_accepts_current_daemon_package_with_current_served_snapshot(
     monkeypatch.setattr("cruxible_client.authoring.sdk.CruxibleClient", _CurrentClient)
 
     assert CLIENT_VERSION == DAEMON_VERSION
-    playbill = Playbill.connect(
+    playbill = Cruxible.connect(
         target="http://explicit",
         instance="inst_test",
         workspace=tmp_path,
@@ -1322,7 +1314,7 @@ def test_connect_refuses_mismatched_served_snapshot_before_instance_io(
     monkeypatch.setattr("cruxible_client.authoring.sdk.CruxibleClient", _MismatchedClient)
 
     try:
-        Playbill.connect(
+        Cruxible.connect(
             context=context,
             target="http://explicit",
             instance="inst_test",
@@ -1352,11 +1344,11 @@ def test_refusal_diagnostic_maps_exact_payload_path_to_the_call_expression(
     _workspace(tmp_path)
 
     class _RefusingClient(_Client):
-        def compile_playbill_authoring(
+        def compile_authoring(
             self, _instance_id: str, **values: object
-        ) -> api.PlaybillAuthoringPreflightResult:
+        ) -> api.AuthoringPreflightResult:
             self.compiled = dict(values)
-            return api.PlaybillAuthoringPreflightResult(
+            return api.AuthoringPreflightResult(
                 verdict="refused",
                 certificate={"intent_id": "AIT-" + "1" * 32},
                 frontier={
@@ -1374,7 +1366,7 @@ def test_refusal_diagnostic_maps_exact_payload_path_to_the_call_expression(
                 },
             )
 
-    pb = Playbill._from_client(  # type: ignore[arg-type]
+    pb = Cruxible._from_client(  # type: ignore[arg-type]
         _RefusingClient(), instance_id="inst_test", workspace=tmp_path
     )
     intent = pb.claim(
@@ -1430,7 +1422,7 @@ def test_exact_content_authors_the_object_the_wire_has_always_carried(
     _workspace(tmp_path)
     client = _Client()
     client.claim_type_object_kinds.update({"docs.exact": "exact_content"})
-    pb = Playbill._from_client(  # type: ignore[arg-type]
+    pb = Cruxible._from_client(  # type: ignore[arg-type]
         client,
         instance_id="inst_test",
         workspace=tmp_path,
@@ -1456,7 +1448,7 @@ def test_exact_content_keeps_bytes_that_are_not_text(tmp_path: Path) -> None:
     _workspace(tmp_path)
     client = _Client()
     client.claim_type_object_kinds.update({"docs.exact": "exact_content"})
-    pb = Playbill._from_client(  # type: ignore[arg-type]
+    pb = Cruxible._from_client(  # type: ignore[arg-type]
         client,
         instance_id="inst_test",
         workspace=tmp_path,
@@ -1481,7 +1473,7 @@ def test_exact_content_on_a_literal_predicate_refuses_before_the_wire(
 
     _workspace(tmp_path)
     client = _Client()
-    pb = Playbill._from_client(  # type: ignore[arg-type]
+    pb = Cruxible._from_client(  # type: ignore[arg-type]
         client,
         instance_id="inst_test",
         workspace=tmp_path,
@@ -1514,7 +1506,7 @@ def test_a_string_value_reads_the_object_kind_from_the_sets_own_definition(
 
     _workspace(tmp_path)
     client = _Client()
-    pb = Playbill._from_client(  # type: ignore[arg-type]
+    pb = Cruxible._from_client(  # type: ignore[arg-type]
         client,
         instance_id="inst_test",
         workspace=tmp_path,
@@ -1560,18 +1552,18 @@ def test_sdk_measure_and_readings_carry_the_run_and_observation_basis(tmp_path: 
     class MeasureClient(_Client):
         def __init__(self) -> None:
             super().__init__()
-            self.measure_requests: list[api.PlaybillProcedureMeasureRequest] = []
-            self.readings_requests: list[api.PlaybillProcedureReadingsRequest] = []
+            self.measure_requests: list[api.ProcedureMeasureRequest] = []
+            self.readings_requests: list[api.ProcedureReadingsRequest] = []
 
-        def measure_playbill_procedure(
+        def measure_procedure(
             self,
             _instance_id: str,
             name: str,
             *,
-            request: api.PlaybillProcedureMeasureRequest,
-        ) -> api.PlaybillProcedureMeasureResult:
+            request: api.ProcedureMeasureRequest,
+        ) -> api.ProcedureMeasureResult:
             self.measure_requests.append(request)
-            return api.PlaybillProcedureMeasureResult(
+            return api.ProcedureMeasureResult(
                 procedure_identity={"kind": "Procedure", "name": name},
                 procedure_artifact_digest=_DIGEST,
                 activation_coordinate=coordinate,
@@ -1602,15 +1594,15 @@ def test_sdk_measure_and_readings_carry_the_run_and_observation_basis(tmp_path: 
                 ),
             )
 
-        def list_playbill_procedure_readings(
+        def list_procedure_readings(
             self,
             _instance_id: str,
             name: str,
             *,
-            request: api.PlaybillProcedureReadingsRequest,
-        ) -> api.PlaybillProcedureReadingsResult:
+            request: api.ProcedureReadingsRequest,
+        ) -> api.ProcedureReadingsResult:
             self.readings_requests.append(request)
-            return api.PlaybillProcedureReadingsResult(
+            return api.ProcedureReadingsResult(
                 procedure_identity={"kind": "Procedure", "name": name},
                 procedure_artifact_digest=_DIGEST,
                 activation_coordinate=coordinate,
@@ -1621,7 +1613,7 @@ def test_sdk_measure_and_readings_carry_the_run_and_observation_basis(tmp_path: 
             )
 
     client = MeasureClient()
-    pb = Playbill._from_client(  # type: ignore[arg-type]
+    pb = Cruxible._from_client(  # type: ignore[arg-type]
         client,
         instance_id="inst_test",
         workspace=tmp_path,

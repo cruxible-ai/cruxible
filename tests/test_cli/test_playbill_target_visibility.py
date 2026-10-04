@@ -1,4 +1,4 @@
-"""Target-visibility guardrails for surviving Playbill and credential writes."""
+"""Target-visibility guardrails for surviving Cruxible and credential writes."""
 
 from __future__ import annotations
 
@@ -106,12 +106,10 @@ def test_explicit_playbill_write_names_instance_transport_and_source(
     body.write_text("# governed\n")
 
     class StubClient:
-        def store_playbill_body(
-            self, instance_id: str, content: bytes
-        ) -> contracts.PlaybillCasObjectResult:
+        def store_body(self, instance_id: str, content: bytes) -> contracts.CasObjectResult:
             assert instance_id == "inst_explicit"
             assert content == b"# governed\n"
-            return contracts.PlaybillCasObjectResult(
+            return contracts.CasObjectResult(
                 digest="sha256:" + "1" * 64,
                 present=True,
                 byte_length=len(content),
@@ -155,20 +153,20 @@ def test_remembered_playbill_write_marks_remembered_target(
     )
 
     class StubClient:
-        def resolve_playbill_proposal_selector(
+        def resolve_proposal_selector(
             self, instance_id: str, selector: str
-        ) -> contracts.PlaybillProposalSelectorResult:
+        ) -> contracts.ProposalSelectorResult:
             assert instance_id == "inst_remembered"
-            return contracts.PlaybillProposalSelectorResult(
+            return contracts.ProposalSelectorResult(
                 selector=selector,
                 proposal_id=selector,
             )
 
-        def activate_playbill_proposal(
+        def activate_proposal(
             self, instance_id: str, proposal_id: str
-        ) -> contracts.PlaybillActivationReceipt:
+        ) -> contracts.ActivationReceipt:
             assert (instance_id, proposal_id) == ("inst_remembered", "proposal-1")
-            return contracts.PlaybillActivationReceipt(
+            return contracts.ActivationReceipt(
                 proposal_id=proposal_id,
                 activated_by="owner",
                 status="lost_cas",
@@ -213,11 +211,9 @@ def test_two_attached_workspaces_route_the_same_write_to_their_own_instance(
     calls: list[str] = []
 
     class StubClient:
-        def store_playbill_body(
-            self, instance_id: str, content: bytes
-        ) -> contracts.PlaybillCasObjectResult:
+        def store_body(self, instance_id: str, content: bytes) -> contracts.CasObjectResult:
             calls.append(instance_id)
-            return contracts.PlaybillCasObjectResult(
+            return contracts.CasObjectResult(
                 digest="sha256:" + "1" * 64,
                 present=True,
                 byte_length=len(content),
@@ -265,16 +261,16 @@ def test_host_creation_names_explicit_requested_id(
     monkeypatch.chdir(tmp_path)
 
     class StubClient:
-        def create_playbill_host(
+        def create_host(
             self,
             *,
             instance_id: str | None = None,
             workspace_root: str | None = None,
             dry_run: bool | None = None,
             at: str | None = None,
-        ) -> contracts.PlaybillHostResult:
+        ) -> contracts.HostResult:
             assert instance_id == "inst_requested"
-            return contracts.PlaybillHostResult(instance_id=instance_id, status="created")
+            return contracts.HostResult(instance_id=instance_id, status="created")
 
     monkeypatch.setattr(
         "cruxible_core.cli.commands._common._get_client",
@@ -389,22 +385,22 @@ def test_coverage_commands_are_reads_and_stay_out_of_the_mutating_inventory(
     (working / "notes.txt").write_text("ordinary working notes\n", encoding="utf-8")
 
     class StubClient:
-        def resolve_playbill_coverage(
+        def resolve_coverage(
             self,
             instance_id: str,
             *,
             observations: list[dict[str, object]],
             **_: object,
-        ) -> contracts.PlaybillCoverageResult:
+        ) -> contracts.CoverageResult:
             assert instance_id == "inst_read"
             assert len(observations) == 1
-            coordinate = contracts.PlaybillAcceptedCoordinate(
+            coordinate = contracts.AcceptedCoordinate(
                 git_oid="11" * 20,
                 semantic_root="sha256:" + "aa" * 32,
                 generation_root="sha256:" + "22" * 32,
                 compiler_digest="sha256:" + "bb" * 32,
             )
-            return contracts.PlaybillCoverageResult(
+            return contracts.CoverageResult(
                 coordinate=coordinate,
                 result={
                     "tag": "playbill-coverage-result-v3",
@@ -467,7 +463,7 @@ def test_coverage_commands_are_reads_and_stay_out_of_the_mutating_inventory(
 
     assert result.exit_code == 0, result.output
     assert result.stderr == ""
-    assert result.stdout.startswith("Playbill coverage: 0 exact, 0 drifted, 0 candidates, 0 none")
+    assert result.stdout.startswith("Cruxible coverage: 0 exact, 0 drifted, 0 candidates, 0 none")
 
 
 def test_host_show_is_a_silent_read_and_cli_adds_transport(
@@ -477,8 +473,8 @@ def test_host_show_is_a_silent_read_and_cli_adds_transport(
     assert ("playbill", "host", "show") not in MUTATING_COMMAND_TARGETS
 
     class StubClient:
-        def show_playbill_host(self, instance_id: str) -> contracts.PlaybillHostInspection:
-            return contracts.PlaybillHostInspection(
+        def show_host(self, instance_id: str) -> contracts.HostInspection:
+            return contracts.HostInspection(
                 instance_id=instance_id,
                 managed_root=str(tmp_path / "state"),
                 workspace_root=None,
@@ -544,19 +540,19 @@ def test_workspace_attach_writes_config_only_after_exact_daemon_registration(
     monkeypatch.chdir(workspace)
 
     class StubClient:
-        def playbill_host_workspace_registration(
+        def host_workspace_registration(
             self, instance_id: str
-        ) -> contracts.PlaybillHostWorkspaceRegistration:
+        ) -> contracts.HostWorkspaceRegistration:
             assert instance_id == "inst_attached"
-            return contracts.PlaybillHostWorkspaceRegistration(
+            return contracts.HostWorkspaceRegistration(
                 instance_id=instance_id,
                 status="registered",
                 workspace_path=str(workspace.resolve()),
             )
 
-        def set_playbill_floor_delivery(self, instance_id: str, *, enabled: bool):
+        def set_floor_delivery(self, instance_id: str, *, enabled: bool):
             assert enabled
-            return self.playbill_host_workspace_registration(instance_id)
+            return self.host_workspace_registration(instance_id)
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
     result = CliRunner().invoke(
@@ -606,19 +602,19 @@ def test_workspace_attach_marks_a_remembered_target_as_remembered(
     )
 
     class StubClient:
-        def playbill_host_workspace_registration(
+        def host_workspace_registration(
             self, instance_id: str
-        ) -> contracts.PlaybillHostWorkspaceRegistration:
+        ) -> contracts.HostWorkspaceRegistration:
             assert instance_id == "inst_remembered"
-            return contracts.PlaybillHostWorkspaceRegistration(
+            return contracts.HostWorkspaceRegistration(
                 instance_id=instance_id,
                 status="registered",
                 workspace_path=str(workspace.resolve()),
             )
 
-        def set_playbill_floor_delivery(self, instance_id: str, *, enabled: bool):
+        def set_floor_delivery(self, instance_id: str, *, enabled: bool):
             assert enabled
-            return self.playbill_host_workspace_registration(instance_id)
+            return self.host_workspace_registration(instance_id)
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
     result = CliRunner().invoke(cli, ["playbill", "workspace", "attach", "--json"])
@@ -638,10 +634,10 @@ def test_workspace_attach_refuses_a_different_registration_without_writing(
     monkeypatch.chdir(workspace)
 
     class StubClient:
-        def playbill_host_workspace_registration(
+        def host_workspace_registration(
             self, instance_id: str
-        ) -> contracts.PlaybillHostWorkspaceRegistration:
-            return contracts.PlaybillHostWorkspaceRegistration(
+        ) -> contracts.HostWorkspaceRegistration:
+            return contracts.HostWorkspaceRegistration(
                 instance_id=instance_id,
                 status="registered",
                 workspace_path=str(other.resolve()),
@@ -675,17 +671,17 @@ def test_instance_decommission_names_the_instance_it_is_about_to_end(
     calls: list[tuple[str, str, bool | None, str | None]] = []
 
     class StubClient:
-        def decommission_playbill_instance(
+        def decommission_instance(
             self, instance_id: str, *, reason: str, dry_run: bool | None, at: str | None
-        ) -> contracts.PlaybillInstanceDecommissionResult:
+        ) -> contracts.InstanceDecommissionResult:
             calls.append((instance_id, reason, dry_run, at))
-            return contracts.PlaybillInstanceDecommissionResult(
+            return contracts.InstanceDecommissionResult(
                 status="decommissioned",
                 instance_id=instance_id,
                 reason=reason,
                 decommissioned_at="2026-09-03T12:00:00.000000Z",
                 decommissioned_by="owner",
-                coordinate=contracts.PlaybillAcceptedCoordinate(
+                coordinate=contracts.AcceptedCoordinate(
                     git_oid="0" * 40,
                     semantic_root="sha256:" + "2" * 64,
                     generation_root="sha256:" + "3" * 64,
@@ -738,7 +734,7 @@ def test_the_world_stub_leaf_is_a_read_and_stays_out_of_the_mutating_inventory(
     assert _command_at_path(path).callback is not None
 
     monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
-    coordinate = contracts.PlaybillAcceptedCoordinate(
+    coordinate = contracts.AcceptedCoordinate(
         git_oid="11" * 20,
         semantic_root="sha256:" + "aa" * 32,
         generation_root="sha256:" + "22" * 32,
@@ -762,15 +758,15 @@ def test_the_world_stub_leaf_is_a_read_and_stays_out_of_the_mutating_inventory(
     class StubClient:
         """The world stub reads the head, the ClaimType section and one proof batch."""
 
-        def playbill_head(self, instance_id: str, **_values: object) -> contracts.PlaybillHead:
+        def head(self, instance_id: str, **_values: object) -> contracts.Head:
             assert instance_id == "inst_read"
-            return contracts.PlaybillHead(
+            return contracts.Head(
                 instance=instance_id,
                 coordinate=coordinate.model_dump(mode="json"),  # type: ignore[arg-type]
                 generation=1,
             )
 
-        def orient_playbill(self, instance_id: str, **values: object) -> object:
+        def orient(self, instance_id: str, **values: object) -> object:
             from types import SimpleNamespace
 
             assert instance_id == "inst_read" and values["section"] == "claim_types"
@@ -781,7 +777,7 @@ def test_the_world_stub_leaf_is_a_read_and_stays_out_of_the_mutating_inventory(
                 next_cursor=None,
             )
 
-        def playbill_get_batch(self, instance_id: str, *, request: object) -> object:
+        def get_batch(self, instance_id: str, *, request: object) -> object:
             from types import SimpleNamespace
 
             return SimpleNamespace(
@@ -789,7 +785,7 @@ def test_the_world_stub_leaf_is_a_read_and_stays_out_of_the_mutating_inventory(
                 results=(SimpleNamespace(proof={"envelope": envelope}),),
             )
 
-        def query_playbill(self, instance_id: str, *, request: object) -> object:
+        def query(self, instance_id: str, *, request: object) -> object:
             from types import SimpleNamespace
 
             return SimpleNamespace(

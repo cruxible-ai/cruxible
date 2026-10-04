@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from cruxible_client.contracts.authoring.models import PlaybillBlockSyncItem
+from cruxible_client.contracts.authoring.models import BlockSyncItem
 from cruxible_client.contracts.procedures.results import ProcedureAdmissionRefusal
 from cruxible_client.contracts.repairs import (
     DECLARED_HAND_EDIT_CHANGES,
@@ -140,7 +140,7 @@ def _admission_refusal_repair(code: str) -> RepairOperation | HandEditRepair:
 def _block_sync_repair(code: str) -> RepairOperation | HandEditRepair:
     """Build the served block-sync item exactly as a producer that carries none."""
 
-    item = PlaybillBlockSyncItem.model_validate({"path": ".", "outcome": "refused", "reason": code})
+    item = BlockSyncItem.model_validate({"path": ".", "outcome": "refused", "reason": code})
     assert item.repair is not None
     return item.repair
 
@@ -163,10 +163,10 @@ def _measurement_refusal_repair(code: str) -> object:
 
 def _next_refusal_repair(code: str) -> object:
     from cruxible_core.server.errors import error_to_response
-    from cruxible_core.service.discovery.next import PlaybillNextCursorMismatch
+    from cruxible_core.service.discovery.next import NextCursorMismatch
 
-    assert code == PlaybillNextCursorMismatch.code
-    status, response = error_to_response(PlaybillNextCursorMismatch("refused"))
+    assert code == NextCursorMismatch.code
+    status, response = error_to_response(NextCursorMismatch("refused"))
     assert status == 400
     assert response.error_code == code
     return response.repair

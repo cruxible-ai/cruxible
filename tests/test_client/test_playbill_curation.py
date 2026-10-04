@@ -46,7 +46,7 @@ def test_client_sends_explicit_workspace_observation_to_curation_list() -> None:
     client._client = httpx.Client(  # type: ignore[assignment]
         base_url="http://cruxible", transport=httpx.MockTransport(handler)
     )
-    result = client.list_playbill_curation(
+    result = client.list_curation(
         "inst",
         evaluation_time="2026-08-26T16:00:00+00:00",
         access_profile={
@@ -74,13 +74,13 @@ def test_client_sends_explicit_workspace_observation_to_curation_list() -> None:
     ("method", "path", "extra", "expected_tag"),
     (
         (
-            "overrule_playbill_curation",
+            "overrule_curation",
             "/api/v1/inst/playbill/curation/overrule",
             {},
             "playbill-curation-overrule-request-v1",
         ),
         (
-            "accept_fixed_playbill_curation",
+            "accept_fixed_curation",
             "/api/v1/inst/playbill/curation/accept-fixed",
             {
                 "accepted_proposal_id": "sha256:" + "3" * 64,
@@ -89,7 +89,7 @@ def test_client_sends_explicit_workspace_observation_to_curation_list() -> None:
             "playbill-curation-accept-fixed-request-v1",
         ),
         (
-            "suppress_playbill_curation",
+            "suppress_curation",
             "/api/v1/inst/playbill/curation/suppress",
             {"scope": "pattern", "until_generation": 12},
             "playbill-curation-suppress-request-v1",

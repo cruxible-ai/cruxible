@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from cruxible_client import Playbill
+from cruxible_client import Cruxible
 from cruxible_client import contracts as api
 from cruxible_client.authoring.blocks import (
     ProjectionRepinError,
@@ -26,7 +26,7 @@ from cruxible_client.contracts.query.results import ClaimQueryResult
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.types import CompilerCoordinate
 
-COORDINATE = api.PlaybillAcceptedCoordinate(
+COORDINATE = api.AcceptedCoordinate(
     git_oid="1" * 64,
     semantic_root="sha256:" + "2" * 64,
     generation_root="sha256:" + "3" * 64,
@@ -66,11 +66,11 @@ class _RepinClient:
         self.on_claim = lambda: None
         self.declared: list[dict[str, Any]] = []
 
-    def declare_playbill_block(
+    def declare_block(
         self,
         _instance_id: str,
         stamp: dict[str, Any],
-    ) -> api.PlaybillBlockDeclareResult:
+    ) -> api.BlockDeclareResult:
         """Record the declaration a repin makes after it writes the marker.
 
         A stamped marker the instance has never heard of is an orphan to every
@@ -81,7 +81,7 @@ class _RepinClient:
         """
 
         self.declared.append(stamp)
-        return api.PlaybillBlockDeclareResult(
+        return api.BlockDeclareResult(
             source_id=stamp["source_id"],
             block_id=stamp["block_id"],
             outcome="declared",
@@ -89,14 +89,14 @@ class _RepinClient:
             coordinate=COORDINATE,
         )
 
-    def playbill_head(self, instance_id: str, *, at: Any = None) -> api.PlaybillHead:
-        return api.PlaybillHead(
+    def head(self, instance_id: str, *, at: Any = None) -> api.Head:
+        return api.Head(
             instance=instance_id,
             coordinate=AcceptedCoordinate.model_validate(COORDINATE.model_dump(mode="json")),
             generation=7,
         )
 
-    def playbill_get(self, instance_id: str, *, request: Any) -> Any:
+    def get(self, instance_id: str, *, request: Any) -> Any:
         assert request.detail == "proof"
         view = self._claim_view(request.ref)
         return SimpleNamespace(
@@ -132,8 +132,8 @@ class _RepinClient:
             ],
         )
 
-    def query_playbill(self, _instance_id: str, *, request: Any) -> Any:
-        from cruxible_client.contracts.compact_query import PlaybillQueryReplay
+    def query(self, _instance_id: str, *, request: Any) -> Any:
+        from cruxible_client.contracts.compact_query import QueryReplay
         from cruxible_core.query.engine import query_execution_receipt
 
         assert request.name is not None and request.receipt == "full"
@@ -142,7 +142,7 @@ class _RepinClient:
             receipt=SimpleNamespace(
                 coordinate=run.coordinate,
                 spec_digest=run.definition_digest,
-                replay=PlaybillQueryReplay(
+                replay=QueryReplay(
                     definition_path="queries/project.items.json",
                     result=run.result,
                     execution=query_execution_receipt(run.result),
@@ -373,7 +373,7 @@ def test_repin_refuses_incomplete_query_backings(tmp_path: Path, kind: str) -> N
 def test_sdk_block_facade_bootstraps_at_its_active_coordinate(tmp_path: Path) -> None:
     _workspace(tmp_path)
     client = _RepinClient()
-    playbill = Playbill._from_client(  # type: ignore[arg-type]
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
         client,
         instance_id="inst_projection",
         workspace=tmp_path,
@@ -404,7 +404,7 @@ def test_repin_preserves_omitted_categories_and_policy_and_removes_only_explicit
 
     source = _workspace(tmp_path)
     client = _RepinClient()
-    claim_proof = client.playbill_get
+    claim_proof = client.get
 
     def proof(instance_id: str, *, request: Any) -> Any:
         if request.ref.startswith("ClaimType:"):
@@ -413,7 +413,7 @@ def test_repin_preserves_omitted_categories_and_policy_and_removes_only_explicit
             return SimpleNamespace(proof={"envelope": {"artifact_digest": "sha256:" + "5" * 64}})
         return claim_proof(instance_id, request=request)
 
-    client.playbill_get = proof  # type: ignore[method-assign]
+    client.get = proof  # type: ignore[method-assign]
 
     def repin(**kwargs: Any):  # type: ignore[no-untyped-def]
         return repin_projection_block(

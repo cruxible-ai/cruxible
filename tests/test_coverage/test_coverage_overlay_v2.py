@@ -8,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from cruxible_client.contracts.captures import render_capture_envelope
-from cruxible_client.contracts.errors import PlaybillCasError
+from cruxible_client.contracts.errors import CasError
 from cruxible_core.coverage.contracts import (
     CoverageCommitmentMaterializationCorrupt,
 )
@@ -178,7 +178,7 @@ def test_present_corrupt_cas_material_refuses_instead_of_falling_back() -> None:
         def read(self, digest: str, *, access: object) -> bytes:
             if digest == accepted.capture_digest:
                 return envelope_bytes
-            raise PlaybillCasError("corrupt retained object")
+            raise CasError("corrupt retained object")
 
     instance = SimpleNamespace(body_store=lambda: _CorruptStore())
     with pytest.raises(

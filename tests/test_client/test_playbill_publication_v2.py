@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.authoring.insertions import (
-    PlaybillInsertionApplyError,
+    InsertionApplyError,
     replace_publication_file,
 )
 
@@ -33,7 +33,7 @@ def test_publication_file_replace_refuses_a_concurrent_edit(
         return original(path)
 
     monkeypatch.setattr(Path, "read_bytes", edit_before_compare)
-    with pytest.raises(PlaybillInsertionApplyError, match="compare-and-swap"):
+    with pytest.raises(InsertionApplyError, match="compare-and-swap"):
         replace_publication_file(source, expected=b"before\n", replacement=b"after\n")
 
     monkeypatch.setattr(Path, "read_bytes", original)

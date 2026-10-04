@@ -1,6 +1,6 @@
-# Playbill adoption-scale benchmark
+# Cruxible adoption-scale benchmark
 
-The measured gate from §12.3 of the Playbill convergence program. It builds a
+The measured gate from §12.3 of the Cruxible convergence program. It builds a
 real accepted ledger — signed generations, live acceptance laws, real dependency
 closure — and measures what reopening one costs.
 

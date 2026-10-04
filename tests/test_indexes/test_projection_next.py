@@ -20,14 +20,14 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.claims import claim_artifact_digest
 from cruxible_client.contracts.declared_blocks import (
-    PlaybillPresentationPolicy,
-    PlaybillProjectionAdvisoryPolicy,
-    PlaybillProjectionCoverageBinding,
-    PlaybillProjectionCoverageObservation,
+    PresentationPolicy,
+    ProjectionAdvisoryPolicy,
     ProjectionArtifactBacking,
     ProjectionBacking,
     ProjectionBlockStampV1,
     ProjectionClaimBacking,
+    ProjectionCoverageBinding,
+    ProjectionCoverageObservation,
     ProjectionMarkerSummary,
     ProjectionQueryBacking,
     ProjectionResolvedParameterBinding,
@@ -51,9 +51,9 @@ from cruxible_core.service.claims.claims import (
     service_list_playbill_claims,
 )
 from cruxible_core.service.discovery.next import (
-    PlaybillNextRequestV1,
-    PlaybillNextSourceObservationV3,
-    PlaybillNextWorkspaceObservation,
+    NextRequestV1,
+    NextSourceObservationV3,
+    NextWorkspaceObservation,
     _procedure_catalog_health,
     service_playbill_next,
 )
@@ -169,7 +169,7 @@ def _request(
     start_byte: int = 0,
     complete: bool = True,
     marker_notes: tuple[str, ...] = (),
-) -> PlaybillNextRequestV1:
+) -> NextRequestV1:
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     stamp = ProjectionBlockStampV1(
         source_id="corpus.runbook",
@@ -185,16 +185,16 @@ def _request(
         start_byte=start_byte,
         end_byte=start_byte + 100,
     )
-    return PlaybillNextRequestV1(
+    return NextRequestV1(
         at=coordinate,
         evaluation_time=evaluation_time,
         access_profile=CoverageAccessProfile(
             profile_id="projection-test",
             permitted_access_classes=permitted,  # type: ignore[arg-type]
         ),
-        workspace_observation=PlaybillNextWorkspaceObservation(
+        workspace_observation=NextWorkspaceObservation(
             source_observations=(
-                PlaybillNextSourceObservationV3(
+                NextSourceObservationV3(
                     tag="playbill-next-source-observation-v3",
                     source_id="corpus.runbook",
                     observed_source_digest="sha256:" + "a" * 64,
@@ -211,7 +211,7 @@ def _request(
     )
 
 
-def _projection_rows(instance: PlaybillInstance, request: PlaybillNextRequestV1):  # type: ignore[no-untyped-def]
+def _projection_rows(instance: PlaybillInstance, request: NextRequestV1):  # type: ignore[no-untyped-def]
     """Every projection finding, whether it heads its block's row or rides inside it."""
 
     return tuple(
@@ -249,11 +249,11 @@ def test_unprojected_procedure_advisory_is_coordinate_bound_and_policy_controlle
     public = ClientAcceptedCoordinate.model_validate(
         AcceptedCoordinate.from_internal(coordinate).model_dump(mode="json")
     )
-    base_observation = PlaybillNextWorkspaceObservation(
-        presentation_policy=PlaybillPresentationPolicy(
-            projection_advisories=PlaybillProjectionAdvisoryPolicy(procedure=True)
+    base_observation = NextWorkspaceObservation(
+        presentation_policy=PresentationPolicy(
+            projection_advisories=ProjectionAdvisoryPolicy(procedure=True)
         ),
-        projection_coverage=PlaybillProjectionCoverageObservation(
+        projection_coverage=ProjectionCoverageObservation(
             coordinate=public,
             complete_kinds=("Procedure",),
             bindings=(),
@@ -292,11 +292,11 @@ def test_unprojected_procedure_advisory_is_coordinate_bound_and_policy_controlle
 
     projected = base_observation.model_copy(
         update={
-            "projection_coverage": PlaybillProjectionCoverageObservation(
+            "projection_coverage": ProjectionCoverageObservation(
                 coordinate=public,
                 complete_kinds=("Procedure",),
                 bindings=(
-                    PlaybillProjectionCoverageBinding(
+                    ProjectionCoverageBinding(
                         artifact=procedure.procedure.identity,
                         workspace_path="runbooks/procedure.md",
                         evidence_kind="procedure_catalog",
@@ -309,16 +309,14 @@ def test_unprojected_procedure_advisory_is_coordinate_bound_and_policy_controlle
 
     disabled = base_observation.model_copy(
         update={
-            "presentation_policy": PlaybillPresentationPolicy(
-                projection_advisories=PlaybillProjectionAdvisoryPolicy(procedure=False)
+            "presentation_policy": PresentationPolicy(
+                projection_advisories=ProjectionAdvisoryPolicy(procedure=False)
             )
         }
     )
     assert catalog(disabled).state == "not_required"
     # Off unless a kit or workspace turns it on.
-    default = base_observation.model_copy(
-        update={"presentation_policy": PlaybillPresentationPolicy()}
-    )
+    default = base_observation.model_copy(update={"presentation_policy": PresentationPolicy()})
     assert catalog(default).state == "not_required"
 
     foreign = base_observation.model_copy(
@@ -358,17 +356,17 @@ def test_a_malformed_presentation_policy_fails_the_projection_advisory_closed(
     public = ClientAcceptedCoordinate.model_validate(
         AcceptedCoordinate.from_internal(before).model_dump(mode="json")
     )
-    observation = PlaybillNextWorkspaceObservation(
-        presentation_policy=PlaybillPresentationPolicy(
-            projection_advisories=PlaybillProjectionAdvisoryPolicy(procedure=True)
+    observation = NextWorkspaceObservation(
+        presentation_policy=PresentationPolicy(
+            projection_advisories=ProjectionAdvisoryPolicy(procedure=True)
         ),
-        projection_coverage=PlaybillProjectionCoverageObservation(
+        projection_coverage=ProjectionCoverageObservation(
             coordinate=public,
             complete_kinds=("Procedure",),
             bindings=(),
         ),
     )
-    request = PlaybillNextRequestV1(
+    request = NextRequestV1(
         evaluation_time=NOW,
         access_profile=CoverageAccessProfile(
             profile_id="presentation-policy-fail-closed",
@@ -410,17 +408,17 @@ def test_service_next_coalesces_projection_advice_in_its_own_observed_domain(
     public = ClientAcceptedCoordinate.model_validate(
         AcceptedCoordinate.from_internal(before).model_dump(mode="json")
     )
-    request = PlaybillNextRequestV1(
+    request = NextRequestV1(
         evaluation_time=NOW,
         access_profile=CoverageAccessProfile(
             profile_id="procedure-service-test",
             permitted_access_classes=("instance",),
         ),
-        workspace_observation=PlaybillNextWorkspaceObservation(
-            presentation_policy=PlaybillPresentationPolicy(
-                projection_advisories=PlaybillProjectionAdvisoryPolicy(procedure=True)
+        workspace_observation=NextWorkspaceObservation(
+            presentation_policy=PresentationPolicy(
+                projection_advisories=ProjectionAdvisoryPolicy(procedure=True)
             ),
-            projection_coverage=PlaybillProjectionCoverageObservation(
+            projection_coverage=ProjectionCoverageObservation(
                 coordinate=public,
                 complete_kinds=("Procedure",),
                 bindings=(),
@@ -447,7 +445,7 @@ def test_service_next_coalesces_projection_advice_in_its_own_observed_domain(
         result = service_playbill_next(instance, request=request)
         unobserved = service_playbill_next(
             instance,
-            request=PlaybillNextRequestV1(
+            request=NextRequestV1(
                 evaluation_time=NOW,
                 access_profile=request.access_profile,
             ),
@@ -490,17 +488,17 @@ def test_many_unprojected_procedures_coalesce_without_a_cardinality_cap(
             for index in range(25)
         )
 
-    request = PlaybillNextRequestV1(
+    request = NextRequestV1(
         evaluation_time=NOW,
         access_profile=CoverageAccessProfile(
             profile_id="many-procedures",
             permitted_access_classes=("instance",),
         ),
-        workspace_observation=PlaybillNextWorkspaceObservation(
-            presentation_policy=PlaybillPresentationPolicy(
-                projection_advisories=PlaybillProjectionAdvisoryPolicy(procedure=True)
+        workspace_observation=NextWorkspaceObservation(
+            presentation_policy=PresentationPolicy(
+                projection_advisories=ProjectionAdvisoryPolicy(procedure=True)
             ),
-            projection_coverage=PlaybillProjectionCoverageObservation(
+            projection_coverage=ProjectionCoverageObservation(
                 coordinate=public,
                 complete_kinds=("Procedure",),
                 bindings=(),
@@ -551,7 +549,7 @@ def test_clean_claim_and_query_backings_do_not_stale_on_coordinate_or_time_alone
     assert advanced.workspace_observation is not None
     assert advanced.workspace_observation.source_observations is not None
     source = advanced.workspace_observation.source_observations[0]
-    assert isinstance(source, PlaybillNextSourceObservationV3)
+    assert isinstance(source, NextSourceObservationV3)
     assert source.marker_summaries[0].stamp.declared_coordinate.git_oid == (
         original_coordinate.git_oid
     )
@@ -1182,7 +1180,7 @@ def test_shared_check_query_definition_drift_batch_reuse_and_unchecked_siblings(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from cruxible_client.contracts.authoring.models import PlaybillProjectionCheckRequest
+    from cruxible_client.contracts.authoring.models import ProjectionCheckRequest
     from cruxible_client.contracts.declared_blocks import ProjectionBlockStamp
     from cruxible_core.service.authoring import projection_sync
 
@@ -1225,7 +1223,7 @@ def test_shared_check_query_definition_drift_batch_reuse_and_unchecked_siblings(
     at = ClientAcceptedCoordinate.from_internal(instance.accepted_coordinate())
     result = projection_sync.service_check_projection_blocks(
         instance,
-        request=PlaybillProjectionCheckRequest(
+        request=ProjectionCheckRequest(
             stamps=(stamp, stamp.model_copy(update={"block_id": "other"})),
             at=at,
             evaluation_time=NOW,
@@ -1272,7 +1270,7 @@ def test_shared_check_query_definition_drift_batch_reuse_and_unchecked_siblings(
     )
     unchecked = projection_sync.service_check_projection_blocks(
         instance,
-        request=PlaybillProjectionCheckRequest(stamps=(mixed,), at=at, evaluation_time=NOW),
+        request=ProjectionCheckRequest(stamps=(mixed,), at=at, evaluation_time=NOW),
     )
     assert {i.status for i in unchecked.results[0].issues} == {"invalid", "unchecked"}
     rows = _projection_rows(instance, observed(stamp))
@@ -1293,7 +1291,7 @@ def test_shared_check_query_definition_drift_batch_reuse_and_unchecked_siblings(
     )
     clipped = projection_sync.service_check_projection_blocks(
         instance,
-        request=PlaybillProjectionCheckRequest(stamps=(stamp,), at=at, evaluation_time=NOW),
+        request=ProjectionCheckRequest(stamps=(stamp,), at=at, evaluation_time=NOW),
     )
     assert clipped.results[0].status == "unchecked"
     assert "truncated" in clipped.results[0].detail
@@ -1302,6 +1300,6 @@ def test_shared_check_query_definition_drift_batch_reuse_and_unchecked_siblings(
     repaired = stamp.model_copy(update={"declared_coordinate": at, "backing": (current_backing,)})
     clean = projection_sync.service_check_projection_blocks(
         instance,
-        request=PlaybillProjectionCheckRequest(stamps=(repaired,), at=at, evaluation_time=NOW),
+        request=ProjectionCheckRequest(stamps=(repaired,), at=at, evaluation_time=NOW),
     )
     assert clean.results[0].status == "current"

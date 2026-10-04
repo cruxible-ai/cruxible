@@ -1,4 +1,4 @@
-"""Pure canonical rendering for Playbill principal records."""
+"""Pure canonical rendering for Cruxible principal records."""
 
 from __future__ import annotations
 

@@ -31,8 +31,8 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import (
     CanonicalEncodingError,
+    CasError,
     DocumentFormatError,
-    PlaybillCasError,
 )
 from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -384,7 +384,7 @@ def evaluate_document_law(
 
     try:
         body_present = bodies.verify(shell.body_digest)
-    except PlaybillCasError:
+    except CasError:
         body_present = False
     if not body_present:
         return DocumentLawResult(

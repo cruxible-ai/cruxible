@@ -72,9 +72,6 @@ from cruxible_core.indexes.history.history_index import HistoryReader, RetainedR
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.proposals.settlement import ChangeSetRecord, ChangeSetRecordAnyVersion
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.authoring.documents import (
-    PlaybillAcceptedCoordinate,
-)
 from cruxible_core.storage.cas import BodyAccessContext, note_unobservable_body
 
 
@@ -104,7 +101,7 @@ class ClaimReadSourceProtocol(Protocol):
 
 class PlaybillClaimVerdictQueryV1(_StrictEvidenceServiceModel):
     tag: Literal["playbill-claim-verdict-query-v1"] = "playbill-claim-verdict-query-v1"
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     claim_identity: str
     evaluation_time: datetime
     verdict: ClaimVerdictResultV1
@@ -119,7 +116,7 @@ class PlaybillClaimVerdictQueryV1(_StrictEvidenceServiceModel):
 
 class PlaybillClaimVerdictQueryV2(_StrictEvidenceServiceModel):
     tag: Literal["playbill-claim-verdict-query-v2"] = "playbill-claim-verdict-query-v2"
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     claim_identity: str
     evaluation_time: datetime
     verdict: ClaimVerdictResult
@@ -137,7 +134,7 @@ PlaybillClaimVerdictQueryAny = PlaybillClaimVerdictQueryV1 | PlaybillClaimVerdic
 
 def _resolve_coordinate(
     instance: PlaybillInstance,
-    at: PlaybillAcceptedCoordinate | None,
+    at: AcceptedCoordinate | None,
 ) -> AcceptedProjectionCoordinate:
     if at is None:
         return instance.accepted_coordinate()
@@ -1183,7 +1180,7 @@ def service_evaluate_playbill_claim_verdict(
     *,
     claim_identity: str,
     evaluation_time: datetime,
-    at: PlaybillAcceptedCoordinate | None = None,
+    at: AcceptedCoordinate | None = None,
     external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,
     time_boundaries: MutableSet[datetime] | None = None,
     read_context: ClaimVerdictReadContext | None = None,
@@ -1304,13 +1301,13 @@ def service_evaluate_playbill_claim_verdict(
     )
     if isinstance(verdict, ClaimVerdictResult):
         return PlaybillClaimVerdictQueryV2(
-            coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
+            coordinate=AcceptedCoordinate.from_internal(coordinate),
             claim_identity=accepted.claim.identity.qualified,
             evaluation_time=evaluation_time,
             verdict=verdict,
         )
     return PlaybillClaimVerdictQueryV1(
-        coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
+        coordinate=AcceptedCoordinate.from_internal(coordinate),
         claim_identity=accepted.claim.identity.qualified,
         evaluation_time=evaluation_time,
         verdict=verdict,

@@ -1,4 +1,4 @@
-"""Schema laws for the reduced Playbill MCP tool catalog."""
+"""Schema laws for the reduced Cruxible MCP tool catalog."""
 
 from __future__ import annotations
 

@@ -13,10 +13,10 @@ from typing import Any
 
 from click.testing import CliRunner
 
-from cruxible_client.authoring.sdk import Playbill
+from cruxible_client.authoring.sdk import Cruxible
 from cruxible_client.authoring.sdk_types import RefKind
-from cruxible_client.contracts.get_reads import PlaybillGetRequest
-from cruxible_client.contracts.operational_reads import PlaybillGetProcedureRunCard
+from cruxible_client.contracts.get_reads import GetRequest
+from cruxible_client.contracts.operational_reads import GetProcedureRunCard
 from cruxible_core.cli.main import cli
 from cruxible_core.mcp import handlers
 from cruxible_core.mcp.server import create_server
@@ -34,14 +34,14 @@ class _ServiceClient:
         self.instance = instance
         self.surfaces: list[str] = []
 
-    def playbill_get(self, instance_id: str, *, request: PlaybillGetRequest) -> Any:
+    def get(self, instance_id: str, *, request: GetRequest) -> Any:
         self.surfaces.append(request.surface)
         return service_playbill_get(self.instance, request=request, access=_ACCESS)
 
-    def playbill_head(self, instance_id: str, **_values: Any) -> Any:
+    def head(self, instance_id: str, **_values: Any) -> Any:
         return service_playbill_head(self.instance)
 
-    def orient_playbill(self, instance_id: str, **values: Any) -> Any:
+    def orient(self, instance_id: str, **values: Any) -> Any:
         from datetime import datetime
 
         self.surfaces.append(values["surface"])
@@ -75,11 +75,11 @@ def test_the_mcp_tools_read_runs(run_world, monkeypatch) -> None:  # type: ignor
     instance, _procedure, finished = run_world
     client = _ServiceClient(instance)
     monkeypatch.setattr(handlers, "_get_client", lambda: None)
-    monkeypatch.setattr(handlers.playbill_api, "playbill_get", client.playbill_get)
+    monkeypatch.setattr(handlers.playbill_api, "playbill_get", client.get)
     monkeypatch.setattr(
         handlers.playbill_api,
         "playbill_orient",
-        lambda instance_id, **values: client.orient_playbill(instance_id, **values),
+        lambda instance_id, **values: client.orient(instance_id, **values),
     )
     server = create_server()
 
@@ -112,7 +112,7 @@ def test_the_sdk_reads_a_run_card(run_world) -> None:  # type: ignore[no-untyped
     instance, _procedure, finished = run_world
     # A connection opened without a workspace: reads serve, and orient reports
     # no floor rather than reading one.
-    playbill = Playbill._from_client(  # type: ignore[arg-type]
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
         _ServiceClient(instance),
         instance_id="inst",
         workspace=None,
@@ -122,8 +122,8 @@ def test_the_sdk_reads_a_run_card(run_world) -> None:  # type: ignore[no-untyped
     card = playbill.get(f"ProcedureRun:{finished.run_id}")
 
     assert card.kind is RefKind.PROCEDURE_RUN and card.identity == finished.run_id
-    assert isinstance(card.value, PlaybillGetProcedureRunCard)
-    assert card.value.next[-1] == f'pb.get("ProcedureRun:{finished.run_id}", detail="proof")'
+    assert isinstance(card.value, GetProcedureRunCard)
+    assert card.value.next[-1] == f'cx.get("ProcedureRun:{finished.run_id}", detail="proof")'
     runs = playbill.orient(section="runs")
     assert runs.runs is not None and len(runs.runs) == 2
     assert runs.floor is None

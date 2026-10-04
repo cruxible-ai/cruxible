@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.errors import PlaybillExecutionError
+from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
@@ -448,7 +448,7 @@ def test_v1_activation_with_outcome_class_filter_refuses_typed(tmp_path) -> None
     )
 
     with pytest.raises(
-        PlaybillExecutionError,
+        ExecutionError,
         match="outcome_class filter requires v2 activations",
     ):
         query_settled_outcomes(

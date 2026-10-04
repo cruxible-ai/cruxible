@@ -15,9 +15,9 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from cruxible_client.authoring.sdk import Playbill
+from cruxible_client.authoring.sdk import Cruxible
 from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
-from cruxible_client.contracts.compact_query import PLAYBILL_QUERY_MAX_SELECT
+from cruxible_client.contracts.compact_query import QUERY_MAX_SELECT
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.runtime import playbill_api
@@ -34,7 +34,7 @@ from tests.core_support._write_support import (
 WI1 = f"{KIND}/wi-1"
 TITLE = f"{KIND}.title"
 #: Enough extra string fields that the kind admits more than one query can select.
-EXTRA_FIELDS = tuple(f"extra_{index:02d}" for index in range(PLAYBILL_QUERY_MAX_SELECT + 1))
+EXTRA_FIELDS = tuple(f"extra_{index:02d}" for index in range(QUERY_MAX_SELECT + 1))
 
 
 def _accept_extra_fields(instance: PlaybillInstance, *, actor_id: str) -> None:
@@ -59,12 +59,12 @@ def _accept_extra_fields(instance: PlaybillInstance, *, actor_id: str) -> None:
     assert receipt.status == "accepted"
 
 
-def _sdk(client: TestClient, instance_id: str, tmp_path: Path) -> Playbill:
+def _sdk(client: TestClient, instance_id: str, tmp_path: Path) -> Cruxible:
     transport = CruxibleClient(base_url="http://testserver")
     transport._client._client = client  # type: ignore[attr-defined]  # noqa: SLF001
     workspace = tmp_path / "sdk-workspace"
     workspace.mkdir(exist_ok=True)
-    return Playbill._from_client(  # noqa: SLF001
+    return Cruxible._from_client(  # noqa: SLF001
         transport,
         instance_id=instance_id,
         workspace=workspace,
@@ -90,7 +90,7 @@ def test_values_reads_every_field_of_a_kind_wider_than_one_select(
     last = pb.set(WI1, EXTRA_FIELDS[-1], "the last field", because="Named in review.")
     world = pb.world()
     admitted = len(CLAIM_TYPES) + len(EXTRA_FIELDS)
-    assert len(world.predicates) == admitted > PLAYBILL_QUERY_MAX_SELECT
+    assert len(world.predicates) == admitted > QUERY_MAX_SELECT
 
     values = world.values(subjects=[WI1])
 

@@ -9,7 +9,7 @@ import pytest
 from click.testing import CliRunner
 from fastapi.testclient import TestClient
 
-from cruxible_client import Playbill
+from cruxible_client import Cruxible
 from cruxible_client import contracts as api
 from cruxible_client.authoring.sdk_types import (
     AbsentSubject,
@@ -112,7 +112,7 @@ def _approve_and_activate(
     instance_id: str,
     private_key_path: Path,
     proposal_id: str,
-) -> api.PlaybillActivationReceipt:
+) -> api.ActivationReceipt:
     challenge = client.post(
         f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approval-challenge",
         json={"signer_id": "reviewer"},
@@ -134,18 +134,18 @@ def _approve_and_activate(
     activated = client.post(f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/activate")
     assert activated.status_code == 200, activated.text
     assert activated.json()["status"] == "accepted"
-    return api.PlaybillActivationReceipt.model_validate(activated.json())
+    return api.ActivationReceipt.model_validate(activated.json())
 
 
 @pytest.fixture
 def connection(
     playbill_http: tuple[TestClient, str, Path],
     tmp_path: Path,
-) -> tuple[Playbill, TestClient, str, Path]:
+) -> tuple[Cruxible, TestClient, str, Path]:
     http, instance_id, private_key_path = playbill_http
     transport = CruxibleClient(base_url="http://cruxible")
     transport._client = http  # type: ignore[assignment]
-    playbill = Playbill._from_client(
+    playbill = Cruxible._from_client(
         transport,
         instance_id=instance_id,
         workspace=_workspace(tmp_path),
@@ -154,7 +154,7 @@ def connection(
 
 
 def _accept_vocabulary(
-    playbill: Playbill,
+    playbill: Cruxible,
     http: TestClient,
     instance_id: str,
     private_key_path: Path,
@@ -176,7 +176,7 @@ def _accept_vocabulary(
 
 
 def test_a_same_set_definition_lands_with_the_claim_that_reads_it_in_one_generation(
-    connection: tuple[Playbill, TestClient, str, Path],
+    connection: tuple[Cruxible, TestClient, str, Path],
 ) -> None:
     """A ref to an unaccepted Subject must not refuse against the base tree."""
 
@@ -249,7 +249,7 @@ def test_a_same_set_definition_lands_with_the_claim_that_reads_it_in_one_generat
 
 
 def test_a_same_set_claim_type_ref_states_a_claim_under_the_type_it_defines(
-    connection: tuple[Playbill, TestClient, str, Path],
+    connection: tuple[Cruxible, TestClient, str, Path],
 ) -> None:
     playbill, http, instance_id, private_key_path = connection
     _accept_vocabulary(playbill, http, instance_id, private_key_path)
@@ -294,7 +294,7 @@ def test_a_same_set_claim_type_ref_states_a_claim_under_the_type_it_defines(
 
 
 def test_the_world_reads_the_accepted_vocabulary_and_refuses_what_it_does_not_name(
-    connection: tuple[Playbill, TestClient, str, Path],
+    connection: tuple[Cruxible, TestClient, str, Path],
 ) -> None:
     playbill, http, instance_id, private_key_path = connection
     _accept_vocabulary(playbill, http, instance_id, private_key_path)
@@ -312,7 +312,7 @@ def test_the_world_reads_the_accepted_vocabulary_and_refuses_what_it_does_not_na
 
 
 def test_the_cli_leaf_writes_a_coordinate_stamped_stub_for_the_live_world(
-    connection: tuple[Playbill, TestClient, str, Path],
+    connection: tuple[Cruxible, TestClient, str, Path],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

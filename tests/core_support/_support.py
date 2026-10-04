@@ -1,11 +1,11 @@
-"""Small custody-safe test helpers for Playbill bootstrap."""
+"""Small custody-safe test helpers for Cruxible bootstrap."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
 
-from cruxible_client.contracts.types import GitObjectFormat, PlaybillTrustRoot
+from cruxible_client.contracts.types import GitObjectFormat, TrustRoot
 from cruxible_core.governance.keys import GeneratedKeyMaterial, generate_client_principal_key
 from cruxible_core.runtime.instance import PlaybillInstance
 from tests.core_support._world_templates import TEMPLATES, Template, copy_template
@@ -112,7 +112,7 @@ class TemplateWorld:
     """What a copy needs to reopen a templated instance and name its owner key."""
 
     managed: Path
-    trust_root: PlaybillTrustRoot
+    trust_root: TrustRoot
     owner: GeneratedKeyMaterial
     owner_private: Path
     owner_public: Path
@@ -204,5 +204,5 @@ def restamp_state_root(state_root: Path) -> None:
         managed = state_root / "instances" / trust_path.stem
         if not managed.is_dir():
             continue
-        trust_root = PlaybillTrustRoot.model_validate_json(trust_path.read_bytes())
+        trust_root = TrustRoot.model_validate_json(trust_path.read_bytes())
         restamp_proposal_index(PlaybillInstance.open(managed, trust_root=trust_root))

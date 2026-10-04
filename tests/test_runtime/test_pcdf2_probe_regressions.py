@@ -88,14 +88,14 @@ def _genesis_replay_at_retained_compiler(
         """
         import json, sys
         from pathlib import Path
-        from cruxible_client.contracts.types import PlaybillTrustRoot
+        from cruxible_client.contracts.types import TrustRoot
         from cruxible_core.compiler import compiler
         from cruxible_core.runtime.instance import PlaybillInstance
 
         assert compiler.current_compiler_coordinate() == compiler.GOVERNED_TRIGGERS_COMPILER
         reopened = PlaybillInstance.open(
             Path(sys.argv[1]),
-            trust_root=PlaybillTrustRoot.model_validate(json.loads(sys.argv[2])),
+            trust_root=TrustRoot.model_validate(json.loads(sys.argv[2])),
         )
         assert reopened.descriptor.compiler.model_dump(mode="json") == json.loads(sys.argv[4])
         assert reopened.accepted_coordinate().git_oid == sys.argv[3]
@@ -299,7 +299,7 @@ def test_release_level_law_bump_replays_rev8_tombstone_from_fresh_clone(
             "playbill-claim-v3",
             semantic_revision=99,
         )
-        installed = tuple(laws.PLAYBILL_ACCEPTANCE_LAWS._by_coordinate.values())
+        installed = tuple(laws.ACCEPTANCE_LAWS._by_coordinate.values())
         v3 = tuple(
             replace(item, current=False)
             for item in installed
@@ -307,7 +307,7 @@ def test_release_level_law_bump_replays_rev8_tombstone_from_fresh_clone(
         )
         non_v3 = tuple(item for item in installed if item.artifact_tag != "playbill-claim-v3")
         laws.CLAIM_LAW_V3 = next_revision
-        laws.PLAYBILL_ACCEPTANCE_LAWS = laws.AcceptanceLawRegistry(
+        laws.ACCEPTANCE_LAWS = laws.AcceptanceLawRegistry(
             (
                 *non_v3,
                 InstalledAcceptanceLaw(
@@ -320,7 +320,7 @@ def test_release_level_law_bump_replays_rev8_tombstone_from_fresh_clone(
         )
 
         from cruxible_core.proposals import proposals
-        from cruxible_client.contracts.types import PlaybillTrustRoot
+        from cruxible_client.contracts.types import TrustRoot
         from cruxible_core.runtime.instance import PlaybillInstance
 
         assert proposals.CLAIM_LAW_V3_REVISION_8.digest == (
@@ -329,7 +329,7 @@ def test_release_level_law_bump_replays_rev8_tombstone_from_fresh_clone(
         assert proposals.CLAIM_LAW_V3_REVISION_8 != laws.CLAIM_LAW_V3
         reopened = PlaybillInstance.open(
             Path(sys.argv[1]),
-            trust_root=PlaybillTrustRoot.model_validate(json.loads(sys.argv[2])),
+            trust_root=TrustRoot.model_validate(json.loads(sys.argv[2])),
         )
         assert reopened.accepted_coordinate().git_oid == sys.argv[3]
         """

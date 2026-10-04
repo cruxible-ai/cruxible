@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from cruxible_client.contracts import ClaimViewRecord, PlaybillAcceptedCoordinate
+from cruxible_client.contracts import AcceptedCoordinate, ClaimViewRecord
 from cruxible_client.contracts.claims import ClaimObject
 from cruxible_client.contracts.declared_blocks import ProjectionClaimBacking
 
@@ -20,7 +20,7 @@ MAX_CLAIM_VALUE_ROWS = 8192
 
 class ClaimReadBatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-    at: PlaybillAcceptedCoordinate | None = None
+    at: AcceptedCoordinate | None = None
     claim_ids: tuple[str, ...] = Field(default=(), max_length=MAX_CLAIM_READ_BATCH)
     subject_paths: tuple[str, ...] = Field(default=(), max_length=MAX_CLAIM_READ_BATCH)
     predicates: tuple[str, ...] = Field(default=(), max_length=MAX_CLAIM_READ_BATCH)
@@ -48,7 +48,7 @@ class ClaimReadBatchRequest(BaseModel):
 class ClaimReadBatchResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     tag: Literal["playbill-claim-read-batch-v1"] = "playbill-claim-read-batch-v1"
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     claims: tuple[ClaimViewRecord, ...]
     truncated: bool = False
     cursor: str | None = None
@@ -56,14 +56,14 @@ class ClaimReadBatchResult(BaseModel):
 
 class ClaimBackingsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-    at: PlaybillAcceptedCoordinate
+    at: AcceptedCoordinate
     claim_ids: tuple[str, ...] = Field(min_length=1, max_length=MAX_CLAIM_READ_BATCH)
 
 
 class ClaimBackingsResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     tag: Literal["playbill-claim-backings-v1"] = "playbill-claim-backings-v1"
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     backings: tuple[ProjectionClaimBacking, ...]
 
 
@@ -74,7 +74,7 @@ class ClaimValuesRequest(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
-    at: PlaybillAcceptedCoordinate | None = None
+    at: AcceptedCoordinate | None = None
     subject_paths: tuple[str, ...] = Field(default=(), max_length=MAX_CLAIM_VALUE_SUBJECTS)
     subject_kind: str | None = Field(default=None, min_length=1)
     predicates: tuple[str, ...] = Field(default=(), max_length=MAX_CLAIM_VALUE_PREDICATES)
@@ -143,6 +143,6 @@ class ClaimValueRecord(BaseModel):
 class ClaimValuesResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     tag: Literal["playbill-claim-values-v1"] = "playbill-claim-values-v1"
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     evaluation_time: datetime
     values: tuple[ClaimValueRecord, ...]

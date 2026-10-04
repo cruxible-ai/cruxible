@@ -1,4 +1,4 @@
-"""End-to-end proof that a Playbill instance is drivable from the CLI alone.
+"""End-to-end proof that a Cruxible instance is drivable from the CLI alone.
 
 This is the TauBench-runnable surface, written as the harness recipe it has to
 support: allocate a host, bootstrap it, seed a ClaimType, a Subject, two Claims,
@@ -35,7 +35,7 @@ from cruxible_client.contracts.captures import (
     capture_contract_digest,
     foreign_source_capture_contract,
 )
-from cruxible_client.contracts.errors import PlaybillBootstrapError
+from cruxible_client.contracts.errors import BootstrapError
 from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionRuleV1,
@@ -278,7 +278,7 @@ def test_cli_init_adopts_only_its_transport_bound_response_loss_orphan(
     calls = 0
 
     class StubClient:
-        def init_playbill(
+        def init(
             self,
             instance_id: str,
             *,
@@ -288,21 +288,21 @@ def test_cli_init_adopts_only_its_transport_bound_response_loss_orphan(
             seed: bool = True,
             git_object_format: str | None = None,
             mirror_url: str | None = None,
-        ) -> contracts.PlaybillInitResult:
+        ) -> contracts.InitResult:
             nonlocal calls
             calls += 1
             assert instance_id == "inst_retry"
             assert operating_profile == "local"
             assert require_independent_approval is False
             if calls == 1:
-                raise PlaybillBootstrapError("simulated response loss")
-            coordinate = contracts.PlaybillAcceptedCoordinate(
+                raise BootstrapError("simulated response loss")
+            coordinate = contracts.AcceptedCoordinate(
                 git_oid="1" * 64,
                 semantic_root="sha256:" + "2" * 64,
                 generation_root="sha256:" + "3" * 64,
                 compiler_digest="sha256:" + "4" * 64,
             )
-            return contracts.PlaybillInitResult(
+            return contracts.InitResult(
                 instance_id=instance_id,
                 coordinate=coordinate,
                 trust_root={"principals": principals},

@@ -9,9 +9,9 @@ import httpx
 import pytest
 
 from cruxible_client import CruxibleClient, contracts
-from cruxible_client.contracts.errors import PlaybillSinceRequestInvalid
+from cruxible_client.contracts.errors import SinceRequestInvalid
 
-COORDINATE = contracts.PlaybillAcceptedCoordinate(
+COORDINATE = contracts.AcceptedCoordinate(
     git_oid="1" * 64,
     semantic_root="sha256:" + "2" * 64,
     generation_root="sha256:" + "3" * 64,
@@ -52,7 +52,7 @@ def test_client_sends_the_frozen_since_request() -> None:
     client._client = httpx.Client(  # type: ignore[attr-defined]
         base_url="http://cruxible", transport=httpx.MockTransport(handler)
     )
-    result = client.since_playbill(
+    result = client.since(
         "inst",
         generation=3,
         at=COORDINATE,
@@ -87,8 +87,8 @@ def test_client_refuses_an_invalid_request_before_transport() -> None:
         base_url="http://cruxible", transport=httpx.MockTransport(handler)
     )
 
-    with pytest.raises(PlaybillSinceRequestInvalid) as raised:
-        client.since_playbill(
+    with pytest.raises(SinceRequestInvalid) as raised:
+        client.since(
             "inst",
             generation=3,
             access_profile=PROFILE,
@@ -105,10 +105,10 @@ def test_client_reconstructs_the_typed_http_refusal() -> None:
         return httpx.Response(
             400,
             json={
-                "error_type": "PlaybillSinceRequestInvalid",
+                "error_type": "SinceRequestInvalid",
                 "message": (
                     "playbill.since.request_invalid: request field $.cursor is invalid: "
-                    "Input should be a valid dictionary or instance of PlaybillSinceCursor"
+                    "Input should be a valid dictionary or instance of SinceCursor"
                 ),
                 "error_code": "playbill.since.request_invalid",
                 "errors": [],
@@ -121,8 +121,8 @@ def test_client_reconstructs_the_typed_http_refusal() -> None:
         base_url="http://cruxible", transport=httpx.MockTransport(handler)
     )
 
-    with pytest.raises(PlaybillSinceRequestInvalid) as raised:
-        client.since_playbill(
+    with pytest.raises(SinceRequestInvalid) as raised:
+        client.since(
             "inst",
             generation=3,
             access_profile=PROFILE,
@@ -134,6 +134,6 @@ def test_client_reconstructs_the_typed_http_refusal() -> None:
 
 def test_client_since_rejects_non_mapping_access_profile_with_typed_refusal() -> None:
     client = CruxibleClient(base_url="https://since.invalid", token="crt_x")
-    with pytest.raises(PlaybillSinceRequestInvalid) as excinfo:
-        client.since_playbill("inst_x", generation=0, access_profile=["not", "a", "mapping"])  # type: ignore[arg-type]
+    with pytest.raises(SinceRequestInvalid) as excinfo:
+        client.since("inst_x", generation=0, access_profile=["not", "a", "mapping"])  # type: ignore[arg-type]
     assert excinfo.value.field_path.startswith("$.access_profile")

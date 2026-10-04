@@ -10,14 +10,14 @@ import pytest
 from cruxible_client import contracts
 from cruxible_client.authoring import floor_apply
 from cruxible_client.authoring.floor_apply import (
-    PlaybillFloorApplyError,
+    FloorApplyError,
     apply_floor_delta,
     read_floor_manifest,
 )
-from cruxible_client.contracts.floor import PlaybillFloorDelta
+from cruxible_client.contracts.floor import FloorDelta
 from tests.support.floor_exports import floor_v5_delta
 
-COORDINATE = contracts.PlaybillAcceptedCoordinate(
+COORDINATE = contracts.AcceptedCoordinate(
     git_oid="4" * 64,
     semantic_root="sha256:" + "1" * 64,
     generation_root="sha256:" + "2" * 64,
@@ -58,7 +58,7 @@ def _expected(tmp_path: Path) -> dict[str, bytes]:
     return _tree(directory)
 
 
-def _delta() -> PlaybillFloorDelta:
+def _delta() -> FloorDelta:
     return floor_v5_delta(HEAD, coordinate=COORDINATE, generation=5, base=(3, BASE))
 
 
@@ -114,8 +114,8 @@ def test_a_delta_that_does_not_reach_its_head_refuses_before_writing(tmp_path: P
 
     payload = forged.model_dump(mode="json")
     payload["delta_digest"] = floor_delta_digest(payload)
-    with pytest.raises(PlaybillFloorApplyError, match="head manifest digest"):
-        apply_floor_delta(directory, PlaybillFloorDelta.model_validate(payload))
+    with pytest.raises(FloorApplyError, match="head manifest digest"):
+        apply_floor_delta(directory, FloorDelta.model_validate(payload))
     assert _tree(directory) == before
 
 
@@ -198,7 +198,7 @@ def test_a_full_floor_replaces_whatever_the_directory_held(tmp_path: Path) -> No
 # -- review r1: the apply proves the installed floor, through no link ---------------
 
 
-def _resealed(delta: PlaybillFloorDelta, **changes: object) -> dict[str, object]:
+def _resealed(delta: FloorDelta, **changes: object) -> dict[str, object]:
     from cruxible_client.contracts.floor import floor_delta_digest
 
     payload = {**delta.model_dump(mode="json"), **changes}
@@ -225,21 +225,21 @@ def test_a_forged_replay_at_the_installed_head_refuses_before_writing(tmp_path: 
         else item.model_dump(mode="json")
         for item in honest.files
     ]
-    forged = PlaybillFloorDelta.model_validate(_resealed(honest, files=files))
+    forged = FloorDelta.model_validate(_resealed(honest, files=files))
     assert forged.head_manifest_digest == honest.head_manifest_digest
-    with pytest.raises(PlaybillFloorApplyError, match="head manifest digest"):
+    with pytest.raises(FloorApplyError, match="head manifest digest"):
         apply_floor_delta(directory, forged)
     assert _tree(directory) == installed
     # A head naming another coordinate under the honest digest refuses too.
     other = {**honest.head.model_dump(mode="json"), "semantic_root": "sha256:" + "8" * 64}
-    moved = PlaybillFloorDelta.model_validate(_resealed(honest, head=other))
-    with pytest.raises(PlaybillFloorApplyError, match="head manifest digest"):
+    moved = FloorDelta.model_validate(_resealed(honest, head=other))
+    with pytest.raises(FloorApplyError, match="head manifest digest"):
         apply_floor_delta(directory, moved)
     # A replayed tombstone of a file the head still holds refuses as well.
-    removing = PlaybillFloorDelta.model_validate(
+    removing = FloorDelta.model_validate(
         _resealed(honest, tombstones=["current/k/a.yaml", "current/k/b.status.txt"])
     )
-    with pytest.raises(PlaybillFloorApplyError, match="head manifest digest"):
+    with pytest.raises(FloorApplyError, match="head manifest digest"):
         apply_floor_delta(directory, removing)
     assert _tree(directory) == installed
 
@@ -265,7 +265,7 @@ def test_a_parent_swapped_for_a_symlink_mid_apply_is_never_written_through(
         return original(root, path, *args)
 
     monkeypatch.setattr(floor_apply, name, barrier)
-    with pytest.raises(PlaybillFloorApplyError, match="escapes the floor"):
+    with pytest.raises(FloorApplyError, match="escapes the floor"):
         apply_floor_delta(directory, _delta())
     assert swapped
     assert sorted(path.name for path in outside.iterdir()) == ["b.status.txt"]
@@ -310,7 +310,7 @@ def test_a_reserved_tombstone_is_refused_before_any_mutation(
     honest = _delta()
     payload = _resealed(honest, tombstones=sorted({*honest.tombstones, tombstone}))
     with pytest.raises(ValueError, match="reserved"):
-        PlaybillFloorDelta.model_validate(payload)
+        FloorDelta.model_validate(payload)
     assert _tree(directory) == before
     # A crash between writes never loses the manifest, so the honest delta resumes.
     assert apply_floor_delta(directory, honest).status == "applied"
@@ -391,9 +391,7 @@ def test_nothing_may_live_under_a_reserved_file(tmp_path: Path, path: str) -> No
     before = _tree(directory)
     honest = _delta()
     with pytest.raises(ValueError, match="reserved"):
-        PlaybillFloorDelta.model_validate(
-            _resealed(honest, tombstones=sorted({*honest.tombstones, path}))
-        )
+        FloorDelta.model_validate(_resealed(honest, tombstones=sorted({*honest.tombstones, path})))
     # ... and in a manifest inventory, before anything is written.
     with pytest.raises(ValueError, match="reserved"):
         build_floor_manifest(
@@ -460,7 +458,7 @@ def test_a_delta_refuses_a_directory_where_it_writes_or_removes(tmp_path: Path) 
 # -- review r3: installed spellings are matched exactly, never by alias ---------------
 
 
-def _full() -> PlaybillFloorDelta:
+def _full() -> FloorDelta:
     return floor_v5_delta(HEAD, coordinate=COORDINATE, generation=5)
 
 
@@ -582,6 +580,6 @@ def test_floor_verification_refuses_a_fifo_swapped_after_stat(tmp_path, monkeypa
         return open_file(path, flags, mode, dir_fd=dir_fd)
 
     monkeypatch.setattr(floor_apply.os, "open", open_at)
-    with pytest.raises(PlaybillFloorApplyError, match="not a regular file"):
+    with pytest.raises(FloorApplyError, match="not a regular file"):
         call_with_fifo_timeout(fifo, lambda: apply_floor_delta(directory, _delta()))
     assert swapped

@@ -120,7 +120,7 @@ from cruxible_client.contracts.declared_blocks import (
     projection_window_intersecting,
     stamped_projection_windows,
 )
-from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.procedure_mandates import (
     MANDATE_CHANGE_KIND_ORDER,
     MandateClaimScope,
@@ -1131,7 +1131,7 @@ def _lower_claim(
                     can_read_body=True,
                 ),
             )
-        except PlaybillError:
+        except CruxibleError:
             _refuse(
                 "playbill.authoring.existing_capture_not_found",
                 "source.capture_digest",
@@ -1141,7 +1141,7 @@ def _lower_claim(
             )
         try:
             envelope = parse_capture_envelope(raw_envelope)
-        except (PlaybillError, ValueError):
+        except (CruxibleError, ValueError):
             _refuse(
                 "playbill.authoring.existing_capture_invalid",
                 "source.capture_digest",
@@ -1176,7 +1176,7 @@ def _lower_claim(
                     bodies=store,
                 ),
             )
-        except (PlaybillError, ValueError):
+        except (CruxibleError, ValueError):
             _refuse(
                 "playbill.authoring.existing_capture_invalid",
                 "source.capture_digest",
@@ -1247,7 +1247,7 @@ def _lower_claim(
                 selector=source.selector.model_dump(mode="json"),
                 selected_content=source.selected_content,
             )
-        except (PlaybillError, ValueError) as exc:
+        except (CruxibleError, ValueError) as exc:
             # The capture contracts refusing the observation -- a selector that
             # carries a locator, a selection over its byte budget -- is a
             # refusal of THIS request, and it used to leave as an unhandled
@@ -1395,7 +1395,7 @@ def _lower_claim(
                 if not identity_matches or digest != pin.artifact_digest:
                     raise ValueError("a derivation binding changed from its admitted version")
                 pins.append(pin)
-        except (ValueError, PlaybillError) as exc:
+        except (ValueError, CruxibleError) as exc:
             _refuse(
                 "playbill.authoring.derivation_unverified",
                 "derivation",
@@ -1764,7 +1764,7 @@ def _parse_reference_tree(
             artifact_codec=artifact_codec_for_compiler(base.compiler),
             bodies=instance.body_store(),
         )
-    except PlaybillError as exc:
+    except CruxibleError as exc:
         # An accepted tree this instance cannot read is a fault of the
         # instance, not of the payload -- but the author still asked a question
         # and is owed a typed answer with a repair rather than a bare 500.

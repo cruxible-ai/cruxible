@@ -8,13 +8,13 @@ from pydantic import BaseModel, Field
 
 from cruxible_client._error_base import CoreError as CoreError
 from cruxible_client.contracts.errors import (
-    PlaybillInstanceDecommissioned,
-    PlaybillObjectFormatConflict,
-    PlaybillSinceRequestInvalid,
+    InstanceDecommissioned,
+    ObjectFormatConflict,
     ProposalActivationRequestInvalid,
     ProposalNotFoundError,
     ProposalSelectorAmbiguousError,
     ReadRefusalError,
+    SinceRequestInvalid,
 )
 from cruxible_client.contracts.repairs import ServedRepair
 
@@ -232,8 +232,8 @@ def response_to_error(status: int, body: ErrorResponse) -> CoreError:
         # Server-side FastAPI request validation; field-level details ride in
         # errors just like data validation failures.
         exc = DataValidationError(body.message, errors=body.errors)
-    elif body.error_type == "PlaybillSinceRequestInvalid":
-        exc = PlaybillSinceRequestInvalid(
+    elif body.error_type == "SinceRequestInvalid":
+        exc = SinceRequestInvalid(
             field_path=str(context.get("field_path", "$")),
             message=body.message,
         )
@@ -278,8 +278,8 @@ def response_to_error(status: int, body: ErrorResponse) -> CoreError:
         exc = CustomerCodeExecutionUnsupportedError(context.get("detail"))
     elif body.error_type == "HostedProfileUnknownError":
         exc = HostedProfileUnknownError(str(context.get("profile", "unknown")))
-    elif body.error_type == "PlaybillObjectFormatConflict":
-        exc = PlaybillObjectFormatConflict(
+    elif body.error_type == "ObjectFormatConflict":
+        exc = ObjectFormatConflict(
             body.message,
             workspace_format=context.get("workspace_format"),
         )
@@ -291,8 +291,8 @@ def response_to_error(status: int, body: ErrorResponse) -> CoreError:
             http_status=status,
             context=context,
         )
-    elif body.error_type == "PlaybillInstanceDecommissioned":
-        exc = PlaybillInstanceDecommissioned(
+    elif body.error_type == "InstanceDecommissioned":
+        exc = InstanceDecommissioned(
             instance_id=context.get("instance_id", "unknown"),
             reason=context.get("reason", "unknown"),
             decommissioned_at=context.get("decommissioned_at", "unknown"),

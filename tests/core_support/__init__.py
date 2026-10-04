@@ -1,1 +1,1 @@
-"""Playbill substrate contract tests."""
+"""Cruxible substrate contract tests."""

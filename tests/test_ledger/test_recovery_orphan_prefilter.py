@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.laws import PLAYBILL_ACCEPTANCE_LAWS
+from cruxible_client.contracts.laws import ACCEPTANCE_LAWS
 from cruxible_core.ledger.recovery import _clean_unaccepted_generations
 from tests.core_support._support import FIXED_TIMESTAMP, initialize_local
 
@@ -17,7 +17,7 @@ def _clean(instance):
         object_format=instance.descriptor.git_object_format,
         instance_id=instance.descriptor.instance_id,
         bodies=instance.body_store(),
-        laws=PLAYBILL_ACCEPTANCE_LAWS,
+        laws=ACCEPTANCE_LAWS,
         promotion_verifier=None,
         producer_receipt_resolver=None,
         query_facts_builder=None,

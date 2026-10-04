@@ -32,7 +32,7 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
@@ -55,7 +55,7 @@ from cruxible_client.contracts.semantic import SemanticAddress
 _PROCEDURE_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 
 
-class ProcedureFormatError(PlaybillFormatError):
+class ProcedureFormatError(FormatError):
     """A Procedure artifact or canonical path is invalid."""
 
 

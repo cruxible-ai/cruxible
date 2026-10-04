@@ -11,7 +11,7 @@ from cruxible_client.contracts.acquisition_policies import SourceAcquisitionPoli
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.canonical import CanonicalValue
 from cruxible_client.contracts.captures import CaptureContract
-from cruxible_client.contracts.errors import PlaybillExecutionError, PlaybillJournalError
+from cruxible_client.contracts.errors import ExecutionError, JournalError
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.contracts import OwnedProcedureContractValidator
 from cruxible_client.contracts.query.grammar import QueryBudgets
@@ -66,7 +66,7 @@ class ExhaustReducerRegistry:
         try:
             return self._reducers[digest]
         except KeyError as exc:
-            raise PlaybillJournalError(f"pinned ExhaustReducer is unavailable: {digest}") from exc
+            raise JournalError(f"pinned ExhaustReducer is unavailable: {digest}") from exc
 
 
 class LocalExhaustPromotionVerifier:
@@ -103,7 +103,7 @@ class LocalExhaustPromotionVerifier:
             )
             records = self.journal.read_exact_range(journal_range)
             reducer = self.reducers.require(promotion.reducer_digest)
-        except (PlaybillJournalError, ValueError) as exc:
+        except (JournalError, ValueError) as exc:
             return ExhaustPromotionLawResultV1(
                 verdict="refused",
                 refusal_code="promotion.operational_basis_unavailable",
@@ -140,11 +140,11 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
         budgets: QueryBudgets | None = None,
     ) -> StateTapReadResultV1:
         if budgets is not None and self.budgets is not None and not budgets.within(self.budgets):
-            raise PlaybillExecutionError("state tap query budget exceeds the run ceiling")
+            raise ExecutionError("state tap query budget exceeds the run ceiling")
         if query.target.kind != "QueryDefinition":
-            raise PlaybillExecutionError("state tap pin must target QueryDefinition")
+            raise ExecutionError("state tap pin must target QueryDefinition")
         if not isinstance(parameters, Mapping):
-            raise PlaybillExecutionError("state tap query parameters must be an object")
+            raise ExecutionError("state tap query parameters must be an object")
         internal = self.instance.resolve_accepted_coordinate(
             git_oid=coordinate.git_oid,
             semantic_root=coordinate.semantic_root,
@@ -157,7 +157,7 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
             coordinate=internal,
         )
         if accepted.artifact_digest != query.artifact_digest:
-            raise PlaybillExecutionError(
+            raise ExecutionError(
                 "state tap QueryDefinition pin does not match the admitted coordinate"
             )
         run = service_run_playbill_query(
@@ -170,7 +170,7 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
         )
         if run.result.verdict != "completed":
             code = None if run.result.refusal is None else run.result.refusal.code
-            raise PlaybillExecutionError(f"state tap query refused: {code or 'unknown'}")
+            raise ExecutionError(f"state tap query refused: {code or 'unknown'}")
         return StateTapReadResultV1(
             value=state_tap_value(run.result),
             effective_budgets=run.result.budgets,
@@ -197,7 +197,7 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
         from cruxible_core.service.claims.claims import _claim_from_view
 
         if claim_type.target.kind != "ClaimType":
-            raise PlaybillExecutionError("A Claim field read requires an exact ClaimType")
+            raise ExecutionError("A Claim field read requires an exact ClaimType")
         internal = self.instance.resolve_accepted_coordinate(
             **coordinate.model_dump(mode="json", exclude={"tag"})
         )
@@ -209,18 +209,18 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
             not isinstance(selected_type, ClaimType)
             or claim_type_digest(selected_type).tagged != claim_type.artifact_digest
         ):
-            raise PlaybillExecutionError("ClaimType differs from the admitted field binding")
+            raise ExecutionError("ClaimType differs from the admitted field binding")
         if (
             subject_kind not in selected_type.allowed_subject_kinds
             or not isinstance(subject, SubjectShell)
             or subject.lifecycle.state != "live"
         ):
-            raise PlaybillExecutionError(
+            raise ExecutionError(
                 "Subject is absent, retired, or outside the ClaimType's admitted kinds"
             )
         budget = self.budgets or QueryBudgets(max_results=256, max_traversal_depth=0)
         if cardinality == "all" and (limit is None or limit <= 0):
-            raise PlaybillExecutionError("A plural Claim read requires an explicit positive limit")
+            raise ExecutionError("A plural Claim read requires an explicit positive limit")
         limit = (
             2 if cardinality == "one" else min(limit or 0, budget.max_results, MAX_CLAIM_READ_BATCH)
         )
@@ -235,7 +235,7 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
         )
         batch = service_read_claim_batch(self.instance, request=request)
         if batch.truncated or (cardinality == "one" and len(batch.claims) != 1):
-            raise PlaybillExecutionError(
+            raise ExecutionError(
                 "Claim selection must be complete and satisfy its declared cardinality"
             )
         values = []
@@ -248,7 +248,7 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
                 or "verdict" not in verdict
                 or "currency" not in verdict
             ):
-                raise PlaybillExecutionError("Selected Claim has no current verdict and currency")
+                raise ExecutionError("Selected Claim has no current verdict and currency")
             obj = claim.statement.object.model_dump(mode="json")
             value = obj.get("value") if obj["kind"] == "literal" else obj
             values.append(

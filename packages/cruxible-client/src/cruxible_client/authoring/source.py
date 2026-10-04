@@ -135,7 +135,7 @@ class ProcedureBlueprint:
         for name, value in self._bindings.items():
             if isinstance(value, ProviderBinding):
                 if value.coordinate is None:
-                    raise ValueError("Select source providers through pb.provider_binding()")
+                    raise ValueError("Select source providers through cx.provider_binding()")
                 world._playbill._assert_coordinate(value.coordinate)
                 selections[name] = SourceProviderSelection(
                     provider=value.provider, interface=value.interface
@@ -173,7 +173,7 @@ class ProcedureBlueprint:
                 errors=(
                     CompositionDiagnostic(
                         code="playbill.source.context_required",
-                        message="Supply world=pb.world() for backend source compilation.",
+                        message="Supply world=cx.world() for backend source compilation.",
                     ),
                 ),
             )
@@ -181,7 +181,7 @@ class ProcedureBlueprint:
             source=self._at(world),
             at=AcceptedCoordinate.model_validate(world.coordinate.model_dump(mode="json")),
         )
-        compiled = world._playbill._client.preview_playbill_procedure_source(
+        compiled = world._playbill._client.preview_procedure_source(
             world._playbill._instance_id, request=request
         )
         from cruxible_client.contracts.procedures.models import (

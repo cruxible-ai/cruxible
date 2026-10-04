@@ -32,31 +32,31 @@ from cruxible_client.contracts.claim_types import (
     effective_evidence_requirement,
     effective_revision_evidence,
 )
-from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.orient import (
-    PLAYBILL_ORIENT_ATTENTION_TOP,
-    PLAYBILL_ORIENT_DEFAULT_LIMIT,
-    PLAYBILL_ORIENT_DEFAULT_QUERIES,
-    PLAYBILL_ORIENT_SAMPLE_SUBJECTS,
-    PlaybillHead,
-    PlaybillOrientArms,
-    PlaybillOrientArtifactCounts,
-    PlaybillOrientAttention,
-    PlaybillOrientClaimCounts,
-    PlaybillOrientDocument,
-    PlaybillOrientInterface,
-    PlaybillOrientInterfaceProvider,
-    PlaybillOrientKind,
-    PlaybillOrientKindDetail,
-    PlaybillOrientPredicate,
-    PlaybillOrientProcedure,
-    PlaybillOrientQuery,
-    PlaybillOrientResult,
-    PlaybillOrientSection,
-    PlaybillOrientSurface,
-    PlaybillOrientYou,
+    ORIENT_ATTENTION_TOP,
+    ORIENT_DEFAULT_LIMIT,
+    ORIENT_DEFAULT_QUERIES,
+    ORIENT_SAMPLE_SUBJECTS,
+    Head,
+    OrientArms,
+    OrientArtifactCounts,
+    OrientAttention,
+    OrientClaimCounts,
+    OrientDocument,
+    OrientInterface,
+    OrientInterfaceProvider,
+    OrientKind,
+    OrientKindDetail,
+    OrientPredicate,
+    OrientProcedure,
+    OrientQuery,
+    OrientResult,
+    OrientSection,
+    OrientSurface,
+    OrientYou,
 )
-from cruxible_client.contracts.policy_rows import PlaybillPolicyInForce
+from cruxible_client.contracts.policy_rows import PolicyInForce
 from cruxible_client.contracts.provider_contracts import ProviderOperationContract
 from cruxible_client.contracts.query.definitions import QueryDefinition
 from cruxible_client.contracts.repairs import RepairOperation
@@ -73,8 +73,8 @@ from cruxible_core.service.discovery.discovery import (
 )
 from cruxible_core.service.discovery.field_names import short_field_name
 from cruxible_core.service.discovery.next import (
+    NextRequest,
     PlaybillNextItemV1,
-    PlaybillNextRequest,
     summarize_playbill_next,
 )
 from cruxible_core.service.discovery.operational import (
@@ -89,8 +89,8 @@ from cruxible_core.service.discovery.runs import run_counts, run_rows
 from cruxible_core.service.identity import authoring_refusal, principal_standing
 from cruxible_core.service.list_pages import (
     ListContinuation,
-    PlaybillListCursorMismatch,
-    PlaybillListCursorStale,
+    ListCursorMismatch,
+    ListCursorStale,
     decode_list_cursor,
     encode_list_cursor,
     list_snapshot,
@@ -152,14 +152,14 @@ class _State:
     subjects_by_kind: dict[str, int]
     evidence: dict[str, tuple[str, ...]]
     digest_named: int
-    procedures: tuple[PlaybillOrientProcedure, ...]
-    documents: tuple[PlaybillOrientDocument, ...]
-    queries: tuple[PlaybillOrientQuery, ...]
-    interfaces: tuple[PlaybillOrientInterface, ...] = ()
+    procedures: tuple[OrientProcedure, ...]
+    documents: tuple[OrientDocument, ...]
+    queries: tuple[OrientQuery, ...]
+    interfaces: tuple[OrientInterface, ...] = ()
 
 
-def _query_row(query: QueryDefinition) -> PlaybillOrientQuery:
-    return PlaybillOrientQuery(
+def _query_row(query: QueryDefinition) -> OrientQuery:
+    return OrientQuery(
         name=query.identity.name,
         description=query.description,
         params=tuple(
@@ -200,7 +200,7 @@ def _first_sentence(text: str) -> str | None:
     return head + "." if separator else text
 
 
-def interface_row(item: AcceptedProviderInterface) -> PlaybillOrientInterface:
+def interface_row(item: AcceptedProviderInterface) -> OrientInterface:
     registration = item.registration
     definition = json.loads(bytes.fromhex(registration.interface_bytes_hex))
     vocabulary = json.loads(bytes.fromhex(registration.vocabulary_bytes_hex))
@@ -210,14 +210,14 @@ def interface_row(item: AcceptedProviderInterface) -> PlaybillOrientInterface:
         definition if stub and isinstance(definition, Mapping) else contracts_block or {}
     )
     description = vocabulary.get("description") if isinstance(vocabulary, Mapping) else None
-    return PlaybillOrientInterface(
+    return OrientInterface(
         name=registration.interface_id,
         description=_first_sentence(description) if isinstance(description, str) else None,
         input=_contract_fields(sides.get("input"), stub=stub),
         output=_contract_fields(sides.get("output"), stub=stub),
         effect=registration.effect_class,
         providers=tuple(
-            PlaybillOrientInterfaceProvider(
+            OrientInterfaceProvider(
                 provider=provider.provider_identity.removeprefix("Provider:"),
                 implementation_digest=provider.implementation_digest,
             )
@@ -259,7 +259,7 @@ def _read_state(instance: PlaybillInstance, coordinate: AcceptedProjectionCoordi
             )
         }
         procedures = tuple(
-            PlaybillOrientProcedure(
+            OrientProcedure(
                 name=item.identity.removeprefix("Procedure:"),
                 lifecycle="retired" if item.lifecycle == "retired" else "live",
                 runnable="directly_runnable" if item.directly_runnable else "binding_required",
@@ -267,7 +267,7 @@ def _read_state(instance: PlaybillInstance, coordinate: AcceptedProjectionCoordi
             for item in sorted(typed.procedure_inventory(), key=lambda item: item.identity)
         )
         documents = tuple(
-            PlaybillOrientDocument(
+            OrientDocument(
                 name=str(identity).removeprefix("document:"),
                 title=str(title),
                 document_kind=str(document_kind),
@@ -277,7 +277,7 @@ def _read_state(instance: PlaybillInstance, coordinate: AcceptedProjectionCoordi
                 "SELECT identity, title, document_kind, media_type FROM documents ORDER BY identity"
             )
         )
-        queries: list[PlaybillOrientQuery] = []
+        queries: list[OrientQuery] = []
         for row in typed.envelopes(kind="query-definition"):
             query = typed.source(row.identity)
             if isinstance(query, QueryDefinition) and query.lifecycle.state == "live":
@@ -361,11 +361,11 @@ def _descriptor(
     evidence: tuple[str, ...],
     full: bool,
     live_claims: int | None = None,
-) -> PlaybillOrientPredicate:
+) -> OrientPredicate:
     value_type, members = _value_type(claim_type)
     freshness = claim_type.evidence_freshness
     requirement = effective_evidence_requirement(claim_type)
-    return PlaybillOrientPredicate(
+    return OrientPredicate(
         name=name,
         predicate=claim_type.predicate,
         cardinality=claim_type.cardinality,
@@ -399,7 +399,7 @@ def _kind_names(state: _State) -> tuple[str, ...]:
     return tuple(sorted(kinds, key=lambda item: item.encode("utf-8")))
 
 
-def _kind_row(state: _State, kind: str) -> PlaybillOrientKind:
+def _kind_row(state: _State, kind: str) -> OrientKind:
     of_kind = [item for item in state.claim_types if kind in item.allowed_subject_kinds]
     names = _short_names((item.predicate for item in of_kind), kind, state)
     predicates = sorted(
@@ -415,7 +415,7 @@ def _kind_row(state: _State, kind: str) -> PlaybillOrientKind:
         key=lambda item: item.name,
     )
     evidence, hoisted = _hoist_evidence(predicates)
-    return PlaybillOrientKind(
+    return OrientKind(
         kind=kind,
         subjects=state.subjects_by_kind.get(kind, 0),
         evidence=evidence,
@@ -424,8 +424,8 @@ def _kind_row(state: _State, kind: str) -> PlaybillOrientKind:
 
 
 def _hoist_evidence(
-    predicates: Sequence[PlaybillOrientPredicate],
-) -> tuple[tuple[str, ...], tuple[PlaybillOrientPredicate, ...]]:
+    predicates: Sequence[OrientPredicate],
+) -> tuple[tuple[str, ...], tuple[OrientPredicate, ...]]:
     """Name the modal set once; ties use byte order, independent of input order."""
 
     counts = Counter(item.evidence for item in predicates if item.evidence is not None)
@@ -483,7 +483,7 @@ def _cli_where(item: Mapping[str, object]) -> str:
     return field
 
 
-def render_orient_call(call: _Call, surface: PlaybillOrientSurface) -> str:
+def render_orient_call(call: _Call, surface: OrientSurface) -> str:
     """One runnable call in the caller's own syntax."""
 
     args = dict(call.args)
@@ -492,13 +492,13 @@ def render_orient_call(call: _Call, surface: PlaybillOrientSurface) -> str:
         return f"{tool}({', '.join(f'{key}={_py(value)}' for key, value in call.args)})"
     if surface == "sdk":
         if call.verb == "evidence_rules_upgrade":
-            return "client.upgrade_playbill_evidence_rules(instance_id)"
+            return "client.upgrade_evidence_rules(instance_id)"
         if call.verb == "next":
-            return "pb.next(expiring_within=Duration.days(count=7))"
+            return "cx.next(expiring_within=Duration.days(count=7))"
         if call.verb == "get":
-            return f"pb.get({_python(args['ref'])})"
+            return f"cx.get({_python(args['ref'])})"
         return (
-            f"pb.{call.verb}("
+            f"cx.{call.verb}("
             + ", ".join(f"{key}={_python(value)}" for key, value in call.args)
             + ")"
         )
@@ -528,11 +528,11 @@ def render_orient_call(call: _Call, surface: PlaybillOrientSurface) -> str:
     return " ".join(parts)
 
 
-def _select_names(kind: PlaybillOrientKind) -> list[str]:
+def _select_names(kind: OrientKind) -> list[str]:
     return [item.name for item in kind.predicates[:3]]
 
 
-def _enum_filter(kind: PlaybillOrientKind) -> dict[str, object] | None:
+def _enum_filter(kind: OrientKind) -> dict[str, object] | None:
     for item in kind.predicates:
         if item.type == "enum" and item.members and item.cardinality == "one":
             return {"field": item.name, "eq": item.members[0]}
@@ -577,11 +577,11 @@ def _attention(
     state: _State,
     caller: OrientCaller | None,
     caller_rung: int | None,
-    surface: PlaybillOrientSurface,
+    surface: OrientSurface,
     caller_tools: tuple[str, ...] | None,
     provider_lane: contracts.ProviderLaneStatus | None = None,
     consumers_running: bool = False,
-) -> tuple[PlaybillOrientAttention, bool]:
+) -> tuple[OrientAttention, bool]:
     notes: list[str] = []
     terminal = instance.descriptor.decommissioned
     if terminal is not None:
@@ -595,11 +595,11 @@ def _attention(
     try:
         queue = summarize_playbill_next(
             instance,
-            request=PlaybillNextRequest(
+            request=NextRequest(
                 at=AcceptedCoordinate.from_internal(coordinate),
                 evaluation_time=evaluation_time,
                 access_profile=_NEXT_PROFILE,
-                limit=contracts.PLAYBILL_NEXT_MAX_LIMIT,
+                limit=contracts.NEXT_MAX_LIMIT,
                 caller_surface=surface,
                 caller_tools=caller_tools,
             ),
@@ -609,7 +609,7 @@ def _attention(
         )
         items, total = queue.items, queue.total_items
         reused = queue.matching_item
-    except PlaybillError as exc:
+    except CruxibleError as exc:
         code = getattr(exc, "error_code", None) or getattr(exc, "code", None)
         notes.append(f"the next queue could not be read: {code or type(exc).__name__}")
     upgrade = False
@@ -635,10 +635,10 @@ def _attention(
         )
     open_proposals = len(service_list_playbill_proposals(instance, status="open").entries)
     return (
-        PlaybillOrientAttention(
+        OrientAttention(
             next_items=total,
             open_proposals=open_proposals,
-            top=tuple(_line(item) for item in items[:PLAYBILL_ORIENT_ATTENTION_TOP]),
+            top=tuple(_line(item) for item in items[:ORIENT_ATTENTION_TOP]),
             notes=tuple(notes),
             arms=arms,
         ),
@@ -646,7 +646,7 @@ def _attention(
     )
 
 
-def _arms(instance: PlaybillInstance, *, evaluation_time: datetime) -> PlaybillOrientArms | None:
+def _arms(instance: PlaybillInstance, *, evaluation_time: datetime) -> OrientArms | None:
     """Every Line's latest arm as the Line consumer reports it, read from the instance alone."""
 
     from cruxible_core.consumers.lines import LINE_STALL_AFTER
@@ -661,15 +661,15 @@ def _arms(instance: PlaybillInstance, *, evaluation_time: datetime) -> PlaybillO
         for state, arm in health
         if state != "running"
     ]
-    return PlaybillOrientArms(
+    return OrientArms(
         running=counts["running"],
         stalled=counts["stalled"],
         stopped=counts["stopped"],
-        needs_attention=tuple(flagged[:PLAYBILL_ORIENT_ATTENTION_TOP]),
+        needs_attention=tuple(flagged[:ORIENT_ATTENTION_TOP]),
     )
 
 
-def _you(caller: OrientCaller | None, *, instance: PlaybillInstance) -> PlaybillOrientYou:
+def _you(caller: OrientCaller | None, *, instance: PlaybillInstance) -> OrientYou:
     """Whether the caller can author, with the same refusal whoami and authoring give."""
 
     actor_id = None if caller is None else caller.actor_id
@@ -685,7 +685,7 @@ def _you(caller: OrientCaller | None, *, instance: PlaybillInstance) -> Playbill
         ),
     )
     active = actor_id is not None and principal_standing(instance, actor_id) == "active"
-    return PlaybillOrientYou(
+    return OrientYou(
         actor=actor_id,
         principal=actor_id if active else None,
         can_author=refusal is None,
@@ -711,8 +711,8 @@ def _continuation(
         at is not None
         and AcceptedCoordinate.from_internal(resolve_read_coordinate(instance, at)) != pinned
     ):
-        raise PlaybillListCursorMismatch(
-            f"{PlaybillListCursorMismatch.error_code}: the cursor continues a different "
+        raise ListCursorMismatch(
+            f"{ListCursorMismatch.error_code}: the cursor continues a different "
             "coordinate; orient again without a cursor"
         )
     return continuation, pinned
@@ -765,11 +765,11 @@ def service_playbill_head(
     instance: PlaybillInstance,
     *,
     at: AcceptedCoordinate | str | None = None,
-) -> PlaybillHead:
+) -> Head:
     """The accepted head (or ``at``) as a coordinate and its generation; nothing else."""
 
     coordinate = resolve_read_coordinate(instance, at)
-    return PlaybillHead(
+    return Head(
         instance=instance.descriptor.instance_id,
         coordinate=AcceptedCoordinate.from_internal(coordinate),
         generation=_generation(instance, coordinate),
@@ -780,18 +780,18 @@ def service_playbill_orient(
     instance: PlaybillInstance,
     *,
     kind: str | None = None,
-    section: PlaybillOrientSection | None = None,
-    limit: int = PLAYBILL_ORIENT_DEFAULT_LIMIT,
+    section: OrientSection | None = None,
+    limit: int = ORIENT_DEFAULT_LIMIT,
     cursor: str | None = None,
     at: AcceptedCoordinate | str | None = None,
     evaluation_time: datetime | None = None,
-    surface: PlaybillOrientSurface = "cli",
+    surface: OrientSurface = "cli",
     caller: OrientCaller | None = None,
     caller_rung: int | None = None,
     caller_tools: tuple[str, ...] | None = None,
     provider_lane: contracts.ProviderLaneStatus | None = None,
     consumers_running: bool = False,
-) -> PlaybillOrientResult:
+) -> OrientResult:
     """Answer one orient read at one accepted coordinate.
 
     The runtime supplies its effective authenticated ``caller_rung``, just as
@@ -848,7 +848,7 @@ def service_playbill_orient(
             )
         if detail.sample_subject_ids:
             calls.append(_Call("get", (("ref", f"{kind}/{detail.sample_subject_ids[0]}"),)))
-        return PlaybillOrientResult(
+        return OrientResult(
             **base,
             kind_detail=detail,
             next=tuple(render_orient_call(call, surface) for call in calls),
@@ -893,7 +893,7 @@ def service_playbill_orient(
         base[section] = page
         if section in _LIVE_SECTIONS:
             base["live"] = live_view(instance, _LIVE_SECTIONS[section])
-        return PlaybillOrientResult(
+        return OrientResult(
             **base,
             section=section,
             truncated=next_cursor is not None,
@@ -914,7 +914,7 @@ def service_playbill_orient(
         # A continuation page carries only the next kinds; the rest was on page one.
         if next_cursor is not None:
             calls.append(_Call("orient", (("cursor", next_cursor),)))
-        return PlaybillOrientResult(
+        return OrientResult(
             **base,
             kinds=kinds_page,
             truncated=next_cursor is not None,
@@ -944,7 +944,7 @@ def service_playbill_orient(
         calls.append(_Call("next"))
     if upgrade:
         calls.append(_Call("evidence_rules_upgrade"))
-    if len(state.queries) > PLAYBILL_ORIENT_DEFAULT_QUERIES:
+    if len(state.queries) > ORIENT_DEFAULT_QUERIES:
         calls.append(_Call("orient", (("section", "queries"),)))
     if state.interfaces:
         calls.append(_Call("orient", (("section", "interfaces"),)))
@@ -971,11 +971,11 @@ def service_playbill_orient(
                 if present
             ),
         )
-    return PlaybillOrientResult(
+    return OrientResult(
         **base,
         you=_you(caller, instance=instance),
         kinds=kinds_page,
-        artifacts=PlaybillOrientArtifactCounts(
+        artifacts=OrientArtifactCounts(
             claim_types=len(state.claim_types),
             procedures=live_procedures,
             documents=len(state.documents),
@@ -984,7 +984,7 @@ def service_playbill_orient(
             **counts,
             claims=_claim_counts(instance, coordinate, evaluation_time=moment),
         ),
-        queries=state.queries[:PLAYBILL_ORIENT_DEFAULT_QUERIES],
+        queries=state.queries[:ORIENT_DEFAULT_QUERIES],
         attention=attention,
         truncated=next_cursor is not None,
         next_cursor=next_cursor,
@@ -1008,14 +1008,14 @@ def _claim_counts(
     coordinate: AcceptedProjectionCoordinate,
     *,
     evaluation_time: datetime,
-) -> PlaybillOrientClaimCounts:
+) -> OrientClaimCounts:
     """Every accepted Claim counted by status, from the remembered resolution when it holds.
 
     The ``next`` fold just derived the same statuses at this coordinate, so a
     warm memo answers from the index alone; a miss derives them once.
     """
 
-    from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+    from cruxible_core.service.authoring.documents import AcceptedCoordinate
     from cruxible_core.service.discovery.claim_status import (
         claim_resolution_statuses,
         remembered_resolution_statuses,
@@ -1029,7 +1029,7 @@ def _claim_counts(
                 "SELECT identity FROM claims ORDER BY identity"
             )
         )
-    at = PlaybillAcceptedCoordinate.from_internal(coordinate)
+    at = AcceptedCoordinate.from_internal(coordinate)
     statuses = remembered_resolution_statuses(
         instance, identities=identities, at=at, evaluation_time=evaluation_time
     )
@@ -1043,7 +1043,7 @@ def _claim_counts(
             read_context=context,
         )
     counts = Counter(statuses.values())
-    return PlaybillOrientClaimCounts(
+    return OrientClaimCounts(
         accepted=counts["accepted"],
         conflicted=counts["conflicted"],
         overturned=counts["overturned"],
@@ -1114,10 +1114,10 @@ def _governance_rows(
     from cruxible_core.service.claims.policies import service_playbill_policies_in_force
 
     policies = tuple(
-        PlaybillPolicyInForce.model_validate(row.model_dump(mode="json"))
+        PolicyInForce.model_validate(row.model_dump(mode="json"))
         for row in service_playbill_policies_in_force(
             instance,
-            at=contracts.PlaybillAcceptedCoordinate.model_validate(
+            at=contracts.AcceptedCoordinate.model_validate(
                 AcceptedCoordinate.from_internal(coordinate).model_dump(mode="json")
             ),
         ).policies
@@ -1171,12 +1171,12 @@ def _captures_section(
     served: AcceptedCoordinate,
     continuation: ListContinuation | None,
     limit: int,
-    surface: PlaybillOrientSurface,
-) -> PlaybillOrientResult:
+    surface: OrientSurface,
+) -> OrientResult:
     after = _keyset_after(continuation)
     if after is not None and (len(after) != 2 or not after[0].isdigit()):
-        raise PlaybillListCursorMismatch(
-            f"{PlaybillListCursorMismatch.error_code}: the cursor is malformed; "
+        raise ListCursorMismatch(
+            f"{ListCursorMismatch.error_code}: the cursor is malformed; "
             "orient again without a cursor"
         )
     rows, stop = capture_rows(
@@ -1193,7 +1193,7 @@ def _captures_section(
     calls = [_Call("get", (("ref", rows[0].capture),))] if rows else []
     if next_cursor is not None:
         calls.append(_Call("orient", (("section", "captures"), ("cursor", next_cursor))))
-    return PlaybillOrientResult(
+    return OrientResult(
         **base,
         section="captures",
         captures=rows,
@@ -1224,8 +1224,8 @@ def _keyset_after(continuation: ListContinuation | None) -> tuple[str, ...] | No
     if continuation is None:
         return None
     if continuation.snapshot != _KEYSET:
-        raise PlaybillListCursorMismatch(
-            f"{PlaybillListCursorMismatch.error_code}: the cursor does not continue this "
+        raise ListCursorMismatch(
+            f"{ListCursorMismatch.error_code}: the cursor does not continue this "
             "listing; orient again without a cursor"
         )
     return continuation.last_key
@@ -1239,8 +1239,8 @@ def _runs_section(
     served: AcceptedCoordinate,
     continuation: ListContinuation | None,
     limit: int,
-    surface: PlaybillOrientSurface,
-) -> PlaybillOrientResult:
+    surface: OrientSurface,
+) -> OrientResult:
     """Procedure runs newest admission first; ``running`` keeps only runs still running.
 
     The order never depends on a run's status, which changes as runs finish,
@@ -1249,8 +1249,8 @@ def _runs_section(
 
     after = _keyset_after(continuation)
     if after is not None and (len(after) != 2 or not after[1].isdigit()):
-        raise PlaybillListCursorMismatch(
-            f"{PlaybillListCursorMismatch.error_code}: the cursor is malformed; "
+        raise ListCursorMismatch(
+            f"{ListCursorMismatch.error_code}: the cursor is malformed; "
             "orient again without a cursor"
         )
     try:
@@ -1261,8 +1261,8 @@ def _runs_section(
             after=None if after is None else (after[0], int(after[1])),
         )
     except RunPageInvalidated as exc:
-        raise PlaybillListCursorStale(
-            f"{PlaybillListCursorStale.error_code}: {exc}; orient again without a cursor"
+        raise ListCursorStale(
+            f"{ListCursorStale.error_code}: {exc}; orient again without a cursor"
         ) from exc
     next_cursor = (
         None
@@ -1272,7 +1272,7 @@ def _runs_section(
     calls = [_Call("get", (("ref", f"ProcedureRun:{rows[0].run}"),))] if rows else []
     if next_cursor is not None:
         calls.append(_Call("orient", (("section", section), ("cursor", next_cursor))))
-    return PlaybillOrientResult(
+    return OrientResult(
         **base,
         section=section,
         live=live_view(instance, ("runs",)),
@@ -1288,7 +1288,7 @@ def _kind_detail(
     coordinate: AcceptedProjectionCoordinate,
     state: _State,
     kind: str,
-) -> PlaybillOrientKindDetail:
+) -> OrientKindDetail:
     known = _kind_names(state)
     if kind not in known:
         raise _kind_not_found(kind, known)
@@ -1310,7 +1310,7 @@ def _kind_detail(
             for (subject_id,) in connection.execute(
                 "SELECT subject_id FROM subjects WHERE subject_kind=? AND lifecycle='live' "
                 "ORDER BY subject_id LIMIT ?",
-                (kind, PLAYBILL_ORIENT_SAMPLE_SUBJECTS),
+                (kind, ORIENT_SAMPLE_SUBJECTS),
             )
         )
     predicates = sorted(
@@ -1327,7 +1327,7 @@ def _kind_detail(
         key=lambda item: item.name,
     )
     evidence, hoisted = _hoist_evidence(predicates)
-    return PlaybillOrientKindDetail(
+    return OrientKindDetail(
         kind=kind,
         subjects=state.subjects_by_kind.get(kind, 0),
         evidence=evidence,
@@ -1373,9 +1373,7 @@ def _reverse_follow(state: _State, kind: str) -> dict[str, str] | None:
     return None
 
 
-def _section_rows(
-    state: _State, section: PlaybillOrientSection
-) -> tuple[tuple[Any, ...], list[str], Any]:
+def _section_rows(state: _State, section: OrientSection) -> tuple[tuple[Any, ...], list[str], Any]:
     if section == "documents":
         return (
             state.documents,

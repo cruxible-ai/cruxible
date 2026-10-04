@@ -15,7 +15,7 @@ def test_metadata_batch_is_bounded_and_does_not_read_claim_verdicts():
     calls = []
 
     class Client:
-        def get_playbill_claim_backings(self, instance_id, *, claim_ids, at):
+        def get_claim_backings(self, instance_id, *, claim_ids, at):
             assert instance_id == "instance"
             assert at == OLD_COORDINATE.model_dump(mode="json")
             calls.append(claim_ids)
@@ -30,7 +30,7 @@ def test_metadata_batch_is_bounded_and_does_not_read_claim_verdicts():
                 ),
             )
 
-        def playbill_get(self, *args, **kwargs):
+        def get(self, *args, **kwargs):
             raise AssertionError("stamping must not materialize a verdict")
 
     names = tuple("CLM-" + f"{i:032x}" for i in range(300))
@@ -48,7 +48,7 @@ def test_metadata_batch_is_bounded_and_does_not_read_claim_verdicts():
 @pytest.mark.parametrize("bad_coordinate", [False, True])
 def test_incomplete_or_mixed_coordinate_backing_batch_refuses(bad_coordinate):
     class Client:
-        def get_playbill_claim_backings(self, *args, **kwargs):
+        def get_claim_backings(self, *args, **kwargs):
             return SimpleNamespace(
                 coordinate=NEW_COORDINATE if bad_coordinate else OLD_COORDINATE, backings=()
             )

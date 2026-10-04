@@ -14,7 +14,7 @@ from cruxible_client.contracts.candidates import (
     canonical_candidate_timestamp,
 )
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.procedure_mandates import ProcedureMandateAny
 from cruxible_client.contracts.proposal_models import ProposalSettleSubmission
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from cruxible_core.procedures.nested import ProcedureDelegation
 
 
-class EffectfulTerminalError(PlaybillFormatError):
+class EffectfulTerminalError(FormatError):
     """An effectful terminal cannot traverse the governed service door."""
 
 

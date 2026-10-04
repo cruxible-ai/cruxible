@@ -17,7 +17,7 @@ import sqlite3
 
 from cruxible_client.contracts.captures import AcceptedCaptureContract
 from cruxible_client.contracts.claim_types import ClaimType
-from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRule
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -61,7 +61,7 @@ class CaptureContractNames:
         if digest not in self._versions:
             try:
                 found = self._instance.accepted_capture_contract_version(self._at, digest)
-            except PlaybillError:
+            except CruxibleError:
                 found = None
             self._versions[digest] = found
         return self._versions[digest]

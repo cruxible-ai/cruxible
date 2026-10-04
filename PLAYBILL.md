@@ -1,4 +1,4 @@
-# Playbill declared blocks
+# Cruxible declared blocks
 
 Governed knowledge lives in the accepted ledger. Ordinary Markdown may declare
 that an agent-written passage reflects one or more accepted Claims or named

@@ -27,7 +27,7 @@ from cruxible_core.service.claims.claims import (
 )
 from cruxible_core.service.discovery.next import (
     MAX_DEPENDENCY_LINEAGE_NODES,
-    PlaybillNextRequest,
+    NextRequest,
     _attestation_claim_lineage,
     _AttestationLineageArtifact,
 )
@@ -95,7 +95,7 @@ def _door_rows(instance):  # type: ignore[no-untyped-def]
         item
         for item in unfolded_next(
             instance,
-            request=PlaybillNextRequest(
+            request=NextRequest(
                 evaluation_time=RECORDED_AT,
                 access_profile=_access(),
             ),

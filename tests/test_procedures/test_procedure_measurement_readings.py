@@ -35,8 +35,8 @@ from cruxible_client.contracts.claims import (
     parse_claim,
 )
 from cruxible_client.contracts.errors import (
-    PlaybillCasError,
-    PlaybillFormatError,
+    CasError,
+    FormatError,
     ProjectionIntegrityError,
 )
 from cruxible_client.contracts.procedure_mandates import (
@@ -81,8 +81,8 @@ from cruxible_client.contracts.procedures.models import (
     iter_pin_bindings,
 )
 from cruxible_client.contracts.procedures.readings import (
-    PlaybillProcedureMeasureRequest,
-    PlaybillProcedureReadingsRequest,
+    ProcedureMeasureRequest,
+    ProcedureReadingsRequest,
 )
 from cruxible_client.contracts.query.definitions import query_definition_digest
 from cruxible_core.governance.actor_context import GovernedActorContext
@@ -95,7 +95,7 @@ from cruxible_core.procedures.resolution import (
     derive_resolution_activations,
     resolution_contract_partition_id,
 )
-from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+from cruxible_core.service.authoring.documents import AcceptedCoordinate
 from cruxible_core.service.evidence.claim_attestations import service_append_claim_attestation
 from cruxible_core.service.evidence.evidence import service_evaluate_playbill_claim_verdict
 from cruxible_core.service.procedures import measurements as measurements
@@ -485,7 +485,7 @@ def _measure(  # type: ignore[no-untyped-def]
     return service_measure_playbill_procedure(
         instance,
         name=procedure.identity.name,
-        request=PlaybillProcedureMeasureRequest(
+        request=ProcedureMeasureRequest(
             run_id=run_id,
             measurement_names=tuple(sorted(names)),
             evaluation_time=at,
@@ -642,7 +642,7 @@ def test_retry_replays_the_standing_resolution_and_reading(tmp_path: Path) -> No
     listed = service_list_playbill_procedure_readings(
         instance,
         name=procedure.identity.name,
-        request=PlaybillProcedureReadingsRequest(measurement_names=("rows-present",)),
+        request=ProcedureReadingsRequest(measurement_names=("rows-present",)),
         evaluation_time=RECORD_AT,
     )
     assert len(listed.readings) == 1
@@ -679,7 +679,7 @@ def test_crash_between_resolution_and_reading_resumes_at_the_reading(
     listed = service_list_playbill_procedure_readings(
         instance,
         name=procedure.identity.name,
-        request=PlaybillProcedureReadingsRequest(),
+        request=ProcedureReadingsRequest(),
         evaluation_time=RECORD_AT,
     )
     assert [row.measurement_name for row in listed.readings] == ["rows-present"]
@@ -699,7 +699,7 @@ def test_two_runs_each_earn_one_reading_and_a_repeated_key_never_doubles(
     listed = service_list_playbill_procedure_readings(
         instance,
         name=procedure.identity.name,
-        request=PlaybillProcedureReadingsRequest(),
+        request=ProcedureReadingsRequest(),
         evaluation_time=RECORD_AT,
     )
     assert sorted(row.run_id for row in listed.readings) == sorted(  # type: ignore[type-var]
@@ -775,7 +775,7 @@ def test_overturn_reopens_the_contract_and_the_old_key_refuses_a_new_answer(
     listed = service_list_playbill_procedure_readings(
         instance,
         name=procedure.identity.name,
-        request=PlaybillProcedureReadingsRequest(measurement_names=("rows-present",)),
+        request=ProcedureReadingsRequest(measurement_names=("rows-present",)),
         evaluation_time=RECORD_AT + timedelta(minutes=6),
     )
     contract = listed.contracts[0]
@@ -817,7 +817,7 @@ def test_run_not_final_and_run_mismatch_are_explicit(tmp_path: Path) -> None:
         service_measure_playbill_procedure(
             instance,
             name=procedure.identity.name,
-            request=PlaybillProcedureMeasureRequest(run_id="RUN-" + "0" * 64),
+            request=ProcedureMeasureRequest(run_id="RUN-" + "0" * 64),
             actor_context=_actor(instance),
             recorded_at=RECORD_AT,
         )
@@ -906,7 +906,7 @@ def test_truncated_query_is_indeterminate_and_retains_a_reconstructable_receipt(
     retained = load_retained_query_receipt(instance, record_digest=str(proof["digest"]))
     assert retained.receipt.truncation.candidate_result_count == 2
     assert reconstruct_query_evidence(instance, evidence=retained)
-    with pytest.raises(PlaybillFormatError):
+    with pytest.raises(FormatError):
         load_retained_query_receipt(instance, record_digest="sha256:" + "f" * 64)
 
 
@@ -921,14 +921,14 @@ def test_readings_inspection_is_bounded_paginated_and_never_writes(tmp_path: Pat
     first = service_list_playbill_procedure_readings(
         instance,
         name=procedure.identity.name,
-        request=PlaybillProcedureReadingsRequest(limit=4),
+        request=ProcedureReadingsRequest(limit=4),
         evaluation_time=RECORD_AT,
     )
     assert len(first.readings) == 4 and first.truncated and first.cursor
     second = service_list_playbill_procedure_readings(
         instance,
         name=procedure.identity.name,
-        request=PlaybillProcedureReadingsRequest(limit=4, cursor=first.cursor),
+        request=ProcedureReadingsRequest(limit=4, cursor=first.cursor),
         evaluation_time=RECORD_AT,
     )
     assert len(second.readings) == 2 and not second.truncated
@@ -937,18 +937,16 @@ def test_readings_inspection_is_bounded_paginated_and_never_writes(tmp_path: Pat
     only_run = service_list_playbill_procedure_readings(
         instance,
         name=procedure.identity.name,
-        request=PlaybillProcedureReadingsRequest(run_id=runs[1].run_id),
+        request=ProcedureReadingsRequest(run_id=runs[1].run_id),
         evaluation_time=RECORD_AT,
     )
     assert {row.run_id for row in only_run.readings} == {runs[1].run_id}
     assert journal.partition_ids(stream) == partitions_before
-    with pytest.raises(PlaybillFormatError):
+    with pytest.raises(FormatError):
         service_list_playbill_procedure_readings(
             instance,
             name=procedure.identity.name,
-            request=PlaybillProcedureReadingsRequest(
-                run_id=runs[0].run_id, limit=4, cursor=first.cursor
-            ),
+            request=ProcedureReadingsRequest(run_id=runs[0].run_id, limit=4, cursor=first.cursor),
             evaluation_time=RECORD_AT,
         )
 
@@ -1120,7 +1118,7 @@ def test_a_warm_index_never_vouches_for_a_body_cas_cannot_show(tmp_path: Path) -
     warm = service_list_playbill_procedure_readings(
         instance,
         name=procedure.identity.name,
-        request=PlaybillProcedureReadingsRequest(),
+        request=ProcedureReadingsRequest(),
         evaluation_time=RECORD_AT,
     )
     assert len(warm.readings) == 1
@@ -1132,14 +1130,14 @@ def test_a_warm_index_never_vouches_for_a_body_cas_cannot_show(tmp_path: Path) -
     body_path.write_bytes(b"corrupted")
 
     # Warm inspection and warm retry both refuse exactly as a cold process does.
-    with pytest.raises(PlaybillCasError):
+    with pytest.raises(CasError):
         service_list_playbill_procedure_readings(
             instance,
             name=procedure.identity.name,
-            request=PlaybillProcedureReadingsRequest(),
+            request=ProcedureReadingsRequest(),
             evaluation_time=RECORD_AT,
         )
-    with pytest.raises(PlaybillCasError):
+    with pytest.raises(CasError):
         _measure(instance, procedure, run_id=run.run_id, names=("rows-present",))
     assert len(_reading_records(instance, procedure)) == 1
 
@@ -1147,7 +1145,7 @@ def test_a_warm_index_never_vouches_for_a_body_cas_cannot_show(tmp_path: Path) -
     restored = service_list_playbill_procedure_readings(
         instance,
         name=procedure.identity.name,
-        request=PlaybillProcedureReadingsRequest(),
+        request=ProcedureReadingsRequest(),
         evaluation_time=RECORD_AT,
     )
     assert [row.reading_id for row in restored.readings] == [warm.readings[0].reading_id]
@@ -1164,7 +1162,7 @@ def test_a_cursor_continues_the_first_pages_selection_under_a_moving_clock(
     first = service_list_playbill_procedure_readings(
         instance,
         name=procedure.identity.name,
-        request=PlaybillProcedureReadingsRequest(limit=4),
+        request=ProcedureReadingsRequest(limit=4),
         evaluation_time=RECORD_AT,
     )
     assert first.truncated and first.cursor
@@ -1173,20 +1171,18 @@ def test_a_cursor_continues_the_first_pages_selection_under_a_moving_clock(
     second = service_list_playbill_procedure_readings(
         instance,
         name=procedure.identity.name,
-        request=PlaybillProcedureReadingsRequest(limit=4, cursor=first.cursor),
+        request=ProcedureReadingsRequest(limit=4, cursor=first.cursor),
         evaluation_time=RECORD_AT + timedelta(hours=3),
     )
     assert second.observation_time == first.observation_time == RECORD_AT
     assert second.observation_coordinate == first.observation_coordinate
     assert not second.truncated
     assert len({row.reading_id for row in (*first.readings, *second.readings)}) == 6
-    with pytest.raises(PlaybillFormatError):
+    with pytest.raises(FormatError):
         service_list_playbill_procedure_readings(
             instance,
             name=procedure.identity.name,
-            request=PlaybillProcedureReadingsRequest(
-                run_id=runs[0].run_id, limit=4, cursor=first.cursor
-            ),
+            request=ProcedureReadingsRequest(run_id=runs[0].run_id, limit=4, cursor=first.cursor),
             evaluation_time=RECORD_AT,
         )
 
@@ -1235,7 +1231,7 @@ def test_a_claim_statement_resolution_retains_the_observation_that_produced_it(
         instance,
         claim_identity=account.claim_identity,
         evaluation_time=account.observation_time,
-        at=PlaybillAcceptedCoordinate.model_validate(
+        at=AcceptedCoordinate.model_validate(
             account.observation_coordinate.model_dump(mode="json")
         ),
     )
@@ -1456,7 +1452,7 @@ def test_a_real_line_occurrence_is_credited_once_per_occurrence(tmp_path: Path) 
     listed = service_list_playbill_procedure_readings(
         instance,
         name=procedure.identity.name,
-        request=PlaybillProcedureReadingsRequest(run_id=second.run_id),
+        request=ProcedureReadingsRequest(run_id=second.run_id),
         evaluation_time=RECORD_AT + timedelta(minutes=31),
     )
     assert [row.run_id for row in listed.readings] == [second.run_id]

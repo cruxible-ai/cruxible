@@ -45,7 +45,7 @@ def test_document_adapter_does_not_change_frozen_document_bytes_or_digest() -> N
     shell = DocumentShell(
         identity="document:design",
         document_kind="design",
-        title="Playbill design",
+        title="Cruxible design",
         media_type="text/markdown",
         body_digest="sha256:" + "22" * 32,
         pins=(

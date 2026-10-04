@@ -1,4 +1,4 @@
-"""Client request parity for the deterministic Playbill next queue."""
+"""Client request parity for the deterministic Cruxible next queue."""
 
 from __future__ import annotations
 
@@ -84,7 +84,7 @@ def test_client_sends_explicit_time_access_and_workspace_observation() -> None:
         )
 
     client = _client(handler)
-    result = client.next_playbill(
+    result = client.next(
         "inst",
         evaluation_time="2026-08-24T18:00:00Z",
         access_profile={
@@ -137,7 +137,7 @@ def test_client_parses_v2_delta_removal_classification() -> None:
 
     client = _client(handler)
 
-    result = client.next_playbill(
+    result = client.next(
         "inst",
         evaluation_time="2026-08-24T18:00:00Z",
         access_profile={
@@ -208,7 +208,7 @@ def test_client_parses_typed_rows_findings_and_status() -> None:
         "result_digest": "sha256:" + "7" * 64,
         "attestation_head_digest": "sha256:" + "8" * 64,
     }
-    result = _client(lambda _request: httpx.Response(200, json=body)).next_playbill(
+    result = _client(lambda _request: httpx.Response(200, json=body)).next(
         "inst",
         evaluation_time="2026-08-24T18:00:00Z",
         access_profile={
@@ -220,7 +220,7 @@ def test_client_parses_typed_rows_findings_and_status() -> None:
     )
 
     (row,) = result.items
-    assert isinstance(row, contracts.PlaybillNextItem)
+    assert isinstance(row, contracts.NextItem)
     assert (row.severity, row.reason, row.related_identities) == (
         "repair",
         "projection_dirty",
@@ -238,7 +238,7 @@ def test_client_parses_typed_rows_findings_and_status() -> None:
     assert result.status.instance.repair is None
     # A row standing alone keeps its bytes: empty findings stay off the wire.
     assert "findings" not in _item(item_id)
-    lone = contracts.PlaybillNextItem.model_validate(_item(item_id))
+    lone = contracts.NextItem.model_validate(_item(item_id))
     assert "findings" not in lone.model_dump(mode="json")
     assert result.model_dump(mode="json")["items"][0]["findings"][0]["reason"] == (
         "projection_backing_stale"
@@ -257,14 +257,14 @@ def test_client_parses_typed_rows_findings_and_status() -> None:
 )
 def test_client_refuses_an_untyped_row(change: dict[str, Any]) -> None:
     with pytest.raises(ValidationError):
-        contracts.PlaybillNextItem.model_validate(_item("sha256:" + "6" * 64) | change)
+        contracts.NextItem.model_validate(_item("sha256:" + "6" * 64) | change)
 
 
 def test_client_status_requires_every_facet() -> None:
     status = dict(HEALTHY_STATUS)
     status.pop("procedure_catalog")
     with pytest.raises(ValidationError):
-        contracts.PlaybillNextStatus.model_validate(status)
+        contracts.NextStatus.model_validate(status)
 
 
 def test_client_sends_a_page_size_and_cursor_and_reads_the_page() -> None:
@@ -293,7 +293,7 @@ def test_client_sends_a_page_size_and_cursor_and_reads_the_page() -> None:
             },
         )
 
-    result = _client(handler).next_playbill(
+    result = _client(handler).next(
         "inst",
         evaluation_time="2026-08-24T18:00:00Z",
         access_profile={
@@ -322,6 +322,6 @@ def test_client_refuses_an_incoherent_page() -> None:
         "result_digest": "sha256:" + "5" * 64,
     }
     with pytest.raises(ValidationError, match="more rows than its answer"):
-        contracts.PlaybillNextResult.model_validate(body | {"total_items": 0})
+        contracts.NextResult.model_validate(body | {"total_items": 0})
     with pytest.raises(ValidationError, match="no further page"):
-        contracts.PlaybillNextResult.model_validate(body | {"total_items": 1, "next_cursor": "x"})
+        contracts.NextResult.model_validate(body | {"total_items": 1, "next_cursor": "x"})

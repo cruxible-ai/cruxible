@@ -89,7 +89,7 @@ def change_set_summary(
     if rationale is not None:
         return rationale
     if not members:
-        return "Record Playbill proposal"
+        return "Record proposal"
     if len(members) == 1:
         return member_line(members[0])
     return f"Propose {len(members)} members: {_kind_tally(members)}"
@@ -149,7 +149,7 @@ def generation_commit_message(
     settled commit and the proposal it settles read as the same change set.
     """
 
-    return _message(f"Accept Playbill generation {sequence}", members)
+    return _message(f"Accept generation {sequence}", members)
 
 
 __all__ = [

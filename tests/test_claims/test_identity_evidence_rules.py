@@ -802,7 +802,7 @@ def test_the_upgrade_leaves_producer_reducer_allowlists_for_a_decision() -> None
 
 
 def test_a_kit_carries_the_contracts_its_identity_rules_name() -> None:
-    from cruxible_client.contracts.kits import PlaybillKitBuildRequest
+    from cruxible_client.contracts.kits import KitBuildRequest
     from cruxible_core.service.kits import build_kit
 
     identity_type = _v6_type().model_copy(
@@ -816,9 +816,7 @@ def test_a_kit_carries_the_contracts_its_identity_rules_name() -> None:
         claim_type_path(identity_type.predicate): render_claim_type(identity_type),
         CONTRACT_PATH: render_capture_contract(ORIGINAL),
     }
-    bundle = build_kit(
-        tree, PlaybillKitBuildRequest(kit_id="acme", version="1.0.0", owns=("acme.",))
-    )
+    bundle = build_kit(tree, KitBuildRequest(kit_id="acme", version="1.0.0", owns=("acme.",)))
     assert {item.path for item in bundle.manifest.artifacts} == {
         claim_type_path(identity_type.predicate),
         CONTRACT_PATH,
@@ -826,7 +824,7 @@ def test_a_kit_carries_the_contracts_its_identity_rules_name() -> None:
 
 
 def test_an_identity_reference_never_makes_a_kit_cycle() -> None:
-    from cruxible_client.contracts.kits import PlaybillKitBuildRequest
+    from cruxible_client.contracts.kits import KitBuildRequest
     from cruxible_core.service.kits import build_kit
 
     identity_type = _v6_type().model_copy(
@@ -859,9 +857,7 @@ def test_an_identity_reference_never_makes_a_kit_cycle() -> None:
         claim_type_path(identity_type.predicate): render_claim_type(identity_type),
         CONTRACT_PATH: render_capture_contract(pinning),
     }
-    bundle = build_kit(
-        tree, PlaybillKitBuildRequest(kit_id="acme", version="1.0.0", owns=("acme.",))
-    )
+    bundle = build_kit(tree, KitBuildRequest(kit_id="acme", version="1.0.0", owns=("acme.",)))
     assert {item.path for item in bundle.manifest.artifacts} == set(tree)
 
 

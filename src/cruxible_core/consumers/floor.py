@@ -19,14 +19,14 @@ from typing import Any, cast
 
 from cruxible_client import contracts
 from cruxible_client.authoring.workspace import (
-    PlaybillWorkspaceError,
+    WorkspaceError,
     configured_floor_output,
     sync_floor_directory,
     write_projection_index,
 )
 from cruxible_client.contracts.floor import (
-    PlaybillFloorHead,
-    PlaybillFloorManifest,
+    FloorHead,
+    FloorManifest,
     floor_manifest_digest,
     seal_floor_delta,
 )
@@ -71,7 +71,7 @@ def _floor_directory(workspace: str) -> tuple[Path, Path]:
     registered = Path(workspace)
     root = registered.resolve(strict=True)
     if registered.is_symlink() or str(registered.absolute()).casefold() != str(root).casefold():
-        raise PlaybillWorkspaceError("floor delivery refuses a symlinked workspace root")
+        raise WorkspaceError("floor delivery refuses a symlinked workspace root")
     floor = root / ".playbill" / "floor"
     # Check the real on-disk spellings too: a differently cased symlink is
     # still the same path on the local case-insensitive filesystem.
@@ -83,11 +83,11 @@ def _floor_directory(workspace: str) -> tuple[Path, Path]:
             else [child for child in parent.iterdir() if child.name.casefold() == name.casefold()]
         )
         if any(child.is_symlink() for child in matches):
-            raise PlaybillWorkspaceError("floor delivery refuses symlinked workspace components")
+            raise WorkspaceError("floor delivery refuses symlinked workspace components")
         parent = parent / name
     resolved = floor.resolve(strict=False)
     if not resolved.is_relative_to(root) or resolved == root:
-        raise PlaybillWorkspaceError("floor delivery escapes the registered workspace")
+        raise WorkspaceError("floor delivery escapes the registered workspace")
     return root, floor
 
 
@@ -114,14 +114,14 @@ def _progress(instance: Any) -> tuple[int, str, str | None, str | None] | None:
         )
 
 
-def floor_outcomes(instance: Any) -> tuple[contracts.PlaybillFloorConsumerOutcome, ...]:
+def floor_outcomes(instance: Any) -> tuple[contracts.FloorConsumerOutcome, ...]:
     """The latest refresh outcome; health needs no per-generation history."""
 
     with _STATE.open(instance, create=False) as connection:
         if connection is None:
             return ()
         return tuple(
-            contracts.PlaybillFloorConsumerOutcome.model_validate_json(payload)
+            contracts.FloorConsumerOutcome.model_validate_json(payload)
             for (payload,) in connection.execute(
                 "SELECT payload FROM outcomes ORDER BY sequence DESC LIMIT 1"
             )
@@ -129,19 +129,19 @@ def floor_outcomes(instance: Any) -> tuple[contracts.PlaybillFloorConsumerOutcom
 
 
 def _included_floor(
-    instance: Any, head: Any, include: tuple[contracts.PlaybillFloorExportPart, ...]
-) -> tuple[Any, contracts.PlaybillFloorExport]:
+    instance: Any, head: Any, include: tuple[contracts.FloorExportPart, ...]
+) -> tuple[Any, contracts.FloorExport]:
     """Opt-in cards use the existing coordinate-pure full export and shared apply."""
 
     files = service_export_playbill_floor(
         instance, at=AcceptedCoordinate.from_internal(head), include=include
     )
-    manifest = PlaybillFloorManifest.model_validate_json(files["manifest.json"])
+    manifest = FloorManifest.model_validate_json(files["manifest.json"])
     delta = seal_floor_delta(
         {
             "kind": "full",
             "renderer": manifest.renderer,
-            "head": PlaybillFloorHead(
+            "head": FloorHead(
                 **manifest.coordinate.model_dump(mode="json", exclude={"tag"}),
                 generation=manifest.generation,
                 notes_digest=manifest.notes_digest,
@@ -158,16 +158,14 @@ def _included_floor(
             ],
         }
     )
-    export = contracts.PlaybillFloorExport(
+    export = contracts.FloorExport(
         tag="playbill-floor-export-v5",
-        coordinate=contracts.PlaybillAcceptedCoordinate.model_validate(
+        coordinate=contracts.AcceptedCoordinate.model_validate(
             AcceptedCoordinate.from_internal(head).model_dump(mode="json")
         ),
         manifest=manifest.model_dump(mode="json"),
         files=[
-            contracts.PlaybillFloorFile(
-                path=path, content_base64=base64.b64encode(content).decode("ascii")
-            )
+            contracts.FloorFile(path=path, content_base64=base64.b64encode(content).decode("ascii"))
             for path, content in files.items()
         ],
     )
@@ -180,9 +178,9 @@ def refresh_floor(
     *,
     require_delivery: bool = False,
     follow_fire: bool = False,
-    include: tuple[contracts.PlaybillFloorExportPart, ...] = (),
-    at: contracts.PlaybillAcceptedCoordinate | None = None,
-) -> contracts.PlaybillFloorDeliveryResult | None:
+    include: tuple[contracts.FloorExportPart, ...] = (),
+    at: contracts.AcceptedCoordinate | None = None,
+) -> contracts.FloorDeliveryResult | None:
     """Render at the current head and, when opted in, apply through the shared writer."""
 
     with FLOOR_ADMISSION.hold(instance_id):
@@ -202,19 +200,19 @@ def _refresh_floor_admitted(
     *,
     require_delivery: bool = False,
     follow_fire: bool = False,
-    include: tuple[contracts.PlaybillFloorExportPart, ...] = (),
-    at: contracts.PlaybillAcceptedCoordinate | None = None,
-) -> contracts.PlaybillFloorDeliveryResult | None:
+    include: tuple[contracts.FloorExportPart, ...] = (),
+    at: contracts.AcceptedCoordinate | None = None,
+) -> contracts.FloorDeliveryResult | None:
     """Refresh with floor admission already held by the caller."""
 
     record = get_registry().get(instance_id)
     if require_delivery and (
         record is None or not record.floor_delivery or record.workspace_root is None
     ):
-        raise PlaybillWorkspaceError("Daemon floor delivery is off for this workspace")
+        raise WorkspaceError("Daemon floor delivery is off for this workspace")
     covered = latest_sequence(instance, action="floor.refresh")
     head = instance.accepted_coordinate()
-    if at is not None and at != contracts.PlaybillAcceptedCoordinate.model_validate(
+    if at is not None and at != contracts.AcceptedCoordinate.model_validate(
         AcceptedCoordinate.from_internal(head).model_dump(mode="json")
     ):
         raise RequestRefusedError(
@@ -265,27 +263,25 @@ def _refresh_floor_admitted(
                 )
             _post_apply_joins(root)
             assert applied.floor_digest is not None
-            receipt = contracts.PlaybillWorkspaceFloorWriteResult(
+            receipt = contracts.WorkspaceFloorWriteResult(
                 status="unchanged" if applied.status == "unchanged" else "written",
                 path=".playbill/floor",
                 destination=str(floor),
                 floor_digest=applied.floor_digest,
-                coordinate=contracts.PlaybillAcceptedCoordinate.model_validate(
+                coordinate=contracts.AcceptedCoordinate.model_validate(
                     delta.head.coordinate().model_dump(mode="json")
                 ),
                 file_count=applied.file_count + 1,
             )
-            written = contracts.PlaybillFloorDeliveryResult(
-                delta=delta, written=receipt, export=export
-            )
-        outcome = contracts.PlaybillFloorConsumerOutcome(
+            written = contracts.FloorDeliveryResult(delta=delta, written=receipt, export=export)
+        outcome = contracts.FloorConsumerOutcome(
             generation=generation,
             status="unchanged" if written is None else written.written.status,
             file_count=0 if written is None else written.written.file_count,
         )
     except Exception as exc:
         error = exc
-        outcome = contracts.PlaybillFloorConsumerOutcome(
+        outcome = contracts.FloorConsumerOutcome(
             generation=generation, status="failed", error=f"{type(exc).__name__}: {exc}"
         )
     with _STATE.open(instance) as connection:
@@ -366,9 +362,7 @@ class FloorConsumers:
                 ).fetchone()
             )
         outcome = (
-            None
-            if row is None
-            else contracts.PlaybillFloorConsumerOutcome.model_validate_json(row[0])
+            None if row is None else contracts.FloorConsumerOutcome.model_validate_json(row[0])
         )
         return (
             ConsumerHealth(

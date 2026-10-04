@@ -403,7 +403,7 @@ record a guessed observation as settled truth. Author it through the served
 prediction path instead:
 
 1. Build an ordinary Claim draft containing the predicted value and call
-   `Playbill.predict(...)` with the accepted Procedure measurement, the exact
+   `Cruxible.predict(...)` with the accepted Procedure measurement, the exact
    later-observation selector, an equality/threshold/presence rule, and a
    validity-window deadline. Prediction uses ordinary Claim proposal authority;
    it does not require a Procedure rung.
@@ -411,7 +411,7 @@ prediction path instead:
    proposal flow. The prediction has no calibration weight until that Claim is
    accepted and later settled.
 3. When the matching observation Claim is accepted, call
-   `Playbill.settle(prediction, observation=<ClaimRef>)`. If an authorized
+   `Cruxible.settle(prediction, observation=<ClaimRef>)`. If an authorized
    Procedure terminal is the evidence, also pass its run ID and retained
    terminal-record digest; the settlement then retains the terminal's mandate.
 4. Treat the returned settled-outcome relation—not the prediction prose—as the

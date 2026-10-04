@@ -1,1 +1,1 @@
-"""Frozen Playbill authoring wire contracts."""
+"""Frozen Cruxible authoring wire contracts."""

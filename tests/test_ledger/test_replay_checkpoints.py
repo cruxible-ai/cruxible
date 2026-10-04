@@ -520,7 +520,7 @@ def test_a_forged_tree_under_a_verified_head_checkpoint_is_never_served(tmp_path
 
     import zlib
 
-    from cruxible_client.contracts.errors import PlaybillGitError
+    from cruxible_client.contracts.errors import GitError
     from cruxible_core.ledger import git as ledger_git
 
     fixture = build_fixture(tmp_path, PROFILE)
@@ -569,8 +569,8 @@ def test_a_forged_tree_under_a_verified_head_checkpoint_is_never_served(tmp_path
 
     try:
         reopened = _reopen_instance(fixture)
-    except PlaybillGitError as refused:
+    except GitError as refused:
         assert "do not hash to their ID" in str(refused)
         return
-    with pytest.raises(PlaybillGitError, match="do not hash to their ID"):
+    with pytest.raises(GitError, match="do not hash to their ID"):
         reopened.immutable_tree_at(head)[f"{name}/{victim}"]

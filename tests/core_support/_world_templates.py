@@ -1,4 +1,4 @@
-"""Session-cached copies of expensive Playbill test worlds.
+"""Session-cached copies of expensive Cruxible test worlds.
 
 A fresh signed genesis costs about 17 Git subprocesses and a seeded world about
 90 more, and most tests need *a* world of a given shape, not one built from

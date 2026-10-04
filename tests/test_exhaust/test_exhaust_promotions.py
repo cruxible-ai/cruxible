@@ -356,18 +356,18 @@ def test_promotion_passes_proposal_replay_and_projects_canonical_output(
     # `get` on the Procedure shows the same accepted track record, which the
     # SDK's ProcedureRun.track_record reads.
     from cruxible_client.contracts.get_reads import (
-        PlaybillGetProcedureCard,
-        PlaybillGetRequest,
+        GetProcedureCard,
+        GetRequest,
     )
     from cruxible_core.service.discovery.get import service_playbill_get
     from cruxible_core.storage.cas import BodyAccessContext
 
     card = service_playbill_get(
         instance,
-        request=PlaybillGetRequest(ref=accepted_procedure.procedure.identity.qualified),
+        request=GetRequest(ref=accepted_procedure.procedure.identity.qualified),
         access=BodyAccessContext(principal_id="test", can_read_body=False),
     ).card
-    assert isinstance(card, PlaybillGetProcedureCard)
+    assert isinstance(card, GetProcedureCard)
     (entry,) = card.track_record
     assert entry.promotion == "run-a"
     assert (entry.first_sequence, entry.last_sequence) == (1, 2)

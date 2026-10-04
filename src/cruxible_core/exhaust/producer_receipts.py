@@ -17,7 +17,7 @@ from cruxible_client.contracts.captures import (
     provider_capture_receipt_matches_occurrence,
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
-from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.provider_execution import (
     ProcedureDerivedSourceRequest,
     ProviderInvocationCompleted,
@@ -195,7 +195,7 @@ class JournalProducerReceiptResolver:
         stream = procedure_line_journal_stream(self._instance_id)
         try:
             partition_ids = self._journal.partition_ids(stream)
-        except (OSError, PlaybillError, ValueError) as exc:
+        except (OSError, CruxibleError, ValueError) as exc:
             raise CaptureFormatError("Capture producer receipt journal is unavailable") from exc
         for partition_id in partition_ids:
             admissions: dict[tuple[str, str], ProcedureAdmissionBoundPayloadV5] = {}
@@ -203,7 +203,7 @@ class JournalProducerReceiptResolver:
             source_reads: dict[tuple[str, str], SourceReadReceipt | None] = {}
             try:
                 records = self._journal.all_records(stream, partition_id)
-            except (OSError, PlaybillError, ValueError) as exc:
+            except (OSError, CruxibleError, ValueError) as exc:
                 raise CaptureFormatError(
                     "Capture producer receipt journal partition is unavailable"
                 ) from exc
@@ -213,7 +213,7 @@ class JournalProducerReceiptResolver:
                     payload = parse_journal_payload(
                         self._bodies.read(record.payload_digest, access=self._access)
                     )
-                except (KeyError, OSError, TypeError, PlaybillError, ValueError) as exc:
+                except (KeyError, OSError, TypeError, CruxibleError, ValueError) as exc:
                     self._malformed(
                         record_digest=stored.record_digest,
                         event_kind=record.event_kind,

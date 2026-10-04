@@ -21,14 +21,14 @@ from cruxible_client.contracts.claims import (
     claim_statement_address,
     claim_statement_digest,
 )
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.predictions import (
     ObservationSettlementEvidence,
-    PlaybillPredictRequest,
-    PlaybillPredictResult,
-    PlaybillSettleRequest,
-    PlaybillSettleResult,
     PredictionRefusalCode,
+    PredictRequest,
+    PredictResult,
+    SettleRequest,
+    SettleResult,
     TerminalSettlementEvidence,
 )
 from cruxible_client.contracts.procedures.windows import TriggerEventReference
@@ -88,7 +88,7 @@ _PROCEDURE_STREAM = "procedures"
 _WRITER_TOKEN = "playbill-procedure-direct-run-v1"
 
 
-class PredictionRefused(PlaybillFormatError):
+class PredictionRefused(FormatError):
     """Closed, repair-carrying refusal for served prediction operations."""
 
     def __init__(
@@ -114,10 +114,10 @@ def _refuse(
 def service_predict_playbill(
     instance: PlaybillInstance,
     *,
-    request: PlaybillPredictRequest,
+    request: PredictRequest,
     actor: AuthenticatedActor,
     evaluation_time: datetime,
-) -> PlaybillPredictResult:
+) -> PredictResult:
     """Submit a governed test of an already accepted exact hypothesis.
 
     A hypothesis named by Claim ID is resolved here to the exact version
@@ -145,7 +145,7 @@ def service_predict_playbill(
             "Resolution contract did not produce a valid proposal; repair the authoring "
             "diagnostics.",
         )
-    return PlaybillPredictResult(
+    return PredictResult(
         contract_identity=contract.identity.qualified,
         contract_digest=resolution_contract_digest(contract).tagged,
         proposal_id=submitted.status.proposal_id,
@@ -342,7 +342,7 @@ def _append_settlement(
                 for stored in activation_records
             )
             if payloads != (activation.model_dump(mode="json"),):
-                raise PlaybillFormatError("prediction activation journal history diverged")
+                raise FormatError("prediction activation journal history diverged")
         append_procedure_resolution(
             writer,
             activation=activation,
@@ -372,7 +372,7 @@ def _settlement_route(
     instance: PlaybillInstance,
     *,
     prediction_id: str,
-    request: PlaybillSettleRequest,
+    request: SettleRequest,
 ) -> tuple[ResolutionContractReference, TriggerEventReference | None]:
     """The exact contract (and anchor) a settle route names, unless given outright.
 
@@ -426,10 +426,10 @@ def service_settle_playbill_prediction(
     instance: PlaybillInstance,
     *,
     prediction_id: str,
-    request: PlaybillSettleRequest,
+    request: SettleRequest,
     actor_context: GovernedActorContext,
     recorded_at: datetime,
-) -> PlaybillSettleResult:
+) -> SettleResult:
     """Settle one accepted predicted Claim from a later accepted outcome.
 
     The route names the contract (its name or qualified identity) or one bound
@@ -599,7 +599,7 @@ def service_settle_playbill_prediction(
         resolution=resolution,
     )
     relation = build_settled_outcome_relation(activation, resolution)
-    return PlaybillSettleResult(
+    return SettleResult(
         prediction_id=prediction_id,
         activation=activation.model_dump(mode="json"),
         resolution=resolution.model_dump(mode="json"),

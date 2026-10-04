@@ -10,7 +10,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from pydantic import TypeAdapter
 
 from cruxible_client import contracts as api
-from cruxible_client.authoring.sdk_types import PlaybillSdkError
+from cruxible_client.authoring.sdk_types import SdkError
 from cruxible_client.authoring.signing import ApprovalSigner
 from cruxible_client.contracts.attestations import (
     ApprovalAttestation,
@@ -28,12 +28,12 @@ from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.types import PrincipalRecord
 
 if TYPE_CHECKING:
-    from cruxible_client.authoring.sdk import Playbill
+    from cruxible_client.authoring.sdk import Cruxible
 
 _CANDIDATE: TypeAdapter[CandidateRecordAnyVersion] = TypeAdapter(CandidateRecordAnyVersion)
 
 
-class ApprovalReviewMismatch(PlaybillSdkError):
+class ApprovalReviewMismatch(SdkError):
     """A local approval binding failed; no replacement candidate is auto-reviewed."""
 
     code = "playbill.sdk.approval_review_mismatch"
@@ -53,18 +53,18 @@ class ReviewedProposal:
     contract; editing that copy cannot change the candidate this token identifies.
     """
 
-    _owner: Playbill = field(repr=False, compare=False)
+    _owner: Cruxible = field(repr=False, compare=False)
     _instance_id: str = field(repr=False)
     _snapshot: bytes = field(repr=False)
     proposal_id: str
     candidate_digest: str
 
     @property
-    def details(self) -> api.PlaybillProposalReview:
-        return api.PlaybillProposalReview.model_validate_json(self._snapshot)
+    def details(self) -> api.ProposalReview:
+        return api.ProposalReview.model_validate_json(self._snapshot)
 
 
-def _checked_review(review: api.PlaybillProposalReview, proposal_id: str) -> None:
+def _checked_review(review: api.ProposalReview, proposal_id: str) -> None:
     candidate = _CANDIDATE.validate_python(review.candidate)
     if (
         review.proposal_id != proposal_id
@@ -102,11 +102,9 @@ def _checked_review(review: api.PlaybillProposalReview, proposal_id: str) -> Non
         raise ApprovalReviewMismatch("This approval helper requires a complete, unredacted review")
 
 
-def review_proposal(playbill: Playbill, proposal_id: str) -> ReviewedProposal:
-    raw = playbill._client.review_playbill_proposal(
-        playbill._instance_id, proposal_id, include_body=True
-    )
-    review = api.PlaybillProposalReview.model_validate(raw.model_dump(mode="json"))
+def review_proposal(playbill: Cruxible, proposal_id: str) -> ReviewedProposal:
+    raw = playbill._client.review_proposal(playbill._instance_id, proposal_id, include_body=True)
+    review = api.ProposalReview.model_validate(raw.model_dump(mode="json"))
     try:
         _checked_review(review, proposal_id)
     except ValueError as exc:
@@ -121,12 +119,12 @@ def review_proposal(playbill: Playbill, proposal_id: str) -> ReviewedProposal:
 
 
 def approve_reviewed(
-    playbill: Playbill,
+    playbill: Cruxible,
     proposal_id: str,
     *,
     signer: ApprovalSigner,
     reviewed: ReviewedProposal,
-) -> api.PlaybillApprovalReceipt:
+) -> api.ApprovalReceipt:
     if (
         not isinstance(reviewed, ReviewedProposal)
         or reviewed._owner is not playbill
@@ -140,11 +138,11 @@ def approve_reviewed(
     if review.candidate_digest != reviewed.candidate_digest:
         raise ApprovalReviewMismatch("Review token advertises a different candidate digest")
     signer_id, public_key = signer.signer_id, signer.public_key
-    raw = playbill._client.prepare_playbill_approval(
+    raw = playbill._client.prepare_approval(
         playbill._instance_id, proposal_id, signer_id=signer_id, include_body=True
     )
     try:
-        challenge = api.PlaybillApprovalChallenge.model_validate(raw.model_dump(mode="json"))
+        challenge = api.ApprovalChallenge.model_validate(raw.model_dump(mode="json"))
         _checked_review(review, proposal_id)
         _checked_review(challenge.review, proposal_id)
         # Coverage and projection advice are live observations, not candidate identity.
@@ -201,10 +199,10 @@ def approve_reviewed(
     except (ValueError, InvalidSignature, AttributeError) as exc:
         raise ApprovalReviewMismatch("Signer returned an invalid or substituted approval") from exc
     expected_digest = approval_digest(attestation).tagged
-    raw_receipt = playbill._client.submit_playbill_approval(
+    raw_receipt = playbill._client.submit_approval(
         playbill._instance_id, proposal_id, attestation=attestation.model_dump(mode="json")
     )
-    receipt = api.PlaybillApprovalReceipt.model_validate(raw_receipt.model_dump(mode="json"))
+    receipt = api.ApprovalReceipt.model_validate(raw_receipt.model_dump(mode="json"))
     if (
         receipt.proposal_id != proposal_id
         or receipt.candidate_digest != review.candidate_digest

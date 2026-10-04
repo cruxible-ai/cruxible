@@ -57,7 +57,7 @@ This document does not silently remove an existing operation.
 | [Evidence and operational work](../packages/cruxible-client/README.md#evidence-predictions-and-operational-work) | Same capture reads, attestations, predictions, settlement, worklists, and curation. |
 | [Source selectors](../packages/cruxible-client/README.md#source-selection) | Existing host file selectors remain; they are not arbitrary filesystem access inside a Procedure. |
 | [Procedure composition](../packages/cruxible-client/README.md#procedure-composition-and-execution) | `Sequence` and `ProcedureInput` remain valid. Source authoring is an additional frontend. |
-| [Procedure entry points](../packages/cruxible-client/README.md#procedure-entry-points) | `pb.procedure(...)` additionally accepts a source blueprint. Typed input records and run outcomes extend the accepted Procedure handle. `.run(...)` and `pb.run_line(...)` keep their existing authority boundaries. |
+| [Procedure entry points](../packages/cruxible-client/README.md#procedure-entry-points) | `cx.procedure(...)` additionally accepts a source blueprint. Typed input records and run outcomes extend the accepted Procedure handle. `.run(...)` and `cx.run_line(...)` keep their existing authority boundaries. |
 | [Projections and workspace](../packages/cruxible-client/README.md#projections-and-workspace) | Unchanged governed blocks, query backings, repin/sync, and portable packages. |
 | [Signing](../packages/cruxible-client/README.md#signing-capabilities) | Unchanged explicit signing capabilities. A decorated function grants no signing authority. |
 | [Lower-level client](../packages/cruxible-client/README.md#lower-level-http-client) | Existing endpoints remain. A retained Procedure can be invoked without importing its authoring module. |
@@ -81,12 +81,12 @@ ordinary Python objects whose methods execute during authoring.
 | `invoke`, `InvocationOutcome[T]` | Invoke an exact accepted child Procedure. | Implemented sequential child execution. |
 | `parallel` | Concurrent independent branches with a join. | Reserved sketch; no final callable signature or default failure policy. |
 | `ProcedurePreview`, `CompositionDiagnostic`, `ProcedureCompositionError` | Existing inspection/error types extended with source information. | Shared public inspection/error types; extended with source information. |
-| `Playbill.procedure(definition=...)` | Consume a `ProcedureBlueprint` as well as the existing input forms. | Implemented overload; returns the existing `ProcedureDraft`. |
+| `Cruxible.procedure(definition=...)` | Consume a `ProcedureBlueprint` as well as the existing input forms. | Implemented overload; returns the existing `ProcedureDraft`. |
 | `Contract.value`, `bindings.<slot>.input`, `bindings.<query>.parameters` | Construct schema-defined records. | Contract-derived constructors; not executable user helpers. |
-| `Playbill.query_binding`, typed `Procedure.input/run` | Resolve query schemas and construct host invocation values. | Typed adapters over existing definition reads and execution services. |
+| `Cruxible.query_binding`, typed `Procedure.input/run` | Resolve query schemas and construct host invocation values. | Typed adapters over existing definition reads and execution services. |
 
 Unlisted Python functions are not implicitly allowed inside source. In
-particular, ordinary SDK calls such as `pb.accept(...)` or `pb.capture(...)`
+particular, ordinary SDK calls such as `cx.accept(...)` or `cx.capture(...)`
 are host operations, not executable Procedure intrinsics.
 
 ## Types and notation
@@ -208,9 +208,9 @@ Procedure[I, O].run(
     trigger_event: TriggerEventReference | None = None,
 ) -> ProcedureRun[O]
 
-Playbill.query_binding(query: str | QueryRef) -> QueryBinding[P, R]
+Cruxible.query_binding(query: str | QueryRef) -> QueryBinding[P, R]
 
-Playbill.run_query(
+Cruxible.run_query(
     query: QueryBinding[P, R],
     *,
     parameters: QueryParameters[P] | None = None,
@@ -230,7 +230,7 @@ normal coordinate/version checks still apply. Pure host execution example:
 
 ```python
 # Typed host API; accepted Procedure already exists.
-assessment = pb.accepted_procedure("security.assess_asset")
+assessment = cx.accepted_procedure("security.assess_asset")
 run = assessment.run(
     input=assessment.input(asset_id="web-01", policy_id="default"),
 )
@@ -253,7 +253,7 @@ A capture terminal, submitted proposal, successful no-change result, refusal,
 and accepted generation remain different records. No wrapper converts one into
 another.
 
-`pb.run_line(...)` retains its existing occurrence inputs and lane authority.
+`cx.run_line(...)` retains its existing occurrence inputs and lane authority.
 Line parameters are validated against the pinned Procedure input contract when
 authored/admitted; they are not replaced by arbitrary invocation input supplied
 to `run_line`. The returned run resolves `O` from that exact admitted Procedure.
@@ -402,16 +402,16 @@ The returned `ProcedureInput.definition.source_request` contains source and symb
 selections. Prepare resolves it again at its authoring base; preview is not a
 substitute for admission. The accepted graph retains `definition.source`.
 
-### `Playbill.procedure` overload
+### `Cruxible.procedure` overload
 
 ```text
-pb.procedure(
+cx.procedure(
     *,
     definition: ProcedureInput | Sequence | ProcedureBlueprint,
 ) -> ProcedureDraft
 ```
 
-Extends the existing method. A blueprint uses the Playbill context to resolve
+Extends the existing method. A blueprint uses the Cruxible context to resolve
 required accepted references and compiles into the same authoring contract.
 `ProcedureDraft.prepare()` returns the existing intent. The daemon checks the
 source/graph relationship; client compilation does not authorize a mismatch.
@@ -425,10 +425,10 @@ from its uses and requires them to be consistent.
 
 | Source use | Required binding | Selection operation in host code |
 |---|---|---|
-| `call(bindings.normalize, ...)` | `ProviderBinding` for the compatible Call interface | `pb.provider_binding(interface, provider=...)` |
+| `call(bindings.normalize, ...)` | `ProviderBinding` for the compatible Call interface | `cx.provider_binding(interface, provider=...)` |
 | `source(bindings.fetch, ...)` | `ProviderBinding` for a Source-compatible acquisition interface | Same accepted provider discovery operation. |
-| `query(bindings.exposures, ...)` | `QueryBinding` or `QueryRef` | `pb.query_binding(name_or_ref)` wraps the existing definition read; a supplied `QueryRef` is resolved at binding. |
-| `invoke(bindings.observer, ...)` | `ProcedureRef` | `pb.accepted_procedure(name).ref` |
+| `query(bindings.exposures, ...)` | `QueryBinding` or `QueryRef` | `cx.query_binding(name_or_ref)` wraps the existing definition read; a supplied `QueryRef` is resolved at binding. |
+| `invoke(bindings.observer, ...)` | `ProcedureRef` | `cx.accepted_procedure(name).ref` |
 
 Provider bindings carry exact accepted interface and implementation identifiers.
 Their typed view additionally resolves the interface schemas at the
@@ -438,10 +438,10 @@ validated at execution even if static compatibility passed.
 
 ```python
 # Existing provider discovery; source-blueprint .bind is PROPOSED.
-fetch = pb.provider_binding("web.fetch", provider="web")
+fetch = cx.provider_binding("web.fetch", provider="web")
 bound = observe_http.bind(fetch=fetch)
-preview = bound.preview(world=pb.world())
-intent = pb.procedure(definition=bound).prepare()
+preview = bound.preview(world=cx.world())
+intent = cx.procedure(definition=bound).prepare()
 ```
 
 The illustrative names must exist in the chosen instance. Discovery must select
@@ -612,7 +612,7 @@ fields and incompatible values; runtime validation still checks actual data.
 
 ### `ProcedureQueryResult[R]`
 
-The host `PlaybillQueryRun` exposes typed existing result/receipt models. Source
+The host `QueryRun` exposes typed existing result/receipt models. Source
 query taps expose the same fields through contract-checked symbolic access.
 
 | Field | Meaning |
@@ -1332,7 +1332,7 @@ open_exposures = QueryDefinitionInput(
 )
 ```
 
-Prepare through `pb.query_definition(definition=open_exposures).prepare()`,
+Prepare through `cx.query_definition(definition=open_exposures).prepare()`,
 submit, and complete normal governance before binding the accepted query.
 Required ClaimType pins resolve at the authoring base; this does not bypass
 definition admission.
@@ -1402,13 +1402,13 @@ iteration, invented aggregation provider, or custom `ExposureRow` is needed.
 ```python
 # After the query is accepted:
 bound_assessment = assess_asset.bind(
-    open_exposures=pb.query_binding("security.open_exposures"),
+    open_exposures=cx.query_binding("security.open_exposures"),
 )
-assessment_preview = bound_assessment.preview(world=pb.world())
-assessment_intent = pb.procedure(definition=bound_assessment).prepare()
+assessment_preview = bound_assessment.preview(world=cx.world())
+assessment_intent = cx.procedure(definition=bound_assessment).prepare()
 
 # After separate submission, review, approval as required, and acceptance:
-accepted_assessment = pb.accepted_procedure("security.assess_asset")
+accepted_assessment = cx.accepted_procedure("security.assess_asset")
 assessment_run = accepted_assessment.run(
     input=accepted_assessment.input(
         asset_id="web-01",
@@ -1474,14 +1474,14 @@ def observe_feed(request, bindings):
 ```python
 # Bind the accepted provider interface:
 bound_observer = observe_feed.bind(
-    fetch=pb.provider_binding("web.fetch", provider="web"),
+    fetch=cx.provider_binding("web.fetch", provider="web"),
 )
-observer_preview = bound_observer.preview(world=pb.world())
-observer_intent = pb.procedure(definition=bound_observer).prepare()
+observer_preview = bound_observer.preview(world=cx.world())
+observer_intent = cx.procedure(definition=bound_observer).prepare()
 ```
 
 After acceptance, standalone execution uses the accepted capture Line whose
-parameters supply the URL. Invoke it with `pb.run_line("security.observe_feed")`,
+parameters supply the URL. Invoke it with `cx.run_line("security.observe_feed")`,
 using the accepted Line’s name; the daemon resolves and retains its exact bindings.
 Direct Procedure execution does not acquire terminal permission from the
 decorator's capability.
@@ -1509,21 +1509,21 @@ Trigger aimed at a `trigger_input` Line must fire on that event, as a
 capture-arrival schedule or an event-relative window. Cadence, cron,
 generation-accepted and fixed-window Triggers cannot provide this input.
 
-Use `pb.check_line(name)` to inspect trigger matches and their `dispatch_status`.
-`pb.dispatch_line(name)` processes pending work; unusable exact Captures close as
+Use `cx.check_line(name)` to inspect trigger matches and their `dispatch_status`.
+`cx.dispatch_line(name)` processes pending work; unusable exact Captures close as
 `rejected` and superseded Line bindings close as `superseded`, with typed refusals
 and repair hints. To explicitly retry closed work after repair, use
-`pb.dispatch_line(name, occurrence_id=occurrence_id, retry=True)`. This can bind a
+`cx.dispatch_line(name, occurrence_id=occurrence_id, retry=True)`. This can bind a
 successor Line only in the same epoch and never substitutes another event or
 Capture. Historical evaluation alone does not reopen closed work.
 
-`pb.arm_line(name)` has the daemon admit what the Line's Triggers match from now
+`cx.arm_line(name)` has the daemon admit what the Line's Triggers match from now
 on, under this connection's credential (rechecked before each run), the Line
 version current now and the Trigger versions aimed at it now; a change to any
 of them stops the arm until it is rearmed. It never catches up: earlier pending work and daemon
-downtime still need `evaluate_line` and `dispatch_line`. `pb.line_status(name)`
+downtime still need `evaluate_line` and `dispatch_line`. `cx.line_status(name)`
 reports whether the Line is armed, its automatic and explicit pending counts,
-and why an arm stopped; `pb.disarm_line(name)` stops further admissions.
+and why an arm stopped; `cx.disarm_line(name)` stops further admissions.
 Both calls are idempotent: repeating one returns the arm unchanged with
 `outcome` `already_armed` or `already_disarmed`.
 
@@ -1610,17 +1610,17 @@ def verify_feed(request, world, bindings):
 ```python
 # The observer must already be accepted at the selected context.
 bound_verifier = verify_feed.bind(
-    observer=pb.accepted_procedure("security.observe_feed").ref,
+    observer=cx.accepted_procedure("security.observe_feed").ref,
 )
-verifier_preview = bound_verifier.preview(world=pb.world())
-verifier_intent = pb.procedure(definition=bound_verifier).prepare()
+verifier_preview = bound_verifier.preview(world=cx.world())
+verifier_intent = cx.procedure(definition=bound_verifier).prepare()
 ```
 
 The parent has no independent Source node. Admission includes the child's
 pinned acquisition policy and effective effects/budgets; nested execution does
 not invent or bypass an acquisition policy on the parent. The accepted proposal
 Line binds `feed_id="kev"` and proposes under its applicable mandate.
-Its invocation uses the same `pb.run_line(...)` surface.
+Its invocation uses the same `cx.run_line(...)` surface.
 
 | Stage or condition | Expected result/state effect |
 |---|---|
@@ -1680,14 +1680,14 @@ def convert_advisory(request, bindings):
 from base64 import b64encode
 
 bound_converter = convert_advisory.bind(
-    converter=pb.provider_binding("doc.to_markdown", provider="docs"),
+    converter=cx.provider_binding("doc.to_markdown", provider="docs"),
 )
-converter_preview = bound_converter.preview(world=pb.world())
-converter_intent = pb.procedure(definition=bound_converter).prepare()
+converter_preview = bound_converter.preview(world=cx.world())
+converter_intent = cx.procedure(definition=bound_converter).prepare()
 
 # After normal submission and acceptance:
 advisory = b"Upgrade the affected service before Friday.\n"
-accepted_converter = pb.accepted_procedure("security.convert_advisory")
+accepted_converter = cx.accepted_procedure("security.convert_advisory")
 conversion_run = accepted_converter.run(
     input=accepted_converter.input(
         content_base64=b64encode(advisory).decode("ascii"),
@@ -1766,8 +1766,8 @@ workspace defaults to daemon delivery as its sole floor writer. Over a Unix-sock
 to opt out and use client delivery; `enabled=True` enables daemon delivery again.
 Detaching clears the flag; a later attachment defaults on again. `playbill_host_workspace_registration` reports `floor_delivery` and
 the local path, which the workspace adapter checks before delegating to
-`deliver_playbill_floor_now`. The latter returns a `PlaybillFloorDeliveryResult`
-with the delta and the ordinary `PlaybillWorkspaceFloorWriteResult` receipt.
+`deliver_playbill_floor_now`. The latter returns a `FloorDeliveryResult`
+with the delta and the ordinary `WorkspaceFloorWriteResult` receipt.
 Host inspection and server status also show `floor_delivery`. Both client apply
 and daemon delivery create the local `.playbill/floor/.gitignore` containing `*`;
 it ignores itself and all floor output, stays outside the manifest, and is

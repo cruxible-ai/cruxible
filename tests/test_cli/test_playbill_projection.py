@@ -11,8 +11,8 @@ from click.testing import CliRunner
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
-    PlaybillBlockSyncItem,
-    PlaybillBlockSyncResult,
+    BlockSyncItem,
+    BlockSyncResult,
 )
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV1,
@@ -135,12 +135,12 @@ def test_cli_sync_passes_local_edit_and_path_controls(
 ) -> None:
     calls: list[dict[str, Any]] = []
 
-    def sync(client: object, instance_id: str, **values: Any) -> PlaybillBlockSyncResult:
+    def sync(client: object, instance_id: str, **values: Any) -> BlockSyncResult:
         assert instance_id == "inst_projection"
         calls.append(values)
-        return PlaybillBlockSyncResult(
+        return BlockSyncResult(
             items=(
-                PlaybillBlockSyncItem(
+                BlockSyncItem(
                     path="corpus/runbook.md",
                     source_id="corpus.runbook",
                     block_id="summary",
@@ -186,9 +186,9 @@ def test_cli_sync_passes_local_edit_and_path_controls(
 def test_cli_sync_check_exits_nonzero_when_safe_bytes_would_change(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    result = PlaybillBlockSyncResult(
+    result = BlockSyncResult(
         items=(
-            PlaybillBlockSyncItem(
+            BlockSyncItem(
                 path="corpus/runbook.md",
                 source_id="corpus.runbook",
                 block_id="summary",

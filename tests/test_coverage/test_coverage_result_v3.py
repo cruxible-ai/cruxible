@@ -12,13 +12,13 @@ from cruxible_client.contracts.claims import LegacyCitationReference
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.coverage.adapter import observe_working_source
 from cruxible_core.coverage.contracts import (
+    CitationWindowObservation,
     CoverageCardBudget,
     CoverageRequestV1,
     CoverageResultAny,
     CoverageResultV3,
     CoverageSpanRequestV1,
     LogicalSourceIdentity,
-    PlaybillCitationWindowObservation,
 )
 from cruxible_core.coverage.indexes import (
     CoverageClaimCitationV2,
@@ -29,10 +29,10 @@ from cruxible_core.coverage.indexes import (
 )
 from cruxible_core.coverage.manifest import coverage_manifest_body_v2
 from cruxible_core.coverage.resolver import resolve_coverage_v3
-from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+from cruxible_core.service.authoring.documents import AcceptedCoordinate
 from cruxible_core.service.discovery.coverage import _citation_window_observations
 from cruxible_core.service.discovery.next import (
-    PlaybillNextSourceObservation,
+    NextSourceObservation,
     _CitationCommitment,
     _source_citation_item,
 )
@@ -113,13 +113,13 @@ def test_citation_window_observation_refuses_incoherent_addressability() -> None
         "original_end": len(CITED),
     }
     with pytest.raises(ValidationError, match="addressable citation window"):
-        PlaybillCitationWindowObservation(
+        CitationWindowObservation(
             **values,
             addressable=True,
             observed_window_digest=None,
         )
     with pytest.raises(ValidationError, match="addressable citation window"):
-        PlaybillCitationWindowObservation(
+        CitationWindowObservation(
             **values,
             addressable=False,
             observed_window_digest=sha256(CITED),
@@ -280,7 +280,7 @@ def test_duplicate_anchor_card_clipping_remains_ambiguous_instead_of_false_curre
         content=content,
     )
     assert len(occurrences) == 2
-    observation = PlaybillNextSourceObservation.model_validate(
+    observation = NextSourceObservation.model_validate(
         {
             "source_id": source.identity,
             "observed_source_digest": sha256(content),
@@ -306,7 +306,7 @@ def test_duplicate_anchor_card_clipping_remains_ambiguous_instead_of_false_curre
             original_end=len(CITED),
         ),
         observed=observation,
-        coordinate=PlaybillAcceptedCoordinate.model_validate(coordinate().model_dump()),
+        coordinate=AcceptedCoordinate.model_validate(coordinate().model_dump()),
     )
     assert item is not None
     assert item.reason == "citation_drifted"

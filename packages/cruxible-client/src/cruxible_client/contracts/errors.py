@@ -1,4 +1,4 @@
-"""Typed refusals for the opt-in Playbill substrate."""
+"""Typed refusals for the opt-in Cruxible substrate."""
 
 from __future__ import annotations
 
@@ -11,23 +11,23 @@ if TYPE_CHECKING:
     from cruxible_client.contracts.repairs import RepairOperation
 
 
-class PlaybillError(CoreError):
-    """Base class for Playbill protocol and storage refusals."""
+class CruxibleError(CoreError):
+    """Base class for Cruxible protocol and storage refusals."""
 
 
-class CanonicalEncodingError(PlaybillError):
+class CanonicalEncodingError(CruxibleError):
     """A value has no representation in the frozen canonical encoding."""
 
 
-class MerkleIntegrityError(PlaybillError):
+class MerkleIntegrityError(CruxibleError):
     """A merkle manifest does not reproduce its claimed root or node digests."""
 
 
-class PlaybillFormatError(PlaybillError):
+class FormatError(CruxibleError):
     """A descriptor or stored artifact declares an unsupported format."""
 
 
-class PlaybillSinceRequestInvalid(PlaybillFormatError):
+class SinceRequestInvalid(FormatError):
     """A ``playbill since`` request failed its frozen model boundary."""
 
     error_code = "playbill.since.request_invalid"
@@ -69,7 +69,7 @@ class PlaybillSinceRequestInvalid(PlaybillFormatError):
         )
 
 
-class ClaimAttestationRequestInvalid(PlaybillFormatError):
+class ClaimAttestationRequestInvalid(FormatError):
     """A Claim-attestation append failed its exact request model boundary."""
 
     error_code = "playbill.claim_attestation.request_invalid"
@@ -98,7 +98,7 @@ class ClaimAttestationRequestInvalid(PlaybillFormatError):
         )
 
 
-class PlaybillInstanceIncompatiblePrereleaseContent(PlaybillFormatError):
+class InstanceIncompatiblePrereleaseContent(FormatError):
     """An accepted prerelease artifact was intentionally removed before release."""
 
     error_code = "playbill.instance.incompatible_prerelease_content"
@@ -111,7 +111,7 @@ class PlaybillInstanceIncompatiblePrereleaseContent(PlaybillFormatError):
         )
 
 
-class PlaybillReseedRequired(PlaybillFormatError):
+class ReseedRequired(FormatError):
     """A prerelease instance is readable but no longer accepts mutations."""
 
     error_code = "playbill.instance.reseed_required"
@@ -130,7 +130,7 @@ class PlaybillReseedRequired(PlaybillFormatError):
         )
 
 
-class PlaybillInstanceDecommissioned(PlaybillFormatError):
+class InstanceDecommissioned(FormatError):
     """A decommissioned instance is readable forever but never writable again."""
 
     error_code = "playbill.instance.decommissioned"
@@ -151,17 +151,17 @@ class PlaybillInstanceDecommissioned(PlaybillFormatError):
         )
 
 
-class SemanticDeltaLimitError(PlaybillFormatError):
+class SemanticDeltaLimitError(FormatError):
     """A semantic delta exceeds its deterministic served-response budget."""
 
     error_code = "playbill.semantic_delta.limit_exceeded"
 
 
-class PlaybillBootstrapError(PlaybillError):
+class BootstrapError(CruxibleError):
     """Genesis does not reproduce from the supplied out-of-band trust root."""
 
 
-class PlaybillObjectFormatConflict(PlaybillBootstrapError):
+class ObjectFormatConflict(BootstrapError):
     """An explicit ledger object format contradicts the attached workspace's.
 
     Its own code, not the advertisement vocabulary's ``object_format_mismatch``:
@@ -180,23 +180,23 @@ class PlaybillObjectFormatConflict(PlaybillBootstrapError):
         super().__init__(message)
 
 
-class PlaybillGitError(PlaybillError):
+class GitError(CruxibleError):
     """System Git refused or failed a ledger operation."""
 
 
-class PlaybillKeyError(PlaybillError):
+class SigningKeyError(CruxibleError):
     """Key generation, custody, or public/private correspondence failed."""
 
 
-class PlaybillCasError(PlaybillError):
+class CasError(CruxibleError):
     """Content-addressed body storage is missing, corrupt, or unauthorized."""
 
 
-class PlaybillJournalError(PlaybillError):
+class JournalError(CruxibleError):
     """An operational journal record, head, range, or writer fence is invalid."""
 
 
-class PlaybillJournalConflictError(PlaybillJournalError):
+class JournalConflictError(JournalError):
     """Another writer holds the partition, or the expected head has moved.
 
     A conflict is a concurrency fact: the same append succeeds once the caller
@@ -206,7 +206,7 @@ class PlaybillJournalConflictError(PlaybillJournalError):
     """
 
 
-class PlaybillJournalIntegrityError(PlaybillJournalError):
+class JournalIntegrityError(JournalError):
     """Stored journal bytes, their chain, or a partition identity is corrupt.
 
     An integrity failure is never retryable and never a concurrency fact; it
@@ -214,31 +214,31 @@ class PlaybillJournalIntegrityError(PlaybillJournalError):
     """
 
 
-class PlaybillExecutionError(PlaybillError):
+class ExecutionError(CruxibleError):
     """A Procedure run cannot be admitted, executed, or finalized safely."""
 
 
-class DocumentFormatError(PlaybillError):
+class DocumentFormatError(CruxibleError):
     """A governed Document shell is unsupported or malformed."""
 
 
-class DocumentNotFoundError(PlaybillError):
+class DocumentNotFoundError(CruxibleError):
     """A requested accepted Document identity is absent at the coordinate."""
 
 
-class SubjectFormatError(PlaybillError):
+class SubjectFormatError(CruxibleError):
     """A governed Subject shell is unsupported, malformed, or mislocated."""
 
 
-class SubjectNotFoundError(PlaybillError):
+class SubjectNotFoundError(CruxibleError):
     """A requested accepted Subject identity is absent at the coordinate."""
 
 
-class ClaimNotFoundError(PlaybillError):
+class ClaimNotFoundError(CruxibleError):
     """A requested accepted Claim identity is absent at the coordinate."""
 
 
-class ProposalAdmissionError(PlaybillError):
+class ProposalAdmissionError(CruxibleError):
     """An unauthenticated, mis-scoped, oversized, or malformed proposal was refused."""
 
 
@@ -273,7 +273,7 @@ class ProposalWithdrawnError(ProposalAdmissionError):
         )
 
 
-class ProposalNotFoundError(PlaybillError):
+class ProposalNotFoundError(CruxibleError):
     """A proposal selector did not resolve to immutable admission evidence."""
 
     error_code = "playbill.proposal_not_found"
@@ -294,7 +294,7 @@ class ProposalNotFoundError(PlaybillError):
         )
 
 
-class ProposalSelectorAmbiguousError(PlaybillError):
+class ProposalSelectorAmbiguousError(CruxibleError):
     """A mutable proposal selector does not name one current admission."""
 
     error_code = "playbill.proposal_selector_ambiguous"
@@ -399,13 +399,13 @@ class ProposalReadmitRequiresResubmission(ProposalAdmissionError):
         )
 
 
-class ProposalActivationRequestInvalid(PlaybillFormatError):
+class ProposalActivationRequestInvalid(FormatError):
     """A proposal activation route received a malformed proposal digest."""
 
     error_code = "playbill.proposal.activation_request_invalid"
 
 
-class ProposalIntegrityError(PlaybillError):
+class ProposalIntegrityError(CruxibleError):
     """Persisted proposal or candidate evidence failed deterministic verification."""
 
 
@@ -413,19 +413,19 @@ class ProposalEvaluationIntegrityError(ProposalIntegrityError):
     """Daemon-created proposal evaluation bytes failed their own typed contract."""
 
 
-class ApprovalIntegrityError(PlaybillError):
+class ApprovalIntegrityError(CruxibleError):
     """An approval statement, signer, signature, or required quorum was refused."""
 
 
-class PrincipalIntegrityError(PlaybillError):
+class PrincipalIntegrityError(CruxibleError):
     """A principal registry or historical key transition failed replay."""
 
 
-class SettlementIntegrityError(PlaybillError):
+class SettlementIntegrityError(CruxibleError):
     """A candidate, change set, generation, or root correspondence failed."""
 
 
-class ReplayCheckpointError(PlaybillError):
+class ReplayCheckpointError(CruxibleError):
     """A local replay checkpoint is missing, stale, or does not reproduce the ledger."""
 
 
@@ -550,8 +550,8 @@ class WriteRefusalError(CoreError):
         super().__init__(text)
 
 
-class ProjectionError(PlaybillError):
-    """Base refusal for deterministic Playbill projection operations."""
+class ProjectionError(CruxibleError):
+    """Base refusal for deterministic Cruxible projection operations."""
 
 
 class ProjectionCoordinateError(ProjectionError):
@@ -576,19 +576,19 @@ __all__ = [
     "ClaimNotFoundError",
     "DocumentFormatError",
     "DocumentNotFoundError",
-    "PlaybillBootstrapError",
-    "PlaybillCasError",
-    "PlaybillError",
-    "PlaybillFormatError",
-    "PlaybillGitError",
-    "PlaybillExecutionError",
-    "PlaybillInstanceIncompatiblePrereleaseContent",
-    "PlaybillJournalConflictError",
-    "PlaybillJournalError",
-    "PlaybillJournalIntegrityError",
-    "PlaybillKeyError",
-    "PlaybillReseedRequired",
-    "PlaybillSinceRequestInvalid",
+    "BootstrapError",
+    "CasError",
+    "CruxibleError",
+    "FormatError",
+    "GitError",
+    "ExecutionError",
+    "InstanceIncompatiblePrereleaseContent",
+    "JournalConflictError",
+    "JournalError",
+    "JournalIntegrityError",
+    "SigningKeyError",
+    "ReseedRequired",
+    "SinceRequestInvalid",
     "PrincipalIntegrityError",
     "ProposalActivationRequestInvalid",
     "ProposalAdmissionError",

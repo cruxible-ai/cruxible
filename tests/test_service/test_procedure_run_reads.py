@@ -15,9 +15,9 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.get_reads import PlaybillGetRequest
+from cruxible_client.contracts.get_reads import GetRequest
 from cruxible_client.contracts.line_dispatch import LineDispatchRequest, LineEvaluateRequest
-from cruxible_client.contracts.operational_reads import PlaybillGetProcedureRunCard
+from cruxible_client.contracts.operational_reads import GetProcedureRunCard
 from cruxible_core.procedures import execution
 from cruxible_core.service.discovery.get import service_playbill_get
 from cruxible_core.service.discovery.orient import service_playbill_orient
@@ -39,9 +39,7 @@ _ACCESS = BodyAccessContext(principal_id="reader", can_read_body=True)
 
 
 def _get(instance, ref: str, **fields):  # type: ignore[no-untyped-def]
-    return service_playbill_get(
-        instance, request=PlaybillGetRequest(ref=ref, **fields), access=_ACCESS
-    )
+    return service_playbill_get(instance, request=GetRequest(ref=ref, **fields), access=_ACCESS)
 
 
 class _Crash(BaseException):
@@ -98,7 +96,7 @@ def test_a_finished_run_card_carries_its_receipt_and_measured_elapsed(run_world)
 
     card = result.card
     assert result.kind == "procedure_run" and result.ref == f"ProcedureRun:{finished.run_id}"
-    assert isinstance(card, PlaybillGetProcedureRunCard)
+    assert isinstance(card, GetProcedureRunCard)
     assert card.status == "succeeded" and card.procedure == procedure.identity.qualified
     assert card.nodes_total == len(procedure.definition.nodes)
     assert card.nodes_done == card.nodes_total == len(card.nodes)
@@ -120,7 +118,7 @@ def test_a_running_run_names_its_current_node_and_elapsed_against_the_read(run_w
 
     card = _get(instance, run_id[:16], evaluation_time=later).card
 
-    assert isinstance(card, PlaybillGetProcedureRunCard)
+    assert isinstance(card, GetProcedureRunCard)
     assert card.status == "running" and card.receipt_digest is None
     assert card.nodes_done == len(procedure.definition.nodes)
     # Every node fired; only finalization is outstanding, so no node is current.
@@ -187,7 +185,7 @@ def test_a_line_run_names_the_line_occurrence_and_arm_that_admitted_it(tmp_path:
 
     card = _get(instance, run_id).card
 
-    assert isinstance(card, PlaybillGetProcedureRunCard)
+    assert isinstance(card, GetProcedureRunCard)
     assert card.triggered_by is not None
     assert card.triggered_by.line == line.identity.qualified
     assert card.triggered_by.occurrence is not None
@@ -220,7 +218,7 @@ def test_an_explicitly_dispatched_line_run_names_no_arm(tmp_path: Path) -> None:
 
     card = _get(instance, run_id).card
 
-    assert isinstance(card, PlaybillGetProcedureRunCard)
+    assert isinstance(card, GetProcedureRunCard)
     assert card.triggered_by is not None and card.triggered_by.line == line.identity.qualified
     assert card.triggered_by.arm is None
 
@@ -255,7 +253,7 @@ def test_a_run_interrupted_mid_graph_names_the_node_it_is_on(tmp_path: Path) -> 
 
     card = _get(instance, _running_id(instance), evaluation_time=READ_TIME).card
 
-    assert isinstance(card, PlaybillGetProcedureRunCard)
+    assert isinstance(card, GetProcedureRunCard)
     assert card.status == "running" and card.nodes_done == 1
     assert [node.node for node in card.nodes] == [nodes[0].node_id]
     assert card.current_node is not None

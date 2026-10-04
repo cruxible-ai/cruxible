@@ -28,7 +28,7 @@ def test_publish_barrier_forwards_timeout_and_parses_acknowledgment(monkeypatch,
             )
 
         monkeypatch.setattr(client._client, "post", post)
-        result = client.publish_playbill_ledger("inst_test", timeout=0)
+        result = client.publish_ledger("inst_test", timeout=0)
         assert calls == [("/api/v1/inst_test/playbill/ledger/publish", {"timeout": 0})]
         assert result.status == "publishing"
         assert result.wait_sequence == result.published_sequence == 2
@@ -40,4 +40,4 @@ def test_client_rejects_invalid_timeout_without_transport(monkeypatch, timeout):
     with CruxibleClient(base_url="http://unused.invalid") as client:
         monkeypatch.setattr(client._client, "post", lambda *a, **k: pytest.fail("transport called"))
         with pytest.raises(ValueError, match="between 0 and 60"):
-            client.publish_playbill_ledger("inst_test", timeout=timeout)
+            client.publish_ledger("inst_test", timeout=timeout)

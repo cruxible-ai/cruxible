@@ -2,7 +2,7 @@
 
 import pytest
 
-from cruxible_client.contracts.errors import PlaybillGitError, SettlementIntegrityError
+from cruxible_client.contracts.errors import GitError, SettlementIntegrityError
 from cruxible_core.ledger.git import GitLedger
 from tests.test_ledger.test_activation import _instance
 from tests.test_ledger.test_activation_handoff_guards import _input
@@ -66,9 +66,9 @@ def test_delta_refuses_mode_and_type_changes_like_full_read(ledger, mode):
         .decode()
         .strip()
     )
-    with pytest.raises(PlaybillGitError, match="unsupported"):
+    with pytest.raises(GitError, match="unsupported"):
         ledger.read_tree(after)
-    with pytest.raises(PlaybillGitError, match="unsupported"):
+    with pytest.raises(GitError, match="unsupported"):
         ledger.read_tree_delta(before, after, parent_tree=parent)
 
 

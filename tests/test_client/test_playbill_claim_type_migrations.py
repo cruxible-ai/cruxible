@@ -47,7 +47,7 @@ def test_client_posts_the_frozen_migration_request_unchanged() -> None:
         "dependents": [],
     }
 
-    result = client.migrate_playbill_claim_type("inst", request=request)
+    result = client.migrate_claim_type("inst", request=request)
 
     assert result.operation_digest == "sha256:" + "1" * 64
     assert "lint" not in result.model_dump(mode="json")
@@ -80,7 +80,7 @@ def test_client_preserves_migration_lint_without_changing_candidate_fields() -> 
         base_url="http://cruxible", transport=httpx.MockTransport(handler)
     )
 
-    result = client.migrate_playbill_claim_type(
+    result = client.migrate_claim_type(
         "inst",
         request={
             "tag": "playbill-claim-type-migration-request-v1",
@@ -124,7 +124,7 @@ def test_client_parses_v3_attributed_retirement_result_and_warning() -> None:
         transport=httpx.MockTransport(handler),
     )
 
-    result = client.migrate_playbill_claim_type(
+    result = client.migrate_claim_type(
         "inst",
         request={
             "tag": "playbill-claim-type-migration-request-v3",
@@ -162,7 +162,7 @@ def test_client_preserves_expert_claim_type_proposal_lint() -> None:
         base_url="http://cruxible", transport=httpx.MockTransport(handler)
     )
 
-    result = client.propose_playbill_claim_type(
+    result = client.propose_claim_type(
         "inst",
         claim_type={"predicate": "project.work_item.status"},
         proposal_name="warn",

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from cruxible_client.authoring.queries import QueryBinding, QueryParameters
-from cruxible_client.authoring.sdk import Playbill
+from cruxible_client.authoring.sdk import Cruxible
 from cruxible_client.contracts.query.definitions import query_definition_digest
 from cruxible_client.contracts.query.grammar import QueryParameterDeclaration
 from tests.support.scoped_query_oracle import _scoped_facts_answer_as_whole_facts  # noqa: F401
@@ -47,7 +47,7 @@ def test_parameters_reuse_the_evaluator_type_rules(kind, valid, invalid):
 def test_sdk_resolves_once_and_runs_at_the_bound_coordinate(tmp_path):
     _workspace(tmp_path)
     client = _Client()
-    pb = Playbill._from_client(client, instance_id="inst_test", workspace=tmp_path)
+    pb = Cruxible._from_client(client, instance_id="inst_test", workspace=tmp_path)
     coordinate = pb.coordinate
     definition = active_work_query()
     calls = []
@@ -75,8 +75,8 @@ def test_sdk_resolves_once_and_runs_at_the_bound_coordinate(tmp_path):
         calls.append(("query", request))
         raise _Ran
 
-    client.playbill_get = get
-    client.query_playbill = query
+    client.get = get
+    client.query = query
     binding = pb.query_binding(definition.identity.name)
     assert isinstance(binding, QueryBinding)
     with pytest.raises(_Ran):

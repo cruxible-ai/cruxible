@@ -27,7 +27,7 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.claims import claim_path, claim_statement_address
-from cruxible_client.contracts.errors import PlaybillExecutionError
+from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.measurements import (
     ClaimAttestationProcedureMeasurement,
@@ -473,7 +473,7 @@ def derive_resolution_activations(
         elif declaration.subject_grain == "node":
             node_id = declaration.node_id
             if node_id is None:  # pragma: no cover - declaration validator owns this
-                raise PlaybillExecutionError("node measurement lacks node_id")
+                raise ExecutionError("node measurement lacks node_id")
             node_local = node_digests[node_id].local_digest
             address = SemanticAddress.procedure_node(accepted.path, node_id)
             content_digest = node_local
@@ -482,7 +482,7 @@ def derive_resolution_activations(
             from_node_id = declaration.from_node_id
             arm_label = declaration.arm_label
             if node_id is None or from_node_id is None or arm_label is None:  # pragma: no cover
-                raise PlaybillExecutionError("arm measurement lacks an endpoint")
+                raise ExecutionError("arm measurement lacks an endpoint")
             node_local = node_digests[node_id].local_digest
             from_node_local = node_digests[from_node_id].local_digest
             arm_subtree = procedure_arm_content_digest(
@@ -1220,7 +1220,7 @@ class ProcedureResolutionBook:
     ) -> None:
         self.activations = {item.contract_id: item for item in activations}
         if len(self.activations) != len(activations):
-            raise PlaybillExecutionError("duplicate ResolutionContract activation")
+            raise ExecutionError("duplicate ResolutionContract activation")
         self.resolutions: dict[str, list[ProcedureResolutionV1 | ProcedureResolutionV2]] = (
             defaultdict(list)
         )
@@ -1257,9 +1257,7 @@ class ProcedureResolutionBook:
                         raise ValueError("resolution payload has an unknown version tag")
                     activation = self.activations.get(resolution.contract_id)
                     if activation is None:
-                        raise PlaybillExecutionError(
-                            "resolution names no accepted derived activation"
-                        )
+                        raise ExecutionError("resolution names no accepted derived activation")
                     if (
                         resolution.subject != activation.subject
                         or resolution.measurement_name != activation.measurement_name
@@ -1270,21 +1268,21 @@ class ProcedureResolutionBook:
                         or stored.record.partition_id
                         != resolution_contract_partition_id(activation)
                     ):
-                        raise PlaybillExecutionError(
+                        raise ExecutionError(
                             "resolution differs from its exact accepted activation"
                         )
                     law = evaluate_procedure_resolution(activation, resolution)
                     if law.verdict == "refused":
-                        raise PlaybillExecutionError(
+                        raise ExecutionError(
                             law.message or "resolution failed its accepted declaration"
                         )
                     prior = self.resolutions[resolution.contract_id]
                     if resolution.sequence != len(prior) + 1:
-                        raise PlaybillExecutionError("resolution sequence is discontinuous")
+                        raise ExecutionError("resolution sequence is discontinuous")
                     if prior:
                         prior_dispositions = self.dispositions.get(prior[-1].resolution_id, ())
                         if not prior_dispositions or prior_dispositions[-1].verdict != "overturned":
-                            raise PlaybillExecutionError(
+                            raise ExecutionError(
                                 "resolution contract is closed until its latest answer "
                                 "is overturned"
                             )
@@ -1293,7 +1291,7 @@ class ProcedureResolutionBook:
                     disposition = ProcedureResolutionDispositionV1.model_validate(payload)
                     disposition_target = self.resolution_by_id(disposition.resolution_id)
                     if disposition_target is None:
-                        raise PlaybillExecutionError("disposition names an absent resolution")
+                        raise ExecutionError("disposition names an absent resolution")
                     disposition_activation = self.activations[disposition_target.contract_id]
                     if (
                         stored.record.partition_id
@@ -1305,22 +1303,20 @@ class ProcedureResolutionBook:
                         or stored.record.procedure_artifact_digest
                         != disposition_activation.procedure_artifact_digest
                     ):
-                        raise PlaybillExecutionError(
+                        raise ExecutionError(
                             "resolution disposition differs from its contract partition"
                         )
                     contract_resolutions = self.resolutions[disposition_target.contract_id]
                     if contract_resolutions[-1].resolution_id != disposition.resolution_id:
-                        raise PlaybillExecutionError(
+                        raise ExecutionError(
                             "an answered overturn cannot be revised on an older resolution"
                         )
                     prior_dispositions = self.dispositions[disposition.resolution_id]
                     if disposition.sequence != len(prior_dispositions) + 1:
-                        raise PlaybillExecutionError(
-                            "resolution disposition sequence is discontinuous"
-                        )
+                        raise ExecutionError("resolution disposition sequence is discontinuous")
                     prior_dispositions.append(disposition)
             except ValueError as exc:
-                raise PlaybillExecutionError("resolution exhaust payload is invalid") from exc
+                raise ExecutionError("resolution exhaust payload is invalid") from exc
 
     def resolution_by_id(
         self, resolution_id: str
@@ -1362,17 +1358,17 @@ def append_procedure_resolution(
     partition_id = resolution_contract_partition_id(activation)
     law = evaluate_procedure_resolution(activation, resolution)
     if law.verdict == "refused":
-        raise PlaybillExecutionError(law.message or "resolution law refused")
+        raise ExecutionError(law.message or "resolution law refused")
     existing = writer.journal.all_records(stream, partition_id)
     book = ProcedureResolutionBook((activation,))
     book.replay(existing, bodies=writer.bodies)
     prior = book.resolutions.get(activation.contract_id, ())
     if resolution.sequence != len(prior) + 1:
-        raise PlaybillExecutionError("resolution sequence is discontinuous")
+        raise ExecutionError("resolution sequence is discontinuous")
     if prior:
         dispositions = book.dispositions.get(prior[-1].resolution_id, ())
         if not dispositions or dispositions[-1].verdict != "overturned":
-            raise PlaybillExecutionError(
+            raise ExecutionError(
                 "resolution contract is closed until its latest answer is overturned"
             )
     return writer.append(
@@ -1401,21 +1397,19 @@ def append_resolution_disposition(
 ) -> StoredProcedureJournalRecordV1:
     partition_id = resolution_contract_partition_id(activation)
     if disposition.resolution_id != resolution.resolution_id:
-        raise PlaybillExecutionError("resolution disposition names another resolution")
+        raise ExecutionError("resolution disposition names another resolution")
     existing = writer.journal.all_records(stream, partition_id)
     book = ProcedureResolutionBook((activation,))
     book.replay(existing, bodies=writer.bodies)
     stored_resolution = book.resolution_by_id(resolution.resolution_id)
     if stored_resolution != resolution:
-        raise PlaybillExecutionError("resolution disposition target is absent from exhaust")
+        raise ExecutionError("resolution disposition target is absent from exhaust")
     contract_resolutions = book.resolutions[resolution.contract_id]
     if contract_resolutions[-1].resolution_id != resolution.resolution_id:
-        raise PlaybillExecutionError(
-            "an answered overturn cannot be revised on an older resolution"
-        )
+        raise ExecutionError("an answered overturn cannot be revised on an older resolution")
     prior = book.dispositions.get(resolution.resolution_id, ())
     if disposition.sequence != len(prior) + 1:
-        raise PlaybillExecutionError("resolution disposition sequence is discontinuous")
+        raise ExecutionError("resolution disposition sequence is discontinuous")
     return writer.append(
         stream=stream,
         partition_id=partition_id,

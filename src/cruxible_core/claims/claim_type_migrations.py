@@ -9,7 +9,7 @@ from typing import Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from cruxible_client.contracts import PlaybillSemanticFieldDelta
+from cruxible_client.contracts import SemanticFieldDelta
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
@@ -37,7 +37,7 @@ from cruxible_client.contracts.claims import (
     parse_claim,
     render_claim,
 )
-from cruxible_client.contracts.errors import PlaybillError, PlaybillFormatError
+from cruxible_client.contracts.errors import CruxibleError, FormatError
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
 from cruxible_client.contracts.procedures.models import ProcedureDefinitionV3
 from cruxible_client.contracts.semantic_delta import semantic_field_delta
@@ -64,8 +64,7 @@ from cruxible_core.proposals.proposals import (
 )
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import (
-    PlaybillAcceptedCoordinate,
-    PlaybillProposalInspection,
+    ProposalInspection,
 )
 
 CLAIM_TYPE_MIGRATION_DOMAIN = "playbill-claim-type-migration-v1"
@@ -188,9 +187,9 @@ class ClaimTypeMigrationResultV1(_StrictMigrationModel):
         "playbill-claim-type-migration-result-v1"
     )
     operation_digest: str
-    semantic_delta: tuple[PlaybillSemanticFieldDelta, ...]
+    semantic_delta: tuple[SemanticFieldDelta, ...]
     dependents: tuple[ClaimTypeMigrationDispositionV1, ...]
-    proposal: PlaybillProposalInspection
+    proposal: ProposalInspection
     warnings: tuple[ClaimTypeMigrationWarningV1, ...] = ()
     lint: ClaimTypeProposalLintV1 | None = Field(
         default=None,
@@ -213,9 +212,9 @@ class ClaimTypeMigrationPreflightV1(_StrictMigrationModel):
     tag: Literal["playbill-claim-type-migration-preflight-v1"] = (
         "playbill-claim-type-migration-preflight-v1"
     )
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     successor_artifact_digest: str
-    semantic_delta: tuple[PlaybillSemanticFieldDelta, ...]
+    semantic_delta: tuple[SemanticFieldDelta, ...]
     dependents: tuple[ClaimTypeMigrationInventoryItemV1, ...]
     warnings: tuple[ClaimTypeMigrationWarningV1, ...] = ()
     lint: ClaimTypeProposalLintV1 | None = Field(
@@ -234,9 +233,9 @@ class ClaimTypeMigrationResultV2(_StrictMigrationModel):
         "playbill-claim-type-migration-result-v2"
     )
     operation_digest: str
-    semantic_delta: tuple[PlaybillSemanticFieldDelta, ...]
+    semantic_delta: tuple[SemanticFieldDelta, ...]
     dependents: tuple[ClaimTypeMigrationDispositionV2, ...]
-    proposal: PlaybillProposalInspection
+    proposal: ProposalInspection
     warnings: tuple[ClaimTypeMigrationWarningV1, ...] = ()
     lint: ClaimTypeProposalLintV1 | None = Field(
         default=None,
@@ -256,9 +255,9 @@ class ClaimTypeMigrationResultV3(_StrictMigrationModel):
         "playbill-claim-type-migration-result-v3"
     )
     operation_digest: str
-    semantic_delta: tuple[PlaybillSemanticFieldDelta, ...]
+    semantic_delta: tuple[SemanticFieldDelta, ...]
     dependents: tuple[ClaimTypeMigrationDispositionV3, ...]
-    proposal: PlaybillProposalInspection
+    proposal: ProposalInspection
     warnings: tuple[ClaimTypeMigrationWarningV1, ...] = ()
     lint: ClaimTypeProposalLintV1 | None = Field(
         default=None,
@@ -274,7 +273,7 @@ ClaimTypeMigrationResponse: TypeAlias = (
 )
 
 
-class ClaimTypeMigrationError(PlaybillFormatError):
+class ClaimTypeMigrationError(FormatError):
     code = "playbill.claim_type.migration_invalid"
 
 
@@ -741,7 +740,7 @@ def _canonical_successor_bytes(
             supplied_content if supplied_content is not None else (pretty_canonical_bytes(payload))
         )
         parsed = parse_dependency_artifact(current.path, candidate)
-    except (PlaybillError, TypeError, ValueError) as exc:
+    except (CruxibleError, TypeError, ValueError) as exc:
         raise ClaimTypeMigrationDependentInvalid(
             f"{ClaimTypeMigrationDependentInvalid.code}: supplied successor is invalid for "
             f"{current.identity.qualified}"
@@ -1226,12 +1225,10 @@ def _service_migrate_claim_type_v1(
         operation_digest=operation_digest,
         semantic_delta=delta,
         dependents=normalized,
-        proposal=PlaybillProposalInspection(
+        proposal=ProposalInspection(
             proposal=proposal,
             workspace_advertisement=proposal.workspace_advertisement,
-            accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
-                instance.accepted_coordinate()
-            ),
+            accepted_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         ),
         warnings=_invalidation_warnings(request.dependents),
         lint=lint if lint.warnings else None,
@@ -1297,7 +1294,7 @@ def _service_migrate_claim_type_v2(
         )
     if request.mode == "preflight":
         return ClaimTypeMigrationPreflightV1(
-            coordinate=PlaybillAcceptedCoordinate.from_internal(current),
+            coordinate=AcceptedCoordinate.from_internal(current),
             successor_artifact_digest=claim_type_digest(successor).tagged,
             semantic_delta=delta,
             dependents=inventory,
@@ -1328,12 +1325,10 @@ def _service_migrate_claim_type_v2(
         operation_digest=operation_digest,
         semantic_delta=delta,
         dependents=normalized,
-        proposal=PlaybillProposalInspection(
+        proposal=ProposalInspection(
             proposal=proposal,
             workspace_advertisement=proposal.workspace_advertisement,
-            accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
-                instance.accepted_coordinate()
-            ),
+            accepted_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         ),
         warnings=_invalidation_warnings(request.dependents),
         lint=lint if lint.warnings else None,
@@ -1399,7 +1394,7 @@ def _service_migrate_claim_type_v3(
         )
     if request.mode == "preflight":
         return ClaimTypeMigrationPreflightV1(
-            coordinate=PlaybillAcceptedCoordinate.from_internal(current),
+            coordinate=AcceptedCoordinate.from_internal(current),
             successor_artifact_digest=claim_type_digest(successor).tagged,
             semantic_delta=delta,
             dependents=inventory,
@@ -1430,12 +1425,10 @@ def _service_migrate_claim_type_v3(
         operation_digest=operation_digest,
         semantic_delta=delta,
         dependents=normalized,
-        proposal=PlaybillProposalInspection(
+        proposal=ProposalInspection(
             proposal=proposal,
             workspace_advertisement=proposal.workspace_advertisement,
-            accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
-                instance.accepted_coordinate()
-            ),
+            accepted_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         ),
         warnings=warnings,
         lint=lint if lint.warnings else None,

@@ -1,6 +1,6 @@
 """Error hierarchy for Cruxible Core.
 
-Every exception inherits from CoreError. Playbill refusals carry their own
+Every exception inherits from CoreError. Cruxible refusals carry their own
 typed errors in ``cruxible_client.contracts.errors``; these are the runtime and
 credential errors shared by the daemon, CLI and MCP boundaries.
 

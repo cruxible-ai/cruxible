@@ -30,14 +30,14 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any
 
 from cruxible_client.contracts.claims import ClaimArtifactAny, claim_path
+from cruxible_client.contracts.get_reads import ReadFlag
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+from cruxible_core.service.authoring.documents import AcceptedCoordinate
 
-ReadFlag = Literal["stale", "contested", "contradicted", "uncovered", "unsure_hold"]
 FLAG_ORDER: tuple[ReadFlag, ...] = (
     "stale",
     "contested",
@@ -163,7 +163,7 @@ def claim_reads(
     statuses = claim_resolution_statuses(
         instance,
         claims=parsed,
-        at=PlaybillAcceptedCoordinate.from_internal(coordinate),
+        at=AcceptedCoordinate.from_internal(coordinate),
         evaluation_time=evaluation_time,
         verdicts_by_identity=verdicts,
         read_context=context,

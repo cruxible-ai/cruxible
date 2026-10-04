@@ -1,4 +1,4 @@
-"""Exact Playbill generation-zero preparation and replay verification."""
+"""Exact Cruxible generation-zero preparation and replay verification."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from cruxible_client.contracts.canonical import (
     manifest_root,
     typed_digest,
 )
-from cruxible_client.contracts.errors import PlaybillBootstrapError
+from cruxible_client.contracts.errors import BootstrapError
 from cruxible_client.contracts.principal_rendering import render_principal
 from cruxible_client.contracts.procedure_runtime_policy import (
     PROCEDURE_RUNTIME_POLICY_PATH,
@@ -44,8 +44,8 @@ from cruxible_client.contracts.triggers import (
 )
 from cruxible_client.contracts.types import (
     GenerationDescriptor,
-    PlaybillTrustRoot,
     PrincipalRecord,
+    TrustRoot,
 )
 from cruxible_core.ledger.git import GitLedger
 
@@ -72,9 +72,9 @@ def bootstrap_root(*, instance_id: str, daemon_public_key: str) -> BootstrapRoot
     try:
         key_bytes = bytes.fromhex(daemon_public_key)
     except ValueError as exc:
-        raise PlaybillBootstrapError("daemon public key must be lowercase hex") from exc
+        raise BootstrapError("daemon public key must be lowercase hex") from exc
     if len(key_bytes) != 32 or key_bytes.hex() != daemon_public_key:
-        raise PlaybillBootstrapError("daemon public key must contain 32 lowercase-hex bytes")
+        raise BootstrapError("daemon public key must contain 32 lowercase-hex bytes")
     return typed_digest(
         BootstrapRoot,
         "playbill-genesis-v1",
@@ -135,7 +135,7 @@ def genesis_tree(
     if [record.principal_id for record in ordered] != sorted(
         {record.principal_id for record in ordered}
     ):
-        raise PlaybillBootstrapError("genesis principals must be unique")
+        raise BootstrapError("genesis principals must be unique")
     tree = {
         APPROVAL_POLICY_PATH: render_approval_policy(approval_policy),
         **{
@@ -188,25 +188,25 @@ def verify_genesis(
     ledger: GitLedger,
     oid: str,
     *,
-    trust_root: PlaybillTrustRoot,
+    trust_root: TrustRoot,
 ) -> VerifiedGenesis:
     """Replay generation zero from out-of-band instance, key, and principals."""
 
     if ledger.parent_of(oid) is not None:
-        raise PlaybillBootstrapError("genesis commit unexpectedly has a Git parent")
+        raise BootstrapError("genesis commit unexpectedly has a Git parent")
     if ledger.allowed_signer_public_key_hex("daemon") != trust_root.daemon_public_key:
-        raise PlaybillBootstrapError("allowed daemon signer differs from bootstrap key")
+        raise BootstrapError("allowed daemon signer differs from bootstrap key")
     if not ledger.verify_commit(oid):
-        raise PlaybillBootstrapError("genesis is not signed by the bootstrap daemon key")
+        raise BootstrapError("genesis is not signed by the bootstrap daemon key")
 
     tree = ledger.read_tree(oid)
     policy_content = tree.get(APPROVAL_POLICY_PATH)
     if policy_content is None:
-        raise PlaybillBootstrapError("genesis approval policy is missing")
+        raise BootstrapError("genesis approval policy is missing")
     try:
         approval_policy = parse_approval_policy(policy_content, path=APPROVAL_POLICY_PATH)
     except ApprovalPolicyFormatError as exc:
-        raise PlaybillBootstrapError("genesis approval policy is invalid") from exc
+        raise BootstrapError("genesis approval policy is invalid") from exc
     runtime_policy: ProcedureRuntimePolicy | None = None
     runtime_policy_content = tree.get(PROCEDURE_RUNTIME_POLICY_PATH)
     if runtime_policy_content is not None:
@@ -216,15 +216,15 @@ def verify_genesis(
                 path=PROCEDURE_RUNTIME_POLICY_PATH,
             )
         except ProcedureRuntimePolicyFormatError as exc:
-            raise PlaybillBootstrapError("genesis Procedure runtime policy is invalid") from exc
+            raise BootstrapError("genesis Procedure runtime policy is invalid") from exc
     triggers: list[Trigger] = []
     for path in sorted(item for item in tree if item.startswith("triggers/")):
         try:
             triggers.append(parse_trigger(tree[path], path=path))
         except TriggerFormatError as exc:
-            raise PlaybillBootstrapError(f"genesis Trigger is invalid: {path}") from exc
+            raise BootstrapError(f"genesis Trigger is invalid: {path}") from exc
     if triggers and tuple(triggers) != seeded_triggers():
-        raise PlaybillBootstrapError("genesis Triggers differ from the seeded defaults")
+        raise BootstrapError("genesis Triggers differ from the seeded defaults")
     expected_tree = genesis_tree(
         trust_root.principals,
         approval_policy=approval_policy,
@@ -232,7 +232,7 @@ def verify_genesis(
         triggers=triggers,
     )
     if set(tree) != set(expected_tree):
-        raise PlaybillBootstrapError("genesis principal registry paths differ from trust root")
+        raise BootstrapError("genesis principal registry paths differ from trust root")
 
     parsed: list[PrincipalRecord] = []
     for path in sorted(expected_tree):
@@ -240,23 +240,23 @@ def verify_genesis(
             "triggers/"
         ):
             if tree[path] != expected_tree[path]:  # pragma: no cover - parser already proves this
-                raise PlaybillBootstrapError("genesis approval policy is not canonical")
+                raise BootstrapError("genesis approval policy is not canonical")
             continue
         content = tree[path]
         try:
             payload = json.loads(content)
             record = PrincipalRecord.model_validate(payload)
         except (json.JSONDecodeError, UnicodeDecodeError, ValidationError) as exc:
-            raise PlaybillBootstrapError(f"invalid canonical genesis principal: {path}") from exc
+            raise BootstrapError(f"invalid canonical genesis principal: {path}") from exc
         if render_principal(record) != content:
-            raise PlaybillBootstrapError(f"genesis principal is not canonical: {path}")
+            raise BootstrapError(f"genesis principal is not canonical: {path}")
         if content != expected_tree[path]:
-            raise PlaybillBootstrapError(f"genesis principal differs from trust root: {path}")
+            raise BootstrapError(f"genesis principal differs from trust root: {path}")
         parsed.append(record)
 
     daemon = next(record for record in parsed if record.principal_id == "daemon")
     if daemon.public_key != trust_root.daemon_public_key:
-        raise PlaybillBootstrapError("committed daemon principal differs from bootstrap key")
+        raise BootstrapError("committed daemon principal differs from bootstrap key")
 
     parent = bootstrap_root(
         instance_id=trust_root.instance_id,
@@ -285,7 +285,7 @@ def verify_genesis(
 def prepare_genesis(
     ledger: GitLedger,
     *,
-    trust_root: PlaybillTrustRoot,
+    trust_root: TrustRoot,
     approval_policy: ApprovalPolicy,
     procedure_runtime_policy: ProcedureRuntimePolicy | None = None,
     triggers: Sequence[Trigger] = (),
@@ -311,7 +311,7 @@ def prepare_genesis(
     verified = verify_genesis(ledger, oid, trust_root=trust_root)
     ledger.set_main_genesis(oid)
     if ledger.read_main() != oid:
-        raise PlaybillBootstrapError("main did not settle on the verified genesis commit")
+        raise BootstrapError("main did not settle on the verified genesis commit")
     return verified
 
 

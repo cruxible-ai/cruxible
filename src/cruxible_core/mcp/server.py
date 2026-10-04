@@ -35,9 +35,9 @@ from cruxible_core.mcp.tools import register_tools
 from cruxible_core.server.config import ServerSettings, resolve_server_settings
 
 BASE_INSTRUCTIONS = """\\
-# cruxible Playbill
+# Cruxible
 
-Playbill is deterministic, governed state with no LLM inside. Agents propose;
+Cruxible is deterministic, governed state with no LLM inside. Agents propose;
 accepted laws, principals, attestations, and compare-and-set settlement decide
 what becomes canonical.
 
@@ -64,7 +64,7 @@ approval is not activation, and diagnostics never carry authority.
 
 Setting up a host and its first principals is operator work on the cruxible CLI
 (server start, playbill host create, playbill init), not part of this tool set.
-Transport tiers only control endpoint reachability; Playbill principals and
+Transport tiers only control endpoint reachability; Cruxible principals and
 acceptance laws control semantic authority.
 """
 

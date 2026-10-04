@@ -1,7 +1,7 @@
 """Frozen graph-format-v3 Procedure grammar.
 
-This packaged contract module owns the live Playbill Procedure graph profile.
-Its dependencies are exact Playbill pins or interface-typed LineSpec slots;
+This packaged contract module owns the live Cruxible Procedure graph profile.
+Its dependencies are exact Cruxible pins or interface-typed LineSpec slots;
 nothing here performs a mutable config or registry lookup.
 """
 

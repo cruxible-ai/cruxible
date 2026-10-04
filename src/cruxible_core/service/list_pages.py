@@ -22,19 +22,19 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.primitives import canonical_json
 
 T = TypeVar("T")
 
 
-class PlaybillListCursorMismatch(PlaybillFormatError):
+class ListCursorMismatch(FormatError):
     """A list cursor that does not continue the list this request reads."""
 
     error_code = "playbill.list.cursor_mismatch"
 
 
-class PlaybillListCursorStale(PlaybillListCursorMismatch):
+class ListCursorStale(ListCursorMismatch):
     """A list cursor whose listing changed after its first page."""
 
     error_code = "playbill.list.cursor_stale"
@@ -49,10 +49,9 @@ class ListContinuation:
     last_key: tuple[str, ...]
 
 
-def _mismatch(list_name: str, detail: str) -> PlaybillListCursorMismatch:
-    return PlaybillListCursorMismatch(
-        f"{PlaybillListCursorMismatch.error_code}: {detail}; "
-        f"list the {list_name} again without a cursor"
+def _mismatch(list_name: str, detail: str) -> ListCursorMismatch:
+    return ListCursorMismatch(
+        f"{ListCursorMismatch.error_code}: {detail}; list the {list_name} again without a cursor"
     )
 
 
@@ -145,8 +144,8 @@ def page_after_boundary(
     start = 0
     if continuation is not None:
         if continuation.snapshot != snapshot:
-            raise PlaybillListCursorStale(
-                f"{PlaybillListCursorStale.error_code}: the {list_name} listing changed since "
+            raise ListCursorStale(
+                f"{ListCursorStale.error_code}: the {list_name} listing changed since "
                 f"the cursor's first page; list the {list_name} again without a cursor"
             )
         try:
@@ -159,8 +158,8 @@ def page_after_boundary(
 
 __all__ = [
     "ListContinuation",
-    "PlaybillListCursorMismatch",
-    "PlaybillListCursorStale",
+    "ListCursorMismatch",
+    "ListCursorStale",
     "decode_list_cursor",
     "encode_list_cursor",
     "list_snapshot",

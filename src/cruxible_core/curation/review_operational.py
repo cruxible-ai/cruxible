@@ -1,4 +1,4 @@
-"""Append-only operational observations outside Playbill governed state.
+"""Append-only operational observations outside Cruxible governed state.
 
 This store records what one daemon served or mechanically observed.  Its files
 are not ledger members and must never participate in semantic, generation, or
@@ -21,7 +21,7 @@ from typing import Callable, Literal, TypeAlias
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
-from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_core.governance.actor_context import GovernedActorContext
@@ -41,7 +41,7 @@ REVIEW_OPERATIONAL_APPEND_BATCH_LIMIT = 256
 _UNCHECKED_PARTITION_HEAD = object()
 
 
-class ReviewOperationalStoreError(PlaybillError):
+class ReviewOperationalStoreError(CruxibleError):
     """Operational state is corrupt, unsafe, or concurrently changed."""
 
     code = "playbill.curation.operational_store_invalid"
@@ -54,7 +54,7 @@ class ReviewOperationalStoreError(PlaybillError):
         super().__init__(f"{self.code}: {message}")
 
 
-class ReviewOperationalConcurrentChangeError(PlaybillError):
+class ReviewOperationalConcurrentChangeError(CruxibleError):
     """The caller's expected operational partition head is no longer current."""
 
     code = "playbill.curation.concurrent_change"

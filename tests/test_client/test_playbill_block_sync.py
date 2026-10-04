@@ -22,9 +22,9 @@ import pytest
 from cruxible_client.authoring.blocks import repin_projection_block, sync_projection_blocks
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
-    PlaybillBlockSyncReadRequest,
-    PlaybillBlockSyncReadResult,
-    PlaybillBlockSyncSuccessorCandidate,
+    BlockSyncReadRequest,
+    BlockSyncReadResult,
+    BlockSyncSuccessorCandidate,
 )
 from cruxible_client.contracts.declared_blocks import (
     ProjectionArtifactBacking,
@@ -181,13 +181,13 @@ class _SyncClient:
         refusal: str | None = None,
         moved: int = 1,
     ) -> None:
-        self.requests: list[PlaybillBlockSyncReadRequest] = []
+        self.requests: list[BlockSyncReadRequest] = []
         self.declared: list[dict[str, object]] = []
         self.status = status
         self.refusal = refusal
         self.moved = moved
 
-    def declare_playbill_block(
+    def declare_block(
         self,
         _instance_id: str,
         stamp: dict[str, object],
@@ -201,36 +201,34 @@ class _SyncClient:
             outcome="declared",
         )
 
-    def check_playbill_projection_blocks(self, instance_id, *, request):
+    def check_projection_blocks(self, instance_id, *, request):
         from types import SimpleNamespace
 
         return SimpleNamespace(
             results=tuple(
-                self.read_playbill_block_sync_backing(
-                    instance_id, request=PlaybillBlockSyncReadRequest(stamp=s)
-                )
+                self.read_block_sync_backing(instance_id, request=BlockSyncReadRequest(stamp=s))
                 for s in request.stamps
             )
         )
 
-    def read_playbill_block_sync_backing(
+    def read_block_sync_backing(
         self,
         instance_id: str,
         *,
-        request: PlaybillBlockSyncReadRequest,
-    ) -> PlaybillBlockSyncReadResult:
+        request: BlockSyncReadRequest,
+    ) -> BlockSyncReadResult:
         assert instance_id == INSTANCE_ID
         self.requests.append(request)
         if self.refusal is not None:
             candidates = (
                 (
-                    PlaybillBlockSyncSuccessorCandidate(
+                    BlockSyncSuccessorCandidate(
                         identity=request.stamp.backing[0].identity,
                         artifact_digest="sha256:" + "a" * 64,
                         coordinate=NEW_COORDINATE,
                         generation=2,
                     ),
-                    PlaybillBlockSyncSuccessorCandidate(
+                    BlockSyncSuccessorCandidate(
                         identity=request.stamp.backing[0].identity,
                         artifact_digest="sha256:" + "b" * 64,
                         coordinate=NEW_COORDINATE,
@@ -240,7 +238,7 @@ class _SyncClient:
                 if self.refusal == "block_successor_ambiguous"
                 else ()
             )
-            return PlaybillBlockSyncReadResult(
+            return BlockSyncReadResult(
                 status="refused",
                 original_artifact_digest=_digest(b"old-artifact"),
                 reason=self.refusal,  # type: ignore[arg-type]
@@ -253,7 +251,7 @@ class _SyncClient:
         # is what `block repin --backing DIGEST` reads back.
         single = held[0] if len(held) == 1 else None
         if self.status == "current":
-            return PlaybillBlockSyncReadResult(
+            return BlockSyncReadResult(
                 status="current",
                 original_artifact_digest=_digest(b"old-artifact"),
                 coordinate=NEW_COORDINATE,
@@ -261,7 +259,7 @@ class _SyncClient:
                 backing=single,
                 current_backings=held,
             )
-        return PlaybillBlockSyncReadResult(
+        return BlockSyncReadResult(
             status="successor",
             original_artifact_digest=_digest(b"old-artifact"),
             artifact_digest=_digest(b"new-artifact"),
@@ -1132,20 +1130,18 @@ def test_batch_check_http_preserves_policy_and_one_evaluation_binding():
             "currency_policy": "require_current",
         }
     )
-    request = contracts.PlaybillProjectionCheckRequest(
+    request = contracts.ProjectionCheckRequest(
         stamps=(stamp,), at=NEW_COORDINATE, evaluation_time=instant
     )
-    response = contracts.PlaybillProjectionCheckResult(
+    response = contracts.ProjectionCheckResult(
         coordinate=NEW_COORDINATE,
         evaluation_time=instant,
-        results=(
-            PlaybillBlockSyncReadResult(status="current", coordinate=NEW_COORDINATE, generation=2),
-        ),
+        results=(BlockSyncReadResult(status="current", coordinate=NEW_COORDINATE, generation=2),),
     )
 
     def handler(wire: httpx.Request) -> httpx.Response:
         assert wire.url.path == f"/api/v1/{INSTANCE_ID}/playbill/projections/check"
-        assert contracts.PlaybillProjectionCheckRequest.model_validate_json(wire.content) == request
+        assert contracts.ProjectionCheckRequest.model_validate_json(wire.content) == request
         return httpx.Response(200, json=response.model_dump(mode="json"))
 
     client = CruxibleClient(base_url="http://projection.test")
@@ -1154,7 +1150,7 @@ def test_batch_check_http_preserves_policy_and_one_evaluation_binding():
         base_url="http://projection.test", transport=httpx.MockTransport(handler)
     )
     try:
-        assert client.check_playbill_projection_blocks(INSTANCE_ID, request=request) == response
+        assert client.check_projection_blocks(INSTANCE_ID, request=request) == response
     finally:
         client._client.close()
 
@@ -1169,7 +1165,7 @@ def test_mixed_retirement_repair_keeps_surviving_artifact_category():
         artifact_digest="sha256:" + "d" * 64,
     )
     stamp = _stamp().model_copy(update={"backing": (claim, artifact)})
-    read = PlaybillBlockSyncReadResult(
+    read = BlockSyncReadResult(
         status="unsyncable",
         reason="block_backing_retired",
         detail="Claim retired",
@@ -1200,9 +1196,9 @@ def test_mixed_retirement_repair_keeps_surviving_artifact_category():
 def test_projection_checks_reject_naive_time_on_both_read_surfaces(batch, value):
     from pydantic import ValidationError
 
-    from cruxible_client.contracts.authoring.models import PlaybillProjectionCheckRequest
+    from cruxible_client.contracts.authoring.models import ProjectionCheckRequest
 
-    model = PlaybillProjectionCheckRequest if batch else PlaybillBlockSyncReadRequest
+    model = ProjectionCheckRequest if batch else BlockSyncReadRequest
     payload = {"stamps": (_stamp(),)} if batch else {"stamp": _stamp()}
     with pytest.raises(ValidationError, match="absolute evaluation time"):
         model.model_validate({**payload, "evaluation_time": value})

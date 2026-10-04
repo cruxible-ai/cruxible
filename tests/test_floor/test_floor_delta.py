@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from cruxible_client.authoring.floor_apply import apply_floor_delta, read_floor_manifest
-from cruxible_client.contracts.floor import PlaybillFloorDelta
+from cruxible_client.contracts.floor import FloorDelta
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.floor.floor_delta import (
@@ -37,7 +37,7 @@ def _delta(
     head: int | None = None,
     base: int | None = None,
     renderer: str | None = None,
-) -> PlaybillFloorDelta:
+) -> FloorDelta:
     full = service_playbill_floor_delta(
         instance, head=_head(instance, head), base_generation=None, base_renderer=None
     )

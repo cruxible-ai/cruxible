@@ -37,7 +37,7 @@ from cruxible_client.contracts.captures import (
     parse_capture_envelope,
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
-from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_client.contracts.triggers import INTERNAL_ACTIONS
 from cruxible_core.consumers.protocol import (
@@ -326,7 +326,7 @@ class EvidencePart:
                     continue
                 try:
                     envelope = parse_capture_envelope(store.read(digest, access=_READER))
-                except PlaybillError:
+                except CruxibleError:
                     observed.append((digest, "envelope", digest, "corrupt"))
                     continue
                 if envelope.commitment.materialization != "cas":

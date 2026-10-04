@@ -72,7 +72,7 @@ _STUB_IMPORTS = (
     ")",
     "from cruxible_client.authoring.world import KindNamespace, Names, WorldClaimType",
     "from cruxible_client.contracts.claim_types import ClaimTypeMemberDescription",
-    "from cruxible_client.contracts.compact_query import PlaybillQueryRequest",
+    "from cruxible_client.contracts.compact_query import QueryRequest",
     "from cruxible_client.contracts.projection import AcceptedCoordinate",
     "from cruxible_client.contracts.write import (",
     "    Evidence,",
@@ -440,7 +440,7 @@ def _query_members(world: World, kind: str, body: _Body, *, include_run: bool) -
     if include_run:
         body.declare(f"def order_by(self, *fields: str) -> {query}: ...")
         body.declare(f"def limit(self, count: int) -> {query}: ...")
-        body.declare("def request(self) -> PlaybillQueryRequest: ...")
+        body.declare("def request(self) -> QueryRequest: ...")
         body.declare("def run(self) -> QueryResult: ...")
         body.declare("def __iter__(self) -> Iterator[dict[str, object]]: ...")
 
@@ -557,7 +557,7 @@ def render_world_stub(world: World) -> str:
         "#",
         "# These classes are closed: a name this coordinate did not accept is a",
         "# type error, not `Any`. Bind the runtime object to them once --",
-        '#   world = cast("World", pb.world())',
+        '#   world = cast("World", cx.world())',
         "# -- and every kind, Subject, predicate and enum member below is checked.",
         "",
         *_STUB_IMPORTS,
@@ -598,16 +598,16 @@ def render_world_stub_for(
     """Render the `.pyi` for one instance's accepted world over an open client.
 
     The sanctioned entry point for a caller that holds a client rather than a
-    `Playbill` -- the CLI leaf, and anything else outside this package -- so no
+    `Cruxible` -- the CLI leaf, and anything else outside this package -- so no
     caller has to reach for a private constructor. The workspace is only the
     root a relative source selection would resolve against; this reads nothing
-    from it, so a directory with no Playbill workspace is fine.
+    from it, so a directory with no Cruxible workspace is fine.
     """
 
-    from cruxible_client.authoring.sdk import Playbill
+    from cruxible_client.authoring.sdk import Cruxible
 
     return (
-        Playbill._from_client(
+        Cruxible._from_client(
             client,
             instance_id=instance_id,
             workspace=Path(workspace),

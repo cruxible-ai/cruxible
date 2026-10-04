@@ -402,7 +402,7 @@ governed_write. Approval submission and activation require graph_write. Host
 allocation, initialization, and principal changes require admin.
 
 The daemon capability ceiling and bearer credential tier both apply. A
-Playbill principal signature is an additional governance condition, not a
+Cruxible principal signature is an additional governance condition, not a
 replacement for transport authorization.
 
 Workspace source tools take `root_aliases` as a list of `{alias, path}` records.

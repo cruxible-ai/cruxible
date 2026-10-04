@@ -14,9 +14,9 @@ from typing import Any
 
 import pytest
 
-from cruxible_client.contracts.get_reads import PlaybillGetRequest
+from cruxible_client.contracts.get_reads import GetRequest
 from cruxible_client.contracts.line_dispatch import LineArmPrincipal
-from cruxible_client.contracts.operational_reads import PlaybillGetProcedureRunCard
+from cruxible_client.contracts.operational_reads import GetProcedureRunCard
 from cruxible_client.contracts.procedures.results import (
     ProcedureRunAttribution,
     ProcedureRunAttributionWithheld,
@@ -165,17 +165,17 @@ def _reads(instance: Any, run_id: str, viewer: OperationalViewer | None):  # typ
     state = procedure_run_status(instance, run_id, viewer=viewer)
     card = service_playbill_get(
         instance,
-        request=PlaybillGetRequest(ref=f"ProcedureRun:{run_id}"),
+        request=GetRequest(ref=f"ProcedureRun:{run_id}"),
         access=_ACCESS,
         viewer=viewer,
     ).card
     proof = service_playbill_get(
         instance,
-        request=PlaybillGetRequest(ref=f"ProcedureRun:{run_id}", detail="proof"),
+        request=GetRequest(ref=f"ProcedureRun:{run_id}", detail="proof"),
         access=_ACCESS,
         viewer=viewer,
     ).proof
-    assert isinstance(card, PlaybillGetProcedureRunCard) and proof is not None
+    assert isinstance(card, GetProcedureRunCard) and proof is not None
     return state, card, proof
 
 

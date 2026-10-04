@@ -73,7 +73,7 @@ def test_a_source_and_the_document_of_its_name_are_one_line(tmp_path: Any) -> No
 
 
 def test_the_client_joins_workspace_paths_into_sources_and_projections(tmp_path: Any) -> None:
-    from cruxible_client.authoring.workspace import materialize_playbill_floor
+    from cruxible_client.authoring.workspace import materialize_floor
     from tests.test_floor.test_floor_current import _export_envelope
 
     (tmp_path / "instance").mkdir()
@@ -98,7 +98,7 @@ def test_the_client_joins_workspace_paths_into_sources_and_projections(tmp_path:
     )
     files = service_export_playbill_floor(instance)
     _header, ledger = _rows(files["sources/LEDGER"])
-    materialize_playbill_floor(workspace, export=_export_envelope(files))
+    materialize_floor(workspace, export=_export_envelope(files))
     floor = workspace / ".playbill/floor"
     header, rows = _rows((floor / "sources/INDEX").read_bytes())
     assert header.startswith("# sources INDEX  3 sources  columns: source, contracts, locator")
@@ -124,12 +124,12 @@ def test_the_client_joins_workspace_paths_into_sources_and_projections(tmp_path:
     # Both joined files are the client's own: the daemon manifest never lists
     # them, and an unchanged floor is still exactly the floor it verified.
     assert "projections/INDEX" not in files and "sources/INDEX" not in files
-    again = materialize_playbill_floor(workspace, export=_export_envelope(files), force=False)
+    again = materialize_floor(workspace, export=_export_envelope(files), force=False)
     assert again.status == "unchanged"
 
 
 def test_without_a_catalog_the_index_keeps_the_ledger_locators(tmp_path: Any) -> None:
-    from cruxible_client.authoring.workspace import materialize_playbill_floor
+    from cruxible_client.authoring.workspace import materialize_floor
     from tests.test_floor.test_floor_current import _export_envelope
 
     (tmp_path / "instance").mkdir()
@@ -138,7 +138,7 @@ def test_without_a_catalog_the_index_keeps_the_ledger_locators(tmp_path: Any) ->
     files = service_export_playbill_floor(instance)
     workspace = tmp_path / "bare"
     workspace.mkdir()
-    materialize_playbill_floor(workspace, export=_export_envelope(files))
+    materialize_floor(workspace, export=_export_envelope(files))
     _header, rows = _rows((workspace / ".playbill/floor/sources/INDEX").read_bytes())
     assert rows == _rows(files["sources/LEDGER"])[1]
 

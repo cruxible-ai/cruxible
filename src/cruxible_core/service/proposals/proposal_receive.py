@@ -8,7 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from cruxible_client.contracts.errors import PlaybillExecutionError
+from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.proposal_models import ProposalReceiveLimits
 
 PROPOSAL_RECEIVE_CONFIG_PATH = Path("daemon/proposal-receive.json")
@@ -60,13 +60,13 @@ def load_proposal_receive_config(state_root: Path) -> ProposalReceiveOperational
     if not path.exists():
         return ProposalReceiveOperationalConfigV1()
     if path.is_symlink() or not path.is_file():
-        raise PlaybillExecutionError(
+        raise ExecutionError(
             f"daemon proposal-receive config is not a regular file: {PROPOSAL_RECEIVE_CONFIG_PATH}"
         )
     try:
         return ProposalReceiveOperationalConfigV1.model_validate(json.loads(path.read_bytes()))
     except (OSError, ValueError, ValidationError) as exc:
-        raise PlaybillExecutionError(
+        raise ExecutionError(
             f"daemon proposal-receive config is malformed: {PROPOSAL_RECEIVE_CONFIG_PATH}"
         ) from exc
 

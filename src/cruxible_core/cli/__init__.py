@@ -1,4 +1,4 @@
-"""Playbill CLI interface."""
+"""Cruxible CLI interface."""
 
 from __future__ import annotations
 

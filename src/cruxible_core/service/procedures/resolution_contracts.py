@@ -15,9 +15,9 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.errors import (
     ClaimNotFoundError,
-    PlaybillExecutionError,
-    PlaybillFormatError,
-    PlaybillJournalIntegrityError,
+    ExecutionError,
+    FormatError,
+    JournalIntegrityError,
 )
 from cruxible_client.contracts.procedures.results import ProcedureAdmissionRefusalCode
 from cruxible_client.contracts.procedures.windows import (
@@ -50,7 +50,7 @@ from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.storage.cas import BodyAccessContext
 
 
-class TriggerCaptureRefused(PlaybillExecutionError):
+class TriggerCaptureRefused(ExecutionError):
     def __init__(
         self,
         code: ProcedureAdmissionRefusalCode,
@@ -74,7 +74,7 @@ def read_claim_reference(
     path = claim_path(reference.identity.name)
     raw = instance.blob_at(coordinate.git_oid, path)
     if raw is None:
-        raise PlaybillFormatError("exact accepted Claim is absent")
+        raise FormatError("exact accepted Claim is absent")
     claim = parse_claim(raw, path=path, codec=artifact_codec_for_compiler(coordinate.compiler))
     reference.verify(claim)
     return claim
@@ -111,7 +111,7 @@ def resolve_claim_version(
     ) as history:
         occurrence = history.artifact(artifact_digest, identity=claim.identity.qualified)
         if occurrence is None:
-            raise PlaybillExecutionError("Claim version has no accepted occurrence")
+            raise ExecutionError("Claim version has no accepted occurrence")
         generation = history.generation(occurrence.occurrence_sequence)
     return ClaimVersionReference(
         identity=claim.identity,
@@ -136,17 +136,17 @@ def read_resolution_contract(
     with instance.bind_accepted_projection(coordinate) as projection:
         row = projection.typed.envelope(reference.identity.qualified)
         if row is None or row.path != path or row.artifact_digest != reference.artifact_digest:
-            raise PlaybillExecutionError("resolution contract does not match its accepted binding")
+            raise ExecutionError("resolution contract does not match its accepted binding")
         contract = parse_resolution_contract(
             projection.typed.member_bytes(path),
             path=path,
             codec=artifact_codec_for_compiler(coordinate.compiler),
         )
     if resolution_contract_digest(contract).tagged != reference.artifact_digest:
-        raise PlaybillExecutionError("resolution contract digest does not reproduce")
+        raise ExecutionError("resolution contract digest does not reproduce")
     with instance.accepted_history_reader(at=reference.coordinate) as history:
         if history.generation_for_oid(contract.hypothesis.coordinate.git_oid) is None:
-            raise PlaybillExecutionError("hypothesis is not accepted before its contract")
+            raise ExecutionError("hypothesis is not accepted before its contract")
     contract.verify_hypothesis(read_claim_reference(instance, contract.hypothesis))
     return contract
 
@@ -192,7 +192,7 @@ def read_capture_event(
     raw = bodies.read(record.payload_digest, access=access)
     try:
         payload = parse_journal_payload(raw)
-    except PlaybillJournalIntegrityError as exc:
+    except JournalIntegrityError as exc:
         raise TriggerCaptureRefused(
             "trigger_capture_invalid", "The exact trigger event payload is malformed."
         ) from exc
@@ -233,7 +233,7 @@ def bind_window(
 ) -> BoundObservationWindow:
     if isinstance(policy, CaptureEventWindow):
         if event is None:
-            raise PlaybillExecutionError("window is waiting for its retained capture event")
+            raise ExecutionError("window is waiting for its retained capture event")
         instant = capture_event_time(instance, policy.event, event, now=now)
         return bind_observation_window(policy, event=event, event_time=instant)
     return bind_observation_window(policy, event=event)
@@ -250,7 +250,7 @@ def bind_investigation(
     contract = read_resolution_contract(instance, reference)
     reference = canonical_contract_reference(instance, reference)
     if now < artifact_accepted_time(instance, reference):
-        raise PlaybillExecutionError("investigation cannot precede acceptance of its contract")
+        raise ExecutionError("investigation cannot precede acceptance of its contract")
     # A capture can trigger a Line without defining the contract's fixed window.
     # Only ignore it here when that same event is already bound to the trigger.
     window_event = event
@@ -276,7 +276,7 @@ def canonical_contract_reference(
             reference.artifact_digest, identity=reference.identity.qualified
         )
         if occurrence is None:
-            raise PlaybillExecutionError("contract version has no accepted occurrence")
+            raise ExecutionError("contract version has no accepted occurrence")
         generation = history.generation(occurrence.occurrence_sequence)
     return reference.model_copy(
         update={
@@ -299,7 +299,7 @@ def artifact_accepted_time(
             reference.artifact_digest, identity=reference.identity.qualified
         )
         if occurrence is None:
-            raise PlaybillExecutionError("artifact version has no accepted occurrence")
+            raise ExecutionError("artifact version has no accepted occurrence")
         generation = history.generation(occurrence.occurrence_sequence)
     return instance.accepted_evaluation_time(generation.git_oid)
 
@@ -316,9 +316,7 @@ def require_current_investigation(
             or state.artifact_digest != binding.contract.artifact_digest
             or state.lifecycle.state != "live"
         ):
-            raise PlaybillExecutionError(
-                "new investigation requires the current live contract version"
-            )
+            raise ExecutionError("new investigation requires the current live contract version")
 
 
 def service_resolution_contracts(
@@ -334,7 +332,7 @@ def service_resolution_contracts(
     hypothesis = resolve_claim_version(instance, request.hypothesis, at=at)
     with instance.accepted_history_reader(at=coordinate) as history:
         if history.generation_for_oid(hypothesis.coordinate.git_oid) is None:
-            raise PlaybillExecutionError("hypothesis is outside the requested accepted history")
+            raise ExecutionError("hypothesis is outside the requested accepted history")
     read_claim_reference(instance, hypothesis)
     with instance.bind_accepted_projection(at) as projection:
         rows = projection.typed.connection.execute(
@@ -360,7 +358,7 @@ def service_resolution_contracts(
                 resolution_contract_digest(contract).tagged != digest
                 or contract.hypothesis.statement_digest != hypothesis.statement_digest
             ):
-                raise PlaybillExecutionError("indexed contract differs from its exact hypothesis")
+                raise ExecutionError("indexed contract differs from its exact hypothesis")
             views.append(
                 ResolutionContractView(
                     reference=canonical_contract_reference(instance, ref), contract=contract

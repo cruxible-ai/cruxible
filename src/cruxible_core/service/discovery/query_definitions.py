@@ -16,7 +16,7 @@ from cruxible_client.contracts.query.definitions import (
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import (
-    PlaybillAcceptedCoordinate,
+    AcceptedCoordinate,
 )
 
 QUERY_DEFINITION_PATH_PREFIX = "query-definitions/"
@@ -26,9 +26,9 @@ class _StrictQueryDefinitionServiceModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class PlaybillQueryDefinitionView(_StrictQueryDefinitionServiceModel):
+class QueryDefinitionView(_StrictQueryDefinitionServiceModel):
     tag: Literal["playbill-query-definition-read-v1"] = "playbill-query-definition-read-v1"
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     path: str
     name: str
     identity: str
@@ -38,7 +38,7 @@ class PlaybillQueryDefinitionView(_StrictQueryDefinitionServiceModel):
 
 def _resolve_coordinate(
     instance: PlaybillInstance,
-    at: PlaybillAcceptedCoordinate | None,
+    at: AcceptedCoordinate | None,
 ) -> AcceptedProjectionCoordinate:
     if at is None:
         return instance.accepted_coordinate()
@@ -55,9 +55,9 @@ def _view(
     *,
     path: str,
     coordinate: AcceptedProjectionCoordinate,
-) -> PlaybillQueryDefinitionView:
-    return PlaybillQueryDefinitionView(
-        coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
+) -> QueryDefinitionView:
+    return QueryDefinitionView(
+        coordinate=AcceptedCoordinate.from_internal(coordinate),
         path=path,
         name=query.identity.name,
         identity=query.identity.qualified,
@@ -94,8 +94,8 @@ def service_get_playbill_query_definition(
     instance: PlaybillInstance,
     *,
     name: str,
-    at: PlaybillAcceptedCoordinate | None = None,
-) -> PlaybillQueryDefinitionView:
+    at: AcceptedCoordinate | None = None,
+) -> QueryDefinitionView:
     """Return one accepted QueryDefinition, refusing when the name is absent."""
 
     coordinate = _resolve_coordinate(instance, at)
@@ -104,7 +104,7 @@ def service_get_playbill_query_definition(
 
 
 __all__ = [
-    "PlaybillQueryDefinitionView",
+    "QueryDefinitionView",
     "accepted_query_definition",
     "service_get_playbill_query_definition",
 ]

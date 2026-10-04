@@ -1,13 +1,13 @@
 """The bounded read surface reaches the shared service through HTTP."""
 
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
-from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+from cruxible_core.service.authoring.documents import AcceptedCoordinate
 
 
 def test_http_bound_empty_selection_and_missing_backing(playbill_http):
     client, instance_id, _ = playbill_http
     instance = get_playbill_manager().get(instance_id)
-    coordinate = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     body = {"at": coordinate.model_dump(mode="json"), "subject_paths": ["subjects/work/item.json"]}
     response = client.post(f"/api/v1/{instance_id}/playbill/claims/read-batch", json=body)
     assert response.status_code == 200, response.text

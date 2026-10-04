@@ -15,7 +15,7 @@ import hashlib
 from dataclasses import dataclass
 from typing import Any, Literal, Mapping
 
-from cruxible_client.authoring.insertions import PlaybillInsertionApplyError
+from cruxible_client.authoring.insertions import InsertionApplyError
 from cruxible_client.contracts.authoring.models import (
     InsertionExpectation,
 )
@@ -39,7 +39,7 @@ def _digest(content: bytes) -> str:
 
 def _mapping(value: object, *, label: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
-        raise PlaybillInsertionApplyError(f"{label} is not an object")
+        raise InsertionApplyError(f"{label} is not an object")
     return value
 
 
@@ -55,12 +55,12 @@ def apply_playbill_publication(
     typed_expectation = InsertionExpectation.model_validate(expectation)
     preparation = typed_expectation.preparation
     if preparation is None:
-        raise PlaybillInsertionApplyError("publication has no durable preparation")
+        raise InsertionApplyError("publication has no durable preparation")
     if (
         _digest(retained_body) != preparation.body_digest
         or len(retained_body) != preparation.body_byte_length
     ):
-        raise PlaybillInsertionApplyError(
+        raise InsertionApplyError(
             "retained accepted body does not reproduce the publication preparation"
         )
     framed = frame_projection_block(stamp=preparation.stamp, body=retained_body)
@@ -68,7 +68,7 @@ def apply_playbill_publication(
         _digest(framed) != preparation.inserted_block_digest
         or len(framed) != preparation.inserted_block_byte_length
     ):
-        raise PlaybillInsertionApplyError(
+        raise InsertionApplyError(
             "retained accepted body does not reproduce the publication preparation"
         )
 
@@ -84,9 +84,7 @@ def apply_playbill_publication(
         outcome: Literal["applied", "already_applied"] = "already_applied"
     except ProjectionMarkerError:
         if f"playbill:block:{preparation.block_id}".encode("ascii") in content:
-            raise PlaybillInsertionApplyError(
-                "local source contains a conflicting publication block"
-            )
+            raise InsertionApplyError("local source contains a conflicting publication block")
         selector = preparation.rebased_selector
         anchor = selector.content
         empty_append = (
@@ -97,7 +95,7 @@ def apply_playbill_publication(
         if content[selector.start_byte : selector.end_byte] != anchor or (
             not empty_append and content.count(anchor) != 1
         ):
-            raise PlaybillInsertionApplyError("publication anchor is stale or ambiguous")
+            raise InsertionApplyError("publication anchor is stale or ambiguous")
         if preparation.operation == "replace_window":
             updated = content[: selector.start_byte] + framed + content[selector.end_byte :]
         else:
@@ -113,7 +111,7 @@ def apply_playbill_publication(
             body_digest=preparation.body_digest,
         )
     except ProjectionMarkerError as exc:
-        raise PlaybillInsertionApplyError(
+        raise InsertionApplyError(
             "final publication does not reproduce its exact declared block"
         ) from exc
     observation = {

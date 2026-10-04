@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
-from cruxible_client import Playbill
+from cruxible_client import Cruxible
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.authoring.inputs import QueryDefinitionInput
@@ -26,13 +26,13 @@ from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, 
 from cruxible_client.contracts.claims import ClaimArtifact, parse_claim
 from cruxible_client.contracts.documents import DocumentLifecycle, DocumentShell
 from cruxible_client.contracts.kits import (
+    KitAddRequest,
     KitArtifact,
     KitArtifactBytes,
+    KitBuildRequest,
     KitBundle,
-    PlaybillKitAddRequest,
-    PlaybillKitBuildRequest,
-    PlaybillKitChangeResult,
-    PlaybillKitRemoveRequest,
+    KitChangeResult,
+    KitRemoveRequest,
 )
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
@@ -89,7 +89,7 @@ class _World:
         self.reviewer_key = reviewer_key
         transport = CruxibleClient(base_url="http://cruxible")
         transport._client = http  # type: ignore[assignment]
-        self.pb = Playbill._from_client(transport, instance_id=instance_id, workspace=workspace)
+        self.pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=workspace)
 
     def tree(self) -> dict[str, bytes]:
         instance = get_playbill_manager().get(self.instance_id)
@@ -105,7 +105,7 @@ class _World:
         assert activated.status_code == 200, activated.text
         assert activated.json()["status"] == "accepted", activated.text
 
-    def settle(self, result: PlaybillKitChangeResult) -> None:
+    def settle(self, result: KitChangeResult) -> None:
         assert result.status == "proposed" and result.proposal_id is not None, result
         if result.approval_required:
             self.approve(result.proposal_id)
@@ -174,14 +174,14 @@ class _World:
     ) -> KitBundle:
         return playbill_api.playbill_kit_build(
             self.instance_id,
-            PlaybillKitBuildRequest(kit_id=kit_id, version=version, owns=owns),
+            KitBuildRequest(kit_id=kit_id, version=version, owns=owns),
         ).bundle
 
-    def add(self, bundle: KitBundle) -> PlaybillKitChangeResult:
+    def add(self, bundle: KitBundle) -> KitChangeResult:
         before = self.tree()
         result = playbill_api.playbill_kit_add(
             self.instance_id,
-            PlaybillKitAddRequest(bundle=bundle, source="test", dry_run=False),
+            KitAddRequest(bundle=bundle, source="test", dry_run=False),
         )
         if result.status == "proposed":
             # Proposing lands nothing; the ordinary activation does.
@@ -592,7 +592,7 @@ def test_removing_a_kit_retires_what_it_installed(worlds: tuple[_World, _World])
     consumer.add(publisher.build("1.0.0"))
 
     removed = playbill_api.playbill_kit_remove(
-        consumer.instance_id, PlaybillKitRemoveRequest(kit_id="acme", dry_run=False)
+        consumer.instance_id, KitRemoveRequest(kit_id="acme", dry_run=False)
     )
     consumer.settle(removed)
 
@@ -611,9 +611,7 @@ def test_removing_a_kit_that_is_not_installed_is_refused_naming_the_installed_on
     consumer.add(publisher.build("1.0.0"))
 
     with pytest.raises(RequestRefusedError) as refused:
-        playbill_api.playbill_kit_remove(
-            consumer.instance_id, PlaybillKitRemoveRequest(kit_id="nokit")
-        )
+        playbill_api.playbill_kit_remove(consumer.instance_id, KitRemoveRequest(kit_id="nokit"))
 
     assert refused.value.error_code == "playbill.kit.not_installed"
     assert "installed: acme" in str(refused.value)
@@ -626,7 +624,7 @@ def test_a_kit_needs_the_approval_the_consumer_policy_requires(
     publisher.author(_claim_type(SEATS, {"type": "integer"}))
     proposed = playbill_api.playbill_kit_add(
         consumer.instance_id,
-        PlaybillKitAddRequest(bundle=publisher.build("1.0.0"), source="test", dry_run=False),
+        KitAddRequest(bundle=publisher.build("1.0.0"), source="test", dry_run=False),
     )
 
     assert proposed.status == "proposed" and proposed.approval_required
@@ -647,9 +645,9 @@ def test_a_release_travels_as_a_directory_through_the_http_client(
     transport = CruxibleClient(base_url="http://cruxible")
     transport._client = publisher.http  # type: ignore[assignment]
 
-    built = transport.build_playbill_kit(
+    built = transport.build_kit(
         publisher.instance_id,
-        PlaybillKitBuildRequest(kit_id="acme", version="1.0.0", owns=("acme.",)),
+        KitBuildRequest(kit_id="acme", version="1.0.0", owns=("acme.",)),
     )
     directory = tmp_path / "acme-1.0.0"
     write_kit_directory(built.bundle, directory)
@@ -660,12 +658,12 @@ def test_a_release_travels_as_a_directory_through_the_http_client(
     read_back = read_kit_directory(directory)
     assert read_back == built.bundle
 
-    proposed = transport.add_playbill_kit(
+    proposed = transport.add_kit(
         consumer.instance_id,
-        PlaybillKitAddRequest(bundle=read_back, source=directory.name, dry_run=False),
+        KitAddRequest(bundle=read_back, source=directory.name, dry_run=False),
     )
     consumer.settle(proposed)
-    status = transport.playbill_kit_status(consumer.instance_id)
+    status = transport.kit_status(consumer.instance_id)
     assert [(kit.kit_id, kit.source) for kit in status.kits] == [("acme", "acme-1.0.0")]
 
     (directory / "artifacts" / "claim-types" / "stray.json").write_bytes(b"{}\n")
@@ -772,7 +770,7 @@ def test_a_kit_never_replaces_or_retires_a_definition_it_only_carries(
     acme = publisher.build("1.0.0")
     beta = playbill_api.playbill_kit_build(
         publisher.instance_id,
-        PlaybillKitBuildRequest(kit_id="beta", version="1.0.0", owns=("beta.",)),
+        KitBuildRequest(kit_id="beta", version="1.0.0", owns=("beta.",)),
     ).bundle
     assert CONTRACT_PATH in beta.manifest.digests()
 
@@ -804,7 +802,7 @@ def test_a_kit_never_replaces_or_retires_a_definition_it_only_carries(
     assert (CONTRACT_PATH, "conflict") in {(item.path, item.action) for item in refused.plan}
 
     removed = playbill_api.playbill_kit_remove(
-        consumer.instance_id, PlaybillKitRemoveRequest(kit_id="beta")
+        consumer.instance_id, KitRemoveRequest(kit_id="beta")
     )
     assert {item.path for item in removed.plan} == {"claim-types/beta.orders/status.json"}
 
@@ -1095,7 +1093,7 @@ def test_a_local_type_pinning_a_changed_contract_keeps_its_literals_and_its_clai
     )
     result = playbill_api.playbill_kit_add(
         consumer.instance_id,
-        PlaybillKitAddRequest(
+        KitAddRequest(
             bundle=publisher.build("1.1.0"),
             source="test",
             dependents=(
@@ -1143,7 +1141,7 @@ def test_a_kit_install_and_removal_preview_by_default_and_write_nothing(
     preview = assert_writes_nothing(
         [tmp_path],
         lambda: playbill_api.playbill_kit_add(
-            consumer.instance_id, PlaybillKitAddRequest(bundle=release, source="test")
+            consumer.instance_id, KitAddRequest(bundle=release, source="test")
         ),
         warm=settle_background,
     )
@@ -1153,16 +1151,14 @@ def test_a_kit_install_and_removal_preview_by_default_and_write_nothing(
     assert {item.action for item in preview.plan} == {"add"}
     committed = playbill_api.playbill_kit_add(
         consumer.instance_id,
-        PlaybillKitAddRequest(
-            bundle=release, source="test", dry_run=False, at=preview.coordinate.git_oid
-        ),
+        KitAddRequest(bundle=release, source="test", dry_run=False, at=preview.coordinate.git_oid),
     )
     consumer.settle(committed)
     # The head moved under the preview's coordinate: a commit pinned to it refuses.
     with pytest.raises(ChangeRefusedError) as moved:
         playbill_api.playbill_kit_add(
             consumer.instance_id,
-            PlaybillKitAddRequest(
+            KitAddRequest(
                 bundle=release, source="test", dry_run=False, at=preview.coordinate.git_oid
             ),
         )
@@ -1171,7 +1167,7 @@ def test_a_kit_install_and_removal_preview_by_default_and_write_nothing(
     removal = assert_writes_nothing(
         [tmp_path],
         lambda: playbill_api.playbill_kit_remove(
-            consumer.instance_id, PlaybillKitRemoveRequest(kit_id="acme")
+            consumer.instance_id, KitRemoveRequest(kit_id="acme")
         ),
         warm=settle_background,
     )

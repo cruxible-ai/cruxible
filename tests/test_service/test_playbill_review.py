@@ -8,13 +8,13 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.contracts.declared_blocks import (
-    PlaybillPresentationPolicy,
-    PlaybillProjectionAdvisoryPolicy,
-    PlaybillProjectionCoverageBinding,
-    PlaybillProjectionCoverageObservation,
-    PlaybillReviewWorkspaceObservation,
+    PresentationPolicy,
+    ProjectionAdvisoryPolicy,
+    ProjectionCoverageBinding,
+    ProjectionCoverageObservation,
+    ReviewWorkspaceObservation,
 )
-from cruxible_client.contracts.errors import PlaybillKeyError
+from cruxible_client.contracts.errors import SigningKeyError
 from cruxible_client.contracts.procedures.artifacts import render_procedure
 from cruxible_client.contracts.projection import AcceptedCoordinate as ClientAcceptedCoordinate
 from cruxible_core.indexes.projection import AcceptedCoordinate
@@ -26,8 +26,8 @@ from cruxible_core.service.authoring.documents import (
     service_submit_playbill_approval,
 )
 from cruxible_core.service.proposals.review import (
-    PlaybillProjectionAdvisory,
-    PlaybillReviewedMember,
+    ProjectionAdvisory,
+    ReviewedMember,
     _projection_advisory,
     render_playbill_proposal_review,
     render_playbill_proposal_review_pointer,
@@ -42,8 +42,8 @@ from tests.test_authoring.test_authoring_preflight import _seed_claim_surface
 from tests.test_integration.test_graph_v4_provider_closure import _accepted_procedure
 from tests.test_service.test_playbill_documents import TIMESTAMP, _instance, _shell
 
-CLAIM_PROJECTION_POLICY = PlaybillPresentationPolicy(
-    projection_advisories=PlaybillProjectionAdvisoryPolicy(claim=True, procedure=True)
+CLAIM_PROJECTION_POLICY = PresentationPolicy(
+    projection_advisories=ProjectionAdvisoryPolicy(claim=True, procedure=True)
 )
 
 
@@ -65,9 +65,9 @@ def _review_observation(instance, *, coordinate=None):  # type: ignore[no-untype
     public = ClientAcceptedCoordinate.model_validate(
         AcceptedCoordinate.from_internal(selected).model_dump(mode="json")
     )
-    return PlaybillReviewWorkspaceObservation(
+    return ReviewWorkspaceObservation(
         presentation_policy=CLAIM_PROJECTION_POLICY,
-        projection_coverage=PlaybillProjectionCoverageObservation(
+        projection_coverage=ProjectionCoverageObservation(
             coordinate=public,
             complete_kinds=("Claim", "Procedure"),
             bindings=(),
@@ -79,7 +79,7 @@ def test_review_and_signing_keep_private_key_outside_wire_contract(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     instance, _owner, reviewer = _instance(tmp_path)
-    body = service_store_playbill_body(instance, content=b"# Playbill\n\nGoverned prose.\n")
+    body = service_store_playbill_body(instance, content=b"# Cruxible\n\nGoverned prose.\n")
     proposed = service_propose_playbill_document(
         instance,
         shell=_shell(body.digest),
@@ -106,7 +106,7 @@ def test_review_and_signing_keep_private_key_outside_wire_contract(
     assert review.candidate_digest == review.candidate.candidate_digest
     assert review.complete_members == review.candidate.members
     assert review.documents[0].candidate_source_mapping is not None
-    assert "+# Playbill" in (review.documents[0].readable_diff or "")
+    assert "+# Cruxible" in (review.documents[0].readable_diff or "")
     assert review.attestation_coverage["coverage"] == "containing_change_set"
     rendered = render_playbill_proposal_review(review)
     assert f"Candidate: {review.candidate_digest}" in rendered
@@ -129,12 +129,12 @@ def test_review_and_signing_keep_private_key_outside_wire_contract(
     assert "--json" in pointer
     # Nothing of the second rendering survives in it.
     assert "Semantic delta" not in pointer
-    assert "+# Playbill" not in pointer
+    assert "+# Cruxible" not in pointer
 
     advisory_rendered = render_playbill_proposal_review(
         review.model_copy(
             update={
-                "projection_advisory": PlaybillProjectionAdvisory(
+                "projection_advisory": ProjectionAdvisory(
                     unprojected_count=1,
                     artifact_identities=("Procedure:release-guard",),
                     message=(
@@ -188,7 +188,7 @@ def test_review_and_signing_keep_private_key_outside_wire_contract(
 
 def test_local_signer_refuses_exposed_or_wrong_key(tmp_path: Path) -> None:
     instance, owner, reviewer = _instance(tmp_path)
-    with pytest.raises(PlaybillKeyError, match="does not match"):
+    with pytest.raises(SigningKeyError, match="does not match"):
         LocalEd25519ApprovalSigner.open(
             signer_id="owner",
             private_key_path=owner.private_key_path,
@@ -197,7 +197,7 @@ def test_local_signer_refuses_exposed_or_wrong_key(tmp_path: Path) -> None:
         )
 
     os.chmod(owner.private_key_path, 0o644)
-    with pytest.raises(PlaybillKeyError, match="permissions"):
+    with pytest.raises(SigningKeyError, match="permissions"):
         LocalEd25519ApprovalSigner.open(
             signer_id="owner",
             private_key_path=owner.private_key_path,
@@ -237,14 +237,14 @@ def test_candidate_projection_advisory_counts_generated_successors_and_excludes_
     procedure = _accepted_procedure()
     settlement = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     public = ClientAcceptedCoordinate.model_validate(settlement.model_dump(mode="json"))
-    coverage = PlaybillProjectionCoverageObservation(
+    coverage = ProjectionCoverageObservation(
         coordinate=public,
         complete_kinds=("Procedure",),
         bindings=(),
     )
 
-    def member(role: str) -> PlaybillReviewedMember:
-        return PlaybillReviewedMember(
+    def member(role: str) -> ReviewedMember:
+        return ReviewedMember(
             path=procedure.path,
             artifact_kind="procedure",
             disposition="added",
@@ -262,8 +262,8 @@ def test_candidate_projection_advisory_counts_generated_successors_and_excludes_
 
     # The Procedure catalog advisory is off by default; a kit or workspace
     # opts in.
-    default_policy = PlaybillReviewWorkspaceObservation(
-        presentation_policy=PlaybillPresentationPolicy(),
+    default_policy = ReviewWorkspaceObservation(
+        presentation_policy=PresentationPolicy(),
         projection_coverage=coverage,
     )
     assert (
@@ -302,7 +302,7 @@ def test_candidate_projection_advisory_counts_generated_successors_and_excludes_
             "projection_coverage": coverage.model_copy(
                 update={
                     "bindings": (
-                        PlaybillProjectionCoverageBinding(
+                        ProjectionCoverageBinding(
                             artifact=procedure.procedure.identity,
                             workspace_path="runbooks/release.md",
                             evidence_kind="procedure_catalog",

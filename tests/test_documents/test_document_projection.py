@@ -53,7 +53,7 @@ def _shell(body_digest: str) -> DocumentShell:
     return DocumentShell(
         identity="document:playbill-design",
         document_kind="design",
-        title="Playbill design",
+        title="Cruxible design",
         media_type="text/markdown",
         body_digest=body_digest,
         links=(

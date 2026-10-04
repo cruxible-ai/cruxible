@@ -19,7 +19,7 @@ from types import SimpleNamespace
 from typing import Any, Literal
 from uuid import uuid4
 
-from cruxible_client.contracts.errors import PlaybillError, PlaybillExecutionError
+from cruxible_client.contracts.errors import CruxibleError, ExecutionError
 from cruxible_client.contracts.line_dispatch import (
     LineArm,
     LineArmOutcome,
@@ -189,7 +189,7 @@ def service_evaluate_line(
         return _enqueue(store, conn, result, actor, now)
 
 
-class LineArmAuthorityLost(PlaybillExecutionError):
+class LineArmAuthorityLost(ExecutionError):
     """The arming credential, scope or permission no longer holds; the arm stops."""
 
     def __init__(self, reason: LineArmStopReason, detail: str) -> None:
@@ -198,7 +198,7 @@ class LineArmAuthorityLost(PlaybillExecutionError):
         self.detail = detail
 
 
-class LineArmSegmentEnded(PlaybillExecutionError):
+class LineArmSegmentEnded(ExecutionError):
     """The arm segment was disarmed, rearmed or stopped after its work was scheduled."""
 
 
@@ -776,7 +776,7 @@ def service_match_listening_lines(
                 instance, coordinate=coordinate, reference=session["line"]
             )
             triggers = line_triggers(instance, accepted, coordinate=coordinate)
-        except (PlaybillError, OSError, ValueError) as exc:
+        except (CruxibleError, OSError, ValueError) as exc:
             # One unavailable Line cannot starve the other subscriptions. No
             # progress is claimed; the retained status explains the uncovered range.
             with store.locked() as conn:
@@ -1201,7 +1201,7 @@ def service_dispatch_line(
                             detail = str(exc)
                         else:
                             raise LineArmAuthorityLost("line_changed", _LINE_CHANGED) from exc
-                    except PlaybillExecutionError as exc:
+                    except ExecutionError as exc:
                         detail = str(exc)
                     finally:
                         if gate is not None:

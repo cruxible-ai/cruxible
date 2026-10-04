@@ -5,7 +5,7 @@ from dataclasses import replace
 
 import pytest
 
-from cruxible_client.contracts.errors import PlaybillFormatError, ProjectionIntegrityError
+from cruxible_client.contracts.errors import FormatError, ProjectionIntegrityError
 from cruxible_core.runtime import instance as module
 from tests.core_support._knowledge_loop_support import seed_claims
 
@@ -34,9 +34,9 @@ def test_indexed_membership_preserves_old_current_and_missing_without_history_wa
         for oid, coordinate in expected.items():
             assert instance.coordinate_for_oid(oid) == coordinate
             assert instance.accepted_evaluation_time(oid).tzinfo is not None
-        with pytest.raises(PlaybillFormatError, match="Git OID is not one accepted generation"):
+        with pytest.raises(FormatError, match="Git OID is not one accepted generation"):
             instance.coordinate_for_oid("0" * 64)
-        with pytest.raises(PlaybillFormatError, match="evaluation coordinate is outside"):
+        with pytest.raises(FormatError, match="evaluation coordinate is outside"):
             instance.accepted_evaluation_time("0" * 64)
     assert history.walks == 0
 
@@ -64,7 +64,7 @@ def test_duplicate_oid_refuses_both_surfaces_and_recovered_replacement_invalidat
         ),
     )
     # A warmed positive result does not authorize an OID outside the new epoch.
-    with pytest.raises(PlaybillFormatError):
+    with pytest.raises(FormatError):
         instance.blobs_at(head.oid, ())
     instance._recovered = recovered
     assert instance.coordinate_for_oid(head.oid).git_oid == head.oid
@@ -87,13 +87,13 @@ def test_unsigned_location_cannot_replace_replayed_generation(instance, monkeypa
 def test_warm_lookup_still_checks_repository_path_and_coordinate_members(instance, monkeypatch):
     head = instance.accepted_coordinate()
     instance.coordinate_for_oid(head.git_oid)
-    with pytest.raises(PlaybillFormatError, match="mixed members"):
+    with pytest.raises(FormatError, match="mixed members"):
         instance.resolve_accepted_coordinate(
             git_oid=head.git_oid,
             semantic_root="sha256:" + "0" * 64,
             generation_root=head.generation_root,
         )
-    with pytest.raises(PlaybillFormatError, match="compiler digest"):
+    with pytest.raises(FormatError, match="compiler digest"):
         instance.resolve_accepted_coordinate(
             git_oid=head.git_oid,
             semantic_root=head.semantic_root,
@@ -103,9 +103,9 @@ def test_warm_lookup_still_checks_repository_path_and_coordinate_members(instanc
     # The ledger directory disappearing after a warm lookup is still reported.
     ledger = instance._ledger.path
     ledger.rename(ledger.with_name(ledger.name + ".moved"))
-    with pytest.raises(PlaybillFormatError, match="missing: ledger"):
+    with pytest.raises(FormatError, match="missing: ledger"):
         instance.coordinate_for_oid(head.git_oid)
-    with pytest.raises(PlaybillFormatError, match="missing: ledger"):
+    with pytest.raises(FormatError, match="missing: ledger"):
         instance.blobs_at(head.git_oid, ())
 
 
@@ -137,7 +137,7 @@ def test_interleaved_refresh_cannot_mix_epoch_membership(instance, monkeypatch):
     # This read began in the old immutable epoch and may finish there.
     assert instance.coordinate_for_oid(head.oid).git_oid == head.oid
     # The next read must not accept the now-stale index publication.
-    with pytest.raises(PlaybillFormatError):
+    with pytest.raises(FormatError):
         instance.coordinate_for_oid(head.oid)
 
 
@@ -152,13 +152,13 @@ def test_successful_refresh_releases_index_and_failed_recovery_adds_no_authority
     original = instance._recovered
 
     def fail(*args, **kwargs):
-        raise PlaybillFormatError("injected recovery refusal")
+        raise FormatError("injected recovery refusal")
 
     monkeypatch.setattr(module, "recover_instance", fail)
-    with pytest.raises(PlaybillFormatError, match="recovery refusal"):
+    with pytest.raises(FormatError, match="recovery refusal"):
         instance.refresh()
     assert instance._recovered is original
-    with pytest.raises(PlaybillFormatError):
+    with pytest.raises(FormatError):
         instance.coordinate_for_oid("0" * 64)
 
 

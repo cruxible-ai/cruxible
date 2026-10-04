@@ -1,4 +1,4 @@
-"""Digest-pinned historical acceptance-law registry for Playbill candidates."""
+"""Digest-pinned historical acceptance-law registry for Cruxible candidates."""
 
 from __future__ import annotations
 
@@ -832,7 +832,7 @@ RESOURCE_BUDGET_UPGRADE_LAW = InstalledAcceptanceLaw(
     current=False,
 )
 
-PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
+ACCEPTANCE_LAWS = AcceptanceLawRegistry(
     (
         PROVIDER_V3_ACCEPTANCE_LAW,
         PROVIDER_INTERFACE_V2_ACCEPTANCE_LAW,
@@ -991,7 +991,7 @@ __all__ = [
     "LINE_LAW_IDENTIFIER",
     "LINE_LAW_V2",
     "LINE_LAW_V2_IDENTIFIER",
-    "PLAYBILL_ACCEPTANCE_LAWS",
+    "ACCEPTANCE_LAWS",
     "PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW",
     "PRINCIPAL_LIFECYCLE_LAW",
     "PRINCIPAL_LIFECYCLE_LAW_IDENTIFIER",

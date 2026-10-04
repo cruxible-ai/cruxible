@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.contracts.errors import (
-    PlaybillInstanceIncompatiblePrereleaseContent,
+    InstanceIncompatiblePrereleaseContent,
     SettlementIntegrityError,
 )
 from cruxible_core.governance.keys import ALLOWED_SIGNERS_FILE, generate_daemon_key
@@ -57,7 +57,7 @@ def test_removed_brief_refuses_before_cold_or_checkpointed_replay(
     )
     assert instance._ledger.compare_and_set_main(successor, expected_oid=base)
 
-    with pytest.raises(PlaybillInstanceIncompatiblePrereleaseContent) as refusal:
+    with pytest.raises(InstanceIncompatiblePrereleaseContent) as refusal:
         PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
 
     assert refusal.value.error_code == "playbill.instance.incompatible_prerelease_content"
@@ -125,7 +125,7 @@ def test_removed_brief_after_daemon_key_rotation_is_incompatible_not_corrupt(
     )
     assert ledger.compare_and_set_main(incompatible, expected_oid=rotation)
 
-    with pytest.raises(PlaybillInstanceIncompatiblePrereleaseContent) as refusal:
+    with pytest.raises(InstanceIncompatiblePrereleaseContent) as refusal:
         PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
 
     assert refusal.value.artifact_class == "knowledge.brief"

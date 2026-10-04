@@ -1,4 +1,4 @@
-"""Playbill Family-1 CLI, including local compilation and client-held signing."""
+"""Cruxible Family-1 CLI, including local compilation and client-held signing."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from cruxible_client import (
     CruxibleClient,
     activate_with_workspace_refresh,
     contracts,
-    observe_playbill_next_workspace,
+    observe_next_workspace,
 )
 from cruxible_client._error_base import CoreError, printable
 from cruxible_client.artifacts import (
@@ -59,14 +59,14 @@ from cruxible_client.authoring.sources import (
     root_aliases,
 )
 from cruxible_client.authoring.workspace import (
-    PlaybillWorkspaceAttachmentError,
+    WorkspaceAttachmentError,
     daemon_floor_delivery,
     floor_export_parts,
-    observe_playbill_next_workspace_with_coverage,
-    observe_playbill_projection_coverage,
-    validate_playbill_workspace_config_write,
+    observe_next_workspace_with_coverage,
+    observe_projection_coverage,
+    validate_workspace_config_write,
     workspace_floor_freshness,
-    write_playbill_workspace_config,
+    write_workspace_config,
     write_workspace_floor,
     write_workspace_floor_delta,
 )
@@ -83,8 +83,8 @@ from cruxible_client.contracts.claim_type_upgrade import ClaimTypeUpgradeRequest
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.errors import (
     CanonicalEncodingError,
-    PlaybillKeyError,
-    PlaybillSinceRequestInvalid,
+    SigningKeyError,
+    SinceRequestInvalid,
 )
 from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeRequest
 from cruxible_client.contracts.get_display import (
@@ -93,15 +93,15 @@ from cruxible_client.contracts.get_display import (
     get_value_display,
 )
 from cruxible_client.contracts.kits import (
-    PlaybillKitAddRequest,
-    PlaybillKitBuildRequest,
-    PlaybillKitChangeResult,
-    PlaybillKitRemoveRequest,
+    KitAddRequest,
+    KitBuildRequest,
+    KitChangeResult,
+    KitRemoveRequest,
 )
 from cruxible_client.contracts.procedures.results import ProcedureHaltTerminal
 from cruxible_client.contracts.procedures.windows import TriggerEventReference
 from cruxible_client.contracts.proposal_models import canonical_proposal_ref_name
-from cruxible_client.contracts.provider_installation import PlaybillProviderInstallRequest
+from cruxible_client.contracts.provider_installation import ProviderInstallRequest
 from cruxible_client.contracts.repairs import RepairOperation, render_served_repair
 from cruxible_client.contracts.resolution_contracts import ResolutionContractReference
 from cruxible_client.contracts.source_catalog import SourceCatalog, SourceCompilationBundle
@@ -111,11 +111,11 @@ from cruxible_client.contracts.validation_messages import validation_summary
 from cruxible_client.contracts.write import (
     Change,
     FileEvidence,
-    PlaybillRetireRequest,
-    PlaybillSetRequest,
-    PlaybillWriteRequest,
+    RetireRequest,
+    SetRequest,
     SubjectRef,
     WriteOutcome,
+    WriteRequest,
 )
 from cruxible_client.errors import DataValidationError
 from cruxible_client.kits import (
@@ -202,7 +202,7 @@ from cruxible_core.service.procedures.procedure_runs import (
     ProcedureBindRequest,
 )
 from cruxible_core.service.proposals.review import (
-    PlaybillProposalReview,
+    ProposalReview,
     render_playbill_proposal_review,
     render_playbill_proposal_review_pointer,
 )
@@ -315,7 +315,7 @@ def _read_since_access_profile(path: str) -> dict[str, Any]:
     try:
         return CoverageAccessProfile.model_validate(payload).model_dump(mode="json")
     except ValidationError as exc:
-        raise PlaybillSinceRequestInvalid.from_validation_errors(
+        raise SinceRequestInvalid.from_validation_errors(
             [
                 {**err, "loc": ("access_profile", *err.get("loc", ()))}
                 for err in exc.errors(include_url=False)
@@ -549,11 +549,11 @@ def _read_init_resume_marker(path: Path) -> dict[str, object]:
     try:
         payload = json.loads(path.read_bytes())
     except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
-        raise PlaybillKeyError(
-            f"Playbill init retry marker is missing or malformed: {path}"
+        raise SigningKeyError(
+            f"Cruxible init retry marker is missing or malformed: {path}"
         ) from exc
     if not isinstance(payload, dict):
-        raise PlaybillKeyError(f"Playbill init retry marker is missing or malformed: {path}")
+        raise SigningKeyError(f"Cruxible init retry marker is missing or malformed: {path}")
     return payload
 
 
@@ -563,7 +563,7 @@ def _write_init_resume_marker(path: Path, payload: Mapping[str, str]) -> None:
             handle.write(canonical_bytes(dict(payload)) + b"\n")
         path.chmod(0o600)
     except FileExistsError as exc:
-        raise PlaybillKeyError(f"refusing to replace Playbill init retry marker: {path}") from exc
+        raise SigningKeyError(f"refusing to replace Cruxible init retry marker: {path}") from exc
 
 
 def _adopt_init_retry_key(
@@ -575,8 +575,8 @@ def _adopt_init_retry_key(
 ) -> GeneratedKeyMaterial:
     marker = _init_resume_marker(target)
     if not marker.is_file() or marker.is_symlink():
-        raise PlaybillKeyError(
-            "Playbill is already initialized for this custody, or the existing key material "
+        raise SigningKeyError(
+            "Cruxible is already initialized for this custody, or the existing key material "
             "was provisioned independently; refusing to reuse it without this init's retry "
             f"marker: {marker}"
         )
@@ -593,8 +593,8 @@ def _adopt_init_retry_key(
         public_key=material.principal.public_key,
     )
     if _read_init_resume_marker(marker) != expected:
-        raise PlaybillKeyError(
-            f"existing key material belongs to a different Playbill init target: {marker}"
+        raise SigningKeyError(
+            f"existing key material belongs to a different Cruxible init target: {marker}"
         )
     return material
 
@@ -616,12 +616,12 @@ def _prepare_init_custody(
         for directory, principal_id, kind in specifications
     )
     if len({target.principal.principal_id for target in targets}) != len(targets):
-        raise PlaybillKeyError("Playbill init principal IDs must be distinct")
+        raise SigningKeyError("Cruxible init principal IDs must be distinct")
     key_paths = tuple(
         path for target in targets for path in (target.private_key_path, target.public_key_path)
     )
     if len(set(key_paths)) != len(key_paths):
-        raise PlaybillKeyError("Playbill init custody key paths must be distinct")
+        raise SigningKeyError("Cruxible init custody key paths must be distinct")
 
     prepared: list[GeneratedKeyMaterial | None] = []
     for target in targets:
@@ -629,8 +629,8 @@ def _prepare_init_custody(
         public_exists = target.public_key_path.exists()
         marker = _init_resume_marker(target)
         if private_exists != public_exists:
-            raise PlaybillKeyError(
-                f"Playbill init retry requires a complete key pair for "
+            raise SigningKeyError(
+                f"Cruxible init retry requires a complete key pair for "
                 f"{target.principal.principal_id}"
             )
         if private_exists:
@@ -644,8 +644,8 @@ def _prepare_init_custody(
             )
         else:
             if marker.exists():
-                raise PlaybillKeyError(
-                    f"Playbill init retry marker has no complete key pair: {marker}"
+                raise SigningKeyError(
+                    f"Cruxible init retry marker has no complete key pair: {marker}"
                 )
             prepared.append(None)
 
@@ -715,7 +715,7 @@ def _compile_remote_context(
 
 @click.group("playbill")
 def playbill_group() -> None:
-    """Govern Documents through Playbill's proposal and acceptance ledger."""
+    """Govern Documents through Cruxible's proposal and acceptance ledger."""
 
 
 @playbill_group.group("host")
@@ -762,42 +762,42 @@ def attach_workspace(
         )
     selected = instance_id or _require_instance_id()
     registration = _dispatch_cli(
-        lambda client: client.playbill_host_workspace_registration(selected),
+        lambda client: client.host_workspace_registration(selected),
         lambda: None,
         allow_local=False,
         command_name="playbill workspace attach",
     )
-    assert isinstance(registration, contracts.PlaybillHostWorkspaceRegistration)
+    assert isinstance(registration, contracts.HostWorkspaceRegistration)
     registered = registration.workspace_path
     if registration.status != "registered":
         attached = _dispatch_cli(
-            lambda client: client.playbill_host_workspace_attach(
+            lambda client: client.host_workspace_attach(
                 selected, workspace_root=str(workspace), dry_run=dry_run, at=at
             ),
             lambda: None,
             allow_local=False,
             command_name="playbill workspace attach",
         )
-        assert isinstance(attached, contracts.PlaybillHostWorkspaceAttachResult)
+        assert isinstance(attached, contracts.HostWorkspaceAttachResult)
         if attached.status == "would_attach":
             if output_json:
                 _emit_json(attached.model_dump(mode="json"))
             else:
                 click.echo(
-                    f"Would attach {workspace} to Playbill host {selected}; nothing was "
+                    f"Would attach {workspace} to Cruxible host {selected}; nothing was "
                     "registered or written"
                 )
                 echo_preview_next(attached.status, attached.coordinate)
             return
         registered = attached.workspace_root
     if registered is None or Path(registered).resolve(strict=False) != workspace:
-        raise PlaybillWorkspaceAttachmentError(
+        raise WorkspaceAttachmentError(
             instance_id=selected,
             requested_workspace=str(workspace),
             registered_workspace=registered,
         )
     if dry_run:
-        click.echo(f"{workspace} is already attached to Playbill host {selected}; nothing changes")
+        click.echo(f"{workspace} is already attached to Cruxible host {selected}; nothing changes")
         return
     transport_values = _workspace_config_transport()
     transport = str(next(iter(transport_values.values())))
@@ -805,19 +805,19 @@ def attach_workspace(
         instance_id=selected,
         instance_source="explicit" if instance_id is not None else None,
     )
-    config_path = write_playbill_workspace_config(
+    config_path = write_workspace_config(
         workspace,
         instance_id=selected,
         replace=replace,
         **transport_values,
     )
     _dispatch_cli(
-        lambda client: client.set_playbill_floor_delivery(selected, enabled=not no_floor_delivery),
+        lambda client: client.set_floor_delivery(selected, enabled=not no_floor_delivery),
         lambda: None,
         allow_local=False,
         command_name="playbill workspace attach",
     )
-    result = contracts.PlaybillWorkspaceAttachResult(
+    result = contracts.WorkspaceAttachResult(
         instance_id=selected,
         workspace_root=str(workspace),
         config_path=str(config_path),
@@ -827,7 +827,7 @@ def attach_workspace(
     if output_json:
         _emit_json(_json_receipt(result))
         return
-    click.echo(f"Attached workspace {workspace} to Playbill host {selected}")
+    click.echo(f"Attached workspace {workspace} to Cruxible host {selected}")
     click.echo(f"Config: {config_path}")
 
 
@@ -843,7 +843,7 @@ def workspace_floor_delivery(state: str, instance_id: str | None, output_json: b
         raise click.UsageError("workspace floor-delivery requires a local --server-socket")
     selected = instance_id or _require_instance_id()
     result = _dispatch_cli(
-        lambda client: client.set_playbill_floor_delivery(selected, enabled=state == "on"),
+        lambda client: client.set_floor_delivery(selected, enabled=state == "on"),
         lambda: None,
         allow_local=False,
         command_name="playbill workspace floor-delivery",
@@ -877,23 +877,23 @@ def detach_workspace(
         instance_source="explicit" if instance_id is not None else None,
     )
     result = _dispatch_cli(
-        lambda client: client.playbill_host_workspace_detach(selected, dry_run=dry_run, at=at),
+        lambda client: client.host_workspace_detach(selected, dry_run=dry_run, at=at),
         lambda: None,
         allow_local=False,
         command_name="playbill workspace detach",
     )
-    assert isinstance(result, contracts.PlaybillWorkspaceDetachResult)
+    assert isinstance(result, contracts.WorkspaceDetachResult)
     if output_json:
         _emit_json(_json_receipt(result))
         return
     if result.status == "not_registered":
-        click.echo(f"Playbill host {selected} registers no workspace")
+        click.echo(f"Cruxible host {selected} registers no workspace")
         return
     if result.status == "would_detach":
-        click.echo(f"Would detach {result.workspace_root} from Playbill host {selected}")
+        click.echo(f"Would detach {result.workspace_root} from Cruxible host {selected}")
         echo_preview_next(result.status, result.coordinate)
         return
-    click.echo(f"Detached {result.workspace_root} from Playbill host {selected}")
+    click.echo(f"Detached {result.workspace_root} from Cruxible host {selected}")
 
 
 def _active_server_transport() -> str:
@@ -913,19 +913,19 @@ def show_host(instance_id: str, output_json: bool) -> None:
     """Show one existing daemon host and its write compatibility."""
 
     result = _dispatch_cli(
-        lambda client: client.show_playbill_host(instance_id),
+        lambda client: client.show_host(instance_id),
         lambda: None,
         allow_local=False,
         command_name="playbill host show",
     )
-    assert isinstance(result, contracts.PlaybillHostInspection)
+    assert isinstance(result, contracts.HostInspection)
     transport = _active_server_transport()
     if output_json:
         payload = result.model_dump(mode="json")
         payload["transport"] = transport
         _emit_json(payload)
         return
-    click.echo(f"Playbill host: {result.instance_id}")
+    click.echo(f"Cruxible host: {result.instance_id}")
     click.echo(f"Transport: {transport}")
     click.echo(f"Managed root: {result.managed_root or '-'}")
     click.echo(f"Workspace root: {result.workspace_root or '-'}")
@@ -977,31 +977,31 @@ def create_host(
     )
     config_transport = _workspace_config_transport() if git_workspace is not None else {}
     if git_workspace is not None:
-        validate_playbill_workspace_config_write(
+        validate_workspace_config_write(
             git_workspace,
             instance_id=instance_id,
             replace=replace,
             **config_transport,
         )
     result = _dispatch_cli(
-        lambda client: client.create_playbill_host(
+        lambda client: client.create_host(
             instance_id=instance_id, workspace_root=workspace_root, dry_run=dry_run, at=at
         ),
         lambda: None,
         allow_local=False,
         command_name="playbill host create",
     )
-    assert isinstance(result, contracts.PlaybillHostResult)
+    assert isinstance(result, contracts.HostResult)
     result = _with_git_workspace_note(result)
     if dry_run:
         if output_json:
             _emit_json(_json_receipt(result))
         else:
-            click.echo(f"Playbill host: {result.instance_id} ({result.status}); nothing written")
+            click.echo(f"Cruxible host: {result.instance_id} ({result.status}); nothing written")
             echo_preview_next(result.status, result.coordinate)
         return
     if git_workspace is not None:
-        write_playbill_workspace_config(
+        write_workspace_config(
             git_workspace,
             instance_id=result.instance_id,
             replace=replace,
@@ -1011,7 +1011,7 @@ def create_host(
     if output_json:
         _emit_json(_json_receipt(result))
         return
-    click.echo(f"Playbill host: {result.instance_id} ({result.status})")
+    click.echo(f"Cruxible host: {result.instance_id} ({result.status})")
 
 
 @playbill_group.command("init")
@@ -1103,7 +1103,7 @@ def init_playbill(
         raise click.UsageError("Server mode is required for playbill init")
     config_transport = _workspace_config_transport() if git_workspace is not None else {}
     if git_workspace is not None:
-        validate_playbill_workspace_config_write(
+        validate_workspace_config_write(
             git_workspace,
             instance_id=selected,
             replace=replace,
@@ -1146,7 +1146,7 @@ def init_playbill(
     owner = materials[0]
     reviewer = materials[1] if reviewer_key_dir is not None else None
     result = _server_call(
-        lambda client, active: client.init_playbill(
+        lambda client, active: client.init(
             active,
             principals=[item.principal.model_dump(mode="json") for item in materials],
             operating_profile=cast(Any, profile),
@@ -1163,7 +1163,7 @@ def init_playbill(
     )
     result = _with_git_workspace_note(result)
     if git_workspace is not None:
-        write_playbill_workspace_config(
+        write_workspace_config(
             git_workspace,
             instance_id=result.instance_id,
             replace=replace,
@@ -1185,7 +1185,7 @@ def init_playbill(
     if output_json:
         _emit_json({**_json_receipt(result), "owner_settings_path": str(settings)})
         return
-    click.echo(f"Playbill initialized at {result.coordinate.git_oid}")
+    click.echo(f"Cruxible initialized at {result.coordinate.git_oid}")
     click.echo(f"Approval policy: {result.approval_policy_mode}")
     click.echo(f"Workspace refs: {result.workspace_advertisement.status}")
     if result.workspace_advertisement.failure_code is not None:
@@ -1221,7 +1221,7 @@ def _mint_owner_credential(owner: GeneratedKeyMaterial, *, principal_id: str) ->
         # An auth-on daemon answers nothing without a bearer credential.
         return None
     identity = _server_call(
-        lambda client, instance_id: client.playbill_whoami(instance_id),
+        lambda client, instance_id: client.whoami(instance_id),
         command_name="playbill init",
     )
     if not identity.authenticated or identity.actor_id == principal_id:
@@ -1257,7 +1257,7 @@ def body_group() -> None:
 def store_body(path: str, output_json: bool) -> None:
     content = Path(path).read_bytes()
     result = _server_call(
-        lambda client, instance_id: client.store_playbill_body(instance_id, content),
+        lambda client, instance_id: client.store_body(instance_id, content),
         command_name="playbill body store",
     )
     if output_json:
@@ -1288,7 +1288,7 @@ def decommission_instance(
     """
 
     result = _server_call(
-        lambda client, instance_id: client.decommission_playbill_instance(
+        lambda client, instance_id: client.decommission_instance(
             instance_id, reason=reason, dry_run=dry_run, at=at
         ),
         command_name="playbill instance decommission",
@@ -1331,7 +1331,7 @@ def set_ledger_mirror(url: str, dry_run: bool | None, at: str | None, output_jso
     """
 
     result = _server_call(
-        lambda client, instance_id: client.set_playbill_ledger_mirror(
+        lambda client, instance_id: client.set_ledger_mirror(
             instance_id, url=url, dry_run=dry_run, at=at
         ),
         command_name="playbill ledger set-mirror",
@@ -1353,7 +1353,7 @@ def ledger_clone_url(output_json: bool) -> None:
     """Print the ledger mirror a reviewer clones to read this instance's proposals."""
 
     result = _server_call(
-        lambda client, instance_id: client.get_playbill_ledger_mirror(instance_id),
+        lambda client, instance_id: client.get_ledger_mirror(instance_id),
         command_name="playbill ledger clone-url",
     )
     if output_json:
@@ -1376,7 +1376,7 @@ def ledger_publish(timeout: float, dry_run: bool | None, at: str | None, output_
     """Wait for publication to the configured mirror; timeout 0 only requests it."""
 
     result = _server_call(
-        lambda client, instance_id: client.publish_playbill_ledger(
+        lambda client, instance_id: client.publish_ledger(
             instance_id, timeout=timeout, dry_run=dry_run, at=at
         ),
         command_name="playbill ledger publish",
@@ -1407,7 +1407,7 @@ def provider_group() -> None:
 def list_provider_packages(output_json: bool) -> None:
     """List packages from the daemon's configured provider repository."""
     result = _server_call(
-        lambda client, instance_id: client.list_playbill_provider_packages(instance_id),
+        lambda client, instance_id: client.list_provider_packages(instance_id),
         command_name="playbill provider list",
     )
     if output_json:
@@ -1478,7 +1478,7 @@ def install_provider(
         if lock_path is not None or dependencies:
             raise click.UsageError("--lock and --dependency apply to a local wheel")
         package, pinned, version = package_or_wheel.partition("==")
-        request = PlaybillProviderInstallRequest(
+        request = ProviderInstallRequest(
             package=package,
             version=version if pinned else None,
             extras=tuple(sorted(set(extras))),
@@ -1486,7 +1486,7 @@ def install_provider(
             dry_run=dry_run or None,
         )
         result = _server_call(
-            lambda client, instance_id: client.install_playbill_provider(instance_id, request),
+            lambda client, instance_id: client.install_provider(instance_id, request),
             command_name="playbill provider install",
         )
     if output_json:
@@ -1513,7 +1513,7 @@ def kit_group() -> None:
     """Export and import definition kits."""
 
 
-def _echo_kit_change(result: PlaybillKitChangeResult) -> None:
+def _echo_kit_change(result: KitChangeResult) -> None:
     version = "" if result.version is None else f" {result.version}"
     click.echo(f"{result.kit_id}{version}: {result.status}")
     for item in result.plan:
@@ -1559,13 +1559,13 @@ def build_kit(
     """Export this instance's owned definitions as one self-contained kit release."""
     if out.exists():
         raise click.UsageError(f"{out} already exists")
-    request = PlaybillKitBuildRequest(
+    request = KitBuildRequest(
         kit_id=kit_id,
         version=version,
         owns=tuple(sorted(set(owns))),
     )
     bundle = _server_call(
-        lambda client, instance_id: client.build_playbill_kit(instance_id, request),
+        lambda client, instance_id: client.build_kit(instance_id, request),
         command_name="playbill kit build",
     ).bundle
     write_kit_directory(bundle, out)
@@ -1596,9 +1596,9 @@ def add_kit(
     by default; commit the preview with ``--commit --at OID``.
     """
     bundle, origin = resolve_kit(kit)
-    request = PlaybillKitAddRequest(bundle=bundle, source=source or origin, dry_run=dry_run, at=at)
+    request = KitAddRequest(bundle=bundle, source=source or origin, dry_run=dry_run, at=at)
     result = _server_call(
-        lambda client, instance_id: client.add_playbill_kit(instance_id, request),
+        lambda client, instance_id: client.add_kit(instance_id, request),
         command_name="playbill kit add",
     )
     if output_json:
@@ -1675,7 +1675,7 @@ def pull_kit(reference: str, out: Path, layout: bool, output_json: bool) -> None
 def kit_status(output_json: bool) -> None:
     """List installed kits and any kit paths edited since install."""
     result = _server_call(
-        lambda client, instance_id: client.playbill_kit_status(instance_id),
+        lambda client, instance_id: client.kit_status(instance_id),
         command_name="playbill kit status",
     )
     if output_json:
@@ -1696,9 +1696,9 @@ def kit_status(output_json: bool) -> None:
 @handle_errors
 def remove_kit(kit_id: str, dry_run: bool | None, at: str | None, output_json: bool) -> None:
     """Propose retiring every artifact KIT_ID installed (previews by default)."""
-    request = PlaybillKitRemoveRequest(kit_id=kit_id, dry_run=dry_run, at=at)
+    request = KitRemoveRequest(kit_id=kit_id, dry_run=dry_run, at=at)
     result = _server_call(
-        lambda client, instance_id: client.remove_playbill_kit(instance_id, request),
+        lambda client, instance_id: client.remove_kit(instance_id, request),
         command_name="playbill kit remove",
     )
     if output_json:
@@ -1741,7 +1741,7 @@ def propose_document(
     assert envelope is not None
     shell = _read_model(envelope, DocumentShell)
     result = _server_call(
-        lambda client, instance_id: client.propose_playbill_document(
+        lambda client, instance_id: client.propose_document(
             instance_id,
             shell=shell.model_dump(mode="json"),
             proposal_name=proposal_name,
@@ -1766,7 +1766,7 @@ def read_capture(capture_digest: str, max_bytes: int) -> None:
     from cruxible_client.contracts.capture_reads import CaptureReadRequest
 
     result = _server_call(
-        lambda client, instance_id: client.read_playbill_capture(
+        lambda client, instance_id: client.read_capture(
             instance_id, CaptureReadRequest(capture_digest=capture_digest, max_bytes=max_bytes)
         ),
         command_name="playbill capture read",
@@ -1783,9 +1783,9 @@ def proposal_group() -> None:
 @click.option("--status", type=click.Choice(["open", "settled", "incomplete"]), default=None)
 @click.option(
     "--limit",
-    default=contracts.PLAYBILL_PROPOSAL_LIST_DEFAULT_LIMIT,
+    default=contracts.PROPOSAL_LIST_DEFAULT_LIMIT,
     show_default=True,
-    type=click.IntRange(1, contracts.PLAYBILL_PROPOSAL_LIST_MAX_LIMIT),
+    type=click.IntRange(1, contracts.PROPOSAL_LIST_MAX_LIMIT),
     help="Proposals per page.",
 )
 @click.option("--cursor", default=None, help="Continue a previous page of the same listing.")
@@ -1793,7 +1793,7 @@ def proposal_group() -> None:
 @handle_errors
 def list_proposals(status: str | None, limit: int, cursor: str | None, output_json: bool) -> None:
     result = _server_call(
-        lambda client, instance_id: client.list_playbill_proposals(
+        lambda client, instance_id: client.list_proposals(
             instance_id,
             status=cast(Any, status),
             limit=limit,
@@ -1824,9 +1824,9 @@ def readmit_proposal(
     proposal_id: str, dry_run: bool | None, at: str | None, output_json: bool
 ) -> None:
     result = _server_call(
-        lambda client, instance_id: client.readmit_playbill_proposal(
+        lambda client, instance_id: client.readmit_proposal(
             instance_id,
-            client.resolve_playbill_proposal_selector(instance_id, proposal_id).proposal_id,
+            client.resolve_proposal_selector(instance_id, proposal_id).proposal_id,
             dry_run=dry_run,
             at=at,
         ),
@@ -1864,9 +1864,9 @@ def withdraw_proposal(
     """Retire an open proposal that will never be activated."""
 
     result = _server_call(
-        lambda client, instance_id: client.withdraw_playbill_proposal(
+        lambda client, instance_id: client.withdraw_proposal(
             instance_id,
-            client.resolve_playbill_proposal_selector(instance_id, proposal_id).proposal_id,
+            client.resolve_proposal_selector(instance_id, proposal_id).proposal_id,
             reason=reason,
             dry_run=dry_run,
             at=at,
@@ -1888,9 +1888,9 @@ def withdraw_proposal(
 @handle_errors
 def inspect_proposal(proposal_id: str, output_json: bool) -> None:
     result = _server_call(
-        lambda client, instance_id: client.inspect_playbill_proposal(
+        lambda client, instance_id: client.inspect_proposal(
             instance_id,
-            client.resolve_playbill_proposal_selector(instance_id, proposal_id).proposal_id,
+            client.resolve_proposal_selector(instance_id, proposal_id).proposal_id,
         ),
         command_name="playbill proposal inspect",
     )
@@ -1903,9 +1903,9 @@ def inspect_proposal(proposal_id: str, output_json: bool) -> None:
 @handle_errors
 def inspect_refusal(proposal_id: str, output_json: bool) -> None:
     result = _server_call(
-        lambda client, instance_id: client.inspect_playbill_refusal(
+        lambda client, instance_id: client.inspect_refusal(
             instance_id,
-            client.resolve_playbill_proposal_selector(instance_id, proposal_id).proposal_id,
+            client.resolve_proposal_selector(instance_id, proposal_id).proposal_id,
         ),
         command_name="playbill proposal refusal",
     )
@@ -1934,27 +1934,25 @@ def review_proposal(
 
     def _review_at_observed_coordinate(
         client: CruxibleClient, instance_id: str
-    ) -> contracts.PlaybillProposalReview:
-        head = client.playbill_head(instance_id)
-        next_observation = observe_playbill_next_workspace(workspace)
+    ) -> contracts.ProposalReview:
+        head = client.head(instance_id)
+        next_observation = observe_next_workspace(workspace)
         observation: dict[str, object] = {
             "tag": "playbill-review-workspace-observation-v1",
             "presentation_policy": next_observation.get("presentation_policy"),
             "presentation_policy_notes": next_observation.get("presentation_policy_notes", []),
             "projection_coverage": None,
         }
-        projection = observe_playbill_projection_coverage(
+        projection = observe_projection_coverage(
             workspace,
-            coordinate=contracts.PlaybillAcceptedCoordinate.model_validate(
+            coordinate=contracts.AcceptedCoordinate.model_validate(
                 head.coordinate.model_dump(mode="json")
             ),
         )
         if projection is not None:
             observation["projection_coverage"] = projection
-        resolved_id = client.resolve_playbill_proposal_selector(
-            instance_id, proposal_id
-        ).proposal_id
-        return client.review_playbill_proposal(
+        resolved_id = client.resolve_proposal_selector(instance_id, proposal_id).proposal_id
+        return client.review_proposal(
             instance_id,
             resolved_id,
             include_body=include_body,
@@ -1968,7 +1966,7 @@ def review_proposal(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
     else:
-        review = PlaybillProposalReview.model_validate(result.model_dump(mode="json"))
+        review = ProposalReview.model_validate(result.model_dump(mode="json"))
         click.echo(render_playbill_proposal_review_pointer(review), nl=False)
 
 
@@ -2009,11 +2007,9 @@ def approve_proposal(
 
     def _resolve_and_prepare(
         client: CruxibleClient, instance_id: str
-    ) -> tuple[str, contracts.PlaybillApprovalChallenge]:
-        resolved_id = client.resolve_playbill_proposal_selector(
-            instance_id, proposal_id
-        ).proposal_id
-        return resolved_id, client.prepare_playbill_approval(
+    ) -> tuple[str, contracts.ApprovalChallenge]:
+        resolved_id = client.resolve_proposal_selector(instance_id, proposal_id).proposal_id
+        return resolved_id, client.prepare_approval(
             instance_id, resolved_id, signer_id=resolved_signer, include_body=True
         )
 
@@ -2021,7 +2017,7 @@ def approve_proposal(
         _resolve_and_prepare,
         command_name="playbill proposal approve",
     )
-    review = PlaybillProposalReview.model_validate(challenge.review.model_dump(mode="json"))
+    review = ProposalReview.model_validate(challenge.review.model_dump(mode="json"))
     if not output_json:
         click.echo(render_playbill_proposal_review(review), nl=False)
     if not yes and not click.confirm("Sign this exact candidate?"):
@@ -2035,7 +2031,7 @@ def approve_proposal(
     )
     attestation = signer.sign(ApprovalStatement.model_validate(challenge.statement))
     result = _server_call(
-        lambda client, instance_id: client.submit_playbill_approval(
+        lambda client, instance_id: client.submit_approval(
             instance_id,
             resolved_id,
             attestation=attestation.model_dump(mode="json"),
@@ -2073,7 +2069,7 @@ def activate_proposal(
         lambda client, instance_id: activate_with_workspace_refresh(
             client,
             instance_id,
-            client.resolve_playbill_proposal_selector(instance_id, proposal_id).proposal_id,
+            client.resolve_proposal_selector(instance_id, proposal_id).proposal_id,
             workspace=Path(workspace_root),
             sync=not no_sync,
         ),
@@ -2116,7 +2112,7 @@ def whoami(output_json: bool) -> None:
     """Explain the transport-derived actor, permission mode, and principal status."""
 
     result = _server_call(
-        lambda client, instance_id: client.playbill_whoami(instance_id),
+        lambda client, instance_id: client.whoami(instance_id),
         command_name="playbill whoami",
     )
     if output_json:
@@ -2210,7 +2206,7 @@ def check_sources(
 ) -> None:
     catalog = _catalog(portable_catalog, local_catalog)
 
-    def call(client: CruxibleClient, instance_id: str) -> contracts.PlaybillSourceCheckResult:
+    def call(client: CruxibleClient, instance_id: str) -> contracts.SourceCheckResult:
         bundle = _compile_remote_context(
             client,
             instance_id,
@@ -2218,9 +2214,7 @@ def check_sources(
             repository_root=Path(repository_root),
             aliases=_root_aliases(root_alias),
         )
-        return client.check_playbill_source_bundle(
-            instance_id, bundle=bundle.model_dump(mode="json")
-        )
+        return client.check_source_bundle(instance_id, bundle=bundle.model_dump(mode="json"))
 
     result = _server_call(call, command_name="playbill sources check")
     _emit_json(result.model_dump(mode="json"))
@@ -2245,7 +2239,7 @@ def propose_sources(
 ) -> None:
     bundle = _read_model(bundle_path, SourceCompilationBundle)
     result = _server_call(
-        lambda client, instance_id: client.propose_playbill_source_bundle(
+        lambda client, instance_id: client.propose_source_bundle(
             instance_id,
             bundle=bundle.model_dump(mode="json"),
             source_name=source_name,
@@ -2348,14 +2342,14 @@ def add_principal(
     def call(client: CruxibleClient, instance_id: str) -> _PrincipalAddOutcome:
         existing = principal_records(client, instance_id)
         if any(item.principal_id == principal_id for item in existing):
-            raise click.ClickException(f"Playbill principal already exists: {principal_id}")
+            raise click.ClickException(f"Cruxible principal already exists: {principal_id}")
         material = generate_client_principal_key(
             custody,
             principal_id=principal_id,
             kind=principal_kind,
             forbidden_roots=_custody_forbidden_roots(),
         )
-        proposed = client.propose_playbill_principal_change(
+        proposed = client.propose_principal_change(
             instance_id,
             principal=material.principal.model_dump(mode="json"),
             proposal_name=ref_name,
@@ -2370,7 +2364,7 @@ def add_principal(
         )
         if signer_key is None or outcome.proposal_id is None:
             return outcome
-        identity = client.playbill_whoami(instance_id)
+        identity = client.whoami(instance_id)
         if identity.actor_id is None:
             return outcome
         outcome.signer_id = identity.actor_id
@@ -2381,7 +2375,7 @@ def add_principal(
             signer_id=identity.actor_id,
             private_key_path=Path(signer_key).expanduser(),
         )
-        activated = client.activate_playbill_proposal(instance_id, outcome.proposal_id)
+        activated = client.activate_proposal(instance_id, outcome.proposal_id)
         outcome.activated = activated.status == "accepted"
         if outcome.activated and identity.authenticated and principal_kind == "ordinary":
             minted = client.create_runtime_credential(
@@ -2451,14 +2445,14 @@ def add_principal(
 class _PrincipalAddOutcome:
     instance_id: str
     material: GeneratedKeyMaterial
-    proposal: contracts.PlaybillProposalInspection
+    proposal: contracts.ProposalInspection
     proposal_id: str | None
     signer_id: str | None = None
     activated: bool = False
     credential: contracts.RuntimeCredentialResult | None = None
 
 
-def _admitted_proposal_id(proposed: contracts.PlaybillProposalInspection) -> str | None:
+def _admitted_proposal_id(proposed: contracts.ProposalInspection) -> str | None:
     admission = proposed.proposal.get("admission")
     if isinstance(admission, Mapping) and isinstance(admission.get("proposal_id"), str):
         return str(admission["proposal_id"])
@@ -2473,7 +2467,7 @@ def _approve_with_key(
     signer_id: str,
     private_key_path: Path,
 ) -> None:
-    challenge = client.prepare_playbill_approval(instance_id, proposal_id, signer_id=signer_id)
+    challenge = client.prepare_approval(instance_id, proposal_id, signer_id=signer_id)
     principal = PrincipalRecord.model_validate(challenge.signer_principal)
     signer = LocalEd25519ApprovalSigner.open(
         signer_id=signer_id,
@@ -2482,7 +2476,7 @@ def _approve_with_key(
         forbidden_roots=_custody_forbidden_roots(),
     )
     attestation = signer.sign(ApprovalStatement.model_validate(challenge.statement))
-    client.submit_playbill_approval(
+    client.submit_approval(
         instance_id, proposal_id, attestation=attestation.model_dump(mode="json")
     )
 
@@ -2521,20 +2515,20 @@ def _preview_principal_change(
     proposal_name: str,
     at: str | None,
     refuse_existing: bool,
-) -> contracts.PlaybillProposalInspection:
+) -> contracts.ProposalInspection:
     """Preview a principal change whose key would be generated: nothing is written.
 
     The record carries a throwaway in-memory public key; the change set, the
     principal-lifecycle law and the approval it needs are exactly the commit's.
     """
 
-    def call(client: CruxibleClient, instance_id: str) -> contracts.PlaybillProposalInspection:
+    def call(client: CruxibleClient, instance_id: str) -> contracts.ProposalInspection:
         matches = principal_records(client, instance_id)
         target = next((item for item in matches if item.principal_id == principal_id), None)
         if refuse_existing and target is not None:
-            raise click.ClickException(f"Playbill principal already exists: {principal_id}")
+            raise click.ClickException(f"Cruxible principal already exists: {principal_id}")
         if not refuse_existing and target is None:
-            raise click.ClickException(f"Unknown Playbill principal: {principal_id}")
+            raise click.ClickException(f"Unknown Cruxible principal: {principal_id}")
         principal_kind = kind if target is None else target.kind
         assert principal_kind is not None
         record = preview_client_principal(
@@ -2543,7 +2537,7 @@ def _preview_principal_change(
             kind=principal_kind,
             forbidden_roots=_custody_forbidden_roots(),
         )
-        return client.propose_playbill_principal_change(
+        return client.propose_principal_change(
             instance_id,
             principal=record.model_dump(mode="json"),
             proposal_name=proposal_name,
@@ -2554,9 +2548,7 @@ def _preview_principal_change(
     return _server_call(call, command_name="playbill principal change")
 
 
-def _emit_principal_preview(
-    preview: contracts.PlaybillProposalInspection, *, output_json: bool
-) -> None:
+def _emit_principal_preview(preview: contracts.ProposalInspection, *, output_json: bool) -> None:
     if output_json:
         _emit_json(preview.model_dump(mode="json"))
         return
@@ -2571,7 +2563,7 @@ def _principal_successor(
     proposal_name: str,
     dry_run: bool | None,
     at: str | None,
-) -> contracts.PlaybillProposalInspection:
+) -> contracts.ProposalInspection:
     if dry_run:
         return _preview_principal_change(
             principal_id=target_id,
@@ -2582,18 +2574,18 @@ def _principal_successor(
             refuse_existing=False,
         )
 
-    def call(client: CruxibleClient, instance_id: str) -> contracts.PlaybillProposalInspection:
+    def call(client: CruxibleClient, instance_id: str) -> contracts.ProposalInspection:
         matches = principal_records(client, instance_id)
         target = next((item for item in matches if item.principal_id == target_id), None)
         if target is None:
-            raise click.ClickException(f"Unknown Playbill principal: {target_id}")
+            raise click.ClickException(f"Unknown Cruxible principal: {target_id}")
         material = generate_client_principal_key(
             Path(key_dir).expanduser(),
             principal_id=target_id,
             kind=target.kind,
             forbidden_roots=_custody_forbidden_roots(),
         )
-        return client.propose_playbill_principal_change(
+        return client.propose_principal_change(
             instance_id,
             principal=material.principal.model_dump(mode="json"),
             proposal_name=proposal_name,
@@ -2669,13 +2661,13 @@ def revoke_principal(
 ) -> None:
     """Propose revoking a principal (and, once active, every credential that acts as it)."""
 
-    def call(client: CruxibleClient, instance_id: str) -> contracts.PlaybillProposalInspection:
+    def call(client: CruxibleClient, instance_id: str) -> contracts.ProposalInspection:
         matches = principal_records(client, instance_id)
         target = next((item for item in matches if item.principal_id == principal_id), None)
         if target is None:
-            raise click.ClickException(f"Unknown Playbill principal: {principal_id}")
+            raise click.ClickException(f"Unknown Cruxible principal: {principal_id}")
         revoked = target.model_copy(update={"status": "revoked"})
-        return client.propose_playbill_principal_change(
+        return client.propose_principal_change(
             instance_id,
             principal=revoked.model_dump(mode="json"),
             proposal_name=proposal_name,
@@ -2726,7 +2718,7 @@ def propose_claim_type(
         if not isinstance(resolved_name, str) or not resolved_name:
             raise click.UsageError("--name is required when the ClaimType payload has no predicate")
         envelope_result = _server_call(
-            lambda client, instance_id: client.propose_playbill_claim_type(
+            lambda client, instance_id: client.propose_claim_type(
                 instance_id,
                 claim_type=envelope_payload,
                 proposal_name=resolved_name,
@@ -2751,7 +2743,7 @@ def propose_claim_type(
             "match its capture contracts"
         ) from exc
     input_result = _server_call(
-        lambda client, instance_id: client.propose_playbill_claim_type_input(
+        lambda client, instance_id: client.propose_claim_type_input(
             instance_id,
             input=claim_type_input.model_dump(mode="json"),
             proposal_name=proposal_name or claim_type_input.predicate,
@@ -2777,7 +2769,7 @@ def migrate_claim_type(request_file: str, output_json: bool) -> None:
             f"Invalid ClaimType migration: {validation_summary(exc)}"
         ) from exc
     result = _server_call(
-        lambda client, instance_id: client.migrate_playbill_claim_type(
+        lambda client, instance_id: client.migrate_claim_type(
             instance_id,
             request=request.model_dump(mode="json"),
         ),
@@ -2874,7 +2866,7 @@ def upgrade_claim_types(
         }
     )
     result = _server_call(
-        lambda client, instance_id: client.upgrade_playbill_claim_types(instance_id, request),
+        lambda client, instance_id: client.upgrade_claim_types(instance_id, request),
         command_name="playbill claim-type upgrade",
     )
     if output_json:
@@ -2915,7 +2907,7 @@ def upgrade_evidence_rules(dry_run: bool | None, at: str | None, output_json: bo
 
     request = EvidenceRuleUpgradeRequest(dry_run=dry_run, at=at)
     result = _server_call(
-        lambda client, instance_id: client.upgrade_playbill_evidence_rules(instance_id, request),
+        lambda client, instance_id: client.upgrade_evidence_rules(instance_id, request),
         command_name="playbill claim-type upgrade-evidence-rules",
     )
     if output_json:
@@ -2990,13 +2982,13 @@ def predict(request_file: str, output_json: bool) -> None:
     """Submit a governed resolution contract for an accepted Claim."""
 
     try:
-        request = contracts.PlaybillPredictRequest.model_validate(_read_mapping(request_file))
+        request = contracts.PredictRequest.model_validate(_read_mapping(request_file))
     except ValidationError as exc:
         raise click.ClickException(
             f"Invalid prediction request: {validation_summary(exc)}"
         ) from exc
     result = _server_call(
-        lambda client, instance_id: client.predict_playbill(instance_id, request=request),
+        lambda client, instance_id: client.predict(instance_id, request=request),
         command_name="playbill predict",
     )
     if output_json:
@@ -3018,7 +3010,7 @@ def predict(request_file: str, output_json: bool) -> None:
     "request_file",
     type=click.Path(exists=True, dir_okay=False),
     help=(
-        "Advanced: a PlaybillSettleRequest file (exact contract reference, anchor event, "
+        "Advanced: a SettleRequest file (exact contract reference, anchor event, "
         "or terminal evidence)."
     ),
 )
@@ -3044,16 +3036,16 @@ def settle(
         )
     try:
         request = (
-            contracts.PlaybillSettleRequest.model_validate(_read_mapping(request_file))
+            contracts.SettleRequest.model_validate(_read_mapping(request_file))
             if request_file is not None
-            else contracts.PlaybillSettleRequest(observation=observation)
+            else contracts.SettleRequest(observation=observation)
         )
     except ValidationError as exc:
         raise click.ClickException(
             f"Invalid settlement request: {validation_summary(exc)}"
         ) from exc
     result = _server_call(
-        lambda client, instance_id: client.settle_playbill_prediction(
+        lambda client, instance_id: client.settle_prediction(
             instance_id,
             prediction_id,
             request=request,
@@ -3078,7 +3070,7 @@ def recover_claim_attestations() -> None:
     """Roll the sole durable unpublished attestation forward after a poison refusal."""
 
     _server_call(
-        lambda client, instance_id: client.recover_playbill_claim_attestations(instance_id),
+        lambda client, instance_id: client.recover_claim_attestations(instance_id),
         command_name="playbill claim-attestation recover",
     )
     click.echo("Claim-attestation evidence ledger recovered.")
@@ -3256,7 +3248,7 @@ def create_authoring_intent(
     parsed_input = _read_authoring_input(payload)
     _echo_write_target("active", ctx.params)
     result = _server_call(
-        lambda client, instance_id: client.create_playbill_authoring_input(
+        lambda client, instance_id: client.create_authoring_input(
             instance_id, input=parsed_input.model_dump(mode="json")
         ),
         command_name="playbill authoring create",
@@ -3270,7 +3262,7 @@ def create_authoring_intent(
 @handle_errors
 def get_authoring_intent(intent_id: str, output_json: bool) -> None:
     result = _server_call(
-        lambda client, instance_id: client.get_playbill_authoring_intent(instance_id, intent_id),
+        lambda client, instance_id: client.get_authoring_intent(instance_id, intent_id),
         command_name="playbill authoring get",
     )
     _emit_json(result.model_dump(mode="json"))
@@ -3282,7 +3274,7 @@ def get_authoring_intent(intent_id: str, output_json: bool) -> None:
 @handle_errors
 def resume_authoring_intent(intent_id: str, output_json: bool) -> None:
     result = _server_call(
-        lambda client, instance_id: client.resume_playbill_authoring_intent(instance_id, intent_id),
+        lambda client, instance_id: client.resume_authoring_intent(instance_id, intent_id),
         command_name="playbill authoring resume",
     )
     _emit_json(result.model_dump(mode="json"))
@@ -3293,7 +3285,7 @@ def resume_authoring_intent(intent_id: str, output_json: bool) -> None:
 @handle_errors
 def list_pending_authoring_intents(output_json: bool) -> None:
     result = _server_call(
-        lambda client, instance_id: client.list_pending_playbill_authoring_intents(instance_id),
+        lambda client, instance_id: client.list_pending_authoring_intents(instance_id),
         command_name="playbill authoring list",
     )
     _emit_json(result.model_dump(mode="json"))
@@ -3306,7 +3298,7 @@ def list_pending_authoring_intents(output_json: bool) -> None:
 @handle_errors
 def compile_authoring(payload: str, intent_id: str | None, output_json: bool) -> None:
     result = _server_call(
-        lambda client, instance_id: client.compile_playbill_authoring_input(
+        lambda client, instance_id: client.compile_authoring_input(
             instance_id,
             input=_read_authoring_input(payload).model_dump(mode="json"),
             intent_id=intent_id,
@@ -3360,7 +3352,7 @@ def bind_authoring_selection(
         occurrence=occurrence,
     )
     result = _server_call(
-        lambda client, instance_id: client.compile_playbill_authoring(
+        lambda client, instance_id: client.compile_authoring(
             instance_id,
             payload=payload.model_dump(mode="json"),
             intent_id=None,
@@ -3377,9 +3369,7 @@ def bind_authoring_selection(
 @handle_errors
 def preflight_authoring_intent(intent_id: str, output_brief: bool, output_json: bool) -> None:
     result = _server_call(
-        lambda client, instance_id: client.preflight_playbill_authoring_intent(
-            instance_id, intent_id
-        ),
+        lambda client, instance_id: client.preflight_authoring_intent(instance_id, intent_id),
         command_name="playbill authoring preflight",
     )
     if output_brief:
@@ -3401,9 +3391,7 @@ def preflight_authoring_intent(intent_id: str, output_brief: bool, output_json: 
     _emit_json(result.model_dump(mode="json"))
     if result.verdict == "refused":
         intent = _server_call(
-            lambda client, instance_id: client.get_playbill_authoring_intent(
-                instance_id, intent_id
-            ),
+            lambda client, instance_id: client.get_authoring_intent(instance_id, intent_id),
             command_name="playbill authoring preflight",
         ).intent
         if intent.get("base_coordinate") != result.certificate.get("accepted_coordinate"):
@@ -3422,7 +3410,7 @@ def rebase_authoring_intent(intent_id: str, output_json: bool) -> None:
     """Advance one refused, unsubmitted intent to the accepted head."""
 
     result = _server_call(
-        lambda client, instance_id: client.rebase_playbill_authoring_intent(instance_id, intent_id),
+        lambda client, instance_id: client.rebase_authoring_intent(instance_id, intent_id),
         command_name="playbill authoring rebase",
     )
     _emit_json(result.model_dump(mode="json"))
@@ -3449,7 +3437,7 @@ def submit_authoring_intent(
     output_json: bool,
 ) -> None:
     def call(client: CruxibleClient, instance_id: str) -> tuple[Any, Any]:
-        submitted = client.submit_playbill_authoring_intent(instance_id, intent_id)
+        submitted = client.submit_authoring_intent(instance_id, intent_id)
         if not and_activate or submitted.status.state != "ready_to_activate":
             return submitted, None
         # Only a candidate that needs nothing further is activated here. Anything
@@ -3558,7 +3546,7 @@ def _submit_next_command(submitted: Any, *, activated: bool) -> str | None:
 @handle_errors
 def authoring_intent_status(intent_id: str, output_json: bool) -> None:
     result = _server_call(
-        lambda client, instance_id: client.playbill_authoring_intent_status(instance_id, intent_id),
+        lambda client, instance_id: client.authoring_intent_status(instance_id, intent_id),
         command_name="playbill authoring status",
     )
     _emit_json(result.model_dump(mode="json"))
@@ -3575,7 +3563,7 @@ def abandon_authoring_insertion(
     output_json: bool,
 ) -> None:
     result = _server_call(
-        lambda client, instance_id: client.abandon_playbill_authoring_insertion(
+        lambda client, instance_id: client.abandon_authoring_insertion(
             instance_id,
             intent_id,
             expectation_id=expectation_id,
@@ -3806,7 +3794,7 @@ def set_value(
     if expect_absent and expect:
         raise click.UsageError("pass --expect or --expect-absent, not both")
     request = _write_request(
-        PlaybillSetRequest,
+        SetRequest,
         {
             "subject": subject,
             "field": field,
@@ -3825,7 +3813,7 @@ def set_value(
         example='cruxible playbill set dev.item/tidy-cli status done --because "Shipped."',
     )
     outcome = _server_call(
-        lambda client, instance_id: client.playbill_set(instance_id, request=request),
+        lambda client, instance_id: client.set(instance_id, request=request),
         command_name="playbill set",
     )
     _finish_write(outcome, output_json=output_json)
@@ -3890,7 +3878,7 @@ def add_value(
     """
 
     request = _write_request(
-        PlaybillWriteRequest,
+        WriteRequest,
         {
             "changes": [
                 {
@@ -3916,7 +3904,7 @@ def add_value(
         ),
     )
     outcome = _server_call(
-        lambda client, instance_id: client.playbill_write(instance_id, request=request),
+        lambda client, instance_id: client.write(instance_id, request=request),
         command_name="playbill add",
     )
     _finish_write(outcome, output_json=output_json)
@@ -3953,7 +3941,7 @@ def retire(
     """
 
     request = _write_request(
-        PlaybillRetireRequest,
+        RetireRequest,
         {
             "target": target if field is None else {"subject": target, "field": field},
             "because": because,
@@ -3966,7 +3954,7 @@ def retire(
         example='cruxible playbill retire CLM-0123456789abcdef0123456789abcdef --because "Wrong."',
     )
     outcome = _server_call(
-        lambda client, instance_id: client.playbill_retire(instance_id, request=request),
+        lambda client, instance_id: client.retire(instance_id, request=request),
         command_name="playbill retire",
     )
     _finish_write(outcome, output_json=output_json)
@@ -4026,7 +4014,7 @@ def write_changes(
     if rationale is None:
         raise click.UsageError("give the write a reason: --because, or because in FILE")
     request = _write_request(
-        PlaybillWriteRequest,
+        WriteRequest,
         {
             "changes": observe_changes(parsed.changes, workspace=Path(workspace_root)),
             "subject": parsed.subject,
@@ -4038,7 +4026,7 @@ def write_changes(
         example="cruxible playbill write changes.yaml",
     )
     outcome = _server_call(
-        lambda client, instance_id: client.playbill_write(instance_id, request=request),
+        lambda client, instance_id: client.write(instance_id, request=request),
         command_name="playbill write",
     )
     _finish_write(outcome, output_json=output_json)
@@ -4105,14 +4093,14 @@ def get_by_ref(
     ResolutionContract:<name>, Mandate:<name>.
     """
 
-    from cruxible_client.contracts.get_reads import PlaybillByteRange, PlaybillGetRequest
+    from cruxible_client.contracts.get_reads import ByteRange, GetRequest
 
     try:
-        request = PlaybillGetRequest.model_validate(
+        request = GetRequest.model_validate(
             {
                 "ref": ref,
                 "detail": detail,
-                "range": None if byte_range is None else PlaybillByteRange.parse(byte_range),
+                "range": None if byte_range is None else ByteRange.parse(byte_range),
                 "at": at_oid,
                 "evaluation_time": evaluation_time,
                 "surface": "cli",
@@ -4132,7 +4120,7 @@ def get_by_ref(
         _write_body(request, Path(output_path), whole=byte_range is None)
         return
     result = _server_call(
-        lambda client, instance_id: client.playbill_get(instance_id, request=request),
+        lambda client, instance_id: client.get(instance_id, request=request),
         command_name="playbill get",
     )
     if output_json:
@@ -4155,19 +4143,19 @@ def _write_body(request: Any, destination: Path, *, whole: bool) -> None:
 
     import base64
 
-    from cruxible_client.contracts.get_reads import GET_BODY_RANGE_MAX_BYTES, PlaybillByteRange
+    from cruxible_client.contracts.get_reads import GET_BODY_RANGE_MAX_BYTES, ByteRange
 
     def read(window: Any, at: Any) -> Any:
         ranged = request.model_copy(update={"range": window, "at": at})
         result = _server_call(
-            lambda client, instance_id: client.playbill_get(instance_id, request=ranged),
+            lambda client, instance_id: client.get(instance_id, request=ranged),
             command_name="playbill get",
         )
         assert result.body is not None
         return result
 
     first = read(
-        PlaybillByteRange(start=0, end=GET_BODY_RANGE_MAX_BYTES) if whole else request.range,
+        ByteRange(start=0, end=GET_BODY_RANGE_MAX_BYTES) if whole else request.range,
         request.at,
     )
     body = first.body
@@ -4182,7 +4170,7 @@ def _write_body(request: Any, destination: Path, *, whole: bool) -> None:
     chunks.append(chunk(body))
     end = 0 if body.range is None else body.range.end
     while whole and end < body.size:
-        window = PlaybillByteRange(start=end, end=min(end + GET_BODY_RANGE_MAX_BYTES, body.size))
+        window = ByteRange(start=end, end=min(end + GET_BODY_RANGE_MAX_BYTES, body.size))
         part = read(window, pinned).body
         chunks.append(chunk(part))
         end = part.range.end
@@ -4327,7 +4315,7 @@ def depublish_projection(
     """
 
     result = _server_call(
-        lambda client, instance_id: client.depublish_playbill_block(
+        lambda client, instance_id: client.depublish_block(
             instance_id,
             source_id,
             block_id,
@@ -4550,12 +4538,12 @@ def propose_compiler_upgrade(
     """Create an upgrade proposal at the selected accepted head; does not activate it."""
     from cruxible_client.contracts.types import CompilerCoordinate
 
-    def call(client: CruxibleClient, instance_id: str) -> contracts.PlaybillProposalInspection:
-        head = client.playbill_head(instance_id)
-        return client.propose_playbill_compiler_upgrade(
+    def call(client: CruxibleClient, instance_id: str) -> contracts.ProposalInspection:
+        head = client.head(instance_id)
+        return client.propose_compiler_upgrade(
             instance_id,
             target=CompilerCoordinate(rule_digest=target_digest),
-            base=contracts.PlaybillAcceptedCoordinate.model_validate(
+            base=contracts.AcceptedCoordinate.model_validate(
                 head.coordinate.model_dump(mode="json")
             ),
             proposal_name=proposal_name,
@@ -4691,7 +4679,7 @@ def _follow_entry(spec: str, option: str) -> dict[str, str]:
     ),
 )
 @click.option("--order-by", "order_fields", multiple=True, help="Order: f or -f (repeatable).")
-@click.option("--limit", type=click.IntRange(1, contracts.PLAYBILL_QUERY_MAX_LIMIT), default=None)
+@click.option("--limit", type=click.IntRange(1, contracts.QUERY_MAX_LIMIT), default=None)
 @click.option("--cursor", default=None, help="Continue a truncated page.")
 @click.option(
     "--spec",
@@ -4824,11 +4812,11 @@ def query_group(
         except ValueError as exc:
             raise click.BadParameter(str(exc), param_hint="--budgets") from exc
     try:
-        request = contracts.PlaybillQueryRequest.model_validate(fields)
+        request = contracts.QueryRequest.model_validate(fields)
     except ValidationError as exc:
         raise click.ClickException(f"invalid query: {_validation_problems(exc)}") from exc
     result = _server_call(
-        lambda client, instance_id: client.query_playbill(instance_id, request=request),
+        lambda client, instance_id: client.query(instance_id, request=request),
         command_name="playbill query",
     )
     if output_json:
@@ -4863,7 +4851,7 @@ def procedure_group() -> None:
 @handle_errors
 def procedure_readiness(name: str, evaluation_time: str, output_json: bool) -> None:
     result = _server_call(
-        lambda client, instance_id: client.playbill_procedure_readiness(
+        lambda client, instance_id: client.procedure_readiness(
             instance_id,
             name,
             evaluation_time=evaluation_time,
@@ -4889,7 +4877,7 @@ def procedure_readiness(name: str, evaluation_time: str, output_json: bool) -> N
 def bind_procedure(name: str, request_file: str, output_json: bool) -> None:
     request = _read_model(request_file, ProcedureBindRequest)
     result = _server_call(
-        lambda client, instance_id: client.bind_playbill_procedure(
+        lambda client, instance_id: client.bind_procedure(
             instance_id,
             name,
             bindings=[item.model_dump(mode="json") for item in request.bindings],
@@ -4921,7 +4909,7 @@ def _cli_repair(repair: Any) -> str:
     return " ".join(parts)
 
 
-def _echo_run_outcome(result: contracts.PlaybillProcedureRunState, label: str) -> None:
+def _echo_run_outcome(result: contracts.ProcedureRunState, label: str) -> None:
     """Lead with the answer: the result on success, the code and repair on refusal."""
 
     click.echo(f"{label}: {result.status}")
@@ -4944,7 +4932,7 @@ def _echo_run_outcome(result: contracts.PlaybillProcedureRunState, label: str) -
     click.echo(f"Next: {result.next_operation['kind']}")
 
 
-def _echo_source_observations(result: contracts.PlaybillProcedureRunState) -> None:
+def _echo_source_observations(result: contracts.ProcedureRunState) -> None:
     """Print what each admitted Source occurrence really observed.
 
     A run with no Source occurrence prints nothing extra. `--json` already
@@ -4964,7 +4952,7 @@ def _echo_source_observations(result: contracts.PlaybillProcedureRunState) -> No
     _echo_terminal_egress(result)
 
 
-def _echo_terminal_egress(result: contracts.PlaybillProcedureRunState) -> None:
+def _echo_terminal_egress(result: contracts.ProcedureRunState) -> None:
     """Print what each terminal of the run did, and the handles a manager needs.
 
     A delivered `propose_change_set` prints the proposal id and the exact
@@ -5046,7 +5034,7 @@ def run_procedure(
     trigger_event = None if event_file is None else _read_model(event_file, TriggerEventReference)
     at = None if at_file is None else _read_model(at_file, AcceptedCoordinate)
     result = _server_call(
-        lambda client, instance_id: client.run_playbill_procedure(
+        lambda client, instance_id: client.run_procedure(
             instance_id,
             name,
             evaluation_time=evaluation_time,
@@ -5072,7 +5060,7 @@ def run_procedure(
 @handle_errors
 def procedure_run_status(run_id: str, output_json: bool) -> None:
     result = _server_call(
-        lambda client, instance_id: client.get_playbill_procedure_run(instance_id, run_id),
+        lambda client, instance_id: client.get_procedure_run(instance_id, run_id),
         command_name="playbill procedure status",
     )
     _emit_json(result.model_dump(mode="json"))
@@ -5112,7 +5100,7 @@ def procedure_measure(
     """Evaluate due measurements from real evidence; retry replays, never duplicates."""
 
     at = None if at_file is None else _read_model(at_file, AcceptedCoordinate)
-    request = contracts.PlaybillProcedureMeasureRequest(
+    request = contracts.ProcedureMeasureRequest(
         run_id=run_id,
         measurement_names=tuple(sorted(set(measurements), key=lambda item: item.encode())),
         evaluation_time=(
@@ -5123,9 +5111,7 @@ def procedure_measure(
         at=at,
     )
     result = _server_call(
-        lambda client, instance_id: client.measure_playbill_procedure(
-            instance_id, name, request=request
-        ),
+        lambda client, instance_id: client.measure_procedure(instance_id, name, request=request),
         command_name="playbill procedure measure",
     )
     if output_json:
@@ -5162,14 +5148,14 @@ def procedure_readings(
 ) -> None:
     """Inspect measurement standing and retained readings. Read-only."""
 
-    request = contracts.PlaybillProcedureReadingsRequest(
+    request = contracts.ProcedureReadingsRequest(
         run_id=run_id,
         measurement_names=tuple(sorted(set(measurements), key=lambda item: item.encode())),
         limit=limit,
         cursor=cursor,
     )
     result = _server_call(
-        lambda client, instance_id: client.list_playbill_procedure_readings(
+        lambda client, instance_id: client.list_procedure_readings(
             instance_id, name, request=request
         ),
         command_name="playbill procedure readings",
@@ -5218,7 +5204,7 @@ def check_line(
         dict(since=since, until=until, limit=limit, cursor=cursor)
     )
     result = _server_call(
-        lambda client, instance_id: client.check_playbill_line(instance_id, line, request=request),
+        lambda client, instance_id: client.check_line(instance_id, line, request=request),
         command_name="playbill line check",
     )
     if output_json:
@@ -5264,9 +5250,7 @@ def arm_line(line: str, dry_run: bool | None, at: str | None, output_json: bool)
     """Admit what this Line matches from now on, under your credential."""
 
     result = _server_call(
-        lambda client, instance_id: client.arm_playbill_line(
-            instance_id, line, dry_run=dry_run, at=at
-        ),
+        lambda client, instance_id: client.arm_line(instance_id, line, dry_run=dry_run, at=at),
         command_name="playbill line arm",
     )
     if output_json:
@@ -5284,9 +5268,7 @@ def disarm_line(line: str, dry_run: bool | None, at: str | None, output_json: bo
     """Stop admitting work automatically; admitted runs keep going."""
 
     result = _server_call(
-        lambda client, instance_id: client.disarm_playbill_line(
-            instance_id, line, dry_run=dry_run, at=at
-        ),
+        lambda client, instance_id: client.disarm_line(instance_id, line, dry_run=dry_run, at=at),
         command_name="playbill line disarm",
     )
     if output_json:
@@ -5303,7 +5285,7 @@ def line_status(line: str, output_json: bool) -> None:
     """Show whether the Line is armed and why an arm stopped."""
 
     result = _server_call(
-        lambda client, instance_id: client.playbill_line_status(instance_id, line),
+        lambda client, instance_id: client.line_status(instance_id, line),
         command_name="playbill line status",
     )
     if output_json:
@@ -5329,9 +5311,7 @@ def evaluate_line(
         dict(since=since, until=until, limit=limit, cursor=cursor)
     )
     result = _server_call(
-        lambda client, instance_id: client.evaluate_playbill_line(
-            instance_id, line, request=request
-        ),
+        lambda client, instance_id: client.evaluate_line(instance_id, line, request=request),
         command_name="playbill line evaluate",
     )
     if output_json:
@@ -5363,7 +5343,7 @@ def dispatch_line(
     from cruxible_client.contracts.line_dispatch import LineDispatchRequest
 
     result = _server_call(
-        lambda client, instance_id: client.dispatch_playbill_line(
+        lambda client, instance_id: client.dispatch_line(
             instance_id,
             line,
             request=LineDispatchRequest(occurrence_id=occurrence_id, limit=limit, retry=retry),
@@ -5431,7 +5411,7 @@ def run_line(
         }
     )
     result = _server_call(
-        lambda client, instance_id: client.run_playbill_line(
+        lambda client, instance_id: client.run_line(
             instance_id,
             line,
             trigger=request.trigger,
@@ -5486,9 +5466,9 @@ def run_line(
 )
 @click.option(
     "--limit",
-    default=contracts.PLAYBILL_NEXT_DEFAULT_LIMIT,
+    default=contracts.NEXT_DEFAULT_LIMIT,
     show_default=True,
-    type=click.IntRange(1, contracts.PLAYBILL_NEXT_MAX_LIMIT),
+    type=click.IntRange(1, contracts.NEXT_MAX_LIMIT),
     help="Rows per page.",
 )
 @click.option("--cursor", default=None, help="Continue a previous page of the same queue.")
@@ -5519,19 +5499,19 @@ def next_work(
         if access_profile_path is None
         else _read_model(access_profile_path, CoverageAccessProfile).model_dump(mode="json")
     )
-    workspace_observation = observe_playbill_next_workspace(Path(workspace_root))
+    workspace_observation = observe_next_workspace(Path(workspace_root))
 
     def _next_at_scanned_coordinate(
         client: CruxibleClient, instance_id: str
-    ) -> contracts.PlaybillNextResult:
-        observed, coordinate = observe_playbill_next_workspace_with_coverage(
+    ) -> contracts.NextResult:
+        observed, coordinate = observe_next_workspace_with_coverage(
             client,
             instance_id,
             Path(workspace_root),
             observation=workspace_observation,
             access_profile=profile,
         )
-        return client.next_playbill(
+        return client.next(
             instance_id,
             evaluation_time=stamped_evaluation_time,
             access_profile=profile,
@@ -5592,7 +5572,7 @@ def next_work(
         )
 
 
-def _next_requirement_hint(requires: contracts.PlaybillNextRepairRequirement | None) -> str:
+def _next_requirement_hint(requires: contracts.NextRepairRequirement | None) -> str:
     """What running a withheld repair needs, in one phrase."""
 
     if requires is None:
@@ -5609,7 +5589,7 @@ def _next_requirement_hint(requires: contracts.PlaybillNextRepairRequirement | N
     return f"{requires.tool} needs " + " and ".join(needs)
 
 
-def _next_repair_hint(repair: contracts.PlaybillNextRepair) -> str:
+def _next_repair_hint(repair: contracts.NextRepair) -> str:
     """The runnable command, or else the operation and the change it must make."""
 
     if repair.command is not None:
@@ -5632,13 +5612,13 @@ _NEXT_STATUS_ATTENTION = {
 }
 
 
-def _echo_next_status(status: contracts.PlaybillNextStatus) -> None:
+def _echo_next_status(status: contracts.NextStatus) -> None:
     """Print the environment facets that need attention above the work rows."""
 
     if status.blocking:
         click.echo("BLOCKING: this instance refuses every write.")
     for facet, states in _NEXT_STATUS_ATTENTION.items():
-        health: contracts.PlaybillNextHealth = getattr(status, facet)
+        health: contracts.NextHealth = getattr(status, facet)
         if health.state not in states:
             continue
         repair = health.repair
@@ -5681,9 +5661,9 @@ def curation_group() -> None:
 )
 @click.option(
     "--limit",
-    default=contracts.PLAYBILL_CURATION_LIST_DEFAULT_LIMIT,
+    default=contracts.CURATION_LIST_DEFAULT_LIMIT,
     show_default=True,
-    type=click.IntRange(1, contracts.PLAYBILL_CURATION_LIST_MAX_LIMIT),
+    type=click.IntRange(1, contracts.CURATION_LIST_MAX_LIMIT),
     help="Queue items per page.",
 )
 @click.option("--cursor", default=None, help="Continue a previous page of the same queue.")
@@ -5696,7 +5676,7 @@ def curation_list(
     cursor: str | None,
     output_json: bool,
 ) -> None:
-    observation = observe_playbill_next_workspace(Path(workspace_root))
+    observation = observe_next_workspace(Path(workspace_root))
     profile = (
         CoverageAccessProfile(
             profile_id="cli-curation",
@@ -5708,15 +5688,15 @@ def curation_list(
 
     def _curation_at_scanned_coordinate(
         client: CruxibleClient, instance_id: str
-    ) -> contracts.PlaybillCurationListResult:
-        observed, _coordinate = observe_playbill_next_workspace_with_coverage(
+    ) -> contracts.CurationListResult:
+        observed, _coordinate = observe_next_workspace_with_coverage(
             client,
             instance_id,
             Path(workspace_root),
             observation=observation,
             access_profile=profile,
         )
-        return client.list_playbill_curation(
+        return client.list_curation(
             instance_id,
             evaluation_time=datetime.now(UTC).isoformat(),
             access_profile=profile,
@@ -5755,7 +5735,7 @@ def curation_overrule(
     output_json: bool,
 ) -> None:
     result = _server_call(
-        lambda client, instance_id: client.overrule_playbill_curation(
+        lambda client, instance_id: client.overrule_curation(
             instance_id,
             item_id=item_id,
             expected_latest_event_digest=expected_latest_event_digest,
@@ -5795,7 +5775,7 @@ def curation_accept_fixed(
     output_json: bool,
 ) -> None:
     result = _server_call(
-        lambda client, instance_id: client.accept_fixed_playbill_curation(
+        lambda client, instance_id: client.accept_fixed_curation(
             instance_id,
             item_id=item_id,
             expected_latest_event_digest=expected_latest_event_digest,
@@ -5837,7 +5817,7 @@ def curation_suppress(
     output_json: bool,
 ) -> None:
     result = _server_call(
-        lambda client, instance_id: client.suppress_playbill_curation(
+        lambda client, instance_id: client.suppress_curation(
             instance_id,
             item_id=item_id,
             expected_latest_event_digest=expected_latest_event_digest,
@@ -5886,7 +5866,7 @@ def curation_suppress(
     "cursor_path",
     default=None,
     type=click.Path(exists=True, dir_okay=False),
-    help="PlaybillAuditCursor JSON/YAML returned by a prior page.",
+    help="AuditCursor JSON/YAML returned by a prior page.",
 )
 @json_option
 @handle_errors
@@ -5909,11 +5889,9 @@ def audit(
         if access_profile_path is None
         else _read_model(access_profile_path, CoverageAccessProfile).model_dump(mode="json")
     )
-    cursor = (
-        None if cursor_path is None else _read_model(cursor_path, contracts.PlaybillAuditCursor)
-    )
+    cursor = None if cursor_path is None else _read_model(cursor_path, contracts.AuditCursor)
     result = _server_call(
-        lambda client, instance_id: client.audit_playbill(
+        lambda client, instance_id: client.audit(
             instance_id,
             evaluation_time=datetime.now(UTC).isoformat(),
             access_profile=profile,
@@ -5958,7 +5936,7 @@ def audit(
     "cursor_path",
     default=None,
     type=click.Path(exists=True, dir_okay=False),
-    help="PlaybillSinceCursor JSON/YAML returned by a prior page.",
+    help="SinceCursor JSON/YAML returned by a prior page.",
 )
 @json_option
 @handle_errors
@@ -5980,7 +5958,7 @@ def since(
     )
     cursor = None if cursor_path is None else _read_mapping(cursor_path)
     result = _server_call(
-        lambda client, instance_id: client.since_playbill(
+        lambda client, instance_id: client.since(
             instance_id,
             generation=generation,
             access_profile=profile,
@@ -6015,7 +5993,7 @@ def _orient_predicate_line(item: Mapping[str, Any]) -> str:
 
 def _render_orient(result: Mapping[str, Any]) -> str:
     lines = [
-        f"Playbill {result['instance']} generation={result['generation']} "
+        f"Cruxible {result['instance']} generation={result['generation']} "
         f"at {result['coordinate']['git_oid'][:12]} accepted {result['accepted_at']}"
     ]
     floor = result.get("floor")
@@ -6130,14 +6108,14 @@ def _render_orient(result: Mapping[str, Any]) -> str:
 @click.option("--kind", default=None, help="Read one Subject kind in full.")
 @click.option(
     "--section",
-    type=click.Choice(list(get_args(contracts.PlaybillOrientSection))),
+    type=click.Choice(list(get_args(contracts.OrientSection))),
     default=None,
     help="Page one artifact family instead of the map.",
 )
 @click.option(
     "--limit",
-    type=click.IntRange(1, contracts.PLAYBILL_ORIENT_MAX_LIMIT),
-    default=contracts.PLAYBILL_ORIENT_DEFAULT_LIMIT,
+    type=click.IntRange(1, contracts.ORIENT_MAX_LIMIT),
+    default=contracts.ORIENT_DEFAULT_LIMIT,
     show_default=True,
 )
 @click.option("--cursor", default=None, help="next_cursor from the previous page.")
@@ -6165,7 +6143,7 @@ def orient(
     """Map accepted state: kinds, predicates, artifacts, attention and next commands."""
 
     result = _server_call(
-        lambda client, instance_id: client.orient_playbill(
+        lambda client, instance_id: client.orient(
             instance_id,
             kind=kind,
             section=cast(Any, section),
@@ -6251,9 +6229,7 @@ def export_floor(
 ) -> None:
     """Write the accepted greppable floor to a deterministic local tree."""
 
-    include: tuple[contracts.PlaybillFloorExportPart, ...] = (
-        ("discovery",) if with_discovery else ()
-    )
+    include: tuple[contracts.FloorExportPart, ...] = ("discovery",) if with_discovery else ()
     workspace_resolution = _local_git_workspace_root()
     _emit_git_workspace_note(workspace_resolution)
     workspace_root = workspace_resolution.workspace_root
@@ -6264,7 +6240,7 @@ def export_floor(
         # The discovery cards are a full export's; they never travel in a delta.
         result, written = _server_call(
             lambda client, instance_id: write_workspace_floor(
-                lambda: client.export_playbill_floor(instance_id, **floor_export_parts(include)),
+                lambda: client.export_floor(instance_id, **floor_export_parts(include)),
                 delivery=lambda: daemon_floor_delivery(
                     client, instance_id, workspace_root, include=include
                 ),
@@ -6283,7 +6259,7 @@ def export_floor(
         # sent this floor's own generation and answers with only what changed.
         delta, written = _server_call(
             lambda client, instance_id: write_workspace_floor_delta(
-                lambda generation, renderer: client.playbill_floor_delta(
+                lambda generation, renderer: client.floor_delta(
                     instance_id, base_generation=generation, base_renderer=renderer
                 ),
                 delivery=lambda: daemon_floor_delivery(client, instance_id, workspace_root),
@@ -6401,8 +6377,8 @@ def _resolved_coverage(
     def resolve(
         client: CruxibleClient,
         selected_instance_id: str,
-    ) -> contracts.PlaybillCoverageResult:
-        return client.resolve_playbill_coverage(
+    ) -> contracts.CoverageResult:
+        return client.resolve_coverage(
             selected_instance_id,
             observations=[item.model_dump(mode="json") for item in observations],
             scan_budget=None if scan_budget is None else scan_budget.model_dump(mode="json"),
@@ -6547,7 +6523,7 @@ def _hook_floor_generation_resolver() -> ResolveFloorGenerations:
 
     def orientation(at: AcceptedCoordinate | None) -> int:
         result = _server_call(
-            lambda client, instance_id: client.playbill_head(
+            lambda client, instance_id: client.head(
                 instance_id, at=None if at is None else at.model_dump(mode="json")
             ),
             command_name="playbill hook floor freshness",

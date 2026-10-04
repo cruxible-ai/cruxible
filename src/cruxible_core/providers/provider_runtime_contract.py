@@ -22,7 +22,7 @@ from pydantic import (
     model_validator,
 )
 
-from cruxible_client.contracts.errors import PlaybillExecutionError
+from cruxible_client.contracts.errors import ExecutionError
 
 PROVIDER_RUNTIME_PROTOCOL = "1.0"
 PROVIDER_RUNTIME_CONTRACT_COMMIT = "389e9f44de56c1adebae731228cf4628c6fbeca8"
@@ -94,7 +94,7 @@ _REFUSAL_CODE_ADAPTER: TypeAdapter[ProviderRuntimeRefusalCodeV1] = TypeAdapter(
 )
 
 
-class ProviderRuntimeWireError(PlaybillExecutionError):
+class ProviderRuntimeWireError(ExecutionError):
     """A runtime context or envelope failed the frozen provider wire contract."""
 
     def __init__(self, code: ProviderRuntimeRefusalCodeV1, message: str) -> None:

@@ -1601,11 +1601,11 @@ def test_a_revision_accepted_mid_arm_refuses_a_pinned_arm_and_disarm(tmp_path, m
 
 
 def service_line_status_or_none(instance, name):  # type: ignore[no-untyped-def]
-    from cruxible_client.contracts.errors import PlaybillError
+    from cruxible_client.contracts.errors import CruxibleError
 
     try:
         return service_line_status(instance, name)
-    except PlaybillError:
+    except CruxibleError:
         return None
 
 

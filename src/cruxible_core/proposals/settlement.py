@@ -57,7 +57,7 @@ from cruxible_client.contracts.governance import (
     governance_identifier,
     validate_approval_requirements,
 )
-from cruxible_client.contracts.laws import PLAYBILL_ACCEPTANCE_LAWS, AcceptanceLawRegistry
+from cruxible_client.contracts.laws import ACCEPTANCE_LAWS, AcceptanceLawRegistry
 from cruxible_client.contracts.principals import (
     PrincipalRegistrySnapshot,
     principal_registry_from_tree,
@@ -497,7 +497,7 @@ def parse_change_set_record(
     """Parse any accepted change-set version and verify exact canonical bytes.
 
     This is the one seam through which accepted change-set bytes enter replay,
-    checkpoint re-derivation, and accepted projection. Every version a Playbill
+    checkpoint re-derivation, and accepted projection. Every version a Cruxible
     instance has ever settled parses here, and each is verified by the derivation
     it was written under: a ledger that crossed the succession boundary carries a
     v1 or v2 prefix and a v3 suffix, and replaying it end to end is ordinary.
@@ -731,7 +731,7 @@ def prepare_generation(
     actor_binding: ChangeActorBinding,
     proposal_actor_id: str,
     sequence: int,
-    laws: AcceptanceLawRegistry = PLAYBILL_ACCEPTANCE_LAWS,
+    laws: AcceptanceLawRegistry = ACCEPTANCE_LAWS,
     mandate_digest: str | None = None,
     crash_hook: SettlementCrashHook | None = None,
     promotion_verifier: ExhaustPromotionVerifierProtocol | None = None,

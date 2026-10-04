@@ -1,4 +1,4 @@
-"""Strict protocol and inspection types for Playbill bootstrap."""
+"""Strict protocol and inspection types for Cruxible bootstrap."""
 
 from __future__ import annotations
 
@@ -58,7 +58,7 @@ class PrincipalRecord(StrictModel):
         return f"sha256:{digest}"
 
 
-class PlaybillTrustRoot(StrictModel):
+class TrustRoot(StrictModel):
     """Out-of-band inputs required to reopen and verify generation zero."""
 
     tag: Literal["playbill-trust-root-v1"] = "playbill-trust-root-v1"
@@ -82,7 +82,7 @@ class PlaybillTrustRoot(StrictModel):
         return value
 
     @model_validator(mode="after")
-    def _principal_registry(self) -> "PlaybillTrustRoot":
+    def _principal_registry(self) -> "TrustRoot":
         ids = [record.principal_id for record in self.principals]
         if ids != sorted(set(ids)):
             raise ValueError("principals must be sorted and unique by principal_id")
@@ -266,7 +266,7 @@ def validate_decommission_prose(value: str) -> str:
     return value
 
 
-class PlaybillDecommission(StrictModel):
+class Decommission(StrictModel):
     """The terminal lifecycle state of one governed instance.
 
     Decommissioning ENDS an instance's governed writes without deleting a byte:
@@ -286,7 +286,7 @@ class PlaybillDecommission(StrictModel):
         return validate_decommission_prose(value)
 
 
-class PlaybillDescriptor(StrictModel):
+class Descriptor(StrictModel):
     """The strict operational descriptor for one opt-in managed instance."""
 
     tag: Literal["playbill-instance-v1"] = "playbill-instance-v1"
@@ -304,7 +304,7 @@ class PlaybillDescriptor(StrictModel):
     # Absent on every live instance, and absent from the canonical bytes when it
     # is: a descriptor written before this field re-renders byte-identically, so
     # existing instances keep replaying.
-    decommissioned: PlaybillDecommission | None = Field(
+    decommissioned: Decommission | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
     # Where this ledger publishes itself, on the same terms. It is operational
@@ -346,7 +346,7 @@ class PrincipalInspection(StrictModel):
     public_key_digest: str
 
 
-class PlaybillInspection(StrictModel):
+class Inspection(StrictModel):
     """Credential-safe read model for internal/service-level inspection."""
 
     descriptor_tag: str
@@ -376,9 +376,9 @@ __all__ = [
     "GenerationDescriptor",
     "GitObjectFormat",
     "OperatingProfile",
-    "PlaybillDescriptor",
-    "PlaybillInspection",
-    "PlaybillTrustRoot",
+    "Descriptor",
+    "Inspection",
+    "TrustRoot",
     "PrincipalInspection",
     "PrincipalRecord",
     "PrincipalKind",

@@ -8,17 +8,17 @@ from cruxible_client import contracts
 from cruxible_client.contracts.change_control import DryRun, PreviewAt
 from cruxible_client.contracts.runtime_credentials import RuntimeCredentialPrincipalProof
 from cruxible_core.server.playbill_request_models import (  # noqa: F401
-    PlaybillApprovalChallengeRequest,
-    PlaybillApprovalRequest,
-    PlaybillCompilerUpgradeRequest,
+    ApprovalChallengeRequest,
+    ApprovalRequest,
+    CompilerUpgradeRequest,
+    InitRequest,
     PlaybillExplainRequest,
-    PlaybillInitRequest,
-    PlaybillProposeDocumentRequest,
-    PlaybillProposePrincipalRequest,
-    PlaybillReviewRequest,
-    PlaybillSourceBundleRequest,
-    PlaybillSourceProposeRequest,
-    PlaybillStoreBodyRequest,
+    ProposeDocumentRequest,
+    ProposePrincipalRequest,
+    ReviewRequest,
+    SourceBundleRequest,
+    SourceProposeRequest,
+    StoreBodyRequest,
 )
 
 
@@ -26,14 +26,14 @@ class _StrictHostRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class PlaybillHostCreateRequest(_StrictHostRequest):
+class HostCreateRequest(_StrictHostRequest):
     instance_id: str | None = None
     workspace_root: str | None = None
     dry_run: DryRun = None
     at: PreviewAt = None
 
 
-class PlaybillHostWorkspaceAttachRequest(_StrictHostRequest):
+class HostWorkspaceAttachRequest(_StrictHostRequest):
     workspace_root: str = Field(min_length=1)
     dry_run: DryRun = None
     at: PreviewAt = None

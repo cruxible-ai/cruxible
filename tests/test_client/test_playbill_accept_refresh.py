@@ -5,14 +5,14 @@ from typing import Any, Literal
 
 import pytest
 
-from cruxible_client import Playbill, contracts
+from cruxible_client import Cruxible, contracts
 from cruxible_client.authoring.workspace import (
     activate_with_workspace_refresh,
     inspect_workspace_floor,
-    materialize_playbill_floor,
+    materialize_floor,
     refresh_workspace_floor,
 )
-from cruxible_client.contracts.floor import PlaybillFloorDelta
+from cruxible_client.contracts.floor import FloorDelta
 from cruxible_client.contracts.projection import AcceptedCoordinate
 
 from .test_playbill_workspace import _coordinate, _delta, _export, _workspace
@@ -23,11 +23,9 @@ class _Client:
         self.events: list[object] = []
         self.status = status
 
-    def activate_playbill_proposal(
-        self, instance_id: str, proposal_id: str
-    ) -> contracts.PlaybillActivationReceipt:
+    def activate_proposal(self, instance_id: str, proposal_id: str) -> contracts.ActivationReceipt:
         self.events.append(("accept", instance_id, proposal_id))
-        return contracts.PlaybillActivationReceipt(
+        return contracts.ActivationReceipt(
             proposal_id=proposal_id,
             activated_by="owner",
             status=self.status,
@@ -35,21 +33,21 @@ class _Client:
             workspace_advertisement={"status": "not_attached", "workspace_path": None},
         )
 
-    def playbill_floor_delta(
+    def floor_delta(
         self,
         instance_id: str,
         *,
-        at: contracts.PlaybillAcceptedCoordinate | None = None,
+        at: contracts.AcceptedCoordinate | None = None,
         base_generation: int | None = None,
         base_renderer: str | None = None,
-    ) -> PlaybillFloorDelta:
+    ) -> FloorDelta:
         self.events.append(("floor", instance_id, at))
         return _delta()
 
 
-def _sdk(client: Any, workspace: Path) -> Playbill:
+def _sdk(client: Any, workspace: Path) -> Cruxible:
     # Avoid orientation I/O: this test isolates the mutation/maintenance boundary.
-    pb = Playbill(
+    pb = Cruxible(
         client=client,
         instance_id="inst_test",
         workspace=workspace,
@@ -110,7 +108,7 @@ def test_explicit_refresh_pins_target_reports_floor_and_retains_snapshot(tmp_pat
 
 def test_refresh_refuses_different_coordinate_before_replacing_floor(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
-    previous = materialize_playbill_floor(workspace, export=_export(content=b"previous"))
+    previous = materialize_floor(workspace, export=_export(content=b"previous"))
     before = (Path(previous.destination) / "cards/fresh.json").read_bytes()
     client = _Client()
 

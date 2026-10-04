@@ -1,4 +1,4 @@
-"""Minimal service-owned Playbill consumption receipts."""
+"""Minimal service-owned Cruxible consumption receipts."""
 
 from __future__ import annotations
 
@@ -267,11 +267,11 @@ def test_a_local_daemon_records_no_receipts_and_dead_vocabulary_stands_down(
 
 
 def test_an_unknown_receipt_setting_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
-    from cruxible_client.contracts.errors import PlaybillFormatError
+    from cruxible_client.contracts.errors import FormatError
     from cruxible_core.exhaust.consumption import consumption_receipts_enabled
 
     monkeypatch.setenv("CRUXIBLE_CONSUMPTION_RECEIPTS", "sometimes")
-    with pytest.raises(PlaybillFormatError, match="'off' or 'on'"):
+    with pytest.raises(FormatError, match="'off' or 'on'"):
         consumption_receipts_enabled()
 
 

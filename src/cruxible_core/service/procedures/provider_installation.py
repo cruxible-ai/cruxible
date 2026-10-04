@@ -22,9 +22,9 @@ from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.provider_installation import (
-    PlaybillProviderCatalog,
-    PlaybillProviderInstallRequest,
-    PlaybillProviderInstallResult,
+    ProviderCatalog,
+    ProviderInstallRequest,
+    ProviderInstallResult,
     ProviderOperationReadiness,
     ProviderPackageSummary,
 )
@@ -112,7 +112,7 @@ def _repository_projects(operator: ProviderRuntimeOperator) -> dict[str, Path]:
     return result
 
 
-def service_provider_catalog(operator: ProviderRuntimeOperator) -> PlaybillProviderCatalog:
+def service_provider_catalog(operator: ProviderRuntimeOperator) -> ProviderCatalog:
     packages = []
     for name, path in _repository_projects(operator).items():
         descriptors = tuple(path.glob("src/*/registration.json"))
@@ -131,7 +131,7 @@ def service_provider_catalog(operator: ProviderRuntimeOperator) -> PlaybillProvi
                 interfaces=tuple(sorted(bundle.definitions)),
             )
         )
-    return PlaybillProviderCatalog(
+    return ProviderCatalog(
         packages=tuple(sorted(packages, key=lambda item: item.name)),
         detail=None
         if operator.config.provider_repository
@@ -193,7 +193,7 @@ def _index_source_files(
 def _source_files(
     instance: PlaybillInstance,
     operator: ProviderRuntimeOperator,
-    request: PlaybillProviderInstallRequest,
+    request: ProviderInstallRequest,
     custody: Path,
     release: IndexRelease | None,
 ) -> tuple[Path, Path, tuple[Path, ...]]:
@@ -372,10 +372,10 @@ def service_install_provider(
     instance: PlaybillInstance,
     *,
     operator: ProviderRuntimeOperator,
-    request: PlaybillProviderInstallRequest,
+    request: ProviderInstallRequest,
     actor_id: str,
     timestamp: str,
-) -> PlaybillProviderInstallResult:
+) -> ProviderInstallResult:
     instance.require_writable()
     enforce_customer_code_execution_supported()
     if instance.accepted_coordinate().compiler not in (
@@ -453,12 +453,12 @@ def service_install_provider(
 def _preview_installation(
     instance: PlaybillInstance,
     mode: ChangeMode,
-    request: PlaybillProviderInstallRequest,
+    request: ProviderInstallRequest,
     identifier: str,
     directory: Path,
     actor_id: str,
     timestamp: str,
-) -> PlaybillProviderInstallResult:
+) -> ProviderInstallResult:
     """What an install would do, with nothing fetched, built, registered or proposed (R12).
 
     The package's definitions come out of preparing it -- fetching its wheels
@@ -477,7 +477,7 @@ def _preview_installation(
         "coordinate": AcceptedCoordinate.from_internal(mode.head),
     }
     if not prepared_path.is_file():
-        return PlaybillProviderInstallResult(
+        return ProviderInstallResult(
             installation_id=identifier,
             provider_id=name,
             status="would_install",
@@ -496,7 +496,7 @@ def _preview_installation(
     provider = Provider.model_validate(saved["provider"])
     candidate_tree, changed = _definition_changes(instance, document, provider, mode.head.git_oid)
     if not changed:
-        return PlaybillProviderInstallResult(
+        return ProviderInstallResult(
             installation_id=identifier,
             provider_id=provider.identity.name,
             status="would_install",
@@ -524,7 +524,7 @@ def _preview_installation(
         candidate_tree=candidate_tree,
         timestamp=timestamp,
     )
-    return PlaybillProviderInstallResult(
+    return ProviderInstallResult(
         installation_id=identifier,
         provider_id=provider.identity.name,
         status="would_install",
@@ -545,7 +545,7 @@ def _preview_installation(
 def _install_locked(
     instance: PlaybillInstance,
     operator: ProviderRuntimeOperator,
-    request: PlaybillProviderInstallRequest,
+    request: ProviderInstallRequest,
     identifier: str,
     directory: Path,
     actor_id: str,
@@ -554,7 +554,7 @@ def _install_locked(
     release: IndexRelease | None,
     *,
     confirm_head: Callable[[str], None],
-) -> PlaybillProviderInstallResult:
+) -> ProviderInstallResult:
     prepared_path = directory / "prepared.json"
     rewrite_prepared = False
     if prepared_path.exists():
@@ -711,7 +711,7 @@ def _install_locked(
                 submitted.evaluation.verdict != "candidate"
                 or submitted.evaluation.candidate_digest is None
             ):
-                return PlaybillProviderInstallResult(
+                return ProviderInstallResult(
                     installation_id=identifier,
                     provider_id=provider.identity.name,
                     status="blocked",
@@ -773,7 +773,7 @@ def _install_locked(
                 missing_requirements=tuple(missing),
             )
         )
-    return PlaybillProviderInstallResult(
+    return ProviderInstallResult(
         installation_id=identifier,
         provider_id=provider.identity.name,
         status="blocked"

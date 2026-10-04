@@ -603,7 +603,7 @@ DEFERRED_PIN_TARGET_KINDS: Final = frozenset(
 These component families are exact compiler/policy-registry pins, or
 content-addressed receipt manifests, until a later batch gives them ledger
 artifact envelopes. Their owning law verifies the role-named digest; this
-exception is never a name lookup and never permits a missing Playbill artifact
+exception is never a name lookup and never permits a missing Cruxible artifact
 kind such as Procedure, ClaimType, or Provider.
 
 A QueryDefinition ledger envelope exists from PC-F slice 1, so a

@@ -1,4 +1,4 @@
-"""A deterministic adoption-scale Playbill fixture.
+"""A deterministic adoption-scale Cruxible fixture.
 
 This module builds a real accepted ledger -- not a mock -- at a declared
 profile: N Subjects, N ClaimTypes across deterministic Claim shards, a seeded
@@ -103,7 +103,7 @@ from cruxible_client.contracts.subjects import (
     subject_digest,
     subject_path,
 )
-from cruxible_client.contracts.types import PlaybillTrustRoot
+from cruxible_client.contracts.types import TrustRoot
 from cruxible_core.governance.keys import GeneratedKeyMaterial, generate_client_principal_key
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.ledger.checkpoints import (
@@ -584,7 +584,7 @@ def build_fixture(
     workspace.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
     if resume and managed_root.exists():
-        trust_root = PlaybillTrustRoot.model_validate_json(
+        trust_root = TrustRoot.model_validate_json(
             trust_root_path(root).read_text(encoding="utf-8")
         )
         instance = PlaybillInstance.open(managed_root, trust_root=trust_root)

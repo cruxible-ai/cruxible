@@ -19,7 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePath
 
-from cruxible_client.contracts.change_control import PlaybillStateCoordinate
+from cruxible_client.contracts.change_control import StateCoordinate
 from cruxible_client.contracts.primitives import new_id
 from cruxible_client.contracts.temporal import format_datetime, utc_now
 from cruxible_core.errors import ConfigError, InstanceLocationRefusedError
@@ -328,7 +328,7 @@ class InstanceRegistry:
             )
             if attached is not None and attached.instance_id != instance_id:
                 raise ConfigError(
-                    f"Workspace {resolved_workspace_root!r} is already attached to Playbill "
+                    f"Workspace {resolved_workspace_root!r} is already attached to Cruxible "
                     f"host {attached.instance_id!r}; release it with `cruxible playbill "
                     f"workspace detach --instance-id {attached.instance_id}` or choose "
                     f"another Git worktree before creating {instance_id!r}"
@@ -338,7 +338,7 @@ class InstanceRegistry:
         holder = self._get_by_backend_location(GOVERNED_DAEMON_BACKEND, stored)
         if holder is not None and holder.instance_id != instance_id:
             raise ConfigError(
-                f"Location {location!r} is already registered to Playbill host "
+                f"Location {location!r} is already registered to Cruxible host "
                 f"{holder.instance_id!r}"
             )
         return PreparedInstance(
@@ -362,7 +362,7 @@ class InstanceRegistry:
         self,
         prepared: PreparedInstance,
         *,
-        observe: Callable[[PlaybillStateCoordinate], None] | None = None,
+        observe: Callable[[StateCoordinate], None] | None = None,
     ) -> RegisteredInstance:
         """Register the governed host `prepare_governed_instance` validated.
 
@@ -378,24 +378,24 @@ class InstanceRegistry:
             observe=observe,
         )
 
-    def host_state(self, instance_id: str) -> PlaybillStateCoordinate:
+    def host_state(self, instance_id: str) -> StateCoordinate:
         """The state coordinate of one host's registry row (R12); absent rows digest too."""
 
         with self._connect() as conn:
             return self._host_state_conn(conn, instance_id)
 
     @staticmethod
-    def _host_state_conn(conn: sqlite3.Connection, instance_id: str) -> PlaybillStateCoordinate:
+    def _host_state_conn(conn: sqlite3.Connection, instance_id: str) -> StateCoordinate:
         row = conn.execute(
             "SELECT backend, location, workspace_root, floor_delivery FROM instances "
             "WHERE instance_id = ?",
             (instance_id,),
         ).fetchone()
-        return PlaybillStateCoordinate.of(
+        return StateCoordinate.of(
             f"host:{instance_id}", None if row is None else [row[0], row[1], row[2], row[3]]
         )
 
-    def workspace_state(self, instance_id: str) -> PlaybillStateCoordinate:
+    def workspace_state(self, instance_id: str) -> StateCoordinate:
         """The state coordinate of one host's worktree binding (R12)."""
 
         record = self.get(instance_id)
@@ -406,8 +406,8 @@ class InstanceRegistry:
         instance_id: str,
         workspace_root: str | Path,
         *,
-        observe: Callable[[PlaybillStateCoordinate], None] | None = None,
-        observe_host: Callable[[PlaybillStateCoordinate], None] | None = None,
+        observe: Callable[[StateCoordinate], None] | None = None,
+        observe_host: Callable[[StateCoordinate], None] | None = None,
     ) -> InstanceRecord:
         """Attach one exact local workspace without replacing an existing attachment.
 
@@ -438,7 +438,7 @@ class InstanceRegistry:
                     observe_host(self._host_state_conn(conn, instance_id))
                 if row["workspace_root"] is not None:
                     if row["workspace_root"] != resolved:
-                        raise ConfigError("Playbill host is already attached to another workspace")
+                        raise ConfigError("Cruxible host is already attached to another workspace")
                 else:
                     # Attaching turns floor delivery on (G4c).
                     conn.execute(
@@ -447,7 +447,7 @@ class InstanceRegistry:
                         (resolved, instance_id),
                     )
         except sqlite3.IntegrityError as exc:
-            raise ConfigError("Workspace is already attached to another Playbill host") from exc
+            raise ConfigError("Workspace is already attached to another Cruxible host") from exc
         record = self.get(instance_id)
         assert record is not None
         return record
@@ -457,7 +457,7 @@ class InstanceRegistry:
         instance_id: str,
         *,
         expected_workspace_root: str | Path,
-        observe: Callable[[PlaybillStateCoordinate], None] | None = None,
+        observe: Callable[[StateCoordinate], None] | None = None,
     ) -> InstanceRecord:
         """Release exactly this attachment (the expected worktree, nothing else).
 
@@ -484,7 +484,7 @@ class InstanceRegistry:
                 (instance_id, expected),
             )
         if cursor.rowcount != 1:
-            raise ConfigError("Playbill workspace attachment changed during rollback")
+            raise ConfigError("Cruxible workspace attachment changed during rollback")
         record = self.get(instance_id)
         assert record is not None
         return record
@@ -496,7 +496,7 @@ class InstanceRegistry:
         location: str,
         workspace_root: str | None,
         preferred_instance_id: str | None = None,
-        observe: Callable[[PlaybillStateCoordinate], None] | None = None,
+        observe: Callable[[StateCoordinate], None] | None = None,
     ) -> RegisteredInstance:
         refuse_write_while_previewing("instance registry")
         if Path(location).is_absolute():
@@ -586,10 +586,8 @@ class InstanceRegistry:
         )
 
 
-def _workspace_state(instance_id: str, workspace_root: str | None) -> PlaybillStateCoordinate:
-    return PlaybillStateCoordinate.of(
-        f"host_workspace:{instance_id}", {"workspace_root": workspace_root}
-    )
+def _workspace_state(instance_id: str, workspace_root: str | None) -> StateCoordinate:
+    return StateCoordinate.of(f"host_workspace:{instance_id}", {"workspace_root": workspace_root})
 
 
 def _validate_instance_id(instance_id: str) -> None:

@@ -12,7 +12,7 @@ from cruxible_client.authoring.examples import (
     query_ontology_example,
     query_procedures_example,
 )
-from cruxible_client.authoring.sdk import Playbill, Proposal
+from cruxible_client.authoring.sdk import Cruxible, Proposal
 from cruxible_client.authoring.signing import LocalEd25519ApprovalSigner
 from cruxible_client.contracts.authoring.inputs import ChangeSetInput, ClaimTypeInput
 from cruxible_client.transport.http import CruxibleClient
@@ -31,7 +31,7 @@ def test_named_query_complete_workflow(playbill_http, tmp_path, monkeypatch, sur
     client._client = transport
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    pb = Playbill._from_client(client, instance_id=instance_id, workspace=workspace)
+    pb = Cruxible._from_client(client, instance_id=instance_id, workspace=workspace)
     definition = example()
     ordinary = example is query_claims_by_type_example
     input = (
@@ -99,7 +99,7 @@ def test_named_query_complete_workflow(playbill_http, tmp_path, monkeypatch, sur
     assert pb.accept(proposal.proposal_id).status == "accepted"
     name = definition.query_definition.identity.name
     if surface == "cli":
-        page = api.PlaybillQueryResult.model_validate(
+        page = api.QueryResultRecord.model_validate(
             invoke("playbill", "query", "--name", name, "--receipt", "full")
         )
         result = _run(page, name)
@@ -115,13 +115,13 @@ def test_named_query_complete_workflow(playbill_http, tmp_path, monkeypatch, sur
             assert result.artifact_definitions == ()
 
 
-def _run(page: api.PlaybillQueryResult, name: str) -> api.PlaybillQueryRun:
+def _run(page: api.QueryResultRecord, name: str) -> api.QueryRun:
     """A named query's full receipt, read as the run it records."""
 
     replay = page.receipt.replay
     assert replay is not None
-    return api.PlaybillQueryRun(
-        coordinate=api.PlaybillAcceptedCoordinate.model_validate(
+    return api.QueryRun(
+        coordinate=api.AcceptedCoordinate.model_validate(
             page.receipt.coordinate.model_dump(mode="json")
         ),
         name=name,

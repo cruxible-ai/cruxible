@@ -12,7 +12,7 @@ from typing import Any, Literal, cast
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
-from cruxible_client.contracts.errors import PlaybillBootstrapError
+from cruxible_client.contracts.errors import BootstrapError
 from cruxible_client.contracts.operator_mac import (
     OPERATOR_BOOT_HEADER,
     OPERATOR_MAC_HEADER,
@@ -260,7 +260,7 @@ def _bound_principal_refusal(credential: RuntimeCredentialRecord) -> PrincipalRe
         return None
     try:
         instance = get_playbill_manager().get(credential.instance_id)
-    except PlaybillBootstrapError:
+    except BootstrapError:
         return None
     refusal = principal_refusal(instance, credential.principal_id, configured=True)
     if refusal is not None:

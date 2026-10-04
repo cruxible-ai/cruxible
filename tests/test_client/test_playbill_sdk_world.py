@@ -1,4 +1,4 @@
-"""The typed world facade: what `pb.world()` names, and what it refuses."""
+"""The typed world facade: what `cx.world()` names, and what it refuses."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 
 import cruxible_client
-from cruxible_client import Playbill
+from cruxible_client import Cruxible
 from cruxible_client import contracts as api
 from cruxible_client.authoring.sdk_types import (
     AbsentSubject,
@@ -40,13 +40,13 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 from tests.test_client._read_fakes import ClaimTypeListing, ClaimTypeRead
 
 _DIGEST = "sha256:" + "1" * 64
-_COORDINATE = api.PlaybillAcceptedCoordinate(
+_COORDINATE = api.AcceptedCoordinate(
     git_oid="a" * 40,
     semantic_root=_DIGEST,
     generation_root="sha256:" + "2" * 64,
     compiler_digest="sha256:" + "3" * 64,
 )
-_MOVED_COORDINATE = api.PlaybillAcceptedCoordinate(
+_MOVED_COORDINATE = api.AcceptedCoordinate(
     git_oid="b" * 40,
     semantic_root=_DIGEST,
     generation_root="sha256:" + "2" * 64,
@@ -90,16 +90,16 @@ def _projection(coordinate: Any) -> AcceptedCoordinate:
 def _proof_result(
     ref: str, kind: str, proof: Any, coordinate: Any, *, why: str | None = None
 ) -> Any:
-    from cruxible_client.contracts.get_reads import PlaybillGetCoordinate, PlaybillGetResult
+    from cruxible_client.contracts.get_reads import GetCoordinate, GetResult
 
-    return PlaybillGetResult(
+    return GetResult(
         ref=ref,
         kind=kind,  # type: ignore[arg-type]
         detail="why" if why is not None else "proof",
         proof=proof,
         why=None if why is None else {"explained": why},
-        coordinate=PlaybillGetCoordinate(git_oid=coordinate.git_oid[:12], generation=1),
-        accepted_coordinate=api.PlaybillAcceptedCoordinate.model_validate(
+        coordinate=GetCoordinate(git_oid=coordinate.git_oid[:12], generation=1),
+        accepted_coordinate=api.AcceptedCoordinate.model_validate(
             coordinate.model_dump(mode="json")
         ),
         evaluation_time=datetime(2026, 9, 7, tzinfo=UTC),
@@ -214,24 +214,24 @@ class _WorldClient:
 
     # -- the read verbs the SDK calls, served from this fake's data ----------
 
-    def playbill_head(self, instance_id: str, *, at: Any = None) -> api.PlaybillHead:
+    def head(self, instance_id: str, *, at: Any = None) -> api.Head:
         self.head_reads.append(at)
         coordinate = self.coordinate if at is None else at
-        return api.PlaybillHead(
+        return api.Head(
             instance=instance_id,
             coordinate=_projection(coordinate),
             generation=1,
         )
 
-    def orient_playbill(
+    def orient(
         self, instance_id: str, *, section: Any = None, at: Any = None, **_values: Any
-    ) -> api.PlaybillOrientResult:
-        from cruxible_client.contracts.orient import PlaybillOrientPredicate
+    ) -> api.OrientResult:
+        from cruxible_client.contracts.orient import OrientPredicate
 
         assert section == "claim_types"
         listing = self._claim_type_list(instance_id, at=at)
         self._listing = listing
-        return api.PlaybillOrientResult(
+        return api.OrientResult(
             instance=instance_id,
             coordinate=_projection(listing.coordinate),
             generation=1,
@@ -239,7 +239,7 @@ class _WorldClient:
             evaluation_time=datetime(2026, 9, 7, tzinfo=UTC),
             section="claim_types",
             claim_types=tuple(
-                PlaybillOrientPredicate(
+                OrientPredicate(
                     name=view.predicate,
                     predicate=view.predicate,
                     cardinality="one",
@@ -250,12 +250,12 @@ class _WorldClient:
             ),
         )
 
-    def playbill_get_batch(self, instance_id: str, *, request: Any) -> Any:
-        from cruxible_client.contracts.get_reads import PlaybillGetBatchResult
+    def get_batch(self, instance_id: str, *, request: Any) -> Any:
+        from cruxible_client.contracts.get_reads import GetBatchResult
 
         by_ref = {f"ClaimType:{view.predicate}": view for view in self._listing.claim_types}
         coordinate = self._listing.coordinate
-        return PlaybillGetBatchResult(
+        return GetBatchResult(
             coordinate=coordinate,
             results=tuple(
                 _proof_result(ref, "claim_type", by_ref[ref].model_dump(mode="json"), coordinate)
@@ -263,7 +263,7 @@ class _WorldClient:
             ),
         )
 
-    def playbill_get(self, instance_id: str, *, request: Any) -> Any:
+    def get(self, instance_id: str, *, request: Any) -> Any:
         coordinate = request.at or self.coordinate
         if request.detail == "why":
             return _proof_result(request.ref, "subject", None, coordinate, why=request.ref)
@@ -277,7 +277,7 @@ class _WorldClient:
         view = self._claim_view(instance_id, request.ref, at=request.at)
         return _proof_result(request.ref, "claim", view.model_dump(mode="json"), coordinate)
 
-    def query_playbill(self, instance_id: str, *, request: Any) -> api.PlaybillQueryResult:
+    def query(self, instance_id: str, *, request: Any) -> api.QueryResultRecord:
         assert request.kind is not None
         self.subject_queries.append(request.kind)
         if self.subject_pages is not None:
@@ -286,7 +286,7 @@ class _WorldClient:
         # status naming "retired" lists retired ones too, each row stating its
         # lifecycle, and otherwise only live ones are listed.
         with_retired = "retired" in request.status
-        return api.PlaybillQueryResult(
+        return api.QueryResultRecord(
             kind=request.kind,
             columns=(),
             rows=tuple(
@@ -303,8 +303,8 @@ class _WorldClient:
             receipt=self._receipt(request),
         )
 
-    def _receipt(self, request: Any) -> api.PlaybillQueryReceipt:
-        return api.PlaybillQueryReceipt(
+    def _receipt(self, request: Any) -> api.QueryReceipt:
+        return api.QueryReceipt(
             mode="inline",
             spec_digest=_DIGEST,
             coordinate=request.at or _projection(self.coordinate),
@@ -318,7 +318,7 @@ class _WorldClient:
             return []
         return ["CLM-" + "9" * 32]
 
-    def read_playbill_claim_batch(self, instance_id: str, *, request: Any) -> Any:
+    def read_claim_batch(self, instance_id: str, *, request: Any) -> Any:
         from cruxible_client.contracts.claim_reads import ClaimReadBatchResult
 
         self.batch_requests.append(request)
@@ -371,10 +371,10 @@ entries:
 
 
 @pytest.fixture
-def connection(tmp_path: Path) -> tuple[Playbill, _WorldClient]:
+def connection(tmp_path: Path) -> tuple[Cruxible, _WorldClient]:
     _workspace(tmp_path)
     client = _WorldClient()
-    playbill = Playbill._from_client(  # type: ignore[arg-type]
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
         client,
         instance_id="inst_world",
         workspace=tmp_path,
@@ -384,7 +384,7 @@ def connection(tmp_path: Path) -> tuple[Playbill, _WorldClient]:
 
 
 def test_world_names_nested_dotted_kinds_and_answers_subjects_both_ways(
-    connection: tuple[Playbill, _WorldClient],
+    connection: tuple[Cruxible, _WorldClient],
 ) -> None:
     """`w.sec.package` nests, and a Subject answers by attribute or by index."""
 
@@ -405,7 +405,7 @@ def test_world_names_nested_dotted_kinds_and_answers_subjects_both_ways(
 
 
 def test_an_absent_subject_names_its_kind_id_and_coordinate(
-    connection: tuple[Playbill, _WorldClient],
+    connection: tuple[Cruxible, _WorldClient],
 ) -> None:
     """The typed refusal has to be actionable without a second read."""
 
@@ -425,7 +425,7 @@ def test_an_absent_subject_names_its_kind_id_and_coordinate(
 
 
 def test_a_predicate_is_a_claim_type_ref_carrying_its_own_structure(
-    connection: tuple[Playbill, _WorldClient],
+    connection: tuple[Cruxible, _WorldClient],
 ) -> None:
     """Structure is a read the caller otherwise makes by hand every time."""
 
@@ -446,7 +446,7 @@ def test_a_predicate_is_a_claim_type_ref_carrying_its_own_structure(
 
 
 def test_enum_members_are_typed_values_and_an_unknown_member_names_the_enum(
-    connection: tuple[Playbill, _WorldClient],
+    connection: tuple[Cruxible, _WorldClient],
 ) -> None:
     playbill, _client = connection
     world = playbill.world()
@@ -463,7 +463,7 @@ def test_enum_members_are_typed_values_and_an_unknown_member_names_the_enum(
 
 
 def test_a_non_enum_schema_validates_its_constructor_before_the_wire(
-    connection: tuple[Playbill, _WorldClient],
+    connection: tuple[Cruxible, _WorldClient],
 ) -> None:
     """A 39-character digest is a caller mistake, not a proposal to submit."""
 
@@ -483,7 +483,7 @@ def test_a_non_enum_schema_validates_its_constructor_before_the_wire(
 
 
 def test_a_kind_loads_its_subjects_only_when_one_is_first_asked_for(
-    connection: tuple[Playbill, _WorldClient],
+    connection: tuple[Cruxible, _WorldClient],
 ) -> None:
     """A thousand-Subject world must cost the vocabulary and nothing else."""
 
@@ -518,7 +518,7 @@ def test_a_kind_loads_its_subjects_only_when_one_is_first_asked_for(
     ],
 )
 def test_an_incomplete_subject_listing_refuses_and_caches_nothing(
-    connection: tuple[Playbill, _WorldClient],
+    connection: tuple[Cruxible, _WorldClient],
     truncated: bool,
     capped: tuple[str, ...],
     cursor: str | None,
@@ -528,10 +528,10 @@ def test_an_incomplete_subject_listing_refuses_and_caches_nothing(
 
     playbill, client = connection
 
-    def stuck(request: Any) -> api.PlaybillQueryResult:
+    def stuck(request: Any) -> api.QueryResultRecord:
         # The same short page every time: a cap that never advances, a
         # truncated answer with nothing to continue it, or a cursor handed back.
-        return api.PlaybillQueryResult(
+        return api.QueryResultRecord(
             kind=request.kind,
             columns=(),
             rows=({"subject": f"{request.kind}/a", "subject_id": "a", "lifecycle": "live"},)
@@ -552,10 +552,10 @@ def test_an_incomplete_subject_listing_refuses_and_caches_nothing(
 
 
 def test_a_subject_listing_row_must_state_its_lifecycle(
-    connection: tuple[Playbill, _WorldClient],
+    connection: tuple[Cruxible, _WorldClient],
 ) -> None:
     playbill, client = connection
-    client.subject_pages = lambda request: api.PlaybillQueryResult(
+    client.subject_pages = lambda request: api.QueryResultRecord(
         kind=request.kind,
         columns=(),
         rows=({"subject": f"{request.kind}/a", "subject_id": "a"},),
@@ -566,7 +566,7 @@ def test_a_subject_listing_row_must_state_its_lifecycle(
 
 
 def test_the_facade_remains_pinned_when_the_live_orientation_moves(
-    connection: tuple[Playbill, _WorldClient],
+    connection: tuple[Cruxible, _WorldClient],
 ) -> None:
     """A name that resolved at one coordinate may name something else at the next."""
 
@@ -596,7 +596,7 @@ def test_the_facade_remains_pinned_when_the_live_orientation_moves(
 
 
 def test_a_retired_claim_type_leaves_the_world_it_was_read_from(
-    connection: tuple[Playbill, _WorldClient],
+    connection: tuple[Cruxible, _WorldClient],
 ) -> None:
     playbill, client = connection
     client.retired_severity = True
@@ -609,7 +609,7 @@ def test_a_retired_claim_type_leaves_the_world_it_was_read_from(
 
 
 def test_a_subject_reads_its_live_claims_through_the_existing_verbs(
-    connection: tuple[Playbill, _WorldClient],
+    connection: tuple[Cruxible, _WorldClient],
 ) -> None:
     playbill, client = connection
     world = playbill.world()
@@ -638,7 +638,7 @@ def test_a_subject_reads_its_live_claims_through_the_existing_verbs(
 
 
 def test_a_same_set_definition_returns_refs_usable_in_the_same_set(
-    connection: tuple[Playbill, _WorldClient],
+    connection: tuple[Cruxible, _WorldClient],
 ) -> None:
     """Card 85 closes by construction on the typed path: the ref is the return."""
 
@@ -695,7 +695,7 @@ def test_a_same_set_definition_returns_refs_usable_in_the_same_set(
 
 
 def test_a_same_set_claim_type_ref_lowers_without_reading_the_unaccepted_type(
-    connection: tuple[Playbill, _WorldClient],
+    connection: tuple[Cruxible, _WorldClient],
 ) -> None:
     playbill, client = connection
     definition = playbill.claim_type(
@@ -754,7 +754,7 @@ def test_a_same_set_claim_type_ref_lowers_without_reading_the_unaccepted_type(
 
 
 def test_a_value_minted_under_one_claim_type_refuses_under_another(
-    connection: tuple[Playbill, _WorldClient],
+    connection: tuple[Cruxible, _WorldClient],
 ) -> None:
     playbill, _client = connection
     world = playbill.world()
@@ -783,7 +783,7 @@ def test_a_value_minted_under_one_claim_type_refuses_under_another(
     assert LANDED_AT in str(refused.value)
 
 
-def _severity_claim(playbill: Playbill, predicate: Any, *, role: str) -> None:
+def _severity_claim(playbill: Cruxible, predicate: Any, *, role: str) -> None:
     world = playbill.world()
     playbill.claim(
         subject=world.sec.vulnerability["cve-2026-69247"],
@@ -804,7 +804,7 @@ def _severity_claim(playbill: Playbill, predicate: Any, *, role: str) -> None:
 
 
 def test_a_role_the_claim_type_does_not_permit_refuses_at_its_keyword(
-    connection: tuple[Playbill, _WorldClient],
+    connection: tuple[Cruxible, _WorldClient],
 ) -> None:
     """The permitted roles a World ref carries answer without a read or a round trip."""
 
@@ -827,7 +827,7 @@ def test_a_role_the_claim_type_does_not_permit_refuses_at_its_keyword(
 
 
 def test_a_named_predicate_reads_its_roles_once_per_coordinate(
-    connection: tuple[Playbill, _WorldClient],
+    connection: tuple[Cruxible, _WorldClient],
 ) -> None:
     playbill, client = connection
     for _ in range(2):
@@ -858,7 +858,7 @@ def _resolution_policy() -> Any:
 
 
 def test_the_stub_is_byte_identical_for_the_same_coordinate_and_moves_with_it(
-    connection: tuple[Playbill, _WorldClient],
+    connection: tuple[Cruxible, _WorldClient],
 ) -> None:
     playbill, client = connection
 
@@ -892,7 +892,7 @@ def test_the_stub_is_byte_identical_for_the_same_coordinate_and_moves_with_it(
 
 
 def test_a_v7_predicate_carries_its_meaning_into_the_world_and_the_stub(
-    connection: tuple[Playbill, _WorldClient],
+    connection: tuple[Cruxible, _WorldClient],
 ) -> None:
     import ast
 
@@ -946,7 +946,7 @@ def test_a_v7_predicate_carries_its_meaning_into_the_world_and_the_stub(
 
 
 def test_a_type_checker_reads_the_generated_stub_as_exact_types(
-    connection: tuple[Playbill, _WorldClient],
+    connection: tuple[Cruxible, _WorldClient],
     tmp_path: Path,
 ) -> None:
     """A stub that types everything as Any would buy the caller nothing."""
@@ -978,7 +978,7 @@ def test_a_type_checker_reads_the_generated_stub_as_exact_types(
 
 
 def test_the_world_is_built_from_the_current_claim_type_list_only(
-    connection: tuple[Playbill, _WorldClient],
+    connection: tuple[Cruxible, _WorldClient],
 ) -> None:
     playbill, client = connection
 
@@ -1044,9 +1044,9 @@ def _paged_identity(index: int) -> str:
     return "CLM-" + f"{index:032d}"
 
 
-def _paged_connection(tmp_path: Path, client: _PagedClaimsClient) -> Playbill:
+def _paged_connection(tmp_path: Path, client: _PagedClaimsClient) -> Cruxible:
     _workspace(tmp_path)
-    return Playbill._from_client(  # type: ignore[arg-type]
+    return Cruxible._from_client(  # type: ignore[arg-type]
         client,
         instance_id="inst_world",
         workspace=tmp_path,
@@ -1170,7 +1170,7 @@ def test_a_failure_inside_a_subject_member_is_not_reported_as_a_naming_mistake(
 
 
 def test_a_world_is_built_at_the_instances_current_coordinate(
-    connection: tuple[Playbill, _WorldClient],
+    connection: tuple[Cruxible, _WorldClient],
 ) -> None:
     """A world built at a coordinate the instance has left is a stale answer."""
 
@@ -1196,7 +1196,7 @@ def test_a_read_only_connection_needs_no_workspace_source_catalog(
     """Reads touch no working tree, so they must not demand a writer's setup."""
 
     client = _WorldClient()
-    playbill = Playbill._from_client(  # type: ignore[arg-type]
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
         client,
         instance_id="inst_world",
         workspace=tmp_path,
@@ -1215,7 +1215,7 @@ def test_selecting_a_file_still_refuses_at_the_same_typed_point(
     from cruxible_client.authoring.sdk_types import SourceSelectionError
 
     client = _WorldClient()
-    playbill = Playbill._from_client(  # type: ignore[arg-type]
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
         client,
         instance_id="inst_world",
         workspace=tmp_path,
@@ -1271,7 +1271,7 @@ def test_a_predicate_leaf_that_a_member_shadows_is_reachable_by_index(
     client = _CollidingClient()
     client.claim_predicates["CLM-" + "9" * 32] = "sec.vuln.claims"
     _workspace(tmp_path)
-    playbill = Playbill._from_client(  # type: ignore[arg-type]
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
         client,
         instance_id="inst_world",
         workspace=tmp_path,
@@ -1298,7 +1298,7 @@ def test_an_enum_member_a_structure_field_shadows_is_minted_by_the_call_form(
 
     client = _CollidingClient()
     _workspace(tmp_path)
-    playbill = Playbill._from_client(  # type: ignore[arg-type]
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
         client,
         instance_id="inst_world",
         workspace=tmp_path,
@@ -1319,7 +1319,7 @@ def test_a_kind_a_predicate_shadows_stays_reachable_as_a_kind(
 
     client = _CollidingClient()
     _workspace(tmp_path)
-    playbill = Playbill._from_client(  # type: ignore[arg-type]
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
         client,
         instance_id="inst_world",
         workspace=tmp_path,
@@ -1365,7 +1365,7 @@ def test_a_python_keyword_segment_leaves_the_stub_parseable(
 
     client = _KeywordSegmentClient()
     _workspace(tmp_path)
-    playbill = Playbill._from_client(  # type: ignore[arg-type]
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
         client,
         instance_id="inst_world",
         workspace=tmp_path,
@@ -1391,7 +1391,7 @@ def test_a_python_keyword_segment_leaves_the_stub_parseable(
 
 
 def test_a_type_checker_rejects_every_misspelling_the_stub_names(
-    connection: tuple[Playbill, _WorldClient],
+    connection: tuple[Cruxible, _WorldClient],
     tmp_path: Path,
 ) -> None:
     """Completion without rejection is the property the stub exists to buy."""
@@ -1490,7 +1490,7 @@ def test_a_segment_spelling_the_separator_does_not_claim_another_names_class(
 
     client = _UnderscoreSegmentClient()
     _workspace(tmp_path)
-    playbill = Playbill._from_client(  # type: ignore[arg-type]
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
         client,
         instance_id="inst_world",
         workspace=tmp_path,
@@ -1511,7 +1511,7 @@ def test_a_segment_spelling_the_separator_does_not_claim_another_names_class(
 def test_workspace_less_connection_reads_but_refuses_block_file_operations() -> None:
     from cruxible_client.authoring.sdk_types import SourceSelectionError
 
-    playbill = Playbill._from_client(  # type: ignore[arg-type]
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
         _WorldClient(),
         instance_id="inst_world",
         workspace=None,
@@ -1527,7 +1527,7 @@ def test_workspace_less_connection_reads_but_refuses_block_file_operations() -> 
 
 
 def test_kinds_and_predicates_answer_as_attribute_and_as_call(
-    connection: tuple[Playbill, _WorldClient],
+    connection: tuple[Cruxible, _WorldClient],
 ) -> None:
     """``w.kinds`` and ``w.kinds()`` are the same tuple, so neither spelling is wrong."""
 
@@ -1541,7 +1541,7 @@ def test_kinds_and_predicates_answer_as_attribute_and_as_call(
 
 
 def test_describe_lists_the_verbs_and_every_kind_with_its_fields(
-    connection: tuple[Playbill, _WorldClient],
+    connection: tuple[Cruxible, _WorldClient],
 ) -> None:
     playbill, _client = connection
     world = playbill.world()
@@ -1549,7 +1549,7 @@ def test_describe_lists_the_verbs_and_every_kind_with_its_fields(
     described = world.describe()
 
     assert described.startswith(f"World at {'a' * 12}: 3 Subject kinds, 3 predicates.")
-    for verb in ("pb.orient()", 'pb.query("<kind>"', 'pb.get("<ref>")', ".playbill/floor/current/"):
+    for verb in ("cx.orient()", 'cx.query("<kind>"', 'cx.get("<ref>")', ".playbill/floor/current/"):
         assert verb in described
     # Only the read verbs that survive the surface cut are named.
     for cut in ("search(", "explain(", "run_query(", "claim_values"):
@@ -1566,7 +1566,7 @@ def test_describe_lists_the_verbs_and_every_kind_with_its_fields(
 
 
 def test_world_subjects_and_predicates_repr_short(
-    connection: tuple[Playbill, _WorldClient],
+    connection: tuple[Cruxible, _WorldClient],
 ) -> None:
     playbill, _client = connection
     world = playbill.world()

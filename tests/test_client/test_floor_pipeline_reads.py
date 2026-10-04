@@ -9,7 +9,7 @@ import yaml
 
 from cruxible_client import _safe_files
 from cruxible_client.authoring import workspace as authoring
-from cruxible_client.authoring.workspace import PlaybillWorkspaceError
+from cruxible_client.authoring.workspace import WorkspaceError
 from cruxible_client.contracts.source_catalog import SourceCatalog, SourceCatalogEntry
 from tests.support.fifos import call_with_fifo_timeout
 from tests.test_client.test_playbill_workspace import _delta, _export
@@ -67,11 +67,11 @@ def test_fifo_coverage_config_returns_promptly(tmp_path, reader):
     def call():
         if reader == "delivery-profile":
             return authoring.configured_floor_output(workspace)
-        return authoring.record_playbill_floor_output(
+        return authoring.record_floor_output(
             workspace, instance_id="inst_fifo", server_socket=str(tmp_path / "socket")
         )
 
-    with pytest.raises(PlaybillWorkspaceError, match="not a regular file"):
+    with pytest.raises(WorkspaceError, match="not a regular file"):
         call_with_fifo_timeout(fifo, call)
 
 
@@ -127,19 +127,19 @@ def test_bound_source_swap_to_fifo_keeps_the_existing_unreadable_source_fallback
 def test_full_export_comparison_refuses_or_repairs_a_fifo_promptly(tmp_path, force):
     workspace = _workspace(tmp_path)
     export = _export()
-    authoring.materialize_playbill_floor(workspace, export=export)
+    authoring.materialize_floor(workspace, export=export)
     fifo = workspace / ".playbill/floor/cards/fresh.json"
     fifo.unlink()
     os.mkfifo(fifo)
 
     def call():
-        return authoring.materialize_playbill_floor(workspace, export=export, force=force)
+        return authoring.materialize_floor(workspace, export=export, force=force)
 
     if force:
         assert call_with_fifo_timeout(fifo, call).status == "written"
         assert fifo.is_file()
     else:
-        with pytest.raises(PlaybillWorkspaceError, match="non-empty directory"):
+        with pytest.raises(WorkspaceError, match="non-empty directory"):
             call_with_fifo_timeout(fifo, call)
 
 
@@ -149,7 +149,7 @@ def test_fifo_git_exclude_refuses_after_applying_the_floor(tmp_path):
     fifo = workspace / ".git/info/exclude"
     fifo.unlink()
     os.mkfifo(fifo)
-    with pytest.raises(PlaybillWorkspaceError, match="Git info/exclude cannot be read"):
+    with pytest.raises(WorkspaceError, match="Git info/exclude cannot be read"):
         call_with_fifo_timeout(
             fifo,
             lambda: authoring.write_workspace_floor_delta(
@@ -213,7 +213,7 @@ def test_git_info_fifo_swap_refuses_or_persists_through_the_held_descriptor(
     previous_umask = os.umask(0o077)
     try:
         if boundary == "open":
-            with pytest.raises(PlaybillWorkspaceError, match="Git info/exclude cannot be read"):
+            with pytest.raises(WorkspaceError, match="Git info/exclude cannot be read"):
                 call_with_fifo_timeout(info, write)
             assert (held / "exclude").read_bytes() == old_bytes
         else:

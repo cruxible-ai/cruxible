@@ -12,7 +12,7 @@ from typing import Any, cast
 
 import pytest
 
-from cruxible_client.contracts.compact_query import PlaybillQueryRequest
+from cruxible_client.contracts.compact_query import QueryRequest
 from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
 from cruxible_core.service.discovery import compact_query as compact_module
 from cruxible_core.service.discovery.compact_query import service_playbill_query
@@ -21,7 +21,7 @@ from cruxible_core.service.discovery.query_vocabulary import (
     PredicateInfo,
     QueryVocabulary,
 )
-from cruxible_core.service.list_pages import PlaybillListCursorMismatch
+from cruxible_core.service.list_pages import ListCursorMismatch
 from cruxible_core.service.read_refusals import ReadRefusalError
 from tests.core_support._candidate_support import submit_query_definition_candidate
 from tests.core_support._knowledge_loop_support import (
@@ -55,7 +55,7 @@ def instance(tmp_path_factory: pytest.TempPathFactory) -> Any:
 
 def _query(instance: Any, **fields: Any) -> Any:
     fields.setdefault("evaluation_time", WHEN)
-    return service_playbill_query(instance, request=PlaybillQueryRequest.model_validate(fields))
+    return service_playbill_query(instance, request=QueryRequest.model_validate(fields))
 
 
 def _ids(result: Any) -> list[str]:
@@ -193,7 +193,7 @@ def test_pages_continue_by_cursor_and_refuse_a_foreign_one(instance: Any) -> Non
     assert second.truncated is False and second.next_cursor is None
     assert second.receipt.coordinate == first.receipt.coordinate
 
-    with pytest.raises(PlaybillListCursorMismatch):
+    with pytest.raises(ListCursorMismatch):
         _query(
             instance,
             kind=SUBJECT_KIND,
@@ -495,12 +495,12 @@ def test_parallel_relation_paths_page_once_per_bound_pair() -> None:
 
 
 def test_a_continuation_refuses_a_different_evaluation_time(instance: Any) -> None:
-    from cruxible_core.service.list_pages import PlaybillListCursorStale
+    from cruxible_core.service.list_pages import ListCursorStale
 
     first = _query(instance, kind=SUBJECT_KIND, limit=1)
     same = _query(instance, kind=SUBJECT_KIND, limit=1, cursor=first.next_cursor)
     assert _ids(same) == ["wi-43"]
-    with pytest.raises(PlaybillListCursorStale, match="evaluation"):
+    with pytest.raises(ListCursorStale, match="evaluation"):
         _query(
             instance,
             kind=SUBJECT_KIND,
@@ -582,7 +582,7 @@ def test_a_malformed_cursor_refuses_as_a_typed_mismatch(
     parts = first.next_cursor.split(".")
     parts[part] = forged
 
-    with pytest.raises(PlaybillListCursorMismatch, match="not a query cursor"):
+    with pytest.raises(ListCursorMismatch, match="not a query cursor"):
         _query(instance, kind=SUBJECT_KIND, limit=1, cursor=".".join(parts))
 
 
@@ -757,7 +757,7 @@ def _follow_vocabulary() -> QueryVocabulary:
 def _columns(**fields: Any) -> list[tuple[str, str | None]]:
     from cruxible_core.service.discovery.compact_query import _compact_columns, _CompactPlan
 
-    request = PlaybillQueryRequest.model_validate({"kind": SUBJECT_KIND, **fields})
+    request = QueryRequest.model_validate({"kind": SUBJECT_KIND, **fields})
     _columns_, output, _notes = _compact_columns(
         _CompactPlan(_follow_vocabulary(), request), request
     )

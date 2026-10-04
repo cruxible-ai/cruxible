@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from cruxible_client import contracts as api
-from cruxible_client.authoring.workspace import observe_playbill_next_workspace_with_coverage
+from cruxible_client.authoring.workspace import observe_next_workspace_with_coverage
 from cruxible_client.contracts.captures import DirectForeignSourceSelection
 from cruxible_client.contracts.semantic import ContentSpan
 from cruxible_core.coverage import adapter
@@ -21,11 +21,10 @@ from cruxible_core.coverage.contracts import (
 from cruxible_core.coverage.indexes import CoverageScanBudget
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.discovery.coverage import service_resolve_playbill_coverage
 from cruxible_core.service.discovery.next import (
-    PlaybillNextRequestV1,
-    PlaybillNextWorkspaceObservation,
+    NextRequestV1,
+    NextWorkspaceObservation,
     service_playbill_next,
 )
 from tests.core_support._claim_authoring_support import service_propose_playbill_claim
@@ -49,9 +48,7 @@ class _DirectCoverageClient:
         self.calls = 0
         self.last_result = None
 
-    def resolve_playbill_coverage(
-        self, instance_id: str, **values: Any
-    ) -> api.PlaybillCoverageResult:
+    def resolve_coverage(self, instance_id: str, **values: Any) -> api.CoverageResult:
         self.calls += 1
         result = service_resolve_playbill_coverage(
             self.instance,
@@ -62,14 +59,14 @@ class _DirectCoverageClient:
             at=(
                 None
                 if values["at"] is None
-                else PlaybillAcceptedCoordinate.model_validate(values["at"].model_dump())
+                else AcceptedCoordinate.model_validate(values["at"].model_dump())
             ),
             budget=CoverageCardBudget.model_validate(values["budget"]),
             scan_budget=CoverageScanBudget.model_validate(values["scan_budget"]),
         )
         self.last_result = result
-        return api.PlaybillCoverageResult(
-            coordinate=api.PlaybillAcceptedCoordinate.model_validate(result.at.model_dump()),
+        return api.CoverageResult(
+            coordinate=api.AcceptedCoordinate.model_validate(result.at.model_dump()),
             result=result.model_dump(mode="json"),
         )
 
@@ -111,10 +108,10 @@ def _result(
     *,
     next_profile: CoverageAccessProfile | None = None,
 ):  # type: ignore[no-untyped-def]
-    coordinate = api.PlaybillAcceptedCoordinate.model_validate(
+    coordinate = api.AcceptedCoordinate.model_validate(
         AcceptedCoordinate.from_internal(instance.accepted_coordinate()).model_dump()
     )
-    observed, pinned = observe_playbill_next_workspace_with_coverage(
+    observed, pinned = observe_next_workspace_with_coverage(
         client,
         instance.descriptor.instance_id,
         root,
@@ -124,11 +121,11 @@ def _result(
     assert pinned == coordinate
     result = service_playbill_next(
         instance,
-        request=PlaybillNextRequestV1(
+        request=NextRequestV1(
             at=AcceptedCoordinate.model_validate(pinned.model_dump()),
             evaluation_time=datetime(2026, 8, 16, 21, tzinfo=UTC),
             access_profile=next_profile or CoverageAccessProfile.model_validate(PROFILE),
-            workspace_observation=PlaybillNextWorkspaceObservation.model_validate(observed),
+            workspace_observation=NextWorkspaceObservation.model_validate(observed),
         ),
     )
     return observed, result

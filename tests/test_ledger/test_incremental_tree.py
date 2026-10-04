@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.errors import PlaybillGitError, SettlementIntegrityError
+from cruxible_client.contracts.errors import GitError, SettlementIntegrityError
 from cruxible_core.ledger.git import GitTreeChange
 from cruxible_core.ledger.recovery import _materialize_successor_tree
 from tests.core_support._adoption_fixture import MINIATURE, AdoptionFixtureProfile, build_fixture
@@ -126,7 +126,7 @@ def test_a_non_regular_member_is_refused_exactly_as_a_full_read_refuses_it(
         return smuggled
 
     ledger.changed_entries = forged  # type: ignore[method-assign]
-    with pytest.raises(PlaybillGitError):
+    with pytest.raises(GitError):
         _materialize_successor_tree(
             ledger,
             parent_oid=history[-2],

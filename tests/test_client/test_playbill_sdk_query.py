@@ -1,4 +1,4 @@
-"""`Playbill.query`, its QueryResult, and the World's typed where/select sugar."""
+"""`Cruxible.query`, its QueryResult, and the World's typed where/select sugar."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from cruxible_client import Playbill
+from cruxible_client import Cruxible
 from cruxible_client import contracts as api
 from cruxible_client.authoring.compact_query import (
     CompactQuery,
@@ -19,7 +19,7 @@ from cruxible_client.authoring.compact_query import (
     keyword_name,
     parse_where,
 )
-from cruxible_client.contracts.compact_query import PlaybillQueryRequest
+from cruxible_client.contracts.compact_query import QueryRequest
 from tests.test_client._read_fakes import ClaimTypeListing
 from tests.test_client.test_playbill_sdk_world import (
     _COORDINATE,
@@ -38,20 +38,18 @@ class _QueryClient(_WorldClient):
 
     def __init__(self) -> None:
         super().__init__()
-        self.requests: list[PlaybillQueryRequest] = []
+        self.requests: list[QueryRequest] = []
 
-    def query_playbill(
-        self, _instance_id: str, *, request: PlaybillQueryRequest
-    ) -> api.PlaybillQueryResult:
+    def query(self, _instance_id: str, *, request: QueryRequest) -> api.QueryResultRecord:
         if "retired" in request.status:
             # The World's own Subject listing, served as the base fake serves it.
-            return super().query_playbill(_instance_id, request=request)
+            return super().query(_instance_id, request=request)
         self.requests.append(request)
         second = request.cursor == "page-2"
         subject_id = "cve-2" if second else "cve-1"
-        return api.PlaybillQueryResult(
+        return api.QueryResultRecord(
             kind="sec.vulnerability",
-            columns=(api.PlaybillQueryColumn(name="severity", predicate=SEVERITY, type="enum"),),
+            columns=(api.QueryColumn(name="severity", predicate=SEVERITY, type="enum"),),
             rows=(
                 {
                     "subject": f"sec.vulnerability/{subject_id}",
@@ -62,7 +60,7 @@ class _QueryClient(_WorldClient):
             ),
             truncated=not second,
             next_cursor=None if second else "page-2",
-            receipt=api.PlaybillQueryReceipt(
+            receipt=api.QueryReceipt(
                 mode="inline",
                 spec_digest="sha256:" + "6" * 64,
                 coordinate=_COORDINATE.model_dump(mode="json"),  # type: ignore[arg-type]
@@ -72,10 +70,10 @@ class _QueryClient(_WorldClient):
 
 
 @pytest.fixture
-def connection(tmp_path: Path) -> tuple[Playbill, _QueryClient]:
+def connection(tmp_path: Path) -> tuple[Cruxible, _QueryClient]:
     _workspace(tmp_path)
     client = _QueryClient()
-    playbill = Playbill._from_client(  # type: ignore[arg-type]
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
         client,
         instance_id="inst_world",
         workspace=tmp_path,
@@ -85,7 +83,7 @@ def connection(tmp_path: Path) -> tuple[Playbill, _QueryClient]:
 
 
 def test_query_returns_a_result_page_that_continues_and_prints(
-    connection: tuple[Playbill, _QueryClient],
+    connection: tuple[Cruxible, _QueryClient],
 ) -> None:
     playbill, client = connection
 
@@ -118,7 +116,7 @@ def test_query_returns_a_result_page_that_continues_and_prints(
 
 
 def test_query_follows_backwards_from_a_tuple_a_mapping_or_the_model(
-    connection: tuple[Playbill, _QueryClient],
+    connection: tuple[Cruxible, _QueryClient],
 ) -> None:
     playbill, client = connection
 
@@ -143,7 +141,7 @@ def test_query_follows_backwards_from_a_tuple_a_mapping_or_the_model(
 
 
 def test_world_where_and_select_build_the_same_query(
-    connection: tuple[Playbill, _QueryClient],
+    connection: tuple[Cruxible, _QueryClient],
 ) -> None:
     playbill, client = connection
     world = playbill.world()
@@ -184,7 +182,7 @@ def test_world_where_and_select_build_the_same_query(
     ],
 )
 def test_world_sugar_refuses_wrong_names_before_the_wire(
-    connection: tuple[Playbill, _QueryClient],
+    connection: tuple[Cruxible, _QueryClient],
     build: Any,
     message: str,
     nearest: str | None,
@@ -218,7 +216,7 @@ def test_cli_where_expressions(expression: str, expected: tuple[str, str, object
 
 
 def test_a_type_checker_reads_where_as_typed_keywords(
-    connection: tuple[Playbill, _QueryClient], tmp_path: Path
+    connection: tuple[Cruxible, _QueryClient], tmp_path: Path
 ) -> None:
     playbill, _client = connection
     project = tmp_path / "query-project"
@@ -268,7 +266,7 @@ class _ReservedLeafClient(_QueryClient):
 def test_a_stub_for_reserved_leaves_compiles_and_type_checks(tmp_path: Path) -> None:
     _workspace(tmp_path)
     client = _ReservedLeafClient()
-    playbill = Playbill._from_client(  # type: ignore[arg-type]
+    playbill = Cruxible._from_client(  # type: ignore[arg-type]
         client, instance_id="inst_world", workspace=tmp_path, clock=lambda: WHEN
     )
     world = playbill.world()

@@ -16,13 +16,13 @@ from cruxible_client.contracts.artifacts import (
 from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, render_claim_type
 from cruxible_client.contracts.errors import CanonicalEncodingError, ProjectionFormatError
-from cruxible_client.contracts.laws import PLAYBILL_ACCEPTANCE_LAWS, QUERY_DEFINITION_ACCEPTANCE_LAW
+from cruxible_client.contracts.laws import ACCEPTANCE_LAWS, QUERY_DEFINITION_ACCEPTANCE_LAW
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV1,
     ClaimResolutionPolicy,
 )
-from cruxible_client.contracts.projection_extensions import playbill_runtime_extension_registry
+from cruxible_client.contracts.projection_extensions import runtime_extension_registry
 from cruxible_client.contracts.query.definitions import (
     AcceptedQueryDefinition,
     QueryDefinition,
@@ -301,7 +301,7 @@ def test_pc_f_activates_the_query_definition_path_kind_and_fails_closed_elsewher
     with pytest.raises(ProjectionFormatError, match="no registered format"):
         registered_path_kind("queries/project.active_work.yaml", artifact_kinds=P2_C_ARTIFACT_KINDS)
     assert (
-        PLAYBILL_ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-query-definition-v1")
+        ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-query-definition-v1")
         == QUERY_DEFINITION_ACCEPTANCE_LAW
     )
 
@@ -872,7 +872,7 @@ def test_query_definition_projects_its_declaration_policy_and_references() -> No
 
     projection = parse_projection_tree(
         {QUERY_PATH: render_query_definition(query)},
-        registry=playbill_runtime_extension_registry(),
+        registry=runtime_extension_registry(),
         artifact_kinds=P2_C_ARTIFACT_KINDS,
     )
 
@@ -915,7 +915,7 @@ def test_query_definition_projection_refuses_a_malformed_registered_artifact() -
     with pytest.raises(QueryDefinitionFormatError):
         parse_projection_tree(
             {QUERY_PATH: b'{"artifact_format":"playbill-query-definition-v1"}\n'},
-            registry=playbill_runtime_extension_registry(),
+            registry=runtime_extension_registry(),
             artifact_kinds=P2_C_ARTIFACT_KINDS,
         )
 

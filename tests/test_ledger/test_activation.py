@@ -24,7 +24,7 @@ from cruxible_client.contracts.documents import (
     render_document,
 )
 from cruxible_client.contracts.errors import ProposalIntegrityError, SettlementIntegrityError
-from cruxible_client.contracts.types import GenerationDescriptor, PlaybillTrustRoot
+from cruxible_client.contracts.types import GenerationDescriptor, TrustRoot
 from cruxible_core.compiler.compiler import current_compiler_coordinate
 from cruxible_core.governance.keys import (
     ALLOWED_SIGNERS_FILE,
@@ -434,7 +434,7 @@ def test_qualified_git_formats_preserve_candidate_changeset_and_semantic_root(
     )
     credentials = tmp_path / "daemon"
     daemon = generate_daemon_key(credentials)
-    trust = PlaybillTrustRoot(
+    trust = TrustRoot(
         instance_id="inst_cross_format_activation",
         daemon_public_key=daemon.principal.public_key,
         principals=tuple(

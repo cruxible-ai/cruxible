@@ -14,7 +14,7 @@ from typing import Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict
 
-PlaybillPolicyKind: TypeAlias = Literal[
+PolicyKind: TypeAlias = Literal[
     "approval_policy",
     "procedure_runtime_policy",
     "source_acquisition_policy",
@@ -31,12 +31,12 @@ PlaybillPolicyKind: TypeAlias = Literal[
 ]
 
 
-class PlaybillPolicyInForce(BaseModel):
+class PolicyInForce(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-policy-in-force-v1"] = "playbill-policy-in-force-v1"
     placement: Literal["embedded", "standalone"]
-    policy_kind: PlaybillPolicyKind
+    policy_kind: PolicyKind
     declaring_artifact_identity: str
     declaring_artifact_kind: str
     declaring_artifact_digest: str
@@ -45,4 +45,4 @@ class PlaybillPolicyInForce(BaseModel):
     policy: dict[str, Any]
 
 
-__all__ = ["PlaybillPolicyInForce", "PlaybillPolicyKind"]
+__all__ = ["PolicyInForce", "PolicyKind"]

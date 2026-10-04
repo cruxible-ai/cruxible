@@ -8,7 +8,7 @@ holding a floor of another renderer is sent the whole floor, never a delta.
 from __future__ import annotations
 
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
-from cruxible_client.contracts.floor import PLAYBILL_FLOOR_FORMAT
+from cruxible_client.contracts.floor import FLOOR_FORMAT
 
 FLOOR_RENDERER_REVISION = "playbill-floor-renderer-v5.3"
 
@@ -20,7 +20,7 @@ def floor_renderer(compiler_digest: str) -> str:
         Sha256Value,
         "playbill-floor-renderer-v1",
         {
-            "format": PLAYBILL_FLOOR_FORMAT,
+            "format": FLOOR_FORMAT,
             "revision": FLOOR_RENDERER_REVISION,
             "compiler_digest": compiler_digest,
         },

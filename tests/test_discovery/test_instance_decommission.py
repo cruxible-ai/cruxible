@@ -21,7 +21,7 @@ from cruxible_client.contracts.documents import (
     render_document,
 )
 from cruxible_client.contracts.errors import (
-    PlaybillInstanceDecommissioned,
+    InstanceDecommissioned,
     SubjectNotFoundError,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
@@ -30,7 +30,7 @@ from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmiss
 from cruxible_core.runtime.instance import DESCRIPTOR_FILE, PlaybillInstance
 from cruxible_core.service.claims.subjects import service_get_playbill_subject
 from cruxible_core.service.discovery.next import (
-    PlaybillNextRequestV1,
+    NextRequestV1,
     service_playbill_next,
 )
 from cruxible_core.service.discovery.orient import service_playbill_orient
@@ -101,7 +101,7 @@ def test_a_decommissioned_instance_refuses_writes_typed_and_keeps_serving_reads(
     record = instance.decommission(reason="superseded by a fresh host", decommissioned_by="owner")
 
     assert instance.is_decommissioned
-    with pytest.raises(PlaybillInstanceDecommissioned) as refused:
+    with pytest.raises(InstanceDecommissioned) as refused:
         _submit(instance)
     assert refused.value.error_code == "playbill.instance.decommissioned"
     assert refused.value.reason == "superseded by a fresh host"
@@ -118,7 +118,7 @@ def test_a_decommissioned_instance_refuses_writes_typed_and_keeps_serving_reads(
 
     status = service_playbill_next(
         instance,
-        request=PlaybillNextRequestV1(
+        request=NextRequestV1(
             evaluation_time=EVALUATION_TIME,
             access_profile=CoverageAccessProfile(profile_id="decommission-test"),
         ),
@@ -140,7 +140,7 @@ def test_the_terminal_state_survives_a_restart_and_deletes_nothing(tmp_path: Pat
     assert reopened.is_decommissioned
     assert reopened.descriptor.decommissioned is not None
     assert reopened.descriptor.decommissioned.reason == "retired dogfood host"
-    with pytest.raises(PlaybillInstanceDecommissioned):
+    with pytest.raises(InstanceDecommissioned):
         reopened.store_document_body(b"anything")
     # Nothing was deleted: every path that existed before still exists.
     after = sorted(str(path.relative_to(instance.root)) for path in instance.root.rglob("*"))
@@ -154,7 +154,7 @@ def test_decommissioning_twice_is_refused_rather_than_silently_restamped(
     instance, _owner = initialize_local(tmp_path)
     instance.decommission(reason="first", decommissioned_by="owner")
 
-    with pytest.raises(PlaybillInstanceDecommissioned):
+    with pytest.raises(InstanceDecommissioned):
         instance.decommission(reason="second", decommissioned_by="owner")
 
     payload = json.loads((instance.root / DESCRIPTOR_FILE).read_bytes())
@@ -399,7 +399,7 @@ def test_every_governed_write_door_refuses_a_decommissioned_instance(
     instance.decommission(reason="write plane closed", decommissioned_by="owner")
 
     _name, call = door
-    with pytest.raises(PlaybillInstanceDecommissioned) as refused:
+    with pytest.raises(InstanceDecommissioned) as refused:
         call(instance)  # type: ignore[operator]
     assert refused.value.error_code == "playbill.instance.decommissioned"
 
@@ -413,7 +413,7 @@ def test_a_second_open_handle_cannot_restamp_the_terminal_state(tmp_path: Path) 
     instance.decommission(reason="first", decommissioned_by="owner")
     assert second.descriptor.decommissioned is None  # the stale handle still believes it is live
 
-    with pytest.raises(PlaybillInstanceDecommissioned) as refused:
+    with pytest.raises(InstanceDecommissioned) as refused:
         second.decommission(reason="second", decommissioned_by="owner")
     assert refused.value.reason == "first"
 
@@ -440,7 +440,7 @@ def test_a_hostile_reason_is_refused_rather_than_rendered(tmp_path: Path) -> Non
 
     # A reason that arrives from an older daemon over the wire is escaped where
     # the refusal prose is built, so it cannot forge a line of daemon output.
-    refusal = PlaybillInstanceDecommissioned(
+    refusal = InstanceDecommissioned(
         instance_id="inst_probe",
         reason="retired\nError: forged",
         decommissioned_at=TIMESTAMP,

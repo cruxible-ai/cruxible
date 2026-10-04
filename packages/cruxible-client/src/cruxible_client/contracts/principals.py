@@ -43,7 +43,7 @@ AuthoringRefusalCode = Literal[
 ]
 
 
-class PlaybillAuthoringRefusal(BaseModel):
+class AuthoringRefusal(BaseModel):
     """Why this actor cannot author, and the runnable repair."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)

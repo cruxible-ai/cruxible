@@ -12,7 +12,7 @@ from cruxible_client import contracts
 from cruxible_core.cli.main import cli
 from cruxible_core.coverage.middleware import CoverageWorkspaceConfigV2
 
-COORDINATE = contracts.PlaybillAcceptedCoordinate(
+COORDINATE = contracts.AcceptedCoordinate(
     git_oid="1" * 64,
     semantic_root="sha256:" + "2" * 64,
     generation_root="sha256:" + "3" * 64,
@@ -24,16 +24,16 @@ def test_cli_allocates_and_remembers_a_playbill_host(monkeypatch, tmp_path) -> N
     monkeypatch.chdir(tmp_path)
 
     class StubClient:
-        def create_playbill_host(
+        def create_host(
             self,
             *,
             instance_id: str | None = None,
             workspace_root: str | None = None,
             dry_run: bool | None = None,
             at: str | None = None,
-        ) -> contracts.PlaybillHostResult:
+        ) -> contracts.HostResult:
             assert instance_id == "inst_cli_host"
-            return contracts.PlaybillHostResult(instance_id=instance_id, status="created")
+            return contracts.HostResult(instance_id=instance_id, status="created")
 
     context_path = tmp_path / "context.json"
     monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(context_path))
@@ -64,7 +64,7 @@ def test_cli_init_remembers_the_initialized_instance(monkeypatch, tmp_path) -> N
     monkeypatch.chdir(tmp_path)
 
     class StubClient:
-        def init_playbill(
+        def init(
             self,
             instance_id: str,
             *,
@@ -74,13 +74,13 @@ def test_cli_init_remembers_the_initialized_instance(monkeypatch, tmp_path) -> N
             seed: bool = True,
             git_object_format: str | None = None,
             mirror_url: str | None = None,
-        ) -> contracts.PlaybillInitResult:
+        ) -> contracts.InitResult:
             assert instance_id == "inst_cli_init"
             assert principals[0]["principal_id"] == "operator"
             assert operating_profile == "local"
             assert require_independent_approval is False
             assert seed is True
-            return contracts.PlaybillInitResult(
+            return contracts.InitResult(
                 instance_id=instance_id,
                 coordinate=COORDINATE,
                 trust_root={},
@@ -157,7 +157,7 @@ def test_cli_init_writes_an_explicit_remote_workspace_config(monkeypatch, tmp_pa
     monkeypatch.chdir(tmp_path)
 
     class StubClient:
-        def init_playbill(
+        def init(
             self,
             instance_id: str,
             *,
@@ -168,9 +168,9 @@ def test_cli_init_writes_an_explicit_remote_workspace_config(monkeypatch, tmp_pa
             seed: bool = True,
             git_object_format: str | None = None,
             mirror_url: str | None = None,
-        ) -> contracts.PlaybillInitResult:
+        ) -> contracts.InitResult:
             assert workspace_root is None
-            return contracts.PlaybillInitResult(
+            return contracts.InitResult(
                 instance_id=instance_id,
                 coordinate=COORDINATE,
                 trust_root={},
@@ -227,16 +227,16 @@ def test_unix_socket_host_attach_uses_the_containing_git_worktree(
     calls: list[str | None] = []
 
     class StubClient:
-        def create_playbill_host(
+        def create_host(
             self,
             *,
             instance_id: str | None = None,
             workspace_root: str | None = None,
             dry_run: bool | None = None,
             at: str | None = None,
-        ) -> contracts.PlaybillHostResult:
+        ) -> contracts.HostResult:
             calls.append(workspace_root)
-            return contracts.PlaybillHostResult(instance_id=instance_id or "inst", status="created")
+            return contracts.HostResult(instance_id=instance_id or "inst", status="created")
 
     monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
     monkeypatch.setattr(
@@ -279,16 +279,16 @@ def test_explicit_remote_workspace_config_never_sends_the_client_path(
     )
 
     class StubClient:
-        def create_playbill_host(
+        def create_host(
             self,
             *,
             instance_id: str | None = None,
             workspace_root: str | None = None,
             dry_run: bool | None = None,
             at: str | None = None,
-        ) -> contracts.PlaybillHostResult:
+        ) -> contracts.HostResult:
             assert workspace_root is None
-            return contracts.PlaybillHostResult(instance_id=instance_id or "inst", status="created")
+            return contracts.HostResult(instance_id=instance_id or "inst", status="created")
 
     monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
     monkeypatch.setattr(
@@ -354,11 +354,11 @@ def test_cli_init_needs_an_owner_principal_and_claims_it_on_an_auth_off_daemon(
     claimed: list[object] = []
 
     class StubClient:
-        def init_playbill(self, instance_id: str, **_kwargs: object) -> object:
+        def init(self, instance_id: str, **_kwargs: object) -> object:
             from cruxible_core.cli.commands._common import _root_ctx_obj
 
             claimed.append(_root_ctx_obj().get("principal_id"))
-            return contracts.PlaybillInitResult(
+            return contracts.InitResult(
                 instance_id=instance_id,
                 coordinate=COORDINATE,
                 trust_root={},

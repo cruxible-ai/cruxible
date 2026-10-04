@@ -18,8 +18,8 @@ from cruxible_core.governance.actor_context import TransportCapability
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import (
-    PlaybillAcceptedCoordinate,
-    PlaybillProposalInspection,
+    AcceptedCoordinate,
+    ProposalInspection,
 )
 from cruxible_core.service.proposals.proposal_names import canonical_playbill_proposal_name
 
@@ -32,9 +32,9 @@ def submit_member_candidate(
     proposal_name: str,
     proposal_family: str,
     timestamp: str,
-    base: PlaybillAcceptedCoordinate | None = None,
+    base: AcceptedCoordinate | None = None,
     capabilities: tuple[TransportCapability, ...] = ("propose",),
-) -> PlaybillProposalInspection:
+) -> ProposalInspection:
     """Submit several artifact members as one candidate, closure included."""
 
     proposed_base = (
@@ -59,11 +59,9 @@ def submit_member_candidate(
         candidate_tree=candidate_tree,
         timestamp=timestamp,
     )
-    return PlaybillProposalInspection(
+    return ProposalInspection(
         proposal=result,
-        accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
-            instance.accepted_coordinate()
-        ),
+        accepted_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
     )
 
 
@@ -76,9 +74,9 @@ def _submit_candidate(
     proposal_name: str,
     proposal_family: str,
     timestamp: str,
-    base: PlaybillAcceptedCoordinate | None,
+    base: AcceptedCoordinate | None,
     capabilities: tuple[TransportCapability, ...],
-) -> PlaybillProposalInspection:
+) -> ProposalInspection:
     proposed_base = (
         instance.accepted_coordinate()
         if base is None
@@ -101,11 +99,9 @@ def _submit_candidate(
         candidate_tree=candidate_tree,
         timestamp=timestamp,
     )
-    return PlaybillProposalInspection(
+    return ProposalInspection(
         proposal=result,
-        accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
-            instance.accepted_coordinate()
-        ),
+        accepted_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
     )
 
 
@@ -116,9 +112,9 @@ def submit_subject_candidate(
     actor_id: str,
     proposal_name: str,
     timestamp: str,
-    base: PlaybillAcceptedCoordinate | None = None,
+    base: AcceptedCoordinate | None = None,
     capabilities: tuple[TransportCapability, ...] = ("propose",),
-) -> PlaybillProposalInspection:
+) -> ProposalInspection:
     return _submit_candidate(
         instance,
         path=subject_path(shell.subject_kind, shell.subject_id),
@@ -139,9 +135,9 @@ def submit_query_definition_candidate(
     actor_id: str,
     proposal_name: str,
     timestamp: str,
-    base: PlaybillAcceptedCoordinate | None = None,
+    base: AcceptedCoordinate | None = None,
     capabilities: tuple[TransportCapability, ...] = ("propose",),
-) -> PlaybillProposalInspection:
+) -> ProposalInspection:
     return _submit_candidate(
         instance,
         path=query_definition_path(query.identity.name),

@@ -28,7 +28,7 @@ def _nfc(value: str, *, label: str) -> str:
 
 
 class ArtifactIdentity(_StrictArtifactModel):
-    """Kind-qualified stable identity shared by new Playbill artifact families."""
+    """Kind-qualified stable identity shared by new Cruxible artifact families."""
 
     kind: str
     name: str

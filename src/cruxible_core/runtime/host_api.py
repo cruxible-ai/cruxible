@@ -1,8 +1,8 @@
-"""Minimal daemon-host facade required to reach Playbill.
+"""Minimal daemon-host facade required to reach Cruxible.
 
 Host allocation and transport credentials create no semantic authority. They
 only allocate an opaque daemon-owned storage root and control which endpoints
-a caller may reach; Playbill bootstrap establishes governed state separately.
+a caller may reach; Cruxible bootstrap establishes governed state separately.
 """
 
 from __future__ import annotations
@@ -13,10 +13,10 @@ from pathlib import Path
 from typing import TypedDict
 
 from cruxible_client import contracts
-from cruxible_client.contracts.change_control import PlaybillStateCoordinate
+from cruxible_client.contracts.change_control import StateCoordinate
 from cruxible_client.contracts.errors import (
-    PlaybillObjectFormatConflict,
-    PlaybillReseedRequired,
+    ObjectFormatConflict,
+    ReseedRequired,
 )
 from cruxible_core import __version__
 from cruxible_core.compiler.compiler import (
@@ -53,17 +53,17 @@ class _HostCommon(TypedDict):
 
 
 def _reseed_reason(
-    code: contracts.PlaybillHostCompatibilityReasonCode,
+    code: contracts.HostCompatibilityReasonCode,
     detail: str,
-) -> contracts.PlaybillHostCompatibilityReason:
-    return contracts.PlaybillHostCompatibilityReason(
+) -> contracts.HostCompatibilityReason:
+    return contracts.HostCompatibilityReason(
         code=code,
         detail=detail,
         repair_commands=("cruxible playbill host create",),
     )
 
 
-def _inspect_registered_host(instance_id: str) -> contracts.PlaybillHostInspection:
+def _inspect_registered_host(instance_id: str) -> contracts.HostInspection:
     record = get_registry().get(instance_id)
     if record is None or record.backend != GOVERNED_DAEMON_BACKEND:
         raise ConfigError(
@@ -73,13 +73,13 @@ def _inspect_registered_host(instance_id: str) -> contracts.PlaybillHostInspecti
     try:
         managed_root = get_registry().instance_root(record)
     except InstanceLocationRefusedError as exc:
-        return contracts.PlaybillHostInspection(
+        return contracts.HostInspection(
             instance_id=instance_id,
             managed_root=record.location,
             workspace_root=record.workspace_root,
             compatibility="refused",
             writable=False,
-            reason=contracts.PlaybillHostCompatibilityReason(
+            reason=contracts.HostCompatibilityReason(
                 code="location_outside_state_root",
                 detail=str(exc),
                 repair_commands=("cruxible server start --state-root <the root that holds it>",),
@@ -94,7 +94,7 @@ def _inspect_registered_host(instance_id: str) -> contracts.PlaybillHostInspecti
         "floor_delivery": record.floor_delivery,
     }
     if not managed_root.exists() and not trust_root.exists():
-        return contracts.PlaybillHostInspection(
+        return contracts.HostInspection(
             **common,
             compatibility="uninitialized",
             writable=False,
@@ -102,17 +102,17 @@ def _inspect_registered_host(instance_id: str) -> contracts.PlaybillHostInspecti
     if (legacy_root / "playbill-v1").exists() or (
         legacy_root / "playbill-trust-root-v1.json"
     ).exists():
-        return contracts.PlaybillHostInspection(
+        return contracts.HostInspection(
             **common,
             compatibility="reseed_required",
             writable=False,
             reason=_reseed_reason(
                 "legacy_layout_requires_reseed",
-                "The host uses a retired nested Playbill layout and must be reseeded.",
+                "The host uses a retired nested Cruxible layout and must be reseeded.",
             ),
         )
     if managed_root.exists() != trust_root.exists():
-        return contracts.PlaybillHostInspection(
+        return contracts.HostInspection(
             **common,
             compatibility="reseed_required",
             writable=False,
@@ -125,8 +125,8 @@ def _inspect_registered_host(instance_id: str) -> contracts.PlaybillHostInspecti
         instance = get_playbill_manager().get(instance_id)
         compiler = instance.inspect().compiler
         terminal = instance.descriptor.decommissioned
-    except PlaybillReseedRequired:
-        return contracts.PlaybillHostInspection(
+    except ReseedRequired:
+        return contracts.HostInspection(
             **common,
             compatibility="reseed_required",
             writable=False,
@@ -136,7 +136,7 @@ def _inspect_registered_host(instance_id: str) -> contracts.PlaybillHostInspecti
             ),
         )
     except Exception as exc:
-        return contracts.PlaybillHostInspection(
+        return contracts.HostInspection(
             **common,
             compatibility="reseed_required",
             writable=False,
@@ -149,13 +149,13 @@ def _inspect_registered_host(instance_id: str) -> contracts.PlaybillHostInspecti
     if terminal is not None:
         # Decommissioning is terminal: the host keeps serving reads but no
         # governed write is ever accepted again, whatever its compiler lineage.
-        return contracts.PlaybillHostInspection(
+        return contracts.HostInspection(
             **common,
             compiler_coordinate=compiler.rule_digest,
             compiler_revision=revision,
             compatibility="decommissioned",
             writable=False,
-            reason=contracts.PlaybillHostCompatibilityReason(
+            reason=contracts.HostCompatibilityReason(
                 code="instance_decommissioned",
                 detail=(
                     f"Decommissioned at {terminal.decommissioned_at}: {terminal.reason}. "
@@ -165,7 +165,7 @@ def _inspect_registered_host(instance_id: str) -> contracts.PlaybillHostInspecti
             ),
         )
     writable = compiler in PC_HR_ARTIFACT_CODEC_COMPILERS
-    return contracts.PlaybillHostInspection(
+    return contracts.HostInspection(
         **common,
         compiler_coordinate=compiler.rule_digest,
         compiler_revision=revision,
@@ -182,7 +182,7 @@ def _inspect_registered_host(instance_id: str) -> contracts.PlaybillHostInspecti
     )
 
 
-def show_playbill_host(instance_id: str) -> contracts.PlaybillHostInspection:
+def show_playbill_host(instance_id: str) -> contracts.HostInspection:
     """Inspect one governed host without creating or changing any state."""
 
     check_permission("cruxible_playbill_host_show", instance_id=instance_id)
@@ -201,8 +201,8 @@ def create_playbill_host(
     workspace_attachment_authorized: bool = False,
     dry_run: bool | None = None,
     at: str | None = None,
-) -> contracts.PlaybillHostResult:
-    """Allocate one empty daemon-owned host record for later Playbill bootstrap.
+) -> contracts.HostResult:
+    """Allocate one empty daemon-owned host record for later Cruxible bootstrap.
 
     An existing host named again with a workspace is attached to it, initialized
     or not (`attach_workspace`). ``dry_run`` registers nothing (R12); the
@@ -214,7 +214,7 @@ def create_playbill_host(
         at=at,
         kind="direct",
         operation="playbill.host.create",
-        describe="allocating a Playbill host",
+        describe="allocating a Cruxible host",
     ) as change:
         registry = get_registry()
         selected = (instance_id or "").strip() or registry.generate_governed_instance_id()
@@ -239,7 +239,7 @@ def create_playbill_host(
             if attached is not None and attached.instance_id != selected:
                 raise ConfigError(
                     f"Workspace {str(Path(workspace_root).expanduser().resolve())!r} is already "
-                    f"attached to Playbill host {attached.instance_id!r}; release it with "
+                    f"attached to Cruxible host {attached.instance_id!r}; release it with "
                     f"`cruxible playbill workspace detach --instance-id {attached.instance_id}` "
                     f"or choose another Git worktree before creating {selected!r}"
                 )
@@ -254,7 +254,7 @@ def create_playbill_host(
                 # The host's row is checked where the attach writes it, inside
                 # the attaching transaction, not read beforehand.
                 attach_workspace(selected, workspace_root, observe_host=change.observe)
-            return contracts.PlaybillHostResult(
+            return contracts.HostResult(
                 instance_id=selected, status="already_exists", coordinate=change.coordinate
             )
         # Validation is shared: the preview answers from the same prepared row
@@ -262,18 +262,18 @@ def create_playbill_host(
         prepared = registry.prepare_governed_instance(selected, workspace_root=workspace_root)
         if change.previewing:
             change.observe(registry.host_state(selected))
-            return contracts.PlaybillHostResult(
+            return contracts.HostResult(
                 instance_id=selected, status="would_create", coordinate=change.coordinate
             )
         registered = registry.create_governed_instance(prepared, observe=change.observe)
     if registered.record.instance_id != selected:
         raise ConfigError(
-            f"Workspace {registered.record.workspace_root!r} is already attached to Playbill "
+            f"Workspace {registered.record.workspace_root!r} is already attached to Cruxible "
             f"host {registered.record.instance_id!r}; release it with `cruxible playbill "
             f"workspace detach --instance-id {registered.record.instance_id}` or choose "
             f"another Git worktree before creating {selected!r}"
         )
-    return contracts.PlaybillHostResult(
+    return contracts.HostResult(
         instance_id=selected,
         status="created" if registered.created else "already_exists",
         coordinate=change.coordinate,
@@ -284,7 +284,7 @@ def playbill_host_workspace_registration(
     instance_id: str,
     *,
     expose_workspace_path: bool = False,
-) -> contracts.PlaybillHostWorkspaceRegistration:
+) -> contracts.HostWorkspaceRegistration:
     """Report daemon registration separately from client workspace configuration."""
 
     check_permission(
@@ -294,7 +294,7 @@ def playbill_host_workspace_registration(
     record = get_registry().get(instance_id)
     if record is None or record.backend != GOVERNED_DAEMON_BACKEND:
         raise ConfigError(f"Instance '{instance_id}' is not a governed daemon host")
-    return contracts.PlaybillHostWorkspaceRegistration(
+    return contracts.HostWorkspaceRegistration(
         instance_id=instance_id,
         status="registered" if record.workspace_root is not None else "not_registered",
         floor_delivery=record.floor_delivery,
@@ -310,8 +310,8 @@ def attach_workspace(
     instance_id: str,
     workspace_root: str,
     *,
-    observe: Callable[[PlaybillStateCoordinate], None] | None = None,
-    observe_host: Callable[[PlaybillStateCoordinate], None] | None = None,
+    observe: Callable[[StateCoordinate], None] | None = None,
+    observe_host: Callable[[StateCoordinate], None] | None = None,
 ) -> bool:
     """Attach one host to a Git worktree, before or after its init; True when newly.
 
@@ -335,7 +335,7 @@ def attach_workspace(
     other = registry.get_governed_instance_by_workspace_root(resolved)
     if other is not None and other.instance_id != instance_id:
         raise ConfigError(
-            f"Workspace {str(resolved)!r} is already attached to Playbill host "
+            f"Workspace {str(resolved)!r} is already attached to Cruxible host "
             f"{other.instance_id!r}; release it with `cruxible playbill workspace detach "
             f"--instance-id {other.instance_id}` first"
         )
@@ -348,7 +348,7 @@ def attach_workspace(
                 observe_host(registry.host_state(instance_id))
             return False
         raise ConfigError(
-            f"Playbill host {instance_id!r} is attached to {record.workspace_root}; release "
+            f"Cruxible host {instance_id!r} is attached to {record.workspace_root}; release "
             f"it with `cruxible playbill workspace detach --instance-id {instance_id}` first"
         )
     instance = get_playbill_manager().initialized(instance_id)
@@ -361,8 +361,8 @@ def attach_workspace(
             )
         ledger_format = instance.descriptor.git_object_format
         if workspace_format != ledger_format:
-            raise PlaybillObjectFormatConflict(
-                f"{PlaybillObjectFormatConflict.error_code}: host {instance_id!r} keeps a "
+            raise ObjectFormatConflict(
+                f"{ObjectFormatConflict.error_code}: host {instance_id!r} keeps a "
                 f"{ledger_format} ledger and the worktree is {workspace_format}; repair: "
                 f"attach a worktree in {ledger_format}",
                 workspace_format=workspace_format,
@@ -387,7 +387,7 @@ def playbill_host_workspace_attach(
     workspace_attachment_authorized: bool = False,
     dry_run: bool | None = None,
     at: str | None = None,
-) -> contracts.PlaybillHostWorkspaceAttachResult:
+) -> contracts.HostWorkspaceAttachResult:
     """Attach a host to a Git worktree, including a host already initialized (Q16).
 
     Local-socket callers only, as for detaching: the daemon must be able to see
@@ -411,7 +411,7 @@ def playbill_host_workspace_attach(
         # Opened behind the preview's guards: a cold open may not repair on disk.
         instance = get_playbill_manager().initialized(instance_id)
         attached = attach_workspace(instance_id, workspace_root, observe=change.observe)
-    return contracts.PlaybillHostWorkspaceAttachResult(
+    return contracts.HostWorkspaceAttachResult(
         instance_id=instance_id,
         status=(
             "already_attached"
@@ -431,7 +431,7 @@ def set_playbill_floor_delivery(
     *,
     enabled: bool,
     workspace_attachment_authorized: bool = False,
-) -> contracts.PlaybillHostWorkspaceRegistration:
+) -> contracts.HostWorkspaceRegistration:
     """Opt a local workspace into its daemon's sole floor writer."""
 
     with FLOOR_ADMISSION.hold(instance_id):
@@ -447,7 +447,7 @@ def _set_playbill_floor_delivery_admitted(
     *,
     enabled: bool,
     workspace_attachment_authorized: bool = False,
-) -> contracts.PlaybillHostWorkspaceRegistration:
+) -> contracts.HostWorkspaceRegistration:
     """Set delivery with floor admission already held by the caller."""
 
     check_permission("cruxible_playbill_workspace_floor_delivery", instance_id=instance_id)
@@ -460,10 +460,10 @@ def _set_playbill_floor_delivery_admitted(
 def deliver_playbill_floor_now(
     instance_id: str,
     *,
-    include: tuple[contracts.PlaybillFloorExportPart, ...] = (),
-    at: contracts.PlaybillAcceptedCoordinate | None = None,
+    include: tuple[contracts.FloorExportPart, ...] = (),
+    at: contracts.AcceptedCoordinate | None = None,
     workspace_attachment_authorized: bool = False,
-) -> contracts.PlaybillFloorDeliveryResult:
+) -> contracts.FloorDeliveryResult:
     """Synchronously run the same floor delivery that follows Trigger fires."""
 
     with FLOOR_ADMISSION.hold(instance_id):
@@ -478,10 +478,10 @@ def deliver_playbill_floor_now(
 def _deliver_playbill_floor_now_admitted(
     instance_id: str,
     *,
-    include: tuple[contracts.PlaybillFloorExportPart, ...] = (),
-    at: contracts.PlaybillAcceptedCoordinate | None = None,
+    include: tuple[contracts.FloorExportPart, ...] = (),
+    at: contracts.AcceptedCoordinate | None = None,
     workspace_attachment_authorized: bool = False,
-) -> contracts.PlaybillFloorDeliveryResult:
+) -> contracts.FloorDeliveryResult:
     """Deliver with floor admission already held by the caller."""
 
     check_permission("cruxible_playbill_floor_deliver_now", instance_id=instance_id)
@@ -506,7 +506,7 @@ def playbill_host_workspace_detach(
     workspace_attachment_authorized: bool = False,
     dry_run: bool | None = None,
     at: str | None = None,
-) -> contracts.PlaybillWorkspaceDetachResult:
+) -> contracts.WorkspaceDetachResult:
     """Release a workspace under floor admission from a thread caller."""
 
     with FLOOR_ADMISSION.hold(instance_id):
@@ -524,7 +524,7 @@ def _playbill_host_workspace_detach_admitted(
     workspace_attachment_authorized: bool = False,
     dry_run: bool | None = None,
     at: str | None = None,
-) -> contracts.PlaybillWorkspaceDetachResult:
+) -> contracts.WorkspaceDetachResult:
     """Release one governed host from the Git worktree it is attached to.
 
     The exclusivity is a UNIQUE index on `(backend, workspace_root)` in the
@@ -569,14 +569,14 @@ def _playbill_host_workspace_detach_admitted(
         if record is None or record.backend != GOVERNED_DAEMON_BACKEND:
             raise ConfigError(f"Instance '{instance_id}' is not a governed daemon host")
         if record.workspace_root is None:
-            return contracts.PlaybillWorkspaceDetachResult(
+            return contracts.WorkspaceDetachResult(
                 instance_id=instance_id,
                 status="not_registered",
             )
         _refuse_detach_with_registered_blocks(instance_id)
         if change.previewing:
             change.observe(registry.workspace_state(instance_id))
-            return contracts.PlaybillWorkspaceDetachResult(
+            return contracts.WorkspaceDetachResult(
                 instance_id=instance_id,
                 status="would_detach",
                 workspace_root=record.workspace_root,
@@ -588,7 +588,7 @@ def _playbill_host_workspace_detach_admitted(
             observe=change.observe,
         )
     assert detached.workspace_root is None
-    return contracts.PlaybillWorkspaceDetachResult(
+    return contracts.WorkspaceDetachResult(
         instance_id=instance_id,
         status="detached",
         workspace_root=record.workspace_root,
@@ -605,7 +605,7 @@ def _refuse_detach_with_registered_blocks(instance_id: str) -> None:
     publication road minted, and it was invisible here because it carried no
     `pub-` prefix.
 
-    The one failure this reads as "registered nothing" is Playbill never having
+    The one failure this reads as "registered nothing" is Cruxible never having
     been initialized under the host: there is no ledger, so there is no
     registration, so a detachment strands nothing. Every OTHER way of failing to
     open the host means the registrations could not be READ, and reading an
@@ -614,18 +614,18 @@ def _refuse_detach_with_registered_blocks(instance_id: str) -> None:
     say which host could not be opened.
     """
 
-    from cruxible_client.contracts.errors import PlaybillBootstrapError, PlaybillError
+    from cruxible_client.contracts.errors import BootstrapError, CruxibleError
     from cruxible_core.service.proposals.publications import registered_projection_blocks
 
     try:
         instance = get_playbill_manager().get(instance_id)
-    except PlaybillObjectFormatConflict as exc:
+    except ObjectFormatConflict as exc:
         # A bootstrap error by inheritance, but it means the host is THERE and
         # unreadable, not absent.
         raise _detach_cannot_read_host(instance_id, exc) from exc
-    except PlaybillBootstrapError:
+    except BootstrapError:
         return
-    except (ConfigError, PlaybillError) as exc:
+    except (ConfigError, CruxibleError) as exc:
         raise _detach_cannot_read_host(instance_id, exc) from exc
     registrations = registered_projection_blocks(instance)
     if registrations is None:
@@ -640,7 +640,7 @@ def _refuse_detach_with_registered_blocks(instance_id: str) -> None:
     if len(pairs) > 5:
         named = f"{named}, and {len(pairs) - 5} more"
     raise ConfigError(
-        f"Playbill host {instance_id!r} still registers {len(registrations)} governed "
+        f"Cruxible host {instance_id!r} still registers {len(registrations)} governed "
         f"block(s) in this workspace ({named}); detaching would leave markers no host "
         "owns. Repair: run `cruxible playbill block depublish <source> <block>` for each, "
         "or retire their backing Claims, then detach"
@@ -649,7 +649,7 @@ def _refuse_detach_with_registered_blocks(instance_id: str) -> None:
 
 def _detach_cannot_read_host(instance_id: str, exc: Exception) -> ConfigError:
     return ConfigError(
-        f"Playbill host {instance_id!r} could not be opened, so the blocks it published "
+        f"Cruxible host {instance_id!r} could not be opened, so the blocks it published "
         f"cannot be read and a detachment cannot be shown to strand nothing ({exc}). "
         "Repair: make the host readable, then detach"
     )

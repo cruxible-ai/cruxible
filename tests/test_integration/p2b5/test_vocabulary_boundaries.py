@@ -8,9 +8,9 @@ import pytest
 
 import cruxible_core.procedures.execution as execution_module
 from cruxible_client.contracts.errors import (
-    PlaybillJournalConflictError,
-    PlaybillJournalError,
-    PlaybillJournalIntegrityError,
+    JournalConflictError,
+    JournalError,
+    JournalIntegrityError,
 )
 from cruxible_core.exhaust import parse_journal_payload
 from cruxible_core.procedures.execution import (
@@ -132,15 +132,15 @@ def test_not_current_is_a_public_refusal_instead_of_generic_failure(tmp_path) ->
 @pytest.mark.parametrize(
     ("raised", "expected"),
     (
-        (PlaybillJournalError, "journal_append_failed"),
-        (PlaybillJournalConflictError, "journal_conflict"),
-        (PlaybillJournalIntegrityError, "journal_integrity_error"),
+        (JournalError, "journal_append_failed"),
+        (JournalConflictError, "journal_conflict"),
+        (JournalIntegrityError, "journal_integrity_error"),
     ),
 )
 def test_public_executor_classifies_journal_boundary_failures(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
-    raised: type[PlaybillJournalError],
+    raised: type[JournalError],
     expected: str,
 ) -> None:  # type: ignore[no-untyped-def]
     """Classification reads the exception class, never the message prose.

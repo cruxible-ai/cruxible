@@ -12,7 +12,7 @@ from cruxible_client.contracts.claims import (
     claim_citation_references,
     parse_claim,
 )
-from cruxible_client.contracts.errors import PlaybillError, ProjectionFormatError
+from cruxible_client.contracts.errors import CruxibleError, ProjectionFormatError
 from cruxible_client.contracts.projection_extensions import ProjectionFact
 from cruxible_client.contracts.source_references import ExternalSourceReference
 from cruxible_core.evidence.citation_relations import (
@@ -55,7 +55,7 @@ def _claim_uses(
                     envelope = parse_capture_envelope(
                         bodies.read(citation.capture_digest, access=_ACCESS)
                     )
-                except PlaybillError as exc:  # pragma: no cover - accepted-tree invariant
+                except CruxibleError as exc:  # pragma: no cover - accepted-tree invariant
                     raise ProjectionFormatError(
                         "citation relation could not read an accepted Capture"
                     ) from exc

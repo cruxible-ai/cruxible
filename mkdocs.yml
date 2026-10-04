@@ -6,7 +6,7 @@
 site_name: Cruxible Docs
 site_url: https://docs.cruxible.ai
 site_description: >-
-  Documentation for the Cruxible Playbill development core: governed semantic
+  Documentation for the Cruxible development core: governed semantic
   state, exact provenance, signed review, and reproducible accepted generations.
 repo_url: https://github.com/cruxible-ai/cruxible
 repo_name: cruxible-ai/cruxible

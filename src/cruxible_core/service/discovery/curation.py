@@ -10,15 +10,15 @@ from typing import Literal, TypeAlias, cast
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from cruxible_client.contracts import (
-    PLAYBILL_CURATION_LIST_DEFAULT_LIMIT,
-    PLAYBILL_CURATION_LIST_MAX_LIMIT,
+    CURATION_LIST_DEFAULT_LIMIT,
+    CURATION_LIST_MAX_LIMIT,
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity, parse_artifact_identity
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.change_control import DryRun, PreviewAt
 from cruxible_client.contracts.declared_blocks import ProjectionMarkerSummary
 from cruxible_client.contracts.documents import document_path, parse_document
-from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_client.contracts.validation_messages import validation_summary
@@ -48,14 +48,14 @@ from cruxible_core.proposals.settlement import ChangeSetRecordAnyVersion
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.change_preview import change_entry, change_scope
 from cruxible_core.service.discovery.next import (
-    PlaybillNextAccessProfileInvalid,
-    PlaybillNextSourceObservationV3,
-    PlaybillNextWorkspaceObservation,
-    PlaybillNextWorkspaceObservationInvalid,
+    NextAccessProfileInvalid,
+    NextSourceObservationV3,
+    NextWorkspaceObservation,
+    NextWorkspaceObservationInvalid,
 )
 from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
 from cruxible_core.service.list_pages import (
-    PlaybillListCursorStale,
+    ListCursorStale,
     decode_list_cursor,
     encode_list_cursor,
     list_snapshot,
@@ -75,7 +75,7 @@ PlaybillCurationObservationOmissionReason: TypeAlias = Literal[
 ]
 
 
-class PlaybillCurationError(PlaybillError):
+class CurationError(CruxibleError):
     code = "playbill.curation.refused"
 
     @property
@@ -83,27 +83,27 @@ class PlaybillCurationError(PlaybillError):
         return self.code
 
 
-class PlaybillCurationCoordinateNotAccepted(PlaybillCurationError):
+class CurationCoordinateNotAccepted(CurationError):
     code = "playbill.curation.coordinate_not_accepted"
 
 
-class PlaybillCurationItemNotFound(PlaybillCurationError):
+class CurationItemNotFound(CurationError):
     code = "playbill.curation.item_not_found"
 
 
-class PlaybillCurationItemAlreadyResolved(PlaybillCurationError):
+class CurationItemAlreadyResolved(CurationError):
     code = "playbill.curation.item_already_resolved"
 
 
-class PlaybillCurationSuppressionInvalid(PlaybillCurationError):
+class CurationSuppressionInvalid(CurationError):
     code = "playbill.curation.suppression_invalid"
 
 
-class PlaybillCurationResolvingProposalInvalid(PlaybillCurationError):
+class CurationResolvingProposalInvalid(CurationError):
     code = "playbill.curation.resolving_proposal_invalid"
 
 
-class PlaybillCurationResolvingChangeUnrelated(PlaybillCurationError):
+class CurationResolvingChangeUnrelated(CurationError):
     code = "playbill.curation.resolving_change_unrelated"
 
 
@@ -115,10 +115,8 @@ class PlaybillCurationListRequestV1(_StrictCurationModel):
     tag: Literal["playbill-curation-list-request-v1"] = "playbill-curation-list-request-v1"
     evaluation_time: datetime
     access_profile: CoverageAccessProfile
-    workspace_observation: PlaybillNextWorkspaceObservation | None = None
-    limit: int = Field(
-        default=PLAYBILL_CURATION_LIST_DEFAULT_LIMIT, ge=1, le=PLAYBILL_CURATION_LIST_MAX_LIMIT
-    )
+    workspace_observation: NextWorkspaceObservation | None = None
+    limit: int = Field(default=CURATION_LIST_DEFAULT_LIMIT, ge=1, le=CURATION_LIST_MAX_LIMIT)
     cursor: str | None = Field(default=None, max_length=4096)
 
     @field_validator("evaluation_time")
@@ -137,16 +135,14 @@ def validate_playbill_curation_list_request(
     except ValidationError as exc:
         roots = {str(item["loc"][0]) for item in exc.errors() if item["loc"]}
         if "access_profile" in roots:
-            raise PlaybillNextAccessProfileInvalid(
-                f"{PlaybillNextAccessProfileInvalid.code}: {validation_summary(exc)}"
+            raise NextAccessProfileInvalid(
+                f"{NextAccessProfileInvalid.code}: {validation_summary(exc)}"
             ) from exc
         if "workspace_observation" in roots:
-            raise PlaybillNextWorkspaceObservationInvalid(
-                f"{PlaybillNextWorkspaceObservationInvalid.code}: {validation_summary(exc)}"
+            raise NextWorkspaceObservationInvalid(
+                f"{NextWorkspaceObservationInvalid.code}: {validation_summary(exc)}"
             ) from exc
-        raise PlaybillCurationError(
-            f"{PlaybillCurationError.code}: {validation_summary(exc)}"
-        ) from exc
+        raise CurationError(f"{CurationError.code}: {validation_summary(exc)}") from exc
 
 
 class PlaybillCurationOverruleRequestV1(_StrictCurationModel):
@@ -331,7 +327,7 @@ def block_observation_id(observation: BlockObservationV1) -> str:
 def build_block_observation(
     *,
     document_identity: ArtifactIdentity,
-    source: PlaybillNextSourceObservationV3,
+    source: NextSourceObservationV3,
     marker: ProjectionMarkerSummary,
     scan_coordinate: AcceptedCoordinate,
     scan_generation: int,
@@ -372,7 +368,7 @@ def _generation(instance: PlaybillInstance, coordinate: AcceptedCoordinate) -> i
         item.sequence for item in instance.accepted_history() if item.oid == coordinate.git_oid
     )
     if len(matches) != 1:
-        raise PlaybillCurationCoordinateNotAccepted(
+        raise CurationCoordinateNotAccepted(
             "curation requires the current replay-verified accepted coordinate"
         )
     return matches[0]
@@ -410,7 +406,7 @@ def _record_block_observations(
     if sources is not None:
         for source in sources:
             source_count += 1
-            if not isinstance(source, PlaybillNextSourceObservationV3):
+            if not isinstance(source, NextSourceObservationV3):
                 counts["source_observation_not_v3"] += 1
                 continue
             if not source.scan_complete:
@@ -436,7 +432,7 @@ def _record_block_observations(
                         generation_root=marker.stamp.declared_coordinate.generation_root,
                         compiler_digest=marker.stamp.declared_coordinate.compiler_digest,
                     )
-                except PlaybillError:
+                except CruxibleError:
                     counts["marker_coordinate_unaccepted"] += 1
                     continue
                 block = build_block_observation(
@@ -640,8 +636,8 @@ def service_list_playbill_curation(
         else decode_list_cursor(request.cursor, list_name=_CURATION_LIST, selection=selection)
     )
     if continuation is not None and continuation.coordinate != coordinate.model_dump(mode="json"):
-        raise PlaybillListCursorStale(
-            f"{PlaybillListCursorStale.error_code}: accepted state moved since the "
+        raise ListCursorStale(
+            f"{ListCursorStale.error_code}: accepted state moved since the "
             "cursor's first page; list the curation queue again without a cursor"
         )
     generation = _generation(instance, coordinate)
@@ -871,11 +867,9 @@ def _open_item(
 ) -> CurationItemV1:
     item = next((item for item in _replay_items(instance) if item.item_id == item_id), None)
     if item is None:
-        raise PlaybillCurationItemNotFound(f"curation item does not exist: {item_id}")
+        raise CurationItemNotFound(f"curation item does not exist: {item_id}")
     if item.status != "open" and not (allow_quarantined and item.status == "quarantined"):
-        raise PlaybillCurationItemAlreadyResolved(
-            f"curation item is already {item.status}: {item_id}"
-        )
+        raise CurationItemAlreadyResolved(f"curation item is already {item.status}: {item_id}")
     return item
 
 
@@ -988,7 +982,7 @@ def service_suppress_playbill_curation(
         coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
         generation = _generation(instance, coordinate)
         if request.until_generation is not None and request.until_generation < generation:
-            raise PlaybillCurationSuppressionInvalid(
+            raise CurationSuppressionInvalid(
                 "curation suppression until_generation is already expired"
             )
         payload = build_curation_suppressed(
@@ -1020,12 +1014,12 @@ def _accepted_change(
 ) -> tuple[int, ChangeSetRecordAnyVersion, dict[str, bytes], dict[str, bytes]]:
     try:
         evaluation = instance.proposal_evidence().read_evaluation(proposal_id)
-    except PlaybillError as exc:
-        raise PlaybillCurationResolvingProposalInvalid(
+    except CruxibleError as exc:
+        raise CurationResolvingProposalInvalid(
             "curation resolving proposal has no unique durable evaluation"
         ) from exc
     if evaluation.verdict != "candidate" or evaluation.candidate_digest is None:
-        raise PlaybillCurationResolvingProposalInvalid(
+        raise CurationResolvingProposalInvalid(
             "curation resolving proposal did not produce a candidate"
         )
     history = instance.accepted_history()
@@ -1037,7 +1031,7 @@ def _accepted_change(
         and generation.record.changeset_digest == changeset_digest
     )
     if len(matches) != 1:
-        raise PlaybillCurationResolvingProposalInvalid(
+        raise CurationResolvingProposalInvalid(
             "curation resolving proposal/ChangeSet is not one accepted generation"
         )
     index, generation = matches[0]
@@ -1129,13 +1123,13 @@ def service_accept_fixed_playbill_curation(
         # The item is proposed only after its accepted coordinate is observed; a
         # resolving ChangeSet must therefore postdate, not merely equal, that generation.
         if resolved_generation <= item.first_proposed_generation:
-            raise PlaybillCurationResolvingProposalInvalid(
+            raise CurationResolvingProposalInvalid(
                 "curation resolving generation does not postdate the item"
             )
         affected = _affected_members(record, parent_tree=parent_tree, candidate_tree=candidate_tree)
         related = _related_paths(item, tree=parent_tree) | _related_paths(item, tree=candidate_tree)
         if not any(member.path in related for member in affected):
-            raise PlaybillCurationResolvingChangeUnrelated(
+            raise CurationResolvingChangeUnrelated(
                 "accepted ChangeSet does not intersect the curation subject or evidence"
             )
         coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
@@ -1170,17 +1164,17 @@ __all__ = [
     "PlaybillCurationObservationOmissionReason",
     "PlaybillCurationAcceptFixedRequestV1",
     "PlaybillCurationActionResultV1",
-    "PlaybillCurationError",
-    "PlaybillCurationItemAlreadyResolved",
-    "PlaybillCurationItemNotFound",
+    "CurationError",
+    "CurationItemAlreadyResolved",
+    "CurationItemNotFound",
     "PlaybillCurationListRequestV1",
     "PlaybillCurationListResultV1",
     "PlaybillCurationObservationCoverageV1",
     "PlaybillCurationOverruleRequestV1",
-    "PlaybillCurationResolvingChangeUnrelated",
-    "PlaybillCurationResolvingProposalInvalid",
+    "CurationResolvingChangeUnrelated",
+    "CurationResolvingProposalInvalid",
     "PlaybillCurationSuppressRequestV1",
-    "PlaybillCurationSuppressionInvalid",
+    "CurationSuppressionInvalid",
     "block_observation_id",
     "build_block_observation",
     "curation_list_result_digest",

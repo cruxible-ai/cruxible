@@ -31,7 +31,7 @@ from cruxible_client.contracts.claims import (
     parse_claim,
     render_claim,
 )
-from cruxible_client.contracts.declared_blocks import PlaybillPresentationPolicyV1
+from cruxible_client.contracts.declared_blocks import PresentationPolicyV1
 from cruxible_client.contracts.proposal_models import ProposalAdmissionRequest
 from cruxible_client.contracts.semantic import ContentSpan, SourceMapping
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
@@ -47,9 +47,9 @@ from cruxible_core.coverage.indexes import (
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.service.discovery.next import (
-    PlaybillNextRequestV1,
-    PlaybillNextSourceObservationV3,
-    PlaybillNextWorkspaceObservation,
+    NextRequestV1,
+    NextSourceObservationV3,
+    NextWorkspaceObservation,
 )
 from tests.core_support._support import initialize_local
 from tests.test_authoring.test_authoring_insertions_v2 import (
@@ -238,7 +238,7 @@ def retire_claim(instance, owner, claim_id: str) -> None:  # type: ignore[no-unt
     )
 
 
-def next_request(instance, *, archival: bool = False) -> PlaybillNextRequestV1:  # type: ignore[no-untyped-def]
+def next_request(instance, *, archival: bool = False) -> NextRequestV1:  # type: ignore[no-untyped-def]
     source = LogicalSourceIdentity(plane="external", identity="repo.work-items")
     commitment = _digest(b"ready")
     occurrence = WorkingOccurrence(
@@ -259,16 +259,16 @@ def next_request(instance, *, archival: bool = False) -> PlaybillNextRequestV1: 
         ),
     )
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    return PlaybillNextRequestV1(
+    return NextRequestV1(
         at=coordinate,
         evaluation_time=NOW,
         access_profile=CoverageAccessProfile(
             profile_id="published-copy-world",
             permitted_access_classes=("instance", "public"),
         ),
-        workspace_observation=PlaybillNextWorkspaceObservation(
+        workspace_observation=NextWorkspaceObservation(
             source_observations=(
-                PlaybillNextSourceObservationV3(
+                NextSourceObservationV3(
                     tag="playbill-next-source-observation-v3",
                     source_id="repo.work-items",
                     observed_source_digest=_digest(b"status: ready"),
@@ -281,7 +281,7 @@ def next_request(instance, *, archival: bool = False) -> PlaybillNextRequestV1: 
                     marker_notes=(),
                 ),
             ),
-            presentation_policy=PlaybillPresentationPolicyV1(
+            presentation_policy=PresentationPolicyV1(
                 archival_source_ids=("repo.work-items",) if archival else ()
             ),
         ),

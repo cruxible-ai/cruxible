@@ -43,8 +43,8 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.laws import (
+    ACCEPTANCE_LAWS,
     CLAIM_LAW_V3_REVISION_7,
-    PLAYBILL_ACCEPTANCE_LAWS,
     AcceptanceLawRegistry,
 )
 from cruxible_client.contracts.procedures.artifacts import render_procedure
@@ -87,7 +87,7 @@ from cruxible_core.service.authoring.documents import (
     service_submit_playbill_approval,
 )
 from cruxible_core.service.claims.claims import _claim_law_evidence
-from cruxible_core.service.discovery.next import PlaybillNextRequestV1, service_playbill_next
+from cruxible_core.service.discovery.next import NextRequestV1, service_playbill_next
 from tests.core_support._adoption_fixture import _query_definition
 from tests.core_support._support import client_material, initialize_local
 from tests.test_authoring.test_authoring_preflight import TIMESTAMP, _seed_claim_surface
@@ -599,7 +599,7 @@ def test_revision_7_claim_candidate_settles_and_reopens_under_its_recorded_law(
     assert tree_oid is not None
     candidate_tree = instance.proposal_tree(tree_oid)
     base = instance.accepted_coordinate()
-    installed = tuple(PLAYBILL_ACCEPTANCE_LAWS._by_coordinate.values())
+    installed = tuple(ACCEPTANCE_LAWS._by_coordinate.values())
     revision_7_registry = AcceptanceLawRegistry(
         tuple(
             replace(law, current=True) if law.coordinate == CLAIM_LAW_V3_REVISION_7 else law
@@ -845,7 +845,7 @@ def _accept_claim_type_only(
 def _next(instance):  # type: ignore[no-untyped-def]
     return service_playbill_next(
         instance,
-        request=PlaybillNextRequestV1(
+        request=NextRequestV1(
             evaluation_time=datetime(2026, 8, 26, 12, tzinfo=UTC),
             access_profile=CoverageAccessProfile(
                 profile_id="migration-test",

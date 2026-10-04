@@ -1,4 +1,4 @@
-"""Narrow structural seams for later Playbill batches."""
+"""Narrow structural seams for later Cruxible batches."""
 
 from __future__ import annotations
 

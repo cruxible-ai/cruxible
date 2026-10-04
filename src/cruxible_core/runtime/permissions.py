@@ -1,8 +1,8 @@
-"""Transport permission ceilings for the Playbill daemon and MCP surface.
+"""Transport permission ceilings for the Cruxible daemon and MCP surface.
 
 The process fixes a ceiling from ``CRUXIBLE_MODE`` at startup. Request
 credentials may narrow it but can never raise it. These tiers control endpoint
-reachability only; Playbill principals and acceptance laws determine semantic
+reachability only; Cruxible principals and acceptance laws determine semantic
 authority.
 
 The names remain ``READ_ONLY``, ``GOVERNED_WRITE``, ``GRAPH_WRITE``, and

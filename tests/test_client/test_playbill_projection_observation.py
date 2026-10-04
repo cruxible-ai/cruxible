@@ -12,9 +12,9 @@ import pytest
 
 from cruxible_client import contracts as api
 from cruxible_client.authoring.workspace import (
-    observe_playbill_next_workspace,
-    observe_playbill_next_workspace_with_coverage,
-    observe_playbill_projection_coverage,
+    observe_next_workspace,
+    observe_next_workspace_with_coverage,
+    observe_projection_coverage,
 )
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.declared_blocks import (
@@ -47,9 +47,7 @@ class _CoverageClient:
         self.needle = needle
         self.calls: list[dict[str, Any]] = []
 
-    def resolve_playbill_coverage(
-        self, instance_id: str, **values: Any
-    ) -> api.PlaybillCoverageResult:
+    def resolve_coverage(self, instance_id: str, **values: Any) -> api.CoverageResult:
         assert instance_id == "inst_projection"
         self.calls.append(values)
         (observation,) = values["observations"]
@@ -135,7 +133,7 @@ class _CoverageClient:
             card["match_state"] = "candidate"
             span["commitment_scan_proofs"] = []
 
-        return api.PlaybillCoverageResult(
+        return api.CoverageResult(
             coordinate=COORDINATE,
             result={"at": coordinate, "access_profile": profile, "spans": [span]},
         )
@@ -146,8 +144,8 @@ def _observe(
     root: Path,
     *,
     profile: Mapping[str, Any] = PROFILE,
-) -> tuple[dict[str, object], api.PlaybillAcceptedCoordinate | None]:
-    return observe_playbill_next_workspace_with_coverage(
+) -> tuple[dict[str, object], api.AcceptedCoordinate | None]:
+    return observe_next_workspace_with_coverage(
         client,
         "inst_projection",
         root,
@@ -161,7 +159,7 @@ def test_one_coordinate_pinned_coverage_read_enriches_existing_v1_without_replac
 ) -> None:
     _workspace(tmp_path)
     _repin(_RepinClient(), tmp_path, claims=("CLM-first",))
-    old = observe_playbill_next_workspace(tmp_path)
+    old = observe_next_workspace(tmp_path)
     client = _CoverageClient()
 
     enriched, coordinate = _observe(client, tmp_path)
@@ -312,7 +310,7 @@ def test_projection_coverage_combines_claim_markers_and_procedure_catalog(
         encoding="utf-8",
     )
 
-    observed = observe_playbill_projection_coverage(tmp_path, coordinate=COORDINATE)
+    observed = observe_projection_coverage(tmp_path, coordinate=COORDINATE)
 
     assert observed is not None
     assert observed["coordinate"] == COORDINATE.model_dump(mode="json")
@@ -341,7 +339,7 @@ def test_malformed_claim_markers_never_assert_claim_absence_but_leave_catalog_co
         encoding="utf-8",
     )
 
-    observed = observe_playbill_projection_coverage(tmp_path, coordinate=COORDINATE)
+    observed = observe_projection_coverage(tmp_path, coordinate=COORDINATE)
 
     assert observed is not None
     assert observed["complete_kinds"] == ["Procedure"]

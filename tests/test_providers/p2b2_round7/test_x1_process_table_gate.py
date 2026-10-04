@@ -11,7 +11,7 @@ import pytest
 
 import cruxible_core.providers.provider_local_runtime as runtime_module
 import cruxible_core.service.procedures.procedure_runs as procedure_run_service
-from cruxible_client.contracts.errors import PlaybillExecutionError
+from cruxible_client.contracts.errors import ExecutionError
 from cruxible_core.exhaust import parse_journal_payload
 from cruxible_core.procedures.execution import ProcedureExecutor
 from cruxible_core.providers.provider_classifiers import ProviderBucketClassifierRegistry
@@ -144,7 +144,7 @@ def test_a_retained_pre_execution_refusal_folds_on_the_next_manager_recovery(
         provider_runtime_invoker=_CrashingInvoker(),
         provider_classifier_registry=classifiers,
     )
-    with pytest.raises(PlaybillExecutionError, match="provider_completion_not_durable"):
+    with pytest.raises(ExecutionError, match="provider_completion_not_durable"):
         executor.execute(prepared, accepted)
     records = fixture.journal.all_records(
         prepared.admission.journal_stream,

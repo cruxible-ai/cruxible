@@ -23,7 +23,7 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.models import ProcedureHardCaps
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 _MANDATE_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 
 
-class ProcedureMandateError(PlaybillFormatError):
+class ProcedureMandateError(FormatError):
     """A ProcedureMandate is malformed or cannot authorize an invocation."""
 
 

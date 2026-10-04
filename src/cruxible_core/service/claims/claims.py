@@ -1,4 +1,4 @@
-"""Canonical service contract for first-class Playbill Claims."""
+"""Canonical service contract for first-class Cruxible Claims."""
 
 from __future__ import annotations
 
@@ -79,7 +79,6 @@ from cruxible_core.query.dereference import (
     dereference_source_handle,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.claims.retirement_context import (
     ClaimRetirementContextV1,
     claim_retirement_context,
@@ -98,7 +97,7 @@ class _StrictClaimServiceModel(BaseModel):
 class PlaybillClaimView(_StrictClaimServiceModel):
     tag: Literal["playbill-claim-read-v1"] = "playbill-claim-read-v1"
     coordinate_kind: Literal["canonical"] = "canonical"
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     envelope: dict[str, object]
     facts: tuple[dict[str, object], ...]
 
@@ -130,7 +129,7 @@ class CaptureAdmissionAccountV1(_StrictClaimServiceModel):
 class ClaimViewRecord(_StrictClaimServiceModel):
     tag: Literal["playbill-claim-read-v2"] = "playbill-claim-read-v2"
     coordinate_kind: Literal["canonical"] = "canonical"
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     envelope: dict[str, object]
     facts: tuple[dict[str, object], ...]
     admission_evaluation_time: datetime
@@ -154,7 +153,7 @@ class ClaimViewRecord(_StrictClaimServiceModel):
 
 class PlaybillClaimList(_StrictClaimServiceModel):
     tag: Literal["playbill-claim-list-v1"] = "playbill-claim-list-v1"
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     claims: tuple[PlaybillClaimView, ...]
 
 
@@ -174,7 +173,7 @@ class PlaybillClaimGroupResolution:
 
 class PlaybillClaimHistoryEntry(_StrictClaimServiceModel):
     sequence: int
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     statement_digest: str
     artifact_digest: str
     predecessor_digest: str | None
@@ -192,7 +191,7 @@ class PlaybillClaimHistory(_StrictClaimServiceModel):
 
 class PlaybillClaimExplanationV2(_StrictClaimServiceModel):
     tag: Literal["playbill-claim-explanation-v2"] = "playbill-claim-explanation-v2"
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     evaluation_time: datetime
     claim: PlaybillClaimView
     law_evidence: ClaimLawEvidenceV1
@@ -236,7 +235,7 @@ class ClaimEvidenceFreshnessLineV1(_StrictClaimServiceModel):
 
 class PlaybillClaimExplanationV3(_StrictClaimServiceModel):
     tag: Literal["playbill-claim-explanation-v3"] = "playbill-claim-explanation-v3"
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     evaluation_time: datetime
     claim: PlaybillClaimView
     law_evidence: ClaimLawEvidenceAny
@@ -255,7 +254,7 @@ class PlaybillClaimExplanationV3(_StrictClaimServiceModel):
 
 def _resolve_coordinate(
     instance: PlaybillInstance,
-    at: PlaybillAcceptedCoordinate | None,
+    at: AcceptedCoordinate | None,
 ) -> AcceptedProjectionCoordinate:
     if at is None:
         return instance.accepted_coordinate()
@@ -273,7 +272,7 @@ def _public_claim(view: ClaimProjectionView) -> PlaybillClaimView:
     ):
         raise ProposalIntegrityError("canonical Claim service received a provisional view")
     return PlaybillClaimView(
-        coordinate=PlaybillAcceptedCoordinate.from_internal(view.coordinate),
+        coordinate=AcceptedCoordinate.from_internal(view.coordinate),
         envelope=view.envelope.model_dump(mode="json"),
         facts=tuple(fact.model_dump(mode="json") for fact in view.facts),
     )
@@ -399,7 +398,7 @@ def service_get_playbill_claim(
     instance: PlaybillInstance,
     *,
     identity: str,
-    at: PlaybillAcceptedCoordinate | None = None,
+    at: AcceptedCoordinate | None = None,
     evaluation_time: datetime | None = None,
 ) -> ClaimViewRecord:
     expected = "Claim:CLM-<32 lowercase hex> or CLM-<32 lowercase hex>"
@@ -476,7 +475,7 @@ def materialize_playbill_claim_view(
 def service_list_playbill_claims(
     instance: PlaybillInstance,
     *,
-    at: PlaybillAcceptedCoordinate | None = None,
+    at: AcceptedCoordinate | None = None,
     subject: SemanticAddress | None = None,
     predicate: str | None = None,
     include_retired: bool = False,
@@ -494,7 +493,7 @@ def service_list_playbill_claims(
             )
         )
     return PlaybillClaimList(
-        coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
+        coordinate=AcceptedCoordinate.from_internal(coordinate),
         claims=claims,
     )
 
@@ -719,7 +718,7 @@ def resolve_playbill_claim_group(
             raise ClaimNotFoundError(f"ClaimType:{predicate}") from exc
     contenders: list[ResolutionContender] = []
     verdicts: list[ClaimVerdictResultAny] = []
-    public_coordinate = PlaybillAcceptedCoordinate.from_internal(coordinate)
+    public_coordinate = AcceptedCoordinate.from_internal(coordinate)
     for claim in claims:
         shared = (
             None
@@ -808,7 +807,7 @@ def service_playbill_claim_history(
             entries.append(
                 PlaybillClaimHistoryEntry(
                     sequence=generation.sequence,
-                    coordinate=PlaybillAcceptedCoordinate(
+                    coordinate=AcceptedCoordinate(
                         git_oid=generation.git_oid,
                         semantic_root=generation.semantic_root,
                         generation_root=generation.generation_root,
@@ -832,7 +831,7 @@ def service_explain_playbill_claim(
     instance: PlaybillInstance,
     *,
     identity: str,
-    at: PlaybillAcceptedCoordinate | None = None,
+    at: AcceptedCoordinate | None = None,
     evaluation_time: datetime | None = None,
 ) -> PlaybillClaimExplanationV2 | PlaybillClaimExplanationV3:
     from cruxible_core.service.evidence.evidence import (
@@ -846,7 +845,7 @@ def service_explain_playbill_claim(
     read = service_get_playbill_claim(
         instance,
         identity=identity,
-        at=PlaybillAcceptedCoordinate.from_internal(coordinate),
+        at=AcceptedCoordinate.from_internal(coordinate),
         evaluation_time=evaluated_at,
     )
     view = PlaybillClaimView(
@@ -864,7 +863,7 @@ def service_explain_playbill_claim(
         instance,
         claim_identity=claim.identity.qualified,
         evaluation_time=evaluated_at,
-        at=PlaybillAcceptedCoordinate.from_internal(coordinate),
+        at=AcceptedCoordinate.from_internal(coordinate),
     )
     handles: list[SourceHandle] = []
     capture_context: dict[str, tuple[tuple[str, ...], str, str]] = {}
@@ -892,7 +891,7 @@ def service_explain_playbill_claim(
         handles.append(
             SourceHandle(
                 subject=claim_statement_address(claim_path(claim.identity.name)),
-                at=PlaybillAcceptedCoordinate.from_internal(coordinate),
+                at=AcceptedCoordinate.from_internal(coordinate),
                 source=envelope.source,
                 commitment=envelope.commitment,
                 media_type=(
@@ -920,7 +919,7 @@ def service_explain_playbill_claim(
             contract.contract.identity.qualified,
             logical_source,
         )
-    public_coordinate = PlaybillAcceptedCoordinate.from_internal(coordinate)
+    public_coordinate = AcceptedCoordinate.from_internal(coordinate)
     retirement_context = claim_retirement_context(
         instance,
         coordinate=coordinate,
@@ -1046,7 +1045,7 @@ def service_open_playbill_source(
     *,
     request: OpenSourceRequest,
     access: BodyAccessContext,
-    at: PlaybillAcceptedCoordinate | None = None,
+    at: AcceptedCoordinate | None = None,
     external_reader: ExternalSelectionReaderProtocol | None = None,
 ) -> SourceDereferenceResult:
     """Dereference only the coordinate-bound handle; never mutate or refresh a source.

@@ -14,7 +14,7 @@ from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import reset_runtime_credential_store
 from cruxible_core.server.registry import get_registry, reset_registry
-from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+from cruxible_core.service.authoring.documents import AcceptedCoordinate
 from tests.test_ledger.test_compiler_upgrade import old_instance
 
 
@@ -41,14 +41,14 @@ def test_upgrade_surfaces_create_the_same_reviewable_proposal(
     instance_id = instance.descriptor.instance_id
     get_registry().create_governed_instance_with_id(instance_id)
     before = instance.accepted_coordinate()
-    base = PlaybillAcceptedCoordinate.from_internal(before)
+    base = AcceptedCoordinate.from_internal(before)
     monkeypatch.setattr(playbill_api.get_playbill_manager(), "get", lambda _: instance)
     monkeypatch.setattr(playbill_api, "_actor_id", lambda _instance_id: "owner")
     client = CruxibleClient(base_url="http://testserver")
     client._client.close()
     client._client = host_client
     if surface == "sdk":
-        result = client.propose_playbill_compiler_upgrade(
+        result = client.propose_compiler_upgrade(
             instance_id, target=UPGRADE_COMPILER, base=base, proposal_name="upgrade"
         )
         payload = result.model_dump(mode="json")
@@ -110,7 +110,7 @@ def test_upgrade_to_the_current_compiler_is_a_coded_400_not_a_500(
     instance_id = instance.descriptor.instance_id
     get_registry().create_governed_instance_with_id(instance_id)
     before = instance.accepted_coordinate()
-    base = PlaybillAcceptedCoordinate.from_internal(before)
+    base = AcceptedCoordinate.from_internal(before)
     monkeypatch.setattr(playbill_api.get_playbill_manager(), "get", lambda _: instance)
     monkeypatch.setattr(playbill_api, "_actor_id", lambda _instance_id: "owner")
 
@@ -142,7 +142,7 @@ def test_an_upgrade_previews_on_the_proposal_path_and_writes_nothing(
     instance_id = instance.descriptor.instance_id
     get_registry().create_governed_instance_with_id(instance_id)
     before = instance.accepted_coordinate()
-    base = PlaybillAcceptedCoordinate.from_internal(before)
+    base = AcceptedCoordinate.from_internal(before)
     monkeypatch.setattr(playbill_api.get_playbill_manager(), "get", lambda _: instance)
     monkeypatch.setattr(playbill_api, "_actor_id", lambda _instance_id: "owner")
     body = {

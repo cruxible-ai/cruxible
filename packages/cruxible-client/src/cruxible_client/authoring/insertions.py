@@ -7,7 +7,7 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 
 
-class PlaybillInsertionApplyError(ValueError):
+class InsertionApplyError(ValueError):
     """A local source cannot be reconciled with its insertion expectation."""
 
 
@@ -29,21 +29,17 @@ def replace_publication_file(
             os.fsync(output.fileno())
         temporary.chmod(original_mode)
         if path.read_bytes() != expected:
-            raise PlaybillInsertionApplyError(
-                "source bytes changed before the whole-file compare-and-swap"
-            )
+            raise InsertionApplyError("source bytes changed before the whole-file compare-and-swap")
         os.replace(temporary, path)
         temporary = None
     except OSError as exc:
-        raise PlaybillInsertionApplyError(
-            f"source could not be replaced atomically: {exc}"
-        ) from exc
+        raise InsertionApplyError(f"source could not be replaced atomically: {exc}") from exc
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
 
 
 __all__ = [
-    "PlaybillInsertionApplyError",
+    "InsertionApplyError",
     "replace_publication_file",
 ]

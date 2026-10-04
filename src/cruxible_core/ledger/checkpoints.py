@@ -95,7 +95,7 @@ from cruxible_client.contracts.canonical import (
     semantic_projection,
     typed_digest,
 )
-from cruxible_client.contracts.errors import PlaybillError, ReplayCheckpointError
+from cruxible_client.contracts.errors import CruxibleError, ReplayCheckpointError
 from cruxible_client.contracts.merkle import (
     MANIFEST_MERKLE_DOMAINS,
     build_merkle_manifest,
@@ -844,7 +844,7 @@ def verify_checkpoint(
             claimed_root=body.merkle_root,
             domains=MANIFEST_MERKLE_DOMAINS,
         )
-    except PlaybillError as exc:
+    except CruxibleError as exc:
         raise ReplayCheckpointError(
             "checkpoint merkle manifest root does not reproduce from its coordinate tree"
         ) from exc
@@ -952,7 +952,7 @@ def load_verified_checkpoint(
         if not verified:
             _record_checkpoint_verified(directory, record.checkpoint_digest)
         return seed
-    except (PlaybillError, OSError, ValueError):
+    except (CruxibleError, OSError, ValueError):
         discard_checkpoint(directory)
         return None
 

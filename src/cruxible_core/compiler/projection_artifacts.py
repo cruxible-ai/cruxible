@@ -1,4 +1,4 @@
-"""Registered Playbill artifact formats and normalized projection rows."""
+"""Registered Cruxible artifact formats and normalized projection rows."""
 
 from __future__ import annotations
 
@@ -38,8 +38,8 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.documents import document_digest, parse_document
 from cruxible_client.contracts.errors import (
+    CasError,
     DocumentFormatError,
-    PlaybillCasError,
     ProjectionFormatError,
     SettlementIntegrityError,
     SubjectFormatError,
@@ -806,7 +806,7 @@ def parse_projection_tree(
                             can_read_body=True,
                         ),
                     )
-                except PlaybillCasError as exc:
+                except CasError as exc:
                     raise ProjectionFormatError(
                         f"Document body failed exact digest verification: {path}"
                     ) from exc
@@ -2143,7 +2143,7 @@ def parse_projection_tree(
                                 )
                             )
                         )
-                    except (PlaybillCasError, UnicodeDecodeError, ValueError) as exc:
+                    except (CasError, UnicodeDecodeError, ValueError) as exc:
                         raise ProjectionFormatError(
                             "ExhaustPromotion canonical output is missing or malformed"
                         ) from exc

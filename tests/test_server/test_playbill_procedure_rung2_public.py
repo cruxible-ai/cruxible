@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from cruxible_client import Playbill
+from cruxible_client import Cruxible
 from cruxible_client.authoring.inputs import CarriedContractInput, ProcedureInput
 from cruxible_client.contracts import ClaimViewRecord
 from cruxible_client.contracts.acquisition_policies import (
@@ -30,7 +30,7 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.capture_reads import CaptureReadRequest
 from cruxible_client.contracts.captures import CanonicalDuration, capture_contract_digest
 from cruxible_client.contracts.claim_types import ClaimType
-from cruxible_client.contracts.get_reads import PlaybillGetRequest
+from cruxible_client.contracts.get_reads import GetRequest
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV1,
@@ -381,9 +381,9 @@ def _claim_proof(
     *,
     evaluation_time: datetime | None = None,
 ) -> ClaimViewRecord:
-    proof = transport.playbill_get(
+    proof = transport.get(
         instance_id,
-        request=PlaybillGetRequest(ref=claim_id, detail="proof", evaluation_time=evaluation_time),
+        request=GetRequest(ref=claim_id, detail="proof", evaluation_time=evaluation_time),
     ).proof
     return ClaimViewRecord.model_validate(proof)
 
@@ -482,7 +482,7 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
     )
 
     def accept_members(selected: list[dict[str, Any]]) -> None:
-        compiled = transport.compile_playbill_authoring(
+        compiled = transport.compile_authoring(
             instance_id,
             payload={
                 "tag": "playbill-change-set-authoring-payload-v1",
@@ -492,7 +492,7 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
         )
         assert compiled.verdict == "passed", compiled.frontier
         intent_id = str(compiled.certificate["intent_id"])
-        submitted = transport.submit_playbill_authoring_intent(instance_id, intent_id)
+        submitted = transport.submit_authoring_intent(instance_id, intent_id)
         assert submitted.status.proposal_id is not None, submitted
         _approve_and_activate(http, instance_id, reviewer_key, submitted.status.proposal_id)
 
@@ -510,7 +510,7 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
                 if member["tag"] not in line_tags | {"playbill-procedure-authoring-payload-v2"}
             ]
         )
-        pb = Playbill._from_client(transport, instance_id=instance_id, workspace=workspace)
+        pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=workspace)
         authored = ProcedureInput(
             kind="procedure",
             definition=_authored(definition, same_set_kinds=set()),
@@ -537,7 +537,7 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
 
     # 3. Trigger the Line through its public route.
     identity_digest = line_identity_digest(ArtifactIdentity(kind="Line", name=LINE_NAME))
-    state = transport.run_playbill_line(instance_id, identity_digest, occurrence_id=None)
+    state = transport.run_line(instance_id, identity_digest, occurrence_id=None)
     assert state.status == "succeeded", state.model_dump_json(indent=2)
     assert state.run_id is not None
     (egress,) = state.terminal_egress
@@ -553,7 +553,7 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
         assert emitted_event["capture_event"]["run_id"] == state.run_id
         assert len(egress.children) == 1
         capture_digest = egress.children[0].egress_digest
-        pb = Playbill._from_client(transport, instance_id=instance_id, workspace=workspace)
+        pb = Cruxible._from_client(transport, instance_id=instance_id, workspace=workspace)
         captured = pb.capture(capture_digest)
         assert captured.result.status == "verified", captured.result
         assert captured.json() == {"severity": "high"}
@@ -581,7 +581,7 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
         status = submitted_claim.status()
         assert status.proposal_id is not None, status
         _approve_and_activate(http, instance_id, reviewer_key, status.proposal_id)
-        inspection = transport.inspect_playbill_proposal(instance_id, status.proposal_id)
+        inspection = transport.inspect_proposal(instance_id, status.proposal_id)
         member = next(
             item
             for item in inspection.proposal["candidate"]["members"]
@@ -591,13 +591,13 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
         view = _claim_proof(transport, instance_id, claim_id)
         assert view.admission_accounts[0].capture_digest == capture_digest
         assert view.admission_accounts[0].status == "admitted"
-        missing = transport.read_playbill_capture(
+        missing = transport.read_capture(
             instance_id, CaptureReadRequest(capture_digest="sha256:" + "f" * 64)
         )
         assert missing.status == "unavailable"
         get_playbill_manager().clear()
         assert pb.capture(capture_digest).json() == {"severity": "high"}
-        again = transport.get_playbill_procedure_run(instance_id, state.run_id)
+        again = transport.get_procedure_run(instance_id, state.run_id)
         assert again.outcomes == state.outcomes
         assert again.terminal_egress == state.terminal_egress
         return
@@ -610,7 +610,7 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
     assert observation.source_read_receipt.relative_path == RELATIVE_PATH
 
     # 4. The manager retrieves the exact candidate, reviews it, and activates it.
-    inspection = transport.inspect_playbill_proposal(instance_id, egress.proposal_id)
+    inspection = transport.inspect_proposal(instance_id, egress.proposal_id)
     candidate = inspection.proposal["candidate"]
     assert candidate is not None, inspection.proposal["evaluation"]["diagnostics"]
     assert candidate["candidate_digest"] == egress.candidate_digest
@@ -640,5 +640,5 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
     assert account.citation_origin == "independent"
     assert account.status == "admitted"
     # And the run reads back the same receipt after acceptance.
-    again = transport.get_playbill_procedure_run(instance_id, state.run_id)
+    again = transport.get_procedure_run(instance_id, state.run_id)
     assert again.terminal_egress == state.terminal_egress

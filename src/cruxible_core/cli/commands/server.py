@@ -463,9 +463,9 @@ def _echo_instance_scoped_status(
         return
     if checked is None:
         raise click.UsageError(SERVER_MODE_REQUIRED_MESSAGE)
-    host = checked.show_playbill_host(instance_id)
+    host = checked.show_host(instance_id)
     try:
-        identity = checked.playbill_whoami(instance_id)
+        identity = checked.whoami(instance_id)
     except CoreError:  # an uninitialized host has no identity to read yet
         identity = None
     if output_json:

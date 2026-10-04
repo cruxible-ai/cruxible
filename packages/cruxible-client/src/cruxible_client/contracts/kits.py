@@ -21,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, ValidationInfo, field_validator
 from .authoring.models import ClaimTypeSuccessionDependent
 from .canonical import Sha256Value, canonical_digest
 from .change_control import DryRun, PreviewAt
-from .get_reads import PlaybillGetCoordinate
+from .get_reads import GetCoordinate
 
 KIT_MANIFEST_FILE = "cruxible-kit.json"
 KIT_ARTIFACT_DIRECTORY = "artifacts"
@@ -273,7 +273,7 @@ class KitReceipt(_Strict):
         return {item.path: item.installed_digest for item in self.artifacts}
 
 
-class PlaybillKitBuildRequest(_Strict):
+class KitBuildRequest(_Strict):
     """Export this instance's definitions under ``owns`` as one kit release."""
 
     kit_id: str
@@ -296,12 +296,12 @@ class PlaybillKitBuildRequest(_Strict):
         return _owns(value)
 
 
-class PlaybillKitBuildResult(_Strict):
+class KitBuildResult(_Strict):
     tag: Literal["playbill-kit-build-result-v1"] = "playbill-kit-build-result-v1"
     bundle: KitBundle
 
 
-class PlaybillKitAddRequest(_Strict):
+class KitAddRequest(_Strict):
     bundle: KitBundle
     # Where the bundle came from, recorded in the receipt (a registry reference
     # or a directory name); never interpreted.
@@ -314,7 +314,7 @@ class PlaybillKitAddRequest(_Strict):
     at: PreviewAt = None
 
 
-class PlaybillKitRemoveRequest(_Strict):
+class KitRemoveRequest(_Strict):
     kit_id: str
     #: A kit removal is derived across many artifacts, so it previews by default.
     dry_run: DryRun = None
@@ -335,7 +335,7 @@ class KitPathPlan(_Strict):
     detail: str | None = None
 
 
-class PlaybillKitChangeResult(_Strict):
+class KitChangeResult(_Strict):
     """What a kit add or remove changed, or why it changed nothing."""
 
     tag: Literal["playbill-kit-change-result-v1"] = "playbill-kit-change-result-v1"
@@ -351,7 +351,7 @@ class PlaybillKitChangeResult(_Strict):
     plan: tuple[KitPathPlan, ...] = ()
     detail: str | None = None
     #: The accepted coordinate this change was evaluated at.
-    coordinate: PlaybillGetCoordinate | None = None
+    coordinate: GetCoordinate | None = None
 
 
 class InstalledKit(_Strict):
@@ -363,6 +363,6 @@ class InstalledKit(_Strict):
     drifted: tuple[str, ...] = ()
 
 
-class PlaybillKitStatus(_Strict):
+class KitStatus(_Strict):
     tag: Literal["playbill-kit-status-v1"] = "playbill-kit-status-v1"
     kits: tuple[InstalledKit, ...] = ()

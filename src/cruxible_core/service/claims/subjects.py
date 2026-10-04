@@ -25,7 +25,7 @@ from cruxible_core.indexes.claims.projection_subjects import SubjectProjectionVi
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import (
-    PlaybillAcceptedCoordinate,
+    AcceptedCoordinate,
 )
 
 
@@ -52,7 +52,7 @@ class PlaybillSubjectIncomingGroupV1(_StrictSubjectServiceModel):
 class PlaybillSubjectView(_StrictSubjectServiceModel):
     tag: Literal["playbill-subject-read-v1"] = "playbill-subject-read-v1"
     coordinate_kind: Literal["canonical"] = "canonical"
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     envelope: dict[str, object]
     facts: tuple[dict[str, object], ...]
     # Edges where this Subject is the OBJECT. A profile that lists only its own
@@ -64,7 +64,7 @@ class PlaybillSubjectView(_StrictSubjectServiceModel):
 
 class PlaybillSubjectHistoryEntry(_StrictSubjectServiceModel):
     sequence: int
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     artifact_digest: str
     predecessor_digest: str | None
     lifecycle_state: Literal["live", "retired"]
@@ -90,7 +90,7 @@ def _public_subject(
     ):
         raise ProposalIntegrityError("canonical Subject service received a provisional view")
     return PlaybillSubjectView(
-        coordinate=PlaybillAcceptedCoordinate.from_internal(view.coordinate),
+        coordinate=AcceptedCoordinate.from_internal(view.coordinate),
         envelope=view.envelope.model_dump(mode="json"),
         facts=tuple(fact.model_dump(mode="json") for fact in view.facts),
         incoming=incoming,
@@ -176,7 +176,7 @@ def _incoming_groups(
 
 def _resolve_coordinate(
     instance: PlaybillInstance,
-    at: PlaybillAcceptedCoordinate | None,
+    at: AcceptedCoordinate | None,
 ) -> AcceptedProjectionCoordinate:
     if at is None:
         return instance.accepted_coordinate()
@@ -192,7 +192,7 @@ def service_get_playbill_subject(
     instance: PlaybillInstance,
     *,
     identity: str,
-    at: PlaybillAcceptedCoordinate | None = None,
+    at: AcceptedCoordinate | None = None,
 ) -> PlaybillSubjectView:
     coordinate = _resolve_coordinate(instance, at)
     with instance.bind_accepted_projection(coordinate) as projection:
@@ -246,7 +246,7 @@ def service_playbill_subject_history(
             entries.append(
                 PlaybillSubjectHistoryEntry(
                     sequence=generation.sequence,
-                    coordinate=PlaybillAcceptedCoordinate(
+                    coordinate=AcceptedCoordinate(
                         git_oid=generation.git_oid,
                         semantic_root=generation.semantic_root,
                         generation_root=generation.generation_root,

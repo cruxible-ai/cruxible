@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.errors import PlaybillGitError
+from cruxible_client.contracts.errors import GitError
 from cruxible_core.ledger import git as ledger_git
 from cruxible_core.ledger.git import GitLedger, GitTreeChange, GitTreeEntry
 
@@ -174,10 +174,10 @@ def test_a_tree_object_replaced_on_disk_is_refused(ledger: GitLedger, tmp_path: 
     # Git itself serves the forged member under the accepted tree's ID ...
     assert any(entry.oid == forged_blob for entry in _git_listing(ledger, tree, None))
     # ... the ledger's listing and delta refuse it.
-    with pytest.raises(PlaybillGitError, match="do not hash to their ID"):
+    with pytest.raises(GitError, match="do not hash to their ID"):
         ledger.list_tree(tree)
     empty = _tree(ledger, {}, tmp_path / "index")
-    with pytest.raises(PlaybillGitError, match="do not hash to their ID"):
+    with pytest.raises(GitError, match="do not hash to their ID"):
         ledger._read_changed_entries(empty, tree)
 
 
@@ -206,6 +206,6 @@ def test_a_forged_subtree_never_hides_a_generations_changes_from_history(
     _forge_subtree(ledger, head_entries[name][1], body[1])
     _clear_caches()
     instance._accepted_history_index.invalidate()
-    with pytest.raises(PlaybillGitError, match="do not hash to their ID"):
+    with pytest.raises(GitError, match="do not hash to their ID"):
         with instance.accepted_history_reader():
             pass

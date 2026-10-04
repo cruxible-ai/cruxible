@@ -14,7 +14,7 @@ from cruxible_client.contracts.captures import (
     parse_capture_envelope,
     verify_capture,
 )
-from cruxible_client.contracts.errors import PlaybillError, PlaybillFormatError, ReadRefusalError
+from cruxible_client.contracts.errors import CruxibleError, FormatError, ReadRefusalError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -32,7 +32,7 @@ from cruxible_core.service.claims.claims import service_open_playbill_source
 from cruxible_core.storage.cas import BodyAccessContext
 
 
-class CaptureReadInvalid(PlaybillFormatError):
+class CaptureReadInvalid(FormatError):
     code = "playbill.capture.invalid"
     http_status = 400
 
@@ -207,11 +207,11 @@ def verify_accepted_capture(
         return "capture_unavailable"
     try:
         raw = store.read(digest, access=access)
-    except PlaybillError as exc:
+    except CruxibleError as exc:
         raise CaptureReadInvalid(f"Capture verification failed: {exc}") from exc
     try:
         envelope = parse_capture_envelope(raw)
-    except (PlaybillError, ValueError):
+    except (CruxibleError, ValueError):
         # The bytes are present and intact but are not a Capture envelope: say
         # what they are and which read answers them, not "verification failed".
         raise _not_a_capture(instance, coordinate, digest) from None
@@ -255,7 +255,7 @@ def verify_accepted_capture(
         )
     except CaptureReadInvalid:
         raise
-    except (PlaybillError, ValueError) as exc:
+    except (CruxibleError, ValueError) as exc:
         raise CaptureReadInvalid(f"Capture verification failed: {exc}") from exc
     return VerifiedCapture(envelope=envelope, contract=contract, contract_address=path)
 
@@ -316,7 +316,7 @@ def retained_captures(
             continue
         try:
             envelope = parse_capture_envelope(store.read(digest, access=_INVENTORY_ACCESS))
-        except (PlaybillError, ValueError):
+        except (CruxibleError, ValueError):
             continue
         found.append(RetainedCapture(digest=digest, envelope=envelope))
     return RetainedCaptureInventory(
@@ -420,7 +420,7 @@ def _verifies(
 
     try:
         verified = verify_accepted_capture(instance, coordinate, digest, access=_INVENTORY_ACCESS)
-    except (CaptureReadInvalid, ReadRefusalError, PlaybillError, ValueError):
+    except (CaptureReadInvalid, ReadRefusalError, CruxibleError, ValueError):
         return False
     return not isinstance(verified, str)
 
@@ -484,7 +484,7 @@ def service_read_playbill_capture(
         )
     except CaptureReadInvalid:
         raise
-    except (PlaybillError, ValueError) as exc:
+    except (CruxibleError, ValueError) as exc:
         raise CaptureReadInvalid(f"Capture verification failed: {exc}") from exc
     return CaptureRead(
         capture_digest=request.capture_digest,

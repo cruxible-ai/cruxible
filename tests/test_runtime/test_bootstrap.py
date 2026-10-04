@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.errors import PlaybillBootstrapError, PlaybillKeyError
+from cruxible_client.contracts.errors import BootstrapError, SigningKeyError
 from cruxible_core.governance.keys import (
     DAEMON_PRIVATE_KEY_FILE,
     assert_outside_roots,
@@ -136,7 +136,7 @@ def test_managed_root_must_be_absolute_new_and_outside_workspace(tmp_path: Path)
         principal_id="owner",
         roles=("owner",),
     )
-    with pytest.raises(PlaybillBootstrapError, match="outside"):
+    with pytest.raises(BootstrapError, match="outside"):
         PlaybillInstance.initialize(
             workspace / "managed",
             instance_id="inst_refused",
@@ -146,7 +146,7 @@ def test_managed_root_must_be_absolute_new_and_outside_workspace(tmp_path: Path)
         )
     assert not (workspace / "managed").exists()
 
-    with pytest.raises(PlaybillBootstrapError, match="absolute"):
+    with pytest.raises(BootstrapError, match="absolute"):
         PlaybillInstance.initialize(
             Path("relative-managed"),
             instance_id="inst_refused",
@@ -162,7 +162,7 @@ def test_client_key_generation_refuses_workspace_or_managed_custody(tmp_path: Pa
     workspace.mkdir()
     managed.mkdir()
     for forbidden in (workspace / "keys", managed / "credentials" / "keys"):
-        with pytest.raises(PlaybillKeyError, match="outside"):
+        with pytest.raises(SigningKeyError, match="outside"):
             generate_client_principal_key(
                 forbidden,
                 principal_id="owner",
@@ -170,7 +170,7 @@ def test_client_key_generation_refuses_workspace_or_managed_custody(tmp_path: Pa
                 forbidden_roots=(workspace, managed),
             )
         assert not forbidden.exists()
-    with pytest.raises(PlaybillKeyError):
+    with pytest.raises(SigningKeyError):
         assert_outside_roots(managed, (managed,))
 
 
@@ -292,7 +292,7 @@ def test_bootstrap_without_an_ordinary_principal_refuses_typed(tmp_path: Path) -
     recovery = generate_client(
         tmp_path, managed_root=managed, principal_id="recovery", roles=("recovery",)
     )
-    with pytest.raises(PlaybillBootstrapError, match="at least one ordinary"):
+    with pytest.raises(BootstrapError, match="at least one ordinary"):
         PlaybillInstance.initialize(
             managed,
             instance_id="inst_insufficient_ordinary",
@@ -312,7 +312,7 @@ def test_independent_approval_opt_in_requires_two_ordinary_principals(
         principal_id="owner",
         roles=("owner",),
     )
-    with pytest.raises(PlaybillBootstrapError, match="independent approval requires at least two"):
+    with pytest.raises(BootstrapError, match="independent approval requires at least two"):
         PlaybillInstance.initialize(
             solo_root,
             instance_id="inst_solo_independent",

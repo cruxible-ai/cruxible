@@ -143,7 +143,7 @@ def test_the_batch_summary_keeps_the_shape_the_spec_shows() -> None:
 
     summary = render_batch_summary(result)
 
-    assert summary[0] == "Playbill coverage: 1 exact, 0 drifted, 0 candidates, 41 none"
+    assert summary[0] == "Cruxible coverage: 1 exact, 0 drifted, 0 candidates, 41 none"
     assert summary[1] == (
         f"coverage complete for 42 returned spans at generation {result.at.generation_root}"
     )
@@ -209,7 +209,7 @@ def test_a_drifted_card_names_the_accepted_claim_coordinate_and_both_commitments
     assert "commitment_superseded" in drift
     # The one summary counts the drift; the ungoverned scratch file does not
     # earn a line of its own.
-    assert "Playbill coverage: 0 exact, 1 drifted, 0 candidates, 1 none" in lines
+    assert "Cruxible coverage: 0 exact, 1 drifted, 0 candidates, 1 none" in lines
     assert SCRATCH.identity not in "\n".join(lines)
 
 
@@ -379,7 +379,7 @@ def test_the_manifest_rendering_states_epoch_health_completeness_and_scope() -> 
 
     lines = render_coverage_manifest(result)
 
-    assert lines[0] == "Playbill coverage manifest: epoch 0, health complete, boundary complete"
+    assert lines[0] == "Cruxible coverage manifest: epoch 0, health complete, boundary complete"
     assert lines[1] == f"instance {INSTANCE_ID} at generation {result.at.generation_root}"
     assert f"index {result.index_digest}" in lines
     assert f"overlay {result.overlay_digest}" in lines

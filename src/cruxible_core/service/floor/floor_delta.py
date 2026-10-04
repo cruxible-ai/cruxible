@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import base64
 
-from cruxible_client.contracts.errors import PlaybillError, ProjectionIntegrityError
+from cruxible_client.contracts.errors import CruxibleError, ProjectionIntegrityError
 from cruxible_client.contracts.floor import (
-    PlaybillFloorDelta,
-    PlaybillFloorHead,
+    FloorDelta,
+    FloorHead,
     content_digest,
     floor_manifest_digest,
     seal_floor_delta,
@@ -55,7 +55,7 @@ def _base_render(
         return None
     try:
         return floor_render_from(instance, head, base_generation)
-    except PlaybillError:
+    except CruxibleError:
         # Another renderer made the floor at that generation (a compiler
         # succession in between), or it is outside this accepted history.
         return None
@@ -67,7 +67,7 @@ def service_playbill_floor_delta(
     head: AcceptedCoordinate,
     base_generation: int | None,
     base_renderer: str | None,
-) -> PlaybillFloorDelta:
+) -> FloorDelta:
     """The delta from the client's ``base`` floor to the floor at ``head``.
 
     ``kind="delta"`` carries every file whose ``changed_at`` is after the base
@@ -86,7 +86,7 @@ def service_playbill_floor_delta(
     accepted = render.inputs.coordinate
     payload: dict[str, object] = {
         "renderer": render.renderer,
-        "head": PlaybillFloorHead(
+        "head": FloorHead(
             git_oid=accepted.git_oid,
             generation=render.generation,
             semantic_root=accepted.semantic_root,

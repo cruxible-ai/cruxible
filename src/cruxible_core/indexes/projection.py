@@ -1,4 +1,4 @@
-"""Backend-neutral contracts for deterministic immutable Playbill projections."""
+"""Backend-neutral contracts for deterministic immutable Cruxible projections."""
 
 from __future__ import annotations
 

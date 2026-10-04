@@ -28,7 +28,7 @@ fallback, its remembered instance remains bound to the transport on which it
 was selected, and entering one workspace never retargets another.
 
 `--principal-id` (or `CRUXIBLE_PRINCIPAL_ID`) names the principal this process
-acts as; the CLI, SDK (`Playbill.connect(principal_id=...)`) and MCP server all
+acts as; the CLI, SDK (`Cruxible.connect(principal_id=...)`) and MCP server all
 send it with every request. The daemon checks that it names a registered, active
 principal on the instance before any write and attributes the work to it; an
 unregistered or revoked ID is refused on writes (`playbill.identity.principal_absent`
@@ -42,7 +42,7 @@ credential decides who acts, and a principal ID that disagrees with it is refuse
 way: they are signed with the principal's private key.
 
 `CRUXIBLE_CLIENT_TIMEOUT_S` (default 180) bounds how long a client waits for a
-daemon that has accepted a request. An SDK `Playbill.connect()` reads only the
+daemon that has accepted a request. An SDK `Cruxible.connect()` reads only the
 current head when it opens a session; it does not orient over the whole
 accepted world, so no separate connect budget is needed. The variable is
 refused, typed, unless it names a positive number of seconds. A timeout never
@@ -167,7 +167,7 @@ exactly one has a directory under `<state-root>/instances`, that instance is the
 target; otherwise pass `--instance-id`.
 
 These credentials authorize transport operations. Each one acts as exactly one
-Playbill principal, stored with the credential; the label is a description and
+Cruxible principal, stored with the credential; the label is a description and
 never decides who acts. `credential mint` refuses unless that principal is
 registered and active (`playbill.identity.principal_absent` /
 `principal_revoked`) and ordinary (a recovery principal never holds one:
@@ -564,7 +564,7 @@ compiler coordinate/revision, and write compatibility; the CLI adds the selected
 transport. The daemon-local managed root is visible only to an unscoped operator,
 not an instance-scoped credential. `workspace attach` requires a Unix socket, so
 the daemon can see the path it is asked to register. A host with no worktree
-registers this one, whether or not Playbill is already initialized under it: an
+registers this one, whether or not Cruxible is already initialized under it: an
 initialized host attaches in place (nothing is rebuilt) when the worktree is in
 its ledger's Git object format and holds no part of its managed root, and it
 advertises the accepted ref into the worktree at once. A host already
@@ -670,7 +670,7 @@ or prefix must name one Capture, resolved exactly as the write verbs resolve
 `playbill.capture.ref_scan_exhausted` asks for a longer handle when more share
 the prefix than one bounded lookup examines).
 Uses body-read permission and never refetches the external source. The SDK equivalent
-is `pb.capture(digest)`; its `.ref` can be passed to Claim authoring as `supported_by`.
+is `cx.capture(digest)`; its `.ref` can be passed to Claim authoring as `supported_by`.
 
 ## playbill body
 
@@ -839,7 +839,7 @@ Treat installed environments as immutable; `--reverify` detects manual changes
 and refuses drift instead of silently resealing or repairing it.
 
 SDK: `install_provider_package(client, instance_id, wheel=..., lock=...,
-dependency_wheels=(...))`, or `client.install_playbill_provider` with a typed
+dependency_wheels=(...))`, or `client.install_provider` with a typed
 request. MCP: `cruxible_playbill_provider_catalog` and
 `cruxible_playbill_provider_install`. HTTP: `GET /{instance}/playbill/providers`
 and `POST /{instance}/playbill/providers/install`.
@@ -1219,7 +1219,7 @@ cruxible playbill query [KIND] [--where 'f=v'|'f!=v'|'f<v'|'f<=v'|'f>v'|'f>=v'|'
 ~~~
 
 `query` has no subcommands: it answers any question over accepted state in one
-call, the same read as MCP `cruxible_playbill_query` and SDK `pb.query`. KIND is
+call, the same read as MCP `cruxible_playbill_query` and SDK `cx.query`. KIND is
 a Subject kind, or `ClaimType` / `Procedure` for definitions; `--contains` alone
 searches every live Claim value across kinds. `--where` filters combine as
 all-of; a field is a predicate's full name, its name after the `KIND.` prefix,
@@ -1250,12 +1250,12 @@ row read, traversal paths, bound parameters, verdict, and the
 
 Author named queries through `playbill authoring compile`, then submit the intent
 and review/accept its proposal.
-The SDK equivalent is `pb.query_definition(definition=QueryDefinitionInput(...)).prepare()`, followed
-by the normal intent submission and approval flow. `pb.changes().query_definition(...)`
+The SDK equivalent is `cx.query_definition(definition=QueryDefinitionInput(...)).prepare()`, followed
+by the normal intent submission and approval flow. `cx.changes().query_definition(...)`
 includes a query in a changeset. Omitted ClaimType pins resolve against the intent
 base or sibling definitions; explicit pins remain assertions. SDK `vocabulary=`
 accepts World ClaimType references and retains their stale-reference checks.
-Use `pb.run_query(name)` to read the accepted result and receipt.
+Use `cx.run_query(name)` to read the accepted result and receipt.
 
 `authoring create --example query-claims-by-type` provides a Claim query without
 placeholder digests. `--example query-ontology` and `--example query-procedures`
@@ -2481,7 +2481,7 @@ Governed spans are annotated inline in card order. Ungoverned results are
 summarized once per operation, never one line per result:
 
 ~~~text
-Playbill coverage: 2 exact, 1 drifted, 3 candidates, 41 none
+Cruxible coverage: 2 exact, 1 drifted, 3 candidates, 41 none
 coverage complete for 47 returned spans at generation gen-sha256:...
 omitted cards: 0, truncated spans: 0
 ~~~
@@ -2520,7 +2520,7 @@ is the instruction channel rather than the data channel.
 
 The command always exits 0 and always emits one JSON object. A coverage failure
 degrades to the original output plus, where a channel exists, one
-`Playbill coverage: unavailable` line; it never breaks the agent's tool call.
+`Cruxible coverage: unavailable` line; it never breaks the agent's tool call.
 The parked hook writes one actionable code to stderr only when its own adapter
 input is malformed:
 

@@ -42,7 +42,7 @@ from cruxible_client.contracts.captures import (
     capture_contract_path,
     render_capture_contract,
 )
-from cruxible_client.contracts.errors import PlaybillExecutionError
+from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandateV1,
     procedure_mandate_path,
@@ -562,10 +562,10 @@ def test_source_is_served_on_both_run_lanes_only_in_graph_v4() -> None:
 def test_the_sdk_authors_a_source_node_on_v4_and_refuses_it_on_v3(tmp_path: Path) -> None:
     """The SDK gate and the run lane move together: one token, one generation."""
 
-    from cruxible_client.authoring.sdk import CapabilityNotServed, Playbill, ProcedureDraft
+    from cruxible_client.authoring.sdk import CapabilityNotServed, Cruxible, ProcedureDraft
 
     instance, _owner, procedure, _root, _policy_artifact = _world(tmp_path)
-    draft = Playbill.procedure(
+    draft = Cruxible.procedure(
         object(),
         definition=_sdk_procedure_input(procedure),
     )
@@ -573,7 +573,7 @@ def test_the_sdk_authors_a_source_node_on_v4_and_refuses_it_on_v3(tmp_path: Path
 
     v3_source = _graph_v3_source_definition(procedure)
     with pytest.raises(CapabilityNotServed) as excinfo:
-        Playbill.procedure(
+        Cruxible.procedure(
             object(),
             definition=ProcedureInput(
                 kind="procedure",
@@ -1503,10 +1503,10 @@ def test_the_authoring_path_lowers_the_named_policy_into_the_envelope_pin(
 def test_the_sdk_carries_the_named_policy_into_the_authoring_payload(tmp_path: Path) -> None:
     """The SDK verb an author reaches for, and the payload it emits."""
 
-    from cruxible_client.authoring.sdk import Playbill, ProcedureDraft
+    from cruxible_client.authoring.sdk import Cruxible, ProcedureDraft
 
     _instance, _owner, procedure, _root, policy_artifact = _world(tmp_path)
-    draft = Playbill.procedure(
+    draft = Cruxible.procedure(
         object(),
         definition=_sdk_procedure_input(procedure).model_copy(
             update={"acquisition_policy": policy_artifact.identity.name}
@@ -1562,7 +1562,7 @@ def test_a_source_closure_that_stops_reproducing_refuses_before_the_first_attemp
 
     monkeypatch.setattr(service, "service_execute_direct_procedure", without_contracts)
     invoker = _WorkspaceInvoker()
-    with pytest.raises(PlaybillExecutionError) as excinfo:
+    with pytest.raises(ExecutionError) as excinfo:
         _run(instance, root, invoker=invoker)
 
     assert "source_acquisition_plan_mismatch" in str(excinfo.value)
@@ -1595,7 +1595,7 @@ def test_an_external_mutation_occurrence_refuses_before_the_first_attempt(
     monkeypatch.setattr(service, "_plan_external_occurrences", mutating)
     invoker = _WorkspaceInvoker()
 
-    with pytest.raises(PlaybillExecutionError) as excinfo:
+    with pytest.raises(ExecutionError) as excinfo:
         _run(instance, root, invoker=invoker)
 
     assert "source_acquisition_plan_mismatch" in str(excinfo.value)
@@ -1622,7 +1622,7 @@ def test_a_crash_between_the_read_receipt_and_the_capture_leaves_no_half_capture
             self.spawn_calls += 1
             raise RuntimeError("simulated daemon crash after the governed read")
 
-    with pytest.raises(PlaybillExecutionError) as crash:
+    with pytest.raises(ExecutionError) as crash:
         _run(instance, root, invoker=_Exploding())
     assert "provider_completion_not_durable" in str(crash.value)
 
@@ -1677,7 +1677,7 @@ def test_the_authoring_path_produces_the_exact_artifact_the_run_lane_executes(
     executed above is what "the same definition gives the same digest" means.
     """
 
-    from cruxible_client.authoring.sdk import Playbill
+    from cruxible_client.authoring.sdk import Cruxible
     from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
     from cruxible_core.authoring.preflight import compute_preflight
     from cruxible_core.proposals.proposals import AuthenticatedActor
@@ -1691,7 +1691,7 @@ def test_the_authoring_path_produces_the_exact_artifact_the_run_lane_executes(
     # the digest below an identity claim rather than an echo.
     compiled = coordinator.compile(
         actor=actor,
-        payload=Playbill.procedure(object(), definition=_sdk_procedure_input(procedure)).payload,
+        payload=Cruxible.procedure(object(), definition=_sdk_procedure_input(procedure)).payload,
         canonical_timestamp=ACCEPT_STAMP,
     )
 

@@ -5,7 +5,7 @@ from datetime import datetime
 import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
-from cruxible_client.contracts.errors import PlaybillExecutionError
+from cruxible_client.contracts.errors import ExecutionError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.service.procedures.procedures import PlaybillProcedureStateTapReader
 from tests.core_support._knowledge_loop_support import (
@@ -51,7 +51,7 @@ def test_field_read_selects_one_subject_and_retains_exact_claim(tmp_path, monkey
     assert result.value["value"] == "ready"
     assert result.value["claim"]["statement"]["subject"]["artifact_path"].endswith("wi-42.json")
     assert result.value["artifact_digest"].startswith("sha256:")
-    with pytest.raises(PlaybillExecutionError, match="absent"):
+    with pytest.raises(ExecutionError, match="absent"):
         reader.read_accepted_claim(
             claim_type=pin,
             subject_kind=SUBJECT_KIND,
@@ -81,7 +81,7 @@ def test_plural_field_read_requires_bound_and_retains_semantic_metadata(tmp_path
     reader = PlaybillProcedureStateTapReader(
         instance=instance, evaluation_time=datetime.fromisoformat(EVALUATION_TIME)
     )
-    with pytest.raises(PlaybillExecutionError, match="explicit positive limit"):
+    with pytest.raises(ExecutionError, match="explicit positive limit"):
         reader.read_accepted_claim(**args)
     (selected,) = reader.read_accepted_claim(limit=1, **args).value
     assert selected["predicate"] == PREDICATE

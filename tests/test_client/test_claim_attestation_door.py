@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client import AccessProfile, Playbill
+from cruxible_client import AccessProfile, Cruxible
 from cruxible_client.authoring.attestations import (
     LocalClaimAttestationKeyUnavailable,
     LocalEd25519ClaimAttestationSigner,
@@ -36,7 +36,7 @@ def test_sdk_attest_signs_with_a_real_local_key_and_appends_once(tmp_path: Path)
     workspace = tmp_path / "workspace"
     workspace.mkdir(exist_ok=True)
     _catalog(workspace)
-    pb = Playbill(  # type: ignore[arg-type]
+    pb = Cruxible(  # type: ignore[arg-type]
         client=client,
         instance_id=instance.descriptor.instance_id,
         workspace=workspace,

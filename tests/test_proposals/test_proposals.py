@@ -34,7 +34,7 @@ from cruxible_client.contracts.proposal_models import (
     PROPOSAL_RECEIVE_BOUND_KEYS,
     ProposalReceiveLimits,
 )
-from cruxible_client.contracts.workspace_advertisement import PlaybillWorkspaceAdvertisement
+from cruxible_client.contracts.workspace_advertisement import WorkspaceAdvertisement
 from cruxible_core.authoring.store import AuthoringIntentStore, AuthoringIntentStoreError
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.proposals.proposal_evidence import ProposalEvidenceStore
@@ -64,7 +64,7 @@ TIMESTAMP = "2026-08-11T12:30:00.000000Z"
 DOCUMENT_PATH = "documents/playbill-design.json"
 
 
-def _shell(body_digest: str, *, title: str = "Playbill design") -> DocumentShell:
+def _shell(body_digest: str, *, title: str = "Cruxible design") -> DocumentShell:
     return DocumentShell(
         identity="document:playbill-design",
         document_kind="design",
@@ -396,12 +396,12 @@ def test_submit_advertises_only_after_all_proposal_evidence_is_durable(tmp_path:
     evidence = instance.proposal_evidence()
     calls: list[str] = []
 
-    def advertise() -> PlaybillWorkspaceAdvertisement:
+    def advertise() -> WorkspaceAdvertisement:
         assert tuple(evidence.proposals.glob("*.json"))
         assert tuple(evidence.evaluations.glob("*.json"))
         assert tuple(evidence.candidates.glob("*.json"))
         calls.append("advertised")
-        return PlaybillWorkspaceAdvertisement(
+        return WorkspaceAdvertisement(
             status="failed",
             workspace_path=str(tmp_path),
             failure_code="remote_conflict",
@@ -439,7 +439,7 @@ def test_submit_advertises_only_after_all_proposal_evidence_is_durable(tmp_path:
 def test_submit_survives_an_advertiser_that_raises(tmp_path: Path) -> None:
     instance, _owner = initialize_local(tmp_path)
 
-    def advertise() -> PlaybillWorkspaceAdvertisement:
+    def advertise() -> WorkspaceAdvertisement:
         raise MemoryError("simulated advertiser failure")
 
     instance.bind_workspace_advertiser(advertise, workspace_path=tmp_path)
@@ -462,7 +462,7 @@ def test_submit_survives_an_advertiser_that_raises(tmp_path: Path) -> None:
 def test_proposal_service_guard_contains_a_direct_advertiser_failure(tmp_path: Path) -> None:
     instance, _owner = initialize_local(tmp_path)
 
-    def advertise() -> PlaybillWorkspaceAdvertisement:
+    def advertise() -> WorkspaceAdvertisement:
         raise MemoryError("simulated direct advertiser failure")
 
     service = ProposalService(

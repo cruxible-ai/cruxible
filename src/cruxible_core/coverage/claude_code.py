@@ -81,7 +81,7 @@ TOOL_KINDS: dict[str, HarnessToolKindV1] = {
 
 # The subset whose output shape can carry an annotation without fabricating
 # anything. See the module docstring; this is a fact about Claude Code 2.1.234,
-# not a Playbill policy.
+# not a Cruxible policy.
 ANNOTATABLE_TOOLS: frozenset[str] = frozenset({"Grep"})
 
 

@@ -6,7 +6,7 @@ from unittest.mock import Mock
 import pytest
 
 from cruxible_client.contracts.claims import claim_artifact_digest, claim_path, render_claim
-from cruxible_client.contracts.errors import PlaybillError, PlaybillFormatError
+from cruxible_client.contracts.errors import CruxibleError, FormatError
 from cruxible_core.service.floor import projection_lineage as lineage
 from tests.test_claims.test_claims import _claim
 from tests.test_client.test_playbill_block_sync import OLD_COORDINATE
@@ -126,7 +126,7 @@ def test_request_history_prefix_stays_fixed_during_concurrent_acceptance():
 def test_failed_parse_does_not_publish_partial_index():
     instance, claims, paths, generations, trees, at = _fixture()
     trees[generations[1].oid][paths[1]] = b"not a claim"
-    with pytest.raises(PlaybillError):
+    with pytest.raises(CruxibleError):
         lineage.read_claim_lineages(instance, paths=paths, at=at)
     instance.blobs_at.reset_mock()
     trees[generations[1].oid][paths[1]] = render_claim(claims[1])
@@ -136,7 +136,7 @@ def test_failed_parse_does_not_publish_partial_index():
 
 @pytest.mark.parametrize("read_failure", [False, True])
 def test_batch_errors_preserve_all_marker_findings(read_failure, monkeypatch):
-    from cruxible_client.contracts.authoring.models import PlaybillBlockSyncReadRequest
+    from cruxible_client.contracts.authoring.models import BlockSyncReadRequest
     from cruxible_client.contracts.claims import claim_statement_digest
     from cruxible_client.contracts.declared_blocks import (
         ProjectionBlockStampV1,
@@ -180,12 +180,12 @@ def test_batch_errors_preserve_all_marker_findings(read_failure, monkeypatch):
 
         def read_batch(oid, wanted):
             if oid == generations[1].oid:
-                raise PlaybillFormatError("historical blob unavailable")
+                raise FormatError("historical blob unavailable")
             return batch(oid, wanted)
 
         def read_one(oid, path):
             if oid == generations[1].oid and path == paths[1]:
-                raise PlaybillFormatError("historical blob unavailable")
+                raise FormatError("historical blob unavailable")
             return single(oid, path)
 
         instance.blobs_at.side_effect = read_batch
@@ -209,14 +209,14 @@ def test_batch_errors_preserve_all_marker_findings(read_failure, monkeypatch):
         ),
     )
     result = service_read_playbill_block_sync_backing(
-        instance, request=PlaybillBlockSyncReadRequest(stamp=stamp)
+        instance, request=BlockSyncReadRequest(stamp=stamp)
     )
     assert result.reason == "block_backing_changed"
     # Once the first backing is valid, the historical failure on the second
     # remains observable. It is not dropped, cached as absence, or swallowed.
     valid = stamp.model_copy(update={"backing": backings})
     checked = service_read_playbill_block_sync_backing(
-        instance, request=PlaybillBlockSyncReadRequest(stamp=valid)
+        instance, request=BlockSyncReadRequest(stamp=valid)
     )
     assert checked.status == "unchecked"
     assert checked.issues[-1].identity == backings[1].identity

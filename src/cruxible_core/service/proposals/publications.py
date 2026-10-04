@@ -18,13 +18,13 @@ import hashlib
 from typing import TYPE_CHECKING
 
 from cruxible_client.contracts import (
-    PlaybillAcceptedCoordinate,
-    PlaybillBlockDeclareResult,
-    PlaybillBlockDepublishResult,
+    AcceptedCoordinate,
+    BlockDeclareResult,
+    BlockDepublishResult,
 )
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.declared_blocks import ProjectionBlockStampAny
-from cruxible_client.contracts.errors import PlaybillError, PlaybillFormatError
+from cruxible_client.contracts.errors import CruxibleError, FormatError
 from cruxible_core.authoring.registrations import (
     BoundPublicationRegistration,
     DeclaredBlockRegistration,
@@ -38,7 +38,6 @@ from cruxible_core.authoring.registrations import (
     write_projection_block_declaration,
 )
 from cruxible_core.authoring.store import AuthoringIntentStore
-from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.change_preview import ChangeMode, change_scope
 
@@ -53,7 +52,7 @@ def service_declare_playbill_block(
     actor_id: str,
     stamp: ProjectionBlockStampAny,
     declared_at: str,
-) -> PlaybillBlockDeclareResult:
+) -> BlockDeclareResult:
     """Register one projection block the workspace just stamped.
 
     `next` asks of every marker it observes whether this instance stands behind
@@ -68,12 +67,12 @@ def service_declare_playbill_block(
     """
 
     instance.require_writable()
-    coordinate = PlaybillAcceptedCoordinate.model_validate(
+    coordinate = AcceptedCoordinate.model_validate(
         AcceptedCoordinate.from_internal(instance.accepted_coordinate()).model_dump(mode="json")
     )
     existing = projection_block_declarations(instance)
     if existing is None:
-        raise PlaybillFormatError(
+        raise FormatError(
             "playbill.block.declaration_registry_unavailable: the block declaration store "
             "cannot be read; repair: restore the instance exhaust and retry"
         )
@@ -92,7 +91,7 @@ def service_declare_playbill_block(
         declared_at=declared_at,
         stamp_digest=projection_block_stamp_digest(stamp),
     )
-    return PlaybillBlockDeclareResult(
+    return BlockDeclareResult(
         source_id=stamp.source_id,
         block_id=stamp.block_id,
         outcome="redeclared" if known else "declared",
@@ -116,7 +115,7 @@ def service_depublish_playbill_block(
     block_id: str,
     dry_run: bool | None = None,
     at: str | None = None,
-) -> PlaybillBlockDepublishResult:
+) -> BlockDepublishResult:
     """Release the bound publication registration that demands one page block.
 
     A registration is folded from a `bound` insertion expectation and nothing
@@ -162,19 +161,19 @@ def _depublish(
     actor: "AuthenticatedActor",
     source_id: str,
     block_id: str,
-) -> PlaybillBlockDepublishResult:
-    coordinate = PlaybillAcceptedCoordinate.model_validate(
+) -> BlockDepublishResult:
+    coordinate = AcceptedCoordinate.model_validate(
         AcceptedCoordinate.from_internal(instance.accepted_coordinate()).model_dump(mode="json")
     )
     registrations = bound_publication_registrations(instance)
     if registrations is None:
-        raise PlaybillFormatError(
+        raise FormatError(
             "playbill.block.publication_registry_unavailable: the durable publication "
             "stream cannot be read; repair: restore the instance exhaust and retry"
         )
     declarations = projection_block_declarations(instance)
     if declarations is None:
-        raise PlaybillFormatError(
+        raise FormatError(
             "playbill.block.declaration_registry_unavailable: the block declaration store "
             "cannot be read; repair: restore the instance exhaust and retry"
         )
@@ -192,7 +191,7 @@ def _depublish(
                     source_id=source_id,
                     block_id=block_id,
                 )
-        return PlaybillBlockDepublishResult(
+        return BlockDepublishResult(
             source_id=source_id,
             block_id=block_id,
             origin="declaration",
@@ -203,7 +202,7 @@ def _depublish(
         # Releasing a registration is idempotent by contract, and a declaration
         # this instance once held and has already released must say so rather
         # than refuse by naming a publication that never existed.
-        return PlaybillBlockDepublishResult(
+        return BlockDepublishResult(
             source_id=source_id,
             block_id=block_id,
             origin="declaration",
@@ -218,13 +217,13 @@ def _depublish(
     if not matched:
         released = _released_publication_expectation(instance, source_id, block_id)
         if released is None:
-            raise PlaybillFormatError(
+            raise FormatError(
                 f"playbill.block.not_registered: this instance registers no block "
                 f"{source_id}#{block_id}, by declaration or by publication; repair: read "
                 "the registered blocks with `cruxible playbill next` before releasing one"
             )
         intent_id, expectation_id, claim_identity = released
-        return PlaybillBlockDepublishResult(
+        return BlockDepublishResult(
             source_id=source_id,
             block_id=block_id,
             intent_id=intent_id,
@@ -234,7 +233,7 @@ def _depublish(
             coordinate=coordinate,
         )
     if len(matched) > 1:
-        raise PlaybillFormatError(
+        raise FormatError(
             f"playbill.block.publication_registration_ambiguous: {len(matched)} bound "
             f"publications register {source_id}#{block_id}; repair: abandon each intent "
             "through `cruxible playbill authoring abandon-insertion`"
@@ -246,7 +245,7 @@ def _depublish(
             actor=actor,
             expectation_id=registration.preparation.expectation_id,
         )
-        return PlaybillBlockDepublishResult(
+        return BlockDepublishResult(
             source_id=source_id,
             block_id=block_id,
             intent_id=registration.intent_id,
@@ -261,7 +260,7 @@ def _depublish(
             actor=actor,
             expectation_id=registration.preparation.expectation_id,
         )
-    return PlaybillBlockDepublishResult(
+    return BlockDepublishResult(
         source_id=source_id,
         block_id=block_id,
         intent_id=registration.intent_id,
@@ -282,7 +281,7 @@ def _released_publication_expectation(
     exhaust_root = instance.root / instance.descriptor.storage.exhaust
     try:
         latest = AuthoringIntentStore(exhaust_root, read_only=True).publication_states()
-    except (OSError, PlaybillError):
+    except (OSError, CruxibleError):
         return None
     for intent in latest:
         for expectation in intent.insertion_expectations:

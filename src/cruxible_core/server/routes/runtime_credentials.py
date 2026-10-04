@@ -114,7 +114,7 @@ def revoke_runtime_credential_route(
 ) -> contracts.RuntimeCredentialResult:
     """Revoke one credential. It cannot be undone: previews unless committed with ``at``.
 
-    Pinned to the credential's own state, so a host with no Playbill yet (its
+    Pinned to the credential's own state, so a host with no Cruxible yet (its
     bootstrap or recovery credential) previews and commits like any other.
     """
 

@@ -28,13 +28,13 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.captures import ProducerReceiptResolverProtocol
 from cruxible_client.contracts.errors import (
-    PlaybillError,
-    PlaybillGitError,
-    PlaybillInstanceIncompatiblePrereleaseContent,
+    CruxibleError,
+    GitError,
+    InstanceIncompatiblePrereleaseContent,
     ProjectionIntegrityError,
     SettlementIntegrityError,
 )
-from cruxible_client.contracts.laws import PLAYBILL_ACCEPTANCE_LAWS, AcceptanceLawRegistry
+from cruxible_client.contracts.laws import ACCEPTANCE_LAWS, AcceptanceLawRegistry
 from cruxible_client.contracts.principals import (
     PrincipalRegistrySnapshot,
     parse_principal_record,
@@ -320,7 +320,7 @@ def _refuse_removed_prerelease_content(
         previous_oid = oid
 
     if "claim-types/knowledge/brief.json" in paths:
-        raise PlaybillInstanceIncompatiblePrereleaseContent(artifact_class="knowledge.brief")
+        raise InstanceIncompatiblePrereleaseContent(artifact_class="knowledge.brief")
 
     candidates = {
         entry.path: entry.oid
@@ -338,7 +338,7 @@ def _refuse_removed_prerelease_content(
             and isinstance(payload.get("statement"), dict)
             and payload["statement"].get("predicate") == "knowledge.brief"
         ):
-            raise PlaybillInstanceIncompatiblePrereleaseContent(artifact_class="knowledge.brief")
+            raise InstanceIncompatiblePrereleaseContent(artifact_class="knowledge.brief")
 
 
 def _materialize_successor_tree(
@@ -383,9 +383,7 @@ def _materialize_successor_tree(
         if change.mode != "100644":
             # `read_tree` refuses the same non-regular-file members before any
             # blob is read; a successor may not smuggle one past replay.
-            raise PlaybillGitError(
-                f"ledger tree contains unsupported {change.mode} member: {change.path}"
-            )
+            raise GitError(f"ledger tree contains unsupported {change.mode} member: {change.path}")
         if (change.status == "A") != (change.path not in materialized):
             raise SettlementIntegrityError(
                 f"generation change status differs from its predecessor tree: {change.path}"
@@ -913,7 +911,7 @@ def _clean_unaccepted_generations(
                 ),
             )
             ledger.collect_unreachable_generation(oid)
-        except PlaybillError:
+        except CruxibleError:
             # Unaccepted Git garbage cannot affect service admission. Only a
             # complete replay-valid generation is eligible for targeted deletion.
             continue
@@ -1040,7 +1038,7 @@ def recover_instance(
     publication_directory: Path,
     bodies: BodyProjectionProtocol,
     witness: WitnessSink | None = None,
-    laws: AcceptanceLawRegistry = PLAYBILL_ACCEPTANCE_LAWS,
+    laws: AcceptanceLawRegistry = ACCEPTANCE_LAWS,
     promotion_verifier: ExhaustPromotionVerifierProtocol | None = None,
     producer_receipt_resolver: ProducerReceiptResolverProtocol | None = None,
     query_facts_builder: AcceptedQueryFactsBuilder | None = None,
@@ -1123,7 +1121,7 @@ def recover_instance(
                     tree=seed.tree,
                     state=seed.state,
                 )
-            except PlaybillError:
+            except CruxibleError:
                 # A checkpoint whose tree no longer reproduces is discarded and
                 # the reopen replays from genesis, as for any unusable one.
                 assert checkpoint_directory is not None

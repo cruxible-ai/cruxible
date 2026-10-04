@@ -347,7 +347,7 @@ def test_cli_delivers_coverage_for_a_governed_working_file_and_drops_it_on_edit(
     assert lines[0].startswith("candidate  external:workspace.handbook  ")
     assert card["claim_addresses"][0]["artifact_path"] in lines[0]
     assert "basis content_equivalent" in lines[0]
-    assert lines[-3] == "Playbill coverage: 0 exact, 0 drifted, 1 candidates, 0 none"
+    assert lines[-3] == "Cruxible coverage: 0 exact, 0 drifted, 1 candidates, 0 none"
     assert lines[-2].startswith("coverage complete for 1 returned spans at generation ")
     assert lines[-1] == "omitted cards: 0, truncated spans: 0"
 
@@ -369,7 +369,7 @@ def test_cli_delivers_coverage_for_a_governed_working_file_and_drops_it_on_edit(
     # An ungoverned span is summarized once and never annotated per line.
     edited_lines = edited_human.strip().splitlines()
     assert len(edited_lines) == 3
-    assert edited_lines[0] == "Playbill coverage: 0 exact, 0 drifted, 0 candidates, 1 none"
+    assert edited_lines[0] == "Cruxible coverage: 0 exact, 0 drifted, 0 candidates, 1 none"
     assert not any("none" in line for line in edited_lines[1:])
     assert WORKING_SOURCE not in edited_human
 
@@ -482,7 +482,7 @@ def test_cli_delivers_exact_then_relocated_exact_then_drifted_for_a_foreign_sour
     assert f"expected {drifted['expected_commitment_digest']}" in drift_lines[0]
     assert f"observed {drifted['observed_commitment_digest']}" in drift_lines[0]
     assert "dependents 1" in drift_lines[0]
-    assert drift_lines[-3] == "Playbill coverage: 0 exact, 1 drifted, 0 candidates, 0 none"
+    assert drift_lines[-3] == "Cruxible coverage: 0 exact, 1 drifted, 0 candidates, 0 none"
 
     # 4. Nothing about accepted state moved across the whole transcript.
     assert drifted_payload["at"] == payload["at"] == moved["at"]
@@ -562,7 +562,7 @@ def test_cli_coverage_status_renders_the_manifest_over_the_declared_scope(
     ).stdout
 
     lines = status.strip().splitlines()
-    assert lines[0] == "Playbill coverage manifest: epoch 0, health complete, boundary complete"
+    assert lines[0] == "Cruxible coverage manifest: epoch 0, health complete, boundary complete"
     assert lines[1].startswith("instance ")
     assert "watcher absent, access profile playbill.coverage.read" in lines
     assert "scope 2 source(s):" in lines

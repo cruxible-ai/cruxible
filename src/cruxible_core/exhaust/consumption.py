@@ -1,4 +1,4 @@
-"""Service-owned read-touch receipts for accepted Playbill artifacts."""
+"""Service-owned read-touch receipts for accepted Cruxible artifacts."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.claims.closure import parse_dependency_artifact
 from cruxible_core.curation.review_operational import (
@@ -32,9 +32,7 @@ CONSUMPTION_RECEIPTS_ENV = "CRUXIBLE_CONSUMPTION_RECEIPTS"
 def consumption_receipts_enabled() -> bool:
     value = os.environ.get(CONSUMPTION_RECEIPTS_ENV, "off").strip().lower()
     if value not in {"off", "on"}:
-        raise PlaybillFormatError(
-            f"{CONSUMPTION_RECEIPTS_ENV} must be 'off' or 'on', not {value!r}"
-        )
+        raise FormatError(f"{CONSUMPTION_RECEIPTS_ENV} must be 'off' or 'on', not {value!r}")
     return value == "on"
 
 
@@ -221,7 +219,7 @@ def _generation(instance: PlaybillInstance, coordinate: AcceptedCoordinate) -> i
     try:
         with instance.accepted_history_reader(at=coordinate) as history:
             return history.sequence
-    except PlaybillFormatError as exc:
+    except FormatError as exc:
         raise ReviewOperationalStoreError(
             "consumption receipt coordinate is not accepted by this instance"
         ) from exc

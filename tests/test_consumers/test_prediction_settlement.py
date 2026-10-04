@@ -12,9 +12,9 @@ import pytest
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.predictions import (
     ObservationSettlementEvidence,
-    PlaybillSettleRequest,
     PredictionEqualityRule,
     PredictionObservationSelector,
+    SettleRequest,
 )
 from cruxible_client.contracts.procedures.windows import (
     CaptureEventSelector,
@@ -83,7 +83,7 @@ def settle(instance, contract, observation, *, event=None):  # type: ignore[no-u
     return served.service_settle_playbill_prediction(
         instance,
         prediction_id=contract.identity.name,
-        request=PlaybillSettleRequest(
+        request=SettleRequest(
             contract=contract,
             trigger_event=event,
             evidence=ObservationSettlementEvidence(claim=observation),
@@ -406,7 +406,7 @@ def test_retiring_a_contract_withdraws_what_it_owed(tmp_path: Path) -> None:
 def test_settling_by_window_id_refuses_a_window_retired_before_the_worker_saw_it(
     tmp_path: Path,
 ) -> None:
-    from cruxible_client.contracts.predictions import PlaybillSettleRequest
+    from cruxible_client.contracts.predictions import SettleRequest
     from cruxible_core.service.procedures.predictions import PredictionRefused
 
     instance, owner, capture, contract = fixed_world(tmp_path)
@@ -425,7 +425,7 @@ def test_settling_by_window_id_refuses_a_window_retired_before_the_worker_saw_it
         served.service_settle_playbill_prediction(
             instance,
             prediction_id=window.bound_contract_id,
-            request=PlaybillSettleRequest(observation=observation.identity.name),
+            request=SettleRequest(observation=observation.identity.name),
             actor_context=served._actor(),
             recorded_at=FIXED_CLOSES + timedelta(hours=1),
         )

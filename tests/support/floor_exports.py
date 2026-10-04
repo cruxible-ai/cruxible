@@ -7,7 +7,7 @@ from collections.abc import Mapping
 
 from cruxible_client import contracts
 from cruxible_client.contracts.floor import (
-    PlaybillFloorDelta,
+    FloorDelta,
     build_floor_manifest,
     content_digest,
     floor_manifest_digest,
@@ -22,11 +22,11 @@ TEST_NOTES = "sha256:" + "6" * 64
 def floor_v5_export(
     files: Mapping[str, bytes],
     *,
-    coordinate: contracts.PlaybillAcceptedCoordinate,
+    coordinate: contracts.AcceptedCoordinate,
     generation: int = 1,
     changed_at: Mapping[str, int] | None = None,
     notes_digest: str = TEST_NOTES,
-) -> contracts.PlaybillFloorExport:
+) -> contracts.FloorExport:
     """A full v5 floor export of ``files`` at ``coordinate``, as the daemon serves it."""
 
     manifest = build_floor_manifest(
@@ -44,14 +44,12 @@ def floor_v5_export(
         },
     )
     rendered = render_floor_manifest(manifest)
-    return contracts.PlaybillFloorExport(
+    return contracts.FloorExport(
         tag="playbill-floor-export-v5",
         coordinate=coordinate,
         manifest=manifest.model_dump(mode="json"),
         files=[
-            contracts.PlaybillFloorFile(
-                path=path, content_base64=base64.b64encode(content).decode("ascii")
-            )
+            contracts.FloorFile(path=path, content_base64=base64.b64encode(content).decode("ascii"))
             for path, content in {"manifest.json": rendered, **files}.items()
         ],
     )
@@ -60,13 +58,13 @@ def floor_v5_export(
 def floor_v5_delta(
     head: Mapping[str, tuple[bytes, int]],
     *,
-    coordinate: contracts.PlaybillAcceptedCoordinate,
+    coordinate: contracts.AcceptedCoordinate,
     generation: int,
     base: tuple[int, Mapping[str, tuple[bytes, int]]] | None = None,
     renderer: str = TEST_RENDERER,
     notes_digest: str = TEST_NOTES,
     base_notes_digest: str | None = None,
-) -> PlaybillFloorDelta:
+) -> FloorDelta:
     """The delta the daemon would serve from ``base`` (or a full floor) to ``head``.
 
     Each map is ``path -> (bytes, changed_at)``.
@@ -132,9 +130,7 @@ def floor_v5_delta(
     )
 
 
-def delta_from_export(
-    export: contracts.PlaybillFloorExport, *, corrupt: str | None = None
-) -> PlaybillFloorDelta:
+def delta_from_export(export: contracts.FloorExport, *, corrupt: str | None = None) -> FloorDelta:
     """The full delta carrying exactly a v5 export's floor.
 
     ``corrupt`` names one file whose bytes are then swapped after sealing, as a

@@ -50,7 +50,7 @@ from cruxible_core.query.impact import (
     build_dependency_impact,
 )
 from cruxible_core.service.discovery.audit import (
-    PlaybillAuditCursorInvalid,
+    AuditCursorInvalid,
     PlaybillAuditRequestV1,
     _audit_consumption_touch_counts,
     _AuditHistoryIndex,
@@ -209,7 +209,7 @@ def test_pagination_commits_actual_coverage_and_cursor_rejects_operational_drift
         coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         artifacts=((omitted.claim.identity, omitted.artifact_digest),),
     )
-    with pytest.raises(PlaybillAuditCursorInvalid):
+    with pytest.raises(AuditCursorInvalid):
         service_playbill_audit(
             instance,
             request=first_request.model_copy(update={"cursor": first.next_cursor}),
@@ -251,7 +251,7 @@ def test_pagination_commits_actual_coverage_and_cursor_rejects_operational_drift
         actor_context=_actor(),
         recorded_at=NOW,
     )
-    with pytest.raises(PlaybillAuditCursorInvalid):
+    with pytest.raises(AuditCursorInvalid):
         service_playbill_audit(
             instance,
             request=first_request.model_copy(update={"cursor": restarted.next_cursor}),

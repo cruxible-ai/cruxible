@@ -20,7 +20,7 @@ from cruxible_client.contracts.errors import (
     ProposalReadmitRequiresResubmission,
     ProposalSelectorAmbiguousError,
 )
-from cruxible_client.contracts.principals import PlaybillAuthoringRefusal
+from cruxible_client.contracts.principals import AuthoringRefusal
 from cruxible_client.contracts.proposal_models import ProposalReadmissionLink
 from cruxible_core.authoring.id_prefixes import AmbiguousIdPrefix, resolve_id_prefix
 from cruxible_core.indexes.proposals.proposal_index import timestamp
@@ -33,8 +33,8 @@ from cruxible_core.proposals.proposals import (
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.runtime.permissions import PermissionMode
 from cruxible_core.service.authoring.documents import (
-    PlaybillAcceptedCoordinate,
-    PlaybillProposalInspection,
+    AcceptedCoordinate,
+    ProposalInspection,
 )
 from cruxible_core.service.change_preview import ChangeMode, change_scope
 from cruxible_core.service.identity import authoring_refusal, principal_standing
@@ -99,7 +99,7 @@ class PlaybillProposalListEntryV1(_StrictOperationalReadModel):
 
 class PlaybillProposalListV1(_StrictOperationalReadModel):
     tag: Literal["playbill-proposal-list-v1"] = "playbill-proposal-list-v1"
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     status_filter: ProposalInventoryStatus | None = None
     entries: tuple[PlaybillProposalListEntryV1, ...]
     truncated: bool = False
@@ -110,7 +110,7 @@ class PlaybillProposalReadmitResultV1(_StrictOperationalReadModel):
     tag: Literal["playbill-proposal-readmit-result-v1"] = "playbill-proposal-readmit-result-v1"
     source_proposal_id: str
     operation_digest: str
-    proposal: PlaybillProposalInspection
+    proposal: ProposalInspection
 
 
 class PlaybillProposalWithdrawResultV1(_StrictOperationalReadModel):
@@ -123,10 +123,10 @@ class PlaybillProposalWithdrawResultV1(_StrictOperationalReadModel):
     withdrawn_at: str
     already_withdrawn: bool = False
     #: The accepted coordinate the withdrawal was checked at; ``at`` pins a commit.
-    coordinate: PlaybillAcceptedCoordinate | None = None
+    coordinate: AcceptedCoordinate | None = None
 
 
-class PlaybillProposalSelectorResult(_StrictOperationalReadModel):
+class ProposalSelectorResult(_StrictOperationalReadModel):
     tag: Literal["playbill-proposal-selector-result-v1"] = "playbill-proposal-selector-result-v1"
     selector: str
     proposal_id: str
@@ -146,11 +146,11 @@ class PlaybillWhoAmIV1(_StrictOperationalReadModel):
     # None when the request names no principal (an unbound credential).
     principal_registration_status: PrincipalRegistrationStatus | None
     active_principal_ids: tuple[str, ...]
-    coordinate: PlaybillAcceptedCoordinate
+    coordinate: AcceptedCoordinate
     # Whether authoring create would accept this actor, and the refusal it
     # would return otherwise: the same code, detail and repair.
     can_author: bool
-    authoring_refusal: PlaybillAuthoringRefusal | None
+    authoring_refusal: AuthoringRefusal | None
 
     @model_validator(mode="after")
     def _credential_binding(self) -> "PlaybillWhoAmIV1":
@@ -186,9 +186,9 @@ def service_list_playbill_proposals(
         else decode_list_cursor(cursor, list_name=_PROPOSAL_LIST, selection=selection)
     )
     coordinate = (
-        PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+        AcceptedCoordinate.from_internal(instance.accepted_coordinate())
         if continuation is None
-        else PlaybillAcceptedCoordinate.model_validate(continuation.coordinate)
+        else AcceptedCoordinate.model_validate(continuation.coordinate)
     )
     entries = tuple(
         entry
@@ -247,7 +247,7 @@ def service_playbill_proposal_status(
         ProposalDigest.from_tagged(resolved)
     except ValueError as exc:
         raise ProposalNotFoundError(proposal_id) from exc
-    coordinate = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     entry = next(
         (
             item
@@ -272,7 +272,7 @@ def service_playbill_proposal_status(
 
 def _proposal_entries(
     instance: PlaybillInstance,
-    coordinate: PlaybillAcceptedCoordinate,
+    coordinate: AcceptedCoordinate,
     proposal_id: str | None = None,
     *,
     require_evidence: bool = True,
@@ -335,7 +335,7 @@ def _proposal_entries(
 @contextmanager
 def _bound_inventory(
     instance: PlaybillInstance,
-    coordinate: PlaybillAcceptedCoordinate,
+    coordinate: AcceptedCoordinate,
 ) -> Iterator[tuple[sqlite3.Connection, int] | None]:
     """One proposal-index read bound to the history sequence of `coordinate`.
 
@@ -406,7 +406,7 @@ class StaleProposal:
     candidate_parent_semantic_root: str
 
 
-def readmission_operation_digest(proposal_id: str, coordinate: PlaybillAcceptedCoordinate) -> str:
+def readmission_operation_digest(proposal_id: str, coordinate: AcceptedCoordinate) -> str:
     """The one readmission of `proposal_id` that `coordinate` admits."""
 
     return ProposalReadmissionLink(
@@ -504,7 +504,7 @@ def _carrying_readmission(
 
 def proposal_readmission(
     instance: PlaybillInstance,
-    coordinate: PlaybillAcceptedCoordinate,
+    coordinate: AcceptedCoordinate,
     proposal_id: str,
 ) -> ProposalReadmission | None:
     """The readmission carrying `proposal_id`'s change at `coordinate`, if any."""
@@ -520,7 +520,7 @@ def proposal_readmission(
 
 def stale_unreadmitted_proposals(
     instance: PlaybillInstance,
-    coordinate: PlaybillAcceptedCoordinate,
+    coordinate: AcceptedCoordinate,
     *,
     actor_id: str | None = None,
 ) -> tuple[StaleProposal, ...]:
@@ -595,7 +595,7 @@ class ProposalAwaitingApproval:
 
 def proposals_awaiting_approval(
     instance: PlaybillInstance,
-    coordinate: PlaybillAcceptedCoordinate,
+    coordinate: AcceptedCoordinate,
     *,
     principal_id: str,
     ordinary_principal_ids: frozenset[str],
@@ -658,7 +658,7 @@ def service_resolve_playbill_proposal_selector(
     instance: PlaybillInstance,
     *,
     selector: str,
-) -> PlaybillProposalSelectorResult:
+) -> ProposalSelectorResult:
     """Resolve a user selector once to immutable proposal admission evidence."""
 
     evidence = instance.proposal_evidence()
@@ -673,7 +673,7 @@ def service_resolve_playbill_proposal_selector(
         raise ProposalSelectorAmbiguousError(selector, proposal_ids) from exc
     if resolved in proposal_ids:
         evidence.read_admission(resolved)
-        return PlaybillProposalSelectorResult(selector=selector, proposal_id=resolved)
+        return ProposalSelectorResult(selector=selector, proposal_id=resolved)
     target_oid = instance.proposal_ref_target(selector) if selector.startswith("refs/") else None
     if target_oid is not None:
         current = evidence.index.rows(
@@ -682,7 +682,7 @@ def service_resolve_playbill_proposal_selector(
         if len(current) == 1:
             resolved = current[0]["proposal_id"]
             evidence.read_admission(resolved)
-            return PlaybillProposalSelectorResult(selector=selector, proposal_id=resolved)
+            return ProposalSelectorResult(selector=selector, proposal_id=resolved)
     # Only the historical ambiguity diagnostic needs every admission for a ref.
     rows = evidence.index.rows(evidence, "target_ref=?", (selector,))
     if rows:
@@ -742,7 +742,7 @@ def _readmit(
             entry
             for entry in _proposal_entries(
                 instance,
-                PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+                AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
                 proposal_id,
             )
             if entry.proposal_id == proposal_id
@@ -759,7 +759,7 @@ def _readmit(
         )
     carried = proposal_readmission(
         instance,
-        PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         proposal_id,
     )
     if carried is not None and carried.accepted:
@@ -775,7 +775,7 @@ def _readmit(
             "this stale proposal was admitted against pinned slot membership, which a "
             "byte rebase would not check; run the write again at the current head"
         )
-    coordinate = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     link = ProposalReadmissionLink(source_proposal_id=proposal_id, coordinate=coordinate)
     operation_digest = link.operation_digest
     matching = tuple(
@@ -812,7 +812,7 @@ def _readmit(
             return PlaybillProposalReadmitResultV1(
                 source_proposal_id=proposal_id,
                 operation_digest=operation_digest,
-                proposal=PlaybillProposalInspection(
+                proposal=ProposalInspection(
                     status="would_propose" if preview.candidate is not None else "would_block",
                     proposal=preview,
                     accepted_coordinate=coordinate,
@@ -829,7 +829,7 @@ def _readmit(
     return PlaybillProposalReadmitResultV1(
         source_proposal_id=proposal_id,
         operation_digest=operation_digest,
-        proposal=PlaybillProposalInspection(
+        proposal=ProposalInspection(
             proposal=result,
             workspace_advertisement=result.workspace_advertisement,
             accepted_coordinate=coordinate,
@@ -956,7 +956,7 @@ def _withdraw(
             item
             for item in _proposal_entries(
                 instance,
-                PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+                AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
                 admission.proposal_id,
             )
             if item.proposal_id == admission.proposal_id
@@ -977,7 +977,7 @@ def _withdraw(
     )
     head = mode.head
     assert head is not None
-    coordinate = PlaybillAcceptedCoordinate.from_internal(head)
+    coordinate = AcceptedCoordinate.from_internal(head)
     if mode.previewing:
         return PlaybillProposalWithdrawResultV1(
             status="would_withdraw",
@@ -1044,7 +1044,7 @@ def service_playbill_whoami(
         credential_permission_mode=cast(CredentialPermissionMode, permission_mode.name.lower()),
         principal_registration_status=registration,
         active_principal_ids=active,
-        coordinate=PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
     )
 
 

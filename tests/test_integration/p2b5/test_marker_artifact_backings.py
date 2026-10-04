@@ -9,7 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
-from cruxible_client.contracts.authoring.models import PlaybillBlockSyncReadRequest
+from cruxible_client.contracts.authoring.models import BlockSyncReadRequest
 from cruxible_client.contracts.claim_types import (
     claim_type_digest,
     claim_type_path,
@@ -107,7 +107,7 @@ def test_claim_type_block_sync_checks_current_artifact_without_rendering(
 
     result = service_read_playbill_block_sync_backing(
         instance,
-        request=PlaybillBlockSyncReadRequest(stamp=stamp),
+        request=BlockSyncReadRequest(stamp=stamp),
     )
 
     assert result.status == "successor"

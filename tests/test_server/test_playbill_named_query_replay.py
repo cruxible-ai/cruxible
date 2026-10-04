@@ -16,9 +16,9 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from cruxible_client import CruxibleClient, Playbill
+from cruxible_client import Cruxible, CruxibleClient
 from cruxible_client.authoring.blocks import _query_backing
-from cruxible_client.contracts.compact_query import PlaybillQueryRequest, PlaybillQueryResult
+from cruxible_client.contracts.compact_query import QueryRequest, QueryResultRecord
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.query.definitions import QueryDefinition, QueryDefinitionSpec
 from cruxible_client.contracts.query.grammar import (
@@ -112,8 +112,8 @@ def served(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[CruxibleCli
     return client, instance_id, instance
 
 
-def _sdk(client: CruxibleClient, instance_id: str, tmp_path: Path) -> Playbill:
-    return Playbill._from_client(  # type: ignore[arg-type]
+def _sdk(client: CruxibleClient, instance_id: str, tmp_path: Path) -> Cruxible:
+    return Cruxible._from_client(  # type: ignore[arg-type]
         client,
         instance_id=instance_id,
         workspace=tmp_path,
@@ -162,7 +162,7 @@ def test_http_admits_a_null_parameter_and_the_definition_decides(
         },
     )
     assert response.status_code == 200, response.text
-    page = PlaybillQueryResult.model_validate(response.json())
+    page = QueryResultRecord.model_validate(response.json())
     assert page.receipt.replay is not None
     assert page.receipt.replay.result.parameters[0].value is None
 
@@ -228,12 +228,10 @@ def test_a_block_backing_pins_an_explicit_null_binding(
 
 
 def test_the_request_model_admits_null_params_only() -> None:
-    request = PlaybillQueryRequest.model_validate(
-        {"name": BY_STATUS, "params": {"optional_status": None}}
-    )
+    request = QueryRequest.model_validate({"name": BY_STATUS, "params": {"optional_status": None}})
     assert request.params == {"optional_status": None}
     with pytest.raises(ValueError):
-        PlaybillQueryRequest.model_validate({"name": BY_STATUS, "params": {"x": [1]}})
+        QueryRequest.model_validate({"name": BY_STATUS, "params": {"x": [1]}})
 
 
 # -- F-004: a replay runs the definition's declared budgets ---------------------
@@ -311,7 +309,7 @@ def test_a_query_without_a_projection_records_the_claims_its_cells_served(
         ).model_dump(mode="json")
     response = client._client.post(f"/api/v1/{instance_id}/playbill/query", json=body)
     assert response.status_code == 200, response.text
-    page = PlaybillQueryResult.model_validate(response.json())
+    page = QueryResultRecord.model_validate(response.json())
     assert [row["status"] for row in page.rows] == ["ready", "blocked"]
     assert all("claims" not in row for row in page.rows)
 

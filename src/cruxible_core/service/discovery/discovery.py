@@ -43,7 +43,7 @@ from cruxible_core.query.semantic_discovery import (
     build_discovery_vocabulary,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
-from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
+from cruxible_core.service.authoring.documents import AcceptedCoordinate
 from cruxible_core.service.claims.claim_types import CLAIM_TYPE_PATH_PREFIX
 from cruxible_core.service.discovery.query import build_accepted_query_facts
 from cruxible_core.service.discovery.query_definitions import QUERY_DEFINITION_PATH_PREFIX
@@ -188,7 +188,7 @@ def accepted_provider_interfaces(
 
 def _resolve_coordinate(
     instance: PlaybillInstance,
-    at: PlaybillAcceptedCoordinate | None,
+    at: AcceptedCoordinate | None,
 ) -> AcceptedProjectionCoordinate:
     if at is None:
         return instance.accepted_coordinate()

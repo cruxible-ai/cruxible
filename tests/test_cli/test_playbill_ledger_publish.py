@@ -14,7 +14,7 @@ from cruxible_core.cli.main import cli
 def mirror_cli(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
-    receipt = contracts.PlaybillLedgerMirror(
+    receipt = contracts.LedgerMirror(
         instance_id="inst_test",
         mirror_url=str(tmp_path / "unused.git"),
         status="pending",
@@ -24,10 +24,8 @@ def mirror_cli(monkeypatch, tmp_path):
     )
     calls = []
     client = SimpleNamespace(
-        publish_playbill_ledger=lambda instance_id, **kwargs: (
-            calls.append((instance_id, kwargs)) or receipt
-        ),
-        get_playbill_ledger_mirror=lambda _: receipt,
+        publish_ledger=lambda instance_id, **kwargs: calls.append((instance_id, kwargs)) or receipt,
+        get_ledger_mirror=lambda _: receipt,
     )
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
     args = [

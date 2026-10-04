@@ -54,7 +54,7 @@ from cruxible_client.contracts.claims import (
     LiteralClaimObject,
     SubjectClaimObject,
 )
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContract
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
@@ -376,7 +376,7 @@ AuthoringChangeSetMemberInput: TypeAlias = Annotated[
 class ChangeSetInput(_StrictInputModel):
     kind: Literal["change_set"]
     members: tuple[AuthoringChangeSetMemberInput, ...] = Field(min_length=1)
-    # The same sentence `pb.changes(rationale=...)` carries, on the surface a
+    # The same sentence `cx.changes(rationale=...)` carries, on the surface a
     # CLI file and an MCP dict use. Leaving it to the SDK would have made "say
     # why you proposed this" an SDK-only capability, which is exactly the kind
     # of split the three-surface parity law exists to prevent.
@@ -405,7 +405,7 @@ AuthoringInput: TypeAlias = Annotated[
 
 
 @dataclass(eq=False)
-class AuthoringInputError(PlaybillFormatError, ValueError):
+class AuthoringInputError(FormatError, ValueError):
     code: str
     field_path: str
     message: str

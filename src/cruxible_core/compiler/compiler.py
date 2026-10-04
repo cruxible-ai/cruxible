@@ -1,4 +1,4 @@
-"""Versioned Playbill compiler coordinates and their exact projection registries."""
+"""Versioned Cruxible compiler coordinates and their exact projection registries."""
 
 from __future__ import annotations
 
@@ -9,20 +9,20 @@ from cruxible_client.contracts.canonical import (
     ArtifactCodec,
     canonical_digest,
 )
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.projection_extensions import (
     ProjectionExtensionRegistry,
-    playbill_claim_extension_registry,
-    playbill_claim_type_extension_registry,
-    playbill_evidence_extension_registry,
-    playbill_extension_registry,
-    playbill_governance_extension_registry,
-    playbill_p2c_extension_registry,
-    playbill_procedure_extension_registry,
-    playbill_provider_runtime_extension_registry,
-    playbill_replay_extension_registry,
-    playbill_runtime_extension_registry,
-    playbill_subject_extension_registry,
+    claim_extension_registry,
+    claim_type_extension_registry,
+    evidence_extension_registry,
+    extension_registry,
+    governance_extension_registry,
+    p2c_extension_registry,
+    procedure_extension_registry,
+    provider_runtime_extension_registry,
+    replay_extension_registry,
+    runtime_extension_registry,
+    subject_extension_registry,
 )
 from cruxible_client.contracts.types import CompilerCoordinate
 from cruxible_core.compiler.projection_artifacts import (
@@ -371,7 +371,7 @@ def artifact_kinds_for_compiler(compiler: CompilerCoordinate) -> ArtifactKindReg
         return PLAYBILL_ARTIFACT_KINDS
     if compiler in SUPPORTED_COMPILERS:
         return P2_B0_ARTIFACT_KINDS
-    raise PlaybillFormatError("compiler coordinate has no installed artifact codec")
+    raise FormatError("compiler coordinate has no installed artifact codec")
 
 
 def artifact_codec_for_compiler(compiler: CompilerCoordinate) -> ArtifactCodec:
@@ -381,7 +381,7 @@ def artifact_codec_for_compiler(compiler: CompilerCoordinate) -> ArtifactCodec:
         return CURRENT_ARTIFACT_CODEC
     if compiler in SUPPORTED_COMPILERS:
         return P2_B0_ARTIFACT_CODEC
-    raise PlaybillFormatError("compiler coordinate has no installed artifact codec")
+    raise FormatError("compiler coordinate has no installed artifact codec")
 
 
 def projection_registry_for_compiler(
@@ -400,39 +400,37 @@ def projection_registry_for_compiler(
         TRIGGER_CAPTURE_COMPILER,
         AUTHORITY_VERBS_COMPILER,
     }:
-        return playbill_p2c_extension_registry().with_artifact_kinds(
-            "attestation", "resolution-contract"
-        )
+        return p2c_extension_registry().with_artifact_kinds("attestation", "resolution-contract")
     if compiler == GOVERNED_TRIGGERS_COMPILER:
-        return playbill_p2c_extension_registry().with_artifact_kinds(
+        return p2c_extension_registry().with_artifact_kinds(
             "attestation", "resolution-contract", "trigger"
         )
     if compiler == ATTESTATION_COMPILER:
-        return playbill_p2c_extension_registry().with_artifact_kinds("attestation")
+        return p2c_extension_registry().with_artifact_kinds("attestation")
     if compiler == PB_B_COMPILER:
         return ProjectionExtensionRegistry(())
     if compiler == PB_C_COMPILER:
-        return playbill_extension_registry()
+        return extension_registry()
     if compiler == PB_D_COMPILER:
-        return playbill_governance_extension_registry()
+        return governance_extension_registry()
     if compiler == PC_A1_COMPILER:
-        return playbill_subject_extension_registry()
+        return subject_extension_registry()
     if compiler == PC_A2_COMPILER:
-        return playbill_claim_type_extension_registry()
+        return claim_type_extension_registry()
     if compiler == PC_B_COMPILER:
-        return playbill_claim_extension_registry()
+        return claim_extension_registry()
     if compiler == PC_C_COMPILER:
-        return playbill_evidence_extension_registry()
+        return evidence_extension_registry()
     if compiler == PC_D_COMPILER:
-        return playbill_procedure_extension_registry()
+        return procedure_extension_registry()
     if compiler == PC_E1_COMPILER:
-        return playbill_runtime_extension_registry()
+        return runtime_extension_registry()
     if compiler == P2_B0_COMPILER:
-        return playbill_replay_extension_registry()
+        return replay_extension_registry()
     if compiler == PC_HR_COMPILER:
-        return playbill_replay_extension_registry()
+        return replay_extension_registry()
     if compiler == P2_B1_COMPILER:
-        return playbill_provider_runtime_extension_registry()
+        return provider_runtime_extension_registry()
     if compiler in {
         P2_C_COMPILER,
         PC_DF2_COMPILER,
@@ -441,8 +439,8 @@ def projection_registry_for_compiler(
         P2_B4_UNIT2_COMPILER,
         P2_B5_COMPILER,
     }:
-        return playbill_p2c_extension_registry()
-    raise PlaybillFormatError("compiler coordinate has no installed deterministic registry")
+        return p2c_extension_registry()
+    raise FormatError("compiler coordinate has no installed deterministic registry")
 
 
 __all__ = [

@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.contracts.ledger_mirror import (
-    PlaybillLedgerMirrorUrlInvalid,
+    LedgerMirrorUrlInvalid,
     validate_mirror_url,
 )
 from cruxible_core.ledger import git as git_module
@@ -91,7 +91,7 @@ def test_a_mirror_url_must_be_a_plain_credential_free_remote() -> None:
         "git@-oProxyCommand:ledger.git",
         "https://-evil.invalid/ledger.git",
     ):
-        with pytest.raises(PlaybillLedgerMirrorUrlInvalid):
+        with pytest.raises(LedgerMirrorUrlInvalid):
             validate_mirror_url(refused)
 
 

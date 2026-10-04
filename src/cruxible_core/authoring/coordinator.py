@@ -59,7 +59,7 @@ from cruxible_client.contracts.claims import (
     new_claim_id,
     parse_claim,
 )
-from cruxible_client.contracts.errors import ApprovalIntegrityError, PlaybillError
+from cruxible_client.contracts.errors import ApprovalIntegrityError, CruxibleError
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, parse_datetime, utc_now
 from cruxible_core.authoring.insertions import (
     InsertionProtocolError,
@@ -90,7 +90,7 @@ from cruxible_core.storage.cas import dry_run_bodies
 AUTHORING_REBASE_DOMAIN = "playbill-authoring-rebase-v1"
 
 
-class AuthoringIntentRebaseError(PlaybillError):
+class AuthoringIntentRebaseError(CruxibleError):
     code = "playbill.authoring.intent_rebase_not_allowed"
 
 
@@ -98,7 +98,7 @@ class AuthoringIntentRebaseSubmitted(AuthoringIntentRebaseError):
     code = "playbill.authoring.intent_rebase_submitted"
 
 
-class AuthoringProgramStampError(PlaybillError):
+class AuthoringProgramStampError(CruxibleError):
     def __init__(self, code: str, message: str) -> None:
         self.code = code
         super().__init__(f"{code}: {message}")
@@ -679,7 +679,7 @@ class AuthoringIntentCoordinator:
                 path = projection.citations.capture_contract_path(envelope.capture_contract_digest)
             if not isinstance(path, str):
                 return ()
-        except (PlaybillError, ValueError):
+        except (CruxibleError, ValueError):
             return ()
         return (
             AuthoringReferenceExpectation(

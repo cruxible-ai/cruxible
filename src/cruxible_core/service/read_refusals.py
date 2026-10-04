@@ -16,8 +16,8 @@ import difflib
 import re
 from collections.abc import Iterable
 
-from cruxible_client.contracts import PlaybillAcceptedCoordinate as ClientCoordinate
-from cruxible_client.contracts.errors import PlaybillError, ReadRefusalError
+from cruxible_client.contracts import AcceptedCoordinate as ClientCoordinate
+from cruxible_client.contracts.errors import CruxibleError, ReadRefusalError
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 
@@ -162,7 +162,7 @@ def resolve_read_coordinate(
             generation_root=at.generation_root,
             compiler_digest=at.compiler_digest,
         )
-    except PlaybillError as exc:
+    except CruxibleError as exc:
         raise _not_accepted(str(exc)) from exc
 
 

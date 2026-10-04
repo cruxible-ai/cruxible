@@ -10,7 +10,7 @@ The value is a Claim value, so every caller who may read the Claim reads its
 text (the ``exact-content-read-only`` ruling). Capture reads and Document bodies
 keep their own body-read boundary; this reader serves only accepted Claim values.
 
-When the value cannot be text, a typed ``PlaybillExactContentRef`` marker
+When the value cannot be text, a typed ``ExactContentRef`` marker
 stands in for it, and nothing raises:
 
 - ``binary``: the bytes are not UTF-8 text (or hold a NUL byte);
@@ -20,12 +20,12 @@ stands in for it, and nothing raises:
 from __future__ import annotations
 
 from cruxible_client.contracts.claims import ExactContentClaimObject
-from cruxible_client.contracts.errors import PlaybillError
-from cruxible_client.contracts.get_reads import PlaybillExactContentRef
+from cruxible_client.contracts.errors import CruxibleError
+from cruxible_client.contracts.get_reads import ExactContentRef
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.storage.cas import BodyAccessContext
 
-ExactContentValue = str | PlaybillExactContentRef
+ExactContentValue = str | ExactContentRef
 
 # Reads only the bytes an accepted exact-content Claim commits to as its value.
 _CLAIM_VALUE_ACCESS = BodyAccessContext(principal_id="playbill-claim-value", can_read_body=True)
@@ -48,7 +48,7 @@ class ExactContentReader:
                 self._bytes[digest] = self._instance.body_store().read(
                     digest, access=_CLAIM_VALUE_ACCESS
                 )
-            except (PlaybillError, OSError, ValueError):
+            except (CruxibleError, OSError, ValueError):
                 self._bytes[digest] = None
         return self._bytes[digest]
 
@@ -57,7 +57,7 @@ class ExactContentReader:
 
         content = self._read(digest)
         if content is None or (span is not None and span[1] > len(content)):
-            return PlaybillExactContentRef(
+            return ExactContentRef(
                 exact_content="unavailable", content_digest=digest, length=_span_length(span)
             )
         selected = content if span is None else content[span[0] : span[1]]
@@ -66,9 +66,7 @@ class ExactContentReader:
                 return selected.decode("utf-8")
             except UnicodeDecodeError:
                 pass
-        return PlaybillExactContentRef(
-            exact_content="binary", content_digest=digest, length=len(selected)
-        )
+        return ExactContentRef(exact_content="binary", content_digest=digest, length=len(selected))
 
     def of(self, obj: ExactContentClaimObject) -> ExactContentValue:
         """One accepted exact-content object's value."""

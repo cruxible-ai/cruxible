@@ -903,7 +903,7 @@ class LocalProviderExecutionDriver:
             actual_context = context.model_copy(update={"secret_channel": channel})
             # The external runtime wire law permits finite floats (the wall-clock
             # budget is one), so use its exact model-order JSON spelling rather
-            # than Playbill's narrower governed-artifact canonical value law.
+            # than Cruxible's narrower governed-artifact canonical value law.
             context_bytes = actual_context.to_json()
             _assert_no_secret(context_bytes, secrets, where="run context")
             process = _run_child(

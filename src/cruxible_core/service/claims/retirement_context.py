@@ -18,7 +18,7 @@ from typing import Literal, cast
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from cruxible_client.contracts.canonical import Sha256Value
-from cruxible_client.contracts.errors import PlaybillError, ProposalIntegrityError
+from cruxible_client.contracts.errors import CruxibleError, ProposalIntegrityError
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 
@@ -122,7 +122,7 @@ def claim_retirement_context(
                 if isinstance(fact.value, Mapping)
                 and fact.value.get("live_claim_identity") == claim_identity
             ]
-    except (PlaybillError, ValueError, ValidationError) as exc:
+    except (CruxibleError, ValueError, ValidationError) as exc:
         raise ProposalIntegrityError(
             "playbill.claim.retirement_context_invalid: citation relation projection is invalid"
         ) from exc

@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.source_catalog import (
     ProcedureProjectionCatalogEntry,
     SourceCatalog,
@@ -36,7 +36,7 @@ def _entry(*, locator: str = "specs/design.md", root_alias: str | None = None):
         root_alias=root_alias,
         document_id="design",
         document_kind="design",
-        title="Playbill design",
+        title="Cruxible design",
         media_type="text/markdown",
         required_tier="graph_write",
         governance_scope=("project:playbill",),
@@ -52,7 +52,7 @@ def test_compile_is_read_only_and_propose_uses_frozen_bytes(tmp_path: Path) -> N
     repository = tmp_path / "authoring"
     source = repository / "specs" / "design.md"
     source.parent.mkdir(parents=True)
-    original = b"# Playbill v1\n"
+    original = b"# Cruxible v1\n"
     source.write_bytes(original)
     catalog = _catalog(_entry())
 
@@ -74,7 +74,7 @@ def test_compile_is_read_only_and_propose_uses_frozen_bytes(tmp_path: Path) -> N
     assert "authoring" not in bundle.model_dump_json()
     assert "specs/design.md" not in bundle.model_dump_json()
 
-    source.write_bytes(b"# Playbill changed after compile\n")
+    source.write_bytes(b"# Cruxible changed after compile\n")
     proposed = service_propose_playbill_source_bundle(
         instance,
         bundle=bundle,
@@ -203,12 +203,12 @@ def test_catalog_merge_and_path_guards_refuse_ambiguity_and_escape(tmp_path: Pat
         ),
         kind="local",
     )
-    with pytest.raises(PlaybillFormatError, match="ambiguously"):
+    with pytest.raises(FormatError, match="ambiguously"):
         merge_source_catalogs(portable, conflicting)
 
     symlink = local_root / "linked.md"
     symlink.symlink_to(local_root / "design.md")
-    with pytest.raises(PlaybillFormatError, match="symlink"):
+    with pytest.raises(FormatError, match="symlink"):
         service_compile_playbill_sources(
             instance,
             catalog=_catalog(

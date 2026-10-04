@@ -6,9 +6,9 @@ from cruxible_client import contracts
 from cruxible_core.mcp import handlers
 
 
-def _result(evaluation_time: str) -> contracts.PlaybillAuditResult:
-    return contracts.PlaybillAuditResult(
-        coordinate=contracts.PlaybillAcceptedCoordinate(
+def _result(evaluation_time: str) -> contracts.AuditResult:
+    return contracts.AuditResult(
+        coordinate=contracts.AcceptedCoordinate(
             git_oid="1" * 64,
             semantic_root="sha256:" + "2" * 64,
             generation_root="sha256:" + "3" * 64,
@@ -19,9 +19,9 @@ def _result(evaluation_time: str) -> contracts.PlaybillAuditResult:
         operational_input_head_digest="sha256:" + "5" * 64,
         audited_through_generation=7,
         rows=[],
-        coverage=contracts.PlaybillAuditCoverage(
+        coverage=contracts.AuditCoverage(
             access_permitted=True,
-            declared_scope=contracts.PlaybillAuditScope(),
+            declared_scope=contracts.AuditScope(),
             covered_claims=[],
             candidate_claim_count=0,
             returned_claim_count=0,

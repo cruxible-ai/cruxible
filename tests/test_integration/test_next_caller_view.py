@@ -205,7 +205,7 @@ def test_sdk_rows_render_sdk_calls_not_cli_commands() -> None:
 def _sdk_next(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, status: dict[str, object]
 ) -> tuple[object, list[dict[str, object]]]:
-    """Run `Playbill.next` against a stub queue route; return the page and the calls."""
+    """Run `Cruxible.next` against a stub queue route; return the page and the calls."""
 
     from cruxible_client import contracts
     from cruxible_client.authoring import sdk as sdk_module
@@ -214,9 +214,9 @@ def _sdk_next(
     calls: list[dict[str, object]] = []
 
     class StubClient:
-        def next_playbill(self, instance_id: str, **values: object) -> contracts.PlaybillNextResult:
+        def next(self, instance_id: str, **values: object) -> contracts.NextResult:
             calls.append(values)
-            return contracts.PlaybillNextResult(
+            return contracts.NextResult(
                 coordinate=COORDINATE,
                 evaluation_time="2026-08-24T18:00:00.000000Z",
                 observed_domains=["accepted_state"],
@@ -227,7 +227,7 @@ def _sdk_next(
                 result_digest="sha256:" + "5" * 64,
             )
 
-    playbill = sdk_module.Playbill.__new__(sdk_module.Playbill)
+    playbill = sdk_module.Cruxible.__new__(sdk_module.Cruxible)
     playbill._client = StubClient()  # type: ignore[assignment]
     playbill._instance_id = "inst_sdk_next"
     playbill._workspace = tmp_path
@@ -237,10 +237,10 @@ def _sdk_next(
     monkeypatch.setattr(playbill, "_read_at", lambda: None)
     monkeypatch.setattr(playbill, "_evaluation_time", lambda: "2026-08-24T18:00:00.000000Z")
     monkeypatch.setattr(playbill, "_observe_read", lambda *_a, **_k: None)
-    monkeypatch.setattr(sdk_module, "observe_playbill_next_workspace", lambda _w: None)
+    monkeypatch.setattr(sdk_module, "observe_next_workspace", lambda _w: None)
     monkeypatch.setattr(
         sdk_module,
-        "observe_playbill_next_workspace_with_coverage",
+        "observe_next_workspace_with_coverage",
         lambda *_a, **_k: (None, None),
     )
 
@@ -431,7 +431,7 @@ def test_the_sdk_reads_a_row_whose_repair_is_withheld(
     from cruxible_client import contracts
 
     withheld = _view(surface="sdk", caller_rung=0).render([_line_arm_row()])
-    wire = contracts.PlaybillNextItem.model_validate(withheld[0].model_dump(mode="json"))
+    wire = contracts.NextItem.model_validate(withheld[0].model_dump(mode="json"))
 
     assert wire.repair is None
     assert wire.repair_requires is not None

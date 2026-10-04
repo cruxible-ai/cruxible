@@ -1,4 +1,4 @@
-"""Pin Playbill's current semantic coordinates at the reviewed C1 cut.
+"""Pin Cruxible's current semantic coordinates at the reviewed C1 cut.
 
 Update recipe: change an expected row only with a reviewed semantic-law change,
 increment its semantic revision (or add a post-release successor), recompute the
@@ -16,6 +16,7 @@ import cruxible_client.contracts.captures as capture_contracts
 import cruxible_core.compiler.compiler as compiler_module
 from cruxible_client.contracts.canonical import AcceptanceLawDigest, canonical_digest, typed_digest
 from cruxible_client.contracts.laws import (
+    ACCEPTANCE_LAWS,
     APPROVAL_POLICY_ACCEPTANCE_LAW,
     ATTESTATION_ACCEPTANCE_LAW,
     AUTHORITY_VERBS_UPGRADE_LAW,
@@ -55,7 +56,6 @@ from cruxible_client.contracts.laws import (
     LINE_V4_ACCEPTANCE_LAW,
     LINE_V5_ACCEPTANCE_LAW,
     LINE_V6_ACCEPTANCE_LAW,
-    PLAYBILL_ACCEPTANCE_LAWS,
     PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
     PROCEDURE_ACCEPTANCE_LAW,
     PROCEDURE_MANDATE_ACCEPTANCE_LAW,
@@ -605,8 +605,8 @@ def test_playbill_acceptance_law_coordinates_are_exact() -> None:
 
     assert len(seen_coordinates) == len(LAW_COORDINATES) + len(HISTORICAL_LAW_COORDINATES)
     assert len(seen_tags) == len(LAW_COORDINATES)
-    assert set(PLAYBILL_ACCEPTANCE_LAWS._by_coordinate) == seen_coordinates
-    assert set(PLAYBILL_ACCEPTANCE_LAWS._current_by_tag) == seen_tags
+    assert set(ACCEPTANCE_LAWS._by_coordinate) == seen_coordinates
+    assert set(ACCEPTANCE_LAWS._current_by_tag) == seen_tags
 
 
 def test_playbill_compiler_coordinate_is_exact() -> None:

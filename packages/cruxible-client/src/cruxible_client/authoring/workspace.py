@@ -1,4 +1,4 @@
-"""Client-owned Playbill floor verification and workspace replacement.
+"""Client-owned Cruxible floor verification and workspace replacement.
 
 The daemon returns inert bytes. This module is the shared CLI/MCP adapter that
 verifies those bytes and writes them locally without ever sending a path to the
@@ -30,7 +30,7 @@ from cruxible_client.authoring.blocks import (
 )
 from cruxible_client.authoring.floor_apply import (
     _DIRECTORY,
-    PlaybillFloorApplyError,
+    FloorApplyError,
     _directory,
     _read_at,
     _write_file,
@@ -43,38 +43,38 @@ from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.declared_blocks import (
     MAX_PROJECTION_CARDS_PER_SOURCE,
     MAX_PROJECTION_COVERAGE_BINDINGS,
-    PlaybillPresentationPolicy,
-    PlaybillPresentationPolicyAny,
-    PlaybillPresentationPolicyNote,
-    PlaybillPresentationPolicyV1,
-    PlaybillProjectionCoverageBinding,
-    PlaybillProjectionCoverageObservation,
+    PresentationPolicy,
+    PresentationPolicyAny,
+    PresentationPolicyNote,
+    PresentationPolicyV1,
+    ProjectionCoverageBinding,
+    ProjectionCoverageObservation,
     projection_manifest_refs,
     projection_processing_policy,
     read_projection_source,
     resolve_projection_manifest_digest,
-    upgrade_playbill_presentation_policy,
+    upgrade_presentation_policy,
 )
-from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.errors import CruxibleError
 from cruxible_client.contracts.floor import (
-    PLAYBILL_FLOOR_FORMAT,
-    PLAYBILL_FLOOR_LOCAL_PATHS,
-    PlaybillFloorApplyResult,
-    PlaybillFloorDelta,
+    FLOOR_FORMAT,
+    FLOOR_LOCAL_PATHS,
+    FloorApplyResult,
+    FloorDelta,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.workspace_layout import PLAYBILL_FLOOR_PATH
+from cruxible_client.contracts.workspace_layout import FLOOR_PATH
 
 _CONFIG_PATH = PurePosixPath(".playbill/coverage.json")
 _CONFIG_EXCLUDE_RULE = b"/.playbill/coverage.json\n"
-_FLOOR_DOMAIN = PLAYBILL_FLOOR_FORMAT
+_FLOOR_DOMAIN = FLOOR_FORMAT
 _FLOOR_DOMAINS = {"playbill-floor-export-v2", _FLOOR_DOMAIN}
 _WORKSPACE_CONFIG_TAG = "playbill-coverage-workspace-config-v2"
 _FLOOR_OUTPUT = {
     "tag": "playbill-floor-output-v1",
     "format": _FLOOR_DOMAIN,
 }
-_FLOOR_PARTS: tuple[contracts.PlaybillFloorExportPart, ...] = ("discovery",)
+_FLOOR_PARTS: tuple[contracts.FloorExportPart, ...] = ("discovery",)
 
 
 def _floor_output(include: Sequence[str] = ()) -> dict[str, Any]:
@@ -83,17 +83,17 @@ def _floor_output(include: Sequence[str] = ()) -> dict[str, Any]:
     parts = sorted(set(include))
     unknown = [part for part in parts if part not in _FLOOR_PARTS]
     if unknown:
-        raise PlaybillWorkspaceError(f"unsupported floor export part(s): {', '.join(unknown)}")
+        raise WorkspaceError(f"unsupported floor export part(s): {', '.join(unknown)}")
     return {**_FLOOR_OUTPUT, **({"include": parts} if parts else {})}
 
 
-def _profile_include(output: Mapping[str, Any]) -> tuple[contracts.PlaybillFloorExportPart, ...]:
+def _profile_include(output: Mapping[str, Any]) -> tuple[contracts.FloorExportPart, ...]:
     include = output.get("include", [])
     if not isinstance(include, list) or any(item not in _FLOOR_PARTS for item in include):
-        raise PlaybillWorkspaceError("coverage floor_output.include is not a list of export parts")
+        raise WorkspaceError("coverage floor_output.include is not a list of export parts")
     if include != sorted(set(include)) or not include and "include" in output:
-        raise PlaybillWorkspaceError("coverage floor_output.include must be sorted and nonempty")
-    return cast(tuple[contracts.PlaybillFloorExportPart, ...], tuple(include))
+        raise WorkspaceError("coverage floor_output.include must be sorted and nonempty")
+    return cast(tuple[contracts.FloorExportPart, ...], tuple(include))
 
 
 _WORKSPACE_CONFIG_FIELDS = frozenset(
@@ -112,11 +112,11 @@ _WORKSPACE_CONFIG_FIELDS = frozenset(
 _SECRET_FIELD_FRAGMENTS = ("bearer", "credential", "password", "secret", "token")
 
 
-class PlaybillWorkspaceError(PlaybillError, ValueError):
+class WorkspaceError(CruxibleError, ValueError):
     """A client workspace or exported floor failed deterministic validation."""
 
 
-class PlaybillWorkspaceAttachmentError(PlaybillWorkspaceError):
+class WorkspaceAttachmentError(WorkspaceError):
     """Daemon registration and the requested client workspace disagree."""
 
     error_code = "playbill.workspace.registration_disagrees"
@@ -198,7 +198,7 @@ def _workspace_git_common_dir(workspace: Path) -> Path | None:
     try:
         return Path(result.stdout.strip()).resolve(strict=True)
     except OSError as exc:
-        raise PlaybillWorkspaceError(f"Git common directory cannot be resolved: {exc}") from exc
+        raise WorkspaceError(f"Git common directory cannot be resolved: {exc}") from exc
 
 
 def _ensure_workspace_config_ignored(workspace: Path) -> None:
@@ -208,19 +208,19 @@ def _ensure_workspace_config_ignored(workspace: Path) -> None:
     info_dir = common_dir / "info"
     exclude_path = info_dir / "exclude"
     if info_dir.is_symlink() or exclude_path.is_symlink():
-        raise PlaybillWorkspaceError("Git info/exclude path must not be a symbolic link")
+        raise WorkspaceError("Git info/exclude path must not be a symbolic link")
     try:
         info_dir.mkdir(parents=True, exist_ok=True)
         descriptor = os.open(info_dir, _DIRECTORY)
     except OSError as exc:
-        raise PlaybillWorkspaceError(f"Git info/exclude cannot be read: {exc}") from exc
+        raise WorkspaceError(f"Git info/exclude cannot be read: {exc}") from exc
     try:
         try:
             existing = read_regular_file("exclude", dir_fd=descriptor)
         except FileNotFoundError:
             existing = b""
         except OSError as exc:
-            raise PlaybillWorkspaceError(f"Git info/exclude cannot be read: {exc}") from exc
+            raise WorkspaceError(f"Git info/exclude cannot be read: {exc}") from exc
         if _CONFIG_EXCLUDE_RULE.rstrip(b"\n") in existing.splitlines():
             return
         content = existing
@@ -235,8 +235,8 @@ def _ensure_workspace_config_ignored(workspace: Path) -> None:
             # Keep reads, exclusive staging, replacement and directory fsync on
             # this descriptor even if the workspace swaps .git/info meanwhile.
             _write_file(descriptor, "exclude", content, mode=mode, durable=True, preserve_mode=True)
-        except (OSError, PlaybillFloorApplyError) as exc:
-            raise PlaybillWorkspaceError(
+        except (OSError, FloorApplyError) as exc:
+            raise WorkspaceError(
                 f"Git info/exclude could not be written atomically: {exc}"
             ) from exc
     finally:
@@ -247,29 +247,27 @@ def _read_workspace_config(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
     if path.is_symlink():
-        raise PlaybillWorkspaceError("coverage config must not be a symbolic link")
+        raise WorkspaceError("coverage config must not be a symbolic link")
     try:
         payload: Any = json.loads(read_regular_file(path).decode("utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise PlaybillWorkspaceError(f"coverage config is invalid: {exc}") from exc
+        raise WorkspaceError(f"coverage config is invalid: {exc}") from exc
     if not isinstance(payload, dict):
-        raise PlaybillWorkspaceError("coverage config is not an object")
+        raise WorkspaceError("coverage config is not an object")
     if _contains_secret_field(payload):
-        raise PlaybillWorkspaceError(
+        raise WorkspaceError(
             "coverage config contains a forbidden bearer, credential, password, secret, or "
             "token field"
         )
     unknown = sorted(set(payload).difference(_WORKSPACE_CONFIG_FIELDS))
     if unknown:
-        raise PlaybillWorkspaceError(
-            f"coverage config contains unsupported field(s): {', '.join(unknown)}"
-        )
+        raise WorkspaceError(f"coverage config contains unsupported field(s): {', '.join(unknown)}")
     return payload
 
 
 def _atomic_write_workspace_config(path: Path, payload: Mapping[str, Any]) -> None:
     if _contains_secret_field(payload):  # defensive: writer inputs are fixed below
-        raise PlaybillWorkspaceError("coverage config writer refuses secret-bearing data")
+        raise WorkspaceError("coverage config writer refuses secret-bearing data")
     content = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8") + b"\n"
     _write_workspace_local(path.parent.parent, _CONFIG_PATH.as_posix(), content, durable=True)
 
@@ -284,25 +282,25 @@ def _planned_workspace_config(
 ) -> tuple[Path, dict[str, Any] | None, bool]:
     root = _workspace_root(workspace)
     if instance_id is not None and not instance_id.strip():
-        raise PlaybillWorkspaceError("workspace instance_id must be nonempty")
+        raise WorkspaceError("workspace instance_id must be nonempty")
     transports = [value for value in (server_url, server_socket) if value is not None]
     if len(transports) != 1 or not transports[0].strip():
-        raise PlaybillWorkspaceError("workspace config requires exactly one nonempty transport")
+        raise WorkspaceError("workspace config requires exactly one nonempty transport")
     if _contains_secret_field({"transport": transports[0]}):
-        raise PlaybillWorkspaceError(
+        raise WorkspaceError(
             "workspace config refuses URL user information; pass credentials with "
             "CRUXIBLE_SERVER_BEARER_TOKEN"
         )
     path = root / _CONFIG_PATH
     try:
         existing = _read_workspace_config(path)
-    except PlaybillWorkspaceError:
+    except WorkspaceError:
         if not replace:
             raise
         existing = None
     if instance_id is None:
         if existing is not None and not replace:
-            raise PlaybillWorkspaceError(
+            raise WorkspaceError(
                 f"refusing to overwrite differing workspace config {path}; rerun with --replace"
             )
         return path, None, False
@@ -333,13 +331,13 @@ def _planned_workspace_config(
     if existing == desired:
         return path, desired, True
     if existing is not None and not replace:
-        raise PlaybillWorkspaceError(
+        raise WorkspaceError(
             f"refusing to overwrite differing workspace config {path}; rerun with --replace"
         )
     return path, desired, False
 
 
-def validate_playbill_workspace_config_write(
+def validate_workspace_config_write(
     workspace: str | Path,
     *,
     instance_id: str | None,
@@ -358,7 +356,7 @@ def validate_playbill_workspace_config_write(
     )
 
 
-def write_playbill_workspace_config(
+def write_workspace_config(
     workspace: str | Path,
     *,
     instance_id: str,
@@ -383,13 +381,13 @@ def write_playbill_workspace_config(
     return path
 
 
-def record_playbill_floor_output(
+def record_floor_output(
     workspace: str | Path,
     *,
     instance_id: str,
     server_url: str | None = None,
     server_socket: str | None = None,
-    include: Sequence[contracts.PlaybillFloorExportPart] = (),
+    include: Sequence[contracts.FloorExportPart] = (),
 ) -> Path:
     """Record the fixed floor output and its opt-in parts, keeping safe coverage fields.
 
@@ -402,7 +400,7 @@ def record_playbill_floor_output(
     desired_output = _floor_output(include)
     existing = _read_workspace_config(path)
     if existing is None:
-        written = write_playbill_workspace_config(
+        written = write_workspace_config(
             root,
             instance_id=instance_id,
             server_url=server_url,
@@ -417,11 +415,11 @@ def record_playbill_floor_output(
         "playbill-coverage-workspace-config-v1",
         _WORKSPACE_CONFIG_TAG,
     }:
-        raise PlaybillWorkspaceError("coverage config has an unsupported tag")
+        raise WorkspaceError("coverage config has an unsupported tag")
     output = existing.get("floor_output")
     if output is not None:
         if not isinstance(output, Mapping) or output.get("tag") != "playbill-floor-output-v1":
-            raise PlaybillWorkspaceError("coverage floor_output has an unsupported profile")
+            raise WorkspaceError("coverage floor_output has an unsupported profile")
         if output == desired_output:
             return path
     desired = dict(existing)
@@ -435,11 +433,11 @@ def _presentation_policy(
     root: Path,
     *,
     known_source_ids: Sequence[str],
-) -> tuple[PlaybillPresentationPolicy | None, tuple[PlaybillPresentationPolicyNote, ...]]:
+) -> tuple[PresentationPolicy | None, tuple[PresentationPolicyNote, ...]]:
     path = root / ".playbill" / "presentation-policy.json"
     try:
         if not path.exists():
-            return PlaybillPresentationPolicy(), ()
+            return PresentationPolicy(), ()
         resolved = path.resolve(strict=True)
     except OSError:
         return None, ("presentation_policy_unreadable",)
@@ -448,10 +446,10 @@ def _presentation_policy(
     try:
         raw = json.loads(read_regular_file(path).decode("utf-8"))
         if isinstance(raw, Mapping) and raw.get("tag") == "playbill-presentation-policy-v2":
-            parsed: PlaybillPresentationPolicyAny = PlaybillPresentationPolicy.model_validate(raw)
+            parsed: PresentationPolicyAny = PresentationPolicy.model_validate(raw)
         else:
-            parsed = PlaybillPresentationPolicyV1.model_validate(raw)
-        policy = upgrade_playbill_presentation_policy(parsed)
+            parsed = PresentationPolicyV1.model_validate(raw)
+        policy = upgrade_presentation_policy(parsed)
     except OSError:
         return None, ("presentation_policy_unreadable",)
     except (ValueError, json.JSONDecodeError):
@@ -478,47 +476,47 @@ def _observe_presentation_policy(
 
 
 class _FloorClient(Protocol):
-    def activate_playbill_proposal(
+    def activate_proposal(
         self, instance_id: str, proposal_id: str
-    ) -> contracts.PlaybillActivationReceipt: ...
+    ) -> contracts.ActivationReceipt: ...
 
-    def export_playbill_floor(
+    def export_floor(
         self,
         instance_id: str,
         *,
-        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-        include: Sequence[contracts.PlaybillFloorExportPart] = (),
-    ) -> contracts.PlaybillFloorExport: ...
+        at: contracts.AcceptedCoordinate | Mapping[str, Any] | None = None,
+        include: Sequence[contracts.FloorExportPart] = (),
+    ) -> contracts.FloorExport: ...
 
-    def playbill_floor_delta(
+    def floor_delta(
         self,
         instance_id: str,
         *,
-        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+        at: contracts.AcceptedCoordinate | Mapping[str, Any] | None = None,
         base_generation: int | None = None,
         base_renderer: str | None = None,
-    ) -> PlaybillFloorDelta: ...
+    ) -> FloorDelta: ...
 
-    def check_playbill_projection_blocks(
+    def check_projection_blocks(
         self,
         instance_id: str,
         *,
-        request: contracts.PlaybillProjectionCheckRequest,
-    ) -> contracts.PlaybillProjectionCheckResult: ...
+        request: contracts.ProjectionCheckRequest,
+    ) -> contracts.ProjectionCheckResult: ...
 
 
 class _CoverageClient(Protocol):
-    def resolve_playbill_coverage(
+    def resolve_coverage(
         self,
         instance_id: str,
         *,
         observations: Sequence[Mapping[str, Any]],
-        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+        at: contracts.AcceptedCoordinate | Mapping[str, Any] | None = None,
         budget: Mapping[str, Any] | None = None,
         scan_budget: Mapping[str, Any] | None = None,
-    ) -> contracts.PlaybillCoverageResult: ...
+    ) -> contracts.CoverageResult: ...
 
-    def playbill_head(self, instance_id: str) -> contracts.PlaybillHead: ...
+    def head(self, instance_id: str) -> contracts.Head: ...
 
 
 def _canonical_json(value: object) -> bytes:
@@ -526,11 +524,11 @@ def _canonical_json(value: object) -> bytes:
         if item is None or isinstance(item, (bool, int)):
             return item
         if isinstance(item, float):
-            raise PlaybillWorkspaceError("floor manifest contains a floating-point value")
+            raise WorkspaceError("floor manifest contains a floating-point value")
         if isinstance(item, str):
             normalized = unicodedata.normalize("NFC", item)
             if normalized != item:
-                raise PlaybillWorkspaceError("floor manifest text is not NFC-normalized")
+                raise WorkspaceError("floor manifest text is not NFC-normalized")
             return item
         if isinstance(item, list):
             return [normalize(value) for value in item]
@@ -538,13 +536,13 @@ def _canonical_json(value: object) -> bytes:
             normalized_map: dict[str, object] = {}
             for key, value in item.items():
                 if not isinstance(key, str):
-                    raise PlaybillWorkspaceError("floor manifest keys must be strings")
+                    raise WorkspaceError("floor manifest keys must be strings")
                 normalized_key = unicodedata.normalize("NFC", key)
                 if normalized_key in normalized_map:
-                    raise PlaybillWorkspaceError("floor manifest keys collide after NFC")
+                    raise WorkspaceError("floor manifest keys collide after NFC")
                 normalized_map[normalized_key] = normalize(value)
             return normalized_map
-        raise PlaybillWorkspaceError(f"floor manifest contains unsupported {type(item).__name__}")
+        raise WorkspaceError(f"floor manifest contains unsupported {type(item).__name__}")
 
     return json.dumps(
         normalize(value),
@@ -557,60 +555,60 @@ def _canonical_json(value: object) -> bytes:
 
 def _typed_digest(domain: str, payload: Mapping[str, object]) -> str:
     if "tag" in payload:
-        raise PlaybillWorkspaceError("floor digest payload may not supply tag")
+        raise WorkspaceError("floor digest payload may not supply tag")
     digest = hashlib.sha256(_canonical_json({"tag": domain, **payload})).hexdigest()
     return f"sha256:{digest}"
 
 
 def _safe_export_path(value: object) -> str:
     if not isinstance(value, str):
-        raise PlaybillWorkspaceError("floor export path is not text")
+        raise WorkspaceError("floor export path is not text")
     path = PurePosixPath(value)
     if not value or path.is_absolute() or path.as_posix() != value or ".." in path.parts:
-        raise PlaybillWorkspaceError(f"floor export path escapes its root: {value}")
+        raise WorkspaceError(f"floor export path escapes its root: {value}")
     return value
 
 
-def verified_floor_files(export: contracts.PlaybillFloorExport) -> dict[str, bytes]:
+def verified_floor_files(export: contracts.FloorExport) -> dict[str, bytes]:
     """Verify the v2 envelope, manifest, inventory, and bytes."""
 
     if export.tag not in _FLOOR_DOMAINS:
-        raise PlaybillWorkspaceError("configured floor refresh requires floor export v2 or v5")
+        raise WorkspaceError("configured floor refresh requires floor export v2 or v5")
     manifest = export.manifest
     if manifest.get("tag") != export.tag.replace("export", "manifest"):
-        raise PlaybillWorkspaceError("floor export manifest has an unsupported tag")
+        raise WorkspaceError("floor export manifest has an unsupported tag")
     if manifest.get("format") != export.tag:
-        raise PlaybillWorkspaceError("floor export manifest has an unsupported format")
+        raise WorkspaceError("floor export manifest has an unsupported format")
     coordinate = manifest.get("coordinate")
     if coordinate != export.coordinate.model_dump(mode="json"):
-        raise PlaybillWorkspaceError("floor export envelope and manifest coordinates differ")
+        raise WorkspaceError("floor export envelope and manifest coordinates differ")
     inventory = manifest.get("files")
     if not isinstance(inventory, list):
-        raise PlaybillWorkspaceError("floor export manifest inventory is not a list")
+        raise WorkspaceError("floor export manifest inventory is not a list")
 
     decoded: dict[str, bytes] = {}
     for exported_file in export.files:
         path = _safe_export_path(exported_file.path)
         if path in decoded:
-            raise PlaybillWorkspaceError(f"floor export repeats path: {path}")
+            raise WorkspaceError(f"floor export repeats path: {path}")
         try:
             decoded[path] = base64.b64decode(exported_file.content_base64, validate=True)
         except (ValueError, TypeError) as exc:
-            raise PlaybillWorkspaceError("floor export contains invalid base64 bytes") from exc
+            raise WorkspaceError("floor export contains invalid base64 bytes") from exc
 
     expected_paths = {"manifest.json"}
     for raw_item in inventory:
         if not isinstance(raw_item, Mapping):
-            raise PlaybillWorkspaceError("floor manifest inventory entry is not an object")
+            raise WorkspaceError("floor manifest inventory entry is not an object")
         expected_paths.add(_safe_export_path(raw_item.get("path")))
     if set(decoded) != expected_paths:
-        raise PlaybillWorkspaceError("floor export files differ from the manifest inventory")
+        raise WorkspaceError("floor export files differ from the manifest inventory")
     try:
         decoded_manifest = json.loads(decoded["manifest.json"])
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise PlaybillWorkspaceError("floor export manifest bytes are invalid") from exc
+        raise WorkspaceError("floor export manifest bytes are invalid") from exc
     if decoded_manifest != manifest:
-        raise PlaybillWorkspaceError("floor export manifest bytes differ from the envelope")
+        raise WorkspaceError("floor export manifest bytes differ from the envelope")
 
     for raw_item in inventory:
         assert isinstance(raw_item, Mapping)
@@ -619,15 +617,15 @@ def verified_floor_files(export: contracts.PlaybillFloorExport) -> dict[str, byt
         byte_length = raw_item.get("byte_length")
         content_digest = raw_item.get("content_digest")
         if not isinstance(byte_length, int) or isinstance(byte_length, bool) or byte_length < 0:
-            raise PlaybillWorkspaceError(f"floor export byte length is invalid for {path}")
+            raise WorkspaceError(f"floor export byte length is invalid for {path}")
         if len(content) != byte_length:
-            raise PlaybillWorkspaceError(f"floor export byte length differs for {path}")
+            raise WorkspaceError(f"floor export byte length differs for {path}")
         digest = "sha256:" + hashlib.sha256(content).hexdigest()
         if digest != content_digest:
-            raise PlaybillWorkspaceError(f"floor export content digest differs for {path}")
+            raise WorkspaceError(f"floor export content digest differs for {path}")
     expected_floor_digest = _typed_digest(export.tag, {"files": inventory})
     if manifest.get("floor_digest") != expected_floor_digest:
-        raise PlaybillWorkspaceError("floor export root digest differs from its inventory")
+        raise WorkspaceError("floor export root digest differs from its inventory")
     return decoded
 
 
@@ -636,21 +634,21 @@ def _workspace_root(workspace: str | Path) -> Path:
 
 
 def _relative_destination(workspace: Path, relative_path: str) -> Path:
-    if relative_path != PLAYBILL_FLOOR_PATH:
-        raise PlaybillWorkspaceError(f"floor output path is fixed at {PLAYBILL_FLOOR_PATH}")
+    if relative_path != FLOOR_PATH:
+        raise WorkspaceError(f"floor output path is fixed at {FLOOR_PATH}")
     destination = workspace / relative_path
     try:
         resolved = destination.resolve()
     except OSError as exc:
-        raise PlaybillWorkspaceError(f"could not resolve configured floor output: {exc}") from exc
+        raise WorkspaceError(f"could not resolve configured floor output: {exc}") from exc
     if not resolved.is_relative_to(workspace):
-        raise PlaybillWorkspaceError("configured floor output escapes the workspace root")
+        raise WorkspaceError("configured floor output escapes the workspace root")
     return destination
 
 
 def configured_floor_output(
     workspace: str | Path,
-) -> tuple[str, tuple[contracts.PlaybillFloorExportPart, ...]] | None:
+) -> tuple[str, tuple[contracts.FloorExportPart, ...]] | None:
     """The declared floor path and its opt-in export parts, or ``None`` when unconfigured."""
 
     root = _workspace_root(workspace)
@@ -660,32 +658,32 @@ def configured_floor_output(
     try:
         config: Any = json.loads(read_regular_file(config_path).decode("utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise PlaybillWorkspaceError(f"coverage config is invalid: {exc}") from exc
+        raise WorkspaceError(f"coverage config is invalid: {exc}") from exc
     if not isinstance(config, Mapping):
-        raise PlaybillWorkspaceError("coverage config is not an object")
+        raise WorkspaceError("coverage config is not an object")
     if config.get("tag") != "playbill-coverage-workspace-config-v2":
         return None
     output = config.get("floor_output")
     if output is None:
         return None
     if not isinstance(output, Mapping):
-        raise PlaybillWorkspaceError("coverage floor_output is not an object")
+        raise WorkspaceError("coverage floor_output is not an object")
     if "path" in output:
-        raise PlaybillWorkspaceError(
-            f"coverage floor_output.path is obsolete; the path is fixed at {PLAYBILL_FLOOR_PATH}"
+        raise WorkspaceError(
+            f"coverage floor_output.path is obsolete; the path is fixed at {FLOOR_PATH}"
         )
     if (
         output.get("tag") != "playbill-floor-output-v1"
         or output.get("format") not in _FLOOR_DOMAINS
         or set(output) - {"tag", "format", "include"}
     ):
-        raise PlaybillWorkspaceError(
+        raise WorkspaceError(
             "coverage floor_output has an unsupported profile; rewrite it with "
             "`cruxible playbill floor export --force`"
         )
     include = _profile_include(output)
-    _relative_destination(root, PLAYBILL_FLOOR_PATH)
-    return PLAYBILL_FLOOR_PATH, include
+    _relative_destination(root, FLOOR_PATH)
+    return FLOOR_PATH, include
 
 
 def configured_floor_path(workspace: str | Path) -> str | None:
@@ -707,7 +705,7 @@ def _holds_exactly(destination: Path, files: Mapping[str, bytes]) -> bool:
         for name in filenames:
             source = Path(parent) / name
             relative = source.relative_to(destination).as_posix()
-            if relative in PLAYBILL_FLOOR_LOCAL_PATHS:
+            if relative in FLOOR_LOCAL_PATHS:
                 # Client-written from workspace bindings; never daemon bytes.
                 continue
             observed.add(relative)
@@ -724,7 +722,7 @@ def _holds_exactly(destination: Path, files: Mapping[str, bytes]) -> bool:
 def _replace_exact(destination: Path, files: Mapping[str, bytes], *, root: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     if not destination.parent.resolve().is_relative_to(root):
-        raise PlaybillWorkspaceError("configured floor output parent escapes the workspace root")
+        raise WorkspaceError("configured floor output parent escapes the workspace root")
     # Verify bytes, not just the manifest: a locally edited derived file must
     # be repaired even when the accepted coordinate has not moved. Never
     # reuse symlinks or share writable inodes with the previous installation.
@@ -741,7 +739,7 @@ def _replace_exact(destination: Path, files: Mapping[str, bytes], *, root: Path)
         for path, content in files.items():
             target = (stage / path).resolve()
             if not target.is_relative_to(stage_root):  # pragma: no cover - prevalidated
-                raise PlaybillWorkspaceError(f"floor export path escapes its stage: {path}")
+                raise WorkspaceError(f"floor export path escapes its stage: {path}")
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(content)
         if destination.exists() or destination.is_symlink():
@@ -764,27 +762,27 @@ def _replace_exact(destination: Path, files: Mapping[str, bytes], *, root: Path)
                 backup.unlink()
 
 
-def materialize_playbill_floor(
+def materialize_floor(
     workspace: str | Path,
     *,
-    export: contracts.PlaybillFloorExport,
+    export: contracts.FloorExport,
     force: bool = True,
-) -> contracts.PlaybillWorkspaceFloorWriteResult:
+) -> contracts.WorkspaceFloorWriteResult:
     """Verify and exactly replace one workspace-relative floor directory."""
 
     root = _workspace_root(workspace)
-    relative_path = PLAYBILL_FLOOR_PATH
+    relative_path = FLOOR_PATH
     destination = _relative_destination(root, relative_path)
     files = verified_floor_files(export)
     if destination.exists() and any(destination.iterdir()) and not force:
         # Already exactly this floor (as it is right after an activation's
         # refresh): nothing to write, and nothing of the caller's is at risk.
         if not _holds_exactly(destination, files):
-            raise PlaybillWorkspaceError(
+            raise WorkspaceError(
                 f"refusing to write the floor into a non-empty directory: {destination}"
             )
         write_projection_index(root)
-        return contracts.PlaybillWorkspaceFloorWriteResult(
+        return contracts.WorkspaceFloorWriteResult(
             status="unchanged",
             path=relative_path,
             destination=str(destination),
@@ -794,7 +792,7 @@ def materialize_playbill_floor(
         )
     _replace_exact(destination, files, root=root)
     write_projection_index(root)
-    return contracts.PlaybillWorkspaceFloorWriteResult(
+    return contracts.WorkspaceFloorWriteResult(
         path=relative_path,
         destination=str(destination),
         floor_digest=str(export.manifest["floor_digest"]),
@@ -817,8 +815,8 @@ def _sources_ledger(floor: Path) -> tuple[str, list[list[str]]] | None:
             if directory is None:
                 return None
             text = _read_at(directory, "LEDGER").decode("utf-8")
-    except PlaybillFloorApplyError as exc:
-        raise PlaybillWorkspaceError(f"{_SOURCES_LEDGER_PATH} could not be read: {exc}") from exc
+    except FloorApplyError as exc:
+        raise WorkspaceError(f"{_SOURCES_LEDGER_PATH} could not be read: {exc}") from exc
     except (OSError, UnicodeDecodeError):
         return None
     finally:
@@ -858,7 +856,7 @@ def _workspace_locators(root: Path, sources: WorkspaceSources | None) -> dict[st
     for entry in () if sources is None else sources.document_entries:
         try:
             path = sources.path_for_source(entry.name) if sources is not None else None
-        except (OSError, ValueError, PlaybillError):
+        except (OSError, ValueError, CruxibleError):
             path = None
         if path is None:
             shown = entry.locator
@@ -903,14 +901,14 @@ def _write_workspace_local(
                     _write_file(parent, parts[-1], content, mode=0o600, durable=durable)
             else:
                 _write_file(directory, relative, content, mode=0o600, durable=durable)
-    except (OSError, PlaybillFloorApplyError) as exc:
-        raise PlaybillWorkspaceError(f"{relative} could not be written atomically: {exc}") from exc
+    except (OSError, FloorApplyError) as exc:
+        raise WorkspaceError(f"{relative} could not be written atomically: {exc}") from exc
     finally:
         os.close(anchor)
 
 
 def _write_floor_local(workspace: Path, relative: str, text: str) -> None:
-    _write_workspace_local(workspace, f"{PLAYBILL_FLOOR_PATH}/{relative}", text.encode("utf-8"))
+    _write_workspace_local(workspace, f"{FLOOR_PATH}/{relative}", text.encode("utf-8"))
 
 
 def _rendered_blocks(root: Path, content: bytes) -> list[tuple[str, str]]:
@@ -920,7 +918,7 @@ def _rendered_blocks(root: Path, content: bytes) -> list[tuple[str, str]]:
     blocks: list[tuple[str, str]] = []
     try:
         refs = projection_manifest_refs(content)
-    except (PlaybillError, ValueError):
+    except (CruxibleError, ValueError):
         return blocks
     for ref in refs:
         try:
@@ -936,7 +934,7 @@ def _rendered_blocks(root: Path, content: bytes) -> list[tuple[str, str]]:
                     "utf-8"
                 )
             )
-        except (PlaybillError, OSError, ValueError):
+        except (CruxibleError, OSError, ValueError):
             continue
         if not isinstance(manifest, Mapping):
             continue
@@ -975,12 +973,10 @@ def write_projection_index(workspace: str | Path) -> int | None:
     # it again must not bless a replacement symlink after a caller's check.
     output_root = Path(workspace).expanduser().absolute()
     root = _workspace_root(workspace)
-    floor = _relative_destination(root, PLAYBILL_FLOOR_PATH)
+    floor = _relative_destination(root, FLOOR_PATH)
     if not floor.is_dir():
         return None
-    _write_workspace_local(
-        output_root, f"{PLAYBILL_FLOOR_PATH}/.gitignore", b"*\n", only_if_changed=True
-    )
+    _write_workspace_local(output_root, f"{FLOOR_PATH}/.gitignore", b"*\n", only_if_changed=True)
     ledger = _sources_ledger(floor)
     if ledger is None:
         return None
@@ -988,7 +984,7 @@ def write_projection_index(workspace: str | Path) -> int | None:
     generations = _sources_generations(ledger_rows)
     try:
         sources: WorkspaceSources | None = WorkspaceSources(root)
-    except (OSError, ValueError, PlaybillError):
+    except (OSError, ValueError, CruxibleError):
         sources = None
     locators = _workspace_locators(root, sources)
     joined = [
@@ -1010,7 +1006,7 @@ def write_projection_index(workspace: str | Path) -> int | None:
     for entry in () if sources is None else sources.document_entries:
         try:
             path = sources.path_for_source(entry.name) if sources is not None else None
-        except (OSError, ValueError, PlaybillError):
+        except (OSError, ValueError, CruxibleError):
             continue
         if path is None or not path.is_file() or not path.is_relative_to(root):
             continue
@@ -1022,7 +1018,7 @@ def write_projection_index(workspace: str | Path) -> int | None:
             rows.append((relative, "evidence-source", entry.name, generations[entry.name]))
         try:
             content = read_projection_source(path)
-        except (OSError, ValueError, PlaybillError):
+        except (OSError, ValueError, CruxibleError):
             continue
         rows.extend(
             (relative, "rendered-block", ref, generation)
@@ -1042,7 +1038,7 @@ def write_projection_index(workspace: str | Path) -> int | None:
 
 
 def floor_export_parts(
-    include: Sequence[contracts.PlaybillFloorExportPart],
+    include: Sequence[contracts.FloorExportPart],
 ) -> dict[str, Any]:
     """Keyword arguments naming opt-in parts, empty for the default floor.
 
@@ -1052,12 +1048,12 @@ def floor_export_parts(
     return {"include": tuple(sorted(set(include)))} if include else {}
 
 
-FloorDeltaFetch = Callable[[int | None, str | None], PlaybillFloorDelta]
+FloorDeltaFetch = Callable[[int | None, str | None], FloorDelta]
 
 
 def sync_floor_directory(
     fetch_delta: FloorDeltaFetch, floor_dir: Path
-) -> tuple[PlaybillFloorDelta, PlaybillFloorApplyResult]:
+) -> tuple[FloorDelta, FloorApplyResult]:
     """Bring ``floor_dir`` to the daemon's answer through the one shared apply.
 
     Sends the generation and renderer of the floor the directory holds, so the
@@ -1075,24 +1071,24 @@ def sync_floor_directory(
         delta = fetch_delta(None, None)
         result = apply_floor_delta(floor_dir, delta)
     if result.status == "base_mismatch":  # pragma: no cover - a full floor names no base
-        raise PlaybillWorkspaceError("a full floor could not be applied")
+        raise WorkspaceError("a full floor could not be applied")
     return delta, result
 
 
 class _FloorDeliveryClient(Protocol):
     socket_path: str | None
 
-    def playbill_host_workspace_registration(
+    def host_workspace_registration(
         self, instance_id: str
-    ) -> contracts.PlaybillHostWorkspaceRegistration: ...
+    ) -> contracts.HostWorkspaceRegistration: ...
 
-    def deliver_playbill_floor_now(
+    def deliver_floor_now(
         self,
         instance_id: str,
         *,
-        include: tuple[contracts.PlaybillFloorExportPart, ...] = (),
-        at: contracts.PlaybillAcceptedCoordinate | None = None,
-    ) -> contracts.PlaybillFloorDeliveryResult: ...
+        include: tuple[contracts.FloorExportPart, ...] = (),
+        at: contracts.AcceptedCoordinate | None = None,
+    ) -> contracts.FloorDeliveryResult: ...
 
 
 def daemon_floor_delivery(
@@ -1100,23 +1096,23 @@ def daemon_floor_delivery(
     instance_id: str,
     workspace: str | Path,
     *,
-    include: tuple[contracts.PlaybillFloorExportPart, ...] = (),
-    at: contracts.PlaybillAcceptedCoordinate | None = None,
-) -> contracts.PlaybillFloorDeliveryResult | None:
+    include: tuple[contracts.FloorExportPart, ...] = (),
+    at: contracts.AcceptedCoordinate | None = None,
+) -> contracts.FloorDeliveryResult | None:
     """A local daemon opted into this exact workspace is its floor's only writer."""
 
     if getattr(client, "socket_path", None) is None:
         return None
-    registration = client.playbill_host_workspace_registration(instance_id)
+    registration = client.host_workspace_registration(instance_id)
     if not registration.floor_delivery:
         return None
     if registration.workspace_path is None or Path(
         registration.workspace_path
     ).resolve() != _workspace_root(workspace):
-        raise PlaybillWorkspaceError("Daemon delivery is bound to another workspace")
+        raise WorkspaceError("Daemon delivery is bound to another workspace")
     if include or at is not None:
-        return client.deliver_playbill_floor_now(instance_id, include=include, at=at)
-    return client.deliver_playbill_floor_now(instance_id)
+        return client.deliver_floor_now(instance_id, include=include, at=at)
+    return client.deliver_floor_now(instance_id)
 
 
 def write_workspace_floor_delta(
@@ -1127,8 +1123,8 @@ def write_workspace_floor_delta(
     force: bool = True,
     server_url: str | None = None,
     server_socket: str | None = None,
-    delivery: Callable[[], contracts.PlaybillFloorDeliveryResult | None] | None = None,
-) -> tuple[PlaybillFloorDelta, contracts.PlaybillWorkspaceFloorWriteResult]:
+    delivery: Callable[[], contracts.FloorDeliveryResult | None] | None = None,
+) -> tuple[FloorDelta, contracts.WorkspaceFloorWriteResult]:
     """Write the default floor through the shared apply and record its refresh profile.
 
     The CLI and MCP write path for a floor without opt-in parts: it asks for a
@@ -1137,14 +1133,14 @@ def write_workspace_floor_delta(
     """
 
     root = _workspace_root(workspace)
-    destination = _relative_destination(root, PLAYBILL_FLOOR_PATH)
+    destination = _relative_destination(root, FLOOR_PATH)
     if (
         not force
         and destination.is_dir()
         and any(destination.iterdir())
         and read_floor_manifest(destination) is None
     ):
-        raise PlaybillWorkspaceError(
+        raise WorkspaceError(
             f"refusing to write the floor into a non-empty directory: {destination}"
         )
     delivered = None if delivery is None else delivery()
@@ -1152,12 +1148,12 @@ def write_workspace_floor_delta(
         delta, applied = sync_floor_directory(fetch_delta, destination)
         write_projection_index(root)
         assert applied.floor_digest is not None
-        written = contracts.PlaybillWorkspaceFloorWriteResult(
+        written = contracts.WorkspaceFloorWriteResult(
             status="unchanged" if applied.status == "unchanged" else "written",
-            path=PLAYBILL_FLOOR_PATH,
+            path=FLOOR_PATH,
             destination=str(destination),
             floor_digest=applied.floor_digest,
-            coordinate=contracts.PlaybillAcceptedCoordinate.model_validate(
+            coordinate=contracts.AcceptedCoordinate.model_validate(
                 delta.head.coordinate().model_dump(mode="json")
             ),
             file_count=applied.file_count + 1,
@@ -1165,7 +1161,7 @@ def write_workspace_floor_delta(
     else:
         delta, written = delivered.delta, delivered.written
     if (root / _CONFIG_PATH).exists() or server_url is not None or server_socket is not None:
-        record_playbill_floor_output(
+        record_floor_output(
             workspace,
             instance_id=instance_id,
             server_url=server_url,
@@ -1175,16 +1171,16 @@ def write_workspace_floor_delta(
 
 
 def write_workspace_floor(
-    export_floor: Callable[[], contracts.PlaybillFloorExport],
+    export_floor: Callable[[], contracts.FloorExport],
     *,
     instance_id: str,
     workspace: str | Path,
-    include: Sequence[contracts.PlaybillFloorExportPart] = (),
+    include: Sequence[contracts.FloorExportPart] = (),
     force: bool = True,
     server_url: str | None = None,
     server_socket: str | None = None,
-    delivery: Callable[[], contracts.PlaybillFloorDeliveryResult | None] | None = None,
-) -> tuple[contracts.PlaybillFloorExport, contracts.PlaybillWorkspaceFloorWriteResult]:
+    delivery: Callable[[], contracts.FloorDeliveryResult | None] | None = None,
+) -> tuple[contracts.FloorExport, contracts.WorkspaceFloorWriteResult]:
     """Write an exported floor into the workspace and record its refresh profile.
 
     The one write path every surface (CLI, MCP) takes, so a floor written with
@@ -1198,17 +1194,17 @@ def write_workspace_floor(
     delivered = None if delivery is None else delivery()
     if delivered is None:
         export = export_floor()
-        written = materialize_playbill_floor(workspace, export=export, force=force)
+        written = materialize_floor(workspace, export=export, force=force)
     else:
         if delivered.export is None:
-            raise PlaybillWorkspaceError("daemon delivery omitted the requested full export")
+            raise WorkspaceError("daemon delivery omitted the requested full export")
         export, written = delivered.export, delivered.written
     if (
         (_workspace_root(workspace) / _CONFIG_PATH).exists()
         or server_url is not None
         or server_socket is not None
     ):
-        record_playbill_floor_output(
+        record_floor_output(
             workspace,
             instance_id=instance_id,
             server_url=server_url,
@@ -1221,23 +1217,23 @@ def write_workspace_floor(
 def inspect_workspace_floor(
     workspace: str | Path,
     *,
-    current_coordinate: contracts.PlaybillAcceptedCoordinate | None,
-) -> contracts.PlaybillWorkspaceFloorStatus:
+    current_coordinate: contracts.AcceptedCoordinate | None,
+) -> contracts.WorkspaceFloorStatus:
     """Compare the installed configured floor with a daemon coordinate."""
 
     root = _workspace_root(workspace)
     try:
         relative_path = configured_floor_path(root)
-    except PlaybillWorkspaceError as exc:
-        return contracts.PlaybillWorkspaceFloorStatus(status="invalid", message=str(exc))
+    except WorkspaceError as exc:
+        return contracts.WorkspaceFloorStatus(status="invalid", message=str(exc))
     if relative_path is None:
-        return contracts.PlaybillWorkspaceFloorStatus(
+        return contracts.WorkspaceFloorStatus(
             status="not_configured", current_coordinate=current_coordinate
         )
     destination = _relative_destination(root, relative_path)
     manifest_path = destination / "manifest.json"
     if not manifest_path.is_file():
-        return contracts.PlaybillWorkspaceFloorStatus(
+        return contracts.WorkspaceFloorStatus(
             status="missing",
             path=relative_path,
             destination=str(destination),
@@ -1245,9 +1241,9 @@ def inspect_workspace_floor(
         )
     try:
         manifest = json.loads(read_regular_file(manifest_path).decode("utf-8"))
-        installed = contracts.PlaybillAcceptedCoordinate.model_validate(manifest["coordinate"])
+        installed = contracts.AcceptedCoordinate.model_validate(manifest["coordinate"])
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-        return contracts.PlaybillWorkspaceFloorStatus(
+        return contracts.WorkspaceFloorStatus(
             status="invalid",
             path=relative_path,
             destination=str(destination),
@@ -1259,7 +1255,7 @@ def inspect_workspace_floor(
         status = "current"
     else:
         status = "stale"
-    return contracts.PlaybillWorkspaceFloorStatus(
+    return contracts.WorkspaceFloorStatus(
         status=status,
         path=relative_path,
         destination=str(destination),
@@ -1270,8 +1266,8 @@ def inspect_workspace_floor(
 
 def workspace_floor_freshness(
     workspace: str | Path,
-    orientation: contracts.PlaybillOrientResult,
-) -> contracts.PlaybillOrientResult:
+    orientation: contracts.OrientResult,
+) -> contracts.OrientResult:
     """``orientation`` with ``floor`` set when the workspace holds this instance's floor.
 
     Cheap by construction: it reads the floor's manifest (its coordinate and
@@ -1281,7 +1277,7 @@ def workspace_floor_freshness(
     """
 
     root = _workspace_root(workspace)
-    floor = root / PLAYBILL_FLOOR_PATH
+    floor = root / FLOOR_PATH
     try:
         manifest = json.loads(read_regular_file(floor / "manifest.json").decode("utf-8"))
         at = manifest["coordinate"]["git_oid"]
@@ -1300,11 +1296,11 @@ def workspace_floor_freshness(
         if isinstance(generation, int) and not isinstance(generation, bool):
             behind = max(0, orientation.generation - generation)
     return orientation.model_copy(
-        update={"floor": contracts.PlaybillOrientFloor(at=at, generations_behind=behind)}
+        update={"floor": contracts.OrientFloor(at=at, generations_behind=behind)}
     )
 
 
-def observe_playbill_next_workspace(workspace: str | Path) -> dict[str, object]:
+def observe_next_workspace(workspace: str | Path) -> dict[str, object]:
     """Observe the configured floor and every resolvable installed catalog source.
 
     The daemon compares ``installed_coordinate`` with its resolved coordinate.  Therefore
@@ -1325,7 +1321,7 @@ def observe_playbill_next_workspace(workspace: str | Path) -> dict[str, object]:
             else floor.installed_coordinate.model_dump(mode="json")
         ),
         "drift_observations": None,
-        "presentation_policy": PlaybillPresentationPolicy().model_dump(mode="json"),
+        "presentation_policy": PresentationPolicy().model_dump(mode="json"),
         "presentation_policy_notes": [],
     }
     try:
@@ -1341,7 +1337,7 @@ def observe_playbill_next_workspace(workspace: str | Path) -> dict[str, object]:
         if overlay_path.is_file() and not overlay_path.resolve().is_relative_to(root):
             return observation
         sources = WorkspaceSources(root)
-    except (OSError, ValueError, PlaybillError):
+    except (OSError, ValueError, CruxibleError):
         _observe_presentation_policy(observation, root, known_source_ids=())
         return observation
     _observe_presentation_policy(
@@ -1354,7 +1350,7 @@ def observe_playbill_next_workspace(workspace: str | Path) -> dict[str, object]:
     for entry in sources.document_entries:
         try:
             path = sources.path_for_source(entry.name)
-        except (OSError, ValueError, PlaybillError):
+        except (OSError, ValueError, CruxibleError):
             continue
         if not path.exists() and not path.is_symlink():
             # A binding to a file that is not there is repair work, not an
@@ -1370,7 +1366,7 @@ def observe_playbill_next_workspace(workspace: str | Path) -> dict[str, object]:
             continue
         try:
             content = read_projection_source(path)
-        except (OSError, ValueError, PlaybillError):
+        except (OSError, ValueError, CruxibleError):
             continue
         source_observations.append(
             {
@@ -1426,10 +1422,10 @@ def _projection_marker_observation(
     )
 
 
-def observe_playbill_projection_coverage(
+def observe_projection_coverage(
     workspace: str | Path,
     *,
-    coordinate: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any],
+    coordinate: contracts.AcceptedCoordinate | Mapping[str, Any],
 ) -> dict[str, object] | None:
     """Build bounded, coordinate-bound proof of configured local projections.
 
@@ -1442,34 +1438,34 @@ def observe_playbill_projection_coverage(
     root = _workspace_root(workspace)
     try:
         sources = WorkspaceSources(root)
-    except (OSError, ValueError, PlaybillError):
+    except (OSError, ValueError, CruxibleError):
         return None
 
-    accepted = contracts.PlaybillAcceptedCoordinate.model_validate(coordinate)
-    procedure_bindings: list[PlaybillProjectionCoverageBinding] = []
+    accepted = contracts.AcceptedCoordinate.model_validate(coordinate)
+    procedure_bindings: list[ProjectionCoverageBinding] = []
     procedures_complete = True
     for procedure_entry in sources.procedure_projection_entries:
         try:
             sources.path_for_procedure(procedure_entry.procedure_identity.qualified)
-        except (OSError, ValueError, PlaybillError):
+        except (OSError, ValueError, CruxibleError):
             procedures_complete = False
             procedure_bindings.clear()
             break
         procedure_bindings.append(
-            PlaybillProjectionCoverageBinding(
+            ProjectionCoverageBinding(
                 artifact=procedure_entry.procedure_identity,
                 workspace_path=procedure_entry.locator,
                 evidence_kind="procedure_catalog",
             )
         )
 
-    claim_bindings: list[PlaybillProjectionCoverageBinding] = []
+    claim_bindings: list[ProjectionCoverageBinding] = []
     claims_complete = True
     scanned_bytes = 0
     for document_entry in sources.document_entries:
         try:
             content = read_projection_source(sources.path_for_source(document_entry.name))
-        except (OSError, ValueError, PlaybillError):
+        except (OSError, ValueError, CruxibleError):
             claims_complete = False
             break
         scanned_bytes += len(content)
@@ -1494,7 +1490,7 @@ def observe_playbill_projection_coverage(
             for backing in block.stamp.backing:
                 if backing.identity.kind == "Claim":
                     claim_bindings.append(
-                        PlaybillProjectionCoverageBinding(
+                        ProjectionCoverageBinding(
                             artifact=backing.identity,
                             workspace_path=document_entry.locator,
                             evidence_kind="claim_marker",
@@ -1504,7 +1500,7 @@ def observe_playbill_projection_coverage(
         claim_bindings.clear()
 
     complete_kinds: list[Literal["Claim", "Procedure"]] = []
-    bindings: list[PlaybillProjectionCoverageBinding] = []
+    bindings: list[ProjectionCoverageBinding] = []
     if claims_complete and len(claim_bindings) <= MAX_PROJECTION_COVERAGE_BINDINGS:
         complete_kinds.append("Claim")
         bindings.extend(claim_bindings)
@@ -1523,7 +1519,7 @@ def observe_playbill_projection_coverage(
             ),
         )
     )
-    result = PlaybillProjectionCoverageObservation(
+    result = ProjectionCoverageObservation(
         coordinate=AcceptedCoordinate.model_validate(accepted.model_dump(mode="json")),
         complete_kinds=tuple(sorted(complete_kinds, key=lambda item: item.encode("utf-8"))),
         bindings=ordered_bindings,
@@ -1818,16 +1814,16 @@ def _coverage_v3_fields(
     )
 
 
-def observe_playbill_next_workspace_with_coverage(
+def observe_next_workspace_with_coverage(
     client: _CoverageClient,
     instance_id: str,
     workspace: str | Path,
     *,
     observation: Mapping[str, object] | None = None,
-    coordinate: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+    coordinate: contracts.AcceptedCoordinate | Mapping[str, Any] | None = None,
     access_profile: Mapping[str, Any] | None = None,
-    resolve_coordinate: Callable[[], contracts.PlaybillAcceptedCoordinate] | None = None,
-) -> tuple[dict[str, object], contracts.PlaybillAcceptedCoordinate | None]:
+    resolve_coordinate: Callable[[], contracts.AcceptedCoordinate] | None = None,
+) -> tuple[dict[str, object], contracts.AcceptedCoordinate | None]:
     """Enrich next with one existing, coordinate-bound coverage-scanner read.
 
     This adapter never searches source bytes. Every accepted occurrence comes
@@ -1835,29 +1831,27 @@ def observe_playbill_next_workspace_with_coverage(
     that card against the exact bytes it previously sent to the sole scanner.
     """
 
-    base = dict(observation or observe_playbill_next_workspace(workspace))
+    base = dict(observation or observe_next_workspace(workspace))
     entries = base.get("source_observations")
     if not isinstance(entries, list) or not entries:
-        resolved_coordinate: contracts.PlaybillAcceptedCoordinate | None = None
+        resolved_coordinate: contracts.AcceptedCoordinate | None = None
         try:
             local_sources = WorkspaceSources(_workspace_root(workspace))
-        except (OSError, ValueError, PlaybillError):
+        except (OSError, ValueError, CruxibleError):
             local_sources = None
         if local_sources is not None and local_sources.procedure_projection_entries:
             if coordinate is not None:
-                resolved_coordinate = contracts.PlaybillAcceptedCoordinate.model_validate(
-                    coordinate
-                )
+                resolved_coordinate = contracts.AcceptedCoordinate.model_validate(coordinate)
             else:
                 resolved_coordinate = (
                     resolve_coordinate()
                     if resolve_coordinate is not None
-                    else contracts.PlaybillAcceptedCoordinate.model_validate(
-                        client.playbill_head(instance_id).coordinate.model_dump(mode="json")
+                    else contracts.AcceptedCoordinate.model_validate(
+                        client.head(instance_id).coordinate.model_dump(mode="json")
                     )
                 )
         if resolved_coordinate is not None:
-            projection = observe_playbill_projection_coverage(
+            projection = observe_projection_coverage(
                 workspace,
                 coordinate=resolved_coordinate,
             )
@@ -1868,7 +1862,7 @@ def observe_playbill_next_workspace_with_coverage(
     root = _workspace_root(workspace)
     try:
         sources = WorkspaceSources(root)
-    except (OSError, ValueError, PlaybillError):
+    except (OSError, ValueError, CruxibleError):
         base.pop("source_observations", None)
         return base, None
 
@@ -1881,7 +1875,7 @@ def observe_playbill_next_workspace_with_coverage(
         source_id = entry["source_id"]
         try:
             content = read_projection_source(sources.path_for_source(source_id))
-        except (OSError, ValueError, PlaybillError):
+        except (OSError, ValueError, CruxibleError):
             continue
         material[source_id] = content
         document_id = entry.get("document_id")
@@ -1906,7 +1900,7 @@ def observe_playbill_next_workspace_with_coverage(
         base["source_observations"] = []
         return base, None
 
-    coverage = client.resolve_playbill_coverage(
+    coverage = client.resolve_coverage(
         instance_id,
         observations=payloads,
         at=coordinate,
@@ -1923,7 +1917,7 @@ def observe_playbill_next_workspace_with_coverage(
     returned_at = coverage.coordinate.model_dump(mode="json")
     expected_at = (
         coordinate.model_dump(mode="json")
-        if isinstance(coordinate, contracts.PlaybillAcceptedCoordinate)
+        if isinstance(coordinate, contracts.AcceptedCoordinate)
         else dict(coordinate)
         if coordinate is not None
         else None
@@ -1989,7 +1983,7 @@ def observe_playbill_next_workspace_with_coverage(
     ]
     resolved_coordinate = coverage.coordinate if coordinate_matches else None
     if resolved_coordinate is not None:
-        projection = observe_playbill_projection_coverage(
+        projection = observe_projection_coverage(
             workspace,
             coordinate=resolved_coordinate,
         )
@@ -2003,8 +1997,8 @@ def refresh_workspace_floor(
     instance_id: str,
     *,
     workspace: str | Path,
-    at: contracts.PlaybillAcceptedCoordinate | None = None,
-) -> contracts.PlaybillFloorRefreshResult:
+    at: contracts.AcceptedCoordinate | None = None,
+) -> contracts.FloorRefreshResult:
     """Refresh only the local floor and report the coordinate actually written.
 
     A pinned request refuses a mismatched export before touching local files.
@@ -2015,7 +2009,7 @@ def refresh_workspace_floor(
     try:
         configured = configured_floor_output(workspace)
         if configured is None:
-            return contracts.PlaybillFloorRefreshResult(status="not_configured")
+            return contracts.FloorRefreshResult(status="not_configured")
         relative_path, include = configured
         if getattr(client, "socket_path", None) is not None:
             delivered = daemon_floor_delivery(
@@ -2027,7 +2021,7 @@ def refresh_workspace_floor(
             )
             if delivered is not None:
                 written = delivered.written
-                return contracts.PlaybillFloorRefreshResult(
+                return contracts.FloorRefreshResult(
                     status="refreshed",
                     path=relative_path,
                     destination=written.destination,
@@ -2036,11 +2030,11 @@ def refresh_workspace_floor(
                 )
         if include:
             # Opt-in discovery cards are a full export's; they never travel in a delta.
-            export = client.export_playbill_floor(instance_id, at=at, **floor_export_parts(include))
+            export = client.export_floor(instance_id, at=at, **floor_export_parts(include))
             if at is not None and export.coordinate != at:
-                raise PlaybillWorkspaceError("floor export differs from requested coordinate")
-            written = materialize_playbill_floor(workspace, export=export)
-            return contracts.PlaybillFloorRefreshResult(
+                raise WorkspaceError("floor export differs from requested coordinate")
+            written = materialize_floor(workspace, export=export)
+            return contracts.FloorRefreshResult(
                 status="refreshed",
                 path=relative_path,
                 destination=written.destination,
@@ -2050,8 +2044,8 @@ def refresh_workspace_floor(
         root = _workspace_root(workspace)
         destination = _relative_destination(root, relative_path)
 
-        def fetch(generation: int | None, renderer: str | None) -> PlaybillFloorDelta:
-            delta = client.playbill_floor_delta(
+        def fetch(generation: int | None, renderer: str | None) -> FloorDelta:
+            delta = client.floor_delta(
                 instance_id, at=at, base_generation=generation, base_renderer=renderer
             )
             # A pinned request refuses a mismatched answer before anything is written:
@@ -2059,22 +2053,22 @@ def refresh_workspace_floor(
             if at is not None and delta.head.coordinate().model_dump(mode="json") != at.model_dump(
                 mode="json"
             ):
-                raise PlaybillWorkspaceError("floor delta differs from requested coordinate")
+                raise WorkspaceError("floor delta differs from requested coordinate")
             return delta
 
         delta, applied = sync_floor_directory(fetch, destination)
         write_projection_index(root)
-        return contracts.PlaybillFloorRefreshResult(
+        return contracts.FloorRefreshResult(
             status="refreshed",
             path=relative_path,
             destination=str(destination),
             floor_digest=applied.floor_digest,
-            coordinate=contracts.PlaybillAcceptedCoordinate.model_validate(
+            coordinate=contracts.AcceptedCoordinate.model_validate(
                 delta.head.coordinate().model_dump(mode="json")
             ),
         )
     except Exception as exc:
-        return contracts.PlaybillFloorRefreshResult(status="failed", message=str(exc))
+        return contracts.FloorRefreshResult(status="failed", message=str(exc))
 
 
 def activate_with_workspace_refresh(
@@ -2084,10 +2078,10 @@ def activate_with_workspace_refresh(
     *,
     workspace: str | Path,
     sync: bool = True,
-) -> contracts.PlaybillWorkspaceActivationResult:
+) -> contracts.WorkspaceActivationResult:
     """Activate once, refresh the floor, then independently sync local blocks."""
 
-    activation = client.activate_playbill_proposal(instance_id, proposal_id)
+    activation = client.activate_proposal(instance_id, proposal_id)
     refresh = refresh_workspace_floor(
         client,
         instance_id,
@@ -2107,21 +2101,21 @@ def activate_with_workspace_refresh(
                 item.reason == "workspace_not_attached" for item in block_sync.items
             ):
                 skipped = tuple(
-                    contracts.PlaybillBlockSyncItem.model_validate(
+                    contracts.BlockSyncItem.model_validate(
                         {**item.model_dump(mode="json"), "outcome": "skipped"}
                     )
                     for item in block_sync.items
                 )
-                block_sync = contracts.PlaybillBlockSyncResult(
+                block_sync = contracts.BlockSyncResult(
                     items=skipped,
                     changed_file_count=0,
                     would_change=False,
                     has_refusals=False,
                 )
         except Exception as exc:  # report activation and sync truth together
-            block_sync = contracts.PlaybillBlockSyncResult(
+            block_sync = contracts.BlockSyncResult(
                 items=(
-                    contracts.PlaybillBlockSyncItem(
+                    contracts.BlockSyncItem(
                         path=".",
                         outcome="refused",
                         reason="block_sync_failed",
@@ -2132,7 +2126,7 @@ def activate_with_workspace_refresh(
                 would_change=False,
                 has_refusals=True,
             )
-    return contracts.PlaybillWorkspaceActivationResult(
+    return contracts.WorkspaceActivationResult(
         **activation.model_dump(mode="json"),
         floor_refresh=refresh,
         block_sync=block_sync,
@@ -2140,25 +2134,25 @@ def activate_with_workspace_refresh(
 
 
 __all__ = [
-    "PlaybillWorkspaceAttachmentError",
-    "PlaybillWorkspaceError",
+    "WorkspaceAttachmentError",
+    "WorkspaceError",
     "activate_with_workspace_refresh",
     "configured_floor_path",
     "inspect_workspace_floor",
-    "observe_playbill_next_workspace",
-    "observe_playbill_next_workspace_with_coverage",
-    "observe_playbill_projection_coverage",
-    "materialize_playbill_floor",
+    "observe_next_workspace",
+    "observe_next_workspace_with_coverage",
+    "observe_projection_coverage",
+    "materialize_floor",
     "configured_floor_output",
     "floor_export_parts",
-    "record_playbill_floor_output",
+    "record_floor_output",
     "sync_floor_directory",
     "daemon_floor_delivery",
     "write_workspace_floor",
     "write_workspace_floor_delta",
     "refresh_workspace_floor",
-    "validate_playbill_workspace_config_write",
+    "validate_workspace_config_write",
     "verified_floor_files",
-    "write_playbill_workspace_config",
+    "write_workspace_config",
     "write_projection_index",
 ]

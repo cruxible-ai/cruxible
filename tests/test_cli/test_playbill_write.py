@@ -11,10 +11,10 @@ from click.testing import CliRunner
 
 from cruxible_client.contracts.write import (
     FileEvidence,
-    PlaybillRetireRequest,
-    PlaybillSetRequest,
-    PlaybillWriteRequest,
+    RetireRequest,
+    SetRequest,
     WriteOutcome,
+    WriteRequest,
     as_write_request,
 )
 from cruxible_core.cli.main import cli
@@ -52,13 +52,13 @@ class _ServiceClient:
             self.instance, request=as_write_request(request), caller=caller()
         )
 
-    def playbill_set(self, instance_id: str, *, request: PlaybillSetRequest) -> WriteOutcome:
+    def set(self, instance_id: str, *, request: SetRequest) -> WriteOutcome:
         return self._answer(instance_id, request)
 
-    def playbill_retire(self, instance_id: str, *, request: PlaybillRetireRequest) -> WriteOutcome:
+    def retire(self, instance_id: str, *, request: RetireRequest) -> WriteOutcome:
         return self._answer(instance_id, request)
 
-    def playbill_write(self, instance_id: str, *, request: PlaybillWriteRequest) -> WriteOutcome:
+    def write(self, instance_id: str, *, request: WriteRequest) -> WriteOutcome:
         return self._answer(instance_id, request)
 
 
@@ -84,7 +84,7 @@ def test_set_prints_before_and_after_then_revises_on_the_next_set(served: _Servi
     assert "verdict supported" in first.output
     assert "next: cruxible playbill get project.work_item/wi-1" in first.output
     request = served.requests[0]
-    assert isinstance(request, PlaybillSetRequest)
+    assert isinstance(request, SetRequest)
     assert request.surface == "cli" and request.accept == "if_allowed"
 
     second = _run("set", WI1, "status", "done", "--because", "Shipped.", "--json")
@@ -162,7 +162,7 @@ def test_add_puts_one_more_value_in_a_many_valued_field(served: _ServiceClient) 
     assert "target: inst_write" in first.stderr
     assert "add project.work_item/wi-1 governs: project.work_item/wi-2" in first.output
     request = served.requests[-1]
-    assert isinstance(request, PlaybillWriteRequest) and request.surface == "cli"
+    assert isinstance(request, WriteRequest) and request.surface == "cli"
     (change,) = request.changes
     assert change.op == "add" and not change.expect_absent  # type: ignore[union-attr]
 
@@ -215,7 +215,7 @@ def test_retire_takes_a_claim_id_or_a_subject_and_field(served: _ServiceClient) 
     by_slot = _run("retire", WI1, "title", "--because", "Gone.", "--reason", "was-wrong")
     assert by_slot.exit_code == 0, by_slot.output
     request = served.requests[-1]
-    assert isinstance(request, PlaybillRetireRequest) and request.reason == "was-wrong"
+    assert isinstance(request, RetireRequest) and request.reason == "was-wrong"
     assert title["changes"][0]["claim"] in by_slot.output
 
 
@@ -295,7 +295,7 @@ changes:
 def test_capture_handles_and_contract_evidence_on_set_and_add(
     served: _ServiceClient, tmp_path: Path
 ) -> None:
-    from cruxible_client.contracts.write import PlaybillWriteRequest as Write
+    from cruxible_client.contracts.write import WriteRequest as Write
     from cruxible_client.contracts.write import capture_handle
 
     seeded = service_playbill_write(

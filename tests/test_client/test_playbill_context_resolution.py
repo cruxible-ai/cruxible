@@ -7,11 +7,11 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from cruxible_client import Playbill, contracts
+from cruxible_client import Cruxible, contracts
 from cruxible_client.authoring.context import (
-    PlaybillContextResolutionError,
+    ContextResolutionError,
     _walk_roots,
-    resolve_playbill_context,
+    resolve_context,
 )
 from cruxible_client.authoring.sdk import SDK_CONTRACT_SNAPSHOT_DIGEST
 from cruxible_client.contracts.authoring.models import AUTHORING_SDK_VERSION
@@ -90,12 +90,12 @@ def test_two_cwds_resolve_their_own_workspace_before_one_global_slot(tmp_path: P
         "instance_id": "inst_global",
     }
 
-    first_result = resolve_playbill_context(
+    first_result = resolve_context(
         remembered=remembered,
         environ={},
         cwd=nested,
     )
-    second_result = resolve_playbill_context(
+    second_result = resolve_context(
         remembered=remembered,
         environ={},
         cwd=second,
@@ -120,7 +120,7 @@ def test_target_components_use_independent_explicit_env_workspace_global_precede
     socket = tmp_path / ".b2-workspace.sock"
     _attach(workspace, instance_id="inst_workspace", server_socket=str(socket))
 
-    resolved = resolve_playbill_context(
+    resolved = resolve_context(
         server_url="https://explicit.example.test",
         workspace=workspace,
         remembered={
@@ -145,7 +145,7 @@ def test_incomplete_coverage_config_does_not_retarget_global_context(tmp_path: P
         encoding="utf-8",
     )
 
-    resolved = resolve_playbill_context(
+    resolved = resolve_context(
         remembered={
             "server_url": "https://global.example.test",
             "instance_id": "inst_global",
@@ -170,7 +170,7 @@ def test_foreign_transport_cannot_inherit_a_remembered_instance(
     server_url: str | None,
     environ: dict[str, str],
 ) -> None:
-    resolved = resolve_playbill_context(
+    resolved = resolve_context(
         server_url=server_url,
         remembered={
             "server_url": "https://daemon-a.example.test",
@@ -190,7 +190,7 @@ def test_foreign_transport_cannot_inherit_a_remembered_instance(
 
 
 def test_remembered_instance_uses_its_explicitly_recorded_transport(tmp_path: Path) -> None:
-    resolved = resolve_playbill_context(
+    resolved = resolve_context(
         remembered={
             "server_url": "https://daemon-a.example.test",
             "instance_id": "inst_of_daemon_b",
@@ -216,7 +216,7 @@ def test_workspace_walk_stops_at_home(tmp_path: Path) -> None:
         server_url="https://attacker.example.test",
     )
 
-    resolved = resolve_playbill_context(
+    resolved = resolve_context(
         remembered={
             "server_url": "https://mine.example.test",
             "instance_id": "inst_mine",
@@ -253,7 +253,7 @@ def test_invalid_ancestor_binding_is_skipped_with_a_warning(tmp_path: Path) -> N
     (home / ".playbill").mkdir()
     (home / ".playbill" / "coverage.json").write_text("{not json", encoding="utf-8")
 
-    resolved = resolve_playbill_context(
+    resolved = resolve_context(
         remembered={
             "server_url": "https://mine.example.test",
             "instance_id": "inst_mine",
@@ -272,8 +272,8 @@ def test_invalid_binding_at_cwd_is_still_a_refusal(tmp_path: Path) -> None:
     (tmp_path / ".playbill").mkdir()
     (tmp_path / ".playbill" / "coverage.json").write_text("{not json", encoding="utf-8")
 
-    with pytest.raises(PlaybillContextResolutionError, match="not valid JSON"):
-        resolve_playbill_context(environ={}, cwd=tmp_path, home=tmp_path)
+    with pytest.raises(ContextResolutionError, match="not valid JSON"):
+        resolve_context(environ={}, cwd=tmp_path, home=tmp_path)
 
 
 def test_no_workspace_escape_uses_the_remembered_context(tmp_path: Path) -> None:
@@ -283,7 +283,7 @@ def test_no_workspace_escape_uses_the_remembered_context(tmp_path: Path) -> None
         server_url="https://workspace.example.test",
     )
 
-    resolved = resolve_playbill_context(
+    resolved = resolve_context(
         remembered={
             "server_url": "https://global.example.test",
             "instance_id": "inst_global",
@@ -365,8 +365,8 @@ def test_disagreeing_coverage_and_catalog_roots_refuse(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    with pytest.raises(PlaybillContextResolutionError) as raised:
-        resolve_playbill_context(environ={}, cwd=project, home=tmp_path)
+    with pytest.raises(ContextResolutionError) as raised:
+        resolve_context(environ={}, cwd=project, home=tmp_path)
 
     message = str(raised.value)
     assert "workspace_binding_conflict" in message
@@ -385,8 +385,8 @@ def test_workspace_binding_symlink_escape_names_the_selected_source(tmp_path: Pa
     )
     os.symlink(outside, workspace / ".playbill" / "coverage.json")
 
-    with pytest.raises(PlaybillContextResolutionError, match="selected from.*escapes workspace"):
-        resolve_playbill_context(environ={}, cwd=workspace)
+    with pytest.raises(ContextResolutionError, match="selected from.*escapes workspace"):
+        resolve_context(environ={}, cwd=workspace)
 
 
 def test_cli_context_show_reports_environment_override_sources(
@@ -426,11 +426,11 @@ def test_context_show_reports_typed_daemon_config_disagreement(
     monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
 
     class StubClient:
-        def playbill_host_workspace_registration(
+        def host_workspace_registration(
             self, instance_id: str
-        ) -> contracts.PlaybillHostWorkspaceRegistration:
+        ) -> contracts.HostWorkspaceRegistration:
             assert instance_id == "inst_workspace"
-            return contracts.PlaybillHostWorkspaceRegistration(
+            return contracts.HostWorkspaceRegistration(
                 instance_id=instance_id,
                 status="not_registered",
             )
@@ -467,10 +467,10 @@ def test_context_show_names_workspace_attach_for_missing_local_config(
     monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
 
     class StubClient:
-        def playbill_host_workspace_registration(
+        def host_workspace_registration(
             self, instance_id: str
-        ) -> contracts.PlaybillHostWorkspaceRegistration:
-            return contracts.PlaybillHostWorkspaceRegistration(
+        ) -> contracts.HostWorkspaceRegistration:
+            return contracts.HostWorkspaceRegistration(
                 instance_id=instance_id,
                 status="registered",
                 workspace_path=str(workspace.resolve()),
@@ -508,7 +508,7 @@ def test_sdk_connect_consumes_the_shared_workspace_resolution(
         encoding="utf-8",
     )
     connection: dict[str, object] = {}
-    head = contracts.PlaybillAcceptedCoordinate(
+    head = contracts.AcceptedCoordinate(
         git_oid="a" * 40,
         semantic_root="sha256:" + "1" * 64,
         generation_root="sha256:" + "2" * 64,
@@ -523,7 +523,7 @@ def test_sdk_connect_consumes_the_shared_workspace_resolution(
         def _version_info(self) -> tuple[str, str]:
             return AUTHORING_SDK_VERSION, SDK_CONTRACT_SNAPSHOT_DIGEST
 
-        def playbill_whoami(self, instance_id: str) -> object:
+        def whoami(self, instance_id: str) -> object:
             from types import SimpleNamespace
 
             heads_read.append(instance_id)
@@ -534,7 +534,7 @@ def test_sdk_connect_consumes_the_shared_workspace_resolution(
 
     monkeypatch.setattr("cruxible_client.authoring.sdk.CruxibleClient", StubClient)
 
-    playbill = Playbill.connect(context=context_path, workspace=workspace)
+    playbill = Cruxible.connect(context=context_path, workspace=workspace)
 
     assert connection["base_url"] is None
     assert connection["socket_path"] == str(socket)
@@ -591,7 +591,7 @@ def test_an_unresolved_remembered_socket_alias_still_binds_its_instance(
     alias = tmp_path / "alias"
     alias.symlink_to(real, target_is_directory=True)
 
-    resolved = resolve_playbill_context(
+    resolved = resolve_context(
         remembered={
             "server_socket": str(alias / "d.sock"),
             "instance_id": "inst_alias",

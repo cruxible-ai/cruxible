@@ -15,7 +15,7 @@ from cruxible_client.contracts.approval_policy import (
     render_approval_policy,
 )
 from cruxible_client.contracts.documents import render_document
-from cruxible_client.contracts.errors import ApprovalIntegrityError, PlaybillReseedRequired
+from cruxible_client.contracts.errors import ApprovalIntegrityError, ReseedRequired
 from cruxible_client.contracts.governance import INDEPENDENT_APPROVAL_REQUIREMENTS
 from cruxible_client.contracts.principal_rendering import render_principal
 from cruxible_client.contracts.procedure_runtime_policy import (
@@ -203,7 +203,7 @@ def test_write_gate_uses_artifact_codec_lineage_before_candidate_time(
         assert result.candidate is not None
     else:
         with pytest.raises(
-            PlaybillReseedRequired,
+            ReseedRequired,
             match="compiler selects the frozen compact artifact codec from before PC-HR",
         ):
             _submit_tree(instance, candidate_tree, name="codec-lineage-write")

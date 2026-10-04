@@ -26,7 +26,7 @@ from cruxible_client.contracts.declared_blocks import (
     ProjectionClaimBacking,
     ProjectionMarkerSummary,
 )
-from cruxible_client.contracts.errors import PlaybillGitError, ProjectionIntegrityError
+from cruxible_client.contracts.errors import GitError, ProjectionIntegrityError
 from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionRuleV1,
@@ -44,9 +44,9 @@ from cruxible_core.service.claims.claims import (
 )
 from cruxible_core.service.discovery import next as playbill_next
 from cruxible_core.service.discovery.next import (
-    PlaybillNextRequestV1,
-    PlaybillNextSourceObservation,
-    PlaybillNextWorkspaceObservation,
+    NextRequestV1,
+    NextSourceObservation,
+    NextWorkspaceObservation,
     service_playbill_next,
 )
 from cruxible_core.service.discovery.query import build_accepted_query_facts
@@ -157,17 +157,17 @@ def test_listing_accepted_paths_refuses_what_reading_them_refuses(
     # a generation the ledger accepted and then ask what each reader answers.
     monkeypatch.setattr(type(instance), "coordinate_for_oid", lambda self, oid: None)
 
-    with pytest.raises(PlaybillGitError, match="unsupported 120000"):
+    with pytest.raises(GitError, match="unsupported 120000"):
         instance._ledger.read_tree(poisoned)
 
     # Exact path reads reject unsupported tree entries.
-    with pytest.raises(PlaybillGitError, match="unsupported 120000"):
+    with pytest.raises(GitError, match="unsupported 120000"):
         instance.paths_at(poisoned)
 
     # Whole-tree materialization must enforce the same refusal.
-    with pytest.raises(PlaybillGitError, match="unsupported 120000"):
+    with pytest.raises(GitError, match="unsupported 120000"):
         instance.tree_at(poisoned)
-    with pytest.raises(PlaybillGitError, match="unsupported 120000"):
+    with pytest.raises(GitError, match="unsupported 120000"):
         instance.paths_at(poisoned)
 
 
@@ -211,7 +211,7 @@ def test_a_serving_piece_is_verified_once_and_a_tampered_piece_is_refused(
 
 def _declared_projection_observation(
     instance: Any,
-) -> PlaybillNextWorkspaceObservation:
+) -> NextWorkspaceObservation:
     """Observe one declared block, so `next` reaches the resolution fold.
 
     Without a marker summary `_projection_items` returns before the fold ever
@@ -234,9 +234,9 @@ def _declared_projection_observation(
         ),
         body_digest="sha256:" + "b" * 64,
     )
-    return PlaybillNextWorkspaceObservation(
+    return NextWorkspaceObservation(
         source_observations=(
-            PlaybillNextSourceObservation(
+            NextSourceObservation(
                 source_id="fixture.work-items",
                 observed_source_digest="sha256:" + "0" * 64,
                 byte_length=1000,
@@ -283,7 +283,7 @@ def test_next_evaluates_each_claim_verdict_exactly_once(
     )
     result = service_playbill_next(
         instance,
-        request=PlaybillNextRequestV1(
+        request=NextRequestV1(
             at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
             evaluation_time=EVALUATION_TIME,
             access_profile=ACCESS,
@@ -359,11 +359,11 @@ def test_one_claim_read_materializes_no_generation_and_still_receipts(
     monkeypatch.setattr(runtime_api, "get_playbill_manager", lambda: _Manager())
 
     counted = _count_read_trees(monkeypatch)
-    from cruxible_client.contracts.get_reads import PlaybillGetRequest
+    from cruxible_client.contracts.get_reads import GetRequest
 
     view = runtime_api.playbill_get(
         instance.descriptor.instance_id,
-        request=PlaybillGetRequest(ref=identity, detail="proof", evaluation_time=EVALUATION_TIME),
+        request=GetRequest(ref=identity, detail="proof", evaluation_time=EVALUATION_TIME),
     ).proof
     assert view is not None
 
@@ -390,8 +390,8 @@ def _scanned_source_observation(
     *,
     source_id: str,
     scan_notes: tuple[str, ...],
-) -> PlaybillNextSourceObservation:
-    return PlaybillNextSourceObservation(
+) -> NextSourceObservation:
+    return NextSourceObservation(
         source_id=source_id,
         observed_source_digest="sha256:" + "0" * 64,
         byte_length=64,
@@ -419,11 +419,11 @@ def _unobserved_rows(
         )
     result = service_playbill_next(
         instance,
-        request=PlaybillNextRequestV1(
+        request=NextRequestV1(
             at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
             evaluation_time=EVALUATION_TIME,
             access_profile=ACCESS,
-            workspace_observation=PlaybillNextWorkspaceObservation(
+            workspace_observation=NextWorkspaceObservation(
                 source_observations=tuple(
                     sorted(sources, key=lambda item: item.source_id.encode("utf-8"))
                 )
