@@ -80,6 +80,7 @@ from cruxible_client.contracts.claim_attestations import (
     PreparedClaimAttestationRequest,
 )
 from cruxible_client.contracts.claim_type_upgrade import ClaimTypeUpgradeRequest
+from cruxible_client.contracts.codes import normalize_code
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.errors import (
     CanonicalEncodingError,
@@ -4892,9 +4893,10 @@ _POSITIONAL_REPAIR_ARGUMENTS = frozenset(
 def _cli_repair(repair: Any) -> str:
     """Render a served repair as the CLI command that performs it."""
 
-    if not isinstance(repair, RepairOperation) or not repair.operation.startswith("cruxible."):
+    operation = normalize_code(repair.operation) if isinstance(repair, RepairOperation) else ""
+    if not isinstance(repair, RepairOperation) or not operation.startswith("cruxible."):
         return render_served_repair(repair)
-    parts = ["cruxible", *repair.operation.removeprefix("cruxible.").split(".")]
+    parts = ["cruxible", *operation.removeprefix("cruxible.").split(".")]
     for key, value in repair.arguments.items():
         if key in _POSITIONAL_REPAIR_ARGUMENTS:
             parts.append(shlex.quote(str(value)))

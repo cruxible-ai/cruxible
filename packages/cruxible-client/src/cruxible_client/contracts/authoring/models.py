@@ -47,6 +47,7 @@ from cruxible_client.contracts.claims import (
     SubjectClaimObject,
     claim_path,
 )
+from cruxible_client.contracts.codes import CurrentCode
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBacking,
     ProjectionBlockStampAny,
@@ -2622,9 +2623,9 @@ class PublicationPrepareWarning(_StrictAuthoringModel):
     tag: Literal["playbill-publication-prepare-warning-v1"] = (
         "playbill-publication-prepare-warning-v1"
     )
-    code: Literal["cruxible.authoring.publication_citation_anchor_collision"] = (
-        "cruxible.authoring.publication_citation_anchor_collision"
-    )
+    code: Annotated[
+        Literal["cruxible.authoring.publication_citation_anchor_collision"], CurrentCode
+    ] = "cruxible.authoring.publication_citation_anchor_collision"
     source_id: str
     citation_ids: tuple[str, ...] = Field(min_length=1)
 

@@ -5,11 +5,12 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from cruxible_client.contracts.canonical import SemanticRoot
+from cruxible_client.contracts.codes import CurrentCode
 from cruxible_client.contracts.errors import PrincipalIntegrityError
 from cruxible_client.contracts.principal_rendering import render_principal
 from cruxible_client.contracts.repairs import ServedRepair
@@ -48,7 +49,7 @@ class AuthoringRefusal(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    code: AuthoringRefusalCode
+    code: Annotated[AuthoringRefusalCode, CurrentCode]
     detail: str
     repair: ServedRepair
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Literal, cast
+from typing import Annotated, Any, Literal, cast
 
 from pydantic import (
     BaseModel,
@@ -45,6 +45,7 @@ from cruxible_client.contracts.claim_types import (
     effective_revision_evidence,
     parse_claim_type,
 )
+from cruxible_client.contracts.codes import CurrentCode
 from cruxible_client.contracts.errors import FormatError
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
@@ -202,10 +203,13 @@ class ClaimTypeInputRecord(_StrictClaimTypeInputModel):
 
 
 class ClaimTypeLintWarningV1(_StrictClaimTypeInputModel):
-    code: Literal[
-        "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
-        "cruxible.claim_type.anticipated_source_contract_omitted",
-        "cruxible.claim_type.attestation_threshold_disabled",
+    code: Annotated[
+        Literal[
+            "cruxible.claim_type.evidence_policy_admits_no_accepted_contract",
+            "cruxible.claim_type.anticipated_source_contract_omitted",
+            "cruxible.claim_type.attestation_threshold_disabled",
+        ],
+        CurrentCode,
     ]
     field_path: str
     source_id: str | None = None

@@ -24,10 +24,17 @@ from __future__ import annotations
 import re
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    field_validator,
+)
 
 from cruxible_client.contracts import AcceptedCoordinate
 from cruxible_client.contracts.authoring.models import WorkingSelectionObservation
+from cruxible_client.contracts.codes import current_code_keys
 from cruxible_client.contracts.get_reads import GetCoordinate, ReadSurface
 
 SUBJECT_REF_PATTERN = r"^[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*/[a-z][a-z0-9_.-]{0,255}$"
@@ -534,6 +541,9 @@ class WriteOutcome(_StrictWriteModel):
     warnings: tuple[WriteWarning, ...] = Field(default=(), exclude_if=_omit_empty)
     refusal: WriteRefusal | None = Field(default=None, exclude_if=_omit_none)
     next: str | None = Field(default=None, exclude_if=_omit_none)
+
+    # A warning recorded before the public rename is told apart on today's code.
+    _current_warning_codes = field_validator("warnings", mode="before")(current_code_keys("code"))
 
     @property
     def refused(self) -> bool:

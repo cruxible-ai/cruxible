@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from datetime import datetime
-from typing import Literal, TypeAlias
+from typing import Annotated, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
@@ -37,6 +37,7 @@ from cruxible_client.contracts.claims import (
     parse_claim,
     render_claim,
 )
+from cruxible_client.contracts.codes import CurrentCode
 from cruxible_client.contracts.errors import CruxibleError, FormatError
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
 from cruxible_client.contracts.procedures.models import ProcedureDefinitionV3
@@ -177,9 +178,11 @@ class ClaimTypeMigrationDispositionV1(_StrictMigrationModel):
 
 
 class ClaimTypeMigrationWarningV1(_StrictMigrationModel):
-    code: Literal["cruxible.claim_type.invalidation_deprecated"]
+    code: Annotated[Literal["cruxible.claim_type.invalidation_deprecated"], CurrentCode]
     field_path: str
-    repair_operation: Literal["cruxible.claim_type.migrate"] = "cruxible.claim_type.migrate"
+    repair_operation: Annotated[Literal["cruxible.claim_type.migrate"], CurrentCode] = (
+        "cruxible.claim_type.migrate"
+    )
 
 
 class ClaimTypeMigrationResultV1(_StrictMigrationModel):

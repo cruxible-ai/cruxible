@@ -37,6 +37,7 @@ from cruxible_client.contracts.claim_attestations import (
 )
 from cruxible_client.contracts.claim_types import ClaimType, parse_claim_type
 from cruxible_client.contracts.claims import claim_statement_digest, parse_claim
+from cruxible_client.contracts.codes import normalize_code
 from cruxible_client.contracts.documents import parse_document
 from cruxible_client.contracts.errors import PrincipalIntegrityError, ProjectionIntegrityError
 from cruxible_client.contracts.principals import PrincipalRegistrySnapshot
@@ -1291,8 +1292,8 @@ class TypedStateReader:
             rows = () if envelope is None else (envelope,)
         else:
             kind = None
-            if schema_id is not None and schema_id.startswith("cruxible."):
-                family = schema_id.split(".")[1].replace("_", "-")
+            if schema_id is not None and normalize_code(schema_id).startswith("cruxible."):
+                family = normalize_code(schema_id).split(".")[1].replace("_", "-")
                 if family in OWNER_BY_KIND:
                     kind = family
             rows = self.envelopes(kind=kind)

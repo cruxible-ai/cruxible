@@ -9,6 +9,13 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes
+from cruxible_client.contracts.codes import (
+    CODE_PREFIX as CODE_PREFIX,
+)
+from cruxible_client.contracts.codes import (
+    HISTORICAL_CODE_PREFIX as HISTORICAL_CODE_PREFIX,
+)
+from cruxible_client.contracts.codes import normalize_code as normalize_code
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress
 
 DiagnosticSeverity = Literal["info", "warning", "error"]
@@ -20,21 +27,10 @@ GovernedOperation = Literal[
     "propose",
 ]
 
-# Codes are written as ``cruxible.<family>.<name>``. Records written before the
-# rename (ledger evaluation notes, local stores) carry ``playbill.``; both read,
-# and code-keyed logic compares on ``normalize_code``.
-CODE_PREFIX = "cruxible."
-HISTORICAL_CODE_PREFIX = "playbill."
+# Codes are written ``cruxible.<family>.<name>``; a record written before the
+# rename carries ``playbill.`` and still reads (see contracts.codes).
 _CODE_RE = re.compile(r"^(?:cruxible|playbill)\.[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$")
 _DRAFT_ID_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
-
-
-def normalize_code(code: str) -> str:
-    """The current spelling of a dotted code; a historical ``playbill.`` code maps over."""
-
-    if code.startswith(HISTORICAL_CODE_PREFIX):
-        return CODE_PREFIX + code[len(HISTORICAL_CODE_PREFIX) :]
-    return code
 
 
 class _StrictDiagnosticModel(BaseModel):

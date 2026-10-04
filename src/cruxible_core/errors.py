@@ -28,6 +28,7 @@ from __future__ import annotations
 from typing import Literal
 
 from cruxible_client._error_base import CoreError as CoreError
+from cruxible_client.contracts.codes import normalize_code
 from cruxible_client.contracts.repairs import HandEditRepair, RepairOperation
 from cruxible_client.errors import permission_denied_message
 
@@ -354,7 +355,7 @@ class PrincipalRefusedError(CoreError):
     ) -> None:
         self.error_code = error_code
         self.repair = repair
-        self.http_status = _PRINCIPAL_REFUSAL_STATUS.get(error_code, 403)
+        self.http_status = _PRINCIPAL_REFUSAL_STATUS.get(normalize_code(error_code), 403)
         super().__init__(f"{error_code}: {message}")
 
 

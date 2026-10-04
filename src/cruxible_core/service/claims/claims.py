@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, MutableMapping, MutableSet
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -49,6 +49,7 @@ from cruxible_client.contracts.claims import (
     parse_claim,
     parse_claim_law_evidence,
 )
+from cruxible_client.contracts.codes import CurrentCode
 from cruxible_client.contracts.errors import (
     ClaimNotFoundError,
     ProjectionIntegrityError,
@@ -213,7 +214,9 @@ class EvidenceRecaptureOperationV1(_StrictClaimServiceModel):
     tag: Literal["playbill-evidence-recapture-operation-v1"] = (
         "playbill-evidence-recapture-operation-v1"
     )
-    operation: Literal["cruxible.authoring.bind"] = "cruxible.authoring.bind"
+    operation: Annotated[Literal["cruxible.authoring.bind"], CurrentCode] = (
+        "cruxible.authoring.bind"
+    )
     claim_identity: str
     capture_contract_identity: str
     logical_source: str

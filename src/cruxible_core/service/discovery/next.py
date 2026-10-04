@@ -10,7 +10,7 @@ from collections.abc import Callable, Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from threading import RLock
-from typing import Literal, TypeAlias, cast
+from typing import Annotated, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -68,6 +68,7 @@ from cruxible_client.contracts.claims import (
     claim_statement_digest,
     parse_claim,
 )
+from cruxible_client.contracts.codes import CurrentCode, normalize_code
 from cruxible_client.contracts.declared_blocks import (
     MAX_PROJECTION_CARDS_PER_SOURCE,
     PresentationPolicyAny,
@@ -548,7 +549,7 @@ def validate_playbill_next_request(
 
 
 class PlaybillNextRepairV1(_StrictNextModel):
-    operation: NextRepairOperation
+    operation: Annotated[NextRepairOperation, CurrentCode]
     target: str
     required_change: str
     arguments: object = Field(default_factory=dict)
@@ -594,7 +595,7 @@ class PlaybillNextRepairRequirementV1(_StrictNextModel):
     """
 
     tag: Literal["playbill-next-repair-requirement-v1"] = "playbill-next-repair-requirement-v1"
-    operation: NextRepairOperation
+    operation: Annotated[NextRepairOperation, CurrentCode]
     tool: str
     tier: NextRepairTier
     profile: Literal["full"] | None = Field(default=None, exclude_if=lambda value: value is None)
@@ -3752,7 +3753,7 @@ def _consumer_stalled_items(healths: tuple[ConsumerHealth, ...]) -> tuple[Playbi
             subject_identity=health.consumer_id,
             detail={"kind": health.kind, "state": health.state, **health.detail},
             repair=PlaybillNextRepairV1(
-                operation=cast(NextRepairOperation, health.repair.operation),
+                operation=cast(NextRepairOperation, normalize_code(health.repair.operation)),
                 target=health.consumer_id,
                 required_change=health.repair.required_change,
                 arguments=health.repair.arguments,

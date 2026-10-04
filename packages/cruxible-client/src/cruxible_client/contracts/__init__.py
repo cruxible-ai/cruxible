@@ -34,6 +34,7 @@ from cruxible_client.contracts.authoring.models import (
 from cruxible_client.contracts.canonical import Sha256Value
 from cruxible_client.contracts.change_control import StateCoordinate
 from cruxible_client.contracts.claims import ClaimStatementCard as ClaimStatementCard
+from cruxible_client.contracts.codes import CurrentCode
 from cruxible_client.contracts.compact_query import (
     QUERY_DEFAULT_LIMIT as QUERY_DEFAULT_LIMIT,
 )
@@ -1420,7 +1421,7 @@ class ProcedureRunState(BaseModel):
 class NextRepair(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    operation: NextRepairOperation
+    operation: Annotated[NextRepairOperation, CurrentCode]
     target: str
     required_change: str
     arguments: Any = Field(default_factory=dict)
@@ -1442,7 +1443,7 @@ class NextRepairRequirement(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-next-repair-requirement-v1"] = "playbill-next-repair-requirement-v1"
-    operation: NextRepairOperation
+    operation: Annotated[NextRepairOperation, CurrentCode]
     tool: str
     tier: Literal["read_only", "governed_write", "graph_write", "admin"]
     profile: Literal["full"] | None = None

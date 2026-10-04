@@ -179,6 +179,7 @@ from cruxible_client.contracts.claims import (
     LiteralClaimObject,
     SubjectClaimObject,
 )
+from cruxible_client.contracts.codes import normalize_code
 from cruxible_client.contracts.compact_query import (
     QueryClaimStatus,
     QueryFilter,
@@ -3030,7 +3031,11 @@ class Cruxible:
         if not outcome.refused:
             return outcome
         refusal = outcome.refusal
-        if refusal is not None and refusal.code == "cruxible.write.slot_changed" and pinned:
+        if (
+            refusal is not None
+            and normalize_code(refusal.code) == "cruxible.write.slot_changed"
+            and pinned
+        ):
             # The refusal showed the value the slot holds now; setting again
             # replaces that value, which is its repair.
             self._observe_read(_coordinate(pinned), expected=None)

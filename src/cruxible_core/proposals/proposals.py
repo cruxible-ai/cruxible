@@ -8,7 +8,7 @@ from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import cache
-from typing import Any, Callable, Final, Literal, Protocol, cast
+from typing import Annotated, Any, Callable, Final, Literal, Protocol, cast
 
 from pydantic import (
     BaseModel,
@@ -107,6 +107,7 @@ from cruxible_client.contracts.claims import (
     evaluate_claim_law,
     parse_claim,
 )
+from cruxible_client.contracts.codes import CurrentCode
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.documents import (
     AcceptedDocument,
@@ -735,7 +736,9 @@ def deterministic_rebase(
 
 class RebaseMemberConflictV2(_StrictProposalModel):
     tag: Literal["playbill-rebase-member-conflict-v2"] = "playbill-rebase-member-conflict-v2"
-    code: Literal["cruxible.rebase.member_conflict"] = "cruxible.rebase.member_conflict"
+    code: Annotated[Literal["cruxible.rebase.member_conflict"], CurrentCode] = (
+        "cruxible.rebase.member_conflict"
+    )
     path: str
     old_parent_digest: str | None
     proposed_digest: str | None

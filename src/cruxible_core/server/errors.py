@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from cruxible_client.contracts.codes import normalize_code
 from cruxible_client.contracts.errors import (
     ApprovalIntegrityError,
     BootstrapError,
@@ -161,7 +162,7 @@ def _repair_for_error(exc: CoreError) -> ServedRepair:
     # renders the repair the catalog declares for it, so the wire carries the
     # same runnable operation the refusal detail would have carried.
     error_code = getattr(exc, "error_code", None)
-    if isinstance(error_code, str) and error_code in ALL_SERVED_REFUSAL_CODES:
+    if isinstance(error_code, str) and normalize_code(error_code) in ALL_SERVED_REFUSAL_CODES:
         return repair_for_refusal(error_code)
     code = error_code or getattr(exc, "code", None)
     return hand_edit_repair(str(code or exc.__class__.__name__))

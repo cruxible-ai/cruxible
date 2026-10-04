@@ -48,6 +48,7 @@ from cruxible_client.contracts.claim_type_upgrade import (
 )
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.claims import claim_path
+from cruxible_client.contracts.codes import normalize_code
 from cruxible_client.contracts.declared_blocks import ProjectionBlockStampAny
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.errors import (
@@ -2188,7 +2189,10 @@ def _caller_authoring_refusal(instance_id: str) -> AuthoringRefusal | None:
         refusal = playbill_whoami(instance_id).authoring_refusal
     except AuthenticationError:
         return None
-    if refusal is None or refusal.code == "cruxible.identity.permission_insufficient":
+    if (
+        refusal is None
+        or normalize_code(refusal.code) == "cruxible.identity.permission_insufficient"
+    ):
         return None
     return refusal
 

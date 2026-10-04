@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict
 
 from cruxible_client.contracts.canonical import is_candidate_card_path
+from cruxible_client.contracts.codes import CurrentCode
 from cruxible_client.contracts.documents import parse_document
 from cruxible_client.contracts.errors import (
     DocumentNotFoundError,
@@ -61,7 +62,9 @@ class PlaybillExplainUnsupportedDetail(_StrictExplainModel):
     subject: SemanticAddress
     coordinate: AcceptedCoordinate
     requested_detail: Literal["proof"] = "proof"
-    code: Literal["cruxible.explain.detail_unsupported"] = "cruxible.explain.detail_unsupported"
+    code: Annotated[Literal["cruxible.explain.detail_unsupported"], CurrentCode] = (
+        "cruxible.explain.detail_unsupported"
+    )
     message: str = "Complete proof-bundle retrieval is deferred beyond PB-E."
     supported_details: tuple[Literal["summary", "evidence"], ...] = (
         "summary",

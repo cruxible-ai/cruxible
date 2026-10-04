@@ -15,6 +15,7 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
     typed_digest,
 )
+from cruxible_client.contracts.codes import normalize_code
 from cruxible_client.contracts.procedures.models import (
     AuthorityVerb,
     EffectiveAuthority,
@@ -83,8 +84,13 @@ HISTORICAL_NODE_REFUSAL_CODES: dict[str, str] = {
 
 
 def current_refusal_code(code: str) -> str:
-    """The code a retained refusal is served as today."""
+    """The code a retained refusal is served as today.
 
+    Covers the verb rename (``HISTORICAL_NODE_REFUSAL_CODES``) and the public
+    rename (``playbill.`` codes read as ``cruxible.``); the journal keeps its bytes.
+    """
+
+    code = normalize_code(code)
     return HISTORICAL_NODE_REFUSAL_CODES.get(code, code)
 
 

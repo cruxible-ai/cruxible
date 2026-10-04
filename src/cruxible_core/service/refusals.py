@@ -13,6 +13,7 @@ from cruxible_client.contracts.authoring.models import (
     BlockSyncReadReason,
     BlockSyncReason,
 )
+from cruxible_client.contracts.codes import normalize_code
 from cruxible_client.contracts.predictions import PredictionRefusalCode
 from cruxible_client.contracts.procedures.readings import ProcedureMeasurementRefusalCode
 from cruxible_client.contracts.procedures.results import (
@@ -56,6 +57,7 @@ UNDECLARED_REFUSAL_CODE_COUNT = 148
 def repair_for_refusal(code: str) -> ServedRepair:
     """Resolve one registered code without interpreting diagnostic prose."""
 
+    code = normalize_code(code)
     if code not in ALL_SERVED_REFUSAL_CODES:
         raise KeyError(f"unregistered served refusal code: {code}")
     return served_repair_for_refusal(code)

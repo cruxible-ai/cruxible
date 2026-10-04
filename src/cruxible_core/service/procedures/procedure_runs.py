@@ -35,6 +35,7 @@ from cruxible_client.contracts.captures import (
     CanonicalDuration,
     CaptureContract,
 )
+from cruxible_client.contracts.codes import normalize_code
 from cruxible_client.contracts.errors import (
     CruxibleError,
     ExecutionError,
@@ -3312,7 +3313,8 @@ def _plan_direct_external_run(
                     "Served Source runs support independent coherence only; use a compatible "
                     "runtime or deliberately accept an independent policy."
                     if any(
-                        "cruxible.acquisition.coherence_unsupported" in item.reason_codes
+                        "cruxible.acquisition.coherence_unsupported"
+                        in {normalize_code(code) for code in item.reason_codes}
                         for item in selection.decisions
                     )
                     else "Widen the accepted policy rule or repair the Source binding."
@@ -4429,7 +4431,8 @@ def _run_playbill_line(
                     "Served Source runs support independent coherence only; use a compatible "
                     "runtime or deliberately accept an independent policy."
                     if any(
-                        "cruxible.acquisition.coherence_unsupported" in item.reason_codes
+                        "cruxible.acquisition.coherence_unsupported"
+                        in {normalize_code(code) for code in item.reason_codes}
                         for item in selection.decisions
                     )
                     else "Widen the accepted policy rule or repair the Source binding."

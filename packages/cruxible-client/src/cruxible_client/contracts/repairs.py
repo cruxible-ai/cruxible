@@ -8,6 +8,8 @@ from typing import Any, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from cruxible_client.contracts.codes import normalize_code
+
 
 class RepairOperation(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -345,6 +347,7 @@ def served_repair_for_refusal(code: str) -> ServedRepair:
     module is imported by the vocabularies themselves.
     """
 
+    code = normalize_code(code)
     runnable = RUNNABLE_REFUSAL_REPAIRS.get(code)
     if runnable is not None:
         return runnable
