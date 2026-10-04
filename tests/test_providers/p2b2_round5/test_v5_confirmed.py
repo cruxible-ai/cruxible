@@ -375,13 +375,13 @@ def test_c7_lease_record_integrity(short_root: Path) -> None:
 
 
 def test_c8_custody_store_permissions_and_traversal(short_root: Path) -> None:
-    from cruxible_client.contracts.provider_execution import ProviderSecretReferenceV1
+    from cruxible_client.contracts.provider_execution import ProviderSecretReference
 
     store = runtime_module.FileProviderSecretStore(short_root / "secrets")
     assert stat.S_IMODE((short_root / "secrets").stat().st_mode) == 0o700
     for bad in ("a/b", "a\\b", "..", ".", "a\x00b"):
         with pytest.raises(Exception):
-            ProviderSecretReferenceV1(
+            ProviderSecretReference(
                 ref="r", realm=bad, name="n", epoch="e", purpose="p", resolver_kind="file"
             )
     assert store is not None
@@ -589,9 +589,9 @@ def test_k3_the_retry_path_and_the_path_length_refusal(
 
 
 def test_l8_fence_scope_is_required_and_fixed() -> None:
-    from cruxible_client.contracts.provider_execution import ProviderInvocationReceiptV1
+    from cruxible_client.contracts.provider_execution import ProviderInvocationReceipt
 
-    field = ProviderInvocationReceiptV1.model_fields["fence_scope"]
+    field = ProviderInvocationReceipt.model_fields["fence_scope"]
     assert field.is_required()
     from typing import get_args
 
@@ -636,7 +636,7 @@ def test_l12_every_fence_timeout_is_config_carried() -> None:
 def test_m11_the_closed_vocabularies_are_exactly_as_ruled() -> None:
     from typing import get_args
 
-    from cruxible_client.contracts import ProviderLaneUnavailableCodeV1
+    from cruxible_client.contracts import ProviderLaneUnavailableCode
     from cruxible_core.providers.provider_process_leases import (
         ProviderProcessFenceCodeV1,
         ProviderProcessRecoveryFailureV1,
@@ -650,7 +650,7 @@ def test_m11_the_closed_vocabularies_are_exactly_as_ruled() -> None:
         "provider_process_lease_echo_mismatch",
         "provider_process_group_survived_recovery",
     }
-    assert set(get_args(ProviderLaneUnavailableCodeV1)) == fence | {
+    assert set(get_args(ProviderLaneUnavailableCode)) == fence | {
         "provider_runtime_recovery_failed"
     }
     import typing
@@ -663,10 +663,10 @@ def test_m11_the_closed_vocabularies_are_exactly_as_ruled() -> None:
 def test_l7_all_five_fence_codes_are_public_and_map_exactly() -> None:
     from typing import get_args
 
-    from cruxible_client.contracts.procedures.results import ProcedureInternalFailureCodeV1
+    from cruxible_client.contracts.procedures.results import ProcedureInternalFailureCode
     from cruxible_core.providers.provider_outcomes import _LOCAL_MAPPING
 
-    public = set(get_args(ProcedureInternalFailureCodeV1))
+    public = set(get_args(ProcedureInternalFailureCode))
     for code in (
         "provider_process_lease_invalid",
         "provider_process_lease_missing",
@@ -687,10 +687,10 @@ def test_c14_wire_law_guards_still_hold() -> None:
 
     assert set(_MAPPING) == PROVIDER_RUNTIME_REFUSAL_CODES
     assert all(_MAPPING[code] == ("node_refusal", "input") for code in ABSORBABLE_PROVIDER_REFUSALS)
-    from cruxible_client.contracts.provider_execution import ProviderInvocationReceiptV1
+    from cruxible_client.contracts.provider_execution import ProviderInvocationReceipt
 
-    assert ProviderInvocationReceiptV1.model_config["extra"] == "forbid"
-    assert ProviderInvocationReceiptV1.model_config["frozen"] is True
+    assert ProviderInvocationReceipt.model_config["extra"] == "forbid"
+    assert ProviderInvocationReceipt.model_config["frozen"] is True
 
 
 def test_m1_the_wnowait_kill_window_is_real_on_every_path(

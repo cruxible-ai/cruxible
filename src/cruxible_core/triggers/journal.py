@@ -35,10 +35,10 @@ from typing import Any
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_client.contracts.triggers import (
     INTERNAL_ACTIONS,
-    AcceptedTriggerV1,
-    GenerationAcceptedScheduleV1,
-    TriggerScheduleV1,
-    TriggerV1,
+    AcceptedTrigger,
+    GenerationAcceptedSchedule,
+    Trigger,
+    TriggerSchedule,
     schedule_is_timed,
     trigger_digest,
     trigger_path,
@@ -73,7 +73,7 @@ class InternalTrigger:
 
     trigger: str
     action: str
-    schedule: TriggerScheduleV1
+    schedule: TriggerSchedule
     #: When this Trigger version was accepted: it fires nothing before then.
     accepted_at: datetime
     accepted_generation: int | None = None
@@ -81,7 +81,7 @@ class InternalTrigger:
 
     @classmethod
     def of(
-        cls, trigger: TriggerV1, *, accepted_at: datetime, accepted_generation: int | None = None
+        cls, trigger: Trigger, *, accepted_at: datetime, accepted_generation: int | None = None
     ) -> InternalTrigger:
         action = trigger.action
         if action is None:
@@ -149,7 +149,7 @@ def internal_triggers(instance: Any) -> tuple[InternalTrigger, ...]:
             accepted_generation=trigger_generation(instance, trigger),
             accepted_at=trigger_accepted_at(
                 instance,
-                AcceptedTriggerV1(
+                AcceptedTrigger(
                     path=trigger_path(trigger.identity.name),
                     trigger=trigger,
                     artifact_digest=trigger_digest(trigger).tagged,
@@ -295,7 +295,7 @@ def _due_timers(
         else dict(connection.execute("SELECT trigger_id,covered_until FROM timers").fetchall())
     )
     for item in triggers:
-        if isinstance(item.schedule, GenerationAcceptedScheduleV1):
+        if isinstance(item.schedule, GenerationAcceptedSchedule):
             continue
         if not schedule_is_timed(item.schedule):
             # Capture schedules remain outside the internal-action journal.
@@ -354,7 +354,7 @@ def _record(
     return fired
 
 
-def trigger_generation(instance: Any, trigger: TriggerV1) -> int:
+def trigger_generation(instance: Any, trigger: Trigger) -> int:
     """The accepted sequence of this exact Trigger version."""
 
     with instance.accepted_history_reader() as history:
@@ -416,7 +416,7 @@ def _generation_work(
     listening_since: datetime,
     listening_generation: int | None,
 ) -> tuple[list[_Fire], list[tuple[Any, ...]]]:
-    items = [item for item in triggers if isinstance(item.schedule, GenerationAcceptedScheduleV1)]
+    items = [item for item in triggers if isinstance(item.schedule, GenerationAcceptedSchedule)]
     if not items:
         return [], []
     with instance.accepted_history_reader() as history:
@@ -506,7 +506,7 @@ def evaluate_triggers(
             generation_updates,
         )
         for item in triggers:
-            if isinstance(item.schedule, GenerationAcceptedScheduleV1):
+            if isinstance(item.schedule, GenerationAcceptedSchedule):
                 continue
             connection.execute(
                 "INSERT INTO timers VALUES (?,?) "

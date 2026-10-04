@@ -50,9 +50,9 @@ from cruxible_client.contracts.floor import (
     FLOOR_STAGING_NAME,
     PLAYBILL_FLOOR_LOCAL_PATHS,
     PLAYBILL_FLOOR_MANIFEST_PATH,
-    PlaybillFloorApplyResultV1,
-    PlaybillFloorDeltaV1,
-    PlaybillFloorManifestV5,
+    PlaybillFloorApplyResult,
+    PlaybillFloorDelta,
+    PlaybillFloorManifest,
     build_floor_manifest,
     floor_manifest_digest,
     floor_path_key,
@@ -272,16 +272,16 @@ def _walk(root: int) -> _Installed:
     return installed
 
 
-def _manifest(content: bytes | None) -> PlaybillFloorManifestV5 | None:
+def _manifest(content: bytes | None) -> PlaybillFloorManifest | None:
     if content is None:
         return None
     try:
-        return PlaybillFloorManifestV5.model_validate(json.loads(content))
+        return PlaybillFloorManifest.model_validate(json.loads(content))
     except ValueError:
         return None
 
 
-def read_floor_manifest(floor_dir: Path) -> PlaybillFloorManifestV5 | None:
+def read_floor_manifest(floor_dir: Path) -> PlaybillFloorManifest | None:
     """The directory's v5 manifest, or None when it holds no valid one."""
 
     try:
@@ -315,8 +315,8 @@ def _floor_root(floor_dir: Path) -> Iterator[int]:
 # -- the apply ----------------------------------------------------------------------
 
 
-def _mismatch(delta: PlaybillFloorDeltaV1, message: str) -> PlaybillFloorApplyResultV1:
-    return PlaybillFloorApplyResultV1(
+def _mismatch(delta: PlaybillFloorDelta, message: str) -> PlaybillFloorApplyResult:
+    return PlaybillFloorApplyResult(
         status="base_mismatch",
         kind=delta.kind,
         generation=delta.head.generation,
@@ -325,13 +325,13 @@ def _mismatch(delta: PlaybillFloorDeltaV1, message: str) -> PlaybillFloorApplyRe
 
 
 def _result(
-    delta: PlaybillFloorDeltaV1,
-    head: PlaybillFloorManifestV5,
+    delta: PlaybillFloorDelta,
+    head: PlaybillFloorManifest,
     status: Literal["applied", "unchanged"],
     written: int,
     removed: int,
-) -> PlaybillFloorApplyResultV1:
-    return PlaybillFloorApplyResultV1(
+) -> PlaybillFloorApplyResult:
+    return PlaybillFloorApplyResult(
         status=status,
         kind=delta.kind,
         generation=head.generation,
@@ -344,7 +344,7 @@ def _result(
 
 
 def _head_files(
-    delta: PlaybillFloorDeltaV1, local: PlaybillFloorManifestV5 | None
+    delta: PlaybillFloorDelta, local: PlaybillFloorManifest | None
 ) -> dict[str, tuple[str, int, int]] | None:
     """The head inventory the delta builds from this directory, or None for no base."""
 
@@ -368,7 +368,7 @@ def _head_files(
     }
 
 
-def apply_floor_delta(floor_dir: Path, delta: PlaybillFloorDeltaV1) -> PlaybillFloorApplyResultV1:
+def apply_floor_delta(floor_dir: Path, delta: PlaybillFloorDelta) -> PlaybillFloorApplyResult:
     """Bring ``floor_dir`` to ``delta.head``; see the module docstring for the proof order."""
 
     try:

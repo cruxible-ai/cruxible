@@ -18,7 +18,7 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.errors import PlaybillExecutionError
-from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
+from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 from cruxible_core.exhaust import (
@@ -132,9 +132,9 @@ class ProcedureReadingV1(_StrictReadingModel):
     @classmethod
     def _attestations(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         for item in value:
-            _digest(item, label="ClaimAttestation digest")
+            _digest(item, label="ClaimAttestationV1 digest")
         if value != tuple(sorted(set(value))):
-            raise ValueError("ClaimAttestation digests must be sorted and unique")
+            raise ValueError("ClaimAttestationV1 digests must be sorted and unique")
         return value
 
     @field_validator("observed_at", "recorded_at")
@@ -247,7 +247,7 @@ def procedure_reading_digest(reading: ProcedureReadingV1) -> str:
     ).tagged
 
 
-def procedure_reading_partition_id(accepted: AcceptedProcedureV1) -> str:
+def procedure_reading_partition_id(accepted: AcceptedProcedure) -> str:
     """Return the sole partition for this Procedure's instance-wide reading domain."""
 
     identity_digest = hashlib.sha256(
@@ -257,7 +257,7 @@ def procedure_reading_partition_id(accepted: AcceptedProcedureV1) -> str:
 
 
 def _grain_fields(
-    accepted: AcceptedProcedureV1,
+    accepted: AcceptedProcedure,
     *,
     grain: Literal["procedure_unit", "node", "arm"],
     node_id: str | None,
@@ -325,7 +325,7 @@ def _grain_fields(
 
 
 def build_procedure_reading(
-    accepted: AcceptedProcedureV1,
+    accepted: AcceptedProcedure,
     *,
     accepted_coordinate: AcceptedCoordinate,
     subject_grain: Literal["procedure_unit", "node", "arm"],
@@ -405,7 +405,7 @@ def _refused(code: str, message: str) -> ProcedureReadingLawResultV1:
 def evaluate_procedure_reading(
     reading: ProcedureReadingV1,
     *,
-    accepted: AcceptedProcedureV1,
+    accepted: AcceptedProcedure,
     accepted_coordinate: AcceptedCoordinate,
     activations: tuple[ResolutionContractActivationV1, ...] = (),
     resolution_book: ProcedureResolutionBook | None = None,
@@ -523,7 +523,7 @@ def append_procedure_reading(
     writer: ProcedureExhaustWriter,
     *,
     reading: ProcedureReadingV1,
-    accepted: AcceptedProcedureV1,
+    accepted: AcceptedProcedure,
     accepted_coordinate: AcceptedCoordinate,
     stream: JournalStreamIdentityV1,
     bodies: ContentAddressedBodyStore,

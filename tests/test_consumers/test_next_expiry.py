@@ -11,7 +11,7 @@ import pytest
 from cruxible_core.consumers.next import NEXT_QUEUE, queue
 from cruxible_core.service.claims.verdict_memo import verdict_input_fingerprint
 from cruxible_core.service.discovery import next as next_module
-from cruxible_core.service.discovery.next import PlaybillNextRequestV2, service_playbill_next
+from cruxible_core.service.discovery.next import PlaybillNextRequest, service_playbill_next
 from cruxible_core.triggers.journal import journal_path, schedule_deadline
 from tests.core_support._knowledge_loop_support import seed_claims
 from tests.support.internal_triggers import fire_internal_triggers
@@ -41,7 +41,7 @@ def test_expiry_fire_rebuilds_at_its_recorded_time_and_serving_resumes(tmp_path:
     snapshot = _stored(instance, AT)
     assert snapshot is not None and snapshot.valid_until is not None
     edge = snapshot.valid_until
-    request = PlaybillNextRequestV2(evaluation_time=edge, access_profile=_access())
+    request = PlaybillNextRequest(evaluation_time=edge, access_profile=_access())
     with patch.object(next_module, "_claim_rows", wraps=next_module._claim_rows) as live:
         service_playbill_next(instance, request=request)
         assert live.called

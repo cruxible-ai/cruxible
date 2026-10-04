@@ -38,23 +38,23 @@ from typing import Any, Literal, cast
 from cruxible_client.contracts import PlaybillAcceptedCoordinate as ClientCoordinate
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
-    AuthoringChangeSetMemberV1,
-    AuthoringClaimStatementV1,
-    AuthoringExactContentObjectV1,
-    AuthoringExistingClaimDispositionV1,
+    AuthoringChangeSetMember,
+    AuthoringClaimStatement,
+    AuthoringExactContentObject,
+    AuthoringExistingClaimDisposition,
     AuthoringIntentV1,
-    AuthoringReferenceExpectationV1,
-    AuthoringSlotExpectationV1,
-    ChangeSetAuthoringPayloadV1,
+    AuthoringReferenceExpectation,
+    AuthoringSlotExpectation,
+    ChangeSetAuthoringPayload,
+    ClaimAuthoringPayload,
     ClaimAuthoringPayloadV1,
     ClaimAuthoringPayloadV2,
-    ClaimAuthoringPayloadV3,
-    ClaimDependencyDraftsV1,
-    ClaimRetirementMemberV1,
-    ExistingCaptureCitationSourceV1,
-    PreflightResultV1,
-    SelfSourceBodyV1,
-    SubjectAuthoringPayloadV1,
+    ClaimDependencyDrafts,
+    ClaimRetirementMember,
+    ExistingCaptureCitationSource,
+    PreflightResult,
+    SelfSourceBody,
+    SubjectAuthoringPayload,
     authoring_member_identity,
 )
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
@@ -69,7 +69,7 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import ClaimType, effective_evidence_requirement
 from cruxible_client.contracts.claims import (
-    ClaimRetireDependentV1,
+    ClaimRetireDependent,
     LiteralClaimObject,
     SubjectClaimObject,
     claim_path,
@@ -102,7 +102,7 @@ from cruxible_client.contracts.write import (
     ExpectedValue,
     FileEvidence,
     NewerCaptureNotCitableWarning,
-    PlaybillWriteRequestV1,
+    PlaybillWriteRequest,
     RetireChange,
     SelfEvidence,
     SetChange,
@@ -279,7 +279,7 @@ def _named(subject: str | None) -> str:
     return subject
 
 
-def _with_default_subject(request: PlaybillWriteRequestV1) -> PlaybillWriteRequestV1:
+def _with_default_subject(request: PlaybillWriteRequest) -> PlaybillWriteRequest:
     """Give every change that names no Subject the write's own ``subject``.
 
     A change's own subject overrides the default. A change with neither
@@ -302,7 +302,7 @@ def _with_default_subject(request: PlaybillWriteRequestV1) -> PlaybillWriteReque
     return request.model_copy(update={"changes": tuple(changes)})
 
 
-def _default_subject(request: PlaybillWriteRequestV1, *, index: int, path: str) -> str:
+def _default_subject(request: PlaybillWriteRequest, *, index: int, path: str) -> str:
     if request.subject is None:
         raise _refuse(
             "playbill.write.subject_required",
@@ -387,7 +387,7 @@ class _Planned:
     index: int
     op: Literal["set", "add", "retire"]
     outcome: dict[str, Any]
-    member: AuthoringChangeSetMemberV1 | None = None
+    member: AuthoringChangeSetMember | None = None
     slot: tuple[str, str] | None = None
     revises: str | None = None
     # Live Claims of the slot at the head that the new Claim must disposition.
@@ -420,7 +420,7 @@ class _Planner:
         *,
         head: AcceptedProjectionCoordinate,
         read_at: AcceptedProjectionCoordinate,
-        request: PlaybillWriteRequestV1,
+        request: PlaybillWriteRequest,
     ) -> None:
         self.instance = instance
         self.head = head
@@ -850,7 +850,7 @@ class _Planner:
         evidence = change.evidence
         path = f"changes[{index}].evidence"
         if capture is not None:
-            return ExistingCaptureCitationSourceV1(capture_digest=capture), "evidence"
+            return ExistingCaptureCitationSource(capture_digest=capture), "evidence"
         if isinstance(evidence, FileEvidence):
             if evidence.observation is None:
                 raise _refuse(
@@ -900,7 +900,7 @@ class _Planner:
                 ),
                 field_path=path,
             )
-        return SelfSourceBodyV1(content_base64=base64.b64encode(body).decode("ascii")), None
+        return SelfSourceBody(content_base64=base64.b64encode(body).decode("ascii")), None
 
     # -- Captures by handle or by contract ----------------------------------------
 
@@ -1217,7 +1217,7 @@ class _Planner:
                     field_path=f"{prefix}.value",
                 )
             exact = change.value.encode("utf-8")
-            statement_object = AuthoringExactContentObjectV1(
+            statement_object = AuthoringExactContentObject(
                 content_base64=base64.b64encode(exact).decode("ascii")
             )
         elif claim_type.object_kind == "subject":
@@ -1328,7 +1328,7 @@ class _Planner:
                     change=change,
                     claim_type=claim_type,
                 )
-        statement = AuthoringClaimStatementV1(
+        statement = AuthoringClaimStatement(
             subject=SemanticAddress.whole_artifact(path),
             predicate=info.predicate,
             qualifier=None,
@@ -1341,16 +1341,16 @@ class _Planner:
             "source": source,
             "citation_role": citation_role,
             "revises": revises,
-            "dependency_drafts": ClaimDependencyDraftsV1(),
+            "dependency_drafts": ClaimDependencyDrafts(),
         }
         member: ClaimAuthoringPayloadV1 = (
-            ClaimAuthoringPayloadV3(**values)
-            if isinstance(source, ExistingCaptureCitationSourceV1)
+            ClaimAuthoringPayload(**values)
+            if isinstance(source, ExistingCaptureCitationSource)
             else ClaimAuthoringPayloadV2(**values)
         )
         used_contract = (
             COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name
-            if isinstance(source, SelfSourceBodyV1)
+            if isinstance(source, SelfSourceBody)
             else foreign_source_capture_contract(source.source_id).identity.name
             if isinstance(change.evidence, FileEvidence)
             else None
@@ -1526,7 +1526,7 @@ class _Planner:
         dependents = tuple(
             sorted(
                 (
-                    ClaimRetireDependentV1(
+                    ClaimRetireDependent(
                         artifact_identity=item.artifact_identity,
                         predecessor_digest=item.predecessor_digest,
                         reason=change.reason,
@@ -1550,7 +1550,7 @@ class _Planner:
                 "claim": claim_id,
                 "retired": tuple(item.artifact_identity.name for item in dependents),
             },
-            member=ClaimRetirementMemberV1(
+            member=ClaimRetirementMember(
                 retires=claim_id, reason=change.reason, dependents=dependents
             ),
             retires=claim_id,
@@ -1605,12 +1605,12 @@ class _Planner:
 
 @dataclass(frozen=True)
 class _Lowered:
-    payload: ChangeSetAuthoringPayloadV1
+    payload: ChangeSetAuthoringPayload
     claim_ids: tuple[str, ...]
     identity_by_change: dict[int, str]
     # Every accepted Claim the write revises, retires or dispositions, pinned to
     # the version planning read: admission refuses when one has moved since.
-    expectations: tuple[AuthoringReferenceExpectationV1 | AuthoringSlotExpectationV1, ...] = ()
+    expectations: tuple[AuthoringReferenceExpectation | AuthoringSlotExpectation, ...] = ()
 
 
 def _with_dispositions(
@@ -1619,7 +1619,7 @@ def _with_dispositions(
     return member.model_copy(
         update={
             "existing_claim_dispositions": tuple(
-                AuthoringExistingClaimDispositionV1(claim_id=claim_id, disposition="not_tested")
+                AuthoringExistingClaimDisposition(claim_id=claim_id, disposition="not_tested")
                 for claim_id in sorted(set(claim_ids), key=lambda item: item.encode("ascii"))
             )
         }
@@ -1637,13 +1637,13 @@ def _lower(plan: _Plan, *, because: str, planned_at: AcceptedProjectionCoordinat
     here, in the coordinator's own order, and handed to it.
     """
 
-    drafts: list[tuple[int | None, AuthoringChangeSetMemberV1]] = [
-        (None, SubjectAuthoringPayloadV1(subject=shell)) for shell in plan.subjects.values()
+    drafts: list[tuple[int | None, AuthoringChangeSetMember]] = [
+        (None, SubjectAuthoringPayload(subject=shell)) for shell in plan.subjects.values()
     ]
     for item in plan.changes:
         if item.member is not None:
             drafts.append((item.index, item.member))
-    by_identity: dict[str, tuple[int | None, AuthoringChangeSetMemberV1]] = {}
+    by_identity: dict[str, tuple[int | None, AuthoringChangeSetMember]] = {}
     for index, member in drafts:
         identity = authoring_member_identity(member)
         if identity in by_identity:
@@ -1664,7 +1664,7 @@ def _lower(plan: _Plan, *, because: str, planned_at: AcceptedProjectionCoordinat
             minted[identity] = new_claim_id()
             claim_ids.append(minted[identity])
     siblings: dict[tuple[str, str], list[str]] = {}
-    members: list[AuthoringChangeSetMemberV1] = []
+    members: list[AuthoringChangeSetMember] = []
     identity_by_change: dict[int, str] = {}
     pins: dict[int, _SlotPin] = {}
     for identity in ordered:
@@ -1684,7 +1684,7 @@ def _lower(plan: _Plan, *, because: str, planned_at: AcceptedProjectionCoordinat
         members.append(member)
     rationale = "\n\n".join((because.strip(), *plan.retire_notes))
     return _Lowered(
-        payload=ChangeSetAuthoringPayloadV1(members=tuple(members), rationale=rationale),
+        payload=ChangeSetAuthoringPayload(members=tuple(members), rationale=rationale),
         claim_ids=tuple(claim_ids),
         identity_by_change=identity_by_change,
         expectations=_pinned_claims(
@@ -1694,12 +1694,12 @@ def _lower(plan: _Plan, *, because: str, planned_at: AcceptedProjectionCoordinat
 
 
 def _pinned_claims(
-    members: Sequence[AuthoringChangeSetMemberV1],
+    members: Sequence[AuthoringChangeSetMember],
     *,
     minted: set[str],
     planned_at: AcceptedProjectionCoordinate,
     slots: Mapping[int, _SlotPin],
-) -> tuple[AuthoringReferenceExpectationV1 | AuthoringSlotExpectationV1, ...]:
+) -> tuple[AuthoringReferenceExpectation | AuthoringSlotExpectation, ...]:
     """Pin what the plan read: each slot's live membership, and each Claim's version.
 
     The plan chose what to revise, retire and disposition from each slot as it
@@ -1714,7 +1714,7 @@ def _pinned_claims(
     pins: list[tuple[str, str]] = []
     for position, member in enumerate(members):
         prefix = f"members[{position}]"
-        if isinstance(member, ClaimRetirementMemberV1):
+        if isinstance(member, ClaimRetirementMember):
             pins.append((f"{prefix}.retires", member.retires))
         elif isinstance(member, ClaimAuthoringPayloadV1):
             if member.revises is not None:
@@ -1724,8 +1724,8 @@ def _pinned_claims(
                     pins.append(
                         (f"{prefix}.existing_claim_dispositions[{ordinal}].claim_id", item.claim_id)
                     )
-    expectations: list[AuthoringReferenceExpectationV1 | AuthoringSlotExpectationV1] = [
-        AuthoringReferenceExpectationV1(
+    expectations: list[AuthoringReferenceExpectation | AuthoringSlotExpectation] = [
+        AuthoringReferenceExpectation(
             payload_path=path,
             artifact_kind="Claim",
             address=claim_id,
@@ -1734,7 +1734,7 @@ def _pinned_claims(
         for path, claim_id in pins
     ]
     expectations.extend(
-        AuthoringSlotExpectationV1(
+        AuthoringSlotExpectation(
             payload_path=f"members[{position}]",
             subject_path=pin.subject_path,
             predicate=pin.predicate,
@@ -1803,7 +1803,7 @@ def _accepted_verdicts(
 ) -> dict[str, str]:
     """Each written Claim's verdict at the accepted coordinate, by the read machinery."""
 
-    from cruxible_client.contracts.claim_reads import ClaimValuesRequestV1
+    from cruxible_client.contracts.claim_reads import ClaimValuesRequest
     from cruxible_core.service.claims.claim_reads import service_read_claim_values
 
     slots = [item.slot for item in plan.changes if item.slot is not None and item.op != "retire"]
@@ -1811,7 +1811,7 @@ def _accepted_verdicts(
         return {}
     result = service_read_claim_values(
         instance,
-        request=ClaimValuesRequestV1(
+        request=ClaimValuesRequest(
             at=_full(coordinate),
             subject_paths=tuple(sorted({slot[0] for slot in slots})),
             predicates=tuple(sorted({slot[1] for slot in slots})),
@@ -2008,7 +2008,7 @@ def _refusal(error: WriteRefusalError | ReadRefusalError) -> WriteRefusal:
     )
 
 
-def _preflight_refusal(result: PreflightResultV1, lowered: _Lowered | None = None) -> WriteRefusal:
+def _preflight_refusal(result: PreflightResult, lowered: _Lowered | None = None) -> WriteRefusal:
     diagnostics = result.frontier.diagnostics
     if not diagnostics:
         blocked = result.frontier.blocked_checks
@@ -2119,7 +2119,7 @@ def _coordinator(
 def service_playbill_write(
     instance: PlaybillInstance,
     *,
-    request: PlaybillWriteRequestV1,
+    request: PlaybillWriteRequest,
     caller: WriteCaller,
 ) -> WriteOutcome:
     """Resolve, check and lower one write, then preview it or carry it to acceptance.
@@ -2150,7 +2150,7 @@ def service_playbill_write(
 def _service_write(
     instance: PlaybillInstance,
     *,
-    request: PlaybillWriteRequestV1,
+    request: PlaybillWriteRequest,
     caller: WriteCaller,
 ) -> WriteOutcome:
     head = instance.accepted_coordinate()
@@ -2324,7 +2324,7 @@ def _already_done(
     *,
     head: AcceptedProjectionCoordinate,
     plan: _Plan,
-    request: PlaybillWriteRequestV1,
+    request: PlaybillWriteRequest,
 ) -> WriteOutcome:
     """Every change is already live: accepted, with no change set submitted."""
 
@@ -2354,7 +2354,7 @@ def _slot_moved(
     *,
     planned_at: AcceptedProjectionCoordinate,
     read_at: AcceptedProjectionCoordinate,
-    request: PlaybillWriteRequestV1,
+    request: PlaybillWriteRequest,
     at: AcceptedProjectionCoordinate | None = None,
 ) -> WriteRefusal | None:
     """Why the plan no longer holds at ``at`` (the head by default), if it moved.
@@ -2404,7 +2404,7 @@ def _accepted(
     plan: _Plan,
     head: AcceptedProjectionCoordinate,
     accepted: AcceptedCoordinate | None,
-    request: PlaybillWriteRequestV1,
+    request: PlaybillWriteRequest,
     changes: tuple[ChangeOutcome, ...],
     subjects_added: tuple[str, ...],
     proposal: WriteProposalRef | None,
@@ -2449,7 +2449,7 @@ def _dry_run(
     head: AcceptedProjectionCoordinate,
     coordinator: AuthoringIntentCoordinator,
     caller: WriteCaller,
-    request: PlaybillWriteRequestV1,
+    request: PlaybillWriteRequest,
     plan: _Plan,
     lowered: _Lowered,
     timestamp: str,

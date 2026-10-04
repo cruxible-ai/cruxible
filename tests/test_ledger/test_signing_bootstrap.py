@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.approval_policy import ApprovalPolicyV1
+from cruxible_client.contracts.approval_policy import ApprovalPolicy
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.errors import (
     PlaybillBootstrapError,
@@ -67,7 +67,7 @@ def test_sha1_and_sha256_ledgers_share_semantic_roots_but_not_generation_roots(
             prepare_genesis(
                 ledger,
                 trust_root=trust,
-                approval_policy=ApprovalPolicyV1(mode="self_approval_allowed"),
+                approval_policy=ApprovalPolicy(mode="self_approval_allowed"),
                 timestamp=FIXED_TIMESTAMP,
             )
         )
@@ -89,7 +89,7 @@ def test_sha1_and_sha256_ledgers_share_semantic_roots_but_not_generation_roots(
     )
     legacy_tree = genesis_tree(
         trust.principals,
-        approval_policy=ApprovalPolicyV1(mode="self_approval_allowed"),
+        approval_policy=ApprovalPolicy(mode="self_approval_allowed"),
     )
     legacy_oid = legacy_ledger.create_signed_genesis(legacy_tree, timestamp=FIXED_TIMESTAMP)
     legacy = verify_genesis(legacy_ledger, legacy_oid, trust_root=trust)

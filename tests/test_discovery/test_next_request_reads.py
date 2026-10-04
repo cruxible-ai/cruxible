@@ -14,7 +14,7 @@ from cruxible_client.contracts.errors import ProjectionIntegrityError
 from cruxible_core.service.claims.claims import _claim_from_view, service_list_playbill_claims
 from cruxible_core.service.discovery import next as playbill_next
 from cruxible_core.service.discovery import query as playbill_query
-from cruxible_core.service.discovery.next import PlaybillNextDriftObservationV1
+from cruxible_core.service.discovery.next import PlaybillNextDriftObservation
 from tests.test_indexes.test_projection_next import (
     _claim_backing,
     _query_backing,
@@ -170,7 +170,7 @@ def test_next_reuses_no_source_or_marker_observation_across_requests(tmp_path: P
             "workspace_observation": clean.workspace_observation.model_copy(
                 update={
                     "drift_observations": (
-                        PlaybillNextDriftObservationV1(
+                        PlaybillNextDriftObservation(
                             citation_id=citation.citation_id,
                             expected_commitment_digest=envelope.commitment.digest,
                             observed_commitment_digest=envelope.commitment.digest,
@@ -187,7 +187,7 @@ def test_next_reuses_no_source_or_marker_observation_across_requests(tmp_path: P
             "workspace_observation": changed.workspace_observation.model_copy(
                 update={
                     "drift_observations": (
-                        PlaybillNextDriftObservationV1(
+                        PlaybillNextDriftObservation(
                             citation_id=citation.citation_id,
                             expected_commitment_digest=envelope.commitment.digest,
                             observed_commitment_digest="sha256:" + "f" * 64,
@@ -253,7 +253,7 @@ def test_summary_matches_next_with_mutable_observations_and_retirement(tmp_path:
         _rich_request(instance),
         _request(instance, backing=(_claim_backing(instance),)),
     ):
-        request = playbill_next.PlaybillNextRequestV2(**request.model_dump(exclude={"tag"}))
+        request = playbill_next.PlaybillNextRequest(**request.model_dump(exclude={"tag"}))
         for missing in (False, True, False):
             source = b"status: ready"
             if missing:
@@ -292,7 +292,7 @@ def test_summary_bounds_rows_and_preserves_first_page_matching(
     from dataclasses import replace
 
     instance, _owner = _instance_with_query(tmp_path)
-    request = playbill_next.PlaybillNextRequestV2(
+    request = playbill_next.PlaybillNextRequest(
         **_rich_request(instance).model_dump(exclude={"tag"})
     )
     queue = playbill_next._next_queue(
@@ -323,7 +323,7 @@ def test_summary_avoids_cards_health_and_unneeded_dependency_facts(
 ) -> None:
     instance, _owner = _instance_with_query(tmp_path)
     original = _request(instance, backing=(_claim_backing(instance),))
-    request = playbill_next.PlaybillNextRequestV2(
+    request = playbill_next.PlaybillNextRequest(
         **{**original.model_dump(exclude={"tag"}), "workspace_observation": None}
     )
     full = playbill_next.service_playbill_next(instance, request=request)

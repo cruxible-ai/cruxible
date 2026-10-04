@@ -21,13 +21,13 @@ from cruxible_client.contracts.captures import (
     render_capture_envelope,
 )
 from cruxible_client.contracts.claim_types import (
-    ClaimEvidenceFreshnessV1,
-    ClaimFreshnessDurationV1,
+    ClaimEvidenceFreshness,
+    ClaimFreshnessDuration,
     claim_type_digest,
     claim_type_path,
     render_claim_type,
 )
-from cruxible_client.contracts.claim_verdicts import CaptureVerdictEvidenceV1
+from cruxible_client.contracts.claim_verdicts import CaptureVerdictEvidence
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
     claim_artifact_digest,
@@ -36,8 +36,8 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.source_references import (
-    EvidenceCommitmentV1,
-    ExternalSourceReferenceV1,
+    EvidenceCommitment,
+    ExternalSourceReference,
 )
 from cruxible_client.contracts.subjects import render_subject
 from cruxible_core.curation.curation import (
@@ -122,8 +122,8 @@ def _with_qualifier(row, qualifier: str):  # type: ignore[no-untyped-def]
     )
 
 
-def _capture(index: int, control_domain: str) -> CaptureVerdictEvidenceV1:
-    return CaptureVerdictEvidenceV1(
+def _capture(index: int, control_domain: str) -> CaptureVerdictEvidence:
+    return CaptureVerdictEvidence(
         capture_digest=typed_digest(
             Sha256Value,
             "playbill-test-capture-v1",
@@ -490,8 +490,8 @@ def test_freshness_calibration_uses_changed_commitment_intervals_without_recomme
     current_type = base_type.model_copy(
         update={
             "artifact_format": "playbill-claim-type-v3",
-            "evidence_freshness": ClaimEvidenceFreshnessV1(
-                stale_after=ClaimFreshnessDurationV1(microseconds=100)
+            "evidence_freshness": ClaimEvidenceFreshness(
+                stale_after=ClaimFreshnessDuration(microseconds=100)
             ),
         }
     )
@@ -501,7 +501,7 @@ def test_freshness_calibration_uses_changed_commitment_intervals_without_recomme
     bodies: dict[str, bytes] = {}
     capture_digests: list[str] = []
     for index in range(4):
-        source = ExternalSourceReferenceV1(
+        source = ExternalSourceReference(
             source_identity="commerce.production.orders",
             producer_binding_digest=digest("binding", "orders"),
             coordinate_type="postgres-lsn-v1",
@@ -513,7 +513,7 @@ def test_freshness_calibration_uses_changed_commitment_intervals_without_recomme
         envelope = CaptureEnvelopeV1(
             capture_contract_digest=contract_digest,
             source=source,
-            commitment=EvidenceCommitmentV1(
+            commitment=EvidenceCommitment(
                 digest_kind="canonical_value",
                 digest=digest("commitment", str(index)),
                 materialization="external",

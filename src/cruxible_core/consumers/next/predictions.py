@@ -33,15 +33,15 @@ from uuid import uuid4
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.procedures.windows import (
-    BoundObservationWindowV1,
-    CaptureEventWindowV1,
-    TriggerEventReferenceV1,
+    BoundObservationWindow,
+    CaptureEventWindow,
+    TriggerEventReference,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.resolution_contracts import (
-    InvestigationBindingV1,
-    ResolutionContractReferenceV1,
-    ResolutionContractV1,
+    InvestigationBinding,
+    ResolutionContract,
+    ResolutionContractReference,
 )
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_client.contracts.triggers import INTERNAL_ACTIONS
@@ -147,10 +147,10 @@ _STATE = DisposableState("next/predictions", _SCHEMA)
 class SettleableWindow:
     """A closed bound window whose resolution journal holds no current answer."""
 
-    contract: ResolutionContractReferenceV1
+    contract: ResolutionContractReference
     hypothesis: str
     bound_contract_id: str
-    window: BoundObservationWindowV1
+    window: BoundObservationWindow
     checked_at: datetime
 
 
@@ -158,9 +158,9 @@ class SettleableWindow:
 class UnbindableAnchor:
     """A matching landed Capture whose retained material no longer binds a window."""
 
-    contract: ResolutionContractReferenceV1
+    contract: ResolutionContractReference
     hypothesis: str
-    event: TriggerEventReferenceV1
+    event: TriggerEventReference
     code: str
     checked_at: datetime
 
@@ -168,8 +168,8 @@ class UnbindableAnchor:
 @dataclass(frozen=True)
 class _Contract:
     identity: str
-    reference: ResolutionContractReferenceV1
-    contract: ResolutionContractV1
+    reference: ResolutionContractReference
+    contract: ResolutionContract
     accepted_at: datetime
 
 
@@ -191,14 +191,14 @@ def _contract_row(row: tuple[Any, ...]) -> _Contract:
     identity, reference, contract, accepted_at = row
     return _Contract(
         identity=identity,
-        reference=ResolutionContractReferenceV1.model_validate_json(reference),
-        contract=ResolutionContractV1.model_validate_json(contract),
+        reference=ResolutionContractReference.model_validate_json(reference),
+        contract=ResolutionContract.model_validate_json(contract),
         accepted_at=_instant(accepted_at),
     )
 
 
 def _activation(
-    contract: _Contract, window: BoundObservationWindowV1
+    contract: _Contract, window: BoundObservationWindow
 ) -> ResolutionContractActivationV3:
     """The exact activation a settlement of this bound window journals under."""
 
@@ -206,14 +206,14 @@ def _activation(
 
     return build_independent_activation(
         contract.contract,
-        InvestigationBindingV1(
+        InvestigationBinding(
             contract=contract.reference, hypothesis=contract.contract.hypothesis, window=window
         ),
         activated_at=contract.accepted_at,
     )
 
 
-def _window_row(contract: _Contract, window: BoundObservationWindowV1) -> tuple[Any, ...] | None:
+def _window_row(contract: _Contract, window: BoundObservationWindow) -> tuple[Any, ...] | None:
     # Settlement needs an observation after acceptance and inside the window,
     # so a window that closed before its contract was accepted can never be
     # settled: it is no prediction at all, not an owed one.
@@ -228,8 +228,8 @@ def _window_row(contract: _Contract, window: BoundObservationWindowV1) -> tuple[
 
 
 def _bind(
-    instance: Any, contract: _Contract, event: TriggerEventReferenceV1
-) -> BoundObservationWindowV1 | str | None:
+    instance: Any, contract: _Contract, event: TriggerEventReference
+) -> BoundObservationWindow | str | None:
     """The event's bound window; its refusal code when unbindable; None to retry later."""
 
     from cruxible_core.service.procedures.procedure_runs import _stream
@@ -267,10 +267,10 @@ def settleable_windows(instance: Any, *, evaluation_time: datetime) -> tuple[Set
         ).fetchall()
     return tuple(
         SettleableWindow(
-            contract=ResolutionContractReferenceV1.model_validate_json(reference),
+            contract=ResolutionContractReference.model_validate_json(reference),
             hypothesis=hypothesis,
             bound_contract_id=contract_id,
-            window=BoundObservationWindowV1.model_validate_json(window),
+            window=BoundObservationWindow.model_validate_json(window),
             checked_at=_instant(checked_at),
         )
         for reference, hypothesis, contract_id, window, checked_at in rows
@@ -292,10 +292,10 @@ def bound_window(instance: Any, bound_contract_id: str) -> SettleableWindow | No
         return None
     reference, hypothesis, contract_id, window, checked_at = row
     return SettleableWindow(
-        contract=ResolutionContractReferenceV1.model_validate_json(reference),
+        contract=ResolutionContractReference.model_validate_json(reference),
         hypothesis=hypothesis,
         bound_contract_id=contract_id,
-        window=BoundObservationWindowV1.model_validate_json(window),
+        window=BoundObservationWindow.model_validate_json(window),
         checked_at=_instant(checked_at) if checked_at else _instant("1970-01-01T00:00:00Z"),
     )
 
@@ -307,7 +307,7 @@ _READ_STATUS = "CASE WHEN status='open' AND ends_at_us<=? THEN 'settleable' ELSE
 
 def contract_windows(
     instance: Any, identity: str, *, limit: int, evaluation_time: datetime
-) -> tuple[tuple[tuple[str, BoundObservationWindowV1, str], ...], dict[str, int]] | None:
+) -> tuple[tuple[tuple[str, BoundObservationWindow, str], ...], dict[str, int]] | None:
     """One contract's bound windows (soonest to close first, bounded) and counts by status.
 
     ``None`` when the worker never ran on this instance, so an empty answer is
@@ -333,7 +333,7 @@ def contract_windows(
         ).fetchall()
     return (
         tuple(
-            (str(contract_id), BoundObservationWindowV1.model_validate_json(window), str(status))
+            (str(contract_id), BoundObservationWindow.model_validate_json(window), str(status))
             for contract_id, window, status in rows
         ),
         counts,
@@ -400,9 +400,9 @@ def unbindable_anchors(instance: Any) -> tuple[UnbindableAnchor, ...]:
         ).fetchall()
     return tuple(
         UnbindableAnchor(
-            contract=ResolutionContractReferenceV1.model_validate_json(reference),
+            contract=ResolutionContractReference.model_validate_json(reference),
             hypothesis=hypothesis,
-            event=TriggerEventReferenceV1.model_validate_json(event),
+            event=TriggerEventReference.model_validate_json(event),
             code=code,
             checked_at=_instant(checked_at),
         )
@@ -659,7 +659,7 @@ class PredictionPart:
                         contract.contract.model_dump_json(),
                         format_datetime(contract.accepted_at),
                         window.event.capture_contract_digest
-                        if isinstance(window, CaptureEventWindowV1)
+                        if isinstance(window, CaptureEventWindow)
                         else None,
                     ),
                 )
@@ -686,7 +686,7 @@ class PredictionPart:
         kind, name = identity.split(":", 1)
         reference = canonical_contract_reference(
             instance,
-            ResolutionContractReferenceV1(
+            ResolutionContractReference(
                 identity=ArtifactIdentity(kind=kind, name=name),
                 artifact_digest=digest,
                 coordinate=at,
@@ -698,7 +698,7 @@ class PredictionPart:
             contract=read_resolution_contract(instance, reference),
             accepted_at=artifact_accepted_time(instance, reference),
         )
-        if isinstance(contract.contract.window, CaptureEventWindowV1):
+        if isinstance(contract.contract.window, CaptureEventWindow):
             # Its windows wait for the anchors the capture scan finds.
             return contract, []
         row = _window_row(
@@ -743,11 +743,11 @@ class PredictionPart:
             if not complete:
                 continue  # the index is still projecting new landings
             windows: list[tuple[Any, ...]] = []
-            unbound: list[tuple[str, TriggerEventReferenceV1, str]] = []
+            unbound: list[tuple[str, TriggerEventReference, str]] = []
             bound: list[str] = []
             retry = False
             for stored in records:
-                event = TriggerEventReferenceV1(
+                event = TriggerEventReference(
                     run_id=stored.record.run_id or "",
                     partition_id=stored.record.partition_id,
                     sequence=stored.record.sequence,
@@ -794,7 +794,7 @@ class PredictionPart:
         connection: sqlite3.Connection,
         identity: str,
         windows: list[tuple[Any, ...]],
-        unbound: list[tuple[str, TriggerEventReferenceV1, str]],
+        unbound: list[tuple[str, TriggerEventReference, str]],
         bound: list[str],
         *,
         now: datetime,
@@ -865,7 +865,7 @@ class PredictionPart:
         checked: list[tuple[str, str, str | None]] = []
         for contract_id, window, dirty, *contract_row in rows:
             contract = _contract_row(tuple(contract_row))
-            bound = BoundObservationWindowV1.model_validate_json(window)
+            bound = BoundObservationWindow.model_validate_json(window)
             activation = _activation(contract, bound)
             assert activation.contract_id == contract_id
             book = ProcedureResolutionBook((activation,))
@@ -879,7 +879,7 @@ class PredictionPart:
         retried: list[tuple[str, str, str]] = []
         for digest, event_json, retry_mark, *contract_row in retries:
             contract = _contract_row(tuple(contract_row))
-            event = TriggerEventReferenceV1.model_validate_json(event_json)
+            event = TriggerEventReference.model_validate_json(event_json)
             window = _bind(instance, contract, event)
             retried.append((contract.identity, digest, retry_mark))
             if window is None:

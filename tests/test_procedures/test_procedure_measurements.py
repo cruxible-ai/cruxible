@@ -10,29 +10,29 @@ from cruxible_client.contracts.artifacts import (
     ArtifactPin,
 )
 from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
-from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.procedures.artifacts import ProcedureArtifactV1, render_procedure
 from cruxible_client.contracts.procedures.graph import (
     compute_procedure_definition_digest_v3,
     compute_procedure_node_digests_v3,
 )
 from cruxible_client.contracts.procedures.measurements import (
-    AcceptedQueryProcedureMeasurementV1,
-    ClaimAttestationProcedureMeasurementV1,
-    ClaimStatementProcedureMeasurementV1,
-    ProcedureMeasurementDeclarationV1,
-    ProcedureMeasurementExpectationV1,
-    ProcedureMeasurementReviewTriggerV1,
-    ProcedureMeasurementSituationShapeV1,
+    AcceptedQueryProcedureMeasurement,
+    ClaimAttestationProcedureMeasurement,
+    ClaimStatementProcedureMeasurement,
+    ProcedureMeasurementDeclaration,
+    ProcedureMeasurementExpectation,
+    ProcedureMeasurementReviewTrigger,
+    ProcedureMeasurementSituationShape,
 )
 from cruxible_client.contracts.procedures.models import (
-    GuardNodeV3,
-    GuardPredicateV1,
-    PredicateOperandV1,
-    ProcedureBudgetV3,
+    GuardNode,
+    GuardPredicate,
+    PredicateOperand,
+    ProcedureBudget,
     ProcedureDefinitionV3,
-    ProcedureHardCapsV3,
-    ProjectNodeV3,
+    ProcedureHardCaps,
+    ProjectNode,
     StateTapNodeV3,
     iter_pin_bindings,
 )
@@ -57,19 +57,19 @@ def _pin(role: str, kind: str, name: str) -> ArtifactPin:
     )
 
 
-def _duration(microseconds: int) -> CanonicalDurationV1:
-    return CanonicalDurationV1(microseconds=microseconds)
+def _duration(microseconds: int) -> CanonicalDuration:
+    return CanonicalDuration(microseconds=microseconds)
 
 
-def _expectation() -> ProcedureMeasurementExpectationV1:
-    return ProcedureMeasurementExpectationV1(
+def _expectation() -> ProcedureMeasurementExpectation:
+    return ProcedureMeasurementExpectation(
         min_count=1,
         condition={"status": "healthy"},
     )
 
 
-def _query_measurement(name: str = "outcome-query") -> AcceptedQueryProcedureMeasurementV1:
-    return AcceptedQueryProcedureMeasurementV1(
+def _query_measurement(name: str = "outcome-query") -> AcceptedQueryProcedureMeasurement:
+    return AcceptedQueryProcedureMeasurement(
         query=_pin("query", "QueryDefinition", name),
         parameters={"status": "active"},
         execution_options={"relationship_state": "accepted"},
@@ -85,9 +85,9 @@ def _declaration(
     from_node_id: str | None = None,
     arm_label: str | None = None,
     measurement: object | None = None,
-    review_when: tuple[ProcedureMeasurementReviewTriggerV1, ...] = (),
-) -> ProcedureMeasurementDeclarationV1:
-    return ProcedureMeasurementDeclarationV1(
+    review_when: tuple[ProcedureMeasurementReviewTrigger, ...] = (),
+) -> ProcedureMeasurementDeclaration:
+    return ProcedureMeasurementDeclaration(
         name=name,
         subject_grain=subject_grain,  # type: ignore[arg-type]
         node_id=node_id,
@@ -96,7 +96,7 @@ def _declaration(
         measurement=measurement or _query_measurement(),  # type: ignore[arg-type]
         check_after=_duration(0),
         expires_after=_duration(86_400_000_000),
-        situation_shape=ProcedureMeasurementSituationShapeV1(
+        situation_shape=ProcedureMeasurementSituationShape(
             subject_kinds=("Claim",),
             task_category="release",
             tags=("health", "release"),
@@ -105,16 +105,16 @@ def _declaration(
     )
 
 
-def _predicate(alias: str) -> GuardPredicateV1:
-    return GuardPredicateV1(
-        left=PredicateOperandV1(kind="step", alias=alias),
+def _predicate(alias: str) -> GuardPredicate:
+    return GuardPredicate(
+        left=PredicateOperand(kind="step", alias=alias),
         operator="eq",
-        right=PredicateOperandV1(kind="literal", value=True),
+        right=PredicateOperand(kind="literal", value=True),
     )
 
 
 def _definition(
-    measurements: tuple[ProcedureMeasurementDeclarationV1, ...] = (),
+    measurements: tuple[ProcedureMeasurementDeclaration, ...] = (),
 ) -> ProcedureDefinitionV3:
     contract_in = _pin("contract-in", "Contract", "empty-input")
     contract_out = _pin("contract-out", "Contract", "result")
@@ -128,7 +128,7 @@ def _definition(
                 query=_pin("query", "QueryDefinition", "accepted-state"),
                 as_="rows",
             ),
-            GuardNodeV3(
+            GuardNode(
                 node_id="gate",
                 predicate=_predicate("rows"),
                 on_true="hot",
@@ -136,21 +136,21 @@ def _definition(
                 refusal_code="outcome.branch",
                 message="Choose one measured arm.",
             ),
-            ProjectNodeV3(
+            ProjectNode(
                 node_id="hot",
                 fields={"arm": "hot"},
                 contract_out=contract_out,
                 as_="hot_rows",
                 next="finish",
             ),
-            ProjectNodeV3(
+            ProjectNode(
                 node_id="cold",
                 fields={"arm": "cold"},
                 contract_out=contract_out,
                 as_="cold_rows",
                 next="finish",
             ),
-            ProjectNodeV3(
+            ProjectNode(
                 node_id="finish",
                 fields={"status": "complete"},
                 contract_out=contract_out,
@@ -159,13 +159,13 @@ def _definition(
         ),
         returns="result",
         measurements=measurements,
-        budget=ProcedureBudgetV3(
+        budget=ProcedureBudget(
             wall_clock=_duration(1_000_000),
             max_provider_calls=0,
             max_capture_bytes=0,
             max_items=100,
         ),
-        hard_caps=ProcedureHardCapsV3(
+        hard_caps=ProcedureHardCaps(
             max_wall_clock=_duration(2_000_000),
             max_provider_calls=0,
             max_capture_bytes=0,
@@ -229,7 +229,7 @@ def test_measurement_query_is_an_exact_envelope_dependency_not_a_line_slot() -> 
     assert _artifact(definition, include_all_pins=True).directly_runnable is True
 
     with pytest.raises(ValidationError, match="exact role='query'.*QueryDefinition"):
-        AcceptedQueryProcedureMeasurementV1(
+        AcceptedQueryProcedureMeasurement(
             query=_pin("provider", "Provider", "outcome-query"),
             expect=_expectation(),
         )
@@ -239,7 +239,7 @@ def test_measurement_query_is_an_exact_envelope_dependency_not_a_line_slot() -> 
         "slot_name": "query",
     }
     with pytest.raises(ValidationError):
-        AcceptedQueryProcedureMeasurementV1.model_validate(slot_payload)
+        AcceptedQueryProcedureMeasurement.model_validate(slot_payload)
 
 
 def test_measurements_are_projected_from_the_typed_field_not_annotations() -> None:
@@ -298,9 +298,9 @@ def test_self_measurement_and_non_arm_contrast_are_refused_before_activation() -
     payload = _declaration().model_dump(mode="json")
     payload["measurement"] = {"kind": "procedure_reading"}
     with pytest.raises(ValidationError, match="M5"):
-        ProcedureMeasurementDeclarationV1.model_validate(payload)
+        ProcedureMeasurementDeclaration.model_validate(payload)
 
-    contrast = ProcedureMeasurementReviewTriggerV1(
+    contrast = ProcedureMeasurementReviewTrigger(
         name="arm-drift",
         metric="arm_contrast",
         operator="gte",
@@ -313,7 +313,7 @@ def test_self_measurement_and_non_arm_contrast_are_refused_before_activation() -
 
 def test_measurement_windows_expectations_and_review_thresholds_are_canonical() -> None:
     with pytest.raises(ValidationError, match="less than expires_after"):
-        ProcedureMeasurementDeclarationV1(
+        ProcedureMeasurementDeclaration(
             **{
                 **_declaration().model_dump(mode="python"),
                 "check_after": _duration(10),
@@ -321,9 +321,9 @@ def test_measurement_windows_expectations_and_review_thresholds_are_canonical() 
             }
         )
     with pytest.raises(ValidationError, match="vacuous satisfaction"):
-        ProcedureMeasurementExpectationV1(condition={"ready": True})
+        ProcedureMeasurementExpectation(condition={"ready": True})
     with pytest.raises(ValidationError, match="decimal spelling"):
-        ProcedureMeasurementReviewTriggerV1(
+        ProcedureMeasurementReviewTrigger(
             name="drift",
             metric="contradicted_rate",
             operator="gte",
@@ -331,7 +331,7 @@ def test_measurement_windows_expectations_and_review_thresholds_are_canonical() 
             min_readings=5,
         )
     with pytest.raises(ValidationError, match="floating-point"):
-        AcceptedQueryProcedureMeasurementV1(
+        AcceptedQueryProcedureMeasurement(
             query=_pin("query", "QueryDefinition", "outcome-query"),
             parameters={"threshold": 0.5},
             expect=_expectation(),
@@ -343,13 +343,13 @@ def test_claim_measurements_bind_exact_statement_addresses_and_digests() -> None
         "claims/ab/CLM-ab000000000000000000000000000000.json"
     )
     digest = _digest("claim-statement")
-    attestation = ClaimAttestationProcedureMeasurementV1(
+    attestation = ClaimAttestationProcedureMeasurement(
         claim_statement=statement,
         claim_statement_digest=digest,
         stances=("contradict", "support"),
-        expect=ProcedureMeasurementExpectationV1(min_count=1),
+        expect=ProcedureMeasurementExpectation(min_count=1),
     )
-    claim = ClaimStatementProcedureMeasurementV1(
+    claim = ClaimStatementProcedureMeasurement(
         claim_statement=statement,
         claim_statement_digest=digest,
         acceptable_verdicts=("supported", "unresolved"),
@@ -362,7 +362,7 @@ def test_claim_measurements_bind_exact_statement_addresses_and_digests() -> None
     ).measurements
     wrong_subject = SemanticAddress.procedure_unit("procedures/measured-procedure.json")
     with pytest.raises(ValidationError, match="Claim statement address"):
-        ClaimStatementProcedureMeasurementV1(
+        ClaimStatementProcedureMeasurement(
             claim_statement=wrong_subject,
             claim_statement_digest=digest,
             acceptable_verdicts=("supported",),

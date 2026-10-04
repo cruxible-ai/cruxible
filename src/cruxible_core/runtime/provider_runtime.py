@@ -14,17 +14,17 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from cruxible_client.contracts import ProviderLaneUnavailableCodeV1
-from cruxible_client.contracts.provider_execution import VerifiedProviderBindingV1
+from cruxible_client.contracts import ProviderLaneUnavailableCode
+from cruxible_client.contracts.provider_execution import VerifiedProviderBinding
 from cruxible_client.contracts.provider_interfaces import (
-    AcceptedProviderInterfaceRegistrationV1,
-    ProviderBucketClassifierInstallationV1,
-    ProviderInterfaceRegistrationV2,
+    AcceptedProviderInterfaceRegistration,
+    ProviderBucketClassifierInstallation,
+    ProviderInterfaceRegistration,
     parse_provider_interface,
     provider_interface_digest,
 )
 from cruxible_client.contracts.providers import (
-    AcceptedProviderV1,
+    AcceptedProvider,
     parse_provider,
     provider_digest,
 )
@@ -106,7 +106,7 @@ class ProviderDeploymentConfigV1(_StrictOperationalModel):
     interpreter_path: str
     provider_runtime_version: str
     installation_verification: ProviderInstallationVerification | None = None
-    classifier_installations: tuple[ProviderBucketClassifierInstallationV1, ...] = ()
+    classifier_installations: tuple[ProviderBucketClassifierInstallation, ...] = ()
 
     @field_validator(
         "distribution_path",
@@ -251,18 +251,18 @@ class ProviderRuntimeOperator:
             ]
             | None
         ) = None
-        self._construction_failures: dict[str, tuple[ProviderLaneUnavailableCodeV1, str]] = {}
-        self._recovery_failures: dict[ProviderLaneUnavailableCodeV1, str] = {}
+        self._construction_failures: dict[str, tuple[ProviderLaneUnavailableCode, str]] = {}
+        self._recovery_failures: dict[ProviderLaneUnavailableCode, str] = {}
         self._pending_construction_stages: set[_ConstructionStage] = set()
         self._latest_failure: tuple[Literal["construction", "recovery"], str] | None = None
         self._unavailable_failure_count = 0
         self._observation_diagnostic_count = 0
         self._last_observation_diagnostic: tuple[ProviderProcessFenceCodeV1, str] | None = None
-        self.unavailable_code: ProviderLaneUnavailableCodeV1 | None = None
+        self.unavailable_code: ProviderLaneUnavailableCode | None = None
         self.unavailable_reason: str | None = None
         self._lane_status_snapshot: tuple[
             Literal["available", "unavailable", "not_applicable"],
-            ProviderLaneUnavailableCodeV1 | None,
+            ProviderLaneUnavailableCode | None,
             str | None,
         ] = _inapplicable_lane_status() or ("available", None, None)
         self.config = ProviderRuntimeOperationalConfigV1()
@@ -424,7 +424,7 @@ class ProviderRuntimeOperator:
 
     def mark_unavailable(
         self,
-        code: ProviderLaneUnavailableCodeV1 | ProviderProcessFenceCodeV1,
+        code: ProviderLaneUnavailableCode | ProviderProcessFenceCodeV1,
         message: str,
         *,
         retryable: bool = False,
@@ -466,13 +466,13 @@ class ProviderRuntimeOperator:
                 self._observation_diagnostic_detail_locked(),
             )
             return
-        latest: tuple[ProviderLaneUnavailableCodeV1, str] | None = None
+        latest: tuple[ProviderLaneUnavailableCode, str] | None = None
         if self._latest_failure is not None:
             category, key = self._latest_failure
             if category == "construction":
                 latest = self._construction_failures.get(key)
             else:
-                typed_key = cast(ProviderLaneUnavailableCodeV1, key)
+                typed_key = cast(ProviderLaneUnavailableCode, key)
                 message = self._recovery_failures.get(typed_key)
                 if message is not None:
                     latest = (typed_key, message)
@@ -645,7 +645,7 @@ class ProviderRuntimeOperator:
         self,
     ) -> tuple[
         Literal["available", "unavailable", "not_applicable"],
-        ProviderLaneUnavailableCodeV1 | None,
+        ProviderLaneUnavailableCode | None,
         str | None,
     ]:
         return self._lane_status_snapshot
@@ -675,8 +675,8 @@ class ProviderRuntimeOperator:
             )
             projection.typed.prefetch_members(tuple(row.path for row in rows))
             contents = {row.path: projection.typed.member_bytes(row.path) for row in rows}
-        providers: dict[str, AcceptedProviderV1] = {}
-        interfaces: dict[str, AcceptedProviderInterfaceRegistrationV1] = {}
+        providers: dict[str, AcceptedProvider] = {}
+        interfaces: dict[str, AcceptedProviderInterfaceRegistration] = {}
         for row in rows:
             path = row.path
             content = contents[path]
@@ -685,7 +685,7 @@ class ProviderRuntimeOperator:
                 if provider.lifecycle.state != "live":
                     continue
                 digest = provider_digest(provider).tagged
-                providers[digest] = AcceptedProviderV1(
+                providers[digest] = AcceptedProvider(
                     path=path,
                     provider=provider,
                     artifact_digest=digest,
@@ -695,13 +695,13 @@ class ProviderRuntimeOperator:
                 if registration.lifecycle.state != "live":
                     continue
                 digest = provider_interface_digest(registration).tagged
-                accepted_interface = AcceptedProviderInterfaceRegistrationV1(
+                accepted_interface = AcceptedProviderInterfaceRegistration(
                     path=path,
                     registration=registration,
                     artifact_digest=digest,
                 )
                 try:
-                    if not isinstance(registration, ProviderInterfaceRegistrationV2):
+                    if not isinstance(registration, ProviderInterfaceRegistration):
                         install_compiler_owned_provider_classifier(accepted_interface)
                 except Exception as exc:
                     detail = f"Provider classifier installation failed: {type(exc).__name__}: {exc}"
@@ -714,7 +714,7 @@ class ProviderRuntimeOperator:
                 interfaces[digest] = accepted_interface
         for accepted_interface in interfaces.values():
             registration = accepted_interface.registration
-            if not isinstance(registration, ProviderInterfaceRegistrationV2):
+            if not isinstance(registration, ProviderInterfaceRegistration):
                 continue
             for configured in self.config.deployments:
                 installation = next(
@@ -746,12 +746,12 @@ class ProviderRuntimeOperator:
 
     def admit_line_provider(
         self,
-        accepted_provider: AcceptedProviderV1,
-        accepted_interface: AcceptedProviderInterfaceRegistrationV1,
+        accepted_provider: AcceptedProvider,
+        accepted_interface: AcceptedProviderInterfaceRegistration,
         implementation_digest: str,
         *,
         eligible_environment_pin_keys: tuple[str, ...],
-    ) -> VerifiedProviderBindingV1:
+    ) -> VerifiedProviderBinding:
         """Resolve one accepted Line closure against operator-owned deployments."""
 
         with self._lock:
@@ -913,7 +913,7 @@ class _OperatorBoundProviderRuntimeInvoker:
 class _UnavailableProviderRuntimeInvoker:
     """Refusing invoker used when startup fences degrade the Provider lane."""
 
-    def __init__(self, *, code: ProviderLaneUnavailableCodeV1, detail: str) -> None:
+    def __init__(self, *, code: ProviderLaneUnavailableCode, detail: str) -> None:
         self.code = code
         self.detail = detail
 

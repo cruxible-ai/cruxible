@@ -10,22 +10,22 @@ from pathlib import Path
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.captures import (
-    CaptureContractV1,
-    ProviderResultToExternalCaptureV1,
+    CaptureContract,
+    ProviderResultToExternalCapture,
     capture_contract_digest,
 )
 from cruxible_client.contracts.provider_execution import (
-    ProviderBudgetTranslationV1,
-    ProviderEgressObservationV1,
-    ProviderExternalOccurrencePlanV1,
-    ProviderInvocationOutcomeV1,
-    ProviderInvocationOutputDigestV1,
-    ProviderInvocationReceiptV1,
-    ProviderSecretBindingIdentityV1,
-    ProviderSecretReceiptReferenceV1,
-    ProviderSecretReferenceV1,
-    ProviderSecretResolutionPlanV1,
-    VerifiedProviderBindingV1,
+    ProviderBudgetTranslation,
+    ProviderEgressObservation,
+    ProviderExternalOccurrencePlan,
+    ProviderInvocationOutcome,
+    ProviderInvocationOutputDigest,
+    ProviderInvocationReceipt,
+    ProviderSecretBindingIdentity,
+    ProviderSecretReceiptReference,
+    ProviderSecretReference,
+    ProviderSecretResolutionPlan,
+    VerifiedProviderBinding,
     provider_invocation_output_digest,
     provider_secret_binding_identity_digest,
 )
@@ -40,11 +40,11 @@ def digest(domain: str, value: str) -> str:
 @dataclass(frozen=True)
 class ProviderCaptureFixture:
     store: ContentAddressedBodyStore
-    contract: CaptureContractV1
+    contract: CaptureContract
     producer: ArtifactIdentity
-    occurrence: ProviderExternalOccurrencePlanV1
-    receipt: ProviderInvocationReceiptV1
-    result: ProviderResultToExternalCaptureV1
+    occurrence: ProviderExternalOccurrencePlan
+    receipt: ProviderInvocationReceipt
+    result: ProviderResultToExternalCapture
     bound_generation: str
 
 
@@ -59,7 +59,7 @@ def provider_capture_fixture(root: Path) -> ProviderCaptureFixture:
     implementation_digest = digest("implementation", "source")
     deployment_digest = digest("deployment", "source")
     materialization_digest = digest("materialization", "source")
-    secret = ProviderSecretReferenceV1(
+    secret = ProviderSecretReference(
         realm="orders",
         name="reader",
         epoch="epoch-7",
@@ -67,13 +67,13 @@ def provider_capture_fixture(root: Path) -> ProviderCaptureFixture:
         resolver_kind="file",
     )
     secret_identity_digest = provider_secret_binding_identity_digest(
-        ProviderSecretBindingIdentityV1(realm=secret.realm, name=secret.name)
+        ProviderSecretBindingIdentity(realm=secret.realm, name=secret.name)
     )
-    secret_plan = ProviderSecretResolutionPlanV1(
+    secret_plan = ProviderSecretResolutionPlan(
         references=(secret,),
         binding_identity_digests=(secret_identity_digest,),
     )
-    budget = ProviderBudgetTranslationV1(
+    budget = ProviderBudgetTranslation(
         remaining_wall_clock_microseconds=5_000_000,
         procedure_wall_clock_microseconds=5_000_000,
         hard_cap_wall_clock_microseconds=5_000_000,
@@ -84,7 +84,7 @@ def provider_capture_fixture(root: Path) -> ProviderCaptureFixture:
         max_items=4,
         result_bytes_cap=4096,
     )
-    local = VerifiedProviderBindingV1(
+    local = VerifiedProviderBinding(
         provider_artifact_digest=provider_digest,
         interface_artifact_digest=interface_artifact_digest,
         interface_id="orders.read",
@@ -96,7 +96,7 @@ def provider_capture_fixture(root: Path) -> ProviderCaptureFixture:
         entrypoint="orders.source:Provider",
         declared_endpoints=("https://orders.example",),
     )
-    occurrence = ProviderExternalOccurrencePlanV1(
+    occurrence = ProviderExternalOccurrencePlan(
         occurrence_path="source/orders",
         occurrence_kind="source",
         node_id="source-orders",
@@ -117,7 +117,7 @@ def provider_capture_fixture(root: Path) -> ProviderCaptureFixture:
         source_runtime_plan_digest=digest("source-runtime-plan", "source"),
     )
     body = b'{"order_id":7,"status":"settled"}'
-    result = ProviderResultToExternalCaptureV1(
+    result = ProviderResultToExternalCapture(
         source_identity="commerce.production.orders",
         coordinate_type="postgres-lsn-v1",
         coordinate={"lsn": "0/16B6C50"},
@@ -129,13 +129,13 @@ def provider_capture_fixture(root: Path) -> ProviderCaptureFixture:
         bytes_digest="sha256:" + hashlib.sha256(body).hexdigest(),
         observed_at=NOW,
     )
-    egress = ProviderEgressObservationV1(
+    egress = ProviderEgressObservation(
         declared_endpoints=local.declared_endpoints,
         observed_endpoints=local.declared_endpoints,
         observer_backend="sandbox",
         observer_grade="conformance",
     )
-    receipt = ProviderInvocationReceiptV1(
+    receipt = ProviderInvocationReceipt(
         invocation_id=digest("invocation", "source"),
         occurrence_path=occurrence.occurrence_path,
         run_id="run-b4-source",
@@ -150,18 +150,18 @@ def provider_capture_fixture(root: Path) -> ProviderCaptureFixture:
         input_bucket="kind=orders",
         capture_contract_digest=capture_contract_digest(contract).tagged,
         input_digest=digest("input", "source"),
-        outcome=ProviderInvocationOutcomeV1(
+        outcome=ProviderInvocationOutcome(
             status="ok",
             outcome_class="ok",
             attribution="none",
         ),
-        output=ProviderInvocationOutputDigestV1(
+        output=ProviderInvocationOutputDigest(
             output_digest=provider_invocation_output_digest(result.model_dump(mode="json"))
         ).model_dump(mode="json"),
         egress=egress,
         fence_scope="process_group+descendant_sweep",
         secret_references=(
-            ProviderSecretReceiptReferenceV1(
+            ProviderSecretReceiptReference(
                 binding_identity_digest=secret_identity_digest,
                 purpose=secret.purpose,
             ),

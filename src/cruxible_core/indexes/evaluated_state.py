@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Generic, TypeVar
 
-from cruxible_client.contracts.candidates import DependencyProofReferenceV1
+from cruxible_client.contracts.candidates import DependencyProofReference
 from cruxible_client.contracts.canonical import canonical_bytes, file_digest, is_candidate_card_path
 from cruxible_client.contracts.claims import ClaimStatement
 from cruxible_client.contracts.documents import DocumentArtifactAdapter
@@ -251,10 +251,10 @@ class EvaluationRows:
             self.states, self.identities, pin_sources, outgoing, incoming, edge_tree
         )
 
-    def projected_edges(self) -> tuple[DependencyProofReferenceV1, ...]:
+    def projected_edges(self) -> tuple[DependencyProofReference, ...]:
         """Every dependency edge of the projected tree, from its pin rows."""
         return _sorted_edges(
-            DependencyProofReferenceV1(
+            DependencyProofReference(
                 source_path=row[0],
                 source_artifact_digest=row[1],
                 target_path=row[2],

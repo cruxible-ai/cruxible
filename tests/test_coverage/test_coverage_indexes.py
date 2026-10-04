@@ -18,7 +18,7 @@ import pytest
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
     ClaimArtifactV2,
-    ClaimBackingV2,
+    ClaimBacking,
     build_claim_citation,
     claim_artifact_digest,
     claim_path,
@@ -29,7 +29,7 @@ from cruxible_core.coverage.contracts import (
     occurrence_identity_digest,
 )
 from cruxible_core.coverage.indexes import (
-    CoverageScanBudgetV1,
+    CoverageScanBudget,
     accepted_logical_source,
     build_working_occurrence_overlay,
     evidence_citation_index_digest,
@@ -127,7 +127,7 @@ def test_v2_index_keeps_two_claim_roles_on_one_capture_as_distinct_associations(
         artifact = ClaimArtifactV2(
             identity=legacy.identity,
             statement=legacy.statement,
-            backing=ClaimBackingV2(
+            backing=ClaimBacking(
                 referent_context=legacy.backing.referent_context,
                 capture_digests=legacy.backing.capture_digests,
                 citations=(
@@ -226,7 +226,7 @@ def test_a_scan_budget_bounds_recall_and_states_the_truncation() -> None:
     starved = build_working_occurrence_overlay(
         (working(HANDBOOK, content),),
         wanted=unmaterialized_wanted(citations),
-        budget=CoverageScanBudgetV1(max_scanned_bytes=0),
+        budget=CoverageScanBudget(max_scanned_bytes=0),
     )
 
     assert starved.truncated is True

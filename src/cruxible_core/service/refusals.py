@@ -6,43 +6,43 @@ from typing import get_args
 
 from cruxible_client.contracts import (
     PlaybillNextReason,
-    PlaybillNextRefusalCodeV1,
-    ProviderLaneUnavailableCodeV1,
+    PlaybillNextRefusalCode,
+    ProviderLaneUnavailableCode,
 )
 from cruxible_client.contracts.authoring.models import (
     PlaybillBlockSyncReadReason,
     PlaybillBlockSyncReason,
 )
-from cruxible_client.contracts.predictions import PredictionRefusalCodeV1
-from cruxible_client.contracts.procedures.readings import ProcedureMeasurementRefusalCodeV1
+from cruxible_client.contracts.predictions import PredictionRefusalCode
+from cruxible_client.contracts.procedures.readings import ProcedureMeasurementRefusalCode
 from cruxible_client.contracts.procedures.results import (
-    ProcedureAdmissionRefusalCodeV1,
-    ProcedureInternalFailureCodeV1,
-    ProcedureNodeRefusalCodeV1,
-    ProcedureOperationalFailureCodeV1,
+    ProcedureAdmissionRefusalCode,
+    ProcedureInternalFailureCode,
+    ProcedureNodeRefusalCode,
+    ProcedureOperationalFailureCode,
 )
 from cruxible_client.contracts.repairs import (
     DECLARED_HAND_EDIT_CHANGES,
     RUNNABLE_REFUSAL_REPAIRS,
     UNDECLARED_HAND_EDIT_CHANGE,
-    ServedRepairV1,
+    ServedRepair,
     served_repair_for_refusal,
 )
 from cruxible_client.contracts.workspace_advertisement import WorkspaceAdvertisementFailureCode
 
 CLOSED_SERVED_REFUSAL_VOCABULARIES: dict[str, frozenset[str]] = {
     "playbill_next_reason": frozenset(get_args(PlaybillNextReason)),
-    "playbill_next_refusal": frozenset(get_args(PlaybillNextRefusalCodeV1)),
-    "provider_lane_unavailable": frozenset(get_args(ProviderLaneUnavailableCodeV1)),
+    "playbill_next_refusal": frozenset(get_args(PlaybillNextRefusalCode)),
+    "provider_lane_unavailable": frozenset(get_args(ProviderLaneUnavailableCode)),
     "workspace_advertisement_failure": frozenset(get_args(WorkspaceAdvertisementFailureCode)),
     "block_sync_read_reason": frozenset(get_args(PlaybillBlockSyncReadReason)),
     "block_sync_reason": frozenset(get_args(PlaybillBlockSyncReason)),
-    "procedure_admission_refusal": frozenset(get_args(ProcedureAdmissionRefusalCodeV1)),
-    "procedure_node_refusal": frozenset(get_args(ProcedureNodeRefusalCodeV1)),
-    "procedure_operational_failure": frozenset(get_args(ProcedureOperationalFailureCodeV1)),
-    "procedure_internal_failure": frozenset(get_args(ProcedureInternalFailureCodeV1)),
-    "prediction_refusal": frozenset(get_args(PredictionRefusalCodeV1)),
-    "procedure_measurement_refusal": frozenset(get_args(ProcedureMeasurementRefusalCodeV1)),
+    "procedure_admission_refusal": frozenset(get_args(ProcedureAdmissionRefusalCode)),
+    "procedure_node_refusal": frozenset(get_args(ProcedureNodeRefusalCode)),
+    "procedure_operational_failure": frozenset(get_args(ProcedureOperationalFailureCode)),
+    "procedure_internal_failure": frozenset(get_args(ProcedureInternalFailureCode)),
+    "prediction_refusal": frozenset(get_args(PredictionRefusalCode)),
+    "procedure_measurement_refusal": frozenset(get_args(ProcedureMeasurementRefusalCode)),
 }
 
 ALL_SERVED_REFUSAL_CODES = frozenset().union(*CLOSED_SERVED_REFUSAL_VOCABULARIES.values())
@@ -53,7 +53,7 @@ ALL_SERVED_REFUSAL_CODES = frozenset().union(*CLOSED_SERVED_REFUSAL_VOCABULARIES
 UNDECLARED_REFUSAL_CODE_COUNT = 148
 
 
-def repair_for_refusal(code: str) -> ServedRepairV1:
+def repair_for_refusal(code: str) -> ServedRepair:
     """Resolve one registered code without interpreting diagnostic prose."""
 
     if code not in ALL_SERVED_REFUSAL_CODES:

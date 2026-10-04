@@ -5,7 +5,7 @@ from __future__ import annotations
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.procedures.artifacts import (
-    AcceptedProcedureV1,
+    AcceptedProcedure,
     procedure_artifact_digest,
     render_procedure,
 )
@@ -222,7 +222,7 @@ def test_promotion_passes_proposal_replay_and_projects_canonical_output(
 ) -> None:
     instance, owner = initialize_local(tmp_path)
     base_procedure = _accepted().procedure.model_copy(update={})
-    accepted_procedure = AcceptedProcedureV1(
+    accepted_procedure = AcceptedProcedure(
         path="procedures/measured-procedure.json",
         procedure=base_procedure,
         artifact_digest=procedure_artifact_digest(base_procedure).tagged,
@@ -356,18 +356,18 @@ def test_promotion_passes_proposal_replay_and_projects_canonical_output(
     # `get` on the Procedure shows the same accepted track record, which the
     # SDK's ProcedureRun.track_record reads.
     from cruxible_client.contracts.get_reads import (
-        PlaybillGetProcedureCardV1,
-        PlaybillGetRequestV1,
+        PlaybillGetProcedureCard,
+        PlaybillGetRequest,
     )
     from cruxible_core.service.discovery.get import service_playbill_get
     from cruxible_core.storage.cas import BodyAccessContext
 
     card = service_playbill_get(
         instance,
-        request=PlaybillGetRequestV1(ref=accepted_procedure.procedure.identity.qualified),
+        request=PlaybillGetRequest(ref=accepted_procedure.procedure.identity.qualified),
         access=BodyAccessContext(principal_id="test", can_read_body=False),
     ).card
-    assert isinstance(card, PlaybillGetProcedureCardV1)
+    assert isinstance(card, PlaybillGetProcedureCard)
     (entry,) = card.track_record
     assert entry.promotion == "run-a"
     assert (entry.first_sequence, entry.last_sequence) == (1, 2)

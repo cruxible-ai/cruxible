@@ -13,23 +13,23 @@ from cruxible_client.contracts.claims import (
     parse_claim,
 )
 from cruxible_client.contracts.procedures.windows import (
-    CaptureEventSelectorV1,
-    CaptureEventWindowV1,
-    FixedWindowV1,
-    TriggerEventReferenceV1,
+    CaptureEventSelector,
+    CaptureEventWindow,
+    FixedWindow,
+    TriggerEventReference,
     bind_observation_window,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.resolution_contracts import (
-    ClaimVersionReferenceV1,
-    ResolutionContractV1,
+    ClaimVersionReference,
+    ResolutionContract,
     render_resolution_contract,
     resolution_contract_digest,
     resolution_contract_path,
 )
 from cruxible_client.contracts.resolution_rules import (
-    PredictionEqualityRuleV1,
-    PredictionObservationSelectorV1,
+    PredictionEqualityRule,
+    PredictionObservationSelector,
 )
 from tests.test_claims.test_claim_type_migrations import _accepted_claim_world
 from tests.test_indexes.test_resolution_contracts import _accept_tree
@@ -40,19 +40,19 @@ def contract_world(tmp_path: Path):
     at = instance.accepted_coordinate()
     path = claim_path(claim_id)
     claim = parse_claim(instance.blob_at(at.git_oid, path), path=path)
-    contract = ResolutionContractV1(
+    contract = ResolutionContract(
         identity=ArtifactIdentity(kind="ResolutionContract", name="status-test"),
-        hypothesis=ClaimVersionReferenceV1(
+        hypothesis=ClaimVersionReference(
             identity=claim.identity,
             artifact_digest=claim_artifact_digest(claim).tagged,
             statement_digest=claim_statement_digest(claim.statement).tagged,
             coordinate=AcceptedCoordinate.from_internal(at),
         ),
-        observation=PredictionObservationSelectorV1(
+        observation=PredictionObservationSelector(
             subject=claim.statement.subject, predicate=claim.statement.predicate
         ),
-        rule=PredictionEqualityRuleV1(),
-        window=FixedWindowV1(
+        rule=PredictionEqualityRule(),
+        window=FixedWindow(
             starts_at=datetime(2026, 8, 29, tzinfo=timezone.utc), duration_seconds=86400
         ),
     )
@@ -69,10 +69,10 @@ def test_contract_acceptance_projection_and_history(tmp_path: Path) -> None:
     instance, owner, contract = contract_world(tmp_path)
     accept_contract(instance, owner, contract)
     first = instance.accepted_coordinate()
-    from cruxible_client.contracts.resolution_contracts import ResolutionContractsRequestV1
+    from cruxible_client.contracts.resolution_contracts import ResolutionContractsRequest
     from cruxible_core.service.procedures.resolution_contracts import service_resolution_contracts
 
-    request = ResolutionContractsRequestV1(hypothesis=contract.hypothesis)
+    request = ResolutionContractsRequest(hypothesis=contract.hypothesis)
     view = service_resolution_contracts(instance, request)
     assert tuple(item.contract for item in view.contracts) == (contract,)
     from cruxible_client.contracts.errors import PlaybillFormatError
@@ -122,7 +122,7 @@ def test_contract_acceptance_projection_and_history(tmp_path: Path) -> None:
     with pytest.raises(PlaybillExecutionError, match="outside"):
         service_resolution_contracts(
             instance,
-            ResolutionContractsRequestV1(
+            ResolutionContractsRequest(
                 hypothesis=future, at=AcceptedCoordinate.from_internal(first)
             ),
         )
@@ -138,13 +138,13 @@ def test_contract_acceptance_projection_and_history(tmp_path: Path) -> None:
 
 def test_windows_keep_event_time_independent_of_execution_time() -> None:
     instant = datetime(2026, 9, 1, tzinfo=timezone.utc)
-    fixed = FixedWindowV1(starts_at=instant, duration_seconds=86400)
-    selector = CaptureEventSelectorV1(
+    fixed = FixedWindow(starts_at=instant, duration_seconds=86400)
+    selector = CaptureEventSelector(
         capture_contract_identity=ArtifactIdentity(kind="CaptureContract", name="anchor"),
         capture_contract_digest="sha256:" + "a" * 64,
     )
-    policy = CaptureEventWindowV1(event=selector, duration_seconds=86400)
-    event = TriggerEventReferenceV1(
+    policy = CaptureEventWindow(event=selector, duration_seconds=86400)
+    event = TriggerEventReference(
         run_id="run-1", partition_id="direct:test", sequence=1, record_digest="sha256:" + "b" * 64
     )
     bound = bind_observation_window(policy, event=event, event_time=instant)
@@ -199,9 +199,9 @@ def test_contract_refuses_wrong_hypothesis_version_and_predecessor(tmp_path: Pat
 
 
 def test_run_binds_contract_and_replays_exact_history(tmp_path: Path) -> None:
-    from cruxible_client.contracts.resolution_contracts import ResolutionContractReferenceV1
+    from cruxible_client.contracts.resolution_contracts import ResolutionContractReference
     from cruxible_core.service.procedures.procedure_runs import (
-        ProcedureRunRequestV2,
+        ProcedureRunRequest,
         service_get_playbill_procedure_run,
         service_run_playbill_procedure,
     )
@@ -213,7 +213,7 @@ def test_run_binds_contract_and_replays_exact_history(tmp_path: Path) -> None:
         (p, b) for p, b in instance.tree_at(at.git_oid).items() if p.startswith("claims/")
     )
     claim = parse_claim(raw, path=path)
-    hypothesis = ClaimVersionReferenceV1(
+    hypothesis = ClaimVersionReference(
         identity=claim.identity,
         artifact_digest=claim_artifact_digest(claim).tagged,
         statement_digest=claim_statement_digest(claim.statement).tagged,
@@ -221,14 +221,14 @@ def test_run_binds_contract_and_replays_exact_history(tmp_path: Path) -> None:
     )
 
     def make(name):
-        return ResolutionContractV1(
+        return ResolutionContract(
             identity=ArtifactIdentity(kind="ResolutionContract", name=name),
             hypothesis=hypothesis,
-            observation=PredictionObservationSelectorV1(
+            observation=PredictionObservationSelector(
                 subject=claim.statement.subject, predicate=claim.statement.predicate
             ),
-            rule=PredictionEqualityRuleV1(),
-            window=FixedWindowV1(starts_at=READ_TIME, duration_seconds=86400),
+            rule=PredictionEqualityRule(),
+            window=FixedWindow(starts_at=READ_TIME, duration_seconds=86400),
         )
 
     from cruxible_client.contracts.procedures.artifacts import (
@@ -256,7 +256,7 @@ def test_run_binds_contract_and_replays_exact_history(tmp_path: Path) -> None:
     )
     basis = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     refs = [
-        ResolutionContractReferenceV1(
+        ResolutionContractReference(
             identity=c.identity,
             artifact_digest=resolution_contract_digest(c).tagged,
             coordinate=basis,
@@ -265,9 +265,7 @@ def test_run_binds_contract_and_replays_exact_history(tmp_path: Path) -> None:
     ]
     results = []
     for ref in refs:
-        request = ProcedureRunRequestV2(
-            evaluation_time=READ_TIME, input={}, resolution_contract=ref
-        )
+        request = ProcedureRunRequest(evaluation_time=READ_TIME, input={}, resolution_contract=ref)
         first = service_run_playbill_procedure(
             instance, name=procedure.identity.name, request=request, actor_context=_actor(instance)
         )
@@ -289,7 +287,7 @@ def test_run_binds_contract_and_replays_exact_history(tmp_path: Path) -> None:
     other_run = service_run_playbill_procedure(
         instance,
         name=other_method.identity.name,
-        request=ProcedureRunRequestV2(
+        request=ProcedureRunRequest(
             evaluation_time=READ_TIME, input={}, resolution_contract=refs[0]
         ),
         actor_context=_actor(instance),
@@ -320,7 +318,7 @@ def test_run_binds_contract_and_replays_exact_history(tmp_path: Path) -> None:
     revised_run = service_run_playbill_procedure(
         instance,
         name=procedure.identity.name,
-        request=ProcedureRunRequestV2(
+        request=ProcedureRunRequest(
             evaluation_time=READ_TIME.replace(minute=10), input={}, resolution_contract=refs[0]
         ),
         actor_context=_actor(instance),
@@ -351,7 +349,7 @@ def test_run_binds_contract_and_replays_exact_history(tmp_path: Path) -> None:
         service_run_playbill_procedure(
             instance,
             name=procedure.identity.name,
-            request=ProcedureRunRequestV2(
+            request=ProcedureRunRequest(
                 evaluation_time=READ_TIME, input={}, resolution_contract=refs[0]
             ),
             actor_context=_actor(instance),
@@ -382,7 +380,7 @@ def test_capture_trigger_uses_exact_retained_event_not_git_changes(tmp_path: Pat
     instance, owner, contract = contract_world(tmp_path)
     accept_contract(instance, owner, contract)
     procedure = _slotless_procedure("capture-anchor").procedure
-    selector = CaptureEventSelectorV1(
+    selector = CaptureEventSelector(
         capture_contract_identity=ArtifactIdentity(kind="CaptureContract", name="anchor"),
         capture_contract_digest="sha256:" + "a" * 64,
     )
@@ -410,14 +408,14 @@ def test_capture_trigger_uses_exact_retained_event_not_git_changes(tmp_path: Pat
             "observed_at": "2000-01-01T00:00:00Z",
         },
     )
-    ref = TriggerEventReferenceV1(
+    ref = TriggerEventReference(
         run_id="RUN-anchor",
         partition_id="run:anchor",
         sequence=stored.record.sequence,
         record_digest=stored.record_digest,
     )
     assert capture_event_time(instance, selector, ref, now=READ_TIME) == READ_TIME
-    policy = CaptureEventWindowV1(event=selector, duration_seconds=86400)
+    policy = CaptureEventWindow(event=selector, duration_seconds=86400)
     assert bind_window(instance, policy, ref, now=READ_TIME).ends_at == READ_TIME + timedelta(
         days=1
     )
@@ -427,7 +425,7 @@ def test_capture_trigger_uses_exact_retained_event_not_git_changes(tmp_path: Pat
     with pytest.raises(PlaybillExecutionError, match="selector"):
         capture_event_time(
             instance,
-            CaptureEventSelectorV1(
+            CaptureEventSelector(
                 capture_contract_identity=ArtifactIdentity(kind="CaptureContract", name="anchor"),
                 capture_contract_digest="sha256:" + "b" * 64,
             ),
@@ -444,11 +442,11 @@ def test_capture_trigger_uses_exact_retained_event_not_git_changes(tmp_path: Pat
 
     with pytest.raises(PlaybillExecutionError, match="has not occurred"):
         capture_event_time(instance, selector, ref, now=READ_TIME - timedelta(seconds=1))
-    from cruxible_client.contracts.procedures.windows import LineTriggerBindingV1
-    from cruxible_client.contracts.resolution_contracts import ResolutionContractReferenceV1
+    from cruxible_client.contracts.procedures.windows import LineTriggerBinding
+    from cruxible_client.contracts.resolution_contracts import ResolutionContractReference
     from cruxible_core.service.procedures.resolution_contracts import bind_investigation
 
-    reference = ResolutionContractReferenceV1(
+    reference = ResolutionContractReference(
         identity=contract.identity,
         artifact_digest=resolution_contract_digest(contract).tagged,
         coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
@@ -460,7 +458,7 @@ def test_capture_trigger_uses_exact_retained_event_not_git_changes(tmp_path: Pat
         reference,
         event=ref,
         now=now,
-        trigger_binding=LineTriggerBindingV1(
+        trigger_binding=LineTriggerBinding(
             kind="capture_landing",
             trigger=ArtifactIdentity(kind="Trigger", name="anchor-landed"),
             event=ref,
@@ -490,8 +488,8 @@ def test_window_line_runs_once_and_replays_its_original_investigation(
         render_procedure_mandate,
     )
     from cruxible_client.contracts.procedures.artifacts import (
-        AcceptedProcedureV1,
-        ProcedureArtifactV2,
+        AcceptedProcedure,
+        ProcedureArtifact,
         procedure_artifact_digest,
         procedure_path,
         render_procedure,
@@ -503,11 +501,11 @@ def test_window_line_runs_once_and_replays_its_original_investigation(
         render_line_spec,
     )
     from cruxible_client.contracts.procedures.models import ProcedureDefinitionV4
-    from cruxible_client.contracts.resolution_contracts import ResolutionContractReferenceV1
-    from cruxible_client.contracts.triggers import WindowCloseScheduleV1
+    from cruxible_client.contracts.resolution_contracts import ResolutionContractReference
+    from cruxible_client.contracts.triggers import WindowCloseSchedule
     from cruxible_core.service.procedures import procedure_runs
     from cruxible_core.service.procedures.procedure_runs import (
-        LineRunRequestV1,
+        LineRunRequest,
         service_get_playbill_procedure_run,
         service_run_playbill_line,
     )
@@ -524,14 +522,14 @@ def test_window_line_runs_once_and_replays_its_original_investigation(
     definition = ProcedureDefinitionV4.model_validate(
         {**base.definition.model_dump(mode="python"), "graph_format": 4}
     )
-    procedure = ProcedureArtifactV2.model_validate(
+    procedure = ProcedureArtifact.model_validate(
         {
             **base.model_dump(mode="python"),
             "definition": definition,
             "definition_digest": compute_procedure_definition_digest_v4(definition).tagged,
         }
     )
-    accepted = AcceptedProcedureV1(
+    accepted = AcceptedProcedure(
         path=procedure_path(procedure.identity.name),
         procedure=procedure,
         artifact_digest=procedure_artifact_digest(procedure).tagged,
@@ -541,7 +539,7 @@ def test_window_line_runs_once_and_replays_its_original_investigation(
     window_trigger = line_trigger(
         "window-test-close",
         line=line.identity.name,
-        schedule=WindowCloseScheduleV1(window=contract.window),
+        schedule=WindowCloseSchedule(window=contract.window),
     )
     mandate = _line_mandate(accepted)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
@@ -558,7 +556,7 @@ def test_window_line_runs_once_and_replays_its_original_investigation(
     _accept_tree(
         instance, owner, tree, timestamp="2026-08-28T15:01:00.000000Z", proposal_name="window"
     )
-    ref = ResolutionContractReferenceV1(
+    ref = ResolutionContractReference(
         identity=contract.identity,
         artifact_digest=resolution_contract_digest(contract).tagged,
         coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
@@ -569,7 +567,7 @@ def test_window_line_runs_once_and_replays_its_original_investigation(
         return service_run_playbill_line(
             instance,
             path_identity_digest=line_id,
-            request=LineRunRequestV1(
+            request=LineRunRequest(
                 line_identity_digest=line_id,
                 trigger=window_trigger.identity.name,
                 resolution_contract=reference,
@@ -629,7 +627,7 @@ args = json.load(sys.stdin)
 instance = PlaybillInstance.open(
     Path(args["root"]), trust_root=PlaybillTrustRoot.model_validate(args["trust_root"])
 )
-request = procedure_runs.LineRunRequestV1.model_validate(args["request"])
+request = procedure_runs.LineRunRequest.model_validate(args["request"])
 
 def unexpected_execution(*args, **kwargs):
     raise AssertionError("restarting a retained occurrence must not execute it again")
@@ -651,7 +649,7 @@ print(result.model_dump_json())
                 {
                     "root": str(instance.root),
                     "trust_root": instance.trust_root.model_dump(mode="json"),
-                    "request": LineRunRequestV1(
+                    "request": LineRunRequest(
                         line_identity_digest=line_id, resolution_contract=ref
                     ).model_dump(mode="json"),
                     "actor": _actor(instance).model_dump(mode="json"),

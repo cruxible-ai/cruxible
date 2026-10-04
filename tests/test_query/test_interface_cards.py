@@ -26,15 +26,15 @@ import pytest
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_types import (
-    ClaimAttestationConsequencePolicyV1,
-    ClaimAttestationConsequenceRuleV1,
+    ClaimAttestationConsequencePolicy,
+    ClaimAttestationConsequenceRule,
     claim_type_digest,
     claim_type_path,
 )
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
     ClaimArtifactV2,
-    ClaimBackingV2,
+    ClaimBacking,
     ClaimReferentContext,
     ClaimStatement,
     LiteralClaimObject,
@@ -131,7 +131,7 @@ def _addressed_claim(
             object=obj,
             role="normative",
         ),
-        backing=ClaimBackingV2(
+        backing=ClaimBacking(
             referent_context=ClaimReferentContext(
                 subject_content_digest=digest,
                 observed_at=NOW,
@@ -360,9 +360,9 @@ def test_v4_card_adds_a_compact_attestation_consequence_policy_summary() -> None
     governed = original.model_copy(
         update={
             "artifact_format": "playbill-claim-type-v4",
-            "attestation_consequence_policy": ClaimAttestationConsequencePolicyV1(
+            "attestation_consequence_policy": ClaimAttestationConsequencePolicy(
                 rules=(
-                    ClaimAttestationConsequenceRuleV1(
+                    ClaimAttestationConsequenceRule(
                         rule_id="two-independent-unsure",
                         stance="unsure",
                         minimum_independent_control_components=2,

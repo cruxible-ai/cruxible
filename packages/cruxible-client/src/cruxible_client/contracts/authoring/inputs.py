@@ -10,63 +10,63 @@ from typing import TYPE_CHECKING, Annotated, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_client.contracts.acquisition_policies import SourceAcquisitionPolicyV1
-from cruxible_client.contracts.approval_policy import ApprovalPolicyV1
+from cruxible_client.contracts.acquisition_policies import SourceAcquisitionPolicy
+from cruxible_client.contracts.approval_policy import ApprovalPolicy
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
-    ApprovalPolicyAuthoringPayloadV1,
-    AuthoringArtifactReferenceV1,
-    AuthoringCandidateReferenceV1,
-    AuthoringChangeSetMemberV1,
-    AuthoringClaimStatementV1,
-    AuthoringExactContentObjectV1,
-    AuthoringExistingClaimDispositionV1,
-    AuthoringPayloadV1,
-    ChangeSetAuthoringPayloadV1,
+    ApprovalPolicyAuthoringPayload,
+    AuthoringArtifactReference,
+    AuthoringCandidateReference,
+    AuthoringChangeSetMember,
+    AuthoringClaimStatement,
+    AuthoringExactContentObject,
+    AuthoringExistingClaimDisposition,
+    AuthoringPayload,
+    ChangeSetAuthoringPayload,
+    ClaimAuthoringPayload,
     ClaimAuthoringPayloadV1,
-    ClaimAuthoringPayloadV3,
-    ClaimDependencyDraftsV1,
-    ClaimRetirementMemberV1,
-    ClaimTypeAuthoringPayloadV1,
-    ClaimTypeSuccessionDependentV1,
-    ClaimTypeSuccessionMemberV1,
-    ExistingCaptureCitationSourceV1,
-    LineAuthoringPayloadV1,
-    MandateConditionAuthoringV1,
-    MandateScopeAuthoringV1,
+    ClaimDependencyDrafts,
+    ClaimRetirementMember,
+    ClaimTypeAuthoringPayload,
+    ClaimTypeSuccessionDependent,
+    ClaimTypeSuccessionMember,
+    ExistingCaptureCitationSource,
+    LineAuthoringPayload,
+    MandateConditionAuthoring,
+    MandateScopeAuthoring,
+    ProcedureAuthoringPayload,
     ProcedureAuthoringPayloadV1,
-    ProcedureAuthoringPayloadV2,
-    ProcedureMandateAuthoringPayloadV1,
-    ProcedureRuntimePolicyAuthoringPayloadV1,
-    QueryDefinitionAuthoringPayloadV1,
-    SelfSourceBodyV1,
-    SourceAcquisitionPolicyAuthoringPayloadV1,
-    SubjectAuthoringPayloadV1,
-    TriggerAuthoringPayloadV1,
-    WorkingSelectionObservationV1,
+    ProcedureMandateAuthoringPayload,
+    ProcedureRuntimePolicyAuthoringPayload,
+    QueryDefinitionAuthoringPayload,
+    SelfSourceBody,
+    SourceAcquisitionPolicyAuthoringPayload,
+    SubjectAuthoringPayload,
+    TriggerAuthoringPayload,
+    WorkingSelectionObservation,
     authoring_member_identity,
 )
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.claims import (
-    ClaimRetireDependentV1,
+    ClaimRetireDependent,
     ClaimRetirementReason,
     LiteralClaimObject,
     SubjectClaimObject,
 )
 from cruxible_client.contracts.errors import PlaybillFormatError
-from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicyV1
-from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContractV1
+from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
+from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContract
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
-from cruxible_client.contracts.procedures.models import ProcedureHardCapsV3
+from cruxible_client.contracts.procedures.models import ProcedureHardCaps
 from cruxible_client.contracts.proposal_models import (
     CHANGE_SET_RATIONALE_MAX_LENGTH,
     validate_change_set_rationale,
 )
-from cruxible_client.contracts.query.definitions import QueryDefinitionSpecV1, QueryDefinitionV1
+from cruxible_client.contracts.query.definitions import QueryDefinition, QueryDefinitionSpec
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, subject_path
-from cruxible_client.contracts.triggers import InternalActionName, TriggerScheduleV1
+from cruxible_client.contracts.triggers import InternalActionName, TriggerSchedule
 
 if TYPE_CHECKING:
     from cruxible_client.contracts.records import RecordConstructor
@@ -227,17 +227,17 @@ class SubjectInput(_StrictInputModel):
 
 class QueryDefinitionInput(_StrictInputModel):
     kind: Literal["query_definition"]
-    query_definition: QueryDefinitionSpecV1 | QueryDefinitionV1
+    query_definition: QueryDefinitionSpec | QueryDefinition
 
 
 class ApprovalPolicyInput(_StrictInputModel):
     kind: Literal["approval_policy"]
-    approval_policy: ApprovalPolicyV1
+    approval_policy: ApprovalPolicy
 
 
 class ProcedureRuntimePolicyInput(_StrictInputModel):
     kind: Literal["procedure_runtime_policy"]
-    procedure_runtime_policy: ProcedureRuntimePolicyV1
+    procedure_runtime_policy: ProcedureRuntimePolicy
 
 
 class ClaimTypeInput(_StrictInputModel):
@@ -250,7 +250,7 @@ class ClaimTypeSuccessionInput(_StrictInputModel):
 
     kind: Literal["claim_type_succession"]
     successor: ClaimType
-    dependents: tuple[ClaimTypeSuccessionDependentV1, ...] = ()
+    dependents: tuple[ClaimTypeSuccessionDependent, ...] = ()
     carry_all: bool = Field(
         default=False,
         description=(
@@ -265,10 +265,10 @@ class ClaimRetirementInput(_StrictInputModel):
     retires: str = Field(description="Claim ID this member retires, parallel to revises.")
     reason: ClaimRetirementReason
     effective_until: datetime | None = None
-    dependents: tuple[ClaimRetireDependentV1, ...] = ()
+    dependents: tuple[ClaimRetireDependent, ...] = ()
 
 
-class ProcedureMandateInputV1(_StrictInputModel):
+class ProcedureMandateInput(_StrictInputModel):
     """A propose grant, or a settle grant with its Claim scope and condition query.
 
     ``grants`` is the verb the mandate delegates. A settle grant names the
@@ -281,13 +281,13 @@ class ProcedureMandateInputV1(_StrictInputModel):
     name: str
     procedure_name: str
     grants: Literal["propose", "settle"]
-    resource_ceiling: ProcedureHardCapsV3
+    resource_ceiling: ProcedureHardCaps
     namespace: tuple[str, ...]
     valid_from: datetime
     expires_at: datetime
-    scope: tuple[MandateScopeAuthoringV1, ...] = ()
+    scope: tuple[MandateScopeAuthoring, ...] = ()
     subject_scope: tuple[SemanticAddress, ...] | None = None
-    condition: MandateConditionAuthoringV1 | None = None
+    condition: MandateConditionAuthoring | None = None
     suspended: bool = False
     retire: bool = False
 
@@ -296,7 +296,7 @@ class AcquisitionPolicyInput(_StrictInputModel):
     """One SourceAcquisitionPolicy: how a Line's Source inputs may be acquired."""
 
     kind: Literal["acquisition_policy"]
-    acquisition_policy: SourceAcquisitionPolicyV1
+    acquisition_policy: SourceAcquisitionPolicy
 
 
 class LineInput(_StrictInputModel):
@@ -345,7 +345,7 @@ class TriggerInput(_StrictInputModel):
 
     kind: Literal["trigger"]
     name: str
-    schedule: TriggerScheduleV1
+    schedule: TriggerSchedule
     line_name: str | None = Field(
         default=None, description="The Line this Trigger runs; omit when naming an action."
     )
@@ -355,7 +355,7 @@ class TriggerInput(_StrictInputModel):
     retire: bool = False
 
 
-AuthoringChangeSetMemberInputV1: TypeAlias = Annotated[
+AuthoringChangeSetMemberInput: TypeAlias = Annotated[
     ClaimInput
     | ClaimTypeInput
     | ClaimTypeSuccessionInput
@@ -364,7 +364,7 @@ AuthoringChangeSetMemberInputV1: TypeAlias = Annotated[
     | QueryDefinitionInput
     | ApprovalPolicyInput
     | ProcedureRuntimePolicyInput
-    | ProcedureMandateInputV1
+    | ProcedureMandateInput
     | AcquisitionPolicyInput
     | LineInput
     | TriggerInput
@@ -375,7 +375,7 @@ AuthoringChangeSetMemberInputV1: TypeAlias = Annotated[
 
 class ChangeSetInput(_StrictInputModel):
     kind: Literal["change_set"]
-    members: tuple[AuthoringChangeSetMemberInputV1, ...] = Field(min_length=1)
+    members: tuple[AuthoringChangeSetMemberInput, ...] = Field(min_length=1)
     # The same sentence `pb.changes(rationale=...)` carries, on the surface a
     # CLI file and an MCP dict use. Leaving it to the SDK would have made "say
     # why you proposed this" an SDK-only capability, which is exactly the kind
@@ -388,14 +388,14 @@ class ChangeSetInput(_StrictInputModel):
         return validate_change_set_rationale(value)
 
 
-AuthoringInputV1: TypeAlias = Annotated[
+AuthoringInput: TypeAlias = Annotated[
     ClaimInput
     | ProcedureInput
     | SubjectInput
     | QueryDefinitionInput
     | ApprovalPolicyInput
     | ProcedureRuntimePolicyInput
-    | ProcedureMandateInputV1
+    | ProcedureMandateInput
     | AcquisitionPolicyInput
     | LineInput
     | TriggerInput
@@ -436,7 +436,7 @@ def _subject_address(shorthand: str, *, field_path: str) -> SemanticAddress:
 
 def _claim_object(
     value: AuthoringObjectInput,
-) -> LiteralClaimObject | SubjectClaimObject | AuthoringExactContentObjectV1:
+) -> LiteralClaimObject | SubjectClaimObject | AuthoringExactContentObject:
     if isinstance(value, LiteralObjectInput):
         return LiteralClaimObject(value=value.value)
     if isinstance(value, SubjectObjectInput):
@@ -444,18 +444,18 @@ def _claim_object(
             address=_subject_address(value.subject, field_path="input.object.subject")
         )
     if value.content_base64 is not None:
-        return AuthoringExactContentObjectV1(content_base64=value.content_base64)
+        return AuthoringExactContentObject(content_base64=value.content_base64)
     assert value.text is not None
-    return AuthoringExactContentObjectV1(
+    return AuthoringExactContentObject(
         content_base64=base64.b64encode(value.text.encode("utf-8")).decode("ascii")
     )
 
 
 def _dispositions(
     values: tuple[ClaimDispositionInput, ...],
-) -> tuple[AuthoringExistingClaimDispositionV1, ...]:
+) -> tuple[AuthoringExistingClaimDisposition, ...]:
     return tuple(
-        AuthoringExistingClaimDispositionV1(
+        AuthoringExistingClaimDisposition(
             claim_id=item.claim_id,
             disposition=item.disposition,
         )
@@ -479,8 +479,8 @@ def _claim_payload(value: ClaimInput) -> ClaimAuthoringPayloadV1:
                 "An existing Capture requires evidence or copy intent.",
                 "Set citation_role to evidence or copy.",
             )
-        return ClaimAuthoringPayloadV3(
-            statement=AuthoringClaimStatementV1(
+        return ClaimAuthoringPayload(
+            statement=AuthoringClaimStatement(
                 subject=_subject_address(value.subject, field_path="input.subject"),
                 predicate=value.predicate,
                 qualifier=value.qualifier,
@@ -490,13 +490,13 @@ def _claim_payload(value: ClaimInput) -> ClaimAuthoringPayloadV1:
                 effective_until=value.effective_until,
             ),
             rationale=value.rationale,
-            source=ExistingCaptureCitationSourceV1(
+            source=ExistingCaptureCitationSource(
                 capture_digest=value.source.capture_digest,
             ),
             citation_role=value.citation_role,
             revises=value.revises,
             existing_claim_dispositions=_dispositions(value.dispositions),
-            dependency_drafts=ClaimDependencyDraftsV1(),
+            dependency_drafts=ClaimDependencyDrafts(),
         )
     if value.citation_role is not None:
         raise AuthoringInputError(
@@ -506,7 +506,7 @@ def _claim_payload(value: ClaimInput) -> ClaimAuthoringPayloadV1:
             "Remove citation_role.",
         )
     return ClaimAuthoringPayloadV1(
-        statement=AuthoringClaimStatementV1(
+        statement=AuthoringClaimStatement(
             subject=_subject_address(value.subject, field_path="input.subject"),
             predicate=value.predicate,
             qualifier=value.qualifier,
@@ -516,7 +516,7 @@ def _claim_payload(value: ClaimInput) -> ClaimAuthoringPayloadV1:
             effective_until=value.effective_until,
         ),
         rationale=value.rationale,
-        source=SelfSourceBodyV1(
+        source=SelfSourceBody(
             content_base64=base64.b64encode(value.source.body.encode("utf-8")).decode("ascii")
         ),
         revises=value.revises,
@@ -527,7 +527,7 @@ def _claim_payload(value: ClaimInput) -> ClaimAuthoringPayloadV1:
 def lower_bound_claim_input(
     value: ClaimInput,
     *,
-    observation: WorkingSelectionObservationV1,
+    observation: WorkingSelectionObservation,
 ) -> ClaimAuthoringPayloadV1:
     """Lower the only client-observed input form after bind constructs its observation."""
 
@@ -553,7 +553,7 @@ def lower_bound_claim_input(
             "Set citation_role to evidence or copy.",
         )
     return ClaimAuthoringPayloadV1(
-        statement=AuthoringClaimStatementV1(
+        statement=AuthoringClaimStatement(
             subject=_subject_address(value.subject, field_path="input.subject"),
             predicate=value.predicate,
             qualifier=value.qualifier,
@@ -593,13 +593,13 @@ def _artifact_identity(value: str, *, field_path: str) -> ArtifactIdentity:
 def _procedure_references(
     value: object,
     *,
-    contracts: dict[str, ProcedureOwnedContractV1],
+    contracts: dict[str, ProcedureOwnedContract],
     field_path: str = "input.definition",
 ) -> object:
     if isinstance(value, dict):
         if value.get("kind") == "accepted" and set(value) == {"kind", "role", "target"}:
             accepted_reference = AcceptedReferenceInput.model_validate(value)
-            return AuthoringArtifactReferenceV1(
+            return AuthoringArtifactReference(
                 role=accepted_reference.role,
                 target=_artifact_identity(
                     accepted_reference.target, field_path=f"{field_path}.target"
@@ -615,7 +615,7 @@ def _procedure_references(
                     "Candidate references require text role and target fields.",
                     "Use {kind: candidate, role: <role>, target: ArtifactKind:name}.",
                 )
-            return AuthoringCandidateReferenceV1(
+            return AuthoringCandidateReference(
                 role=role,
                 target=_artifact_identity(target, field_path=f"{field_path}.target"),
             ).model_dump(mode="json")
@@ -662,11 +662,11 @@ def _procedure_references(
 
 def _procedure_payload(
     value: ProcedureInput,
-) -> ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2:
+) -> ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayload:
     contracts = tuple(
         sorted(
             (
-                ProcedureOwnedContractV1(
+                ProcedureOwnedContract(
                     identity=ArtifactIdentity(kind="Contract", name=contract.name),
                     schema=ContractSchema(
                         description=contract.description,
@@ -692,7 +692,7 @@ def _procedure_payload(
         _procedure_references(value.definition, contracts=by_name),
     )
     if contracts or value.acquisition_policy is not None:
-        return ProcedureAuthoringPayloadV2(
+        return ProcedureAuthoringPayload(
             definition=definition,
             activation_policy=value.activation_policy,
             owned_contracts=contracts,
@@ -706,14 +706,14 @@ def _procedure_payload(
     )
 
 
-def _mandate_payload(value: ProcedureMandateInputV1) -> ProcedureMandateAuthoringPayloadV1:
-    return ProcedureMandateAuthoringPayloadV1.model_validate(
+def _mandate_payload(value: ProcedureMandateInput) -> ProcedureMandateAuthoringPayload:
+    return ProcedureMandateAuthoringPayload.model_validate(
         value.model_dump(mode="python", exclude={"tag", "kind"})
     )
 
 
-def _line_payload(value: LineInput) -> LineAuthoringPayloadV1:
-    return LineAuthoringPayloadV1(
+def _line_payload(value: LineInput) -> LineAuthoringPayload:
+    return LineAuthoringPayload(
         name=value.name,
         procedure_name=value.procedure_name,
         acquisition_policy_name=value.acquisition_policy_name,
@@ -726,25 +726,23 @@ def _line_payload(value: LineInput) -> LineAuthoringPayloadV1:
     )
 
 
-def _trigger_payload(value: TriggerInput) -> TriggerAuthoringPayloadV1:
-    return TriggerAuthoringPayloadV1.model_validate(
-        value.model_dump(mode="python", exclude={"kind"})
-    )
+def _trigger_payload(value: TriggerInput) -> TriggerAuthoringPayload:
+    return TriggerAuthoringPayload.model_validate(value.model_dump(mode="python", exclude={"kind"}))
 
 
-def _change_set_member(member: AuthoringChangeSetMemberInputV1) -> AuthoringChangeSetMemberV1:
+def _change_set_member(member: AuthoringChangeSetMemberInput) -> AuthoringChangeSetMember:
     if isinstance(member, ClaimInput):
         return _claim_payload(member)
     if isinstance(member, ClaimTypeInput):
-        return ClaimTypeAuthoringPayloadV1(claim_type=member.claim_type)
+        return ClaimTypeAuthoringPayload(claim_type=member.claim_type)
     if isinstance(member, ClaimTypeSuccessionInput):
-        return ClaimTypeSuccessionMemberV1(
+        return ClaimTypeSuccessionMember(
             successor=member.successor,
             dependents=member.dependents,
             carry_all=member.carry_all,
         )
     if isinstance(member, ClaimRetirementInput):
-        return ClaimRetirementMemberV1(
+        return ClaimRetirementMember(
             retires=member.retires,
             reason=member.reason,
             effective_until=member.effective_until,
@@ -753,19 +751,17 @@ def _change_set_member(member: AuthoringChangeSetMemberInputV1) -> AuthoringChan
     if isinstance(member, ProcedureInput):
         return _procedure_payload(member)
     if isinstance(member, SubjectInput):
-        return SubjectAuthoringPayloadV1(subject=member.subject)
+        return SubjectAuthoringPayload(subject=member.subject)
     if isinstance(member, QueryDefinitionInput):
-        return QueryDefinitionAuthoringPayloadV1(query_definition=member.query_definition)
+        return QueryDefinitionAuthoringPayload(query_definition=member.query_definition)
     if isinstance(member, ApprovalPolicyInput):
-        return ApprovalPolicyAuthoringPayloadV1(approval_policy=member.approval_policy)
+        return ApprovalPolicyAuthoringPayload(approval_policy=member.approval_policy)
     if isinstance(member, ProcedureRuntimePolicyInput):
-        return ProcedureRuntimePolicyAuthoringPayloadV1(
+        return ProcedureRuntimePolicyAuthoringPayload(
             procedure_runtime_policy=member.procedure_runtime_policy
         )
     if isinstance(member, AcquisitionPolicyInput):
-        return SourceAcquisitionPolicyAuthoringPayloadV1(
-            acquisition_policy=member.acquisition_policy
-        )
+        return SourceAcquisitionPolicyAuthoringPayload(acquisition_policy=member.acquisition_policy)
     if isinstance(member, LineInput):
         return _line_payload(member)
     if isinstance(member, TriggerInput):
@@ -773,28 +769,26 @@ def _change_set_member(member: AuthoringChangeSetMemberInputV1) -> AuthoringChan
     return _mandate_payload(member)
 
 
-def lower_authoring_input(value: AuthoringInputV1) -> AuthoringPayloadV1:
+def lower_authoring_input(value: AuthoringInput) -> AuthoringPayload:
     """Lower typed input; accepted-state references are checked during preflight."""
     if isinstance(value, ClaimInput):
         return _claim_payload(value)
     if isinstance(value, ProcedureInput):
         return _procedure_payload(value)
     if isinstance(value, SubjectInput):
-        return SubjectAuthoringPayloadV1(subject=value.subject)
+        return SubjectAuthoringPayload(subject=value.subject)
     if isinstance(value, QueryDefinitionInput):
-        return QueryDefinitionAuthoringPayloadV1(query_definition=value.query_definition)
+        return QueryDefinitionAuthoringPayload(query_definition=value.query_definition)
     if isinstance(value, ApprovalPolicyInput):
-        return ApprovalPolicyAuthoringPayloadV1(approval_policy=value.approval_policy)
+        return ApprovalPolicyAuthoringPayload(approval_policy=value.approval_policy)
     if isinstance(value, ProcedureRuntimePolicyInput):
-        return ProcedureRuntimePolicyAuthoringPayloadV1(
+        return ProcedureRuntimePolicyAuthoringPayload(
             procedure_runtime_policy=value.procedure_runtime_policy
         )
-    if isinstance(value, ProcedureMandateInputV1):
+    if isinstance(value, ProcedureMandateInput):
         return _mandate_payload(value)
     if isinstance(value, AcquisitionPolicyInput):
-        return SourceAcquisitionPolicyAuthoringPayloadV1(
-            acquisition_policy=value.acquisition_policy
-        )
+        return SourceAcquisitionPolicyAuthoringPayload(acquisition_policy=value.acquisition_policy)
     if isinstance(value, LineInput):
         return _line_payload(value)
     if isinstance(value, TriggerInput):
@@ -808,7 +802,7 @@ def lower_authoring_input(value: AuthoringInputV1) -> AuthoringPayloadV1:
             "Change-set member semantic identities must be unique.",
             "Remove or rename the duplicate member.",
         )
-    return ChangeSetAuthoringPayloadV1(
+    return ChangeSetAuthoringPayload(
         members=tuple(
             sorted(
                 members,
@@ -824,9 +818,9 @@ __all__ = [
     "AcquisitionPolicyInput",
     "ApprovalPolicyInput",
     "ProcedureRuntimePolicyInput",
-    "AuthoringChangeSetMemberInputV1",
+    "AuthoringChangeSetMemberInput",
     "AuthoringInputError",
-    "AuthoringInputV1",
+    "AuthoringInput",
     "AuthoringObjectInput",
     "AuthoringSourceInput",
     "CarriedContractInput",
@@ -843,7 +837,7 @@ __all__ = [
     "TriggerInput",
     "LiteralObjectInput",
     "ProcedureInput",
-    "ProcedureMandateInputV1",
+    "ProcedureMandateInput",
     "QueryDefinitionInput",
     "SelfSourceInput",
     "SlotReferenceInput",

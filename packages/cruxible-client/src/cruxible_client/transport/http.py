@@ -11,49 +11,49 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from cruxible_client import contracts
 from cruxible_client.contracts.authoring.models import (
+    AuthoringIntentCompileRequest,
     AuthoringIntentCompileRequestV1,
     AuthoringIntentCompileRequestV2,
-    AuthoringIntentCompileRequestV3,
+    AuthoringIntentCreateRequest,
     AuthoringIntentCreateRequestV1,
     AuthoringIntentCreateRequestV2,
-    AuthoringIntentCreateRequestV3,
 )
-from cruxible_client.contracts.capture_reads import CaptureReadRequestV1, CaptureReadV1
+from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
 from cruxible_client.contracts.claim_attestations import (
-    ClaimAttestationAppendRequestV1,
-    ClaimAttestationAppendResultV1,
+    ClaimAttestationAppendRequest,
+    ClaimAttestationAppendResult,
 )
 from cruxible_client.contracts.claim_reads import (
-    ClaimBackingsRequestV1,
-    ClaimBackingsResultV1,
-    ClaimReadBatchRequestV1,
-    ClaimReadBatchResultV1,
+    ClaimBackingsRequest,
+    ClaimBackingsResult,
+    ClaimReadBatchRequest,
+    ClaimReadBatchResult,
 )
 from cruxible_client.contracts.claim_type_upgrade import (
-    ClaimTypeUpgradeRequestV1,
-    ClaimTypeUpgradeResultV1,
+    ClaimTypeUpgradeRequest,
+    ClaimTypeUpgradeResult,
 )
 from cruxible_client.contracts.errors import (
     PlaybillSinceRequestInvalid,
 )
 from cruxible_client.contracts.evidence_rule_upgrade import (
-    EvidenceRuleUpgradeRequestV1,
-    EvidenceRuleUpgradeResultV1,
+    EvidenceRuleUpgradeRequest,
+    EvidenceRuleUpgradeResult,
 )
-from cruxible_client.contracts.floor import PlaybillFloorDeltaV1
+from cruxible_client.contracts.floor import PlaybillFloorDelta
 from cruxible_client.contracts.get_reads import (
-    PlaybillGetBatchRequestV1,
-    PlaybillGetBatchResultV1,
-    PlaybillGetRequestV1,
-    PlaybillGetResultV1,
+    PlaybillGetBatchRequest,
+    PlaybillGetBatchResult,
+    PlaybillGetRequest,
+    PlaybillGetResult,
 )
 from cruxible_client.contracts.kits import (
-    PlaybillKitAddRequestV1,
-    PlaybillKitBuildRequestV1,
-    PlaybillKitBuildResultV1,
-    PlaybillKitChangeResultV1,
-    PlaybillKitRemoveRequestV1,
-    PlaybillKitStatusV1,
+    PlaybillKitAddRequest,
+    PlaybillKitBuildRequest,
+    PlaybillKitBuildResult,
+    PlaybillKitChangeResult,
+    PlaybillKitRemoveRequest,
+    PlaybillKitStatus,
 )
 from cruxible_client.contracts.principals import (
     PRINCIPAL_ID_ENV,
@@ -61,21 +61,21 @@ from cruxible_client.contracts.principals import (
     is_canonical_principal_id,
 )
 from cruxible_client.contracts.procedures.source_requests import (
-    ProcedureSourcePreviewRequestV1,
-    ProcedureSourcePreviewV1,
+    ProcedureSourcePreview,
+    ProcedureSourcePreviewRequest,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.provider_installation import (
-    PlaybillProviderCatalogV1,
-    PlaybillProviderInstallRequestV1,
-    PlaybillProviderInstallResultV1,
+    PlaybillProviderCatalog,
+    PlaybillProviderInstallRequest,
+    PlaybillProviderInstallResult,
 )
-from cruxible_client.contracts.runtime_credentials import RuntimeCredentialPrincipalProofV1
+from cruxible_client.contracts.runtime_credentials import RuntimeCredentialPrincipalProof
 from cruxible_client.contracts.types import CompilerCoordinate
 from cruxible_client.contracts.write import (
-    PlaybillRetireRequestV1,
-    PlaybillSetRequestV1,
-    PlaybillWriteRequestV1,
+    PlaybillRetireRequest,
+    PlaybillSetRequest,
+    PlaybillWriteRequest,
     WriteOutcome,
 )
 from cruxible_client.errors import (
@@ -278,25 +278,25 @@ class CruxibleClient:
         self,
         instance_id: str,
         *,
-        request: contracts.PlaybillProjectionCheckRequestV1,
-    ) -> contracts.PlaybillProjectionCheckResultV1:
+        request: contracts.PlaybillProjectionCheckRequest,
+    ) -> contracts.PlaybillProjectionCheckResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/projections/check",
             json=request.model_dump(mode="json"),
         )
-        return self._parse_model(response, contracts.PlaybillProjectionCheckResultV1)
+        return self._parse_model(response, contracts.PlaybillProjectionCheckResult)
 
     def read_playbill_block_sync_backing(
         self,
         instance_id: str,
         *,
-        request: contracts.PlaybillBlockSyncReadRequestV1,
-    ) -> contracts.PlaybillBlockSyncReadResultV1:
+        request: contracts.PlaybillBlockSyncReadRequest,
+    ) -> contracts.PlaybillBlockSyncReadResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/projections/sync-backing",
             json=request.model_dump(mode="json"),
         )
-        return self._parse_model(response, contracts.PlaybillBlockSyncReadResultV1)
+        return self._parse_model(response, contracts.PlaybillBlockSyncReadResult)
 
     def server_info(self) -> contracts.ServerInfoResult:
         response = self._client.get("/api/v1/server/info")
@@ -329,12 +329,12 @@ class CruxibleClient:
 
     def declare_playbill_block(
         self, instance_id: str, stamp: Mapping[str, Any]
-    ) -> contracts.PlaybillBlockDeclareResultV1:
+    ) -> contracts.PlaybillBlockDeclareResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/blocks/declare",
             json={"stamp": dict(stamp)},
         )
-        return self._parse_model(response, contracts.PlaybillBlockDeclareResultV1)
+        return self._parse_model(response, contracts.PlaybillBlockDeclareResult)
 
     def depublish_playbill_block(
         self,
@@ -344,21 +344,21 @@ class CruxibleClient:
         *,
         dry_run: bool | None = None,
         at: str | None = None,
-    ) -> contracts.PlaybillBlockDepublishResultV1:
+    ) -> contracts.PlaybillBlockDepublishResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/blocks/depublish",
             json={"source_id": source_id, "block_id": block_id, **_change_control(dry_run, at)},
         )
-        return self._parse_model(response, contracts.PlaybillBlockDepublishResultV1)
+        return self._parse_model(response, contracts.PlaybillBlockDepublishResult)
 
     def playbill_host_workspace_detach(
         self, instance_id: str, *, dry_run: bool | None = None, at: str | None = None
-    ) -> contracts.PlaybillWorkspaceDetachResultV1:
+    ) -> contracts.PlaybillWorkspaceDetachResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/workspace-detach",
             json=_change_control(dry_run, at),
         )
-        return self._parse_model(response, contracts.PlaybillWorkspaceDetachResultV1)
+        return self._parse_model(response, contracts.PlaybillWorkspaceDetachResult)
 
     def playbill_host_workspace_attach(
         self,
@@ -367,31 +367,31 @@ class CruxibleClient:
         workspace_root: str,
         dry_run: bool | None = None,
         at: str | None = None,
-    ) -> contracts.PlaybillHostWorkspaceAttachResultV1:
+    ) -> contracts.PlaybillHostWorkspaceAttachResult:
         """Attach the host to a Git worktree, initialized or not (local socket only)."""
 
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/workspace-attach",
             json={"workspace_root": workspace_root, **_change_control(dry_run, at)},
         )
-        return self._parse_model(response, contracts.PlaybillHostWorkspaceAttachResultV1)
+        return self._parse_model(response, contracts.PlaybillHostWorkspaceAttachResult)
 
     def playbill_host_workspace_registration(
         self, instance_id: str
-    ) -> contracts.PlaybillHostWorkspaceRegistrationV1:
+    ) -> contracts.PlaybillHostWorkspaceRegistration:
         response = self._client.get(f"/api/v1/{instance_id}/playbill/workspace-registration")
-        return self._parse_model(response, contracts.PlaybillHostWorkspaceRegistrationV1)
+        return self._parse_model(response, contracts.PlaybillHostWorkspaceRegistration)
 
     def set_playbill_floor_delivery(
         self,
         instance_id: str,
         *,
         enabled: bool,
-    ) -> contracts.PlaybillHostWorkspaceRegistrationV1:
+    ) -> contracts.PlaybillHostWorkspaceRegistration:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/workspace/floor-delivery", json={"enabled": enabled}
         )
-        return self._parse_model(response, contracts.PlaybillHostWorkspaceRegistrationV1)
+        return self._parse_model(response, contracts.PlaybillHostWorkspaceRegistration)
 
     def deliver_playbill_floor_now(
         self,
@@ -399,17 +399,17 @@ class CruxibleClient:
         *,
         include: tuple[contracts.PlaybillFloorExportPart, ...] = (),
         at: contracts.PlaybillAcceptedCoordinate | None = None,
-    ) -> contracts.PlaybillFloorDeliveryResultV1:
-        request = contracts.PlaybillFloorDeliverNowRequestV1(include=include, at=at)
+    ) -> contracts.PlaybillFloorDeliveryResult:
+        request = contracts.PlaybillFloorDeliverNowRequest(include=include, at=at)
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/floor/deliver-now",
             json=request.model_dump(mode="json"),
         )
-        return self._parse_model(response, contracts.PlaybillFloorDeliveryResultV1)
+        return self._parse_model(response, contracts.PlaybillFloorDeliveryResult)
 
-    def show_playbill_host(self, instance_id: str) -> contracts.PlaybillHostInspectionV1:
+    def show_playbill_host(self, instance_id: str) -> contracts.PlaybillHostInspection:
         response = self._client.get(f"/api/v1/{instance_id}/playbill/host")
-        return self._parse_model(response, contracts.PlaybillHostInspectionV1)
+        return self._parse_model(response, contracts.PlaybillHostInspection)
 
     def claim_runtime_bootstrap(
         self,
@@ -432,7 +432,7 @@ class CruxibleClient:
         principal_id: str,
         permission_mode: contracts.RuntimeCredentialPermissionMode,
         label: str | None = None,
-        principal_proof: RuntimeCredentialPrincipalProofV1 | None = None,
+        principal_proof: RuntimeCredentialPrincipalProof | None = None,
         dry_run: bool | None = None,
         at: str | None = None,
     ) -> contracts.RuntimeCredentialResult:
@@ -482,7 +482,7 @@ class CruxibleClient:
         instance_id: str,
         credential_id: str,
         *,
-        principal_proof: RuntimeCredentialPrincipalProofV1 | None = None,
+        principal_proof: RuntimeCredentialPrincipalProof | None = None,
         dry_run: bool | None = None,
         at: str | None = None,
     ) -> contracts.RuntimeCredentialResult:
@@ -558,7 +558,7 @@ class CruxibleClient:
         reason: str,
         dry_run: bool | None = None,
         at: str | None = None,
-    ) -> contracts.PlaybillInstanceDecommissionResultV1:
+    ) -> contracts.PlaybillInstanceDecommissionResult:
         """Decommission the instance. It cannot be undone: it previews unless
         ``dry_run`` is false, and then commits only with ``at``."""
 
@@ -566,11 +566,11 @@ class CruxibleClient:
             f"/api/v1/{instance_id}/playbill/instance/decommission",
             json={"reason": reason, **_change_control(dry_run, at)},
         )
-        return self._parse_model(response, contracts.PlaybillInstanceDecommissionResultV1)
+        return self._parse_model(response, contracts.PlaybillInstanceDecommissionResult)
 
     def set_playbill_ledger_mirror(
         self, instance_id: str, *, url: str, dry_run: bool | None = None, at: str | None = None
-    ) -> contracts.PlaybillLedgerMirrorV1:
+    ) -> contracts.PlaybillLedgerMirror:
         """Bind a mirror and publish to it. A disclosure cannot be called back: it
         previews unless ``dry_run`` is false, and then commits only with ``at``."""
 
@@ -578,7 +578,7 @@ class CruxibleClient:
             f"/api/v1/{instance_id}/playbill/ledger/mirror",
             json={"url": url, **_change_control(dry_run, at)},
         )
-        return self._parse_model(response, contracts.PlaybillLedgerMirrorV1)
+        return self._parse_model(response, contracts.PlaybillLedgerMirror)
 
     def publish_playbill_ledger(
         self,
@@ -587,80 +587,80 @@ class CruxibleClient:
         timeout: float = 60.0,
         dry_run: bool | None = None,
         at: str | None = None,
-    ) -> contracts.PlaybillLedgerMirrorV1:
+    ) -> contracts.PlaybillLedgerMirror:
         if isinstance(timeout, bool) or not 0 <= timeout <= 60:
             raise ValueError("timeout must be between 0 and 60 seconds")
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/ledger/publish",
             json={"timeout": timeout, **_change_control(dry_run, at)},
         )
-        return self._parse_model(response, contracts.PlaybillLedgerMirrorV1)
+        return self._parse_model(response, contracts.PlaybillLedgerMirror)
 
-    def get_playbill_ledger_mirror(self, instance_id: str) -> contracts.PlaybillLedgerMirrorV1:
+    def get_playbill_ledger_mirror(self, instance_id: str) -> contracts.PlaybillLedgerMirror:
         response = self._client.get(f"/api/v1/{instance_id}/playbill/ledger/mirror")
-        return self._parse_model(response, contracts.PlaybillLedgerMirrorV1)
+        return self._parse_model(response, contracts.PlaybillLedgerMirror)
 
-    def list_playbill_provider_packages(self, instance_id: str) -> PlaybillProviderCatalogV1:
+    def list_playbill_provider_packages(self, instance_id: str) -> PlaybillProviderCatalog:
         response = self._client.get(f"/api/v1/{instance_id}/playbill/providers")
-        return self._parse_model(response, PlaybillProviderCatalogV1)
+        return self._parse_model(response, PlaybillProviderCatalog)
 
     def install_playbill_provider(
         self,
         instance_id: str,
-        request: PlaybillProviderInstallRequestV1,
-    ) -> PlaybillProviderInstallResultV1:
+        request: PlaybillProviderInstallRequest,
+    ) -> PlaybillProviderInstallResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/providers/install",
             json=request.model_dump(mode="json"),
             timeout=600,
         )
-        return self._parse_model(response, PlaybillProviderInstallResultV1)
+        return self._parse_model(response, PlaybillProviderInstallResult)
 
     def build_playbill_kit(
-        self, instance_id: str, request: PlaybillKitBuildRequestV1
-    ) -> PlaybillKitBuildResultV1:
+        self, instance_id: str, request: PlaybillKitBuildRequest
+    ) -> PlaybillKitBuildResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/kits/build", json=request.model_dump(mode="json")
         )
-        return self._parse_model(response, PlaybillKitBuildResultV1)
+        return self._parse_model(response, PlaybillKitBuildResult)
 
-    def playbill_kit_status(self, instance_id: str) -> PlaybillKitStatusV1:
+    def playbill_kit_status(self, instance_id: str) -> PlaybillKitStatus:
         response = self._client.get(f"/api/v1/{instance_id}/playbill/kits")
-        return self._parse_model(response, PlaybillKitStatusV1)
+        return self._parse_model(response, PlaybillKitStatus)
 
     def add_playbill_kit(
-        self, instance_id: str, request: PlaybillKitAddRequestV1
-    ) -> PlaybillKitChangeResultV1:
+        self, instance_id: str, request: PlaybillKitAddRequest
+    ) -> PlaybillKitChangeResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/kits", json=request.model_dump(mode="json")
         )
-        return self._parse_model(response, PlaybillKitChangeResultV1)
+        return self._parse_model(response, PlaybillKitChangeResult)
 
     def upgrade_playbill_claim_types(
-        self, instance_id: str, request: ClaimTypeUpgradeRequestV1
-    ) -> ClaimTypeUpgradeResultV1:
+        self, instance_id: str, request: ClaimTypeUpgradeRequest
+    ) -> ClaimTypeUpgradeResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/claim-types/upgrade",
             json=request.model_dump(mode="json"),
         )
-        return self._parse_model(response, ClaimTypeUpgradeResultV1)
+        return self._parse_model(response, ClaimTypeUpgradeResult)
 
     def upgrade_playbill_evidence_rules(
-        self, instance_id: str, request: EvidenceRuleUpgradeRequestV1
-    ) -> EvidenceRuleUpgradeResultV1:
+        self, instance_id: str, request: EvidenceRuleUpgradeRequest
+    ) -> EvidenceRuleUpgradeResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/claim-types/evidence-rules/upgrade",
             json=request.model_dump(mode="json"),
         )
-        return self._parse_model(response, EvidenceRuleUpgradeResultV1)
+        return self._parse_model(response, EvidenceRuleUpgradeResult)
 
     def remove_playbill_kit(
-        self, instance_id: str, request: PlaybillKitRemoveRequestV1
-    ) -> PlaybillKitChangeResultV1:
+        self, instance_id: str, request: PlaybillKitRemoveRequest
+    ) -> PlaybillKitChangeResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/kits/remove", json=request.model_dump(mode="json")
         )
-        return self._parse_model(response, PlaybillKitChangeResultV1)
+        return self._parse_model(response, PlaybillKitChangeResult)
 
     def propose_playbill_document(
         self,
@@ -742,14 +742,14 @@ class CruxibleClient:
         instance_id: str,
         *,
         at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | str | None = None,
-    ) -> contracts.PlaybillHeadV1:
+    ) -> contracts.PlaybillHead:
         """The accepted head (or ``at``) as a coordinate and its generation; nothing else."""
 
         params: dict[str, Any] = (
             {"at": at} if isinstance(at, str) else dict(self._playbill_coordinate_params(at))
         )
         response = self._client.get(f"/api/v1/{instance_id}/playbill/head", params=params)
-        return self._parse_model(response, contracts.PlaybillHeadV1)
+        return self._parse_model(response, contracts.PlaybillHead)
 
     def orient_playbill(
         self,
@@ -763,7 +763,7 @@ class CruxibleClient:
         evaluation_time: str | None = None,
         surface: contracts.PlaybillOrientSurface = "sdk",
         caller_tools: Sequence[str] | None = None,
-    ) -> contracts.PlaybillOrientResultV1:
+    ) -> contracts.PlaybillOrientResult:
         """The orient map: kinds, artifacts, you, attention and next calls for ``surface``.
 
         ``at`` is an accepted coordinate or one accepted generation's Git OID, or a
@@ -787,7 +787,7 @@ class CruxibleClient:
             if value is not None:
                 params[name] = value
         response = self._client.get(f"/api/v1/{instance_id}/playbill/orient", params=params)
-        return self._parse_model(response, contracts.PlaybillOrientResultV1)
+        return self._parse_model(response, contracts.PlaybillOrientResult)
 
     def list_playbill_proposals(
         self,
@@ -813,12 +813,12 @@ class CruxibleClient:
         self,
         instance_id: str,
         selector: str,
-    ) -> contracts.PlaybillProposalSelectorResultV1:
+    ) -> contracts.PlaybillProposalSelectorResult:
         response = self._client.get(
             f"/api/v1/{instance_id}/playbill/proposal-selector",
             params={"selector": selector},
         )
-        return self._parse_model(response, contracts.PlaybillProposalSelectorResultV1)
+        return self._parse_model(response, contracts.PlaybillProposalSelectorResult)
 
     def readmit_playbill_proposal(
         self,
@@ -951,14 +951,12 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.PlaybillActivationReceipt)
 
-    def read_playbill_capture(
-        self, instance_id: str, request: CaptureReadRequestV1
-    ) -> CaptureReadV1:
+    def read_playbill_capture(self, instance_id: str, request: CaptureReadRequest) -> CaptureRead:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/captures/read",
             json=request.model_dump(mode="json"),
         )
-        return self._parse_model(response, CaptureReadV1)
+        return self._parse_model(response, CaptureRead)
 
     def playbill_source_context(self, instance_id: str) -> contracts.PlaybillSourceContext:
         response = self._client.get(f"/api/v1/{instance_id}/playbill/sources/context")
@@ -1073,14 +1071,14 @@ class CruxibleClient:
         self,
         instance_id: str,
         *,
-        request: ClaimAttestationAppendRequestV1,
-    ) -> ClaimAttestationAppendResultV1:
+        request: ClaimAttestationAppendRequest,
+    ) -> ClaimAttestationAppendResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/claim-attestations",
             json=request.model_dump(mode="json"),
         )
         self._check_error(response)
-        return ClaimAttestationAppendResultV1.model_validate(response.json())
+        return ClaimAttestationAppendResult.model_validate(response.json())
 
     def recover_playbill_claim_attestations(self, instance_id: str) -> None:
         response = self._client.post(
@@ -1089,38 +1087,38 @@ class CruxibleClient:
         self._check_error(response)
 
     def resolution_contracts(
-        self, instance_id: str, *, request: contracts.ResolutionContractsRequestV1
-    ) -> contracts.ResolutionContractsResultV1:
+        self, instance_id: str, *, request: contracts.ResolutionContractsRequest
+    ) -> contracts.ResolutionContractsResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/resolution-contracts/query",
             json=request.model_dump(mode="json"),
         )
-        return self._parse_model(response, contracts.ResolutionContractsResultV1)
+        return self._parse_model(response, contracts.ResolutionContractsResult)
 
     def predict_playbill(
         self,
         instance_id: str,
         *,
-        request: contracts.PlaybillPredictRequestV2,
-    ) -> contracts.PlaybillPredictResultV2:
+        request: contracts.PlaybillPredictRequest,
+    ) -> contracts.PlaybillPredictResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/predictions",
             json=request.model_dump(mode="json"),
         )
-        return self._parse_model(response, contracts.PlaybillPredictResultV2)
+        return self._parse_model(response, contracts.PlaybillPredictResult)
 
     def settle_playbill_prediction(
         self,
         instance_id: str,
         prediction_id: str,
         *,
-        request: contracts.PlaybillSettleRequestV2,
-    ) -> contracts.PlaybillSettleResultV2:
+        request: contracts.PlaybillSettleRequest,
+    ) -> contracts.PlaybillSettleResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/predictions/{prediction_id}/settlements",
             json=request.model_dump(mode="json"),
         )
-        return self._parse_model(response, contracts.PlaybillSettleResultV2)
+        return self._parse_model(response, contracts.PlaybillSettleResult)
 
     def create_playbill_authoring_intent(
         self,
@@ -1133,7 +1131,7 @@ class CruxibleClient:
         request: (
             AuthoringIntentCreateRequestV1
             | AuthoringIntentCreateRequestV2
-            | AuthoringIntentCreateRequestV3
+            | AuthoringIntentCreateRequest
         )
         if reference_expectations is None:
             if program_stamp is not None:
@@ -1147,7 +1145,7 @@ class CruxibleClient:
                 }
             )
         else:
-            request = AuthoringIntentCreateRequestV3.model_validate(
+            request = AuthoringIntentCreateRequest.model_validate(
                 {
                     "payload": dict(payload),
                     "reference_expectations": [dict(item) for item in reference_expectations],
@@ -1212,7 +1210,7 @@ class CruxibleClient:
         request: (
             AuthoringIntentCompileRequestV1
             | AuthoringIntentCompileRequestV2
-            | AuthoringIntentCompileRequestV3
+            | AuthoringIntentCompileRequest
         )
         if reference_expectations is None:
             if program_stamp is not None:
@@ -1229,7 +1227,7 @@ class CruxibleClient:
                 }
             )
         else:
-            request = AuthoringIntentCompileRequestV3.model_validate(
+            request = AuthoringIntentCompileRequest.model_validate(
                 {
                     "payload": dict(payload),
                     "reference_expectations": [dict(item) for item in reference_expectations],
@@ -1253,7 +1251,7 @@ class CruxibleClient:
         intent_id: str | None = None,
     ) -> contracts.PlaybillAuthoringSubmitResult:
         """Compile and submit in one request; the daemon preflights once, on submit."""
-        request = AuthoringIntentCompileRequestV3.model_validate(
+        request = AuthoringIntentCompileRequest.model_validate(
             {
                 "payload": dict(payload),
                 "reference_expectations": [dict(item) for item in reference_expectations],
@@ -1347,41 +1345,41 @@ class CruxibleClient:
         self,
         instance_id: str,
         *,
-        request: ClaimReadBatchRequestV1,
-    ) -> ClaimReadBatchResultV1:
+        request: ClaimReadBatchRequest,
+    ) -> ClaimReadBatchResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/claims/read-batch",
             json=request.model_dump(mode="json"),
         )
-        return self._parse_model(response, ClaimReadBatchResultV1)
+        return self._parse_model(response, ClaimReadBatchResult)
 
     def playbill_get(
         self,
         instance_id: str,
         *,
-        request: PlaybillGetRequestV1,
-    ) -> PlaybillGetResultV1:
+        request: PlaybillGetRequest,
+    ) -> PlaybillGetResult:
         """One governed thing by any reference form, values first; see ``detail``."""
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/get",
             json=request.model_dump(mode="json", exclude_none=True),
         )
-        return self._parse_model(response, PlaybillGetResultV1)
+        return self._parse_model(response, PlaybillGetResult)
 
     def playbill_get_batch(
         self,
         instance_id: str,
         *,
-        request: PlaybillGetBatchRequestV1,
-    ) -> PlaybillGetBatchResultV1:
+        request: PlaybillGetBatchRequest,
+    ) -> PlaybillGetBatchResult:
         """SDK-internal: several references at one coordinate and one detail."""
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/get-batch",
             json=request.model_dump(mode="json", exclude_none=True),
         )
-        return self._parse_model(response, PlaybillGetBatchResultV1)
+        return self._parse_model(response, PlaybillGetBatchResult)
 
-    def playbill_set(self, instance_id: str, *, request: PlaybillSetRequestV1) -> WriteOutcome:
+    def playbill_set(self, instance_id: str, *, request: PlaybillSetRequest) -> WriteOutcome:
         """Put one value in one field of one Subject; a refused write is an outcome."""
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/set",
@@ -1389,9 +1387,7 @@ class CruxibleClient:
         )
         return self._parse_model(response, WriteOutcome)
 
-    def playbill_retire(
-        self, instance_id: str, *, request: PlaybillRetireRequestV1
-    ) -> WriteOutcome:
+    def playbill_retire(self, instance_id: str, *, request: PlaybillRetireRequest) -> WriteOutcome:
         """End one live Claim, named by ID or by its Subject and field."""
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/retire",
@@ -1399,7 +1395,7 @@ class CruxibleClient:
         )
         return self._parse_model(response, WriteOutcome)
 
-    def playbill_write(self, instance_id: str, *, request: PlaybillWriteRequestV1) -> WriteOutcome:
+    def playbill_write(self, instance_id: str, *, request: PlaybillWriteRequest) -> WriteOutcome:
         """Apply set, add and retire changes as one change set."""
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/write",
@@ -1413,8 +1409,8 @@ class CruxibleClient:
         *,
         claim_ids: Sequence[str],
         at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any],
-    ) -> ClaimBackingsResultV1:
-        request = ClaimBackingsRequestV1.model_validate(
+    ) -> ClaimBackingsResult:
+        request = ClaimBackingsRequest.model_validate(
             {
                 "at": self._playbill_coordinate_body(at),
                 "claim_ids": tuple(claim_ids),
@@ -1424,13 +1420,13 @@ class CruxibleClient:
             f"/api/v1/{instance_id}/playbill/claims/backings",
             json=request.model_dump(mode="json"),
         )
-        return self._parse_model(response, ClaimBackingsResultV1)
+        return self._parse_model(response, ClaimBackingsResult)
 
     def query_playbill(
         self,
         instance_id: str,
         *,
-        request: contracts.PlaybillQueryRequestV1,
+        request: contracts.PlaybillQueryRequest,
     ) -> contracts.PlaybillQueryResult:
         """One page of a query answer; pass ``next_cursor`` back while ``truncated``."""
         response = self._client.post(
@@ -1442,15 +1438,15 @@ class CruxibleClient:
         return self._parse_model(response, contracts.PlaybillQueryResult)
 
     def preview_playbill_procedure_source(
-        self, instance_id: str, *, request: ProcedureSourcePreviewRequestV1
-    ) -> ProcedureSourcePreviewV1:
-        from cruxible_client.contracts.procedures.source_requests import ProcedureSourcePreviewV1
+        self, instance_id: str, *, request: ProcedureSourcePreviewRequest
+    ) -> ProcedureSourcePreview:
+        from cruxible_client.contracts.procedures.source_requests import ProcedureSourcePreview
 
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/procedures/source/preview",
             json=request.model_dump(mode="json", by_alias=True),
         )
-        return self._parse_model(response, ProcedureSourcePreviewV1)
+        return self._parse_model(response, ProcedureSourcePreview)
 
     def playbill_procedure_readiness(
         self,
@@ -1492,8 +1488,8 @@ class CruxibleClient:
         evaluation_time: str | None,
         at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
         input: Any,
-        resolution_contract: contracts.ResolutionContractReferenceV1 | None = None,
-        trigger_event: contracts.TriggerEventReferenceV1 | None = None,
+        resolution_contract: contracts.ResolutionContractReference | None = None,
+        trigger_event: contracts.TriggerEventReference | None = None,
     ) -> contracts.PlaybillProcedureRunState:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/procedures/{name}/runs",
@@ -1529,75 +1525,75 @@ class CruxibleClient:
         instance_id: str,
         name: str,
         *,
-        request: contracts.PlaybillProcedureMeasureRequestV1,
-    ) -> contracts.PlaybillProcedureMeasureResultV1:
+        request: contracts.PlaybillProcedureMeasureRequest,
+    ) -> contracts.PlaybillProcedureMeasureResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/procedures/{name}/measurements",
             json=request.model_dump(mode="json"),
         )
-        return self._parse_model(response, contracts.PlaybillProcedureMeasureResultV1)
+        return self._parse_model(response, contracts.PlaybillProcedureMeasureResult)
 
     def list_playbill_procedure_readings(
         self,
         instance_id: str,
         name: str,
         *,
-        request: contracts.PlaybillProcedureReadingsRequestV1,
-    ) -> contracts.PlaybillProcedureReadingsResultV1:
+        request: contracts.PlaybillProcedureReadingsRequest,
+    ) -> contracts.PlaybillProcedureReadingsResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/procedures/{name}/readings",
             json=request.model_dump(mode="json"),
         )
-        return self._parse_model(response, contracts.PlaybillProcedureReadingsResultV1)
+        return self._parse_model(response, contracts.PlaybillProcedureReadingsResult)
 
     def check_playbill_line(
-        self, instance_id: str, line: str, *, request: contracts.LineTriggerCheckRequestV1
-    ) -> contracts.LineTriggerCheckResultV1:
+        self, instance_id: str, line: str, *, request: contracts.LineTriggerCheckRequest
+    ) -> contracts.LineTriggerCheckResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/lines/{line}/check",
             json=request.model_dump(mode="json"),
         )
-        return self._parse_model(response, contracts.LineTriggerCheckResultV1)
+        return self._parse_model(response, contracts.LineTriggerCheckResult)
 
     def arm_playbill_line(
         self, instance_id: str, line: str, *, dry_run: bool | None = None, at: str | None = None
-    ) -> contracts.LineArmV1:
+    ) -> contracts.LineArm:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/lines/{line}/arm",
             json=_change_control(dry_run, at),
         )
-        return self._parse_model(response, contracts.LineArmV1)
+        return self._parse_model(response, contracts.LineArm)
 
     def disarm_playbill_line(
         self, instance_id: str, line: str, *, dry_run: bool | None = None, at: str | None = None
-    ) -> contracts.LineArmV1:
+    ) -> contracts.LineArm:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/lines/{line}/disarm",
             json=_change_control(dry_run, at),
         )
-        return self._parse_model(response, contracts.LineArmV1)
+        return self._parse_model(response, contracts.LineArm)
 
-    def playbill_line_status(self, instance_id: str, line: str) -> contracts.LineArmV1:
+    def playbill_line_status(self, instance_id: str, line: str) -> contracts.LineArm:
         response = self._client.get(f"/api/v1/{instance_id}/playbill/lines/{line}/arm")
-        return self._parse_model(response, contracts.LineArmV1)
+        return self._parse_model(response, contracts.LineArm)
 
     def evaluate_playbill_line(
-        self, instance_id: str, line: str, *, request: contracts.LineEvaluateRequestV1
-    ) -> contracts.LineTriggerCheckResultV1:
+        self, instance_id: str, line: str, *, request: contracts.LineEvaluateRequest
+    ) -> contracts.LineTriggerCheckResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/lines/{line}/evaluate",
             json=request.model_dump(mode="json"),
         )
-        return self._parse_model(response, contracts.LineTriggerCheckResultV1)
+        return self._parse_model(response, contracts.LineTriggerCheckResult)
 
     def dispatch_playbill_line(
-        self, instance_id: str, line: str, *, request: contracts.LineDispatchRequestV1
-    ) -> contracts.LineDispatchResultV1:
+        self, instance_id: str, line: str, *, request: contracts.LineDispatchRequest
+    ) -> contracts.LineDispatchResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/lines/{line}/dispatch",
             json=request.model_dump(mode="json"),
         )
-        return self._parse_model(response, contracts.LineDispatchResultV1)
+        return self._parse_model(response, contracts.LineDispatchResult)
 
     def run_playbill_line(
         self,
@@ -1606,8 +1602,8 @@ class CruxibleClient:
         *,
         occurrence_id: str | None,
         evaluation_time: str | None = None,
-        resolution_contract: contracts.ResolutionContractReferenceV1 | None = None,
-        trigger_event: contracts.TriggerEventReferenceV1 | None = None,
+        resolution_contract: contracts.ResolutionContractReference | None = None,
+        trigger_event: contracts.TriggerEventReference | None = None,
         trigger: str | None = None,
     ) -> contracts.PlaybillProcedureRunState:
         response = self._client.post(
@@ -1908,7 +1904,7 @@ class CruxibleClient:
         at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
         base_generation: int | None = None,
         base_renderer: str | None = None,
-    ) -> PlaybillFloorDeltaV1:
+    ) -> PlaybillFloorDelta:
         """What brings a floor at ``base_generation`` to ``at`` (default: head).
 
         Pass the generation and renderer of the floor you hold (from its
@@ -1923,7 +1919,7 @@ class CruxibleClient:
                 "base_renderer": base_renderer,
             },
         )
-        return self._parse_model(response, PlaybillFloorDeltaV1)
+        return self._parse_model(response, PlaybillFloorDelta)
 
     def export_playbill_floor(
         self,

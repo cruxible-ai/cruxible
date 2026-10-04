@@ -32,7 +32,7 @@ from cruxible_client.contracts.claims import (
     LiteralClaimObject,
     SubjectClaimObject,
 )
-from cruxible_client.contracts.policies import ClaimResolutionPolicyV1
+from cruxible_client.contracts.policies import ClaimResolutionPolicy
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
 from cruxible_core.governance.keys import GeneratedKeyMaterial
@@ -67,7 +67,7 @@ def _relation(template: ClaimType, predicate: str, *, source: str, many: bool) -
             "literal_schema": None,
             "allowed_object_subject_kinds": (SUBJECT_KIND,),
             "cardinality": cardinality,
-            "resolution_policy": ClaimResolutionPolicyV1(
+            "resolution_policy": ClaimResolutionPolicy(
                 cardinality=cardinality,
                 eligible_verdicts=("supported",),
                 selector="all" if many else "only_contender",

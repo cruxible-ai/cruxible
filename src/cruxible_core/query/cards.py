@@ -44,13 +44,13 @@ from cruxible_client.contracts.claim_verdicts import evaluate_claim_verdict
 from cruxible_client.contracts.claims import ClaimArtifactAny, SubjectClaimObject
 from cruxible_client.contracts.diagnostics import GovernedOperationReference
 from cruxible_client.contracts.discovery import (
-    DiscoveryMatchBasis,
+    DiscoveryMatchBasisKind,
     reject_locator_or_secret,
 )
 from cruxible_client.contracts.providers import ProviderV1
 from cruxible_client.contracts.query.grammar import byte_sorted
 from cruxible_client.contracts.semantic import SemanticAddress
-from cruxible_client.contracts.source_references import CoverageDescriptorV1
+from cruxible_client.contracts.source_references import CoverageDescriptor
 from cruxible_core.claims.claim_slots import classify_claim_slot
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.query.backends import ClaimFactRowV1
@@ -90,7 +90,7 @@ class InterfaceMatchBasisV1(_StrictCardModel):
     """One basis this interface can be found through, and what it may conclude."""
 
     tag: Literal["playbill-interface-match-basis-v1"] = "playbill-interface-match-basis-v1"
-    basis: DiscoveryMatchBasis
+    basis: DiscoveryMatchBasisKind
     terms: tuple[str, ...]
     resolves_equivalence: bool
 
@@ -206,7 +206,7 @@ class ClaimTypeCardV1(_StrictCardModel):
     policies: tuple[InterfacePolicySummaryV1, ...] = ()
     usage: ClaimTypeUsageV1
     expansion_links: tuple[GovernedOperationReference, ...] = ()
-    coverage: CoverageDescriptorV1
+    coverage: CoverageDescriptor
 
     @field_validator("artifact_digest", "structural_signature_digest", "literal_schema_digest")
     @classmethod
@@ -287,7 +287,7 @@ class SubjectProfileV1(_StrictCardModel):
     match_bases: tuple[InterfaceMatchBasisV1, ...] = ()
     predicates: tuple[SubjectProfilePredicateV1, ...] = ()
     expansion_links: tuple[GovernedOperationReference, ...] = ()
-    coverage: CoverageDescriptorV1
+    coverage: CoverageDescriptor
 
     @field_validator("artifact_digest")
     @classmethod
@@ -553,9 +553,9 @@ def _coverage(
     facets: tuple[str, ...],
     truncated: Iterable[str],
     reasons: Iterable[str],
-) -> CoverageDescriptorV1:
+) -> CoverageDescriptor:
     truncated_facets = byte_sorted(tuple(truncated))
-    return CoverageDescriptorV1(
+    return CoverageDescriptor(
         requested_facets=byte_sorted(facets),
         available_facets=byte_sorted(
             tuple(item for item in facets if item not in set(truncated_facets))

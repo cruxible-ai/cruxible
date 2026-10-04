@@ -21,32 +21,32 @@ from uuid import uuid4
 
 from cruxible_client.contracts.errors import PlaybillError, PlaybillExecutionError
 from cruxible_client.contracts.line_dispatch import (
-    LineArmOutcomeV1,
-    LineArmPrincipalV1,
-    LineArmStopReasonV1,
-    LineArmV1,
-    LineDispatchItemV1,
-    LineDispatchRequestV1,
-    LineDispatchResultV1,
-    LineEvaluateRequestV1,
-    LineTriggerCheckRequestV1,
-    LineTriggerCheckResultV1,
-    LineTriggerOccurrenceV1,
+    LineArm,
+    LineArmOutcome,
+    LineArmPrincipal,
+    LineArmStopReason,
+    LineDispatchItem,
+    LineDispatchRequest,
+    LineDispatchResult,
+    LineEvaluateRequest,
+    LineTriggerCheckRequest,
+    LineTriggerCheckResult,
+    LineTriggerOccurrence,
     is_current_arm_principal_record,
 )
 from cruxible_client.contracts.procedures.line_specs import line_identity_digest
 from cruxible_client.contracts.procedures.results import (
-    ProcedureAdmissionRefusalV1,
-    ProcedureNodeRefusalV1,
+    ProcedureAdmissionRefusal,
+    ProcedureNodeRefusal,
 )
-from cruxible_client.contracts.procedures.windows import TIMED_BINDING_KINDS, FixedWindowV1
+from cruxible_client.contracts.procedures.windows import TIMED_BINDING_KINDS, FixedWindow
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.repairs import served_repair_for_refusal
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_client.contracts.triggers import (
-    AcceptedTriggerV1,
-    GenerationAcceptedScheduleV1,
-    WindowCloseScheduleV1,
+    AcceptedTrigger,
+    GenerationAcceptedSchedule,
+    WindowCloseSchedule,
     schedule_is_timed,
 )
 from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
@@ -61,7 +61,7 @@ from cruxible_core.service.change_preview import change_scope
 from cruxible_core.service.procedures.line_triggers import service_check_line_trigger
 from cruxible_core.service.procedures.procedure_runs import (
     LineNeverArmed,
-    LineRunRequestV1,
+    LineRunRequest,
     LineTriggersChanged,
     LineVersionChanged,
     _accepted_line_by_reference,
@@ -109,12 +109,12 @@ def _positions(instance: PlaybillInstance) -> dict[str, Any]:
 def _enqueue(
     store: LineDispatchStore,
     conn: Any,
-    result: LineTriggerCheckResultV1,
+    result: LineTriggerCheckResult,
     actor: GovernedActorContext,
     now: datetime,
     *,
     session_id: str | None = None,
-) -> LineTriggerCheckResultV1:
+) -> LineTriggerCheckResult:
     occurrences = []
     trigger_digests = {item.trigger: item.artifact_digest for item in result.triggers}
     for occurrence in result.occurrences:
@@ -177,11 +177,11 @@ def _enqueue(
 def service_evaluate_line(
     instance: PlaybillInstance,
     line: str,
-    request: LineEvaluateRequestV1,
+    request: LineEvaluateRequest,
     *,
     actor: GovernedActorContext,
     now: datetime,
-) -> LineTriggerCheckResultV1:
+) -> LineTriggerCheckResult:
     instance.require_writable()
     result = service_check_line_trigger(instance, line, request, now=now)
     store = LineDispatchStore(instance)
@@ -192,7 +192,7 @@ def service_evaluate_line(
 class LineArmAuthorityLost(PlaybillExecutionError):
     """The arming credential, scope or permission no longer holds; the arm stops."""
 
-    def __init__(self, reason: LineArmStopReasonV1, detail: str) -> None:
+    def __init__(self, reason: LineArmStopReason, detail: str) -> None:
         super().__init__(detail)
         self.reason = reason
         self.detail = detail
@@ -348,7 +348,7 @@ def _stop(
     conn: Any,
     session: dict[str, Any],
     *,
-    reason: LineArmStopReasonV1 | None,
+    reason: LineArmStopReason | None,
     detail: str,
     actor: GovernedActorContext,
     now: datetime,
@@ -372,9 +372,9 @@ def _arm_view(
     conn: Any,
     data: dict[str, Any],
     *,
-    outcome: LineArmOutcomeV1 | None = None,
+    outcome: LineArmOutcome | None = None,
     coordinate: AcceptedCoordinate | None = None,
-) -> LineArmV1:
+) -> LineArm:
     active = data["stops_at"] is None
     automatic = (
         conn.execute(
@@ -398,13 +398,13 @@ def service_arm_line(
     instance: PlaybillInstance,
     line: str,
     *,
-    principal: LineArmPrincipalV1,
+    principal: LineArmPrincipal,
     actor: GovernedActorContext,
     now: datetime,
     daemon_id: str,
     dry_run: bool | None = None,
     at: str | None = None,
-) -> LineArmV1:
+) -> LineArm:
     """Arm the current Line version forward-only under the caller's credential.
 
     ``dry_run`` previews the arm on this same path and records nothing; its
@@ -443,7 +443,7 @@ def service_arm_line(
         )
 
 
-def _previewed(previewing: bool, view: LineArmV1) -> LineArmV1:
+def _previewed(previewing: bool, view: LineArm) -> LineArm:
     """A preview's arm view: the state the commit would leave, outcome ``would_*``."""
 
     if not previewing or view.outcome not in _WOULD_OUTCOMES:
@@ -451,7 +451,7 @@ def _previewed(previewing: bool, view: LineArmV1) -> LineArmV1:
     return view.model_copy(update={"outcome": _WOULD_OUTCOMES[view.outcome]})
 
 
-_WOULD_OUTCOMES: dict[str | None, LineArmOutcomeV1] = {
+_WOULD_OUTCOMES: dict[str | None, LineArmOutcome] = {
     "armed": "would_arm",
     "rearmed": "would_rearm",
     "disarmed": "would_disarm",
@@ -462,12 +462,12 @@ def _arm_line(
     instance: PlaybillInstance,
     line: str,
     *,
-    principal: LineArmPrincipalV1,
+    principal: LineArmPrincipal,
     actor: GovernedActorContext,
     now: datetime,
     daemon_id: str,
     committing: Callable[[], AbstractContextManager[None]],
-) -> LineArmV1:
+) -> LineArm:
     coordinate = instance.accepted_coordinate()
     accepted = _accepted_line_by_reference(instance, coordinate=coordinate, reference=line)
     evaluated = AcceptedCoordinate.from_internal(coordinate)
@@ -533,7 +533,7 @@ def service_disarm_line(
     now: datetime,
     dry_run: bool | None = None,
     at: str | None = None,
-) -> LineArmV1:
+) -> LineArm:
     """Stop admitting new work; a run already admitted is not cancelled.
 
     Disarming a Line whose arm already stopped changes nothing and returns that
@@ -563,7 +563,7 @@ def _disarm_line(
     actor: GovernedActorContext,
     now: datetime,
     committing: Callable[[], AbstractContextManager[None]],
-) -> LineArmV1:
+) -> LineArm:
     coordinate = instance.accepted_coordinate()
     accepted = _accepted_line_by_reference(instance, coordinate=coordinate, reference=line)
     evaluated = AcceptedCoordinate.from_internal(coordinate)
@@ -591,7 +591,7 @@ def _disarm_line(
         return _arm_view(store, conn, data, outcome="disarmed", coordinate=evaluated)
 
 
-def service_line_status(instance: PlaybillInstance, line: str) -> LineArmV1:
+def service_line_status(instance: PlaybillInstance, line: str) -> LineArm:
     """The Line's current arm, or the last one and why it stopped."""
 
     accepted = _accepted_line_by_reference(
@@ -615,7 +615,7 @@ def service_stop_line_arm(
     instance: PlaybillInstance,
     session_id: str,
     *,
-    reason: LineArmStopReasonV1,
+    reason: LineArmStopReason,
     detail: str,
     actor: GovernedActorContext,
     now: datetime,
@@ -642,7 +642,7 @@ def service_stop_line_arm(
 
 def line_arm_health(
     instance: PlaybillInstance, *, now: datetime, stall_after: timedelta
-) -> tuple[tuple[Literal["running", "stalled", "stopped"], LineArmV1], ...]:
+) -> tuple[tuple[Literal["running", "stalled", "stopped"], LineArm], ...]:
     """Every Line's latest arm segment, and whether its automation is doing its job.
 
     An arm that stopped for any reason but a deliberate disarm is `stopped`; an
@@ -654,7 +654,7 @@ def line_arm_health(
     if not dispatch_root(instance).exists():
         return ()
     store = LineDispatchStore(instance)
-    arms: list[tuple[Literal["running", "stalled", "stopped"], LineArmV1]] = []
+    arms: list[tuple[Literal["running", "stalled", "stopped"], LineArm]] = []
     with store.locked() as conn:
         latest = conn.execute(
             "SELECT s.payload FROM sessions s WHERE s.rowid = "
@@ -700,7 +700,7 @@ def _arm_stop(
     occurrence_epoch: int,
     line_artifact_digest: str,
     trigger_pins: dict[str, str],
-) -> tuple[LineArmStopReasonV1, str] | None:
+) -> tuple[LineArmStopReason, str] | None:
     """Why an arm no longer matches what is accepted, or None while it still does."""
 
     if occurrence_epoch != session["occurrence_epoch"]:
@@ -716,23 +716,20 @@ def _arm_stop(
     return None
 
 
-def _timed(trigger: AcceptedTriggerV1) -> bool:
+def _timed(trigger: AcceptedTrigger) -> bool:
     """Whether a Trigger fires by time (ticks, fixed windows) rather than on events."""
 
     schedule = trigger.trigger.schedule
     return (
         schedule_is_timed(schedule)
-        or isinstance(schedule, GenerationAcceptedScheduleV1)
-        or (
-            isinstance(schedule, WindowCloseScheduleV1)
-            and isinstance(schedule.window, FixedWindowV1)
-        )
+        or isinstance(schedule, GenerationAcceptedSchedule)
+        or (isinstance(schedule, WindowCloseSchedule) and isinstance(schedule.window, FixedWindow))
     )
 
 
 def _segment_request(
-    trigger: AcceptedTriggerV1, session: dict[str, Any], scan: dict[str, Any]
-) -> LineTriggerCheckRequestV1:
+    trigger: AcceptedTrigger, session: dict[str, Any], scan: dict[str, Any]
+) -> LineTriggerCheckRequest:
     """One Trigger's forward-only range: ticks and fixed windows by time, events by position.
 
     A timed Trigger resumes from the instant its own matching last covered, so a
@@ -741,20 +738,20 @@ def _segment_request(
     """
 
     name = trigger.trigger.identity.qualified
-    return LineTriggerCheckRequestV1(
+    return LineTriggerCheckRequest(
         since=(
             parse_datetime(session["starts_at"])
-            if isinstance(trigger.trigger.schedule, GenerationAcceptedScheduleV1)
+            if isinstance(trigger.trigger.schedule, GenerationAcceptedSchedule)
             else (
                 parse_datetime(session.get("trigger_until", {}).get(name, session["starts_at"]))
                 if _timed(trigger)
-                and not isinstance(trigger.trigger.schedule, GenerationAcceptedScheduleV1)
+                and not isinstance(trigger.trigger.schedule, GenerationAcceptedSchedule)
                 else None
             )
         ),
         until=parse_datetime(scan["until"]),
         cursor=None
-        if isinstance(trigger.trigger.schedule, GenerationAcceptedScheduleV1)
+        if isinstance(trigger.trigger.schedule, GenerationAcceptedSchedule)
         else scan["cursors"].get(name),
         limit=256,
     )
@@ -794,7 +791,7 @@ def service_match_listening_lines(
                         store.append(conn, "coverage", session, actor=actor, now=now)
             continue
         pins = line_trigger_pins(triggers)
-        stop: tuple[LineArmStopReasonV1, str] | None
+        stop: tuple[LineArmStopReason, str] | None
         if not is_current_arm_principal_record(session.get("armed_by")):
             # Checked before the arm can be rolled across a restart: a record
             # without provenance never becomes the implicit operator's arm.
@@ -883,7 +880,7 @@ def service_match_listening_lines(
                 # holds the arm's own ticks back.
                 if (
                     schedule_is_timed(trigger.trigger.schedule)
-                    or isinstance(trigger.trigger.schedule, GenerationAcceptedScheduleV1)
+                    or isinstance(trigger.trigger.schedule, GenerationAcceptedSchedule)
                 ) and conn.execute(
                     "SELECT 1 FROM pending WHERE session_id=? AND trigger_id=? "
                     "AND disposition='pending' LIMIT 1",
@@ -929,10 +926,10 @@ def service_match_listening_lines(
                 if result.detail is not None:
                     details.append(result.detail)
                 if result.status == "incomplete":
-                    if not isinstance(trigger.trigger.schedule, GenerationAcceptedScheduleV1):
+                    if not isinstance(trigger.trigger.schedule, GenerationAcceptedSchedule):
                         scan["cursors"][name] = result.cursor
                 else:
-                    if not isinstance(trigger.trigger.schedule, GenerationAcceptedScheduleV1):
+                    if not isinstance(trigger.trigger.schedule, GenerationAcceptedSchedule):
                         scan["cursors"].pop(name, None)
                     scan["done"].append(name)
                     if _timed(trigger):
@@ -975,7 +972,7 @@ def service_match_listening_lines(
 def service_dispatch_line(
     instance: PlaybillInstance,
     line: str,
-    request: LineDispatchRequestV1,
+    request: LineDispatchRequest,
     *,
     actor: GovernedActorContext,
     now: datetime,
@@ -986,7 +983,7 @@ def service_dispatch_line(
     pinned_line_artifact_digest: str | None = None,
     pinned_trigger_pins: dict[str, str] | None = None,
     before_admission: Callable[[], tuple[GovernedActorContext, int]] | None = None,
-) -> LineDispatchResultV1:
+) -> LineDispatchResult:
     """Admit pending occurrences, explicitly or for one armed segment.
 
     `session_id` limits dispatch to the work that armed segment matched itself,
@@ -1010,7 +1007,7 @@ def service_dispatch_line(
     )
     identity, epoch = line_identity_digest(accepted.line.identity), accepted.line.occurrence_epoch
     if not dispatch_root(instance).exists():
-        return LineDispatchResultV1()
+        return LineDispatchResult()
     store = LineDispatchStore(instance)
     with store.locked() as conn:
         sql = "SELECT payload FROM pending WHERE line_id=?"
@@ -1030,10 +1027,10 @@ def service_dispatch_line(
     for row in rows:
         data = json.loads(row[0])
         epoch = data["occurrence_epoch"]
-        occurrence = LineTriggerOccurrenceV1.model_validate(data["occurrence"])
+        occurrence = LineTriggerOccurrence.model_validate(data["occurrence"])
         if occurrence.eligible_at > now:
             results.append(
-                LineDispatchItemV1(
+                LineDispatchItem(
                     occurrence_id=occurrence.occurrence_id,
                     status="pending",
                     detail="The bound window has not closed.",
@@ -1051,7 +1048,7 @@ def service_dispatch_line(
                 disposition, data = latest[0], json.loads(latest[1])
             if disposition != "pending" and not request.retry:
                 continue
-            refusal: ProcedureAdmissionRefusalV1 | ProcedureNodeRefusalV1 | None = None
+            refusal: ProcedureAdmissionRefusal | ProcedureNodeRefusal | None = None
             status: Literal["blocked", "rejected", "superseded"] = "blocked"
             prior = next(
                 iter(_line_admissions(instance, accepted, occurrence_id=occurrence.occurrence_id)),
@@ -1098,7 +1095,7 @@ def service_dispatch_line(
                 if data.get("trigger") is not None and (
                     trigger is None or trigger.artifact_digest != data["trigger_artifact_digest"]
                 ):
-                    refusal = ProcedureAdmissionRefusalV1(
+                    refusal = ProcedureAdmissionRefusal(
                         code="line_binding_superseded",
                         repair=served_repair_for_refusal("line_binding_superseded"),
                         message=(
@@ -1110,7 +1107,7 @@ def service_dispatch_line(
                     status = "superseded"
                     detail = refusal.message
                 elif current.artifact_digest != data["line_artifact_digest"]:
-                    refusal = ProcedureAdmissionRefusalV1(
+                    refusal = ProcedureAdmissionRefusal(
                         code="line_binding_superseded",
                         repair=served_repair_for_refusal("line_binding_superseded"),
                         message=(
@@ -1137,7 +1134,7 @@ def service_dispatch_line(
                         result = service_run_playbill_line(
                             instance,
                             path_identity_digest=line,
-                            request=LineRunRequestV1(
+                            request=LineRunRequest(
                                 line=line,
                                 trigger=None if binding is None else binding.trigger.name,
                                 occurrence_id=occurrence.occurrence_id,
@@ -1168,7 +1165,7 @@ def service_dispatch_line(
                         if run_id is None:
                             if isinstance(
                                 result.terminal,
-                                (ProcedureAdmissionRefusalV1, ProcedureNodeRefusalV1),
+                                (ProcedureAdmissionRefusal, ProcedureNodeRefusal),
                             ):
                                 refusal = result.terminal
                                 detail = refusal.message
@@ -1239,7 +1236,7 @@ def service_dispatch_line(
                         now=now,
                     )
             results.append(
-                LineDispatchItemV1(
+                LineDispatchItem(
                     occurrence_id=occurrence.occurrence_id,
                     status="admitted" if run_id else status,
                     run_id=run_id,
@@ -1247,4 +1244,4 @@ def service_dispatch_line(
                     refusal=refusal,
                 )
             )
-    return LineDispatchResultV1(items=tuple(results))
+    return LineDispatchResult(items=tuple(results))

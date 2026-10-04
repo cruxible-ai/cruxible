@@ -9,7 +9,7 @@ from typing import Literal, Mapping
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
 from cruxible_client.contracts.accepted_attestations import (
-    AcceptedClaimAttestationEvidenceV1,
+    AcceptedClaimAttestationEvidence,
     ClaimAttestationEvidence,
     attestation_identity,
 )
@@ -18,11 +18,11 @@ from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes
 from cruxible_client.contracts.captures import parse_capture_envelope
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claim_verdicts import (
-    CaptureVerdictEvidenceV1,
+    CaptureVerdictEvidence,
+    ClaimVerdictResult,
     ClaimVerdictResultAny,
-    ClaimVerdictResultV2,
     EvidenceCurrency,
-    EvidenceRelativeClaimVerdict,
+    EvidenceRelativeClaimVerdictV1,
     evaluate_claim_verdict,
 )
 from cruxible_client.contracts.claims import (
@@ -34,8 +34,8 @@ from cruxible_client.contracts.claims import (
 from cruxible_client.contracts.errors import PlaybillError, ProposalIntegrityError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.providers import ProviderV1
-from cruxible_client.contracts.query.definitions import QueryEvaluationPolicyV1
-from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+from cruxible_client.contracts.query.definitions import QueryEvaluationPolicy
+from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.coverage.indexes import accepted_logical_source
 from cruxible_core.curation.audit import (
     AUDIT_PARTITION_ID,
@@ -44,7 +44,7 @@ from cruxible_core.curation.audit import (
     AuditClaimRowV1,
     AuditCoverageV1,
     AuditCoveredClaimV1,
-    AuditCursorV1,
+    AuditCursor,
     AuditDependentRefV1,
     AuditEvidenceRefV1,
     AuditRunV1,
@@ -87,7 +87,7 @@ from cruxible_core.query.backends import ClaimFactRowV1, claim_row_visibility
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.query import build_accepted_query_facts
 
-_ALL_VERDICTS: tuple[EvidenceRelativeClaimVerdict, ...] = (
+_ALL_VERDICTS: tuple[EvidenceRelativeClaimVerdictV1, ...] = (
     "contradicted",
     "stale",
     "supported",
@@ -95,7 +95,7 @@ _ALL_VERDICTS: tuple[EvidenceRelativeClaimVerdict, ...] = (
     "unresolved",
 )
 _ALL_CURRENCY: tuple[EvidenceCurrency, ...] = ("current", "not_applicable", "stale")
-_AUDIT_VISIBILITY_POLICY = QueryEvaluationPolicyV1(
+_AUDIT_VISIBILITY_POLICY = QueryEvaluationPolicy(
     visible_verdicts=_ALL_VERDICTS,
     visible_currency=_ALL_CURRENCY,
     conflict_behavior="surface_conflicts",
@@ -141,10 +141,10 @@ class PlaybillAuditRequestV1(_StrictAuditServiceModel):
     tag: Literal["playbill-audit-request-v1"] = "playbill-audit-request-v1"
     at: AcceptedCoordinate | None = None
     evaluation_time: datetime
-    access_profile: CoverageAccessProfileV1
+    access_profile: CoverageAccessProfile
     scope: AuditScopeV1 = AuditScopeV1()
     budget: AuditBudgetV1 = AuditBudgetV1()
-    cursor: AuditCursorV1 | None = None
+    cursor: AuditCursor | None = None
 
     @field_validator("evaluation_time")
     @classmethod
@@ -169,7 +169,7 @@ class PlaybillAuditResultV1(_StrictAuditServiceModel):
     audited_through_generation: int | None = None
     rows: tuple[AuditClaimRowV1, ...]
     coverage: AuditCoverageV1
-    next_cursor: AuditCursorV1 | None = None
+    next_cursor: AuditCursor | None = None
     result_digest: str
 
     @field_validator("operational_input_head_digest", "result_digest")
@@ -339,7 +339,7 @@ def _history_index(
     with instance.accepted_history_reader() as retained:
         for path, row in current_claims.items():
             for item in row.attestations:
-                if isinstance(item, AcceptedClaimAttestationEvidenceV1):
+                if isinstance(item, AcceptedClaimAttestationEvidence):
                     occurrences = retained.occurrences(
                         attestation_identity(item.envelope).qualified
                     )
@@ -416,7 +416,7 @@ def _current_verdict(
 
 
 def _logical_source_keys(
-    instance: PlaybillInstance, captures: tuple[CaptureVerdictEvidenceV1, ...]
+    instance: PlaybillInstance, captures: tuple[CaptureVerdictEvidence, ...]
 ) -> dict[str, str | None]:
     result: dict[str, str | None] = {}
     access = BodyAccessContext(principal_id="playbill-audit", can_read_body=True)
@@ -482,7 +482,7 @@ def _row(
         item.attestation_digest for item in independent if item.attestation_digest in effective
     }
     near_horizon = False
-    if isinstance(verdict, ClaimVerdictResultV2) and row.rule.max_evidence_age is not None:
+    if isinstance(verdict, ClaimVerdictResult) and row.rule.max_evidence_age is not None:
         quarter = (
             timedelta(microseconds=row.rule.max_evidence_age.microseconds)
             / AUDIT_NEAR_FRESHNESS_HORIZON_DIVISOR
@@ -646,7 +646,7 @@ def _result(
     audited_through_generation: int | None,
     rows: tuple[AuditClaimRowV1, ...],
     coverage: AuditCoverageV1,
-    next_cursor: AuditCursorV1 | None,
+    next_cursor: AuditCursor | None,
 ) -> PlaybillAuditResultV1:
     placeholder = "sha256:" + "0" * 64
     draft = PlaybillAuditResultV1.model_construct(

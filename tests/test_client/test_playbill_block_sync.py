@@ -22,20 +22,20 @@ import pytest
 from cruxible_client.authoring.blocks import repin_projection_block, sync_projection_blocks
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
-    PlaybillBlockSyncReadRequestV1,
-    PlaybillBlockSyncReadResultV1,
-    PlaybillBlockSyncSuccessorCandidateV1,
+    PlaybillBlockSyncReadRequest,
+    PlaybillBlockSyncReadResult,
+    PlaybillBlockSyncSuccessorCandidate,
 )
 from cruxible_client.contracts.declared_blocks import (
-    ProjectionArtifactBackingV1,
-    ProjectionBackingV1,
+    ProjectionArtifactBacking,
+    ProjectionBacking,
     ProjectionBlockStampV1,
-    ProjectionClaimBackingV1,
+    ProjectionClaimBacking,
     frame_projection_block,
     parse_projection_blocks,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.repairs import RepairOperationV1
+from cruxible_client.contracts.repairs import RepairOperation
 
 INSTANCE_ID = "inst_block_sync"
 OLD_BODY = b"status: old\n"
@@ -59,8 +59,8 @@ def _digest(value: bytes) -> str:
     return "sha256:" + hashlib.sha256(value).hexdigest()
 
 
-def _claim_backing(letter: str) -> ProjectionClaimBackingV1:
-    return ProjectionClaimBackingV1(
+def _claim_backing(letter: str) -> ProjectionClaimBacking:
+    return ProjectionClaimBacking(
         identity=ArtifactIdentity(kind="Claim", name="CLM-" + letter * 32),
         statement_digest="sha256:" + "8" * 64,
     )
@@ -97,7 +97,7 @@ def _artifact_stamp(*, body: bytes = OLD_BODY) -> ProjectionBlockStampV1:
         declared_generation=1,
         declared_coordinate=OLD_COORDINATE,
         backing=(
-            ProjectionArtifactBackingV1(
+            ProjectionArtifactBacking(
                 identity=ArtifactIdentity(kind="ClaimType", name="sec.vuln.severity"),
                 artifact_digest="sha256:" + "7" * 64,
             ),
@@ -149,7 +149,7 @@ entries:
     return source
 
 
-def _moved(backing: ProjectionBackingV1) -> ProjectionBackingV1:
+def _moved(backing: ProjectionBacking) -> ProjectionBacking:
     """The current spelling of a held backing that moved under the stamp.
 
     A successor verdict names what the backing reads as NOW, not a body: the
@@ -157,9 +157,9 @@ def _moved(backing: ProjectionBackingV1) -> ProjectionBackingV1:
     about a member that moved is its new identity-and-digest spelling.
     """
 
-    if isinstance(backing, ProjectionClaimBackingV1):
+    if isinstance(backing, ProjectionClaimBacking):
         return backing.model_copy(update={"statement_digest": MOVED_DIGEST})
-    assert isinstance(backing, ProjectionArtifactBackingV1)
+    assert isinstance(backing, ProjectionArtifactBacking)
     return backing.model_copy(update={"artifact_digest": MOVED_DIGEST})
 
 
@@ -181,7 +181,7 @@ class _SyncClient:
         refusal: str | None = None,
         moved: int = 1,
     ) -> None:
-        self.requests: list[PlaybillBlockSyncReadRequestV1] = []
+        self.requests: list[PlaybillBlockSyncReadRequest] = []
         self.declared: list[dict[str, object]] = []
         self.status = status
         self.refusal = refusal
@@ -207,7 +207,7 @@ class _SyncClient:
         return SimpleNamespace(
             results=tuple(
                 self.read_playbill_block_sync_backing(
-                    instance_id, request=PlaybillBlockSyncReadRequestV1(stamp=s)
+                    instance_id, request=PlaybillBlockSyncReadRequest(stamp=s)
                 )
                 for s in request.stamps
             )
@@ -217,20 +217,20 @@ class _SyncClient:
         self,
         instance_id: str,
         *,
-        request: PlaybillBlockSyncReadRequestV1,
-    ) -> PlaybillBlockSyncReadResultV1:
+        request: PlaybillBlockSyncReadRequest,
+    ) -> PlaybillBlockSyncReadResult:
         assert instance_id == INSTANCE_ID
         self.requests.append(request)
         if self.refusal is not None:
             candidates = (
                 (
-                    PlaybillBlockSyncSuccessorCandidateV1(
+                    PlaybillBlockSyncSuccessorCandidate(
                         identity=request.stamp.backing[0].identity,
                         artifact_digest="sha256:" + "a" * 64,
                         coordinate=NEW_COORDINATE,
                         generation=2,
                     ),
-                    PlaybillBlockSyncSuccessorCandidateV1(
+                    PlaybillBlockSyncSuccessorCandidate(
                         identity=request.stamp.backing[0].identity,
                         artifact_digest="sha256:" + "b" * 64,
                         coordinate=NEW_COORDINATE,
@@ -240,7 +240,7 @@ class _SyncClient:
                 if self.refusal == "block_successor_ambiguous"
                 else ()
             )
-            return PlaybillBlockSyncReadResultV1(
+            return PlaybillBlockSyncReadResult(
                 status="refused",
                 original_artifact_digest=_digest(b"old-artifact"),
                 reason=self.refusal,  # type: ignore[arg-type]
@@ -253,7 +253,7 @@ class _SyncClient:
         # is what `block repin --backing DIGEST` reads back.
         single = held[0] if len(held) == 1 else None
         if self.status == "current":
-            return PlaybillBlockSyncReadResultV1(
+            return PlaybillBlockSyncReadResult(
                 status="current",
                 original_artifact_digest=_digest(b"old-artifact"),
                 coordinate=NEW_COORDINATE,
@@ -261,7 +261,7 @@ class _SyncClient:
                 backing=single,
                 current_backings=held,
             )
-        return PlaybillBlockSyncReadResultV1(
+        return PlaybillBlockSyncReadResult(
             status="successor",
             original_artifact_digest=_digest(b"old-artifact"),
             artifact_digest=_digest(b"new-artifact"),
@@ -303,7 +303,7 @@ def test_a_moved_backing_is_reported_stale_and_the_page_is_never_touched(
     (item,) = result.items
     assert item.outcome == "stale"
     assert item.reason == "block_backing_changed"
-    assert item.repair == RepairOperationV1(
+    assert item.repair == RepairOperation(
         operation="playbill.block.repin",
         arguments={"source_id": "corpus.runbook", "block_id": "pub-example"},
     )
@@ -353,7 +353,7 @@ def test_a_moved_claim_type_backing_is_stale_like_any_other_held_member(
     assert item.outcome == "stale"
     assert item.reason == "block_backing_changed"
     assert item.detail["moved_backings"] == ["ClaimType:sec.vuln.severity"]
-    assert item.repair == RepairOperationV1(
+    assert item.repair == RepairOperation(
         operation="playbill.block.repin",
         arguments={"source_id": "corpus.runbook", "block_id": "vocabulary"},
     )
@@ -581,7 +581,7 @@ def test_retired_block_refuses_then_detaches_markers_without_changing_body(tmp_p
         paths=(source,),
     )
     assert refused.items[0].reason == "block_backing_retired"
-    assert refused.items[0].repair == RepairOperationV1(
+    assert refused.items[0].repair == RepairOperation(
         operation="playbill.block.sync",
         arguments={"paths": [refused.items[0].path], "detach": True},
     )
@@ -658,7 +658,7 @@ def test_ambiguous_live_successors_emit_exact_repin_selections(tmp_path: Path) -
     )
 
     assert result.items[0].reason == "block_successor_ambiguous"
-    assert result.items[0].repair == RepairOperationV1(
+    assert result.items[0].repair == RepairOperation(
         operation="playbill.block.repin",
         arguments={
             "source_id": "corpus.runbook",
@@ -1094,9 +1094,9 @@ def test_repin_with_an_exact_backing_digest_reads_the_single_held_member(
 
 @pytest.mark.parametrize("policy,blocking", [("warn", False), ("require_current", True)])
 def test_block_policy_gates_drift_without_changing_findings(tmp_path, policy, blocking):
-    from cruxible_client.contracts.declared_blocks import ProjectionBlockStampV2
+    from cruxible_client.contracts.declared_blocks import ProjectionBlockStamp
 
-    stamp = ProjectionBlockStampV2.model_validate(
+    stamp = ProjectionBlockStamp.model_validate(
         {
             **_stamp().model_dump(mode="json"),
             "tag": "playbill-projection-stamp-v2",
@@ -1121,35 +1121,31 @@ def test_batch_check_http_preserves_policy_and_one_evaluation_binding():
     import httpx
 
     from cruxible_client import contracts
-    from cruxible_client.contracts.declared_blocks import ProjectionBlockStampV2
+    from cruxible_client.contracts.declared_blocks import ProjectionBlockStamp
     from cruxible_client.transport.http import CruxibleClient
 
     instant = datetime(2026, 9, 16, tzinfo=UTC)
-    stamp = ProjectionBlockStampV2.model_validate(
+    stamp = ProjectionBlockStamp.model_validate(
         {
             **_stamp().model_dump(mode="json"),
             "tag": "playbill-projection-stamp-v2",
             "currency_policy": "require_current",
         }
     )
-    request = contracts.PlaybillProjectionCheckRequestV1(
+    request = contracts.PlaybillProjectionCheckRequest(
         stamps=(stamp,), at=NEW_COORDINATE, evaluation_time=instant
     )
-    response = contracts.PlaybillProjectionCheckResultV1(
+    response = contracts.PlaybillProjectionCheckResult(
         coordinate=NEW_COORDINATE,
         evaluation_time=instant,
         results=(
-            PlaybillBlockSyncReadResultV1(
-                status="current", coordinate=NEW_COORDINATE, generation=2
-            ),
+            PlaybillBlockSyncReadResult(status="current", coordinate=NEW_COORDINATE, generation=2),
         ),
     )
 
     def handler(wire: httpx.Request) -> httpx.Response:
         assert wire.url.path == f"/api/v1/{INSTANCE_ID}/playbill/projections/check"
-        assert (
-            contracts.PlaybillProjectionCheckRequestV1.model_validate_json(wire.content) == request
-        )
+        assert contracts.PlaybillProjectionCheckRequest.model_validate_json(wire.content) == request
         return httpx.Response(200, json=response.model_dump(mode="json"))
 
     client = CruxibleClient(base_url="http://projection.test")
@@ -1165,21 +1161,21 @@ def test_batch_check_http_preserves_policy_and_one_evaluation_binding():
 
 def test_mixed_retirement_repair_keeps_surviving_artifact_category():
     from cruxible_client.authoring.blocks import _sync_item_from_read_refusal
-    from cruxible_client.contracts.authoring.models import ProjectionDependencyIssueV1
+    from cruxible_client.contracts.authoring.models import ProjectionDependencyIssue
 
     claim = _stamp().backing[0]
-    artifact = ProjectionArtifactBackingV1(
+    artifact = ProjectionArtifactBacking(
         identity=ArtifactIdentity(kind="ClaimType", name="status"),
         artifact_digest="sha256:" + "d" * 64,
     )
     stamp = _stamp().model_copy(update={"backing": (claim, artifact)})
-    read = PlaybillBlockSyncReadResultV1(
+    read = PlaybillBlockSyncReadResult(
         status="unsyncable",
         reason="block_backing_retired",
         detail="Claim retired",
         current_backings=(artifact,),
         issues=(
-            ProjectionDependencyIssueV1(
+            ProjectionDependencyIssue(
                 identity=claim.identity,
                 status="stale",
                 reason="block_backing_retired",
@@ -1204,9 +1200,9 @@ def test_mixed_retirement_repair_keeps_surviving_artifact_category():
 def test_projection_checks_reject_naive_time_on_both_read_surfaces(batch, value):
     from pydantic import ValidationError
 
-    from cruxible_client.contracts.authoring.models import PlaybillProjectionCheckRequestV1
+    from cruxible_client.contracts.authoring.models import PlaybillProjectionCheckRequest
 
-    model = PlaybillProjectionCheckRequestV1 if batch else PlaybillBlockSyncReadRequestV1
+    model = PlaybillProjectionCheckRequest if batch else PlaybillBlockSyncReadRequest
     payload = {"stamps": (_stamp(),)} if batch else {"stamp": _stamp()}
     with pytest.raises(ValidationError, match="absolute evaluation time"):
         model.model_validate({**payload, "evaluation_time": value})
@@ -1217,14 +1213,14 @@ def test_projection_checks_reject_naive_time_on_both_read_surfaces(batch, value)
 
 def test_processing_budget_is_incomplete_not_malformed_or_current(tmp_path):
     from cruxible_client.contracts.declared_blocks import (
-        ProjectionProcessingPolicyV1,
+        ProjectionProcessingPolicy,
         projection_processing_budget,
     )
 
     source = _workspace(tmp_path)
     before = source.read_bytes()
     client = _SyncClient(status="successor")
-    with projection_processing_budget(ProjectionProcessingPolicyV1(max_bytes=32)):
+    with projection_processing_budget(ProjectionProcessingPolicy(max_bytes=32)):
         result = sync_projection_blocks(
             client, INSTANCE_ID, workspace=tmp_path, paths=("corpus/runbook.md",)
         )

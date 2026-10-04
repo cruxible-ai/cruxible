@@ -9,15 +9,15 @@ from typing import Any
 import pytest
 
 from cruxible_client.contracts import PLAYBILL_NEXT_DEFAULT_LIMIT, PLAYBILL_NEXT_MAX_LIMIT
-from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.service.discovery import next as next_module
 from cruxible_core.service.discovery.next import (
     PlaybillNextAcceptedStateInvalid,
     PlaybillNextCursorMismatch,
     PlaybillNextItemV1,
     PlaybillNextRepairV1,
+    PlaybillNextRequest,
     PlaybillNextRequestV1,
-    PlaybillNextRequestV2,
     PlaybillNextResultV2,
     _item,
     service_playbill_next,
@@ -61,10 +61,10 @@ def queue(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, _Queue]
     return instance, rows
 
 
-def _request(**values: Any) -> PlaybillNextRequestV2:
-    return PlaybillNextRequestV2(
+def _request(**values: Any) -> PlaybillNextRequest:
+    return PlaybillNextRequest(
         evaluation_time=EVALUATION_TIME,
-        access_profile=CoverageAccessProfileV1(
+        access_profile=CoverageAccessProfile(
             profile_id="next-pages",
             permitted_access_classes=("instance", "public"),
         ),

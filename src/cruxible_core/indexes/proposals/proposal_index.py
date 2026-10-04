@@ -28,7 +28,7 @@ from cruxible_client.contracts.primitives import canonical_json, new_id
 from cruxible_client.contracts.proposal_models import (
     ProposalAdmissionRecord,
     ProposalEvaluationRecord,
-    ProposalWithdrawalRecordV1,
+    ProposalWithdrawalRecord,
 )
 from cruxible_core.indexes.acquisition import WorkingDatabaseChangedError, open_working_snapshot
 from cruxible_core.indexes.history.history_index import (
@@ -395,7 +395,7 @@ class ProposalIndex:
         withdrawal, withdrawal_digest = (
             (None, None)
             if withdrawal_path is None
-            else self._record(evidence, withdrawal_path, ProposalWithdrawalRecordV1)
+            else self._record(evidence, withdrawal_path, ProposalWithdrawalRecord)
         )
         ids = {record.proposal_id for record in (admission, evaluation, withdrawal) if record}
         if len(ids) != 1:
@@ -470,7 +470,7 @@ class ProposalIndex:
         for directory, model, render in (
             (evidence.proposals, ProposalAdmissionRecord, admission_bytes),
             (evidence.evaluations, ProposalEvaluationRecord, None),
-            (evidence.withdrawals, ProposalWithdrawalRecordV1, None),
+            (evidence.withdrawals, ProposalWithdrawalRecord, None),
         ):
             by_id: dict[str, Path] = {}
             digests: dict[str, str] = {}

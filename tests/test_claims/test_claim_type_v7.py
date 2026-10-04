@@ -12,11 +12,11 @@ import pytest
 from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactRef
-from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.claim_types import (
     V7_FIELDS,
     ClaimType,
-    ClaimTypeMemberDescriptionV1,
+    ClaimTypeMemberDescription,
     claim_type_digest,
     claim_type_path,
     effective_evidence_requirement,
@@ -26,16 +26,16 @@ from cruxible_client.contracts.claim_types import (
     render_claim_type,
 )
 from cruxible_client.contracts.claim_verdicts import (
+    ClaimAdjudicationRule,
     ClaimAdjudicationRuleV1,
-    ClaimAdjudicationRuleV2,
     claim_adjudication_rule,
     claim_adjudication_rule_digest,
     evaluate_claim_verdict,
 )
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
-    ClaimEvidenceAdmissionPolicyV3,
-    ClaimEvidenceAdmissionRuleV3,
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
 )
 from tests.test_claims._claim_type_format_fixtures import fingerprints, historical_claim_types
 from tests.test_claims.test_claim_verdicts import (
@@ -206,7 +206,7 @@ def test_descriptions_are_canonical_text_within_bounds() -> None:
     with pytest.raises(ValidationError, match="1..1024"):
         v7(description="x" * 1025)
     with pytest.raises(ValidationError, match="1..256"):
-        ClaimTypeMemberDescriptionV1(member="done", description="x" * 257)
+        ClaimTypeMemberDescription(member="done", description="x" * 257)
     with pytest.raises(ValidationError, match="1..1024"):
         v7(description="")
 
@@ -214,10 +214,10 @@ def test_descriptions_are_canonical_text_within_bounds() -> None:
 # --- The evidence requirement ------------------------------------------------------
 
 
-def _self_only_rules() -> ClaimEvidenceAdmissionPolicyV3:
-    return ClaimEvidenceAdmissionPolicyV3(
+def _self_only_rules() -> ClaimEvidenceAdmissionPolicy:
+    return ClaimEvidenceAdmissionPolicy(
         rules=(
-            ClaimEvidenceAdmissionRuleV3(
+            ClaimEvidenceAdmissionRule(
                 rule_id="own-words",
                 claim_roles=("normative", "observation"),
                 capture_contracts=(
@@ -265,20 +265,20 @@ def test_only_none_compiles_the_origin_supporting_rule() -> None:
     ):
         assert isinstance(rule(claim_type), ClaimAdjudicationRuleV1)
     origin = rule(v7(evidence_requirement="none"))
-    assert isinstance(origin, ClaimAdjudicationRuleV2) and origin.origin_supports
+    assert isinstance(origin, ClaimAdjudicationRule) and origin.origin_supports
     # The v1 rule's digest domain is unchanged; v2 has its own.
     v1_rule = rule(historical_claim_types()["v6"])
     assert isinstance(v1_rule, ClaimAdjudicationRuleV1)
-    as_v2 = ClaimAdjudicationRuleV2(**v1_rule.model_dump(exclude={"tag"}))
+    as_v2 = ClaimAdjudicationRule(**v1_rule.model_dump(exclude={"tag"}))
     assert claim_adjudication_rule_digest(as_v2) != claim_adjudication_rule_digest(v1_rule)
 
 
-def _origin_rule(**update: object) -> ClaimAdjudicationRuleV2:
+def _origin_rule(**update: object) -> ClaimAdjudicationRule:
     claim_type = v7(evidence_requirement="none")
     rule = claim_adjudication_rule(
         claim_type, claim_type_digest=claim_type_digest(claim_type).tagged
     )
-    assert isinstance(rule, ClaimAdjudicationRuleV2)
+    assert isinstance(rule, ClaimAdjudicationRule)
     return rule.model_copy(update=update)
 
 
@@ -311,7 +311,7 @@ def test_under_none_the_origin_goes_stale_past_the_freshness_horizon() -> None:
     from tests.core_support._pc_c_support import NOW
 
     origin = _capture("origin", admission="origin_only")
-    rule = _origin_rule(max_evidence_age=CanonicalDurationV1(microseconds=60_000_000))
+    rule = _origin_rule(max_evidence_age=CanonicalDuration(microseconds=60_000_000))
     fresh = evaluate_claim_verdict(
         claim_statement_digest=STATEMENT_DIGEST,
         rule=rule,
@@ -337,11 +337,11 @@ def test_under_none_the_origin_goes_stale_past_the_freshness_horizon() -> None:
 
 def _input(**update: object) -> object:
     from cruxible_core.claims.claim_type_inputs import (
-        ClaimTypeInputV1,
+        ClaimTypeInputRecord,
         claim_type_input_template,
     )
 
-    return ClaimTypeInputV1.model_validate(
+    return ClaimTypeInputRecord.model_validate(
         {**claim_type_input_template().model_dump(mode="json"), **update}
     )
 
@@ -469,7 +469,7 @@ def test_an_edit_that_omits_the_v7_fields_keeps_every_one_of_them() -> None:
 
 
 def test_an_explicit_null_clears_a_v7_field_and_survives_the_wire() -> None:
-    from cruxible_core.claims.claim_type_inputs import ClaimTypeInputV1
+    from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord
 
     tree = {PATH: render_claim_type(_described_v7())}
     clearing = _input(
@@ -483,7 +483,7 @@ def test_an_explicit_null_clears_a_v7_field_and_survives_the_wire() -> None:
     assert {"description": None, "member_descriptions": None, "default_role": None}.items() <= (
         wire.items()
     )
-    cleared = _lower(ClaimTypeInputV1.model_validate(wire), tree)
+    cleared = _lower(ClaimTypeInputRecord.model_validate(wire), tree)
     assert (cleared.description, cleared.member_descriptions, cleared.default_role) == (
         None,
         (),

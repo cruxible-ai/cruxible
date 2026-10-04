@@ -31,10 +31,10 @@ ERROR_ENVELOPE_FIELDS = {
 # the only pair v1 accepts, so that regression fails here instead of silently
 # moving the frozen schema names.
 SPLIT_COMPONENT_NAMES = {
-    "PredictionObservationSelectorV1-Input",
-    "PredictionObservationSelectorV1-Output",
+    "PredictionObservationSelector-Input",
+    "PredictionObservationSelector-Output",
     # Landed with the statement-first Claim projection, not with this batch:
-    # `ClaimStatementCardV1` returns the Claim object union that authoring also
+    # `ClaimStatementCard` returns the Claim object union that authoring also
     # accepts. Both spellings are byte-identical, so the pair is a FastAPI
     # naming artifact rather than a moved schema.
     "SubjectClaimObject-Input",

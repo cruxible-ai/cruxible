@@ -11,13 +11,13 @@ from fastapi.testclient import TestClient
 
 from cruxible_client.authoring.sdk import ClaimView, Playbill
 from cruxible_client.authoring.sdk_types import ClaimRef, ClaimTypeRef, RefKind, SubjectRef
-from cruxible_client.contracts import PlaybillClaimViewV2
+from cruxible_client.contracts import ClaimViewRecord
 from cruxible_client.contracts.get_reads import (
-    PlaybillGetBatchRequestV1,
-    PlaybillGetClaimTypeCardV1,
-    PlaybillGetEvidenceV1,
-    PlaybillGetRequestV1,
-    PlaybillGetSubjectCardV1,
+    PlaybillGetBatchRequest,
+    PlaybillGetClaimTypeCard,
+    PlaybillGetEvidence,
+    PlaybillGetRequest,
+    PlaybillGetSubjectCard,
 )
 from cruxible_client.errors import CoreError
 from cruxible_client.transport.http import CruxibleClient
@@ -61,7 +61,7 @@ def test_get_resolves_strings_and_typed_refs_directly(
 
     subject = pb.get("project.work_item/wi-42")
     assert subject.kind is RefKind.SUBJECT and subject.identity == "project.work_item/wi-42"
-    assert isinstance(subject.value, PlaybillGetSubjectCardV1)
+    assert isinstance(subject.value, PlaybillGetSubjectCard)
     assert [(row.predicate, row.value) for row in subject.value.claims] == [("status", "ready")]
     assert isinstance(subject.ref, SubjectRef)
     # Summaries answer a compact coordinate; the SDK asks for the full one to pin.
@@ -69,7 +69,7 @@ def test_get_resolves_strings_and_typed_refs_directly(
 
     by_leaf = pb.get("status")
     assert by_leaf.kind is RefKind.CLAIM_TYPE and by_leaf.identity == PREDICATE
-    assert isinstance(by_leaf.value, PlaybillGetClaimTypeCardV1)
+    assert isinstance(by_leaf.value, PlaybillGetClaimTypeCard)
     assert pb.get(ClaimTypeRef(PREDICATE, pb.coordinate)).value == by_leaf.value
 
     # A Claim summary keeps the SDK's typed ClaimView, from a prefix or a ref.
@@ -88,9 +88,9 @@ def test_get_resolves_strings_and_typed_refs_directly(
     assert pb.get(f"claims/{claim_id[4:6]}/{claim_id}.json").value == card.value
 
     evidence = pb.get(claim_id, detail="evidence")
-    assert isinstance(evidence.value, PlaybillGetEvidenceV1)
+    assert isinstance(evidence.value, PlaybillGetEvidence)
     proof = pb.get(claim_id, detail="proof")
-    assert isinstance(proof.value, PlaybillClaimViewV2)
+    assert isinstance(proof.value, ClaimViewRecord)
 
     with pytest.raises(CoreError, match="playbill.get.ref_not_found"):
         pb.get("project.work_item/wi-4")
@@ -100,7 +100,7 @@ def test_an_exact_content_claim_view_carries_the_text_the_daemon_reads(
     owned_playbill_http: tuple[TestClient, str, Path],  # noqa: F811
     tmp_path: Path,
 ) -> None:
-    from cruxible_client.contracts.get_reads import PlaybillExactContentRefV1
+    from cruxible_client.contracts.get_reads import PlaybillExactContentRef
     from tests.core_support._exact_content_support import seed_exact_content_into
 
     client, instance_id, key = owned_playbill_http
@@ -125,7 +125,7 @@ def test_an_exact_content_claim_view_carries_the_text_the_daemon_reads(
     assert pb.claim_view(ruling.claim_id) == card.value
     (batched, marked) = pb.claim_views([ruling.claim_id, binary.claim_id])
     assert batched == card.value
-    assert marked.value == PlaybillExactContentRefV1(
+    assert marked.value == PlaybillExactContentRef(
         exact_content="binary", content_digest=binary.digest, length=9
     )
     assert marked.content_digest == binary.digest
@@ -142,7 +142,7 @@ def test_cut_values_offer_runnable_evidence_on_every_surface(
     from click.testing import CliRunner
 
     from cruxible_client.contracts import PlaybillAcceptedCoordinate
-    from cruxible_client.contracts.get_reads import PlaybillGetHistoryV1
+    from cruxible_client.contracts.get_reads import PlaybillGetHistory
     from cruxible_core.cli.main import cli
     from cruxible_core.mcp import handlers
     from tests.core_support._exact_content_support import seed_exact_content_into
@@ -205,9 +205,9 @@ def test_cut_values_offer_runnable_evidence_on_every_surface(
         if isinstance(card.value, ClaimView):
             assert card.value.value == whole
             continue
-        assert isinstance(card.value, PlaybillGetSubjectCardV1 | PlaybillGetHistoryV1)
+        assert isinstance(card.value, PlaybillGetSubjectCard | PlaybillGetHistory)
         section_sdk = (
-            card.value.revisions[0] if isinstance(card.value, PlaybillGetHistoryV1) else card.value
+            card.value.revisions[0] if isinstance(card.value, PlaybillGetHistory) else card.value
         )
         read_sdk = eval(
             section_sdk.next[0],
@@ -407,7 +407,7 @@ def test_the_compact_coordinate_passes_back_as_at_on_every_surface(
     transport._client._client = client  # type: ignore[attr-defined]  # noqa: SLF001
     assert (
         transport.playbill_get(
-            instance_id, request=PlaybillGetRequestV1(ref=ref, at=compact)
+            instance_id, request=PlaybillGetRequest(ref=ref, at=compact)
         ).coordinate.git_oid
         == compact
     )
@@ -463,7 +463,7 @@ def test_world_reads_values_subjects_and_vocabulary_through_the_read_verbs(
     assert head.coordinate.git_oid == pb.coordinate.git_oid
     batch = pb._client.playbill_get_batch(  # noqa: SLF001
         instance_id,
-        request=PlaybillGetBatchRequestV1(refs=(f"ClaimType:{PREDICATE}", value.claim)),
+        request=PlaybillGetBatchRequest(refs=(f"ClaimType:{PREDICATE}", value.claim)),
     )
     assert [item.kind for item in batch.results] == ["claim_type", "claim"]
     assert {item.accepted_coordinate for item in batch.results} == {batch.coordinate}

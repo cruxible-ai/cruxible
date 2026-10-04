@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
-from cruxible_client.contracts.get_reads import PlaybillGetClaimTypeCardV1, PlaybillGetRequestV1
+from cruxible_client.contracts.get_reads import PlaybillGetClaimTypeCard, PlaybillGetRequest
 from cruxible_core.service.discovery.get import service_playbill_get
 from cruxible_core.service.discovery.orient import OrientCaller, service_playbill_orient
 from tests.test_claims.test_claim_type_v7_revisions import _V7World, v7_type
@@ -44,15 +44,15 @@ def _descriptor(world: _V7World, *, full: bool) -> object:
     return descriptor
 
 
-def _card(world: _V7World) -> PlaybillGetClaimTypeCardV1:
+def _card(world: _V7World) -> PlaybillGetClaimTypeCard:
     card = service_playbill_get(
         world.instance,
-        request=PlaybillGetRequestV1(
+        request=PlaybillGetRequest(
             ref=f"ClaimType:{PREDICATE}", evaluation_time=datetime(2026, 8, 22, tzinfo=UTC)
         ),
         access=BodyAccessContext(principal_id="reader", can_read_body=True),
     ).card
-    assert isinstance(card, PlaybillGetClaimTypeCardV1)
+    assert isinstance(card, PlaybillGetClaimTypeCard)
     return card
 
 

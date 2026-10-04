@@ -9,16 +9,16 @@ from types import SimpleNamespace
 import pytest
 
 from cruxible_client.contracts.line_dispatch import (
-    LineArmPrincipalV1,
-    LineDispatchRequestV1,
-    LineEvaluateRequestV1,
-    LineTriggerCheckRequestV1,
+    LineArmPrincipal,
+    LineDispatchRequest,
+    LineEvaluateRequest,
+    LineTriggerCheckRequest,
 )
 from cruxible_client.contracts.triggers import (
-    CadenceScheduleV1,
-    CaptureLandingScheduleV1,
-    CronScheduleV1,
-    WindowCloseScheduleV1,
+    CadenceSchedule,
+    CaptureLandingSchedule,
+    CronSchedule,
+    WindowCloseSchedule,
 )
 from cruxible_core.exhaust.line_dispatch import LineDispatchStore
 from cruxible_core.service.procedures.line_dispatch import (
@@ -29,7 +29,7 @@ from cruxible_core.service.procedures.line_dispatch import (
 )
 from cruxible_core.service.procedures.line_triggers import service_check_line_trigger
 from cruxible_core.service.procedures.procedure_runs import (
-    LineRunRequestV1,
+    LineRunRequest,
     _journal,
     _stream,
     service_run_playbill_line,
@@ -38,7 +38,7 @@ from tests.support.lines import line_trigger, successor, trigger_members
 from tests.test_procedures.test_line_triggers import SELECTOR, TRIGGER, capture, line_world
 from tests.test_procedures.test_procedure_run_surface import READ_TIME, _actor
 
-LOCAL_OPERATOR = LineArmPrincipalV1(kind="local_operator", label="local-operator")
+LOCAL_OPERATOR = LineArmPrincipal(kind="local_operator", label="local-operator")
 
 
 def _active_segment(instance) -> str:  # type: ignore[no-untyped-def]
@@ -50,13 +50,13 @@ def _active_segment(instance) -> str:  # type: ignore[no-untyped-def]
 
 
 def queued_world(tmp_path):
-    instance, line, procedure = line_world(tmp_path, CaptureLandingScheduleV1(event=SELECTOR))
+    instance, line, procedure = line_world(tmp_path, CaptureLandingSchedule(event=SELECTOR))
     capture(instance, procedure)
     now = READ_TIME + timedelta(seconds=2)
     result = service_evaluate_line(
         instance,
         line.identity.name,
-        LineEvaluateRequestV1(since=READ_TIME, until=now),
+        LineEvaluateRequest(since=READ_TIME, until=now),
         actor=_actor(instance),
         now=now,
     )
@@ -70,7 +70,7 @@ def test_explicit_evaluation_and_pending_rebuild_do_not_execute(tmp_path):
     before = store.journal.read_head(store.stream, "dispatch")
     store.path.unlink()
     check = service_check_line_trigger(
-        instance, line.identity.name, LineTriggerCheckRequestV1(), now=now
+        instance, line.identity.name, LineTriggerCheckRequest(), now=now
     )
     assert check.occurrences[0].pending
     assert check.occurrences[0].admitted_run_id is None
@@ -78,7 +78,7 @@ def test_explicit_evaluation_and_pending_rebuild_do_not_execute(tmp_path):
     service_evaluate_line(
         instance,
         line.identity.name,
-        LineEvaluateRequestV1(since=READ_TIME, until=now),
+        LineEvaluateRequest(since=READ_TIME, until=now),
         actor=_actor(instance),
         now=now,
     )
@@ -91,7 +91,7 @@ def test_explicit_evaluation_and_pending_rebuild_do_not_execute(tmp_path):
 
 
 def test_listener_restart_keeps_pending_and_leaves_downtime_for_explicit_evaluation(tmp_path):
-    instance, line, procedure = line_world(tmp_path, CaptureLandingScheduleV1(event=SELECTOR))
+    instance, line, procedure = line_world(tmp_path, CaptureLandingSchedule(event=SELECTOR))
     capture(instance, procedure)  # before subscribing: never auto-consumed
     actor = _actor(instance)
     start = READ_TIME + timedelta(seconds=10)
@@ -128,7 +128,7 @@ def test_listener_restart_keeps_pending_and_leaves_downtime_for_explicit_evaluat
     evaluated = service_evaluate_line(
         instance,
         line.identity.name,
-        LineEvaluateRequestV1(since=start + timedelta(seconds=2), until=restarted),
+        LineEvaluateRequest(since=start + timedelta(seconds=2), until=restarted),
         actor=actor,
         now=restarted,
     )
@@ -147,7 +147,7 @@ def test_dispatch_races_explicit_line_run_admits_exactly_once(tmp_path):
         return service_dispatch_line(
             instance,
             line.identity.name,
-            LineDispatchRequestV1(),
+            LineDispatchRequest(),
             actor=actor,
             now=now,
             caller_rung=3,
@@ -158,7 +158,7 @@ def test_dispatch_races_explicit_line_run_admits_exactly_once(tmp_path):
         return service_run_playbill_line(
             instance,
             path_identity_digest=line.identity.name,
-            request=LineRunRequestV1(
+            request=LineRunRequest(
                 line=line.identity.name,
                 trigger=TRIGGER,
                 trigger_event=occurrence.binding.event,
@@ -193,7 +193,7 @@ def test_lost_dispatch_completion_reuses_admission_after_projection_rebuild(tmp_
             service_dispatch_line(
                 instance,
                 line.identity.name,
-                LineDispatchRequestV1(),
+                LineDispatchRequest(),
                 actor=_actor(instance),
                 now=now,
                 caller_rung=3,
@@ -202,7 +202,7 @@ def test_lost_dispatch_completion_reuses_admission_after_projection_rebuild(tmp_
     result = service_dispatch_line(
         instance,
         line.identity.name,
-        LineDispatchRequestV1(),
+        LineDispatchRequest(),
         actor=_actor(instance),
         now=now + timedelta(minutes=1),
         caller_rung=3,
@@ -214,7 +214,7 @@ def test_lost_dispatch_completion_reuses_admission_after_projection_rebuild(tmp_
         service_dispatch_line(
             instance,
             line.identity.name,
-            LineDispatchRequestV1(),
+            LineDispatchRequest(),
             actor=_actor(instance),
             now=now,
             caller_rung=3,
@@ -229,14 +229,14 @@ def test_dispatch_refusal_leaves_exact_pending_binding(tmp_path):
     result = service_dispatch_line(
         instance,
         line.identity.name,
-        LineDispatchRequestV1(),
+        LineDispatchRequest(),
         actor=_actor(instance),
         now=now,
         caller_rung=1,
     )
     assert result.items[0].status == "blocked"
     check = service_check_line_trigger(
-        instance, line.identity.name, LineTriggerCheckRequestV1(), now=now
+        instance, line.identity.name, LineTriggerCheckRequest(), now=now
     )
     assert check.occurrences[0].pending
     assert check.occurrences[0].binding == occurrence.binding
@@ -246,14 +246,14 @@ def test_dispatch_refusal_leaves_exact_pending_binding(tmp_path):
 def test_listener_retains_window_boundaries_and_dispatches_only_when_closed(
     tmp_path, event_relative
 ):
-    from cruxible_client.contracts.procedures.windows import CaptureEventWindowV1, FixedWindowV1
+    from cruxible_client.contracts.procedures.windows import CaptureEventWindow, FixedWindow
 
     window = (
-        CaptureEventWindowV1(event=SELECTOR, duration_seconds=60)
+        CaptureEventWindow(event=SELECTOR, duration_seconds=60)
         if event_relative
-        else FixedWindowV1(starts_at=READ_TIME, duration_seconds=60)
+        else FixedWindow(starts_at=READ_TIME, duration_seconds=60)
     )
-    instance, line, procedure = line_world(tmp_path, WindowCloseScheduleV1(window=window))
+    instance, line, procedure = line_world(tmp_path, WindowCloseSchedule(window=window))
     actor = _actor(instance)
     service_arm_line(
         instance,
@@ -271,7 +271,7 @@ def test_listener_retains_window_boundaries_and_dispatches_only_when_closed(
     early = service_dispatch_line(
         instance,
         line.identity.name,
-        LineDispatchRequestV1(),
+        LineDispatchRequest(),
         actor=actor,
         now=READ_TIME + timedelta(seconds=2),
         caller_rung=3,
@@ -287,20 +287,20 @@ def test_listener_retains_window_boundaries_and_dispatches_only_when_closed(
     late = service_dispatch_line(
         instance,
         line.identity.name,
-        LineDispatchRequestV1(),
+        LineDispatchRequest(),
         actor=actor,
         now=end + timedelta(hours=1),
         caller_rung=3,
     )
     assert late.items[0].status == "admitted", late
     check = service_check_line_trigger(
-        instance, line.identity.name, LineTriggerCheckRequestV1(), now=end + timedelta(hours=1)
+        instance, line.identity.name, LineTriggerCheckRequest(), now=end + timedelta(hours=1)
     )
     assert check.occurrences[0].binding.window.ends_at == end
 
 
 def test_cadence_has_one_pending_occurrence_and_retains_its_first_due_instant(tmp_path):
-    instance, line, _ = line_world(tmp_path, CadenceScheduleV1(interval_seconds=60))
+    instance, line, _ = line_world(tmp_path, CadenceSchedule(interval_seconds=60))
     actor = _actor(instance)
     service_arm_line(
         instance,
@@ -320,7 +320,7 @@ def test_cadence_has_one_pending_occurrence_and_retains_its_first_due_instant(tm
     checked = service_check_line_trigger(
         instance,
         line.identity.name,
-        LineTriggerCheckRequestV1(),
+        LineTriggerCheckRequest(),
         now=READ_TIME + timedelta(seconds=30),
     )
     assert checked.occurrences[0].pending
@@ -329,7 +329,7 @@ def test_cadence_has_one_pending_occurrence_and_retains_its_first_due_instant(tm
     result = service_dispatch_line(
         instance,
         line.identity.name,
-        LineDispatchRequestV1(),
+        LineDispatchRequest(),
         actor=actor,
         now=READ_TIME + timedelta(seconds=30),
         caller_rung=3,
@@ -338,7 +338,7 @@ def test_cadence_has_one_pending_occurrence_and_retains_its_first_due_instant(tm
 
 
 def test_event_index_rebuild_never_replays_history_or_loses_pending(tmp_path):
-    instance, line, procedure = line_world(tmp_path, CaptureLandingScheduleV1(event=SELECTOR))
+    instance, line, procedure = line_world(tmp_path, CaptureLandingSchedule(event=SELECTOR))
     actor = _actor(instance)
     service_arm_line(
         instance,
@@ -370,7 +370,7 @@ def test_daemon_listener_matches_without_execution(tmp_path, monkeypatch):
 
     from cruxible_core.consumers.runner import ConsumerRunner
 
-    instance, line, procedure = line_world(tmp_path, CaptureLandingScheduleV1(event=SELECTOR))
+    instance, line, procedure = line_world(tmp_path, CaptureLandingSchedule(event=SELECTOR))
     monkeypatch.setattr(
         "cruxible_core.consumers.runner.get_registry",
         lambda: SimpleNamespace(
@@ -428,7 +428,7 @@ def test_any_line_or_trigger_change_stops_the_arm_until_it_is_rearmed(
     from tests.test_indexes.test_resolution_contracts import _accept_tree
 
     instance, line, procedure, owner = line_world(
-        tmp_path, CaptureLandingScheduleV1(event=SELECTOR), with_owner=True
+        tmp_path, CaptureLandingSchedule(event=SELECTOR), with_owner=True
     )
     actor = _actor(instance)
     service_arm_line(
@@ -440,7 +440,7 @@ def test_any_line_or_trigger_change_stops_the_arm_until_it_is_rearmed(
         daemon_id="daemon",
     )
     segment = _active_segment(instance)
-    from cruxible_client.contracts.procedures.windows import CaptureEventWindowV1
+    from cruxible_client.contracts.procedures.windows import CaptureEventWindow
 
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     if new_trigger:
@@ -450,10 +450,10 @@ def test_any_line_or_trigger_change_stops_the_arm_until_it_is_rearmed(
                     line_trigger(
                         TRIGGER,
                         line=line.identity.name,
-                        schedule=CaptureLandingScheduleV1(event=SELECTOR),
+                        schedule=CaptureLandingSchedule(event=SELECTOR),
                     ),
-                    schedule=WindowCloseScheduleV1(
-                        window=CaptureEventWindowV1(event=SELECTOR, duration_seconds=1)
+                    schedule=WindowCloseSchedule(
+                        window=CaptureEventWindow(event=SELECTOR, duration_seconds=1)
                     ),
                 )
             )
@@ -510,7 +510,7 @@ def test_one_capture_can_leave_independent_pending_work_for_two_lines(tmp_path):
     from tests.test_indexes.test_resolution_contracts import _accept_tree
 
     instance, first, procedure, owner = line_world(
-        tmp_path, CaptureLandingScheduleV1(event=SELECTOR), with_owner=True
+        tmp_path, CaptureLandingSchedule(event=SELECTOR), with_owner=True
     )
     second = first.model_copy(update={"identity": ArtifactIdentity(kind="Line", name="other-line")})
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
@@ -520,7 +520,7 @@ def test_one_capture_can_leave_independent_pending_work_for_two_lines(tmp_path):
             line_trigger(
                 "other-line-trigger",
                 line=second.identity.name,
-                schedule=CaptureLandingScheduleV1(event=SELECTOR),
+                schedule=CaptureLandingSchedule(event=SELECTOR),
             )
         )
     )
@@ -541,7 +541,7 @@ def test_one_capture_can_leave_independent_pending_work_for_two_lines(tmp_path):
     now = READ_TIME + timedelta(seconds=2)
     service_match_listening_lines(instance, actor=actor, now=now, daemon_id="daemon")
     first_result = service_dispatch_line(
-        instance, first.identity.name, LineDispatchRequestV1(), actor=actor, now=now, caller_rung=3
+        instance, first.identity.name, LineDispatchRequest(), actor=actor, now=now, caller_rung=3
     )
     assert first_result.items[0].status == "admitted"
     LineDispatchStore(instance).path.unlink()
@@ -551,14 +551,14 @@ def test_one_capture_can_leave_independent_pending_work_for_two_lines(tmp_path):
             == 1
         )
     second_result = service_dispatch_line(
-        instance, second.identity.name, LineDispatchRequestV1(), actor=actor, now=now, caller_rung=3
+        instance, second.identity.name, LineDispatchRequest(), actor=actor, now=now, caller_rung=3
     )
     assert second_result.items[0].status == "admitted"
     assert first_result.items[0].run_id != second_result.items[0].run_id
 
 
 def test_idle_coverage_is_checkpointed_and_restart_claims_only_durable_range(tmp_path):
-    instance, line, procedure = line_world(tmp_path, CaptureLandingScheduleV1(event=SELECTOR))
+    instance, line, procedure = line_world(tmp_path, CaptureLandingSchedule(event=SELECTOR))
     actor = _actor(instance)
     service_arm_line(
         instance,
@@ -620,7 +620,7 @@ def test_superseded_pending_requires_explicit_reconciliation_and_survives_rebuil
     from tests.test_indexes.test_resolution_contracts import _accept_tree
 
     instance, line, procedure, owner = line_world(
-        tmp_path, CaptureLandingScheduleV1(event=SELECTOR), with_owner=True
+        tmp_path, CaptureLandingSchedule(event=SELECTOR), with_owner=True
     )
     capture(instance, procedure)
     now = READ_TIME + timedelta(seconds=2)
@@ -628,7 +628,7 @@ def test_superseded_pending_requires_explicit_reconciliation_and_survives_rebuil
     evaluated = service_evaluate_line(
         instance,
         line.identity.name,
-        LineEvaluateRequestV1(since=READ_TIME, until=now),
+        LineEvaluateRequest(since=READ_TIME, until=now),
         actor=actor,
         now=now,
     )
@@ -641,7 +641,7 @@ def test_superseded_pending_requires_explicit_reconciliation_and_survives_rebuil
     )
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     if new_trigger:
-        from cruxible_client.contracts.procedures.windows import CaptureEventWindowV1
+        from cruxible_client.contracts.procedures.windows import CaptureEventWindow
 
         # A changed schedule is new trigger semantics: what the old one matched
         # is superseded, never adopted.
@@ -652,10 +652,10 @@ def test_superseded_pending_requires_explicit_reconciliation_and_survives_rebuil
                     line_trigger(
                         TRIGGER,
                         line=line.identity.name,
-                        schedule=CaptureLandingScheduleV1(event=SELECTOR),
+                        schedule=CaptureLandingSchedule(event=SELECTOR),
                     ),
-                    schedule=WindowCloseScheduleV1(
-                        window=CaptureEventWindowV1(event=SELECTOR, duration_seconds=1)
+                    schedule=WindowCloseSchedule(
+                        window=CaptureEventWindow(event=SELECTOR, duration_seconds=1)
                     ),
                 )
             )
@@ -686,7 +686,7 @@ def test_superseded_pending_requires_explicit_reconciliation_and_survives_rebuil
     else:
         accept_successor()
     result = service_dispatch_line(
-        instance, line.identity.name, LineDispatchRequestV1(), actor=actor, now=now, caller_rung=3
+        instance, line.identity.name, LineDispatchRequest(), actor=actor, now=now, caller_rung=3
     )
     assert result.items[0].status == "superseded"
     assert result.items[0].refusal.code == "line_binding_superseded"
@@ -696,7 +696,7 @@ def test_superseded_pending_requires_explicit_reconciliation_and_survives_rebuil
         service_dispatch_line(
             instance,
             line.identity.name,
-            LineDispatchRequestV1(),
+            LineDispatchRequest(),
             actor=actor,
             now=now,
             caller_rung=3,
@@ -707,7 +707,7 @@ def test_superseded_pending_requires_explicit_reconciliation_and_survives_rebuil
         row = conn.execute("SELECT payload,disposition FROM pending").fetchone()
         assert row[1] == "superseded"
         assert json.loads(row[0])["line_artifact_digest"] == evaluated.line_artifact_digest
-    request = LineDispatchRequestV1(occurrence_id=occurrence.occurrence_id, retry=True)
+    request = LineDispatchRequest(occurrence_id=occurrence.occurrence_id, retry=True)
     retry = service_dispatch_line(
         instance, line.identity.name, request, actor=actor, now=now, caller_rung=3
     )
@@ -716,7 +716,7 @@ def test_superseded_pending_requires_explicit_reconciliation_and_survives_rebuil
         evaluated_new = service_evaluate_line(
             instance,
             line.identity.name,
-            LineEvaluateRequestV1(since=READ_TIME, until=now + timedelta(seconds=2)),
+            LineEvaluateRequest(since=READ_TIME, until=now + timedelta(seconds=2)),
             actor=actor,
             now=now + timedelta(seconds=2),
         )
@@ -724,7 +724,7 @@ def test_superseded_pending_requires_explicit_reconciliation_and_survives_rebuil
         fresh = service_dispatch_line(
             instance,
             line.identity.name,
-            LineDispatchRequestV1(),
+            LineDispatchRequest(),
             actor=actor,
             now=now + timedelta(seconds=2),
             caller_rung=3,
@@ -744,11 +744,11 @@ def test_superseded_pending_requires_explicit_reconciliation_and_survives_rebuil
 
 
 def test_restoring_a_schedule_rebinds_an_occurrence_its_change_superseded(tmp_path):
-    from cruxible_client.contracts.procedures.windows import CaptureEventWindowV1
+    from cruxible_client.contracts.procedures.windows import CaptureEventWindow
     from tests.test_indexes.test_resolution_contracts import _accept_tree
 
     instance, line, procedure, owner = line_world(
-        tmp_path, CaptureLandingScheduleV1(event=SELECTOR), with_owner=True
+        tmp_path, CaptureLandingSchedule(event=SELECTOR), with_owner=True
     )
     capture(instance, procedure)
     now = READ_TIME + timedelta(seconds=2)
@@ -758,7 +758,7 @@ def test_restoring_a_schedule_rebinds_an_occurrence_its_change_superseded(tmp_pa
         return service_evaluate_line(
             instance,
             line.identity.name,
-            LineEvaluateRequestV1(since=READ_TIME, until=at),
+            LineEvaluateRequest(since=READ_TIME, until=at),
             actor=actor,
             now=at,
         )
@@ -767,7 +767,7 @@ def test_restoring_a_schedule_rebinds_an_occurrence_its_change_superseded(tmp_pa
         return service_dispatch_line(
             instance,
             line.identity.name,
-            LineDispatchRequestV1(),
+            LineDispatchRequest(),
             actor=actor,
             now=at,
             caller_rung=3,
@@ -780,13 +780,11 @@ def test_restoring_a_schedule_rebinds_an_occurrence_its_change_superseded(tmp_pa
 
     (occurrence,) = evaluate(now).occurrences
     landing = line_trigger(
-        TRIGGER, line=line.identity.name, schedule=CaptureLandingScheduleV1(event=SELECTOR)
+        TRIGGER, line=line.identity.name, schedule=CaptureLandingSchedule(event=SELECTOR)
     )
     windowed = successor(
         landing,
-        schedule=WindowCloseScheduleV1(
-            window=CaptureEventWindowV1(event=SELECTOR, duration_seconds=1)
-        ),
+        schedule=WindowCloseSchedule(window=CaptureEventWindow(event=SELECTOR, duration_seconds=1)),
     )
     accept(windowed, "to-window", "2026-08-24T15:30:00.000000Z")
     superseded = dispatch(now)
@@ -812,9 +810,9 @@ def test_restoring_a_schedule_rebinds_an_occurrence_its_change_superseded(tmp_pa
 
 def test_retry_requires_one_explicit_occurrence():
     with pytest.raises(ValueError, match="retry requires"):
-        LineDispatchRequestV1(retry=True)
+        LineDispatchRequest(retry=True)
     with pytest.raises(ValueError, match="retry requires"):
-        LineDispatchRequestV1(retry=True, occurrence_id="one", limit=2)
+        LineDispatchRequest(retry=True, occurrence_id="one", limit=2)
 
 
 @pytest.mark.parametrize(
@@ -822,11 +820,11 @@ def test_retry_requires_one_explicit_occurrence():
 )
 def test_event_refusals_close_only_unusable_occurrences(tmp_path, monkeypatch, failure):
     from cruxible_client.contracts.errors import PlaybillExecutionError
-    from cruxible_client.contracts.line_dispatch import LineTriggerOccurrenceV1
+    from cruxible_client.contracts.line_dispatch import LineTriggerOccurrence
     from cruxible_client.contracts.procedures.line_specs import line_identity_digest
     from cruxible_client.contracts.procedures.windows import (
-        LineTriggerBindingV1,
-        TriggerEventReferenceV1,
+        LineTriggerBinding,
+        TriggerEventReference,
     )
     from cruxible_core.service.procedures import resolution_contracts
     from cruxible_core.service.procedures.procedure_runs import (
@@ -835,7 +833,7 @@ def test_event_refusals_close_only_unusable_occurrences(tmp_path, monkeypatch, f
         line_triggers,
     )
 
-    instance, line, procedure = line_world(tmp_path, CaptureLandingScheduleV1(event=SELECTOR))
+    instance, line, procedure = line_world(tmp_path, CaptureLandingSchedule(event=SELECTOR))
     actor = _actor(instance)
     first = capture(
         instance,
@@ -857,7 +855,7 @@ def test_event_refusals_close_only_unusable_occurrences(tmp_path, monkeypatch, f
     store = LineDispatchStore(instance)
     occurrence_ids = []
     for ordinal, stored in enumerate((first, second)):
-        event = TriggerEventReferenceV1(
+        event = TriggerEventReference(
             run_id=stored.record.run_id,
             partition_id=stored.record.partition_id,
             sequence=stored.record.sequence,
@@ -871,7 +869,7 @@ def test_event_refusals_close_only_unusable_occurrences(tmp_path, monkeypatch, f
             }.get(failure, {})
             event = event.model_copy(update=updates)
         (trigger,) = line_triggers(instance, accepted, coordinate=instance.accepted_coordinate())
-        binding = LineTriggerBindingV1(
+        binding = LineTriggerBinding(
             kind="capture_landing", trigger=trigger.trigger.identity, event=event
         )
         occurrence_id, _ = _line_occurrence(
@@ -892,7 +890,7 @@ def test_event_refusals_close_only_unusable_occurrences(tmp_path, monkeypatch, f
                     "trigger": trigger.trigger.identity.qualified,
                     "trigger_artifact_digest": trigger.artifact_digest,
                     "coordinate": stored.record.accepted_coordinate.model_dump(mode="json"),
-                    "occurrence": LineTriggerOccurrenceV1(
+                    "occurrence": LineTriggerOccurrence(
                         occurrence_id=occurrence_id,
                         binding=binding,
                         eligible_at=READ_TIME + timedelta(seconds=ordinal),
@@ -914,7 +912,7 @@ def test_event_refusals_close_only_unusable_occurrences(tmp_path, monkeypatch, f
     item = service_dispatch_line(
         instance,
         line.identity.name,
-        LineDispatchRequestV1(),
+        LineDispatchRequest(),
         actor=actor,
         now=now,
         caller_rung=3,
@@ -935,7 +933,7 @@ def test_event_refusals_close_only_unusable_occurrences(tmp_path, monkeypatch, f
         later = service_dispatch_line(
             instance,
             line.identity.name,
-            LineDispatchRequestV1(),
+            LineDispatchRequest(),
             actor=actor,
             now=READ_TIME + timedelta(seconds=11),
             caller_rung=3,
@@ -953,7 +951,7 @@ def test_event_refusals_close_only_unusable_occurrences(tmp_path, monkeypatch, f
     next_item = service_dispatch_line(
         instance,
         line.identity.name,
-        LineDispatchRequestV1(),
+        LineDispatchRequest(),
         actor=actor,
         now=READ_TIME + timedelta(seconds=12),
         caller_rung=3,
@@ -988,13 +986,13 @@ def test_a_timer_trigger_never_ticks_before_its_acceptance_and_a_successor_resta
     from tests.test_indexes.test_resolution_contracts import _accept_tree
 
     instance, line, _procedure, owner = line_world(
-        tmp_path, CadenceScheduleV1(interval_seconds=3600), with_owner=True
+        tmp_path, CadenceSchedule(interval_seconds=3600), with_owner=True
     )
     accepted = datetime(2026, 8, 24, 15, tzinfo=UTC)  # line_world's acceptance
 
     def due(at):  # type: ignore[no-untyped-def]
         checked = service_check_line_trigger(
-            instance, line.identity.name, LineTriggerCheckRequestV1(), now=at
+            instance, line.identity.name, LineTriggerCheckRequest(), now=at
         )
         return [item.eligible_at for item in checked.occurrences]
 
@@ -1003,10 +1001,10 @@ def test_a_timer_trigger_never_ticks_before_its_acceptance_and_a_successor_resta
     assert due(accepted + timedelta(hours=1, seconds=1)) == [accepted + timedelta(hours=1)]
 
     hourly = line_trigger(
-        TRIGGER, line=line.identity.name, schedule=CadenceScheduleV1(interval_seconds=3600)
+        TRIGGER, line=line.identity.name, schedule=CadenceSchedule(interval_seconds=3600)
     )
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    tree.update(trigger_members(successor(hourly, schedule=CronScheduleV1(expression="0 * * * 1"))))
+    tree.update(trigger_members(successor(hourly, schedule=CronSchedule(expression="0 * * * 1"))))
     _accept_tree(
         instance, owner, tree, timestamp="2026-08-28T15:30:00.000000Z", proposal_name="weekly"
     )
@@ -1023,9 +1021,9 @@ TRIGGER_ACCEPTED = READ_TIME - timedelta(hours=1)
 
 
 def _event(stored):  # type: ignore[no-untyped-def]
-    from cruxible_client.contracts.procedures.windows import TriggerEventReferenceV1
+    from cruxible_client.contracts.procedures.windows import TriggerEventReference
 
-    return TriggerEventReferenceV1(
+    return TriggerEventReference(
         run_id=stored.record.run_id,
         partition_id=stored.record.partition_id,
         sequence=stored.record.sequence,
@@ -1035,12 +1033,12 @@ def _event(stored):  # type: ignore[no-untyped-def]
 
 @pytest.mark.parametrize("windowed", [False, True])
 def test_a_capture_at_or_before_the_triggers_acceptance_never_fires_it(tmp_path, windowed):
-    from cruxible_client.contracts.procedures.windows import CaptureEventWindowV1
+    from cruxible_client.contracts.procedures.windows import CaptureEventWindow
 
     schedule = (
-        WindowCloseScheduleV1(window=CaptureEventWindowV1(event=SELECTOR, duration_seconds=60))
+        WindowCloseSchedule(window=CaptureEventWindow(event=SELECTOR, duration_seconds=60))
         if windowed
-        else CaptureLandingScheduleV1(event=SELECTOR)
+        else CaptureLandingSchedule(event=SELECTOR)
     )
     instance, line, procedure = line_world(tmp_path, schedule)
     stored = {
@@ -1052,7 +1050,7 @@ def test_a_capture_at_or_before_the_triggers_acceptance_never_fires_it(tmp_path,
         )
     }
     checked = service_check_line_trigger(
-        instance, line.identity.name, LineTriggerCheckRequestV1(), now=READ_TIME
+        instance, line.identity.name, LineTriggerCheckRequest(), now=READ_TIME
     )
     # Strictly after acceptance only: the equal instant is not after it.
     assert [item.binding.event for item in checked.occurrences] == [_event(stored["after"])]
@@ -1062,7 +1060,7 @@ def test_a_capture_at_or_before_the_triggers_acceptance_never_fires_it(tmp_path,
         run = service_run_playbill_line(
             instance,
             path_identity_digest=line.identity.name,
-            request=LineRunRequestV1(
+            request=LineRunRequest(
                 line=line.identity.name, trigger=TRIGGER, trigger_event=_event(stored[name])
             ),
             actor_context=_actor(instance),
@@ -1079,20 +1077,20 @@ def test_a_capture_at_or_before_the_triggers_acceptance_never_fires_it(tmp_path,
 def test_a_fixed_window_fires_only_when_it_closes_after_the_triggers_acceptance(
     tmp_path, closes_after, fires
 ):
-    from cruxible_client.contracts.procedures.windows import FixedWindowV1
+    from cruxible_client.contracts.procedures.windows import FixedWindow
 
-    window = FixedWindowV1(
+    window = FixedWindow(
         starts_at=TRIGGER_ACCEPTED - timedelta(hours=1), duration_seconds=3600 + closes_after
     )
-    instance, line, _procedure = line_world(tmp_path, WindowCloseScheduleV1(window=window))
+    instance, line, _procedure = line_world(tmp_path, WindowCloseSchedule(window=window))
     checked = service_check_line_trigger(
-        instance, line.identity.name, LineTriggerCheckRequestV1(), now=READ_TIME
+        instance, line.identity.name, LineTriggerCheckRequest(), now=READ_TIME
     )
     assert len(checked.occurrences) == (1 if fires else 0)
     run = service_run_playbill_line(
         instance,
         path_identity_digest=line.identity.name,
-        request=LineRunRequestV1(line=line.identity.name, trigger=TRIGGER),
+        request=LineRunRequest(line=line.identity.name, trigger=TRIGGER),
         actor_context=_actor(instance),
         caller_rung=3,
         daemon_clock=SimpleNamespace(now=lambda: READ_TIME),
@@ -1102,7 +1100,7 @@ def test_a_fixed_window_fires_only_when_it_closes_after_the_triggers_acceptance(
 
 
 def test_an_armed_line_never_admits_a_later_append_stamped_before_acceptance(tmp_path):
-    instance, line, procedure = line_world(tmp_path, CaptureLandingScheduleV1(event=SELECTOR))
+    instance, line, procedure = line_world(tmp_path, CaptureLandingSchedule(event=SELECTOR))
     actor = _actor(instance)
     service_arm_line(
         instance,
@@ -1122,7 +1120,7 @@ def test_an_armed_line_never_admits_a_later_append_stamped_before_acceptance(tmp
     dispatched = service_dispatch_line(
         instance,
         line.identity.name,
-        LineDispatchRequestV1(),
+        LineDispatchRequest(),
         actor=actor,
         now=READ_TIME + timedelta(seconds=2),
         caller_rung=3,

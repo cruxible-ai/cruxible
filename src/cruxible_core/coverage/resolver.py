@@ -42,33 +42,33 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-from cruxible_client.contracts.claims import ClaimCitationV1
-from cruxible_client.contracts.discovery import DiscoveryMatchBasis
+from cruxible_client.contracts.claims import ClaimCitation
+from cruxible_client.contracts.discovery import DiscoveryMatchBasisKind
 from cruxible_client.contracts.query.grammar import byte_sorted
-from cruxible_client.contracts.source_references import CoverageDescriptorV1
+from cruxible_client.contracts.source_references import CoverageDescriptor
 from cruxible_core.coverage.contracts import (
     COVERAGE_HEALTH_PROVES_FRESHNESS,
     COVERAGE_MATCH_STATES,
-    CoverageAccessProfileV1,
+    CoverageAccessProfile,
     CoverageBatchSummaryV3,
     CoverageCardV2,
     CoverageHealthV1,
-    CoverageLineOverlayV1,
+    CoverageLineOverlay,
     CoverageMatchStateV1,
     CoverageRequestV1,
     CoverageResultV3,
     CoverageSpanRequestV1,
     CoverageSpanResultV3,
-    LogicalSourceIdentityV1,
-    PlaybillCitationWindowObservationV1,
+    LogicalSourceIdentity,
+    PlaybillCitationWindowObservation,
     coverage_span_match_state,
     weakest_health,
 )
 from cruxible_core.coverage.indexes import (
     EvidenceCitationIndexV2,
     EvidenceCitationV2,
+    WorkingOccurrence,
     WorkingOccurrenceOverlayV2,
-    WorkingOccurrenceV1,
     evidence_citation_index_digest,
     working_occurrence_overlay_digest,
 )
@@ -85,13 +85,13 @@ COVERAGE_FACET = "coverage"
 class BoundPublicationObservation:
     """One parsed block backed by a durable confirmed publication."""
 
-    source: LogicalSourceIdentityV1
+    source: LogicalSourceIdentity
     block_id: str
     claim_path: str
     claim_statement_digest: str
     expected_body_digest: str
     observed_body_digest: str
-    line_overlay: CoverageLineOverlayV1
+    line_overlay: CoverageLineOverlay
 
     @property
     def sort_key(self) -> tuple[bytes, bytes, bytes]:
@@ -114,7 +114,7 @@ def _published_citation(
         item
         for item in citation.citation_associations
         if item.claim_address.artifact_path == observation.claim_path
-        and isinstance(item.reference, ClaimCitationV1)
+        and isinstance(item.reference, ClaimCitation)
         and item.reference.role == "copy"
         and item.reference.origin == "self_source"
     )
@@ -180,7 +180,7 @@ def _source_floor(
 
 
 def _selected(
-    occurrence: WorkingOccurrenceV1,
+    occurrence: WorkingOccurrence,
     span: CoverageSpanRequestV1,
 ) -> bool:
     """Whether a requested window touches this occurrence.
@@ -201,7 +201,7 @@ def _selected(
 
 def _same_source(
     citation: EvidenceCitationV2,
-    source: LogicalSourceIdentityV1,
+    source: LogicalSourceIdentity,
 ) -> bool:
     return (
         citation.accepted_source is not None
@@ -235,11 +235,11 @@ def _resolve_span_v3(
     request: CoverageRequestV1,
     index: EvidenceCitationIndexV2,
     overlay: WorkingOccurrenceOverlayV2,
-    access: CoverageAccessProfileV1,
+    access: CoverageAccessProfile,
     manifest_floor: CoverageHealthV1,
     manifest_reasons: tuple[str, ...],
     manifest: CoverageManifestBodyV2 | None,
-    window_observations: tuple[PlaybillCitationWindowObservationV1, ...],
+    window_observations: tuple[PlaybillCitationWindowObservation, ...],
     additional_window_citation_ids: frozenset[str],
     publication_observations: tuple[BoundPublicationObservation, ...],
 ) -> CoverageSpanResultV3:
@@ -495,7 +495,7 @@ def _resolve_span_v3(
         omitted_card_count=omitted,
         commitment_scan_proofs=proofs,
         citation_window_observations=windows,
-        coverage=CoverageDescriptorV1(
+        coverage=CoverageDescriptor(
             requested_facets=(COVERAGE_FACET,),
             available_facets=(COVERAGE_FACET,) if kept else (),
             omitted_for_access=(
@@ -513,9 +513,9 @@ def _card(
     match_state: Literal["exact", "drifted", "candidate"],
     *,
     citation: EvidenceCitationV2,
-    occurrence: WorkingOccurrenceV1,
+    occurrence: WorkingOccurrence,
     at: AcceptedCoordinate,
-    basis: DiscoveryMatchBasis | None = None,
+    basis: DiscoveryMatchBasisKind | None = None,
     reason_codes: tuple[str, ...] = (),
 ) -> CoverageCardV2:
     payload = dict(
@@ -543,7 +543,7 @@ def _drift_card(
     *,
     citation: EvidenceCitationV2,
     observed_commitment_digest: str,
-    source: LogicalSourceIdentityV1,
+    source: LogicalSourceIdentity,
     at: AcceptedCoordinate,
 ) -> CoverageCardV2:
     payload = dict(
@@ -613,9 +613,9 @@ def resolve_coverage_v3(
     *,
     index: EvidenceCitationIndexV2,
     overlay: WorkingOccurrenceOverlayV2,
-    access: CoverageAccessProfileV1,
+    access: CoverageAccessProfile,
     manifest: CoverageManifestBodyV2 | None = None,
-    window_observations: tuple[PlaybillCitationWindowObservationV1, ...] = (),
+    window_observations: tuple[PlaybillCitationWindowObservation, ...] = (),
     additional_window_citation_ids: frozenset[str] = frozenset(),
     publication_observations: tuple[BoundPublicationObservation, ...] = (),
 ) -> CoverageResultV3:
@@ -700,7 +700,7 @@ def resolve_coverage_v3(
         health=health,
         global_scan_complete=global_scan_complete,
         truncation_reason_codes=byte_sorted(tuple(global_reasons)),
-        coverage=CoverageDescriptorV1(
+        coverage=CoverageDescriptor(
             requested_facets=(COVERAGE_FACET,),
             available_facets=(COVERAGE_FACET,) if any(span.cards for span in spans) else (),
             omitted_for_access=(COVERAGE_FACET,) if withheld else (),

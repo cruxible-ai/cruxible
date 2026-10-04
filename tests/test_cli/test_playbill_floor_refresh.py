@@ -12,7 +12,7 @@ from click.testing import CliRunner
 from cruxible_client import contracts
 from cruxible_client.authoring.workspace import observe_playbill_next_workspace
 from cruxible_client.contracts.errors import ProposalActivationRequestInvalid
-from cruxible_client.contracts.floor import PlaybillFloorDeltaV1
+from cruxible_client.contracts.floor import PlaybillFloorDelta
 from cruxible_core.cli.context import CliContextState, save_cli_context
 from cruxible_core.cli.main import cli
 from tests.support.floor_exports import delta_from_export, floor_v5_export
@@ -31,7 +31,7 @@ def _export() -> contracts.PlaybillFloorExport:
     return floor_v5_export({"cards/fresh.json": b'{"fresh":true}\n'}, coordinate=_coordinate())
 
 
-def _delta(*, corrupt: bool = False) -> PlaybillFloorDeltaV1:
+def _delta(*, corrupt: bool = False) -> PlaybillFloorDelta:
     return delta_from_export(_export(), corrupt="cards/fresh.json" if corrupt else None)
 
 
@@ -66,9 +66,9 @@ def _install_client(
     class StubClient:
         def resolve_playbill_proposal_selector(
             self, instance_id: str, selector: str
-        ) -> contracts.PlaybillProposalSelectorResultV1:
+        ) -> contracts.PlaybillProposalSelectorResult:
             assert instance_id == "inst_test"
-            return contracts.PlaybillProposalSelectorResultV1(
+            return contracts.PlaybillProposalSelectorResult(
                 selector=selector,
                 proposal_id=selector,
             )
@@ -92,7 +92,7 @@ def _install_client(
             at=None,  # type: ignore[no-untyped-def]
             base_generation: int | None = None,
             base_renderer: str | None = None,
-        ) -> PlaybillFloorDeltaV1:
+        ) -> PlaybillFloorDelta:
             assert instance_id == "inst_test"
             assert at == (_coordinate() if status == "accepted" else None)
             return _delta(corrupt=corrupt)
@@ -122,7 +122,7 @@ def test_floor_export_records_missing_config_and_clears_floor_missing(
             at=None,  # type: ignore[no-untyped-def]
             base_generation: int | None = None,
             base_renderer: str | None = None,
-        ) -> PlaybillFloorDeltaV1:
+        ) -> PlaybillFloorDelta:
             assert instance_id == "inst_test"
             assert at is None
             return _delta()
@@ -188,8 +188,8 @@ def test_attached_sync_refusal_reports_accepted_truth_and_runnable_repair(
     class StubClient:
         def resolve_playbill_proposal_selector(
             self, instance_id: str, selector: str
-        ) -> contracts.PlaybillProposalSelectorResultV1:
-            return contracts.PlaybillProposalSelectorResultV1(
+        ) -> contracts.PlaybillProposalSelectorResult:
+            return contracts.PlaybillProposalSelectorResult(
                 selector=selector,
                 proposal_id=selector,
             )
@@ -202,9 +202,9 @@ def test_attached_sync_refusal_reports_accepted_truth_and_runnable_repair(
         accepted_coordinate=_coordinate(),
         workspace_advertisement={"status": "updated", "workspace_path": str(tmp_path)},
         floor_refresh=contracts.PlaybillFloorRefreshResult(status="not_configured"),
-        block_sync=contracts.PlaybillBlockSyncResultV1(
+        block_sync=contracts.PlaybillBlockSyncResult(
             items=(
-                contracts.PlaybillBlockSyncItemV1(
+                contracts.PlaybillBlockSyncItem(
                     path="runbook.md",
                     outcome="refused",
                     reason="block_locally_modified",
@@ -301,8 +301,8 @@ def test_activation_renders_malformed_proposal_id_as_typed_refusal(
     class StubClient:
         def resolve_playbill_proposal_selector(
             self, instance_id: str, selector: str
-        ) -> contracts.PlaybillProposalSelectorResultV1:
-            return contracts.PlaybillProposalSelectorResultV1(
+        ) -> contracts.PlaybillProposalSelectorResult:
+            return contracts.PlaybillProposalSelectorResult(
                 selector=selector,
                 proposal_id=selector,
             )

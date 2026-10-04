@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from cruxible_client.contracts.procedures.results import ProcedureTerminalEgressV1
+from cruxible_client.contracts.procedures.results import ProcedureTerminalEgress
 from cruxible_core.cli.commands.playbill import _echo_terminal_egress
 
 PROPOSAL = "sha256:" + "a" * 64
@@ -10,7 +10,7 @@ CANDIDATE = "sha256:" + "b" * 64
 
 
 def _settle(**update):  # type: ignore[no-untyped-def]
-    return ProcedureTerminalEgressV1(
+    return ProcedureTerminalEgress(
         node_id="settle",
         kind="settle_change_set",
         verdict="delivered",
@@ -45,7 +45,7 @@ def test_a_fallen_back_settle_prints_its_proposal_and_why(capsys) -> None:
 
 
 def test_a_capped_terminal_names_the_authority_it_needed_and_had(capsys) -> None:
-    capped = ProcedureTerminalEgressV1(
+    capped = ProcedureTerminalEgress(
         node_id="settle",
         kind="settle_change_set",
         verdict="refused_effective_authority",

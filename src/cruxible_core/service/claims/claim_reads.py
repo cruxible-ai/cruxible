@@ -7,17 +7,17 @@ import hashlib
 import json
 from typing import Any
 
+from cruxible_client.contracts import ClaimViewRecord
 from cruxible_client.contracts import PlaybillAcceptedCoordinate as ClientAcceptedCoordinate
-from cruxible_client.contracts import PlaybillClaimViewV2
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.claim_reads import (
-    ClaimBackingsRequestV1,
-    ClaimBackingsResultV1,
-    ClaimReadBatchRequestV1,
-    ClaimReadBatchResultV1,
-    ClaimValuesRequestV1,
-    ClaimValuesResultV1,
-    ClaimValueV1,
+    ClaimBackingsRequest,
+    ClaimBackingsResult,
+    ClaimReadBatchRequest,
+    ClaimReadBatchResult,
+    ClaimValueRecord,
+    ClaimValuesRequest,
+    ClaimValuesResult,
 )
 from cruxible_client.contracts.claim_types import claim_type_path
 from cruxible_client.contracts.claims import (
@@ -26,7 +26,7 @@ from cruxible_client.contracts.claims import (
     claim_statement_digest,
     parse_claim,
 )
-from cruxible_client.contracts.declared_blocks import ProjectionClaimBackingV1
+from cruxible_client.contracts.declared_blocks import ProjectionClaimBacking
 from cruxible_client.contracts.errors import (
     ClaimNotFoundError,
     PlaybillFormatError,
@@ -48,7 +48,7 @@ from cruxible_core.service.evidence.evidence import (
 )
 
 
-def _cursor_selection(request: ClaimReadBatchRequestV1) -> str:
+def _cursor_selection(request: ClaimReadBatchRequest) -> str:
     body = request.model_dump(mode="json", exclude={"cursor", "limit"})
     return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
 
@@ -56,8 +56,8 @@ def _cursor_selection(request: ClaimReadBatchRequestV1) -> str:
 def service_read_claim_batch(
     instance: PlaybillInstance,
     *,
-    request: ClaimReadBatchRequestV1,
-) -> ClaimReadBatchResultV1:
+    request: ClaimReadBatchRequest,
+) -> ClaimReadBatchResult:
     if request.cursor is not None and request.at is None:
         raise PlaybillFormatError("Claim batch cursor requires an explicit accepted coordinate")
     coordinate = _resolve_coordinate(
@@ -87,7 +87,7 @@ def service_read_claim_batch(
     if generation_sequence == 0:
         if request.claim_ids:
             raise ClaimNotFoundError("the accepted generation contains no Claims")
-        return ClaimReadBatchResultV1(coordinate=resolved_at, claims=())
+        return ClaimReadBatchResult(coordinate=resolved_at, claims=())
     truncated = False
     with instance.bind_accepted_projection(coordinate) as projection:
         if request.claim_ids:
@@ -118,7 +118,7 @@ def service_read_claim_batch(
             )
             truncated = len(identities) > request.limit
             identities = identities[: request.limit]
-        views: list[PlaybillClaimViewV2] = []
+        views: list[ClaimViewRecord] = []
         public_views = []
         projected_views = {view.envelope.identity: view for view in projection.claims(identities)}
         for identity in identities:
@@ -174,13 +174,13 @@ def service_read_claim_batch(
                 law=claim_history.law_evidence.get(str(public.envelope["path"])),
                 bodies=bodies,
             )
-            views.append(PlaybillClaimViewV2.model_validate(view.model_dump(mode="json")))
+            views.append(ClaimViewRecord.model_validate(view.model_dump(mode="json")))
     cursor = None
     if truncated:
         cursor = base64.urlsafe_b64encode(
             json.dumps([_cursor_selection(request), identities[-1]]).encode()
         ).decode()
-    return ClaimReadBatchResultV1(
+    return ClaimReadBatchResult(
         coordinate=resolved_at,
         claims=tuple(views),
         truncated=truncated,
@@ -191,8 +191,8 @@ def service_read_claim_batch(
 def service_read_claim_backings(
     instance: PlaybillInstance,
     *,
-    request: ClaimBackingsRequestV1,
-) -> ClaimBackingsResultV1:
+    request: ClaimBackingsRequest,
+) -> ClaimBackingsResult:
     coordinate = _resolve_coordinate(
         instance, PlaybillAcceptedCoordinate.model_validate(request.at.model_dump())
     )
@@ -202,7 +202,7 @@ def service_read_claim_backings(
     except ValueError as exc:
         raise PlaybillFormatError("Claim backings require exact full Claim identities") from exc
     bodies = instance.blobs_at(coordinate.git_oid, paths)
-    backings: list[ProjectionClaimBackingV1] = []
+    backings: list[ProjectionClaimBacking] = []
     for name, path in zip(names, paths, strict=True):
         if path not in bodies:
             raise ClaimNotFoundError(f"Claim backing not found: {name}")
@@ -214,19 +214,19 @@ def service_read_claim_backings(
         if claim.lifecycle.state != "live":
             raise PlaybillFormatError(f"Claim backing must identify a live Claim: {name}")
         backings.append(
-            ProjectionClaimBackingV1(
+            ProjectionClaimBacking(
                 identity=claim.identity,
                 statement_digest=claim_statement_digest(claim.statement).tagged,
             )
         )
-    return ClaimBackingsResultV1(coordinate=request.at, backings=tuple(backings))
+    return ClaimBackingsResult(coordinate=request.at, backings=tuple(backings))
 
 
 def service_read_claim_values(
     instance: PlaybillInstance,
     *,
-    request: ClaimValuesRequestV1,
-) -> ClaimValuesResultV1:
+    request: ClaimValuesRequest,
+) -> ClaimValuesResult:
     """Live Claim values and verdicts for selected Subjects, without full Claim views.
 
     Subjects are explicit paths or every Subject of one kind, read through the
@@ -290,14 +290,14 @@ def service_read_claim_values(
         )
         for claim in claims
     )
-    return ClaimValuesResultV1(
+    return ClaimValuesResult(
         coordinate=ClientAcceptedCoordinate.model_validate(at.model_dump()),
         evaluation_time=evaluation_time,
         values=rows,
     )
 
 
-def _claim_value_row(claim: Any, *, verdict: object, status: str) -> ClaimValueV1:
+def _claim_value_row(claim: Any, *, verdict: object, status: str) -> ClaimValueRecord:
     """One Claim's value row, for every statement object variant."""
 
     from cruxible_client.contracts.claims import ExactContentClaimObject, SubjectClaimObject
@@ -311,7 +311,7 @@ def _claim_value_row(claim: Any, *, verdict: object, status: str) -> ClaimValueV
     else:
         value = claim_object.value
     subject_path = statement.subject.artifact_path
-    return ClaimValueV1(
+    return ClaimValueRecord(
         claim_id=claim.identity.name,
         subject_path=subject_path,
         # Subject paths are `subjects/<kind>/<id>.json`; kinds hold no slash.

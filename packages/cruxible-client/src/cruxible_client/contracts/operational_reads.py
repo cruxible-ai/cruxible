@@ -11,7 +11,7 @@ An accepted artifact (a Line, a ResolutionContract, a mandate) is read at the
 requested coordinate. What happens to it operationally -- arms, pending
 occurrences, runs, bound prediction windows, capture availability -- has no
 history: it is read as of now at the current head, whatever coordinate the read
-names, and the answer says so with ``live`` (``PlaybillLiveViewV1``), which
+names, and the answer says so with ``live`` (``PlaybillLiveView``), which
 names that head and the fields read live. No answer mixes the two unannounced.
 """
 
@@ -65,14 +65,14 @@ def capture_handle(digest: str) -> str:
     return "CAP-" + digest.removeprefix("sha256:")[:CAPTURE_HANDLE_HEX]
 
 
-class PlaybillLiveHeadV1(_StrictOperationalModel):
+class PlaybillLiveHead(_StrictOperationalModel):
     """The accepted head a live read was taken at: its git oid's 12-hex prefix and sequence."""
 
     git_oid: str = Field(pattern=r"^[0-9a-f]{12}$")
     generation: int = Field(ge=0)
 
 
-class PlaybillLiveViewV1(_StrictOperationalModel):
+class PlaybillLiveView(_StrictOperationalModel):
     """Marks the parts of an answer read live: operational state has no history.
 
     ``as_of`` is the current head those parts were read at, which differs from
@@ -81,11 +81,11 @@ class PlaybillLiveViewV1(_StrictOperationalModel):
     """
 
     tag: Literal["playbill-live-view-v1"] = "playbill-live-view-v1"
-    as_of: PlaybillLiveHeadV1
+    as_of: PlaybillLiveHead
     fields: tuple[str, ...]
 
 
-class PlaybillRunRowV1(_StrictOperationalModel):
+class PlaybillRunRow(_StrictOperationalModel):
     """One Procedure run as a list row, newest admission first; ``status`` never orders."""
 
     run: str
@@ -105,7 +105,7 @@ PlaybillArmPrincipalKind: TypeAlias = Literal[
 ]
 
 
-class PlaybillGetLineArmV1(_StrictOperationalModel):
+class PlaybillGetLineArm(_StrictOperationalModel):
     """One arm of a Line: who armed it, and what its automation is doing."""
 
     arm: str
@@ -126,7 +126,7 @@ class PlaybillGetLineArmV1(_StrictOperationalModel):
     pending_explicit: int = Field(default=0, ge=0)
 
 
-class PlaybillGetLineOccurrenceV1(_StrictOperationalModel):
+class PlaybillGetLineOccurrence(_StrictOperationalModel):
     """One pending occurrence: ``due`` once its window has closed, else ``waiting``."""
 
     occurrence: str
@@ -134,7 +134,7 @@ class PlaybillGetLineOccurrenceV1(_StrictOperationalModel):
     state: Literal["due", "waiting"]
 
 
-class PlaybillGetLineCardV1(_StrictOperationalModel):
+class PlaybillGetLineCard(_StrictOperationalModel):
     line: str
     identity_digest: str
     lifecycle: str
@@ -143,17 +143,17 @@ class PlaybillGetLineCardV1(_StrictOperationalModel):
     trigger: str
     trigger_detail: str | None = Field(default=None, exclude_if=_omit_none)
     occurrence_epoch: int = Field(ge=1)
-    arms: tuple[PlaybillGetLineArmV1, ...] = ()
+    arms: tuple[PlaybillGetLineArm, ...] = ()
     arms_total: int = Field(default=0, ge=0)
     due: int = Field(default=0, ge=0)
     waiting: int = Field(default=0, ge=0)
-    occurrences: tuple[PlaybillGetLineOccurrenceV1, ...] = ()
-    recent_runs: tuple[PlaybillRunRowV1, ...] = ()
+    occurrences: tuple[PlaybillGetLineOccurrence, ...] = ()
+    recent_runs: tuple[PlaybillRunRow, ...] = ()
     runs_total: int = Field(default=0, ge=0)
     next: tuple[str, ...] = ()
 
 
-class PlaybillGetCaptureCardV1(_StrictOperationalModel):
+class PlaybillGetCaptureCard(_StrictOperationalModel):
     """A retained Capture: its contract, when it was observed, and who cites it.
 
     ``status`` is whether the store can still produce it, as the evidence
@@ -177,7 +177,7 @@ class PlaybillGetCaptureCardV1(_StrictOperationalModel):
     next: tuple[str, ...] = ()
 
 
-class PlaybillGetPredictionWindowV1(_StrictOperationalModel):
+class PlaybillGetPredictionWindow(_StrictOperationalModel):
     """One bound window of a ResolutionContract, as the settlement worker holds it."""
 
     window: str
@@ -186,7 +186,7 @@ class PlaybillGetPredictionWindowV1(_StrictOperationalModel):
     status: PlaybillPredictionWindowStatus
 
 
-class PlaybillGetResolutionContractCardV1(_StrictOperationalModel):
+class PlaybillGetResolutionContractCard(_StrictOperationalModel):
     contract: str
     lifecycle: str
     hypothesis: str
@@ -194,12 +194,12 @@ class PlaybillGetResolutionContractCardV1(_StrictOperationalModel):
     window: str
     rule: str
     state: Literal["open", "settleable", "resolved", "unbound", "not_observed"]
-    windows: tuple[PlaybillGetPredictionWindowV1, ...] = ()
+    windows: tuple[PlaybillGetPredictionWindow, ...] = ()
     windows_total: int = Field(default=0, ge=0)
     next: tuple[str, ...] = ()
 
 
-class PlaybillGetMandateCardV1(_StrictOperationalModel):
+class PlaybillGetMandateCard(_StrictOperationalModel):
     mandate: str
     procedure: str
     grants: Literal["propose", "settle"]
@@ -211,7 +211,7 @@ class PlaybillGetMandateCardV1(_StrictOperationalModel):
     next: tuple[str, ...] = ()
 
 
-class PlaybillGetRunNodeV1(_StrictOperationalModel):
+class PlaybillGetRunNode(_StrictOperationalModel):
     """One node that finished, in journal order.
 
     ``duration_us`` is absent: the journal records every event of a run at the
@@ -226,14 +226,14 @@ class PlaybillGetRunNodeV1(_StrictOperationalModel):
     duration_us: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
 
 
-class PlaybillGetRunCurrentNodeV1(_StrictOperationalModel):
+class PlaybillGetRunCurrentNode(_StrictOperationalModel):
     node: str
     kind: str
     # The journal time of the event before it: the run's evaluation instant.
     started_at: datetime
 
 
-class PlaybillGetRunTriggerV1(_StrictOperationalModel):
+class PlaybillGetRunTrigger(_StrictOperationalModel):
     """What admitted a Line run: the Line, its occurrence, and the arm that dispatched it."""
 
     line: str
@@ -245,27 +245,27 @@ class PlaybillGetRunTriggerV1(_StrictOperationalModel):
     armed_by_withheld: bool = Field(default=False, exclude_if=lambda value: not value)
 
 
-class PlaybillGetPendingInputV1(_StrictOperationalModel):
+class PlaybillGetPendingInput(_StrictOperationalModel):
     name: str
     waiting_since: datetime
 
 
-class PlaybillGetProcedureRunCardV1(_StrictOperationalModel):
+class PlaybillGetProcedureRunCard(_StrictOperationalModel):
     run: str
     procedure: str
     status: PlaybillRunStatus
     nodes_done: int = Field(ge=0)
     nodes_total: int = Field(ge=0)
-    current_node: PlaybillGetRunCurrentNodeV1 | None = Field(default=None, exclude_if=_omit_none)
+    current_node: PlaybillGetRunCurrentNode | None = Field(default=None, exclude_if=_omit_none)
     # The run's admission: its evaluation instant.
     started_at: datetime
     elapsed_us: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
     elapsed_basis: Literal["read_time", "measured_wall_clock"] | None = Field(
         default=None, exclude_if=_omit_none
     )
-    nodes: tuple[PlaybillGetRunNodeV1, ...] = ()
-    pending_inputs: tuple[PlaybillGetPendingInputV1, ...] = ()
-    triggered_by: PlaybillGetRunTriggerV1 | None = Field(default=None, exclude_if=_omit_none)
+    nodes: tuple[PlaybillGetRunNode, ...] = ()
+    pending_inputs: tuple[PlaybillGetPendingInput, ...] = ()
+    triggered_by: PlaybillGetRunTrigger | None = Field(default=None, exclude_if=_omit_none)
     actor: str | None = Field(default=None, exclude_if=_omit_none)
     receipt_digest: str | None = Field(default=None, exclude_if=_omit_none)
     terminal: str | None = Field(default=None, exclude_if=_omit_none)
@@ -275,7 +275,7 @@ class PlaybillGetProcedureRunCardV1(_StrictOperationalModel):
 # -- orient section rows -----------------------------------------------------------
 
 
-class PlaybillOrientLineV1(_StrictOperationalModel):
+class PlaybillOrientLine(_StrictOperationalModel):
     line: str
     lifecycle: Literal["live", "retired"]
     procedure: str
@@ -286,14 +286,14 @@ class PlaybillOrientLineV1(_StrictOperationalModel):
     waiting: int = Field(default=0, ge=0)
 
 
-class PlaybillOrientCaptureV1(_StrictOperationalModel):
+class PlaybillOrientCapture(_StrictOperationalModel):
     capture: str
     contract: str
     observed_at: datetime
     citing: int = Field(ge=0)
 
 
-class PlaybillOrientCaptureContractV1(_StrictOperationalModel):
+class PlaybillOrientCaptureContract(_StrictOperationalModel):
     contract: str
     version: int = Field(ge=1)
     lifecycle: str
@@ -301,7 +301,7 @@ class PlaybillOrientCaptureContractV1(_StrictOperationalModel):
     admitted_by: int = Field(ge=0)
 
 
-class PlaybillOrientPredictionV1(_StrictOperationalModel):
+class PlaybillOrientPrediction(_StrictOperationalModel):
     contract: str
     hypothesis: str
     window: str
@@ -311,7 +311,7 @@ class PlaybillOrientPredictionV1(_StrictOperationalModel):
     next_close: datetime | None = Field(default=None, exclude_if=_omit_none)
 
 
-class PlaybillOrientMandateV1(_StrictOperationalModel):
+class PlaybillOrientMandate(_StrictOperationalModel):
     mandate: str
     procedure: str
     grants: Literal["propose", "settle"]
@@ -325,29 +325,29 @@ __all__ = [
     "LINE_CARD_RUNS",
     "OPERATIONAL_CARD_LIST_LIMIT",
     "PlaybillArmPrincipalKind",
-    "PlaybillGetCaptureCardV1",
-    "PlaybillGetLineArmV1",
-    "PlaybillGetLineCardV1",
-    "PlaybillGetLineOccurrenceV1",
-    "PlaybillGetMandateCardV1",
-    "PlaybillGetPendingInputV1",
-    "PlaybillGetPredictionWindowV1",
-    "PlaybillGetProcedureRunCardV1",
-    "PlaybillGetResolutionContractCardV1",
-    "PlaybillGetRunCurrentNodeV1",
-    "PlaybillGetRunNodeV1",
-    "PlaybillGetRunTriggerV1",
+    "PlaybillGetCaptureCard",
+    "PlaybillGetLineArm",
+    "PlaybillGetLineCard",
+    "PlaybillGetLineOccurrence",
+    "PlaybillGetMandateCard",
+    "PlaybillGetPendingInput",
+    "PlaybillGetPredictionWindow",
+    "PlaybillGetProcedureRunCard",
+    "PlaybillGetResolutionContractCard",
+    "PlaybillGetRunCurrentNode",
+    "PlaybillGetRunNode",
+    "PlaybillGetRunTrigger",
     "PlaybillLineArmState",
-    "PlaybillLiveHeadV1",
-    "PlaybillLiveViewV1",
+    "PlaybillLiveHead",
+    "PlaybillLiveView",
     "PlaybillMandateState",
-    "PlaybillOrientCaptureContractV1",
-    "PlaybillOrientCaptureV1",
-    "PlaybillOrientLineV1",
-    "PlaybillOrientMandateV1",
-    "PlaybillOrientPredictionV1",
+    "PlaybillOrientCaptureContract",
+    "PlaybillOrientCapture",
+    "PlaybillOrientLine",
+    "PlaybillOrientMandate",
+    "PlaybillOrientPrediction",
     "PlaybillPredictionWindowStatus",
-    "PlaybillRunRowV1",
+    "PlaybillRunRow",
     "PlaybillRunStatus",
     "capture_handle",
 ]

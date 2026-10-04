@@ -47,17 +47,17 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.errors import ProjectionIntegrityError, ProposalIntegrityError
 from cruxible_client.contracts.floor import (
-    PlaybillFloorManifestV5,
+    PlaybillFloorManifest,
     build_floor_manifest,
     render_floor_manifest,
 )
 from cruxible_client.contracts.primitives import pretty_json
-from cruxible_client.contracts.procedures.artifacts import ProcedureArtifactV1, ProcedureArtifactV2
+from cruxible_client.contracts.procedures.artifacts import ProcedureArtifact, ProcedureArtifactV1
 from cruxible_client.contracts.procedures.models import (
     RUNG_AUTHORITY,
-    ProcedureBudgetV3,
-    ProcedureHardCapsV3,
-    ProcedurePinSlotRefV1,
+    ProcedureBudget,
+    ProcedureHardCaps,
+    ProcedurePinSlotRef,
 )
 from cruxible_client.contracts.projection_extensions import (
     ProjectionFact,
@@ -159,8 +159,8 @@ class PlaybillFloorCoverageManifestV2(CoverageManifestProfileV2):
 class PlaybillProcedureInputContractV1(_StrictFloorModel):
     """The run input planes a Procedure declares, without resolving open slots."""
 
-    input: ArtifactPin | ProcedurePinSlotRefV1
-    parameters: ArtifactPin | ProcedurePinSlotRefV1 | None = None
+    input: ArtifactPin | ProcedurePinSlotRef
+    parameters: ArtifactPin | ProcedurePinSlotRef | None = None
 
 
 class PlaybillProcedureCapabilitiesV1(_StrictFloorModel):
@@ -194,11 +194,11 @@ class PlaybillProcedureFloorCardV1(_StrictFloorModel):
     artifact_digest: str
     accepted_coordinate: PlaybillAcceptedCoordinate
     input_contract: PlaybillProcedureInputContractV1
-    output_contract: ArtifactPin | ProcedurePinSlotRefV1
+    output_contract: ArtifactPin | ProcedurePinSlotRef
     binding_state: Literal["directly_runnable", "binding_required"]
     capabilities: PlaybillProcedureCapabilitiesV1
-    budget: ProcedureBudgetV3
-    hard_caps: ProcedureHardCapsV3
+    budget: ProcedureBudget
+    hard_caps: ProcedureHardCaps
     governance: PlaybillProcedureGovernanceV1
     track_record: tuple[PlaybillProcedureTrackRecordEntryV1, ...]
 
@@ -404,7 +404,7 @@ def _procedure_cards(
     track_records = _procedure_track_records(instance, coordinate=coordinate)
     files: dict[str, bytes] = {}
     for row, procedure in procedures:
-        if not isinstance(procedure, ProcedureArtifactV1 | ProcedureArtifactV2):
+        if not isinstance(procedure, ProcedureArtifactV1 | ProcedureArtifact):
             raise ProjectionIntegrityError("Procedure floor source is unavailable")
         path = row.path
         definition = procedure.definition
@@ -661,7 +661,7 @@ __all__ = [
     "PlaybillFloorFileV1",
     "PlaybillFloorManifestV1",
     "PlaybillFloorManifestV2",
-    "PlaybillFloorManifestV5",
+    "PlaybillFloorManifest",
     "PlaybillProcedureCapabilitiesV1",
     "PlaybillProcedureFloorCardV1",
     "PlaybillProcedureGovernanceV1",

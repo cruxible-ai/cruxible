@@ -20,19 +20,19 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.captures import CaptureEnvelopeV1, CaptureRunCoordinateV1
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress
 from cruxible_client.contracts.source_references import (
-    CasSourceReferenceV1,
-    EvidenceCommitmentV1,
-    ExternalSourceReferenceV1,
-    LedgerSourceReferenceV1,
+    CasSourceReference,
+    EvidenceCommitment,
+    ExternalSourceReference,
+    LedgerSourceReference,
     SourceAccessClass,
-    SourceHandleV1,
-    SourceReferenceV1,
+    SourceHandle,
+    SourceReference,
 )
 from cruxible_core.coverage.contracts import (
-    CoverageAccessProfileV1,
+    CoverageAccessProfile,
     CoverageRequestV1,
     CoverageSpanRequestV1,
-    LogicalSourceIdentityV1,
+    LogicalSourceIdentity,
 )
 from cruxible_core.coverage.indexes import (
     EvidenceCitationIndexV1,
@@ -58,9 +58,9 @@ from tests.core_support._citation_index_oracle import (
 INSTANCE_ID = "inst_coverage"
 NOW = datetime(2026, 8, 19, 9, 0, tzinfo=UTC)
 
-HANDBOOK = LogicalSourceIdentityV1(plane="ledger", identity="documents/handbook.md")
-SCRATCH = LogicalSourceIdentityV1(plane="external", identity="workspace.scratch")
-CATALOG = LogicalSourceIdentityV1(plane="external", identity="workspace.catalog")
+HANDBOOK = LogicalSourceIdentity(plane="ledger", identity="documents/handbook.md")
+SCRATCH = LogicalSourceIdentity(plane="external", identity="workspace.scratch")
+CATALOG = LogicalSourceIdentity(plane="external", identity="workspace.catalog")
 
 CITED = b"The reviewer accepted the migration plan on the second reading.\n"
 PREAMBLE = b"# Handbook\n\nIntroduction paragraph.\n\n"
@@ -84,15 +84,15 @@ def _digest(domain: str, value: str) -> str:
     return typed_digest(Sha256Value, domain, {"value": value}).tagged
 
 
-def source_reference(source: LogicalSourceIdentityV1) -> SourceReferenceV1:
+def source_reference(source: LogicalSourceIdentity) -> SourceReference:
     """Build the accepted reference that names one logical source."""
 
     if source.plane == "ledger":
-        return LedgerSourceReferenceV1(
+        return LedgerSourceReference(
             address=SemanticAddress.whole_artifact(source.identity),
             coordinate=coordinate(),
         )
-    return ExternalSourceReferenceV1(
+    return ExternalSourceReference(
         source_identity=source.identity,
         producer_binding_digest=_digest("coverage-binding", source.identity),
         coordinate_type="workspace-file-v1",
@@ -103,8 +103,8 @@ def source_reference(source: LogicalSourceIdentityV1) -> SourceReferenceV1:
     )
 
 
-def commitment(content: bytes) -> EvidenceCommitmentV1:
-    return EvidenceCommitmentV1(
+def commitment(content: bytes) -> EvidenceCommitment:
+    return EvidenceCommitment(
         digest_kind="exact_bytes",
         digest=sha256(content),
         byte_length=len(content),
@@ -113,7 +113,7 @@ def commitment(content: bytes) -> EvidenceCommitmentV1:
 
 
 def capture(
-    source: LogicalSourceIdentityV1 | None,
+    source: LogicalSourceIdentity | None,
     content: bytes,
     *,
     name: str = "handbook",
@@ -127,7 +127,7 @@ def capture(
     """
 
     reference = (
-        CasSourceReferenceV1(content_digest=sha256(content))
+        CasSourceReference(content_digest=sha256(content))
         if source is None
         else source_reference(source)
     )
@@ -148,14 +148,14 @@ def capture(
         producer=ArtifactIdentity(kind="Provider", name="coverage.watcher"),
         producer_binding_digest=(
             reference.producer_binding_digest
-            if isinstance(reference, ExternalSourceReferenceV1)
+            if isinstance(reference, ExternalSourceReference)
             else _digest("coverage-binding", name)
         ),
         observed_at=NOW,
     )
     handle = None
     if with_handle:
-        handle = SourceHandleV1(
+        handle = SourceHandle(
             subject=SemanticAddress.whole_artifact(f"subjects/project.note/{name}.json"),
             at=coordinate(),
             source=reference,
@@ -232,7 +232,7 @@ def unmaterialized_wanted(
     )
 
 
-def working(source: LogicalSourceIdentityV1, content: bytes) -> WorkingSourceContent:
+def working(source: LogicalSourceIdentity, content: bytes) -> WorkingSourceContent:
     return WorkingSourceContent(source=source, content=content)
 
 
@@ -240,7 +240,7 @@ def manifest(
     citations: EvidenceCitationIndexV1,
     snapshot: WorkingOccurrenceOverlayV2,
     *,
-    access: CoverageAccessProfileV1 | None = None,
+    access: CoverageAccessProfile | None = None,
     epoch: int = 0,
     watcher_health: str = "absent",
 ) -> CoverageManifestBodyV1:
@@ -258,7 +258,7 @@ def manifest_v2(
     citations: EvidenceCitationIndexV2,
     snapshot: WorkingOccurrenceOverlayV2,
     *,
-    access: CoverageAccessProfileV1 | None = None,
+    access: CoverageAccessProfile | None = None,
     epoch: int = 0,
     watcher_health: str = "absent",
 ) -> CoverageManifestBodyV2:
@@ -276,8 +276,8 @@ def profile(
     *,
     permitted: tuple[SourceAccessClass, ...] = ("instance", "public"),
     disclose: bool = True,
-) -> CoverageAccessProfileV1:
-    return CoverageAccessProfileV1(
+) -> CoverageAccessProfile:
+    return CoverageAccessProfile(
         profile_id="coverage.test",
         permitted_access_classes=tuple(sorted(set(permitted))),
         disclose_restricted_existence=disclose,
@@ -285,7 +285,7 @@ def profile(
 
 
 def request(
-    *sources: LogicalSourceIdentityV1,
+    *sources: LogicalSourceIdentity,
     at: AcceptedCoordinate | None = None,
 ) -> CoverageRequestV1:
     return CoverageRequestV1(

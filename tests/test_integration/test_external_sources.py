@@ -6,7 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactPin
-from cruxible_client.contracts.candidates import CandidateRecordV3
+from cruxible_client.contracts.candidates import CandidateRecord
 from cruxible_client.contracts.captures import (
     capture_contract_digest,
     capture_contract_path,
@@ -16,7 +16,7 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.claim_types import claim_type_digest, render_claim_type
 from cruxible_client.contracts.claims import (
-    ClaimBackingV2,
+    ClaimBacking,
     ClaimLawEvidenceV1,
     build_claim_citation,
     claim_path,
@@ -251,7 +251,7 @@ def test_external_capture_supports_claim_only_through_exact_contract_mapping(
                     "subject": subject_address,
                 }
             ),
-            "backing": ClaimBackingV2(
+            "backing": ClaimBacking(
                 referent_context=claim.backing.referent_context,
                 capture_digests=(acquired.capture_digest,),
                 citations=(
@@ -310,7 +310,7 @@ def test_external_capture_supports_claim_only_through_exact_contract_mapping(
         timestamp=TIMESTAMP,
     )
     assert not proposed.evaluation.diagnostics
-    assert isinstance(proposed.candidate, CandidateRecordV3)
+    assert isinstance(proposed.candidate, CandidateRecord)
     evidence = ClaimLawEvidenceV1.model_validate(
         next(
             item.result["claim_evidence"]

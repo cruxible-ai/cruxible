@@ -11,10 +11,10 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts import ProviderLaneStatusV1
+from cruxible_client.contracts import ProviderLaneStatus
 from cruxible_client.contracts.declared_blocks import (
-    PlaybillPresentationPolicyV2,
-    PlaybillProjectionAdvisoryPolicyV1,
+    PlaybillPresentationPolicy,
+    PlaybillProjectionAdvisoryPolicy,
 )
 from cruxible_client.contracts.errors import PlaybillInstanceDecommissioned
 from cruxible_client.contracts.projection import AcceptedCoordinate as ClientAcceptedCoordinate
@@ -23,7 +23,7 @@ from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.runtime.instance import DESCRIPTOR_FILE
 from cruxible_core.service.discovery.next import (
     PlaybillNextRequestV1,
-    PlaybillNextWorkspaceObservationV1,
+    PlaybillNextWorkspaceObservation,
     service_playbill_next,
 )
 from tests.core_support._support import initialize_local
@@ -69,7 +69,7 @@ def test_a_missing_or_stale_floor_names_the_export_until_it_is_current(
 
     status = _status(
         instance,
-        _request(instance, workspace=PlaybillNextWorkspaceObservationV1(floor_status=reported)),
+        _request(instance, workspace=PlaybillNextWorkspaceObservation(floor_status=reported)),
     )
     assert status.floor.state == reported
     assert status.floor.repair is not None
@@ -80,7 +80,7 @@ def test_a_missing_or_stale_floor_names_the_export_until_it_is_current(
         instance,
         _request(
             instance,
-            workspace=PlaybillNextWorkspaceObservationV1(
+            workspace=PlaybillNextWorkspaceObservation(
                 floor_status="current", installed_coordinate=coordinate
             ),
         ),
@@ -96,7 +96,7 @@ def test_a_workspace_that_never_configured_a_floor_says_nothing_about_it(
     status = _status(
         instance,
         _request(
-            instance, workspace=PlaybillNextWorkspaceObservationV1(floor_status="not_configured")
+            instance, workspace=PlaybillNextWorkspaceObservation(floor_status="not_configured")
         ),
     )
 
@@ -110,7 +110,7 @@ def test_an_unavailable_provider_lane_is_status_until_it_recovers(tmp_path: Path
     degraded = _status(
         instance,
         request,
-        provider_lane=ProviderLaneStatusV1(
+        provider_lane=ProviderLaneStatus(
             state="unavailable",
             code="provider_runtime_recovery_failed",
             detail="operator recovery failed",
@@ -123,7 +123,7 @@ def test_an_unavailable_provider_lane_is_status_until_it_recovers(tmp_path: Path
     repaired = _status(
         instance,
         request,
-        provider_lane=ProviderLaneStatusV1(state="available", code=None, detail=None),
+        provider_lane=ProviderLaneStatus(state="available", code=None, detail=None),
     )
     assert repaired.provider_lane.state == "available" and _attention(repaired) == ()
 
@@ -182,19 +182,19 @@ def test_a_current_mirror_stays_current_for_an_earlier_requested_coordinate(
     assert _status(instance, earlier).ledger_mirror.state == "current"
 
 
-def _catalog_observation(instance, *, advisory: bool) -> PlaybillNextWorkspaceObservationV1:  # type: ignore[no-untyped-def]
+def _catalog_observation(instance, *, advisory: bool) -> PlaybillNextWorkspaceObservation:  # type: ignore[no-untyped-def]
     from cruxible_client.contracts.declared_blocks import (
-        PlaybillProjectionCoverageObservationV1,
+        PlaybillProjectionCoverageObservation,
     )
 
     public = ClientAcceptedCoordinate.model_validate(
         AcceptedCoordinate.from_internal(instance.accepted_coordinate()).model_dump(mode="json")
     )
-    return PlaybillNextWorkspaceObservationV1(
-        presentation_policy=PlaybillPresentationPolicyV2(
-            projection_advisories=PlaybillProjectionAdvisoryPolicyV1(procedure=advisory)
+    return PlaybillNextWorkspaceObservation(
+        presentation_policy=PlaybillPresentationPolicy(
+            projection_advisories=PlaybillProjectionAdvisoryPolicy(procedure=advisory)
         ),
-        projection_coverage=PlaybillProjectionCoverageObservationV1(
+        projection_coverage=PlaybillProjectionCoverageObservation(
             coordinate=public, complete_kinds=("Procedure",), bindings=()
         ),
     )
@@ -356,7 +356,7 @@ def test_a_compiler_with_no_forward_edge_is_reported_without_a_repair(
 def test_due_line_occurrences_name_their_dispatch_until_it_admits_them(tmp_path: Path) -> None:
     from datetime import timedelta
 
-    from cruxible_client.contracts.line_dispatch import LineDispatchRequestV1
+    from cruxible_client.contracts.line_dispatch import LineDispatchRequest
     from cruxible_client.contracts.procedures.line_specs import line_identity_digest
     from cruxible_core.service.procedures.line_dispatch import service_dispatch_line
     from tests.test_procedures.test_line_dispatch import queued_world
@@ -397,7 +397,7 @@ def test_due_line_occurrences_name_their_dispatch_until_it_admits_them(tmp_path:
     dispatched = service_dispatch_line(
         instance,
         identity,
-        LineDispatchRequestV1(),
+        LineDispatchRequest(),
         actor=_actor(instance),
         now=now,
         caller_rung=3,
@@ -419,27 +419,27 @@ def test_a_retired_lines_pending_work_is_neither_due_nor_a_repair(tmp_path: Path
     from datetime import timedelta
 
     from cruxible_client.contracts.artifacts import ArtifactLifecycle
-    from cruxible_client.contracts.line_dispatch import LineEvaluateRequestV1
+    from cruxible_client.contracts.line_dispatch import LineEvaluateRequest
     from cruxible_client.contracts.procedures.line_specs import (
         line_spec_digest,
         line_spec_path,
         render_line_spec,
     )
-    from cruxible_client.contracts.triggers import CaptureLandingScheduleV1
+    from cruxible_client.contracts.triggers import CaptureLandingSchedule
     from cruxible_core.service.procedures.line_dispatch import service_evaluate_line
     from tests.support.lines import line_trigger, successor, trigger_members
     from tests.test_indexes.test_resolution_contracts import _accept_tree
     from tests.test_procedures.test_line_triggers import SELECTOR, TRIGGER, capture, line_world
     from tests.test_procedures.test_procedure_run_surface import READ_TIME, _actor
 
-    schedule = CaptureLandingScheduleV1(event=SELECTOR)
+    schedule = CaptureLandingSchedule(event=SELECTOR)
     instance, line, procedure, owner = line_world(tmp_path, schedule, with_owner=True)
     capture(instance, procedure)
     now = READ_TIME + timedelta(seconds=2)
     service_evaluate_line(
         instance,
         line.identity.name,
-        LineEvaluateRequestV1(since=READ_TIME, until=now),
+        LineEvaluateRequest(since=READ_TIME, until=now),
         actor=_actor(instance),
         now=now,
     )
@@ -542,8 +542,8 @@ def test_an_internal_action_no_trigger_schedules_is_status_with_an_authoring_rep
 ) -> None:
 
     from cruxible_client.contracts.triggers import (
-        CadenceScheduleV1,
-        GenerationAcceptedScheduleV1,
+        CadenceSchedule,
+        GenerationAcceptedSchedule,
     )
     from cruxible_core.triggers.journal import internal_triggers
     from tests.support.lines import action_trigger, successor, trigger_members
@@ -565,7 +565,7 @@ def test_an_internal_action_no_trigger_schedules_is_status_with_an_authoring_rep
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree.update(
         trigger_members(
-            successor(sweep, schedule=CadenceScheduleV1(interval_seconds=600)),
+            successor(sweep, schedule=CadenceSchedule(interval_seconds=600)),
             successor(retry, state="retired"),
         )
     )
@@ -574,8 +574,8 @@ def test_an_internal_action_no_trigger_schedules_is_status_with_an_authoring_rep
     )
     # The daemon's cadences are whatever the accepted Triggers say, per generation.
     assert [(item.action, item.schedule) for item in internal_triggers(instance)] == [
-        ("evidence.sweep", CadenceScheduleV1(interval_seconds=600)),
-        ("floor.refresh", GenerationAcceptedScheduleV1()),
+        ("evidence.sweep", CadenceSchedule(interval_seconds=600)),
+        ("floor.refresh", GenerationAcceptedSchedule()),
     ]
     unscheduled = _status(instance, _request(instance))
     facet = unscheduled.triggers

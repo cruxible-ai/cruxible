@@ -9,14 +9,14 @@ from typing import TYPE_CHECKING
 
 from cruxible_client.contracts.candidates import (
     CandidateMemberEvidence,
-    CandidateMemberLawEvidenceV2,
+    CandidateMemberLawEvidence,
     CandidateRecordAnyVersion,
     canonical_candidate_timestamp,
 )
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.procedure_mandates import ProcedureMandateAny
-from cruxible_client.contracts.proposal_models import ProposalSettleSubmissionV1
+from cruxible_client.contracts.proposal_models import ProposalSettleSubmission
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.procedures.egress import (
     TerminalEgressChildReceiptV2,
@@ -79,7 +79,7 @@ def proposal_terminal_payload_digest(
     tree: Mapping[str, bytes],
     paths: tuple[str, ...],
     *,
-    settle: ProposalSettleSubmissionV1 | None = None,
+    settle: ProposalSettleSubmission | None = None,
 ) -> str:
     """Retain the exact authored payload binding after candidate Git objects expire.
 
@@ -108,7 +108,7 @@ def proposal_terminal_payload_digest(
 
 
 def _candidate_member_digest(
-    member: CandidateMemberEvidence | CandidateMemberLawEvidenceV2,
+    member: CandidateMemberEvidence | CandidateMemberLawEvidence,
 ) -> str | None:
     if isinstance(member, CandidateMemberEvidence):
         return member.artifact_digest
@@ -168,7 +168,7 @@ class ProposalTerminalAdapter:
         base_tree: Mapping[str, bytes] | None = None,
         changed_paths: tuple[str, ...] | None = None,
         delegation: ProcedureDelegation | None = None,
-        settle_submission: ProposalSettleSubmissionV1 | None = None,
+        settle_submission: ProposalSettleSubmission | None = None,
     ) -> ProposalResult:
         """Submit the lowered candidate once, under the exact mandate, and return the result.
 

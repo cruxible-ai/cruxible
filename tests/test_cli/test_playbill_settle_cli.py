@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 
-from cruxible_client.contracts.predictions import PlaybillSettleRequestV2
+from cruxible_client.contracts.predictions import PlaybillSettleRequest
 from cruxible_core.cli.main import cli
 
 OBSERVATION = "CLM-" + "a" * 32
@@ -44,7 +44,7 @@ def test_settle_sends_only_the_observation_claim_id(monkeypatch: pytest.MonkeyPa
     assert result.exit_code == 0, result.output
     ((instance_id, prediction_id, request),) = sent
     assert (instance_id, prediction_id) == ("inst_settle", window)
-    assert request == PlaybillSettleRequestV2(observation=OBSERVATION)
+    assert request == PlaybillSettleRequest(observation=OBSERVATION)
     assert request.contract is None and request.evidence is None
 
 

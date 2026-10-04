@@ -15,18 +15,18 @@ from cruxible_client.contracts.claims import (
     claim_path,
     claim_statement_address,
 )
-from cruxible_client.contracts.source_references import CoverageDescriptorV1
+from cruxible_client.contracts.source_references import CoverageDescriptor
 from cruxible_core.coverage.contracts import (
-    CoverageAccessProfileV1,
+    CoverageAccessProfile,
     CoverageBatchSummaryV3,
-    CoverageCardBudgetV1,
+    CoverageCardBudget,
     CoverageCardV2,
     CoverageClaimCitationV2,
     CoverageRequestV1,
     CoverageResultV3,
     CoverageSpanRequestV1,
     CoverageSpanResultV3,
-    LogicalSourceIdentityV1,
+    LogicalSourceIdentity,
     occurrence_identity_digest,
 )
 from cruxible_core.coverage.render import (
@@ -82,7 +82,7 @@ def _ungoverned_result(count: int) -> CoverageResultV3:
 
     citations = index_v2(capture(HANDBOOK, CITED))
     sources = [
-        LogicalSourceIdentityV1(plane="external", identity=f"workspace.note{number:03d}")
+        LogicalSourceIdentity(plane="external", identity=f"workspace.note{number:03d}")
         for number in range(count)
     ]
     snapshot = overlay(
@@ -114,7 +114,7 @@ def _degraded_span(health: str, reason: str) -> CoverageResultV3:
         match_state="none",
         health=health,  # type: ignore[arg-type]
         absence_is_factual=False,
-        coverage=CoverageDescriptorV1(
+        coverage=CoverageDescriptor(
             requested_facets=("coverage",),
             reason_codes=(reason,),
         ),
@@ -126,12 +126,12 @@ def _degraded_span(health: str, reason: str) -> CoverageResultV3:
         overlay_digest=sha256(b"overlay"),
         manifest_digest=None,
         watcher_health="absent",
-        access_profile=CoverageAccessProfileV1(profile_id="coverage.test"),
+        access_profile=CoverageAccessProfile(profile_id="coverage.test"),
         spans=(span,),
         summary=CoverageBatchSummaryV3(exact=0, drifted=0, candidate=0, none=1, returned_spans=1),
         health=health,  # type: ignore[arg-type]
         global_scan_complete=True,
-        coverage=CoverageDescriptorV1(requested_facets=("coverage",), reason_codes=(reason,)),
+        coverage=CoverageDescriptor(requested_facets=("coverage",), reason_codes=(reason,)),
     )
 
 
@@ -304,7 +304,7 @@ def test_clipped_candidate_cards_are_reported_rather_than_silently_dropped() -> 
             instance_id=INSTANCE_ID,
             at=coordinate(),
             spans=(CoverageSpanRequestV1(source=SCRATCH),),
-            budget=CoverageCardBudgetV1(max_cards_per_span=1, max_candidate_cards_per_span=1),
+            budget=CoverageCardBudget(max_cards_per_span=1, max_candidate_cards_per_span=1),
         ),
         index=citations,
         overlay=snapshot,

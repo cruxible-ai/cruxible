@@ -7,8 +7,8 @@ import pytest
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
 from cruxible_client.contracts.procedures.models import (
-    ExhaustTapNodeV3,
-    ProcedurePinSlotRefV1,
+    ExhaustTapNode,
+    ProcedurePinSlotRef,
     SourceNodeV3,
     StateTapNodeV3,
 )
@@ -87,11 +87,11 @@ def test_capture_and_exhaust_cannot_be_relabelled_as_canonical_state() -> None:
     source_node = SourceNodeV3(
         node_id="source",
         capture_contract=_pin("capture-contract", "CaptureContract", "world"),
-        provider=ProcedurePinSlotRefV1(slot_name="provider"),
+        provider=ProcedurePinSlotRef(slot_name="provider"),
         request={},
         as_="capture",
     )
-    exhaust_node = ExhaustTapNodeV3(
+    exhaust_node = ExhaustTapNode(
         node_id="exhaust",
         reducer_or_query=_pin("reducer", "Reducer", "reduce-exhaust"),
         journal_identity="procedure-exhaust",

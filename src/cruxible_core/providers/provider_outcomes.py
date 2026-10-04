@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from typing import Any, get_args
 
 from cruxible_client.contracts.canonical import CanonicalValue, normalize_canonical
-from cruxible_client.contracts.provider_execution import ProviderInvocationOutcomeV1
+from cruxible_client.contracts.provider_execution import ProviderInvocationOutcome
 from cruxible_core.providers.provider_runtime_contract import (
     ProviderRuntimeRefusalCodeV1,
     ProviderRuntimeResultEnvelopeV1,
@@ -136,7 +136,7 @@ def map_provider_refusal(
     *,
     message: str,
     detail: Any,
-) -> ProviderInvocationOutcomeV1:
+) -> ProviderInvocationOutcome:
     outcome_class, attribution = (_MAPPING | _LOCAL_MAPPING).get(
         code,
         ("internal", "executor_mirror_drift"),
@@ -144,7 +144,7 @@ def map_provider_refusal(
     normalized_code = (
         code if code in _MAPPING or code in _LOCAL_MAPPING else "provider_refusal_taxonomy_unknown"
     )
-    return ProviderInvocationOutcomeV1(
+    return ProviderInvocationOutcome(
         status="refused",
         outcome_class=outcome_class,  # type: ignore[arg-type]
         attribution=attribution,  # type: ignore[arg-type]
@@ -154,9 +154,9 @@ def map_provider_refusal(
     )
 
 
-def map_provider_envelope(envelope: ProviderRuntimeResultEnvelopeV1) -> ProviderInvocationOutcomeV1:
+def map_provider_envelope(envelope: ProviderRuntimeResultEnvelopeV1) -> ProviderInvocationOutcome:
     if envelope.status == "ok":
-        return ProviderInvocationOutcomeV1(
+        return ProviderInvocationOutcome(
             status="ok",
             outcome_class="ok",
             attribution="none",
@@ -169,7 +169,7 @@ def map_provider_envelope(envelope: ProviderRuntimeResultEnvelopeV1) -> Provider
             detail=envelope.refusal.detail,
         )
     assert envelope.error is not None
-    return ProviderInvocationOutcomeV1(
+    return ProviderInvocationOutcome(
         status="error",
         outcome_class="operational",
         attribution="provider_runtime",
@@ -181,7 +181,7 @@ def map_provider_envelope(envelope: ProviderRuntimeResultEnvelopeV1) -> Provider
     )
 
 
-def provider_refusal_is_absorbable(outcome: ProviderInvocationOutcomeV1) -> bool:
+def provider_refusal_is_absorbable(outcome: ProviderInvocationOutcome) -> bool:
     return (
         outcome.status == "refused"
         and outcome.outcome_class == "node_refusal"

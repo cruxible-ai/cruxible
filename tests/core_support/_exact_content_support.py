@@ -18,9 +18,9 @@ from types import SimpleNamespace
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
-    AuthoringExactContentObjectV1,
-    AuthoringExistingClaimDispositionV1,
-    SelfSourceBodyV1,
+    AuthoringExactContentObject,
+    AuthoringExistingClaimDisposition,
+    SelfSourceBody,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell
@@ -111,17 +111,17 @@ def add_exact_claim(
     encoded = base64.b64encode(content).decode("ascii")
     payload = template.model_copy(
         update={
-            "source": SelfSourceBodyV1(content_base64=encoded),
+            "source": SelfSourceBody(content_base64=encoded),
             "statement": template.statement.model_copy(
                 update={
                     "subject": SemanticAddress.whole_artifact(
                         f"subjects/{EXACT_KIND}/{subject_id}.json"
                     ),
-                    "object": AuthoringExactContentObjectV1(content_base64=encoded),
+                    "object": AuthoringExactContentObject(content_base64=encoded),
                 }
             ),
             "existing_claim_dispositions": tuple(
-                AuthoringExistingClaimDispositionV1(claim_id=item, disposition="not_tested")
+                AuthoringExistingClaimDisposition(claim_id=item, disposition="not_tested")
                 for item in sorted(existing)
             ),
         }

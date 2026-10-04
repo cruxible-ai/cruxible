@@ -18,9 +18,9 @@ from cruxible_client.authoring.source import (
     propose_change_set,
     source,
 )
-from cruxible_client.contracts.authoring.inputs import ProcedureMandateInputV1
+from cruxible_client.contracts.authoring.inputs import ProcedureMandateInput
 from cruxible_client.contracts.captures import (
-    CanonicalDurationV1,
+    CanonicalDuration,
     capture_component_pin,
     capture_contract_digest,
 )
@@ -29,7 +29,7 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionRuleV2,
 )
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
-from cruxible_client.contracts.procedures.models import ProcedureBudgetV3, ProcedureHardCapsV3
+from cruxible_client.contracts.procedures.models import ProcedureBudget, ProcedureHardCaps
 from cruxible_client.provider_installation import install_provider_package
 from cruxible_client.transport.http import CruxibleClient
 from tests.core_support._pc_c_support import capture_contract
@@ -40,10 +40,10 @@ from tests.test_server.test_provider_installation import installer_http  # noqa:
 
 
 def _proof(client: CruxibleClient, instance_id: str, ref: str) -> dict[str, Any]:
-    from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
+    from cruxible_client.contracts.get_reads import PlaybillGetRequest
 
     proof = client.playbill_get(
-        instance_id, request=PlaybillGetRequestV1(ref=ref, detail="proof")
+        instance_id, request=PlaybillGetRequest(ref=ref, detail="proof")
     ).proof
     assert proof is not None
     return dict(proof)
@@ -122,13 +122,13 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
                 "text": PropertySchema(type="json", json_schema={"type": ["string", "null"]}),
             },
         )
-        budget = ProcedureBudgetV3(
-            wall_clock=CanonicalDurationV1(microseconds=30_000_000),
+        budget = ProcedureBudget(
+            wall_clock=CanonicalDuration(microseconds=30_000_000),
             max_provider_calls=1,
             max_capture_bytes=2_097_152,
         )
-        caps = ProcedureHardCapsV3(
-            max_wall_clock=CanonicalDurationV1(microseconds=60_000_000),
+        caps = ProcedureHardCaps(
+            max_wall_clock=CanonicalDuration(microseconds=60_000_000),
             max_provider_calls=2,
             max_capture_bytes=4_194_304,
             max_repeat_attempts=1,
@@ -243,7 +243,7 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
                 parameters={"url": f"http://127.0.0.1:{server.server_port}/state.json"},
             )
             .procedure_mandate(
-                ProcedureMandateInputV1(
+                ProcedureMandateInput(
                     kind="procedure_mandate",
                     name="source-authority",
                     procedure_name="observe-parent",
@@ -325,7 +325,7 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
             pb.changes(
                 rationale="Authorize the exact derivation Procedure separately from its ClaimType."
             ).procedure_mandate(
-                ProcedureMandateInputV1(
+                ProcedureMandateInput(
                     kind="procedure_mandate",
                     name="verify-authority",
                     procedure_name="verify-parent",
@@ -354,9 +354,9 @@ def test_installed_fetch_parent_proposal_and_accepted_derivation(
         derived_claim = _proof(
             client, instance_id, next(v.claim_id for v in claims if v.role == "derivation")
         )
-        from cruxible_client.contracts.claims import ClaimBackingV2
+        from cruxible_client.contracts.claims import ClaimBacking
 
-        backing = ClaimBackingV2.model_validate(
+        backing = ClaimBacking.model_validate(
             next(
                 fact["value"]
                 for fact in derived_claim["facts"]

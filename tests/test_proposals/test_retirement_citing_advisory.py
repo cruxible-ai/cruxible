@@ -144,7 +144,7 @@ def copied_from_world(root: Path, *, retire: bool = True):  # type: ignore[no-un
     Returns the instance, its owner, and the coordinator and actor that built it.
     """
     from cruxible_client.contracts.authoring.models import (
-        AuthoringExistingClaimDispositionV1,
+        AuthoringExistingClaimDisposition,
     )
     from cruxible_client.contracts.captures import foreign_source_capture_contract
     from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
@@ -191,7 +191,7 @@ def copied_from_world(root: Path, *, retire: bool = True):  # type: ignore[no-un
             update={
                 "citation_role": "copy",
                 "existing_claim_dispositions": (
-                    AuthoringExistingClaimDispositionV1(
+                    AuthoringExistingClaimDisposition(
                         claim_id=SOURCE_CLAIM_ID,
                         disposition="not_tested",
                     ),

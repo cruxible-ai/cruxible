@@ -239,10 +239,10 @@ def _claim_type(capture_contract_digest_value: str):  # type: ignore[no-untyped-
     from cruxible_client.contracts.artifacts import ArtifactIdentity
     from cruxible_client.contracts.claim_types import ClaimType
     from cruxible_client.contracts.policies import (
-        ClaimAdmissionPolicyV1,
+        ClaimAdmissionPolicy,
         ClaimEvidenceAdmissionPolicyV1,
         ClaimEvidenceAdmissionRuleV1,
-        ClaimResolutionPolicyV1,
+        ClaimResolutionPolicy,
     )
 
     return ClaimType(
@@ -265,8 +265,8 @@ def _claim_type(capture_contract_digest_value: str):  # type: ignore[no-untyped-
                 ),
             )
         ),
-        admission_policy=ClaimAdmissionPolicyV1(),
-        resolution_policy=ClaimResolutionPolicyV1(
+        admission_policy=ClaimAdmissionPolicy(),
+        resolution_policy=ClaimResolutionPolicy(
             cardinality="one",
             eligible_verdicts=("supported",),
             selector="only_contender",
@@ -404,7 +404,7 @@ def _seed_population(instance, owner, population: int) -> None:  # type: ignore[
     from tests.test_procedures import test_procedure_source_runs as fixtures
 
     from cruxible_client.contracts.captures import (
-        DirectForeignSourceSelectionV1,
+        DirectForeignSourceSelection,
         capture_contract_digest,
         capture_contract_path,
         foreign_source_capture_contract,
@@ -451,7 +451,7 @@ def _seed_population(instance, owner, population: int) -> None:  # type: ignore[
             instance,
             authoring=loop.authoring(f"wi-{index:04d}", "ready", with_claim_type=False).model_copy(
                 update={
-                    "source_selection": DirectForeignSourceSelectionV1(
+                    "source_selection": DirectForeignSourceSelection(
                         logical_source_identity=source_id,
                         span=ContentSpan(
                             content_digest=stored.digest,
@@ -516,7 +516,7 @@ def _sample(instance, owner, workspace_root, line, *, clock, activate) -> dict[s
 
     from cruxible_client.contracts.procedures.line_specs import line_identity_digest
     from cruxible_core.service.procedures.procedure_runs import (
-        LineRunRequestV1,
+        LineRunRequest,
         service_run_playbill_line,
     )
 
@@ -526,7 +526,7 @@ def _sample(instance, owner, workspace_root, line, *, clock, activate) -> dict[s
     state = service_run_playbill_line(
         instance,
         path_identity_digest=identity_digest,
-        request=LineRunRequestV1(
+        request=LineRunRequest(
             line_identity_digest=identity_digest,
             occurrence_id=None,
             evaluation_time=None,

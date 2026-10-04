@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
-from cruxible_client.contracts.operational_reads import PlaybillGetLineCardV1
+from cruxible_client.contracts.get_reads import PlaybillGetRequest
+from cruxible_client.contracts.operational_reads import PlaybillGetLineCard
 from cruxible_core.service.discovery.get import service_playbill_get
 from cruxible_core.service.discovery.orient import service_playbill_orient
 from cruxible_core.storage.cas import BodyAccessContext
@@ -16,7 +16,7 @@ _ACCESS = BodyAccessContext(principal_id="reader", can_read_body=False)
 
 def _get(instance: Any, ref: str, **fields: Any):  # type: ignore[no-untyped-def]
     return service_playbill_get(
-        instance, request=PlaybillGetRequestV1(ref=ref, **fields), access=_ACCESS
+        instance, request=PlaybillGetRequest(ref=ref, **fields), access=_ACCESS
     )
 
 
@@ -43,7 +43,7 @@ def test_live_state_beside_a_historical_at_is_announced(credential_world) -> Non
     at_head = _get(instance, line.identity.qualified, evaluation_time=when)
     assert at_head.live is not None and at_head.live.as_of.generation == head.sequence
     assert "arms" in at_head.live.fields
-    assert isinstance(at_head.card, PlaybillGetLineCardV1) and at_head.card.arms
+    assert isinstance(at_head.card, PlaybillGetLineCard) and at_head.card.arms
     definition = _get(instance, "Mandate:served-line-mandate", evaluation_time=when)
     assert definition.live is None
 

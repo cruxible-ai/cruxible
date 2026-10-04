@@ -17,12 +17,12 @@ class _StrictPredictionModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class PredictionEqualityRuleV1(_StrictPredictionModel):
+class PredictionEqualityRule(_StrictPredictionModel):
     tag: Literal["playbill-prediction-equality-rule-v1"] = "playbill-prediction-equality-rule-v1"
     operator: Literal["equality"] = "equality"
 
 
-class PredictionThresholdRuleV1(_StrictPredictionModel):
+class PredictionThresholdRule(_StrictPredictionModel):
     tag: Literal["playbill-prediction-threshold-rule-v1"] = "playbill-prediction-threshold-rule-v1"
     operator: Literal["threshold"] = "threshold"
     comparison: Literal["gt", "gte", "lt", "lte"]
@@ -39,18 +39,18 @@ class PredictionThresholdRuleV1(_StrictPredictionModel):
         return normalized
 
 
-class PredictionPresenceRuleV1(_StrictPredictionModel):
+class PredictionPresenceRule(_StrictPredictionModel):
     tag: Literal["playbill-prediction-presence-rule-v1"] = "playbill-prediction-presence-rule-v1"
     operator: Literal["presence"] = "presence"
 
 
-PredictionRuleV1: TypeAlias = Annotated[
-    PredictionEqualityRuleV1 | PredictionThresholdRuleV1 | PredictionPresenceRuleV1,
+PredictionRule: TypeAlias = Annotated[
+    PredictionEqualityRule | PredictionThresholdRule | PredictionPresenceRule,
     Field(discriminator="tag"),
 ]
 
 
-class PredictionObservationSelectorV1(_StrictPredictionModel):
+class PredictionObservationSelector(_StrictPredictionModel):
     tag: Literal["playbill-prediction-observation-selector-v1"] = (
         "playbill-prediction-observation-selector-v1"
     )
@@ -67,7 +67,7 @@ class PredictionObservationSelectorV1(_StrictPredictionModel):
         return value
 
     @model_validator(mode="after")
-    def _subject(self) -> "PredictionObservationSelectorV1":
+    def _subject(self) -> "PredictionObservationSelector":
         if (
             self.subject.selector.scheme != "artifact-v1"
             or not self.subject.artifact_path.startswith("subjects/")

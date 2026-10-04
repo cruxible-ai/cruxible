@@ -21,10 +21,10 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.errors import PlaybillCasError, PlaybillFormatError
 from cruxible_core.coverage.adapter import (
-    WorkingSourceObservationV1,
+    WorkingSourceObservation,
     observe_working_source,
 )
-from cruxible_core.coverage.contracts import LogicalSourceIdentityV1
+from cruxible_core.coverage.contracts import LogicalSourceIdentity
 from cruxible_core.indexes.evidence import citation_sql
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.claims.claims import _claim_from_view, service_list_playbill_claims
@@ -112,7 +112,7 @@ def test_service_reuses_captures_and_matches_projection_route(
 ) -> None:
     instance, source, _workspace = _foreign_world(tmp_path)
     observation = observe_working_source(
-        LogicalSourceIdentityV1(plane="external", identity="corpus.runbook"), source.read_bytes()
+        LogicalSourceIdentity(plane="external", identity="corpus.runbook"), source.read_bytes()
     )
     at = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
     expected_index = _projected_index(instance, at=at)
@@ -150,7 +150,7 @@ def test_service_reuses_captures_and_matches_projection_route(
 
 def test_subsequent_reads_recheck_source_bytes_and_capture_cas(tmp_path: Path) -> None:
     instance, source, _workspace = _foreign_world(tmp_path)
-    logical = LogicalSourceIdentityV1(plane="external", identity="corpus.runbook")
+    logical = LogicalSourceIdentity(plane="external", identity="corpus.runbook")
     arguments = dict(instance_id=instance.descriptor.instance_id)
     before = coverage.service_resolve_playbill_coverage(
         instance, observations=(observe_working_source(logical, source.read_bytes()),), **arguments
@@ -185,14 +185,14 @@ def test_many_citation_windows_decode_each_source_once(
     instance, source, _workspace = _foreign_world(tmp_path)
     at = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
     index, envelopes = coverage._accepted_evidence_inputs_v2(instance, at=at)
-    logical = LogicalSourceIdentityV1(plane="external", identity="corpus.runbook")
+    logical = LogicalSourceIdentity(plane="external", identity="corpus.runbook")
     observation = observe_working_source(logical, source.read_bytes())
     digest = next(iter(envelopes))
     retired = tuple(
         (logical, "sha256:" + hashlib.sha256(str(n).encode()).hexdigest(), digest)
         for n in range(20)
     )
-    original = WorkingSourceObservationV1.content.fget
+    original = WorkingSourceObservation.content.fget
     calls = 0
 
     def counted(self):  # type: ignore[no-untyped-def]
@@ -200,7 +200,7 @@ def test_many_citation_windows_decode_each_source_once(
         calls += 1
         return original(self)
 
-    monkeypatch.setattr(WorkingSourceObservationV1, "content", property(counted))
+    monkeypatch.setattr(WorkingSourceObservation, "content", property(counted))
     windows = coverage._citation_window_observations(
         index=index,
         observations=(observation,),

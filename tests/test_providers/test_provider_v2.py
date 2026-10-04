@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
 from cruxible_client.contracts.providers import (
-    AcceptedProviderV1,
+    AcceptedProvider,
     ProviderImplementationManifestV1,
     ProviderV1,
     ProviderV2,
@@ -131,7 +131,7 @@ def test_provider_v1_to_v2_succession_and_effect_parity() -> None:
     historical_payload.pop("implementations")
     historical_payload["artifact_format"] = "playbill-provider-v1"
     historical = ProviderV1.model_validate(historical_payload)
-    predecessor = AcceptedProviderV1(
+    predecessor = AcceptedProvider(
         path=provider_path("demo-provider"),
         provider=historical,
         artifact_digest=provider_digest(historical).tagged,

@@ -13,7 +13,7 @@ from cruxible_client.contracts.canonical import (
     SemanticRoot,
     typed_digest,
 )
-from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.documents import (
     DocumentAuthority,
     DocumentLifecycle,
@@ -22,7 +22,7 @@ from cruxible_client.contracts.documents import (
 )
 from cruxible_client.contracts.errors import PlaybillExecutionError
 from cruxible_client.contracts.procedures.artifacts import (
-    AcceptedProcedureV1,
+    AcceptedProcedure,
     ProcedureArtifactV1,
     procedure_artifact_digest,
     procedure_path,
@@ -34,19 +34,19 @@ from cruxible_client.contracts.procedures.graph import (
     compute_procedure_node_digests_v4,
 )
 from cruxible_client.contracts.procedures.measurements import (
-    AcceptedQueryProcedureMeasurementV1,
-    ProcedureMeasurementDeclarationV1,
-    ProcedureMeasurementExpectationV1,
+    AcceptedQueryProcedureMeasurement,
+    ProcedureMeasurementDeclaration,
+    ProcedureMeasurementExpectation,
 )
 from cruxible_client.contracts.procedures.models import (
-    GuardNodeV3,
-    GuardPredicateV1,
-    PredicateOperandV1,
-    ProcedureBudgetV3,
+    GuardNode,
+    GuardPredicate,
+    PredicateOperand,
+    ProcedureBudget,
     ProcedureDefinitionV3,
     ProcedureDefinitionV4,
-    ProcedureHardCapsV3,
-    ProjectNodeV3,
+    ProcedureHardCaps,
+    ProjectNode,
     StateTapNodeV3,
     iter_pin_bindings,
 )
@@ -94,8 +94,8 @@ def _pin(role: str, kind: str, name: str) -> ArtifactPin:
     )
 
 
-def _duration(value: int) -> CanonicalDurationV1:
-    return CanonicalDurationV1(microseconds=value)
+def _duration(value: int) -> CanonicalDuration:
+    return CanonicalDuration(microseconds=value)
 
 
 def _coordinate(label: str = "accepted") -> AcceptedCoordinate:
@@ -128,23 +128,23 @@ def _measurement(
     node_id: str | None = None,
     from_node_id: str | None = None,
     arm_label: str | None = None,
-) -> ProcedureMeasurementDeclarationV1:
-    return ProcedureMeasurementDeclarationV1(
+) -> ProcedureMeasurementDeclaration:
+    return ProcedureMeasurementDeclaration(
         name=name,
         subject_grain=grain,  # type: ignore[arg-type]
         node_id=node_id,
         from_node_id=from_node_id,
         arm_label=arm_label,  # type: ignore[arg-type]
-        measurement=AcceptedQueryProcedureMeasurementV1(
+        measurement=AcceptedQueryProcedureMeasurement(
             query=_pin("query", "QueryDefinition", f"measure-{name}"),
-            expect=ProcedureMeasurementExpectationV1(min_count=1),
+            expect=ProcedureMeasurementExpectation(min_count=1),
         ),
         check_after=_duration(1_000_000),
         expires_after=_duration(10_000_000),
     )
 
 
-def _accepted() -> AcceptedProcedureV1:
+def _accepted() -> AcceptedProcedure:
     contract_in = _pin("contract-in", "Contract", "input")
     contract_out = _pin("contract-out", "Contract", "output")
     definition = ProcedureDefinitionV3(
@@ -157,33 +157,33 @@ def _accepted() -> AcceptedProcedureV1:
                 query=_pin("query", "QueryDefinition", "state"),
                 as_="rows",
             ),
-            GuardNodeV3(
+            GuardNode(
                 node_id="gate",
-                predicate=GuardPredicateV1(
-                    left=PredicateOperandV1(kind="count", alias="rows"),
+                predicate=GuardPredicate(
+                    left=PredicateOperand(kind="count", alias="rows"),
                     operator="gt",
-                    right=PredicateOperandV1(kind="literal", value=0),
+                    right=PredicateOperand(kind="literal", value=0),
                 ),
                 on_true="hot",
                 on_false="cold",
                 refusal_code="empty",
                 message="No rows.",
             ),
-            ProjectNodeV3(
+            ProjectNode(
                 node_id="hot",
                 fields={"arm": "hot"},
                 contract_out=contract_out,
                 as_="hot_result",
                 next="finish",
             ),
-            ProjectNodeV3(
+            ProjectNode(
                 node_id="cold",
                 fields={"arm": "cold"},
                 contract_out=contract_out,
                 as_="cold_result",
                 next="finish",
             ),
-            ProjectNodeV3(
+            ProjectNode(
                 node_id="finish",
                 fields={"status": "done"},
                 contract_out=contract_out,
@@ -198,13 +198,13 @@ def _accepted() -> AcceptedProcedureV1:
             _measurement("node-health", "node", node_id="hot"),
             _measurement("unit-health", "procedure_unit"),
         ),
-        budget=ProcedureBudgetV3(
+        budget=ProcedureBudget(
             wall_clock=_duration(1_000_000),
             max_provider_calls=0,
             max_capture_bytes=0,
             max_items=100,
         ),
-        hard_caps=ProcedureHardCapsV3(
+        hard_caps=ProcedureHardCaps(
             max_wall_clock=_duration(2_000_000),
             max_provider_calls=0,
             max_capture_bytes=0,
@@ -234,14 +234,14 @@ def _accepted() -> AcceptedProcedureV1:
         pins=pins,
         activation_policy="snapshot",
     )
-    return AcceptedProcedureV1(
+    return AcceptedProcedure(
         path=procedure_path(definition.name),
         procedure=procedure,
         artifact_digest=procedure_artifact_digest(procedure).tagged,
     )
 
 
-def _accepted_v4() -> AcceptedProcedureV1:
+def _accepted_v4() -> AcceptedProcedure:
     historical = _accepted()
     payload = historical.procedure.definition.model_dump(mode="python", by_alias=True)
     payload["graph_format"] = 4
@@ -252,7 +252,7 @@ def _accepted_v4() -> AcceptedProcedureV1:
             "definition_digest": compute_procedure_definition_digest_v4(definition).tagged,
         }
     )
-    return AcceptedProcedureV1(
+    return AcceptedProcedure(
         path=historical.path,
         procedure=procedure,
         artifact_digest=procedure_artifact_digest(procedure).tagged,

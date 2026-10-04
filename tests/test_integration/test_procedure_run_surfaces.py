@@ -15,8 +15,8 @@ from click.testing import CliRunner
 
 from cruxible_client.authoring.sdk import Playbill
 from cruxible_client.authoring.sdk_types import RefKind
-from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
-from cruxible_client.contracts.operational_reads import PlaybillGetProcedureRunCardV1
+from cruxible_client.contracts.get_reads import PlaybillGetRequest
+from cruxible_client.contracts.operational_reads import PlaybillGetProcedureRunCard
 from cruxible_core.cli.main import cli
 from cruxible_core.mcp import handlers
 from cruxible_core.mcp.server import create_server
@@ -34,7 +34,7 @@ class _ServiceClient:
         self.instance = instance
         self.surfaces: list[str] = []
 
-    def playbill_get(self, instance_id: str, *, request: PlaybillGetRequestV1) -> Any:
+    def playbill_get(self, instance_id: str, *, request: PlaybillGetRequest) -> Any:
         self.surfaces.append(request.surface)
         return service_playbill_get(self.instance, request=request, access=_ACCESS)
 
@@ -122,7 +122,7 @@ def test_the_sdk_reads_a_run_card(run_world) -> None:  # type: ignore[no-untyped
     card = playbill.get(f"ProcedureRun:{finished.run_id}")
 
     assert card.kind is RefKind.PROCEDURE_RUN and card.identity == finished.run_id
-    assert isinstance(card.value, PlaybillGetProcedureRunCardV1)
+    assert isinstance(card.value, PlaybillGetProcedureRunCard)
     assert card.value.next[-1] == f'pb.get("ProcedureRun:{finished.run_id}", detail="proof")'
     runs = playbill.orient(section="runs")
     assert runs.runs is not None and len(runs.runs) == 2

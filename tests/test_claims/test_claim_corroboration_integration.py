@@ -23,23 +23,23 @@ from cruxible_client.contracts.claim_types import (
 from cruxible_client.contracts.claims import ClaimArtifactV2, claim_path, render_claim
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicyV1,
-    CorroborationRequirementV1,
-    FreezeRequirementV1,
+    ClaimAdmissionPolicy,
+    CorroborationRequirement,
+    FreezeRequirement,
 )
 from cruxible_client.contracts.proposal_models import ProposalResult
 from cruxible_client.contracts.query.definitions import (
-    QueryDefinitionV1,
-    QueryEvaluationPolicyV1,
+    QueryDefinition,
+    QueryEvaluationPolicy,
     query_definition_digest,
     query_definition_path,
     render_query_definition,
 )
 from cruxible_client.contracts.query.grammar import (
-    QueryBudgetsV1,
-    QueryEntryV1,
-    QueryParameterDeclarationV1,
-    QueryParameterRefV1,
+    QueryBudgets,
+    QueryEntry,
+    QueryParameterDeclaration,
+    QueryParameterRef,
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
@@ -55,31 +55,31 @@ PROPOSAL_TIMESTAMP = "2026-08-28T12:01:00.000000Z"
 OBSERVED_AT = datetime(2026, 8, 28, 11, 59, tzinfo=timezone.utc)
 
 
-def _query(*, missing_parameter: bool = False) -> QueryDefinitionV1:
+def _query(*, missing_parameter: bool = False) -> QueryDefinition:
     parameters = [
-        QueryParameterDeclarationV1(name="claim_subject_id", value_type="string"),
+        QueryParameterDeclaration(name="claim_subject_id", value_type="string"),
     ]
     if missing_parameter:
-        parameters.append(QueryParameterDeclarationV1(name="required_extra", value_type="string"))
-    return QueryDefinitionV1(
+        parameters.append(QueryParameterDeclaration(name="required_extra", value_type="string"))
+    return QueryDefinition(
         identity=ArtifactIdentity(kind="QueryDefinition", name="project.subject_exists"),
-        entry=QueryEntryV1(
+        entry=QueryEntry(
             binding="item",
             subject_kinds=("project.work_item",),
-            subject_id=QueryParameterRefV1(parameter="claim_subject_id"),
+            subject_id=QueryParameterRef(parameter="claim_subject_id"),
         ),
         result_binding="item",
         result_shape="subject",
         result_cardinality="one",
         dedupe="subject",
         parameters=tuple(parameters),
-        evaluation_policy=QueryEvaluationPolicyV1(
+        evaluation_policy=QueryEvaluationPolicy(
             visible_verdicts=("supported",),
             visible_currency=("current",),
             conflict_behavior="refuse_on_conflict",
         ),
-        default_budgets=QueryBudgetsV1(max_results=1, max_traversal_depth=0),
-        maximum_budgets=QueryBudgetsV1(max_results=1, max_traversal_depth=0),
+        default_budgets=QueryBudgets(max_results=1, max_traversal_depth=0),
+        maximum_budgets=QueryBudgets(max_results=1, max_traversal_depth=0),
     )
 
 
@@ -95,9 +95,9 @@ def _corroborated_type(
         update={
             "identity": ArtifactIdentity(kind="ClaimType", name=predicate),
             "predicate": predicate,
-            "admission_policy": ClaimAdmissionPolicyV1(
+            "admission_policy": ClaimAdmissionPolicy(
                 corroboration_requirements=(
-                    CorroborationRequirementV1(
+                    CorroborationRequirement(
                         requirement_id="subject-exists",
                         query_definition_digest=query_digest,
                         min_count=min_count,
@@ -114,7 +114,7 @@ def _seed_vocabulary(
     owner: object,
     *,
     claim_types: tuple[ClaimType, ...],
-    query: QueryDefinitionV1 | None,
+    query: QueryDefinition | None,
     proposal_name: str = "corroboration-vocabulary",
     timestamp: str = SEED_TIMESTAMP,
 ) -> None:
@@ -386,9 +386,9 @@ def test_cross_type_freeze_is_subject_scoped_through_the_proposal_path(
     instance, owner = initialize_local(tmp_path)
     status_type = _claim_type().model_copy(
         update={
-            "admission_policy": ClaimAdmissionPolicyV1(
+            "admission_policy": ClaimAdmissionPolicy(
                 freeze_requirements=(
-                    FreezeRequirementV1(
+                    FreezeRequirement(
                         requirement_id="done-freezes-summary",
                         while_predicate="project.work_item.status",
                         while_values=("done",),

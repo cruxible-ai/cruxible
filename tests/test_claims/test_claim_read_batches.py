@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-from cruxible_client.contracts.claim_reads import ClaimBackingsRequestV1, ClaimReadBatchRequestV1
+from cruxible_client.contracts.claim_reads import ClaimBackingsRequest, ClaimReadBatchRequest
 from cruxible_client.contracts.errors import ClaimNotFoundError, PlaybillFormatError
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.claims.claim_reads import (
@@ -26,7 +26,7 @@ def seeded(tmp_path_factory):
 
 
 def request(instance, **kwargs):
-    return ClaimReadBatchRequestV1(
+    return ClaimReadBatchRequest(
         at=PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate()).model_dump(),
         evaluation_time=TIME,
         **kwargs,
@@ -103,7 +103,7 @@ def test_latest_batch_resolves_once_and_returns_the_resolved_coordinate(seeded, 
         return next(coordinates)
 
     monkeypatch.setattr(playbill_claim_reads, "_resolve_coordinate", resolve)
-    req = ClaimReadBatchRequestV1(subject_paths=PATHS, evaluation_time=TIME)
+    req = ClaimReadBatchRequest(subject_paths=PATHS, evaluation_time=TIME)
     first = service_read_claim_batch(seeded, request=req)
     second = service_read_claim_batch(seeded, request=req)
     assert calls == [None, None]
@@ -119,7 +119,7 @@ def test_latest_batch_resolves_once_and_returns_the_resolved_coordinate(seeded, 
 def test_latest_page_continuation_is_bound_to_returned_coordinate(seeded, monkeypatch):
     from cruxible_core.service.claims import claim_reads as playbill_claim_reads
 
-    req = ClaimReadBatchRequestV1(subject_paths=PATHS, evaluation_time=TIME, limit=1)
+    req = ClaimReadBatchRequest(subject_paths=PATHS, evaluation_time=TIME, limit=1)
     first = service_read_claim_batch(seeded, request=req)
     assert first.truncated and first.cursor
     original = playbill_claim_reads._resolve_coordinate
@@ -154,14 +154,14 @@ def test_cursor_without_coordinate_is_rejected_before_source_work(seeded, monkey
     from cruxible_core.service.claims import claim_reads as playbill_claim_reads
 
     with pytest.raises(ValidationError, match="continuation requires"):
-        ClaimReadBatchRequestV1(subject_paths=PATHS, cursor="cursor")
+        ClaimReadBatchRequest(subject_paths=PATHS, cursor="cursor")
 
     def forbidden(*args, **kwargs):
         raise AssertionError("invalid continuation must fail before resolving accepted state")
 
     monkeypatch.setattr(playbill_claim_reads, "_resolve_coordinate", forbidden)
     # Internal callers using model_copy/model_construct receive the same guard.
-    req = ClaimReadBatchRequestV1(subject_paths=PATHS).model_copy(update={"cursor": "cursor"})
+    req = ClaimReadBatchRequest(subject_paths=PATHS).model_copy(update={"cursor": "cursor"})
     with pytest.raises(PlaybillFormatError, match="explicit accepted coordinate"):
         service_read_claim_batch(seeded, request=req)
 
@@ -170,7 +170,7 @@ def test_latest_identity_read_matches_explicit_snapshot(seeded):
     selected = service_read_claim_batch(seeded, request=request(seeded, subject_paths=PATHS))
     ids = tuple(view.envelope["identity"] for view in selected.claims)
     latest = service_read_claim_batch(
-        seeded, request=ClaimReadBatchRequestV1(claim_ids=ids, evaluation_time=TIME)
+        seeded, request=ClaimReadBatchRequest(claim_ids=ids, evaluation_time=TIME)
     )
     assert latest == selected
 
@@ -179,9 +179,7 @@ def test_latest_empty_generation_returns_its_full_coordinate(tmp_path):
     from tests.core_support._support import initialize_local
 
     instance, _ = initialize_local(tmp_path)
-    result = service_read_claim_batch(
-        instance, request=ClaimReadBatchRequestV1(subject_paths=PATHS)
-    )
+    result = service_read_claim_batch(instance, request=ClaimReadBatchRequest(subject_paths=PATHS))
     assert result.claims == () and not result.truncated and result.cursor is None
     assert (
         result.coordinate.model_dump()
@@ -206,7 +204,7 @@ def test_backing_reads_use_one_blob_batch_without_admission_or_projection(seeded
 
     monkeypatch.setattr(seeded, "blobs_at", counted)
     result = service_read_claim_backings(
-        seeded, request=ClaimBackingsRequestV1(at=selected.coordinate, claim_ids=ids)
+        seeded, request=ClaimBackingsRequest(at=selected.coordinate, claim_ids=ids)
     )
     assert tuple(str(item.identity) for item in result.backings)  # typed backings, same order
     assert tuple("Claim:" + item.identity.name for item in result.backings) == ids
@@ -214,11 +212,11 @@ def test_backing_reads_use_one_blob_batch_without_admission_or_projection(seeded
     with pytest.raises(ClaimNotFoundError):
         service_read_claim_backings(
             seeded,
-            request=ClaimBackingsRequestV1(at=selected.coordinate, claim_ids=("CLM-" + "0" * 32,)),
+            request=ClaimBackingsRequest(at=selected.coordinate, claim_ids=("CLM-" + "0" * 32,)),
         )
     with pytest.raises(PlaybillFormatError):
         service_read_claim_backings(
-            seeded, request=ClaimBackingsRequestV1(at=selected.coordinate, claim_ids=("CLM-abc",))
+            seeded, request=ClaimBackingsRequest(at=selected.coordinate, claim_ids=("CLM-abc",))
         )
 
 
@@ -234,7 +232,7 @@ def test_backing_reads_use_one_blob_batch_without_admission_or_projection(seeded
 )
 def test_bounds_and_ambiguous_selection_are_refused(seeded, updates):
     with pytest.raises(ValidationError):
-        ClaimReadBatchRequestV1.model_validate(
+        ClaimReadBatchRequest.model_validate(
             {"at": request(seeded, subject_paths=PATHS).at, **updates}
         )
 
@@ -258,7 +256,7 @@ def test_runtime_checks_read_permission_before_instance_lookup(monkeypatch):
 def test_explicit_older_coordinate_does_not_read_current_head(seeded):
     earlier = seeded.coordinate_for_oid(seeded.accepted_history()[-2].oid)
     req = request(seeded, subject_paths=PATHS)
-    req = ClaimReadBatchRequestV1.model_validate(
+    req = ClaimReadBatchRequest.model_validate(
         {
             **req.model_dump(mode="json"),
             "at": PlaybillAcceptedCoordinate.from_internal(earlier).model_dump(mode="json"),
@@ -283,7 +281,7 @@ def test_retired_claim_cannot_be_pinned_as_live_backing(seeded, monkeypatch):
     with pytest.raises(PlaybillFormatError, match="live Claim"):
         service_read_claim_backings(
             seeded,
-            request=ClaimBackingsRequestV1(
+            request=ClaimBackingsRequest(
                 at=selected.coordinate,
                 claim_ids=(identity,),
             ),

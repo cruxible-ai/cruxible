@@ -20,11 +20,11 @@ import cruxible_core.providers.provider_local_runtime as runtime_module
 import cruxible_core.service.procedures.procedure_runs as procedure_run_service
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.procedures.results import (
-    ProcedureInternalFailureCodeV1,
-    ProcedureOperationalFailureCodeV1,
+    ProcedureInternalFailureCode,
+    ProcedureOperationalFailureCode,
 )
 from cruxible_client.contracts.provider_execution import (
-    ProviderSecretReferenceV1,
+    ProviderSecretReference,
 )
 from cruxible_core.procedures.execution import ProcedureExecutor
 from cruxible_core.providers.provider_classifiers import ProviderBucketClassifierRegistry
@@ -115,16 +115,16 @@ def test_c8_custody_store_permissions_and_traversal(short_root: Path) -> None:
     assert oct((short_root / "secrets").stat().st_mode)[-3:] == "700"
     for bad in ("a/b", "a\\b", "..", ".", "a\x00b"):
         with pytest.raises(Exception):
-            ProviderSecretReferenceV1(
+            ProviderSecretReference(
                 resolver_kind="environment", realm=bad, name="n", epoch="e", purpose="p"
             )
     key_a = provider_environment_secret_key(
-        ProviderSecretReferenceV1(
+        ProviderSecretReference(
             resolver_kind="environment", realm="billing", name="api_key", epoch="v1", purpose="p"
         )
     )
     key_b = provider_environment_secret_key(
-        ProviderSecretReferenceV1(
+        ProviderSecretReference(
             resolver_kind="environment", realm="billing", name="api", epoch="key_v1", purpose="p"
         )
     )
@@ -166,8 +166,8 @@ def test_the_three_fence_codes_are_public_and_project_exactly(
         "provider_process_lease_echo_mismatch",
         "provider_process_group_survived_recovery",
     )
-    public = set(get_args(ProcedureInternalFailureCodeV1)) | set(
-        get_args(ProcedureOperationalFailureCodeV1)
+    public = set(get_args(ProcedureInternalFailureCode)) | set(
+        get_args(ProcedureOperationalFailureCode)
     )
     assert [code for code in codes if code not in public] == []
     for code in codes:

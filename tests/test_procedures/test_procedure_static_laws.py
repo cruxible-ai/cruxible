@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
-from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.procedures.graph import (
     ProcedureGraphFormatError,
     analyze_procedure_v3,
@@ -18,25 +18,25 @@ from cruxible_client.contracts.procedures.graph import (
 )
 from cruxible_client.contracts.procedures.models import (
     CaptureEgressNodeV3,
-    ExhaustTapNodeV3,
-    GuardNodeV3,
-    GuardPredicateV1,
-    HaltNodeV3,
-    InboxEgressNodeV3,
-    PredicateOperandV1,
-    ProcedureBudgetV3,
+    ExhaustTapNode,
+    GuardNode,
+    GuardPredicate,
+    HaltNode,
+    InboxEgressNode,
+    PredicateOperand,
+    ProcedureBudget,
     ProcedureDefinitionV3,
-    ProcedureHardCapsV3,
-    ProcedurePinSlotRefV1,
-    ProcedurePinSlotV1,
-    ProjectNodeV3,
+    ProcedureHardCaps,
+    ProcedurePinSlot,
+    ProcedurePinSlotRef,
+    ProjectNode,
     ProposeChangeSetNodeV3,
     ProviderNodeV3,
     RepeatBodyNodeV3,
     RepeatNodeV3,
     SourceNodeV3,
     StateTapNodeV3,
-    TransformNodeV3,
+    TransformNode,
 )
 
 
@@ -52,11 +52,11 @@ def _pin(role: str, kind: str, name: str) -> ArtifactPin:
     )
 
 
-def _predicate(alias: str) -> GuardPredicateV1:
-    return GuardPredicateV1(
-        left=PredicateOperandV1(kind="step", alias=alias),
+def _predicate(alias: str) -> GuardPredicate:
+    return GuardPredicate(
+        left=PredicateOperand(kind="step", alias=alias),
         operator="eq",
-        right=PredicateOperandV1(kind="literal", value=True),
+        right=PredicateOperand(kind="literal", value=True),
     )
 
 
@@ -65,7 +65,7 @@ def _definition(
     *,
     returns: str,
     terminal_capability: int = 3,
-    pin_slots: tuple[ProcedurePinSlotV1, ...] = (),
+    pin_slots: tuple[ProcedurePinSlot, ...] = (),
     parameter_contract: ArtifactPin | None = None,
 ) -> ProcedureDefinitionV3:
     return ProcedureDefinitionV3(
@@ -76,14 +76,14 @@ def _definition(
         nodes=tuple(nodes),  # type: ignore[arg-type]
         returns=returns,
         pin_slots=pin_slots,
-        budget=ProcedureBudgetV3(
-            wall_clock=CanonicalDurationV1(microseconds=2_000_000),
+        budget=ProcedureBudget(
+            wall_clock=CanonicalDuration(microseconds=2_000_000),
             max_provider_calls=10,
             max_capture_bytes=10_000,
             max_items=100,
         ),
-        hard_caps=ProcedureHardCapsV3(
-            max_wall_clock=CanonicalDurationV1(microseconds=4_000_000),
+        hard_caps=ProcedureHardCaps(
+            max_wall_clock=CanonicalDuration(microseconds=4_000_000),
             max_provider_calls=20,
             max_capture_bytes=20_000,
             max_items=200,
@@ -113,7 +113,7 @@ def _kitchen_sink_definition() -> ProcedureDefinitionV3:
                 request={"state": "$steps.state_rows"},
                 as_="source_rows",
             ),
-            ExhaustTapNodeV3(
+            ExhaustTapNode(
                 node_id="exhaust",
                 reducer_or_query=_pin("reducer", "Reducer", "journal-reducer"),
                 journal_identity="run-exhaust",
@@ -129,7 +129,7 @@ def _kitchen_sink_definition() -> ProcedureDefinitionV3:
                 input={"source": "$steps.source_rows"},
                 as_="provider_rows",
             ),
-            TransformNodeV3(
+            TransformNode(
                 node_id="transform",
                 transform_kind="shape_items",
                 contract_in=contract_in,
@@ -142,7 +142,7 @@ def _kitchen_sink_definition() -> ProcedureDefinitionV3:
                 },
                 as_="transformed_rows",
             ),
-            ProjectNodeV3(
+            ProjectNode(
                 node_id="project",
                 fields={"rows": "$steps.transformed_rows"},
                 contract_out=contract_out,
@@ -235,7 +235,7 @@ def test_semantic_pin_expectations_cover_every_exact_field(
 
 
 def test_semantic_pin_expectations_validate_slot_declarations_not_only_bindings() -> None:
-    wrong_slot = ProcedurePinSlotV1(
+    wrong_slot = ProcedurePinSlot(
         slot_name="query",
         pin_role="provider",
         artifact_kind="Provider",
@@ -246,7 +246,7 @@ def test_semantic_pin_expectations_validate_slot_declarations_not_only_bindings(
             (
                 StateTapNodeV3(
                     node_id="state",
-                    query=ProcedurePinSlotRefV1(slot_name="query"),
+                    query=ProcedurePinSlotRef(slot_name="query"),
                     as_="rows",
                 ),
             ),
@@ -264,7 +264,7 @@ def test_branch_join_tracks_must_availability_separately_from_may_reachability()
                 query=_pin("query", "QueryDefinition", "state"),
                 as_="rows",
             ),
-            GuardNodeV3(
+            GuardNode(
                 node_id="branch",
                 predicate=_predicate("rows"),
                 on_true="hot",
@@ -272,14 +272,14 @@ def test_branch_join_tracks_must_availability_separately_from_may_reachability()
                 refusal_code="branch.false",
                 message="Take the cold path.",
             ),
-            ProjectNodeV3(
+            ProjectNode(
                 node_id="hot",
                 fields={"hot": True},
                 contract_out=contract_out,
                 as_="hot_rows",
                 next="join",
             ),
-            ProjectNodeV3(
+            ProjectNode(
                 node_id="join",
                 fields={"status": "joined"},
                 contract_out=contract_out,
@@ -309,7 +309,7 @@ def test_guard_at_a_join_cannot_read_an_alias_from_only_one_branch() -> None:
                     query=_pin("query", "QueryDefinition", "state"),
                     as_="rows",
                 ),
-                GuardNodeV3(
+                GuardNode(
                     node_id="branch",
                     predicate=_predicate("rows"),
                     on_true="hot",
@@ -317,21 +317,21 @@ def test_guard_at_a_join_cannot_read_an_alias_from_only_one_branch() -> None:
                     refusal_code="branch.false",
                     message="Take the cold path.",
                 ),
-                ProjectNodeV3(
+                ProjectNode(
                     node_id="hot",
                     fields={"hot": True},
                     contract_out=contract_out,
                     as_="hot_rows",
                     next="join",
                 ),
-                GuardNodeV3(
+                GuardNode(
                     node_id="join",
                     predicate=_predicate("hot_rows"),
                     on_false="$abort",
                     refusal_code="hot.missing",
                     message="Hot data is required.",
                 ),
-                ProjectNodeV3(
+                ProjectNode(
                     node_id="result",
                     fields={"status": "joined"},
                     contract_out=contract_out,
@@ -350,7 +350,7 @@ def test_trailing_halt_is_a_terminal_graph_leaf_without_edges() -> None:
                 query=_pin("query", "QueryDefinition", "halt-input"),
                 as_="rows",
             ),
-            HaltNodeV3(node_id="stop", reason="No work remains."),
+            HaltNode(node_id="stop", reason="No work remains."),
         ),
         returns="rows",
         terminal_capability=1,
@@ -370,7 +370,7 @@ def _guard_halt_layout(*, halt_before_return: bool) -> ProcedureDefinitionV3:
         as_="rows",
         next="gate",
     )
-    gate = GuardNodeV3(
+    gate = GuardNode(
         node_id="gate",
         predicate=_predicate("rows"),
         on_true="result",
@@ -378,13 +378,13 @@ def _guard_halt_layout(*, halt_before_return: bool) -> ProcedureDefinitionV3:
         refusal_code="guard.empty",
         message="No rows are available.",
     )
-    result = ProjectNodeV3(
+    result = ProjectNode(
         node_id="result",
         fields={"rows": "$steps.rows"},
         contract_out=contract_out,
         as_="result",
     )
-    stop = HaltNodeV3(node_id="stop", reason="No rows are available.")
+    stop = HaltNode(node_id="stop", reason="No rows are available.")
     tail = (stop, result) if halt_before_return else (result, stop)
     return _definition((read, gate, *tail), returns="result", terminal_capability=1)
 
@@ -408,25 +408,25 @@ def test_guard_arm_halt_layout_order_has_identical_graph_identity() -> None:
 
 @pytest.mark.parametrize("explicit_halt", (False, True))
 def test_terminal_position_guard_requires_authored_true_target(explicit_halt: bool) -> None:
-    result = ProjectNodeV3(
+    result = ProjectNode(
         node_id="result",
         fields={"ok": True},
         contract_out=_pin("contract-out", "Contract", "terminal-guard-result"),
         as_="result",
     )
-    gate = GuardNodeV3(
+    gate = GuardNode(
         node_id="gate",
-        predicate=GuardPredicateV1(
-            left=PredicateOperandV1(kind="literal", value=True),
+        predicate=GuardPredicate(
+            left=PredicateOperand(kind="literal", value=True),
             operator="eq",
-            right=PredicateOperandV1(kind="literal", value=True),
+            right=PredicateOperand(kind="literal", value=True),
         ),
         on_false="stop" if explicit_halt else "$abort",
         refusal_code="guard.false",
         message="The guard refused.",
     )
     nodes: tuple[object, ...] = (
-        (result, HaltNodeV3(node_id="stop", reason="The guard refused."), gate)
+        (result, HaltNode(node_id="stop", reason="The guard refused."), gate)
         if explicit_halt
         else (result, gate)
     )
@@ -444,18 +444,18 @@ def test_nonterminal_guard_keeps_implicit_true_fallthrough() -> None:
     contract_out = _pin("contract-out", "Contract", "guard-fallthrough")
     definition = _definition(
         (
-            GuardNodeV3(
+            GuardNode(
                 node_id="gate",
-                predicate=GuardPredicateV1(
-                    left=PredicateOperandV1(kind="literal", value=True),
+                predicate=GuardPredicate(
+                    left=PredicateOperand(kind="literal", value=True),
                     operator="eq",
-                    right=PredicateOperandV1(kind="literal", value=True),
+                    right=PredicateOperand(kind="literal", value=True),
                 ),
                 on_false="$abort",
                 refusal_code="guard.false",
                 message="The guard refused.",
             ),
-            ProjectNodeV3(
+            ProjectNode(
                 node_id="result",
                 fields={"ok": True},
                 contract_out=contract_out,
@@ -482,7 +482,7 @@ def test_guard_arm_halt_exposes_an_intervening_nonreturn_leaf() -> None:
                     as_="rows",
                     next="gate",
                 ),
-                GuardNodeV3(
+                GuardNode(
                     node_id="gate",
                     predicate=_predicate("rows"),
                     on_true="result",
@@ -490,7 +490,7 @@ def test_guard_arm_halt_exposes_an_intervening_nonreturn_leaf() -> None:
                     refusal_code="guard.empty",
                     message="No rows are available.",
                 ),
-                TransformNodeV3(
+                TransformNode(
                     node_id="result",
                     transform_kind="aggregate_items",
                     contract_in=_pin("contract-in", "Contract", "guard-tail-items"),
@@ -501,13 +501,13 @@ def test_guard_arm_halt_exposes_an_intervening_nonreturn_leaf() -> None:
                     },
                     as_="result",
                 ),
-                ProjectNodeV3(
+                ProjectNode(
                     node_id="tail",
                     fields={"extra": True},
                     contract_out=contract_out,
                     as_="extra",
                 ),
-                HaltNodeV3(node_id="stop", reason="No rows are available."),
+                HaltNode(node_id="stop", reason="No rows are available."),
             ),
             returns="result",
             terminal_capability=1,
@@ -543,30 +543,30 @@ def test_structured_step_references_are_checked_in_every_runtime_template(
 def test_transform_specs_are_tagged_closed_and_kind_matched() -> None:
     definition = _kitchen_sink_definition()
     transform = definition.nodes[4]
-    assert isinstance(transform, TransformNodeV3)
+    assert isinstance(transform, TransformNode)
     raw = transform.model_dump(mode="json", by_alias=True)
 
     untagged = {**raw, "spec": {"items": [], "fields": {}}}
     with pytest.raises(ValueError, match="tag"):
-        TransformNodeV3.model_validate(untagged)
+        TransformNode.model_validate(untagged)
 
     mismatched = {
         **raw,
         "spec": {"tag": "playbill-transform-aggregate-items-spec-v1", "items": []},
     }
     with pytest.raises(ValueError, match="does not match"):
-        TransformNodeV3.model_validate(mismatched)
+        TransformNode.model_validate(mismatched)
 
     extra = raw.copy()
     extra["spec"] = {**raw["spec"], "undeclared": True}
     with pytest.raises(ValueError, match="Extra inputs"):
-        TransformNodeV3.model_validate(extra)
+        TransformNode.model_validate(extra)
 
 
 @pytest.mark.parametrize(
     ("terminal", "capability", "accepted"),
     (
-        (InboxEgressNodeV3(node_id="inbox", input="$steps.result"), 1, True),
+        (InboxEgressNode(node_id="inbox", input="$steps.result"), 1, True),
         (
             ProposeChangeSetNodeV3(
                 node_id="propose",
@@ -591,7 +591,7 @@ def test_terminal_kinds_cannot_exceed_the_declared_capability(
     accepted: bool,
 ) -> None:
     nodes = (
-        ProjectNodeV3(
+        ProjectNode(
             node_id="project",
             fields={"ready": True},
             contract_out=_pin("contract-out", "Contract", "result"),
@@ -628,7 +628,7 @@ def test_external_provider_effects_do_not_raise_the_terminal_rung() -> None:
                 input={},
                 as_="provider_result",
             ),
-            ProjectNodeV3(
+            ProjectNode(
                 node_id="project",
                 fields={"result": "$steps.provider_result"},
                 contract_out=contract_out,
@@ -644,7 +644,7 @@ def test_external_provider_effects_do_not_raise_the_terminal_rung() -> None:
 @pytest.mark.parametrize(
     "terminal",
     (
-        InboxEgressNodeV3(node_id="inbox", input="$steps.missing"),
+        InboxEgressNode(node_id="inbox", input="$steps.missing"),
         ProposeChangeSetNodeV3(
             node_id="propose",
             candidate_templates=({"input": "$steps.missing"},),
@@ -657,7 +657,7 @@ def test_all_terminal_runtime_templates_receive_structured_reference_checks(
     with pytest.raises(ProcedureGraphFormatError, match="missing"):
         _definition(
             (
-                ProjectNodeV3(
+                ProjectNode(
                     node_id="project",
                     fields={"ready": True},
                     contract_out=_pin("contract-out", "Contract", "result"),

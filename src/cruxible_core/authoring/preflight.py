@@ -17,24 +17,24 @@ from cruxible_client.contracts.authoring.models import (
     AUTHORING_RESOLVED_DIGEST_DOMAIN,
     MAX_BLOCKED_CHECKS,
     MAX_DIAGNOSTICS,
-    AuthoringDiagnosticV1,
+    AuthoringDiagnostic,
+    AuthoringIntent,
     AuthoringIntentV1,
-    AuthoringIntentV2,
-    AuthoringPayloadV1,
-    AuthoringReferenceExpectationV1,
-    AuthoringReferenceSuccessorV1,
-    AuthoringSlotExpectationV1,
-    BlockedCheckV1,
-    CandidateStatusV1,
-    ChangeSetAuthoringPayloadV1,
+    AuthoringPayload,
+    AuthoringReferenceExpectation,
+    AuthoringReferenceSuccessor,
+    AuthoringSlotExpectation,
+    BlockedCheck,
+    CandidateStatus,
+    ChangeSetAuthoringPayload,
     ClaimAuthoringPayloadV1,
-    ClaimRetirementMemberV1,
-    ClaimTypeSuccessionMemberV1,
-    DiagnosticFrontierLimitsV1,
-    DiagnosticFrontierV1,
-    PreflightResultV1,
-    RepairAlternativeV1,
-    WorkingSelectionObservationV1,
+    ClaimRetirementMember,
+    ClaimTypeSuccessionMember,
+    DiagnosticFrontier,
+    DiagnosticFrontierLimits,
+    PreflightResult,
+    RepairAlternative,
+    WorkingSelectionObservation,
     build_preflight_certificate,
 )
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
@@ -90,8 +90,8 @@ from cruxible_core.runtime.instance import PlaybillInstance
 
 @dataclass(frozen=True)
 class ComputedPreflight:
-    result: PreflightResultV1
-    status: CandidateStatusV1
+    result: PreflightResult
+    status: CandidateStatus
     lowered: LoweredAuthoring | None
     evaluated_tree: Mapping[str, bytes]
     evaluation: CandidateEvaluation | None
@@ -105,7 +105,7 @@ COMPILE_BUDGET_EXCEEDED = "playbill.authoring.compile_budget_exceeded"
 _PAYLOAD_PATH_PART_RE = re.compile(r"([^.\[\]]+)|\[([0-9]+)\]")
 
 
-def _reference_artifact_path(expectation: AuthoringReferenceExpectationV1) -> str:
+def _reference_artifact_path(expectation: AuthoringReferenceExpectation) -> str:
     if expectation.artifact_kind == "Subject":
         kind, separator, identifier = expectation.address.partition("/")
         if not separator:
@@ -126,7 +126,7 @@ def _reference_artifact_path(expectation: AuthoringReferenceExpectationV1) -> st
 
 
 def _reference_artifact_digest(
-    expectation: AuthoringReferenceExpectationV1,
+    expectation: AuthoringReferenceExpectation,
     *,
     path: str,
     content: bytes,
@@ -172,7 +172,7 @@ def _payload_path_value(payload: object, path: str) -> object:
 def _payload_value_matches_reference(
     value: object,
     *,
-    expectation: AuthoringReferenceExpectationV1,
+    expectation: AuthoringReferenceExpectation,
     artifact_path: str,
 ) -> bool:
     if isinstance(value, str):
@@ -223,9 +223,9 @@ def _existing_capture_contract_matches_reference(
 def _slot_diagnostics(
     instance: PlaybillInstance,
     *,
-    expectations: tuple[AuthoringSlotExpectationV1, ...],
+    expectations: tuple[AuthoringSlotExpectation, ...],
     evaluated_at: AcceptedProjectionCoordinate,
-) -> tuple[AuthoringDiagnosticV1, ...]:
+) -> tuple[AuthoringDiagnostic, ...]:
     """Refuse every pinned slot whose live membership differs at the evaluated head.
 
     Checked at the head the candidate is evaluated at, not at the intent base:
@@ -235,7 +235,7 @@ def _slot_diagnostics(
 
     if not expectations:
         return ()
-    diagnostics: list[AuthoringDiagnosticV1] = []
+    diagnostics: list[AuthoringDiagnostic] = []
     with instance.bind_accepted_projection(evaluated_at) as projection:
         connection = projection.typed.connection
         for expectation in expectations:
@@ -291,22 +291,22 @@ def _reference_diagnostics(
     intent: AuthoringIntentV1,
     base_tree: Mapping[str, bytes],
     evaluated_at: AcceptedProjectionCoordinate,
-) -> tuple[AuthoringDiagnosticV1, ...]:
-    if not isinstance(intent, AuthoringIntentV2):
+) -> tuple[AuthoringDiagnostic, ...]:
+    if not isinstance(intent, AuthoringIntent):
         return ()
-    diagnostics: list[AuthoringDiagnosticV1] = list(
+    diagnostics: list[AuthoringDiagnostic] = list(
         _slot_diagnostics(
             instance,
             expectations=tuple(
                 item
                 for item in intent.reference_expectations
-                if isinstance(item, AuthoringSlotExpectationV1)
+                if isinstance(item, AuthoringSlotExpectation)
             ),
             evaluated_at=evaluated_at,
         )
     )
     for expectation in intent.reference_expectations:
-        if isinstance(expectation, AuthoringSlotExpectationV1):
+        if isinstance(expectation, AuthoringSlotExpectation):
             continue
         try:
             path = _reference_artifact_path(expectation)
@@ -432,7 +432,7 @@ def _reference_diagnostics(
         if current_content == minted_content:
             continue
         if current_content is not None:
-            successor = AuthoringReferenceSuccessorV1(
+            successor = AuthoringReferenceSuccessor(
                 payload_path=expectation.payload_path,
                 artifact_kind=expectation.artifact_kind,
                 address=expectation.address,
@@ -511,8 +511,8 @@ def _repair(
     kind: str,
     description: str,
     replacement: object | None = None,
-) -> RepairAlternativeV1:
-    return RepairAlternativeV1(
+) -> RepairAlternative:
+    return RepairAlternative(
         kind=kind,
         description=description,
         replacement=replacement,
@@ -527,9 +527,9 @@ def _diagnostic(
     message: str,
     owner: str = "writer",
     disposition: str = "edit_and_retry",
-    repairs: tuple[RepairAlternativeV1, ...],
-) -> AuthoringDiagnosticV1:
-    return AuthoringDiagnosticV1(
+    repairs: tuple[RepairAlternative, ...],
+) -> AuthoringDiagnostic:
+    return AuthoringDiagnostic(
         code=code,
         stage=stage,
         offending_element=offending_element,
@@ -551,7 +551,7 @@ def _compiler_diagnostic(
     member_by_path: Mapping[str, int],
     claim_members: frozenset[int] = frozenset(),
     singular_claim_path: str | None = None,
-) -> AuthoringDiagnosticV1:
+) -> AuthoringDiagnostic:
     """Address one compiler refusal at the change-set member that authored it.
 
     The laws that run after lowering -- succession, permitted roles,
@@ -602,8 +602,8 @@ def _compiler_diagnostic(
 
 
 def _ordered_diagnostics(
-    diagnostics: list[AuthoringDiagnosticV1],
-) -> tuple[AuthoringDiagnosticV1, ...]:
+    diagnostics: list[AuthoringDiagnostic],
+) -> tuple[AuthoringDiagnostic, ...]:
     by_key = {(item.stage, item.code, item.offending_element): item for item in diagnostics}
     return tuple(
         by_key[key]
@@ -636,7 +636,7 @@ def _encoded_changes(
 
 
 def _authored_claims(
-    payload: AuthoringPayloadV1,
+    payload: AuthoringPayload,
 ) -> tuple[tuple[str, ClaimAuthoringPayloadV1], ...]:
     """Return every Claim this intent authors, with the payload path that names it.
 
@@ -648,7 +648,7 @@ def _authored_claims(
 
     if isinstance(payload, ClaimAuthoringPayloadV1):
         return (("", payload),)
-    if isinstance(payload, ChangeSetAuthoringPayloadV1):
+    if isinstance(payload, ChangeSetAuthoringPayload):
         return tuple(
             (f"members[{index}].", member)
             for index, member in enumerate(payload.members)
@@ -661,10 +661,10 @@ def _claim_surface_diagnostics(
     payload: ClaimAuthoringPayloadV1,
     *,
     prefix: str,
-) -> tuple[AuthoringDiagnosticV1, ...]:
+) -> tuple[AuthoringDiagnostic, ...]:
     """Refusals knowable from one authored Claim's own surface, before any tree."""
 
-    diagnostics: list[AuthoringDiagnosticV1] = []
+    diagnostics: list[AuthoringDiagnostic] = []
     if payload.insertion_target is not None:
         # A Claim projected as its own text is the overlap the two-block-kinds
         # law refuses: the page attests itself into concrete. The field stays
@@ -696,7 +696,7 @@ def _claim_surface_diagnostics(
                 ),
             )
         )
-    if isinstance(payload.source, WorkingSelectionObservationV1):
+    if isinstance(payload.source, WorkingSelectionObservation):
         count = payload.source.selector.observed_occurrence_count
         if count > 1 and payload.source.selector.selected_occurrence is None:
             diagnostics.append(
@@ -720,10 +720,10 @@ def _claim_surface_diagnostics(
     return tuple(diagnostics)
 
 
-def _authored_member_count(payload: AuthoringPayloadV1) -> int:
+def _authored_member_count(payload: AuthoringPayload) -> int:
     """Count the members this intent authors, before anything is lowered."""
 
-    if isinstance(payload, ChangeSetAuthoringPayloadV1):
+    if isinstance(payload, ChangeSetAuthoringPayload):
         return len(payload.members)
     return 1
 
@@ -747,15 +747,15 @@ def _member_record_entries(member: object) -> int:
     bound.
     """
 
-    if isinstance(member, ClaimTypeSuccessionMemberV1 | ClaimRetirementMemberV1):
+    if isinstance(member, ClaimTypeSuccessionMember | ClaimRetirementMember):
         return 1 + len(member.dependents)
     return 1
 
 
-def _projected_record_entries(payload: AuthoringPayloadV1) -> int:
+def _projected_record_entries(payload: AuthoringPayload) -> int:
     """Project the record entries this intent writes, before anything is lowered."""
 
-    if isinstance(payload, ChangeSetAuthoringPayloadV1):
+    if isinstance(payload, ChangeSetAuthoringPayload):
         return sum(_member_record_entries(member) for member in payload.members)
     return 1
 
@@ -765,7 +765,7 @@ def _record_ceiling_diagnostic(
     entries: int,
     limits: ProposalReceiveLimits,
     measured: bool,
-) -> AuthoringDiagnosticV1:
+) -> AuthoringDiagnostic:
     """Refuse a change set the ledger could never record, before compiling it."""
 
     fits = limits.max_change_set_members
@@ -844,8 +844,8 @@ def compute_preflight(
 ) -> ComputedPreflight:
     """Compute every independently knowable refusal and one submit-binding certificate."""
 
-    diagnostics: list[AuthoringDiagnosticV1] = []
-    blocked: list[BlockedCheckV1] = []
+    diagnostics: list[AuthoringDiagnostic] = []
+    blocked: list[BlockedCheck] = []
     for prefix, claim in _authored_claims(intent.payload):
         diagnostics.extend(_claim_surface_diagnostics(claim, prefix=prefix))
     current = instance.accepted_coordinate()
@@ -895,7 +895,7 @@ def compute_preflight(
             )
         )
         blocked.append(
-            BlockedCheckV1(
+            BlockedCheck(
                 check="proposal_evaluation",
                 blocked_by=(CHANGE_SET_RECORD_TOO_LARGE,),
                 reason=(
@@ -956,7 +956,7 @@ def compute_preflight(
                     )
                 )
                 blocked.append(
-                    BlockedCheckV1(
+                    BlockedCheck(
                         check="proposal_evaluation",
                         blocked_by=(CHANGE_SET_RECORD_TOO_LARGE,),
                         reason=(
@@ -991,7 +991,7 @@ def compute_preflight(
                         )
                     )
                     blocked.append(
-                        BlockedCheckV1(
+                        BlockedCheck(
                             check="proposal_evaluation",
                             blocked_by=("playbill.authoring.proposal_receive_refused",),
                             reason=(
@@ -1048,7 +1048,7 @@ def compute_preflight(
                                 proposed_base_oid=current.git_oid,
                                 rationale=(
                                     intent.payload.rationale
-                                    if isinstance(intent.payload, ChangeSetAuthoringPayloadV1)
+                                    if isinstance(intent.payload, ChangeSetAuthoringPayload)
                                     else None
                                 ),
                             ),
@@ -1062,7 +1062,7 @@ def compute_preflight(
                             for index, member in enumerate(intent.payload.members)
                             if isinstance(member, ClaimAuthoringPayloadV1)
                         )
-                        if isinstance(intent.payload, ChangeSetAuthoringPayloadV1)
+                        if isinstance(intent.payload, ChangeSetAuthoringPayload)
                         else frozenset()
                     )
                     diagnostics.extend(
@@ -1117,7 +1117,7 @@ def compute_preflight(
                 )
             )
             blocked.append(
-                BlockedCheckV1(
+                BlockedCheck(
                     check="proposal_evaluation",
                     blocked_by=(refusal.code,),
                     reason="Artifact lowering must succeed before semantic laws can evaluate it.",
@@ -1176,7 +1176,7 @@ def compute_preflight(
                 )
             )
             blocked.append(
-                BlockedCheckV1(
+                BlockedCheck(
                     check="proposal_evaluation",
                     blocked_by=(COMPILE_BUDGET_EXCEEDED,),
                     reason="Lowering must complete before semantic laws can evaluate it.",
@@ -1211,7 +1211,7 @@ def compute_preflight(
         )
         ordered_diagnostics = _ordered_diagnostics([*ordered_diagnostics, budget])
         ordered_blocked = ordered_blocked[:MAX_BLOCKED_CHECKS]
-    frontier = DiagnosticFrontierV1(
+    frontier = DiagnosticFrontier(
         diagnostics=ordered_diagnostics,
         blocked_checks=ordered_blocked,
         frontier_complete=frontier_complete,
@@ -1259,12 +1259,12 @@ def compute_preflight(
         proposal_ref_oid=proposal_ref_oid,
         candidate_tree_digest=candidate_tree_digest,
         frontier_digest=frontier.digest,
-        frontier_limits=DiagnosticFrontierLimitsV1(),
+        frontier_limits=DiagnosticFrontierLimits(),
     )
     verdict: Literal["passed", "refused"] = (
         "passed" if not frontier.diagnostics and not frontier.blocked_checks else "refused"
     )
-    result = PreflightResultV1(
+    result = PreflightResult(
         verdict=verdict,
         certificate=certificate,
         frontier=frontier,
@@ -1272,7 +1272,7 @@ def compute_preflight(
     candidate_digest = None
     if evaluation is not None and evaluation.candidate is not None:
         candidate_digest = evaluation.candidate.candidate_digest
-    status = CandidateStatusV1(
+    status = CandidateStatus(
         state="ready_to_submit" if verdict == "passed" else "preflight_refused",
         candidate_digest=candidate_digest,
         current_accepted_coordinate=current_public,

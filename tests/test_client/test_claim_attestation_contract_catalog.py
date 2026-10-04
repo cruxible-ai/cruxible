@@ -26,14 +26,14 @@ def test_claim_attestation_wire_catalog_is_current_and_exhaustive() -> None:
     ):
         for name, value in vars(module).items():
             if (
-                name.startswith("ClaimAttestation")
+                name.startswith("ClaimAttestationV1")
                 and inspect.isclass(value)
                 and issubclass(value, BaseModel)
                 and value.__module__ == module.__name__
             ):
                 if short_name == "claim_attestations" and name in {
-                    "ClaimAttestation",
-                    "ClaimAttestationStatement",
+                    "ClaimAttestationV1",
+                    "ClaimAttestationStatementV1",
                     "ClaimAttestationSourceRegistrationV1",
                 }:
                     continue
@@ -41,8 +41,8 @@ def test_claim_attestation_wire_catalog_is_current_and_exhaustive() -> None:
         if short_name == "claim_attestations":
             discovered.update(
                 {
-                    (short_name, "PreparedClaimAttestationRequestV1"),
-                    (short_name, "VerifiedClaimAttestationV2"),
+                    (short_name, "PreparedClaimAttestationRequest"),
+                    (short_name, "VerifiedClaimAttestation"),
                 }
             )
     assert set(CLAIM_ATTESTATION_WIRE_MODEL_NAMES) == discovered

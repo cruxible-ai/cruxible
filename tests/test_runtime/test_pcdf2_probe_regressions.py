@@ -22,11 +22,11 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.claims import claim_path, parse_claim
 from cruxible_client.contracts.laws import CLAIM_LAW_V3_IDENTIFIER, _artifact_law_coordinate
-from cruxible_core.claims.claim_type_inputs import ClaimTypeInputV1
+from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord
 from cruxible_core.claims.claim_type_migrations import (
-    ClaimTypeDependentDispositionV3,
+    ClaimTypeDependentDisposition,
     ClaimTypeMigrationPreflightV1,
-    ClaimTypeMigrationRequestV3,
+    ClaimTypeMigrationRequest,
     ClaimTypeMigrationResultV3,
     service_migrate_claim_type,
 )
@@ -218,11 +218,11 @@ def _migration(
     instance: PlaybillInstance,
     claim_id: str,
     *,
-    successor: ClaimTypeInputV1 | ClaimType | None = None,
+    successor: ClaimTypeInputRecord | ClaimType | None = None,
 ) -> ClaimTypeMigrationResultV3:
     result = service_migrate_claim_type(
         instance,
-        request=ClaimTypeMigrationRequestV3(
+        request=ClaimTypeMigrationRequest(
             mode="submit",
             successor=(
                 _subject_valued_affects_package_successor(instance)
@@ -230,7 +230,7 @@ def _migration(
                 else successor
             ),
             dependents=(
-                ClaimTypeDependentDispositionV3(
+                ClaimTypeDependentDisposition(
                     identity=ArtifactIdentity(kind="Claim", name=claim_id),
                     disposition="retire",
                     claim_retirement_reason="was-rescinded",
@@ -395,8 +395,8 @@ def test_probe_double_migration_rederives_an_existing_tombstone(tmp_path: Path) 
     )
     second = service_migrate_claim_type(
         instance,
-        request=ClaimTypeMigrationRequestV3(
-            mode="preflight", successor=ClaimTypeInputV1.model_validate(values)
+        request=ClaimTypeMigrationRequest(
+            mode="preflight", successor=ClaimTypeInputRecord.model_validate(values)
         ),
         actor=AuthenticatedActor(actor_id="owner"),
     )
@@ -405,11 +405,11 @@ def test_probe_double_migration_rederives_an_existing_tombstone(tmp_path: Path) 
 
     submitted = service_migrate_claim_type(
         instance,
-        request=ClaimTypeMigrationRequestV3(
+        request=ClaimTypeMigrationRequest(
             mode="submit",
-            successor=ClaimTypeInputV1.model_validate(values),
+            successor=ClaimTypeInputRecord.model_validate(values),
             dependents=tuple(
-                ClaimTypeDependentDispositionV3(
+                ClaimTypeDependentDisposition(
                     identity=item.identity,
                     disposition="successor",
                 )

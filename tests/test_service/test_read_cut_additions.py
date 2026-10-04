@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.write import PlaybillWriteRequestV1
+from cruxible_client.contracts.write import PlaybillWriteRequest
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.write_verbs import service_playbill_write
 from cruxible_core.service.discovery.orient import service_playbill_head
@@ -18,7 +18,7 @@ _ACCESS = BodyAccessContext(principal_id="reader", can_read_body=True)
 
 
 def _write(instance: PlaybillInstance, *changes: dict[str, object]) -> list[str]:
-    request = PlaybillWriteRequestV1.model_validate({"because": "test", "changes": list(changes)})
+    request = PlaybillWriteRequest.model_validate({"because": "test", "changes": list(changes)})
     outcome = service_playbill_write(instance, request=request, caller=caller())
     assert outcome.status == "accepted", outcome
     return [str(change.claim) for change in outcome.changes]
@@ -47,7 +47,7 @@ def test_head_names_the_coordinate_and_generation_and_resolves_at(
 def test_orient_pages_the_principal_registry_and_get_reads_one_principal(
     world: PlaybillInstance,
 ) -> None:
-    from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
+    from cruxible_client.contracts.get_reads import PlaybillGetRequest
     from cruxible_core.service.discovery.get import service_playbill_get
     from cruxible_core.service.discovery.orient import service_playbill_orient
 
@@ -57,17 +57,17 @@ def test_orient_pages_the_principal_registry_and_get_reads_one_principal(
     assert "daemon" in ids and "owner" in ids
     assert result.next[0] == f'cruxible_playbill_get(ref="Principal:{ids[0]}")'
     card = service_playbill_get(
-        world, request=PlaybillGetRequestV1(ref="Principal:owner"), access=_ACCESS
+        world, request=PlaybillGetRequest(ref="Principal:owner"), access=_ACCESS
     )
     assert card.kind == "principal" and card.card is not None
     assert card.card.model_dump()["status"] == "active"
     proof = service_playbill_get(
-        world, request=PlaybillGetRequestV1(ref="Principal:owner", detail="proof"), access=_ACCESS
+        world, request=PlaybillGetRequest(ref="Principal:owner", detail="proof"), access=_ACCESS
     )
     assert proof.proof is not None and proof.proof["record"]["principal_id"] == "owner"
     with pytest.raises(Exception) as refused:
         service_playbill_get(
-            world, request=PlaybillGetRequestV1(ref="Principal:ownr"), access=_ACCESS
+            world, request=PlaybillGetRequest(ref="Principal:ownr"), access=_ACCESS
         )
     assert "Principal:owner" in str(getattr(refused.value, "candidates", "")) or "owner" in str(
         refused.value
@@ -77,7 +77,7 @@ def test_orient_pages_the_principal_registry_and_get_reads_one_principal(
 def test_orient_pages_policies_in_force_and_get_reads_the_approval_policy(
     world: PlaybillInstance,
 ) -> None:
-    from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
+    from cruxible_client.contracts.get_reads import PlaybillGetRequest
     from cruxible_core.service.claims.policies import service_playbill_policies_in_force
     from cruxible_core.service.discovery.get import service_playbill_get
     from cruxible_core.service.discovery.orient import service_playbill_orient
@@ -92,17 +92,17 @@ def test_orient_pages_policies_in_force_and_get_reads_the_approval_policy(
     assert approval.declaring_artifact_identity == "ApprovalPolicy:instance"
 
     card = service_playbill_get(
-        world, request=PlaybillGetRequestV1(ref="ApprovalPolicy:instance"), access=_ACCESS
+        world, request=PlaybillGetRequest(ref="ApprovalPolicy:instance"), access=_ACCESS
     )
     assert card.kind == "approval_policy" and card.card is not None
     assert card.card.model_dump()["mode"] == approval.policy["mode"]
     by_path = service_playbill_get(
-        world, request=PlaybillGetRequestV1(ref="governance/approval-policy.json"), access=_ACCESS
+        world, request=PlaybillGetRequest(ref="governance/approval-policy.json"), access=_ACCESS
     )
     assert by_path.ref == "ApprovalPolicy:instance"
     history = service_playbill_get(
         world,
-        request=PlaybillGetRequestV1(ref="ApprovalPolicy:instance", detail="history"),
+        request=PlaybillGetRequest(ref="ApprovalPolicy:instance", detail="history"),
         access=_ACCESS,
     )
     assert history.history is not None and history.history.revisions
@@ -146,10 +146,10 @@ def _query_at(instance: PlaybillInstance, **fields: object):  # type: ignore[no-
 
 
 def _query(instance: PlaybillInstance, **fields: object):  # type: ignore[no-untyped-def]
-    from cruxible_client.contracts.compact_query import PlaybillQueryRequestV1
+    from cruxible_client.contracts.compact_query import PlaybillQueryRequest
     from cruxible_core.service.discovery.compact_query import service_playbill_query
 
-    return service_playbill_query(instance, request=PlaybillQueryRequestV1.model_validate(fields))
+    return service_playbill_query(instance, request=PlaybillQueryRequest.model_validate(fields))
 
 
 def test_query_cells_show_the_slot_answer_and_name_each_claims_status(tmp_path: Path) -> None:

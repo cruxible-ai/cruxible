@@ -24,46 +24,46 @@ from cruxible_client import (
 from cruxible_client.authoring.bind import bind_working_selection_input
 from cruxible_client.authoring.examples import authoring_example
 from cruxible_client.authoring.inputs import ClaimInput, ProcedureInput, QueryDefinitionInput
-from cruxible_client.contracts import PlaybillClaimViewV2
+from cruxible_client.contracts import ClaimViewRecord
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
 )
 from cruxible_client.contracts.attestations import ApprovalStatement
-from cruxible_client.contracts.authoring.models import PreflightResultV1
+from cruxible_client.contracts.authoring.models import PreflightResult
 from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
 from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
-    CanonicalDurationV1,
+    CanonicalDuration,
     capture_contract_digest,
     capture_contract_path,
     render_capture_contract,
 )
 from cruxible_client.contracts.claim_types import claim_type_digest
-from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
+from cruxible_client.contracts.get_reads import PlaybillGetRequest
 from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicyV1,
-    ClaimResolutionPolicyV1,
+    ClaimAdmissionPolicy,
+    ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.procedures.models import (
-    ProcedureBudgetV3,
+    ProcedureBudget,
     ProcedureDefinitionV3,
-    ProcedureHardCapsV3,
-    ProcedurePinSlotRefV1,
-    ProcedurePinSlotV1,
-    ProjectNodeV3,
+    ProcedureHardCaps,
+    ProcedurePinSlot,
+    ProcedurePinSlotRef,
+    ProjectNode,
     StateTapNodeV3,
-    TransformNodeV3,
+    TransformNode,
 )
-from cruxible_client.contracts.query.definitions import QueryDefinitionV1, QueryEvaluationPolicyV1
+from cruxible_client.contracts.query.definitions import QueryDefinition, QueryEvaluationPolicy
 from cruxible_client.contracts.query.grammar import (
-    QueryBudgetsV1,
-    QueryClaimPresenceFilterV1,
-    QueryEntryV1,
-    QueryProjectionFieldV1,
-    QueryProjectionV1,
-    QuerySubjectFieldRefV1,
+    QueryBudgets,
+    QueryClaimPresenceFilter,
+    QueryEntry,
+    QueryProjection,
+    QueryProjectionField,
+    QuerySubjectFieldRef,
 )
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.cli.main import cli
@@ -199,13 +199,13 @@ def _install_direct_capture_contract(
     return capture_contract_digest(contract).tagged
 
 
-def _claim_proof(transport: CruxibleClient, instance_id: str, claim_id: str) -> PlaybillClaimViewV2:
+def _claim_proof(transport: CruxibleClient, instance_id: str, claim_id: str) -> ClaimViewRecord:
     """One accepted Claim's full read, through get(detail="proof")."""
 
     proof = transport.playbill_get(
-        instance_id, request=PlaybillGetRequestV1(ref=claim_id, detail="proof")
+        instance_id, request=PlaybillGetRequest(ref=claim_id, detail="proof")
     ).proof
-    return PlaybillClaimViewV2.model_validate(proof)
+    return ClaimViewRecord.model_validate(proof)
 
 
 def _accepted_claims(pb: Playbill, predicate: str) -> list[str]:
@@ -270,8 +270,8 @@ def test_empty_evidence_policy_is_candidate_through_cli_and_sdk(
         permitted_roles=input_value.permitted_roles,
         referent_sensitivity=input_value.referent_sensitivity,
         sources=(),
-        admission_policy=ClaimAdmissionPolicyV1.model_validate(input_value.admission_policy),
-        resolution_policy=ClaimResolutionPolicyV1.model_validate(input_value.resolution_policy),
+        admission_policy=ClaimAdmissionPolicy.model_validate(input_value.admission_policy),
+        resolution_policy=ClaimResolutionPolicy.model_validate(input_value.resolution_policy),
         pins=(),
         evidence_freshness=None,
     ).propose(proposal_name="empty-policy-sdk")
@@ -326,9 +326,9 @@ def test_cli_claim_type_input_is_accepted_in_a_fresh_world(
 
 
 def _abstract_assess_procedure() -> ProcedureDefinitionV3:
-    contract_in = ProcedurePinSlotRefV1(slot_name="contract-in")
-    contract_out = ProcedurePinSlotRefV1(slot_name="contract-out")
-    query = ProcedurePinSlotRefV1(slot_name="policy-query")
+    contract_in = ProcedurePinSlotRef(slot_name="contract-in")
+    contract_out = ProcedurePinSlotRef(slot_name="contract-out")
+    query = ProcedurePinSlotRef(slot_name="policy-query")
     return ProcedureDefinitionV3(
         name="secops.vuln.assess",
         description="Classify a vulnerability from governed policy and service facts.",
@@ -342,7 +342,7 @@ def _abstract_assess_procedure() -> ProcedureDefinitionV3:
                 as_="policy_rows",
                 next="classify",
             ),
-            TransformNodeV3(
+            TransformNode(
                 node_id="classify",
                 transform_kind="adapter",
                 contract_in=contract_in,
@@ -354,7 +354,7 @@ def _abstract_assess_procedure() -> ProcedureDefinitionV3:
                 as_="decision",
                 next="result",
             ),
-            ProjectNodeV3(
+            ProjectNode(
                 node_id="result",
                 fields={"lane": "$steps.decision.lane"},
                 contract_out=contract_out,
@@ -363,32 +363,32 @@ def _abstract_assess_procedure() -> ProcedureDefinitionV3:
         ),
         returns="result",
         pin_slots=(
-            ProcedurePinSlotV1(
+            ProcedurePinSlot(
                 slot_name="contract-in",
                 pin_role="contract-in",
                 artifact_kind="Contract",
                 interface_digest=_digest("contract-in"),
             ),
-            ProcedurePinSlotV1(
+            ProcedurePinSlot(
                 slot_name="contract-out",
                 pin_role="contract-out",
                 artifact_kind="Contract",
                 interface_digest=_digest("contract-out"),
             ),
-            ProcedurePinSlotV1(
+            ProcedurePinSlot(
                 slot_name="policy-query",
                 pin_role="query",
                 artifact_kind="QueryDefinition",
                 interface_digest=_digest("policy-query"),
             ),
         ),
-        budget=ProcedureBudgetV3(
-            wall_clock=CanonicalDurationV1(microseconds=1_000_000),
+        budget=ProcedureBudget(
+            wall_clock=CanonicalDuration(microseconds=1_000_000),
             max_provider_calls=0,
             max_capture_bytes=0,
         ),
-        hard_caps=ProcedureHardCapsV3(
-            max_wall_clock=CanonicalDurationV1(microseconds=2_000_000),
+        hard_caps=ProcedureHardCaps(
+            max_wall_clock=CanonicalDuration(microseconds=2_000_000),
             max_provider_calls=0,
             max_capture_bytes=0,
             max_items=200,
@@ -424,8 +424,8 @@ def test_sdk_cold_claim_delivers_source_lint_without_refusing_preflight(
         permitted_roles=(ClaimRole.NORMATIVE,),
         referent_sensitivity=ReferentSensitivity.IDENTITY,
         sources=(),
-        admission_policy=ClaimAdmissionPolicyV1(),
-        resolution_policy=ClaimResolutionPolicyV1(
+        admission_policy=ClaimAdmissionPolicy(),
+        resolution_policy=ClaimResolutionPolicy(
             cardinality="one",
             eligible_verdicts=("supported",),
             selector="only_contender",
@@ -459,7 +459,7 @@ def test_sdk_cold_claim_delivers_source_lint_without_refusing_preflight(
     assert intent._preflight is not None
     response = intent._preflight.model_dump(mode="json")
     response.pop("lint")
-    assert PreflightResultV1.model_validate(response).verdict == "passed"
+    assert PreflightResult.model_validate(response).verdict == "passed"
 
 
 def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
@@ -488,8 +488,8 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
         permitted_roles=(ClaimRole.NORMATIVE,),
         referent_sensitivity=ReferentSensitivity.IDENTITY,
         sources=("corpus.vuln-response-runbook",),
-        admission_policy=ClaimAdmissionPolicyV1(),
-        resolution_policy=ClaimResolutionPolicyV1(
+        admission_policy=ClaimAdmissionPolicy(),
+        resolution_policy=ClaimResolutionPolicy(
             cardinality="one",
             eligible_verdicts=("supported",),
             selector="only_contender",
@@ -780,7 +780,7 @@ def test_shipped_claim_type_and_flow_a_examples_compose_to_a_supported_claim(
 
     claim_id = str(submitted.intent["semantic_identity"])
     explained = transport.playbill_get(
-        instance_id, request=PlaybillGetRequestV1(ref=claim_id, detail="why")
+        instance_id, request=PlaybillGetRequest(ref=claim_id, detail="why")
     ).why
     assert explained is not None and explained["verdict"]["verdict"] == "supported"
 
@@ -816,8 +816,8 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
             "corpus.infra-inventory",
             "corpus.vuln-response-runbook",
         ),
-        admission_policy=ClaimAdmissionPolicyV1(),
-        resolution_policy=ClaimResolutionPolicyV1(
+        admission_policy=ClaimAdmissionPolicy(),
+        resolution_policy=ClaimResolutionPolicy(
             cardinality="many",
             eligible_verdicts=("supported",),
             selector="all",
@@ -967,30 +967,30 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
     _approve_and_activate(http, instance_id, private_key_path, guidance_proposal)
     pb.refresh()
 
-    query = QueryDefinitionV1(
+    query = QueryDefinition(
         identity=ArtifactIdentity(kind="QueryDefinition", name="secops.policy.guidance"),
         description="List policy subjects that carry governed response decisions.",
-        entry=QueryEntryV1(binding="policy", subject_kinds=("secops.policy",)),
-        where=QueryClaimPresenceFilterV1(binding="policy", predicate=triage_type.predicate),
+        entry=QueryEntry(binding="policy", subject_kinds=("secops.policy",)),
+        where=QueryClaimPresenceFilter(binding="policy", predicate=triage_type.predicate),
         result_binding="policy",
         result_shape="subject",
         result_cardinality="many",
         dedupe="subject",
-        projection=QueryProjectionV1(
+        projection=QueryProjection(
             fields=(
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="policy_id",
-                    value=QuerySubjectFieldRefV1(binding="policy", field="subject_id"),
+                    value=QuerySubjectFieldRef(binding="policy", field="subject_id"),
                 ),
             )
         ),
-        evaluation_policy=QueryEvaluationPolicyV1(
+        evaluation_policy=QueryEvaluationPolicy(
             visible_verdicts=("supported",),
             visible_currency=("current",),
             conflict_behavior="surface_conflicts",
         ),
-        default_budgets=QueryBudgetsV1(max_results=10, max_traversal_depth=0),
-        maximum_budgets=QueryBudgetsV1(max_results=50, max_traversal_depth=0),
+        default_budgets=QueryBudgets(max_results=10, max_traversal_depth=0),
+        maximum_budgets=QueryBudgets(max_results=50, max_traversal_depth=0),
         pins=(
             ArtifactPin(
                 role="claim-type",

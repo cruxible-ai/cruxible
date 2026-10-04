@@ -12,9 +12,9 @@ from typing import Any
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import CanonicalValue, canonical_bytes
 from cruxible_client.contracts.provider_interfaces import (
-    ProviderBucketConformanceFixtureProofV1,
-    ProviderBucketConformanceFixtureV1,
-    ProviderBucketVocabularyV1,
+    ProviderBucketConformanceFixture,
+    ProviderBucketConformanceFixtureProof,
+    ProviderBucketVocabulary,
     ProviderInterfaceRegistrationV1,
     provider_bucket_classifier_digest,
     provider_bucket_fixture_digest,
@@ -65,7 +65,7 @@ WEB_FETCH_INTERFACE_PREIMAGE = {
 WEB_FETCH_INTERFACE_DIGEST = (
     "sha256:9769f47abc5ac2dae6d6c623a9f9abf01afde699de48768a755f40a0334a1ade"
 )
-WEB_FETCH_VOCABULARY = ProviderBucketVocabularyV1.model_validate(
+WEB_FETCH_VOCABULARY = ProviderBucketVocabulary.model_validate(
     {
         "description": "Retrieve the content of a single web resource. Buckets "
         "separate the cases where a fetcher's competence genuinely "
@@ -125,22 +125,22 @@ WEB_FETCH_VOCABULARY = ProviderBucketVocabularyV1.model_validate(
     }
 )
 WEB_FETCH_FIXTURES = (
-    ProviderBucketConformanceFixtureV1(
+    ProviderBucketConformanceFixture(
         fixture_id="web-fetch-api-json",
         canonical_input={"url": "https://fixture.invalid/api/v1/measurements.json"},
         measured_bucket_id="source_kind=api_json;access=public;page_weight=light",
     ),
-    ProviderBucketConformanceFixtureV1(
+    ProviderBucketConformanceFixture(
         fixture_id="web-fetch-rendered",
         canonical_input={"url": "https://fixture.invalid/dashboard", "render": True},
         measured_bucket_id="source_kind=js_rendered;access=public;page_weight=light",
     ),
-    ProviderBucketConformanceFixtureV1(
+    ProviderBucketConformanceFixture(
         fixture_id="web-fetch-static-light",
         canonical_input={"url": "https://fixture.invalid/articles/tide-gauge-recalibration"},
         measured_bucket_id="source_kind=static_html;access=public;page_weight=light",
     ),
-    ProviderBucketConformanceFixtureV1(
+    ProviderBucketConformanceFixture(
         fixture_id="web-fetch-static-medium",
         canonical_input={
             "url": "https://fixture.invalid/reports/water-quality",
@@ -250,7 +250,7 @@ def web_fetch_interface_registration() -> ProviderInterfaceRegistrationV1:
     proofs = tuple(
         sorted(
             (
-                ProviderBucketConformanceFixtureProofV1(
+                ProviderBucketConformanceFixtureProof(
                     selector=WEB_FETCH_SELECTORS[f.fixture_id],
                     fixture_id=f.fixture_id,
                     fixture_digest=provider_bucket_fixture_digest(f),

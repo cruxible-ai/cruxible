@@ -8,12 +8,12 @@ from typing import Protocol
 from cruxible_client.contracts.canonical import CanonicalValue
 from cruxible_client.contracts.errors import PlaybillExecutionError
 from cruxible_client.contracts.provider_interfaces import (
-    AcceptedProviderInterfaceRegistrationV1,
-    ProviderBucketClassifierInstallationResultV1,
-    ProviderBucketClassifierInstallationV1,
-    ProviderBucketConformanceFixtureV1,
+    AcceptedProviderInterfaceRegistration,
+    ProviderBucketClassifierInstallation,
+    ProviderBucketClassifierInstallationResult,
+    ProviderBucketConformanceFixture,
+    ProviderInterfaceRegistration,
     ProviderInterfaceRegistrationV1,
-    ProviderInterfaceRegistrationV2,
     provider_bucket_fixture_digest,
 )
 from cruxible_core.governance.seed_artifacts.workspace_file import (
@@ -51,7 +51,7 @@ class ProviderClassifierInstallationRefused(PlaybillExecutionError):
         super().__init__(f"{code}: {message}")
 
 
-_CORE_DEMO_SIZE_FIXTURE_V1 = ProviderBucketConformanceFixtureV1(
+_CORE_DEMO_SIZE_FIXTURE_V1 = ProviderBucketConformanceFixture(
     fixture_id="demo.small",
     canonical_input={"size": 3},
     measured_bucket_id="size=small",
@@ -61,13 +61,13 @@ _CORE_DEMO_SIZE_FIXTURE_V1 = ProviderBucketConformanceFixtureV1(
 # This compiler-owned catalog is the oracle for accepted fixture proofs. Proposal
 # content can cite it but cannot add a fixture. Executable classifiers are installed
 # by the daemon operator and are never shipped as product-domain demo machinery.
-CORE_PROVIDER_BUCKET_CONFORMANCE_FIXTURES_V1: Mapping[str, ProviderBucketConformanceFixtureV1] = {
+CORE_PROVIDER_BUCKET_CONFORMANCE_FIXTURES_V1: Mapping[str, ProviderBucketConformanceFixture] = {
     fixture.fixture_id: fixture
     for fixture in (_CORE_DEMO_SIZE_FIXTURE_V1, *WORKSPACE_FILE_FIXTURES, *WEB_FETCH_FIXTURES)
 }
 
 
-def core_provider_bucket_conformance_fixtures() -> Mapping[str, ProviderBucketConformanceFixtureV1]:
+def core_provider_bucket_conformance_fixtures() -> Mapping[str, ProviderBucketConformanceFixture]:
     """Return the compiler-owned fixture catalog used by acceptance and install."""
 
     return CORE_PROVIDER_BUCKET_CONFORMANCE_FIXTURES_V1
@@ -79,7 +79,7 @@ class ProviderBucketClassifierRegistry:
     def __init__(
         self,
         *,
-        conformance_fixtures: Mapping[str, ProviderBucketConformanceFixtureV1] | None = None,
+        conformance_fixtures: Mapping[str, ProviderBucketConformanceFixture] | None = None,
     ) -> None:
         self._fixtures = dict(
             core_provider_bucket_conformance_fixtures()
@@ -87,7 +87,7 @@ class ProviderBucketClassifierRegistry:
             else conformance_fixtures
         )
         self._classifiers: dict[str, ProviderBucketClassifierProtocol] = {}
-        self._installations: dict[str, ProviderBucketClassifierInstallationV1] = {}
+        self._installations: dict[str, ProviderBucketClassifierInstallation] = {}
 
     @property
     def installed_classifier_digests(self) -> frozenset[str]:
@@ -95,9 +95,9 @@ class ProviderBucketClassifierRegistry:
 
     def install(
         self,
-        accepted: AcceptedProviderInterfaceRegistrationV1,
+        accepted: AcceptedProviderInterfaceRegistration,
         classifier: ProviderBucketClassifierProtocol,
-    ) -> ProviderBucketClassifierInstallationV1:
+    ) -> ProviderBucketClassifierInstallation:
         """Re-prove every accepted fixture before publishing one digest."""
 
         registration: ProviderInterfaceRegistrationV1 = accepted.registration
@@ -111,10 +111,10 @@ class ProviderBucketClassifierRegistry:
                 "installed classifier identity, version, or digest differs from registration",
             )
 
-        results: list[ProviderBucketClassifierInstallationResultV1] = []
+        results: list[ProviderBucketClassifierInstallationResult] = []
         fixtures = (
             {item.fixture_id: item for item in registration.conformance_fixtures}
-            if isinstance(registration, ProviderInterfaceRegistrationV2)
+            if isinstance(registration, ProviderInterfaceRegistration)
             else self._fixtures
         )
         for proof in registration.conformance_proofs:
@@ -138,14 +138,14 @@ class ProviderBucketClassifierRegistry:
                     f"classifier failed fixture {proof.fixture_id!r}",
                 )
             results.append(
-                ProviderBucketClassifierInstallationResultV1(
+                ProviderBucketClassifierInstallationResult(
                     fixture_id=proof.fixture_id,
                     fixture_digest=proof.fixture_digest,
                     measured_bucket_id=measured,
                 )
             )
 
-        installation = ProviderBucketClassifierInstallationV1(
+        installation = ProviderBucketClassifierInstallation(
             classifier_identity=registration.classifier_identity,
             classifier_version=registration.classifier_version,
             classifier_digest=registration.classifier_digest,
@@ -158,14 +158,14 @@ class ProviderBucketClassifierRegistry:
 
     def restore(
         self,
-        accepted: AcceptedProviderInterfaceRegistrationV1,
+        accepted: AcceptedProviderInterfaceRegistration,
         classifier: ProviderBucketClassifierProtocol,
-        installation: ProviderBucketClassifierInstallationV1,
+        installation: ProviderBucketClassifierInstallation,
     ) -> None:
         """Reload a daemon-owned installation proof without re-executing fixtures."""
         registration = accepted.registration
         if (
-            not isinstance(registration, ProviderInterfaceRegistrationV2)
+            not isinstance(registration, ProviderInterfaceRegistration)
             or installation.classifier_digest != registration.classifier_digest
             or installation.classifier_identity != registration.classifier_identity
             or installation.classifier_version != registration.classifier_version
@@ -200,7 +200,7 @@ class ProviderBucketClassifierRegistry:
                 f"accepted classifier {classifier_digest} is unavailable or not fully re-proven",
             ) from exc
 
-    def installation(self, classifier_digest: str) -> ProviderBucketClassifierInstallationV1:
+    def installation(self, classifier_digest: str) -> ProviderBucketClassifierInstallation:
         self.require(classifier_digest)
         return self._installations[classifier_digest]
 
@@ -211,8 +211,8 @@ PROVIDER_BUCKET_CLASSIFIER_REGISTRY = ProviderBucketClassifierRegistry()
 
 
 def install_compiler_owned_provider_classifier(
-    accepted: AcceptedProviderInterfaceRegistrationV1,
-) -> ProviderBucketClassifierInstallationV1 | None:
+    accepted: AcceptedProviderInterfaceRegistration,
+) -> ProviderBucketClassifierInstallation | None:
     """Install the compiler-owned double for an interface that has one."""
 
     if accepted.registration.interface_digest == WEB_FETCH_INTERFACE_DIGEST:

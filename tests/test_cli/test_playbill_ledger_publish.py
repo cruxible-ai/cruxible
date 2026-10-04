@@ -14,7 +14,7 @@ from cruxible_core.cli.main import cli
 def mirror_cli(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
-    receipt = contracts.PlaybillLedgerMirrorV1(
+    receipt = contracts.PlaybillLedgerMirror(
         instance_id="inst_test",
         mirror_url=str(tmp_path / "unused.git"),
         status="pending",

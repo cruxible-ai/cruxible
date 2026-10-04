@@ -52,7 +52,7 @@ from cruxible_core.coverage.contracts import (
     CoverageCardV2,
     CoverageResultV3,
     CoverageSpanResultV3,
-    LogicalSourceIdentityV1,
+    LogicalSourceIdentity,
 )
 
 BATCH_SUMMARY_PREFIX = "Playbill coverage:"
@@ -68,7 +68,7 @@ CoverageUnavailableCodeV1 = Literal[
 ]
 
 
-def source_label(source: LogicalSourceIdentityV1) -> str:
+def source_label(source: LogicalSourceIdentity) -> str:
     """Name a logical source the way every coverage line names it."""
 
     return f"{source.plane}:{source.identity}"

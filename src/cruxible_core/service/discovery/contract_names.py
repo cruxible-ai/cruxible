@@ -3,7 +3,7 @@
 ``orient`` predicate descriptors, ``query`` ClaimType rows and ``get`` cards all
 show the evidence a ClaimType admits as CaptureContract names:
 
-- a v6 ClaimType's rules (``ClaimEvidenceAdmissionRuleV3``) name contracts by
+- a v6 ClaimType's rules (``ClaimEvidenceAdmissionRule``) name contracts by
   identity already, so the name is read off the ``ArtifactRef``;
 - a v5 (or older) rule names exact contract versions by digest, and each digest
   resolves through accepted state to the identity it is a version of;
@@ -18,7 +18,7 @@ import sqlite3
 from cruxible_client.contracts.captures import AcceptedCaptureContract
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.errors import PlaybillError
-from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRuleV3
+from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRule
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 
@@ -94,7 +94,7 @@ class CaptureContractNames:
 
         names: set[str] = set()
         for rule in claim_type.evidence_admission_policy.rules:
-            if isinstance(rule, ClaimEvidenceAdmissionRuleV3):
+            if isinstance(rule, ClaimEvidenceAdmissionRule):
                 names.update(
                     item.target.qualified if qualified else item.target.name
                     for item in rule.capture_contracts
@@ -114,7 +114,7 @@ class CaptureContractNames:
         return any(
             bool(rule.capture_contract_digests)
             for rule in rules
-            if not isinstance(rule, ClaimEvidenceAdmissionRuleV3)
+            if not isinstance(rule, ClaimEvidenceAdmissionRule)
         )
 
     def lineage(self, identity: str) -> tuple[str, ...]:

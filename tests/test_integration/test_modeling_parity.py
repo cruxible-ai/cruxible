@@ -30,15 +30,15 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from cruxible_client.contracts.query.definitions import QueryDefinitionV1
+from cruxible_client.contracts.query.definitions import QueryDefinition
 from cruxible_client.contracts.query.grammar import (
-    QueryComparisonOperatorV1,
-    QueryFilterV1,
-    QueryTraversalStepV1,
-    QueryValueTypeV1,
+    QueryComparisonOperator,
+    QueryFilter,
+    QueryTraversalStep,
+    QueryValueType,
 )
 from cruxible_client.contracts.query.results import (
-    ClaimQueryResultV1,
+    ClaimQueryResult,
 )
 from cruxible_core.query.engine import (
     CLAIM_CONFLICT,
@@ -83,12 +83,12 @@ def deferred_feature(name: str) -> dict[str, Any]:
 
 def _evaluate(
     domain: str,
-    query: QueryDefinitionV1,
+    query: QueryDefinition,
     facts: Any,
     parameters: dict[str, object] | None = None,
     *,
     when: datetime = EVALUATION_TIME,
-) -> ClaimQueryResultV1:
+) -> ClaimQueryResult:
     return evaluate_claim_query(
         accepted(query),
         facts=facts,
@@ -309,7 +309,7 @@ class TestSupplyChainParity:
         """Same incidents, different sequence -- the enum-ordinal gap, pinned.
 
         The donor ordered by the declared ``incident_severity`` ordinal. Nothing
-        in ``QueryValueTypeV1`` can say that, so the nearest declarable key is
+        in ``QueryValueType`` can say that, so the nearest declarable key is
         the severity string, and lexicographic order puts ``medium`` above
         ``critical``. The suite asserts the divergence rather than hiding it
         behind a re-sorted expectation.
@@ -388,7 +388,7 @@ class TestDeferredDonorFeatureCoverage:
         """The residual ``where_related`` gap, stated against the grammar."""
 
         assert deferred_feature("where_related")["playbill_status"] == "partially expressible"
-        fields = set(QueryTraversalStepV1.model_fields)
+        fields = set(QueryTraversalStep.model_fields)
         assert fields == {
             "tag",
             "binding",
@@ -404,9 +404,7 @@ class TestDeferredDonorFeatureCoverage:
         assert "where_not_related" not in fields
 
     def test_the_filter_union_is_closed_and_carries_no_related_or_aggregate_form(self) -> None:
-        kinds = {
-            member.model_fields["kind"].default for member in QueryFilterV1.__origin__.__args__
-        }
+        kinds = {member.model_fields["kind"].default for member in QueryFilter.__origin__.__args__}
         assert kinds == {"comparison", "membership", "claim_presence", "all_of", "any_of", "not"}
         for absent in ("related", "not_related", "count", "aggregate", "exists_related"):
             assert absent not in kinds
@@ -417,7 +415,7 @@ class TestDeferredDonorFeatureCoverage:
         feature = deferred_feature("enum_ordinal_ordering")
         assert feature["playbill_status"] == "not expressible"
         assert feature["recommendation"] == "keep-by-porting"
-        assert set(QueryValueTypeV1.__args__) == {
+        assert set(QueryValueType.__args__) == {
             "string",
             "integer",
             "boolean",
@@ -431,9 +429,9 @@ class TestDeferredDonorFeatureCoverage:
 
         feature = deferred_feature("substring_operators")
         assert feature["playbill_status"] == "not expressible"
-        assert set(QueryComparisonOperatorV1.__args__) == {"eq", "ne", "gt", "gte", "lt", "lte"}
+        assert set(QueryComparisonOperator.__args__) == {"eq", "ne", "gt", "gte", "lt", "lte"}
         for absent in ("contains", "icontains", "matches", "startswith"):
-            assert absent not in set(QueryComparisonOperatorV1.__args__)
+            assert absent not in set(QueryComparisonOperator.__args__)
 
     def test_includes_bound_their_items_and_report_no_cardinality(self) -> None:
         """The ``select_counts`` gap: a bounded item list is not a count."""
@@ -441,10 +439,10 @@ class TestDeferredDonorFeatureCoverage:
         feature = deferred_feature("select_counts")
         assert feature["playbill_status"] == "not expressible"
         from cruxible_client.contracts.query.results import (
-            QueryIncludeResultV1,
+            QueryIncludeResult,
         )
 
-        fields = set(QueryIncludeResultV1.model_fields)
+        fields = set(QueryIncludeResult.model_fields)
         assert {"items", "truncated"} <= fields
         for absent in ("count", "total", "total_matches", "cardinality"):
             assert absent not in fields
@@ -455,11 +453,11 @@ class TestDeferredDonorFeatureCoverage:
         feature = deferred_feature("variable_depth_union_traversal")
         assert feature["playbill_status"] == "not expressible"
         assert feature["recommendation"] == "keep-by-porting"
-        annotation = QueryTraversalStepV1.model_fields["predicate"].annotation
+        annotation = QueryTraversalStep.model_fields["predicate"].annotation
         assert annotation is str
-        assert "max_depth" not in QueryTraversalStepV1.model_fields
+        assert "max_depth" not in QueryTraversalStep.model_fields
         with pytest.raises(ValidationError):
-            QueryTraversalStepV1(
+            QueryTraversalStep(
                 binding="work",
                 from_binding="area",
                 predicate=[worlds.WI_TARGETS_AREA, worlds.SN_ABOUT_WORK_ITEM],  # type: ignore[arg-type]
@@ -497,6 +495,6 @@ class TestDeferredDonorFeatureCoverage:
 
         feature = deferred_feature("constraint_dsl_graph")
         assert feature["playbill_status"] == "not a query concept"
-        fields = set(QueryDefinitionV1.model_fields)
+        fields = set(QueryDefinition.model_fields)
         for absent in ("constraints", "severity", "invariants", "rules"):
             assert absent not in fields

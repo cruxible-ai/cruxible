@@ -32,7 +32,7 @@ class McpServerInfoResult(BaseModel):
     adapter_version: str
     daemon_version: str
     daemon: contracts.ServerInfoResult | None = None
-    host: contracts.PlaybillHostInspectionV1 | None = None
+    host: contracts.PlaybillHostInspection | None = None
     identity: contracts.PlaybillWhoAmI | None = None
 
     @model_validator(mode="after")

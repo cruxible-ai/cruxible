@@ -9,7 +9,7 @@ import pytest
 import cruxible_client.contracts.projection_extensions as projection_extensions_module
 from cruxible_client.contracts.procedure_runtime_policy import (
     PROCEDURE_RUNTIME_POLICY_PATH,
-    ProcedureRuntimePolicyV1,
+    ProcedureRuntimePolicy,
     render_procedure_runtime_policy,
 )
 from cruxible_client.contracts.procedures.artifacts import render_procedure
@@ -152,7 +152,7 @@ def test_procedure_semantic_identity_is_stable_across_exact_coordinates() -> Non
 def test_runtime_policy_artifact_kind_begins_at_the_p2_b0_compiler() -> None:
     tree = {
         PROCEDURE_RUNTIME_POLICY_PATH: render_procedure_runtime_policy(
-            ProcedureRuntimePolicyV1(provider_output_bytes_cap=1_048_576)
+            ProcedureRuntimePolicy(provider_output_bytes_cap=1_048_576)
         )
     }
 
@@ -205,7 +205,7 @@ def test_replay_registry_copies_the_authoritative_runtime_registry(
 def test_resource_policy_requires_explicit_compiler_succession():
     tree = {
         PROCEDURE_RUNTIME_POLICY_PATH: render_procedure_runtime_policy(
-            ProcedureRuntimePolicyV1(
+            ProcedureRuntimePolicy(
                 provider_output_bytes_cap=64 * 1024 * 1024,
                 result_bytes_cap=16 * 1024 * 1024,
                 repeat_attempts_cap=100,

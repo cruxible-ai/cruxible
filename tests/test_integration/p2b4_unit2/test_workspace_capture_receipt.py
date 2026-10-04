@@ -10,20 +10,20 @@ from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
     CaptureFormatError,
     ProviderProducerReceiptResolution,
-    ProviderResultToExternalCaptureV1,
+    ProviderResultToExternalCapture,
     build_provider_external_capture_v2,
     verify_capture,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.provider_execution import (
-    ProviderEgressObservationV1,
-    ProviderInvocationOutputDigestV1,
-    ProviderSecretResolutionPlanV1,
+    ProviderEgressObservation,
+    ProviderInvocationOutputDigest,
+    ProviderSecretResolutionPlan,
     provider_invocation_output_digest,
 )
 from cruxible_client.contracts.workspace_file import (
     WORKSPACE_FILE_INTERFACE_DIGEST,
-    SourceReadReceiptV1,
+    SourceReadReceipt,
 )
 from tests.core_support.p2b4_unit1._support import digest, provider_capture_fixture
 
@@ -42,9 +42,7 @@ def _workspace_fixture(tmp_path):  # type: ignore[no-untyped-def]
             "interface_id": "workspace.file",
             "interface_digest": WORKSPACE_FILE_INTERFACE_DIGEST,
             "local_execution": local,
-            "secret_plan": ProviderSecretResolutionPlanV1(
-                references=(), binding_identity_digests=()
-            ),
+            "secret_plan": ProviderSecretResolutionPlan(references=(), binding_identity_digests=()),
         }
     )
     coordinate = AcceptedCoordinate(
@@ -53,7 +51,7 @@ def _workspace_fixture(tmp_path):  # type: ignore[no-untyped-def]
         generation_root=fixture.bound_generation,
         compiler_digest="sha256:" + "c" * 64,
     )
-    source_read = SourceReadReceiptV1(
+    source_read = SourceReadReceipt(
         run_id=fixture.receipt.run_id,
         admission_binding_digest=fixture.receipt.admission_binding_digest,
         occurrence_path=fixture.receipt.occurrence_path,
@@ -79,7 +77,7 @@ def _workspace_fixture(tmp_path):  # type: ignore[no-untyped-def]
         "content": {"kind": "text", "text": "orders"},
     }
     material = canonical_bytes(provider_output)
-    result = ProviderResultToExternalCaptureV1(
+    result = ProviderResultToExternalCapture(
         **{
             **fixture.result.model_dump(mode="python"),
             "content_base64": base64.b64encode(material).decode("ascii"),
@@ -88,12 +86,12 @@ def _workspace_fixture(tmp_path):  # type: ignore[no-untyped-def]
             "observed_at": source_read.read_at,
         }
     )
-    egress = ProviderEgressObservationV1(observer_backend="sandbox", observer_grade="conformance")
+    egress = ProviderEgressObservation(observer_backend="sandbox", observer_grade="conformance")
     receipt = fixture.receipt.model_copy(
         update={
             "interface_id": "workspace.file",
             "interface_digest": WORKSPACE_FILE_INTERFACE_DIGEST,
-            "output": ProviderInvocationOutputDigestV1(
+            "output": ProviderInvocationOutputDigest(
                 output_digest=provider_invocation_output_digest(provider_output)
             ).model_dump(mode="json"),
             "egress": egress,

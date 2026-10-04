@@ -12,7 +12,7 @@ from cruxible_client.contracts.artifacts import (
     ArtifactLifecycle,
     ArtifactPin,
 )
-from cruxible_client.contracts.candidates import CandidateRecordV3
+from cruxible_client.contracts.candidates import CandidateRecord
 from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     build_direct_claim_capture,
@@ -22,16 +22,16 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, render_claim_type
 from cruxible_client.contracts.claims import (
+    ClaimArtifact,
     ClaimArtifactV2,
-    ClaimArtifactV3,
     ClaimBacking,
-    ClaimBackingV2,
+    ClaimBackingV1,
     ClaimLawEvidenceV1,
     ClaimReferentContext,
-    ClaimRetirementAttributionV1,
+    ClaimRetirementAttribution,
     ClaimStatement,
     ClaimUnsupportedFormatError,
-    LegacyCitationReferenceV1,
+    LegacyCitationReference,
     LiteralClaimObject,
     _capture_is_explicitly_eligible,
     _citation_origin_refusal,
@@ -46,10 +46,10 @@ from cruxible_client.contracts.claims import (
     render_claim,
 )
 from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicyV1,
+    ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionRuleV1,
-    ClaimResolutionPolicyV1,
+    ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress, SourceMapping
 from cruxible_client.contracts.subjects import (
@@ -98,8 +98,8 @@ def _claim_type() -> ClaimType:
                 ),
             )
         ),
-        admission_policy=ClaimAdmissionPolicyV1(),
-        resolution_policy=ClaimResolutionPolicyV1(
+        admission_policy=ClaimAdmissionPolicy(),
+        resolution_policy=ClaimResolutionPolicy(
             cardinality="one",
             eligible_verdicts=("supported",),
             selector="only_contender",
@@ -129,7 +129,7 @@ def _claim(
             object=LiteralClaimObject(value="ready"),
             role="observation",
         ),
-        backing=ClaimBackingV2(
+        backing=ClaimBacking(
             referent_context=ClaimReferentContext(
                 subject_content_digest=subject_digest(shell).tagged,
                 observed_at=OBSERVED_AT,
@@ -229,7 +229,7 @@ def test_claim_v3_digest_commits_retirement_attribution_without_moving_v2() -> N
         source_length=1,
     )
     predecessor_digest = claim_artifact_digest(predecessor)
-    rescinded = ClaimArtifactV3(
+    rescinded = ClaimArtifact(
         identity=predecessor.identity,
         statement=predecessor.statement,
         backing=predecessor.backing,
@@ -238,10 +238,10 @@ def test_claim_v3_digest_commits_retirement_attribution_without_moving_v2() -> N
             state="retired",
             predecessor_digest=predecessor_digest.tagged,
         ),
-        retirement=ClaimRetirementAttributionV1(reason="was-rescinded"),
+        retirement=ClaimRetirementAttribution(reason="was-rescinded"),
     )
     wrong = rescinded.model_copy(
-        update={"retirement": ClaimRetirementAttributionV1(reason="was-wrong")}
+        update={"retirement": ClaimRetirementAttribution(reason="was-wrong")}
     )
 
     assert parse_claim(render_claim(rescinded), path=claim_path(rescinded.identity.name)) == (
@@ -272,7 +272,7 @@ def test_claim_v3_preserves_all_legacy_v1_backing_read_and_evidence_laws(
         source_digest=capture.source_body_digest,
         source_length=capture.envelope.commitment.byte_length,
     )
-    legacy_backing = ClaimBacking(
+    legacy_backing = ClaimBackingV1(
         referent_context=predecessor.backing.referent_context,
         capture_digests=predecessor.backing.capture_digests,
         attestation_digests=predecessor.backing.attestation_digests,
@@ -280,7 +280,7 @@ def test_claim_v3_preserves_all_legacy_v1_backing_read_and_evidence_laws(
         reducer_digest=predecessor.backing.reducer_digest,
         source_mappings=predecessor.backing.source_mappings,
     )
-    retired = ClaimArtifactV3(
+    retired = ClaimArtifact(
         identity=predecessor.identity,
         statement=predecessor.statement,
         backing=legacy_backing,
@@ -289,13 +289,13 @@ def test_claim_v3_preserves_all_legacy_v1_backing_read_and_evidence_laws(
             state="retired",
             predecessor_digest=claim_artifact_digest(predecessor).tagged,
         ),
-        retirement=ClaimRetirementAttributionV1(reason="was-rescinded"),
+        retirement=ClaimRetirementAttribution(reason="was-rescinded"),
     )
 
     assert parse_claim(render_claim(retired), path=claim_path(claim_id)) == retired
     references = claim_citation_references(retired)
     assert len(references) == 1
-    assert isinstance(references[0], LegacyCitationReferenceV1)
+    assert isinstance(references[0], LegacyCitationReference)
     assert references[0].capture_digest == capture.capture_digest
     assert _capture_is_explicitly_eligible(
         retired,
@@ -365,7 +365,7 @@ def test_subject_claim_type_capture_contract_and_claim_form_one_atomic_candidate
         timestamp=TIMESTAMP,
     )
     assert not evaluated.evaluation.diagnostics
-    assert isinstance(evaluated.candidate, CandidateRecordV3)
+    assert isinstance(evaluated.candidate, CandidateRecord)
     assert tuple(item.artifact_kind for item in evaluated.candidate.members) == (
         "capture-contract",
         "claim-type",

@@ -16,18 +16,18 @@ from cruxible_client.contracts.authoring.inputs import (
     SubjectObjectInput,
 )
 from cruxible_client.contracts.authoring.models import (
-    AuthoringClaimStatementV1,
+    AuthoringClaimStatement,
     ClaimAuthoringPayloadV1,
-    InsertionAnchorWindowV1,
-    InsertionTargetV2,
-    SelfSourceBodyV1,
-    WorkingAnchorWindowV1,
-    WorkingDigestCoordinateV1,
-    WorkingSelectionObservationV1,
+    InsertionAnchorWindow,
+    InsertionTarget,
+    SelfSourceBody,
+    WorkingAnchorWindow,
+    WorkingDigestCoordinate,
+    WorkingSelectionObservation,
 )
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
-    CaptureContractV1,
+    CaptureContract,
     capture_contract_digest,
     capture_contract_path,
     render_capture_contract,
@@ -67,7 +67,7 @@ def _seed_claim_surface(
     instance: PlaybillInstance,
     _owner: object,
     *,
-    contract: CaptureContractV1 = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    contract: CaptureContract = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     claim_type_override: ClaimType | None = None,
     additional_subjects: tuple[SubjectShell, ...] = (),
 ) -> None:
@@ -140,7 +140,7 @@ def _coordinator(instance: PlaybillInstance) -> AuthoringIntentCoordinator:
 
 def _self_source_payload(*, insertion_target: object | None = None) -> ClaimAuthoringPayloadV1:
     return ClaimAuthoringPayloadV1(
-        statement=AuthoringClaimStatementV1(
+        statement=AuthoringClaimStatement(
             subject=SemanticAddress.whole_artifact(
                 subject_path(_subject().subject_kind, _subject().subject_id)
             ),
@@ -149,9 +149,7 @@ def _self_source_payload(*, insertion_target: object | None = None) -> ClaimAuth
             role="observation",
         ),
         rationale="The writer observed the current work status.",
-        source=SelfSourceBodyV1(
-            content_base64=base64.b64encode(b"status: ready\n").decode("ascii")
-        ),
+        source=SelfSourceBody(content_base64=base64.b64encode(b"status: ready\n").decode("ascii")),
         insertion_target=insertion_target,
     )
 
@@ -166,15 +164,15 @@ def _working_payload(
     return ClaimAuthoringPayloadV1(
         statement=_self_source_payload().statement,
         rationale="The repository snapshot says the work is ready.",
-        source=WorkingSelectionObservationV1(
+        source=WorkingSelectionObservation(
             source_id="repo.work-items",
-            coordinate=WorkingDigestCoordinateV1(
+            coordinate=WorkingDigestCoordinate(
                 source_content_digest=digest,
                 source_byte_length=len(selected),
             ),
             selected_content_base64=base64.b64encode(selected).decode("ascii"),
             selected_bytes_digest=digest,
-            selector=WorkingAnchorWindowV1(
+            selector=WorkingAnchorWindow(
                 anchor="status: ready",
                 start_byte=0,
                 end_byte=len(selected),
@@ -482,15 +480,15 @@ def test_preflight_returns_independent_refusals_in_one_frontier(tmp_path: Path) 
     preimage = b"Status: "
     payload = _working_payload(occurrence_count=2).model_copy(
         update={
-            "insertion_target": InsertionTargetV2(
+            "insertion_target": InsertionTarget(
                 source_id="repo.work-items",
-                coordinate=WorkingDigestCoordinateV1(
+                coordinate=WorkingDigestCoordinate(
                     source_content_digest="sha256:" + hashlib.sha256(preimage).hexdigest(),
                     source_byte_length=len(preimage),
                 ),
                 initial_preimage_digest="sha256:" + hashlib.sha256(preimage).hexdigest(),
                 initial_preimage_byte_length=len(preimage),
-                selector=InsertionAnchorWindowV1(
+                selector=InsertionAnchorWindow(
                     anchor_content_base64=base64.b64encode(preimage).decode("ascii"),
                     anchor_bytes_digest="sha256:" + hashlib.sha256(preimage).hexdigest(),
                     start_byte=0,

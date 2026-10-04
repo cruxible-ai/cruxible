@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cruxible_client.contracts.triggers import CadenceScheduleV1
+from cruxible_client.contracts.triggers import CadenceSchedule
 from cruxible_core.triggers import journal as trigger_journal
 from cruxible_core.triggers.journal import (
     InternalTrigger,
@@ -28,7 +28,7 @@ def _cadence(
     return InternalTrigger(
         trigger,
         action,
-        CadenceScheduleV1(interval_seconds=int(interval.total_seconds())),
+        CadenceSchedule(interval_seconds=int(interval.total_seconds())),
         accepted_at=accepted_at,
     )
 
@@ -291,7 +291,7 @@ def test_restarting_the_same_runner_skips_the_ticks_it_missed_while_stopped(
 def test_generation_fires_coalesce_and_restart_skips_offline_accepts(tmp_path: Path) -> None:
     from contextlib import contextmanager
 
-    from cruxible_client.contracts.triggers import GenerationAcceptedScheduleV1
+    from cruxible_client.contracts.triggers import GenerationAcceptedSchedule
 
     world = instance(tmp_path)
     head = [2]
@@ -307,7 +307,7 @@ def test_generation_fires_coalesce_and_restart_skips_offline_accepts(tmp_path: P
     trigger = InternalTrigger(
         "Trigger:floor",
         "floor.refresh",
-        GenerationAcceptedScheduleV1(),
+        GenerationAcceptedSchedule(),
         accepted_at=NOW + timedelta(seconds=2),
         accepted_generation=2,
         version="v1",
@@ -380,7 +380,7 @@ def test_out_of_order_generation_times_fall_back_without_stopping_trigger_ticks(
 ):
     from contextlib import contextmanager
 
-    from cruxible_client.contracts.triggers import GenerationAcceptedScheduleV1
+    from cruxible_client.contracts.triggers import GenerationAcceptedSchedule
     from cruxible_core.triggers.journal import generation_at
 
     world = instance(tmp_path)
@@ -399,7 +399,7 @@ def test_out_of_order_generation_times_fall_back_without_stopping_trigger_ticks(
     trigger = InternalTrigger(
         "Trigger:floor",
         "floor.refresh",
-        GenerationAcceptedScheduleV1(),
+        GenerationAcceptedSchedule(),
         accepted_at=NOW,
         accepted_generation=0,
         version="v1",

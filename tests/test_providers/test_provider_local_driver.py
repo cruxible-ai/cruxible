@@ -26,18 +26,18 @@ import pytest
 import cruxible_core.providers.provider_local_runtime as local_runtime_module
 import cruxible_core.providers.provider_process_leases as process_lease_module
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.captures import CanonicalDurationV1
-from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicyV1
-from cruxible_client.contracts.procedures.models import ProcedureBudgetV3, ProcedureHardCapsV3
+from cruxible_client.contracts.captures import CanonicalDuration
+from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
+from cruxible_client.contracts.procedures.models import ProcedureBudget, ProcedureHardCaps
 from cruxible_client.contracts.provider_execution import (
-    ProviderSecretBindingIdentityV1,
-    ProviderSecretReferenceV1,
-    ProviderSecretResolutionPlanV1,
-    VerifiedProviderBindingV1,
+    ProviderSecretBindingIdentity,
+    ProviderSecretReference,
+    ProviderSecretResolutionPlan,
+    VerifiedProviderBinding,
     provider_secret_binding_identity_digest,
 )
 from cruxible_client.contracts.providers import (
-    AcceptedProviderV1,
+    AcceptedProvider,
     ProviderV2,
     provider_digest,
     provider_expected_implementation_records,
@@ -89,18 +89,18 @@ def _lease_store(
     return create
 
 
-def _budget(*, capture_bytes: int = 2_000_000) -> ProcedureBudgetV3:
-    return ProcedureBudgetV3(
-        wall_clock=CanonicalDurationV1(microseconds=5_900_000),
+def _budget(*, capture_bytes: int = 2_000_000) -> ProcedureBudget:
+    return ProcedureBudget(
+        wall_clock=CanonicalDuration(microseconds=5_900_000),
         max_provider_calls=2,
         max_capture_bytes=capture_bytes,
         max_items=20,
     )
 
 
-def _caps() -> ProcedureHardCapsV3:
-    return ProcedureHardCapsV3(
-        max_wall_clock=CanonicalDurationV1(microseconds=4_100_000),
+def _caps() -> ProcedureHardCaps:
+    return ProcedureHardCaps(
+        max_wall_clock=CanonicalDuration(microseconds=4_100_000),
         max_provider_calls=5,
         max_capture_bytes=3_000_000,
         max_items=30,
@@ -110,8 +110,8 @@ def _caps() -> ProcedureHardCapsV3:
 
 def _secret_plan(
     *, epoch: str = "7", resolver: str = "environment"
-) -> ProviderSecretResolutionPlanV1:
-    reference = ProviderSecretReferenceV1(
+) -> ProviderSecretResolutionPlan:
+    reference = ProviderSecretReference(
         realm="billing",
         name="api",
         epoch=epoch,
@@ -119,18 +119,16 @@ def _secret_plan(
         resolver_kind=resolver,
     )
     digest = provider_secret_binding_identity_digest(
-        ProviderSecretBindingIdentityV1(realm=reference.realm, name=reference.name)
+        ProviderSecretBindingIdentity(realm=reference.realm, name=reference.name)
     )
-    return ProviderSecretResolutionPlanV1(
-        references=(reference,), binding_identity_digests=(digest,)
-    )
+    return ProviderSecretResolutionPlan(references=(reference,), binding_identity_digests=(digest,))
 
 
 def test_capture_free_budget_comes_from_governed_policy_and_rounds_down() -> None:
     first = translate_provider_budget(
         budget=_budget(),
         hard_caps=_caps(),
-        runtime_policy=ProcedureRuntimePolicyV1(provider_output_bytes_cap=1_048_576),
+        runtime_policy=ProcedureRuntimePolicy(provider_output_bytes_cap=1_048_576),
         remaining_wall_clock_microseconds=3_900_000,
         result_bytes_cap=900_000,
         produces_capture=False,
@@ -138,7 +136,7 @@ def test_capture_free_budget_comes_from_governed_policy_and_rounds_down() -> Non
     second = translate_provider_budget(
         budget=_budget(),
         hard_caps=_caps(),
-        runtime_policy=ProcedureRuntimePolicyV1(provider_output_bytes_cap=700_000),
+        runtime_policy=ProcedureRuntimePolicy(provider_output_bytes_cap=700_000),
         remaining_wall_clock_microseconds=3_900_000,
         result_bytes_cap=900_000,
         produces_capture=False,
@@ -155,7 +153,7 @@ def test_provider_budget_refuses_before_spawn_when_whole_second_or_call_is_absen
         translate_provider_budget(
             budget=_budget(),
             hard_caps=_caps(),
-            runtime_policy=ProcedureRuntimePolicyV1(provider_output_bytes_cap=1_048_576),
+            runtime_policy=ProcedureRuntimePolicy(provider_output_bytes_cap=1_048_576),
             remaining_wall_clock_microseconds=999_999,
             result_bytes_cap=100,
             produces_capture=False,
@@ -166,7 +164,7 @@ def test_provider_budget_refuses_before_spawn_when_whole_second_or_call_is_absen
         translate_provider_budget(
             budget=_budget().model_copy(update={"max_provider_calls": 0}),
             hard_caps=_caps(),
-            runtime_policy=ProcedureRuntimePolicyV1(provider_output_bytes_cap=1_048_576),
+            runtime_policy=ProcedureRuntimePolicy(provider_output_bytes_cap=1_048_576),
             remaining_wall_clock_microseconds=2_000_000,
             result_bytes_cap=100,
             produces_capture=False,
@@ -271,7 +269,7 @@ def test_local_bind_reproduces_distribution_lock_materialization_and_runtime_mem
             }
         ).model_dump(mode="python")
     )
-    accepted = AcceptedProviderV1(
+    accepted = AcceptedProvider(
         path="providers/demo-provider.json",
         provider=provider,
         artifact_digest=provider_digest(provider).tagged,
@@ -417,7 +415,7 @@ def test_local_driver_runs_in_isolated_directory_with_fd_secret_and_attribution_
 ) -> None:
     interpreter = _fake_interpreter(tmp_path / "fake-python")
     binding = BoundLocalProviderV1(
-        binding=VerifiedProviderBindingV1(
+        binding=VerifiedProviderBinding(
             provider_artifact_digest=_digest("provider"),
             interface_artifact_digest=_digest("interface-artifact"),
             interface_id="demo.interface",
@@ -486,7 +484,7 @@ def test_local_driver_detects_raw_secret_leak_before_parsing(
         budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=2, output_bytes=16_384),
     )
     bound = BoundLocalProviderV1(
-        binding=VerifiedProviderBindingV1(
+        binding=VerifiedProviderBinding(
             provider_artifact_digest=_digest("provider"),
             interface_artifact_digest=_digest("interface-artifact"),
             interface_id="demo.interface",
@@ -1174,7 +1172,7 @@ def test_environment_secret_keys_are_injective_across_separator_collisions(
     first: tuple[str, str, str], second: tuple[str, str, str]
 ) -> None:
     references = tuple(
-        ProviderSecretReferenceV1(
+        ProviderSecretReference(
             realm=realm,
             name=name,
             epoch=epoch,
@@ -1208,7 +1206,7 @@ def test_environment_secret_keys_are_injective_across_separator_collisions(
 def test_invoker_rebinds_before_spawn_and_surfaces_every_bind_refusal(
     _lease_store: Callable[[Path], ProviderProcessLeaseStore], tmp_path: Path, code: str
 ) -> None:
-    binding = VerifiedProviderBindingV1(
+    binding = VerifiedProviderBinding(
         provider_artifact_digest=_digest("provider"),
         interface_artifact_digest=_digest("interface-artifact"),
         interface_id="demo.interface",
@@ -1250,7 +1248,7 @@ def test_invoker_rebinds_before_spawn_and_surfaces_every_bind_refusal(
         provider_artifact_digest=binding.provider_artifact_digest,
         interface_artifact_digest=binding.interface_artifact_digest,
         implementation_digest=binding.implementation_digest,
-        secret_plan=ProviderSecretResolutionPlanV1(),
+        secret_plan=ProviderSecretResolutionPlan(),
     )
     context = ProviderRuntimeRunContextV1(
         protocol_version="1.0",
@@ -1333,7 +1331,7 @@ def test_unknown_dynamic_endpoint_form_is_typed_before_spawn(
 ) -> None:
     interpreter = _fake_interpreter(tmp_path / "never-spawned")
     binding = BoundLocalProviderV1(
-        binding=VerifiedProviderBindingV1(
+        binding=VerifiedProviderBinding(
             provider_artifact_digest=_digest("provider"),
             interface_artifact_digest=_digest("interface-artifact"),
             interface_id="demo.interface",
@@ -1362,7 +1360,7 @@ def test_unknown_dynamic_endpoint_form_is_typed_before_spawn(
         LocalProviderExecutionDriver().invoke(
             binding,
             context,
-            secret_plan=ProviderSecretResolutionPlanV1(),
+            secret_plan=ProviderSecretResolutionPlan(),
             secret_resolvers=ProviderSecretResolverRegistry(()),
             invocation_id=_digest("dynamic"),
             process_leases=_lease_store(tmp_path / "dynamic-leases"),

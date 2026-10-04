@@ -10,7 +10,7 @@ import pytest
 from pydantic import ValidationError
 
 from cruxible_client.contracts.claim_types import (
-    ClaimFreshnessDurationV1,
+    ClaimFreshnessDuration,
     ClaimType,
     claim_type_digest,
     render_claim_type,
@@ -44,7 +44,7 @@ def test_unsure_hold_for_is_a_v5_claim_type_field_absent_from_the_wire_unless_de
             "unsure_hold_for": {"microseconds": 7 * 86_400_000_000},
         }
     )
-    assert declared.unsure_hold_for == ClaimFreshnessDurationV1(microseconds=7 * 86_400_000_000)
+    assert declared.unsure_hold_for == ClaimFreshnessDuration(microseconds=7 * 86_400_000_000)
     assert claim_type_digest(declared) != claim_type_digest(plain)
 
     with pytest.raises(ValidationError, match="must be positive"):
@@ -116,7 +116,7 @@ def test_a_dependency_hold_covers_only_upstream_versions_its_examiner_saw() -> N
 
 
 def test_a_standing_hold_lasts_as_long_as_its_claim_type_declares() -> None:
-    declared = _claim_type(unsure_hold_for=ClaimFreshnessDurationV1(microseconds=86_400_000_000))
+    declared = _claim_type(unsure_hold_for=ClaimFreshnessDuration(microseconds=86_400_000_000))
     current = {"Claim:CLM-a": "sha256:" + "a" * 64}
     uncovered = _item(
         severity="warning",

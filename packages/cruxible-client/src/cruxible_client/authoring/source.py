@@ -33,14 +33,14 @@ from cruxible_client.authoring.sdk_types import ProcedureRef, QueryRef
 from cruxible_client.contracts.canonical import normalize_canonical
 from cruxible_client.contracts.procedures.models import (
     RUNG_AUTHORITY,
-    ProcedureBudgetV3,
-    ProcedureHardCapsV3,
+    ProcedureBudget,
+    ProcedureHardCaps,
     derived_terminal_capability,
 )
 from cruxible_client.contracts.procedures.source_program import SourceContract
 from cruxible_client.contracts.procedures.source_requests import (
-    ProcedureSourcePreviewRequestV1,
-    ProcedureSourceRequestV1,
+    ProcedureSourcePreviewRequest,
+    ProcedureSourceRequest,
     SourceProcedureSelection,
     SourceProviderSelection,
     SourceQuerySelection,
@@ -62,7 +62,7 @@ def _contract(value: CarriedContractInput) -> SourceContract:
 
 @dataclass(frozen=True)
 class ProcedureBlueprint:
-    _request: ProcedureSourceRequestV1
+    _request: ProcedureSourceRequest
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"] = "snapshot"
     acquisition_policy: str | None = None
     _bindings: Mapping[str, ProviderBinding | QueryBinding | QueryRef | ProcedureRef] = field(
@@ -96,11 +96,11 @@ class ProcedureBlueprint:
         )
 
     @property
-    def budget(self) -> ProcedureBudgetV3:
+    def budget(self) -> ProcedureBudget:
         return self._request.budget.model_copy(deep=True)
 
     @property
-    def hard_caps(self) -> ProcedureHardCapsV3:
+    def hard_caps(self) -> ProcedureHardCaps:
         return self._request.hard_caps.model_copy(deep=True)
 
     @property
@@ -130,7 +130,7 @@ class ProcedureBlueprint:
                 raise TypeError("Bindings require named accepted provider/query/Procedure handles")
         return replace(self, _bindings=MappingProxyType(dict(self._bindings, **bindings)))
 
-    def _at(self, world: World) -> ProcedureSourceRequestV1:
+    def _at(self, world: World) -> ProcedureSourceRequest:
         selections: dict[str, SourceSelection] = {}
         for name, value in self._bindings.items():
             if isinstance(value, ProviderBinding):
@@ -177,7 +177,7 @@ class ProcedureBlueprint:
                     ),
                 ),
             )
-        request = ProcedureSourcePreviewRequestV1(
+        request = ProcedureSourcePreviewRequest(
             source=self._at(world),
             at=AcceptedCoordinate.model_validate(world.coordinate.model_dump(mode="json")),
         )
@@ -186,11 +186,11 @@ class ProcedureBlueprint:
         )
         from cruxible_client.contracts.procedures.models import (
             TERMINAL_REQUIRED_RUNGS,
-            ClaimTapNodeV6,
-            GuardNodeV3,
-            InvokeNodeV6,
-            SelectNodeV6,
-            StateTapNodeV6,
+            ClaimTapNode,
+            GuardNode,
+            InvokeNode,
+            SelectNode,
+            StateTapNode,
             required_authority,
         )
 
@@ -239,20 +239,20 @@ class ProcedureBlueprint:
             state_dependencies=tuple(
                 ProcedureStateDependency(
                     node_id=n.node_id,
-                    kind="claim" if isinstance(n, ClaimTapNodeV6) else "query",
-                    selection=n.claim_type if isinstance(n, ClaimTapNodeV6) else n.query,
-                    cardinality=n.cardinality if isinstance(n, ClaimTapNodeV6) else "query",
-                    limit=n.limit if isinstance(n, ClaimTapNodeV6) else None,
-                    subject_kind=n.subject_kind if isinstance(n, ClaimTapNodeV6) else None,
+                    kind="claim" if isinstance(n, ClaimTapNode) else "query",
+                    selection=n.claim_type if isinstance(n, ClaimTapNode) else n.query,
+                    cardinality=n.cardinality if isinstance(n, ClaimTapNode) else "query",
+                    limit=n.limit if isinstance(n, ClaimTapNode) else None,
+                    subject_kind=n.subject_kind if isinstance(n, ClaimTapNode) else None,
                     selector=cast(
                         JsonValue,
                         normalize_canonical(
-                            n.subject_id if isinstance(n, ClaimTapNodeV6) else n.parameters
+                            n.subject_id if isinstance(n, ClaimTapNode) else n.parameters
                         ),
                     ),
                 )
                 for n in compiled.nodes
-                if isinstance(n, (ClaimTapNodeV6, StateTapNodeV6))
+                if isinstance(n, (ClaimTapNode, StateTapNode))
             ),
             binding_requirements=tuple(
                 ProcedureBindingRequirement(
@@ -264,13 +264,13 @@ class ProcedureBlueprint:
                 ProcedureBranchValue(
                     node_id=n.node_id,
                     kind=n.kind,
-                    producers=n.sources if isinstance(n, SelectNodeV6) else (),
-                    predicate=n.predicate if isinstance(n, GuardNodeV3) else None,
-                    contract=n.contract_out if isinstance(n, SelectNodeV6) else None,
+                    producers=n.sources if isinstance(n, SelectNode) else (),
+                    predicate=n.predicate if isinstance(n, GuardNode) else None,
+                    contract=n.contract_out if isinstance(n, SelectNode) else None,
                     successors=edges.get(n.node_id, {}),
                 )
                 for n in compiled.nodes
-                if isinstance(n, (GuardNodeV3, SelectNodeV6))
+                if isinstance(n, (GuardNode, SelectNode))
             ),
             return_paths=tuple(
                 ProcedureReturnPath(
@@ -291,7 +291,7 @@ class ProcedureBlueprint:
             children=tuple(
                 ProcedureChildCall(node_id=n.node_id, procedure=n.procedure)
                 for n in compiled.nodes
-                if isinstance(n, InvokeNodeV6)
+                if isinstance(n, InvokeNode)
             ),
         )
 
@@ -339,8 +339,8 @@ def procedure(
     name: str,
     input: CarriedContractInput,
     output: CarriedContractInput,
-    budget: ProcedureBudgetV3,
-    hard_caps: ProcedureHardCapsV3,
+    budget: ProcedureBudget,
+    hard_caps: ProcedureHardCaps,
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"] = "snapshot",
     acquisition_policy: str | None = None,
     description: str | None = None,
@@ -373,7 +373,7 @@ def procedure(
         }
         # Only schema data crosses the boundary. No functions, closures or module objects.
         return ProcedureBlueprint(
-            ProcedureSourceRequestV1(
+            ProcedureSourceRequest(
                 name=name,
                 text=text,
                 filename=inspect.getsourcefile(function) or "<procedure>",

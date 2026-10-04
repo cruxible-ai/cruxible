@@ -9,16 +9,16 @@ from cruxible_client.contracts.artifacts import (
     ArtifactLifecycle,
     ArtifactPin,
 )
-from cruxible_client.contracts.candidates import CandidateRecordV3
+from cruxible_client.contracts.candidates import CandidateRecord
 from cruxible_client.contracts.claim_types import (
     ClaimType,
     claim_type_digest,
     render_claim_type,
 )
 from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicyV1,
+    ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV1,
-    ClaimResolutionPolicyV1,
+    ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_digest
 from cruxible_core.claims.closure import evaluate_dependency_closure
@@ -68,8 +68,8 @@ def claim_type(
         cardinality="one",
         permitted_roles=("normative",),
         evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(),
-        admission_policy=ClaimAdmissionPolicyV1(),
-        resolution_policy=ClaimResolutionPolicyV1(
+        admission_policy=ClaimAdmissionPolicy(),
+        resolution_policy=ClaimResolutionPolicy(
             cardinality="one",
             eligible_verdicts=("supported",),
             selector="only_contender",
@@ -114,7 +114,7 @@ def test_multi_kind_candidate_scope_member_and_closure_paths_are_identical(
     )
 
     assert evaluation.diagnostics == ()
-    assert isinstance(evaluation.candidate, CandidateRecordV3)
+    assert isinstance(evaluation.candidate, CandidateRecord)
     assert evaluation.candidate.candidate.scope == (
         claim_type_path,
         SUBJECT_PATH,
@@ -327,7 +327,7 @@ def test_atomic_review_cannot_hide_invalidation_members(tmp_path: Path) -> None:
         },
         timestamp=TIMESTAMP,
     )
-    assert isinstance(initial.candidate, CandidateRecordV3)
+    assert isinstance(initial.candidate, CandidateRecord)
     approver = client_material(instance.root.parent, instance)
     initial_approval = _sign(
         approver,
@@ -384,7 +384,7 @@ def test_atomic_review_cannot_hide_invalidation_members(tmp_path: Path) -> None:
         },
         timestamp="2026-08-16T14:01:00.000000Z",
     )
-    assert isinstance(invalidation.candidate, CandidateRecordV3)
+    assert isinstance(invalidation.candidate, CandidateRecord)
     review = service_review_playbill_proposal(
         instance,
         proposal_id=invalidation.admission.proposal_id,

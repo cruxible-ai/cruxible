@@ -13,7 +13,7 @@ from click.testing import CliRunner
 from fastapi.testclient import TestClient
 
 from cruxible_client import CruxibleClient, Playbill, contracts
-from cruxible_client.contracts.compact_query import PlaybillQueryRequestV1
+from cruxible_client.contracts.compact_query import PlaybillQueryRequest
 from cruxible_client.contracts.errors import ReadRefusalError
 from cruxible_core.cli.main import cli
 from cruxible_core.mcp.server import create_server
@@ -72,7 +72,7 @@ def test_every_surface_returns_the_same_page(
     if surface == "transport":
         result = client.query_playbill(
             instance_id,
-            request=PlaybillQueryRequestV1.model_validate(
+            request=PlaybillQueryRequest.model_validate(
                 {
                     "kind": SUBJECT_KIND,
                     "where": WHERE,
@@ -147,7 +147,7 @@ def test_wrong_names_refuse_over_http_with_code_and_nearest(
     with pytest.raises(ReadRefusalError) as refused:
         client.query_playbill(
             instance_id,
-            request=PlaybillQueryRequestV1.model_validate(
+            request=PlaybillQueryRequest.model_validate(
                 {"kind": SUBJECT_KIND, "where": [{"field": "stauts", "eq": "ready"}]}
             ),
         )
@@ -203,7 +203,7 @@ def test_the_mcp_tool_is_read_only_and_fully_typed(monkeypatch: pytest.MonkeyPat
         path for name, prop in schema["properties"].items() for path in untyped(prop, name)
     ]
     assert free_form == []
-    follow = schema["$defs"]["QueryFollowV1"]["properties"]["direction"]
+    follow = schema["$defs"]["QueryFollow"]["properties"]["direction"]
     assert follow["enum"] == ["forward", "reverse"] and follow["default"] == "forward"
     # Spec mode is its own full-profile tool, so the default query tool stays small:
     # at most a quarter of the default profile's approved model-visible budget
@@ -233,18 +233,18 @@ def test_the_mcp_tool_is_read_only_and_fully_typed(monkeypatch: pytest.MonkeyPat
 def test_the_spec_tool_answers_with_the_same_evaluation(
     served: tuple[CruxibleClient, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from cruxible_client.contracts.query.definitions import QueryDefinitionSpecV1
+    from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
     from cruxible_core.mcp import handlers
     from cruxible_core.mcp.curation import PROFILE_DEFAULT, ToolCuration, advertised_tool_names
     from tests.core_support._knowledge_loop_support import work_item_query
 
     client, instance_id = served
-    spec = QueryDefinitionSpecV1.model_validate(
+    spec = QueryDefinitionSpec.model_validate(
         {**work_item_query("project.adhoc").model_dump(mode="json"), "pins": []}
     )
     through_sdk = client.query_playbill(
         instance_id,
-        request=PlaybillQueryRequestV1(spec=spec, evaluation_time=EVALUATION_TIME),
+        request=PlaybillQueryRequest(spec=spec, evaluation_time=EVALUATION_TIME),
     )
     for remote in (False, True):
         monkeypatch.setattr(

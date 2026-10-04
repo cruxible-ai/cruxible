@@ -7,7 +7,7 @@ from typing import Any, cast
 
 import pytest
 
-from cruxible_client.contracts.compact_query import PlaybillQueryRequestV1
+from cruxible_client.contracts.compact_query import PlaybillQueryRequest
 from cruxible_core.service.discovery.compact_query import (
     _CompactPlan,
     _selection,
@@ -40,7 +40,7 @@ def instance(tmp_path_factory: pytest.TempPathFactory) -> Any:
 def _query(instance: Any, **fields: Any) -> Any:
     fields.setdefault("evaluation_time", WHEN)
     fields.setdefault("kind", SUBJECT_KIND)
-    return service_playbill_query(instance, request=PlaybillQueryRequestV1.model_validate(fields))
+    return service_playbill_query(instance, request=PlaybillQueryRequest.model_validate(fields))
 
 
 def _pairs(result: Any, alias: str = "batch") -> list[tuple[str, str | None]]:
@@ -347,7 +347,7 @@ def test_a_short_reverse_field_shared_by_two_source_kinds_is_ambiguous() -> None
     )
 
     def plan(field: str) -> _CompactPlan:
-        request = PlaybillQueryRequestV1.model_validate(
+        request = PlaybillQueryRequest.model_validate(
             {"kind": target, "follow": [{"field": field, "as": "src", "direction": "reverse"}]}
         )
         return _CompactPlan(vocabulary, request)
@@ -372,7 +372,7 @@ def test_a_kind_nothing_points_at_says_so() -> None:
         predicates={"k.title": _info("k.title", "k")},
         kinds=("k",),
     )
-    request = PlaybillQueryRequestV1.model_validate(
+    request = PlaybillQueryRequest.model_validate(
         {"kind": "k", "follow": [{"field": "title", "as": "src", "direction": "reverse"}]}
     )
     with pytest.raises(ReadRefusalError) as refused:
@@ -383,18 +383,18 @@ def test_a_kind_nothing_points_at_says_so() -> None:
 
 
 def test_the_wire_omits_the_default_direction_and_the_cursor_binds_it() -> None:
-    forward = PlaybillQueryRequestV1.model_validate(
+    forward = PlaybillQueryRequest.model_validate(
         {"kind": "k", "follow": [{"field": "parent", "as": "up"}]}
     )
-    reverse = PlaybillQueryRequestV1.model_validate({"kind": "k", "follow": [BATCH]})
+    reverse = PlaybillQueryRequest.model_validate({"kind": "k", "follow": [BATCH]})
 
     assert forward.model_dump(mode="json")["follow"] == [{"field": "parent", "as": "up"}]
     assert reverse.model_dump(mode="json")["follow"] == [BATCH]
     with pytest.raises(ValueError, match="direction"):
-        PlaybillQueryRequestV1.model_validate(
+        PlaybillQueryRequest.model_validate(
             {"kind": "k", "follow": [{"field": "p", "as": "a", "direction": "backwards"}]}
         )
-    flipped = PlaybillQueryRequestV1.model_validate(
+    flipped = PlaybillQueryRequest.model_validate(
         {"kind": "k", "follow": [{**BATCH, "direction": "forward"}]}
     )
     assert _selection(flipped, "inline") != _selection(reverse, "inline")
@@ -419,7 +419,7 @@ def test_follow_refusals_stay_bounded_as_the_vocabulary_grows() -> None:
     )
 
     def refused(**fields: Any) -> ReadRefusalError:
-        request = PlaybillQueryRequestV1.model_validate({"kind": target, **fields})
+        request = PlaybillQueryRequest.model_validate({"kind": target, **fields})
         with pytest.raises(ReadRefusalError) as caught:
             plan = _CompactPlan(vocabulary, request)
             for index, name in enumerate(request.select):

@@ -136,11 +136,11 @@ def test_failed_parse_does_not_publish_partial_index():
 
 @pytest.mark.parametrize("read_failure", [False, True])
 def test_batch_errors_preserve_all_marker_findings(read_failure, monkeypatch):
-    from cruxible_client.contracts.authoring.models import PlaybillBlockSyncReadRequestV1
+    from cruxible_client.contracts.authoring.models import PlaybillBlockSyncReadRequest
     from cruxible_client.contracts.claims import claim_statement_digest
     from cruxible_client.contracts.declared_blocks import (
         ProjectionBlockStampV1,
-        ProjectionClaimBackingV1,
+        ProjectionClaimBacking,
     )
     from cruxible_core.service.authoring.projection_sync import (
         service_read_playbill_block_sync_backing,
@@ -192,7 +192,7 @@ def test_batch_errors_preserve_all_marker_findings(read_failure, monkeypatch):
         instance.blob_at.side_effect = read_one
 
     backings = tuple(
-        ProjectionClaimBackingV1(
+        ProjectionClaimBacking(
             identity=c.identity, statement_digest=claim_statement_digest(c.statement).tagged
         )
         for c in claims
@@ -209,14 +209,14 @@ def test_batch_errors_preserve_all_marker_findings(read_failure, monkeypatch):
         ),
     )
     result = service_read_playbill_block_sync_backing(
-        instance, request=PlaybillBlockSyncReadRequestV1(stamp=stamp)
+        instance, request=PlaybillBlockSyncReadRequest(stamp=stamp)
     )
     assert result.reason == "block_backing_changed"
     # Once the first backing is valid, the historical failure on the second
     # remains observable. It is not dropped, cached as absence, or swallowed.
     valid = stamp.model_copy(update={"backing": backings})
     checked = service_read_playbill_block_sync_backing(
-        instance, request=PlaybillBlockSyncReadRequestV1(stamp=valid)
+        instance, request=PlaybillBlockSyncReadRequest(stamp=valid)
     )
     assert checked.status == "unchecked"
     assert checked.issues[-1].identity == backings[1].identity

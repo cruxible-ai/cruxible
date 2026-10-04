@@ -32,22 +32,25 @@ from cruxible_client.contracts.canonical import (
     pretty_canonical_bytes,
     typed_digest,
 )
-from cruxible_client.contracts.captures import CanonicalDurationV1
-from cruxible_client.contracts.claim_verdicts import EvidenceCurrency, EvidenceRelativeClaimVerdict
+from cruxible_client.contracts.captures import CanonicalDuration
+from cruxible_client.contracts.claim_verdicts import (
+    EvidenceCurrency,
+    EvidenceRelativeClaimVerdictV1,
+)
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import CanonicalEncodingError, PlaybillFormatError
 from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.query.grammar import (
-    QueryArtifactsEntryV2,
-    QueryBudgetsV1,
-    QueryEntryV1,
-    QueryFilterV1,
-    QueryIncludeV1,
-    QueryOrderingV1,
-    QueryParameterDeclarationV1,
-    QueryProjectionV1,
-    QueryReferenceInventoryV1,
-    QueryTraversalStepV1,
+    QueryArtifactsEntry,
+    QueryBudgets,
+    QueryEntry,
+    QueryFilter,
+    QueryInclude,
+    QueryOrdering,
+    QueryParameterDeclaration,
+    QueryProjection,
+    QueryReferenceInventory,
+    QueryTraversalStep,
     sorted_unique,
     validate_ordering_keys,
 )
@@ -61,10 +64,10 @@ PARAMETER_CONTRACT_PIN_ROLE = "parameter-contract"
 RESULT_CONTRACT_PIN_ROLE = "result-contract"
 _CONTRACT_PIN_ROLES = frozenset({PARAMETER_CONTRACT_PIN_ROLE, RESULT_CONTRACT_PIN_ROLE})
 
-QueryResultShapeV1 = Literal["subject", "relation_claim", "path", "artifact_definition"]
-QueryResultCardinalityV1 = Literal["one", "many"]
-QueryDedupeV1 = Literal["subject", "path", "none", "artifact"]
-QueryConflictBehaviorV1 = Literal["surface_conflicts", "refuse_on_conflict"]
+QueryResultShape = Literal["subject", "relation_claim", "path", "artifact_definition"]
+QueryResultCardinality = Literal["one", "many"]
+QueryDedupe = Literal["subject", "path", "none", "artifact"]
+QueryConflictBehavior = Literal["surface_conflicts", "refuse_on_conflict"]
 
 
 class QueryDefinitionFormatError(PlaybillFormatError):
@@ -75,7 +78,7 @@ class _StrictQueryDefinitionModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
 
 
-class QueryEvaluationPolicyV1(_StrictQueryDefinitionModel):
+class QueryEvaluationPolicy(_StrictQueryDefinitionModel):
     """The visibility, conflict, coordinate, and time law of one canonical query.
 
     Verdict and currency vocabulary is the accepted evidence-relative Claim
@@ -83,12 +86,12 @@ class QueryEvaluationPolicyV1(_StrictQueryDefinitionModel):
     """
 
     tag: Literal["playbill-query-evaluation-policy-v1"] = "playbill-query-evaluation-policy-v1"
-    visible_verdicts: tuple[EvidenceRelativeClaimVerdict, ...]
+    visible_verdicts: tuple[EvidenceRelativeClaimVerdictV1, ...]
     visible_currency: tuple[EvidenceCurrency, ...]
-    conflict_behavior: QueryConflictBehaviorV1
+    conflict_behavior: QueryConflictBehavior
     requires_accepted_coordinate: Literal[True] = True
     requires_explicit_evaluation_time: Literal[True] = True
-    result_expiry: CanonicalDurationV1 | None = None
+    result_expiry: CanonicalDuration | None = None
 
     @field_validator("visible_verdicts")
     @classmethod
@@ -113,7 +116,7 @@ def _pin_key(pin: ArtifactPin) -> tuple[bytes, bytes, bytes]:
     )
 
 
-class QueryDefinitionV1(_StrictQueryDefinitionModel):
+class QueryDefinition(_StrictQueryDefinitionModel):
     """One governed, digest-pinned, Claim-native canonical query declaration."""
 
     artifact_format: Literal["playbill-query-definition-v1", "playbill-query-definition-v2"] = (
@@ -121,20 +124,20 @@ class QueryDefinitionV1(_StrictQueryDefinitionModel):
     )
     identity: ArtifactIdentity
     description: str | None = None
-    entry: QueryEntryV1 | QueryArtifactsEntryV2
-    traversal: tuple[QueryTraversalStepV1, ...] = ()
-    where: QueryFilterV1 | None = None
+    entry: QueryEntry | QueryArtifactsEntry
+    traversal: tuple[QueryTraversalStep, ...] = ()
+    where: QueryFilter | None = None
     result_binding: str
-    result_shape: QueryResultShapeV1
-    result_cardinality: QueryResultCardinalityV1
-    dedupe: QueryDedupeV1
-    projection: QueryProjectionV1 | None = None
-    orderings: tuple[QueryOrderingV1, ...] = ()
-    includes: tuple[QueryIncludeV1, ...] = ()
-    parameters: tuple[QueryParameterDeclarationV1, ...] = ()
-    evaluation_policy: QueryEvaluationPolicyV1
-    default_budgets: QueryBudgetsV1
-    maximum_budgets: QueryBudgetsV1
+    result_shape: QueryResultShape
+    result_cardinality: QueryResultCardinality
+    dedupe: QueryDedupe
+    projection: QueryProjection | None = None
+    orderings: tuple[QueryOrdering, ...] = ()
+    includes: tuple[QueryInclude, ...] = ()
+    parameters: tuple[QueryParameterDeclaration, ...] = ()
+    evaluation_policy: QueryEvaluationPolicy
+    default_budgets: QueryBudgets
+    maximum_budgets: QueryBudgets
     pins: tuple[ArtifactPin, ...] = ()
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
 
@@ -154,14 +157,14 @@ class QueryDefinitionV1(_StrictQueryDefinitionModel):
     @field_validator("parameters")
     @classmethod
     def _parameters(
-        cls, value: tuple[QueryParameterDeclarationV1, ...]
-    ) -> tuple[QueryParameterDeclarationV1, ...]:
+        cls, value: tuple[QueryParameterDeclaration, ...]
+    ) -> tuple[QueryParameterDeclaration, ...]:
         sorted_unique(tuple(item.name for item in value), label="QueryDefinition parameters")
         return value
 
     @field_validator("includes")
     @classmethod
-    def _includes(cls, value: tuple[QueryIncludeV1, ...]) -> tuple[QueryIncludeV1, ...]:
+    def _includes(cls, value: tuple[QueryInclude, ...]) -> tuple[QueryInclude, ...]:
         sorted_unique(tuple(item.name for item in value), label="QueryDefinition includes")
         return value
 
@@ -176,14 +179,14 @@ class QueryDefinitionV1(_StrictQueryDefinitionModel):
         return value
 
     @model_validator(mode="after")
-    def _shape(self) -> "QueryDefinitionV1":
+    def _shape(self) -> "QueryDefinition":
         if self.identity.kind != "QueryDefinition" or not _QUERY_NAME_RE.fullmatch(
             self.identity.name
         ):
             raise ValueError(
                 "QueryDefinition identity must be kind QueryDefinition and path-addressable"
             )
-        if isinstance(self.entry, QueryArtifactsEntryV2):
+        if isinstance(self.entry, QueryArtifactsEntry):
             if self.artifact_format != "playbill-query-definition-v2":
                 raise ValueError("Artifact selection requires query definition v2")
             if (self.result_shape, self.result_cardinality, self.dedupe) != (
@@ -250,7 +253,7 @@ class QueryDefinitionV1(_StrictQueryDefinitionModel):
         inventory = self._inventory()
         return tuple(sorted(inventory.predicates, key=lambda item: item.encode("utf-8")))
 
-    def _inventory(self) -> QueryReferenceInventoryV1:
+    def _inventory(self) -> QueryReferenceInventory:
         inventory = self.entry.references
         for step in self.traversal:
             inventory = inventory.merged(step.references)
@@ -369,11 +372,11 @@ class QueryDefinitionV1(_StrictQueryDefinitionModel):
                 raise ValueError("QueryDefinition contract pins must target Contract identities")
 
 
-class QueryDefinitionSpecV1(QueryDefinitionV1):
+class QueryDefinitionSpec(QueryDefinition):
     """Authoring grammar: omitted ClaimType pins resolve at the intent base.
 
     Explicit pins remain assertions, never silently rebound. Accepted artifacts
-    always pass the stricter QueryDefinitionV1 validation after lowering.
+    always pass the stricter QueryDefinition validation after lowering.
     """
 
     def _validate_pins(self) -> None:
@@ -402,7 +405,7 @@ def query_definition_address(path: str) -> SemanticAddress:
 
 
 def validate_query_definition_path(
-    query: QueryDefinitionV1,
+    query: QueryDefinition,
     path: str,
     *,
     codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
@@ -416,7 +419,7 @@ def validate_query_definition_path(
     return path
 
 
-def render_query_definition(query: QueryDefinitionV1) -> bytes:
+def render_query_definition(query: QueryDefinition) -> bytes:
     return pretty_canonical_bytes(query.model_dump(mode="json"))
 
 
@@ -425,7 +428,7 @@ def parse_query_definition(
     *,
     path: str,
     codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
-) -> QueryDefinitionV1:
+) -> QueryDefinition:
     try:
         payload = json.loads(content)
     except (UnicodeDecodeError, ValueError) as exc:
@@ -439,7 +442,7 @@ def parse_query_definition(
             f"unsupported QueryDefinition artifact format: {declared!r}"
         )
     try:
-        query = QueryDefinitionV1.model_validate(payload)
+        query = QueryDefinition.model_validate(payload)
     except (ValueError, CanonicalEncodingError) as exc:
         raise QueryDefinitionFormatError(
             "QueryDefinition failed strict playbill-query-definition-v1 validation"
@@ -450,7 +453,7 @@ def parse_query_definition(
     return query
 
 
-def query_definition_digest(query: QueryDefinitionV1) -> ArtifactDigest:
+def query_definition_digest(query: QueryDefinition) -> ArtifactDigest:
     return typed_digest(
         ArtifactDigest,
         "playbill-envelope-v1",
@@ -458,20 +461,20 @@ def query_definition_digest(query: QueryDefinitionV1) -> ArtifactDigest:
     )
 
 
-class AcceptedQueryDefinitionV1(_StrictQueryDefinitionModel):
+class AcceptedQueryDefinition(_StrictQueryDefinitionModel):
     path: str
-    query: QueryDefinitionV1
+    query: QueryDefinition
     artifact_digest: str
 
     @model_validator(mode="after")
-    def _binding(self) -> "AcceptedQueryDefinitionV1":
+    def _binding(self) -> "AcceptedQueryDefinition":
         validate_query_definition_path(self.query, self.path)
         if self.artifact_digest != query_definition_digest(self.query).tagged:
             raise ValueError("accepted QueryDefinition digest differs from its exact envelope")
         return self
 
 
-class QueryDefinitionLawResultV1(_StrictQueryDefinitionModel):
+class QueryDefinitionLawResult(_StrictQueryDefinitionModel):
     verdict: Literal["accepted", "refused"]
     artifact_digest: str | None = None
     required_tier: PermissionTier | None = None
@@ -479,7 +482,7 @@ class QueryDefinitionLawResultV1(_StrictQueryDefinitionModel):
     diagnostics: tuple[CompilerDiagnostic, ...] = ()
 
     @model_validator(mode="after")
-    def _shape(self) -> "QueryDefinitionLawResultV1":
+    def _shape(self) -> "QueryDefinitionLawResult":
         if self.verdict == "accepted":
             if self.artifact_digest is None or self.required_tier is None:
                 raise ValueError("accepted QueryDefinition law result is incomplete")
@@ -490,8 +493,8 @@ class QueryDefinitionLawResultV1(_StrictQueryDefinitionModel):
         return self
 
 
-def _refusal(code: str, message: str, *, path: str) -> QueryDefinitionLawResultV1:
-    return QueryDefinitionLawResultV1(
+def _refusal(code: str, message: str, *, path: str) -> QueryDefinitionLawResult:
+    return QueryDefinitionLawResult(
         verdict="refused",
         diagnostics=(
             CompilerDiagnostic(
@@ -505,12 +508,12 @@ def _refusal(code: str, message: str, *, path: str) -> QueryDefinitionLawResultV
 
 
 def evaluate_query_definition_law(
-    query: QueryDefinitionV1,
+    query: QueryDefinition,
     *,
     path: str,
-    predecessor: AcceptedQueryDefinitionV1 | None,
+    predecessor: AcceptedQueryDefinition | None,
     accepted_artifacts: Mapping[str, tuple[ArtifactIdentity, str]] | None = None,
-) -> QueryDefinitionLawResultV1:
+) -> QueryDefinitionLawResult:
     """Evaluate exact path, digest-pinned dependencies, and lifecycle."""
 
     try:
@@ -560,7 +563,7 @@ def evaluate_query_definition_law(
                 "A retired QueryDefinition cannot be revived or revised.",
                 path=path,
             )
-    return QueryDefinitionLawResultV1(
+    return QueryDefinitionLawResult(
         verdict="accepted",
         artifact_digest=digest,
         required_tier="governed_write",
@@ -569,18 +572,18 @@ def evaluate_query_definition_law(
 
 
 __all__ = [
-    "AcceptedQueryDefinitionV1",
+    "AcceptedQueryDefinition",
     "CLAIM_TYPE_PIN_ROLE",
     "PARAMETER_CONTRACT_PIN_ROLE",
-    "QueryConflictBehaviorV1",
-    "QueryDedupeV1",
+    "QueryConflictBehavior",
+    "QueryDedupe",
     "QueryDefinitionFormatError",
-    "QueryDefinitionLawResultV1",
-    "QueryDefinitionV1",
-    "QueryDefinitionSpecV1",
-    "QueryEvaluationPolicyV1",
-    "QueryResultCardinalityV1",
-    "QueryResultShapeV1",
+    "QueryDefinitionLawResult",
+    "QueryDefinition",
+    "QueryDefinitionSpec",
+    "QueryEvaluationPolicy",
+    "QueryResultCardinality",
+    "QueryResultShape",
     "RESULT_CONTRACT_PIN_ROLE",
     "evaluate_query_definition_law",
     "parse_query_definition",

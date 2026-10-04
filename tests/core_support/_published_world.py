@@ -22,7 +22,7 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.claims import (
     ClaimArtifactV2,
-    ClaimBackingV2,
+    ClaimBacking,
     build_claim_citation,
     claim_artifact_digest,
     claim_path,
@@ -36,12 +36,12 @@ from cruxible_client.contracts.proposal_models import ProposalAdmissionRequest
 from cruxible_client.contracts.semantic import ContentSpan, SourceMapping
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.coverage.contracts import (
-    CoverageAccessProfileV1,
-    CoverageLineOverlayV1,
-    LogicalSourceIdentityV1,
+    CoverageAccessProfile,
+    CoverageLineOverlay,
+    LogicalSourceIdentity,
 )
 from cruxible_core.coverage.indexes import (
-    WorkingOccurrenceV1,
+    WorkingOccurrence,
     occurrence_identity_digest,
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
@@ -49,7 +49,7 @@ from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.service.discovery.next import (
     PlaybillNextRequestV1,
     PlaybillNextSourceObservationV3,
-    PlaybillNextWorkspaceObservationV1,
+    PlaybillNextWorkspaceObservation,
 )
 from tests.core_support._support import initialize_local
 from tests.test_authoring.test_authoring_insertions_v2 import (
@@ -103,7 +103,7 @@ def publish_copy_claim(
     tree = instance.tree_at(base.git_oid)
     claim = parse_claim(tree[path], path=path)
     assert isinstance(claim, ClaimArtifactV2)
-    assert isinstance(claim.backing, ClaimBackingV2)
+    assert isinstance(claim.backing, ClaimBacking)
     selected = b"ready"
     selected_digest = _digest(selected)
     observed_at = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
@@ -239,9 +239,9 @@ def retire_claim(instance, owner, claim_id: str) -> None:  # type: ignore[no-unt
 
 
 def next_request(instance, *, archival: bool = False) -> PlaybillNextRequestV1:  # type: ignore[no-untyped-def]
-    source = LogicalSourceIdentityV1(plane="external", identity="repo.work-items")
+    source = LogicalSourceIdentity(plane="external", identity="repo.work-items")
     commitment = _digest(b"ready")
-    occurrence = WorkingOccurrenceV1(
+    occurrence = WorkingOccurrence(
         source=source,
         observed_commitment_digest=commitment,
         byte_length=5,
@@ -251,7 +251,7 @@ def next_request(instance, *, archival: bool = False) -> PlaybillNextRequestV1: 
             observed_commitment_digest=commitment,
             ordinal=0,
         ),
-        line_overlay=CoverageLineOverlayV1(
+        line_overlay=CoverageLineOverlay(
             start_byte=8,
             end_byte=13,
             start_line=1,
@@ -262,11 +262,11 @@ def next_request(instance, *, archival: bool = False) -> PlaybillNextRequestV1: 
     return PlaybillNextRequestV1(
         at=coordinate,
         evaluation_time=NOW,
-        access_profile=CoverageAccessProfileV1(
+        access_profile=CoverageAccessProfile(
             profile_id="published-copy-world",
             permitted_access_classes=("instance", "public"),
         ),
-        workspace_observation=PlaybillNextWorkspaceObservationV1(
+        workspace_observation=PlaybillNextWorkspaceObservation(
             source_observations=(
                 PlaybillNextSourceObservationV3(
                     tag="playbill-next-source-observation-v3",

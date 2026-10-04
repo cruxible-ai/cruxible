@@ -21,8 +21,8 @@ import pytest
 
 from cruxible_client.contracts.candidates import (
     CandidateRecord,
+    CandidateRecordV1,
     CandidateRecordV2,
-    CandidateRecordV3,
     CandidateWireVersion,
 )
 from cruxible_client.contracts.documents import (
@@ -331,12 +331,12 @@ def test_replaying_a_crossed_ledger_reproduces_each_generation_in_its_own_versio
         if generation.record is not None
     ]
     assert [type(item) for item in reproduced] == [
+        CandidateRecordV1,
+        CandidateRecordV2,
+        CandidateRecordV2,
         CandidateRecord,
-        CandidateRecordV2,
-        CandidateRecordV2,
-        CandidateRecordV3,
-        CandidateRecordV3,
-        CandidateRecordV3,
+        CandidateRecord,
+        CandidateRecord,
     ]
     assert [item.tag for item in reproduced] == [V1, V2, V2, V3, V3, V3]
 

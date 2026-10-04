@@ -15,7 +15,7 @@ from typing import ClassVar, Literal, Protocol, runtime_checkable
 
 from cruxible_client._error_base import CoreError
 from cruxible_client.contracts.canonical import CanonicalValue
-from cruxible_client.contracts.capture_reads import CaptureReadV1
+from cruxible_client.contracts.capture_reads import CaptureRead
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import ensure_utc
 
@@ -194,7 +194,7 @@ class CaptureRef:
 class CaptureView:
     """Verified evidence metadata and explicitly available retained material."""
 
-    result: CaptureReadV1
+    result: CaptureRead
 
     @property
     def ref(self) -> CaptureRef:

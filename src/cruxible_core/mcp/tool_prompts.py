@@ -121,7 +121,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "cruxible_playbill_propose_claim_type": (
         "Use when you need a governed ClaimType before any Claim can state that predicate; "
-        "pass a complete ClaimTypeInputV1 whose evidence rules match its capture contracts. "
+        "pass a complete ClaimTypeInputRecord whose evidence rules match its capture contracts. "
         "Generate a lawful starting payload with "
         "`cruxible playbill claim-type propose --template`."
     ),
@@ -230,7 +230,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "nearest valid names."
     ),
     "cruxible_playbill_query_spec": (
-        "Use when compact filters cannot say it: run one full QueryDefinitionSpecV1 inline "
+        "Use when compact filters cannot say it: run one full QueryDefinitionSpec inline "
         "(traversals, disjunctions, projections) without accepting a QueryDefinition. "
         "Same rows, flags and paging as cruxible_playbill_query."
     ),

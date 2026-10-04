@@ -13,8 +13,8 @@ import pytest
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
 from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
-    CanonicalDurationV1,
-    DirectForeignSourceSelectionV1,
+    CanonicalDuration,
+    DirectForeignSourceSelection,
     capture_contract_digest,
     capture_contract_path,
     foreign_source_capture_contract,
@@ -22,8 +22,8 @@ from cruxible_client.contracts.captures import (
     render_capture_contract,
 )
 from cruxible_client.contracts.claim_types import (
-    ClaimEvidenceFreshnessV1,
-    ClaimFreshnessDurationV1,
+    ClaimEvidenceFreshness,
+    ClaimFreshnessDuration,
     ClaimType,
     claim_type_digest,
     claim_type_path,
@@ -50,7 +50,7 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionRuleV1,
 )
 from cruxible_client.contracts.semantic import ContentSpan
-from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
+from cruxible_client.contracts.source_references import ExternalSourceReference
 from cruxible_client.contracts.subjects import render_subject, subject_path
 from cruxible_core.authoring.store import AUTHORING_INTENTS_ENV
 from cruxible_core.claims.claim_type_migrations import (
@@ -59,14 +59,14 @@ from cruxible_core.claims.claim_type_migrations import (
     service_migrate_claim_type,
 )
 from cruxible_core.coverage.contracts import (
-    CoverageAccessProfileV1,
-    CoverageCommitmentScanProofV1,
-    CoverageLineOverlayV1,
-    LogicalSourceIdentityV1,
-    PlaybillCitationWindowObservationV1,
+    CoverageAccessProfile,
+    CoverageCommitmentScanProof,
+    CoverageLineOverlay,
+    LogicalSourceIdentity,
+    PlaybillCitationWindowObservation,
     occurrence_identity_digest,
 )
-from cruxible_core.coverage.indexes import WorkingOccurrenceV1
+from cruxible_core.coverage.indexes import WorkingOccurrence
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.proposals.settlement import ChangeActorBinding
@@ -80,11 +80,11 @@ from cruxible_core.service.claims.claims import (
 )
 from cruxible_core.service.discovery.next import (
     NextReason,
-    PlaybillNextDriftObservationV1,
+    PlaybillNextDriftObservation,
     PlaybillNextRequestV1,
+    PlaybillNextSourceObservation,
     PlaybillNextSourceObservationV3,
-    PlaybillNextSourceObservationV4,
-    PlaybillNextWorkspaceObservationV1,
+    PlaybillNextWorkspaceObservation,
     service_playbill_next,
 )
 from cruxible_core.service.proposals.proposals import service_readmit_playbill_proposal
@@ -196,8 +196,8 @@ def _expected_operation(key: ClosedLoopKey) -> str:
     return expected
 
 
-def _access() -> CoverageAccessProfileV1:
-    return CoverageAccessProfileV1(
+def _access() -> CoverageAccessProfile:
+    return CoverageAccessProfile(
         profile_id="next-closed-loop",
         permitted_access_classes=("instance", "public"),
     )
@@ -208,13 +208,13 @@ def _request(
     *,
     evaluation_time: datetime = EVALUATION_TIME,
     expiring_within: int = 604_800_000_000,
-    workspace: PlaybillNextWorkspaceObservationV1 | None = None,
+    workspace: PlaybillNextWorkspaceObservation | None = None,
 ) -> PlaybillNextRequestV1:
     return PlaybillNextRequestV1(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         evaluation_time=evaluation_time,
         access_profile=_access(),
-        expiring_within=CanonicalDurationV1(microseconds=expiring_within),
+        expiring_within=CanonicalDuration(microseconds=expiring_within),
         workspace_observation=workspace,
     )
 
@@ -408,7 +408,7 @@ def _foreign_world(root: Path, *, bind: bool):  # type: ignore[no-untyped-def]
     if not bind:
         return instance, owner, proposed, source_id, source_body.digest
     current = _current_claim(instance)
-    selected = DirectForeignSourceSelectionV1(
+    selected = DirectForeignSourceSelection(
         logical_source_identity=source_id,
         span=ContentSpan(
             content_digest=source_body.digest,
@@ -449,7 +449,7 @@ def _claim_uncovered(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
             rationale="Bind admissible evidence to close the uncovered row.",
             claim_id=proposed.claim_identity.removeprefix("Claim:"),
             predecessor_artifact_digest=claim_artifact_digest(current).tagged,
-            source_selection=DirectForeignSourceSelectionV1(
+            source_selection=DirectForeignSourceSelection(
                 logical_source_identity=source_id,
                 span=ContentSpan(
                     content_digest=source_digest,
@@ -480,7 +480,7 @@ def _freshness_world(root: Path):  # type: ignore[no-untyped-def]
         instance,
         authoring=authoring("wi-42", "ready", with_claim_type=False).model_copy(
             update={
-                "source_selection": DirectForeignSourceSelectionV1(
+                "source_selection": DirectForeignSourceSelection(
                     logical_source_identity=source_id,
                     span=ContentSpan(
                         content_digest=body.digest,
@@ -504,8 +504,8 @@ def _freshness_world(root: Path):  # type: ignore[no-untyped-def]
         {
             **predecessor.model_dump(mode="json"),
             "artifact_format": "playbill-claim-type-v3",
-            "evidence_freshness": ClaimEvidenceFreshnessV1(
-                stale_after=ClaimFreshnessDurationV1(microseconds=10_000_000)
+            "evidence_freshness": ClaimEvidenceFreshness(
+                stale_after=ClaimFreshnessDuration(microseconds=10_000_000)
             ).model_dump(mode="json"),
             "lifecycle": ArtifactLifecycle(
                 predecessor_digest=claim_type_digest(predecessor).tagged
@@ -546,7 +546,7 @@ def _refresh_claim(instance, owner, *, timestamp: str) -> None:  # type: ignore[
             rationale="Recapture the still-standing statement at a fresh instant.",
             claim_id=current.identity.name,
             predecessor_artifact_digest=claim_artifact_digest(current).tagged,
-            source_selection=DirectForeignSourceSelectionV1(
+            source_selection=DirectForeignSourceSelection(
                 logical_source_identity="fixture.freshness",
                 span=ContentSpan(
                     content_digest=body.digest,
@@ -609,7 +609,7 @@ def _citation_drifted_changed(root: Path, _monkeypatch: pytest.MonkeyPatch) -> N
             update={
                 "claim_id": current.identity.name,
                 "predecessor_artifact_digest": claim_artifact_digest(current).tagged,
-                "source_selection": DirectForeignSourceSelectionV1(
+                "source_selection": DirectForeignSourceSelection(
                     logical_source_identity="fixture.work-items",
                     span=ContentSpan(
                         content_digest=rebound_body.digest,
@@ -648,9 +648,9 @@ def _citation_drifted_changed(root: Path, _monkeypatch: pytest.MonkeyPatch) -> N
     assert observed != commitment
     before = _request(
         instance,
-        workspace=PlaybillNextWorkspaceObservationV1(
+        workspace=PlaybillNextWorkspaceObservation(
             drift_observations=(
-                PlaybillNextDriftObservationV1(
+                PlaybillNextDriftObservation(
                     citation_id=citation.citation_id,
                     expected_commitment_digest=commitment,
                     observed_commitment_digest=observed,
@@ -669,9 +669,9 @@ def _citation_drifted_changed(root: Path, _monkeypatch: pytest.MonkeyPatch) -> N
         key,
         _request(
             instance,
-            workspace=PlaybillNextWorkspaceObservationV1(
+            workspace=PlaybillNextWorkspaceObservation(
                 drift_observations=(
-                    PlaybillNextDriftObservationV1(
+                    PlaybillNextDriftObservation(
                         citation_id=rebound_citation.citation_id,
                         expected_commitment_digest=rebound_envelope.commitment.digest,
                         observed_commitment_digest=observed,
@@ -691,7 +691,7 @@ def _foreign_citation(instance):  # type: ignore[no-untyped-def]
                 access=BodyAccessContext(principal_id="closed-loop", can_read_body=True),
             )
         )
-        if isinstance(envelope.source, ExternalSourceReferenceV1):
+        if isinstance(envelope.source, ExternalSourceReference):
             return current, citation, envelope
     raise AssertionError("the closed-loop world has no foreign citation")
 
@@ -703,8 +703,8 @@ def _v4_citation_observation(
     citation_id: str,
     envelope,  # type: ignore[no-untyped-def]
     state: str,
-) -> PlaybillNextSourceObservationV4:
-    source = LogicalSourceIdentityV1(plane="external", identity=source_id)
+) -> PlaybillNextSourceObservation:
+    source = LogicalSourceIdentity(plane="external", identity=source_id)
     selector = envelope.source.selector
     assert isinstance(selector, Mapping)
     window = selector.get("working_selection", selector)
@@ -727,11 +727,11 @@ def _v4_citation_observation(
         raise AssertionError(f"unsupported closed-loop citation state: {state}")
     source_digest = instance.body_store().store(source_bytes).digest
 
-    occurrences: tuple[WorkingOccurrenceV1, ...] = ()
+    occurrences: tuple[WorkingOccurrence, ...] = ()
     if state in {"ambiguous", "current"}:
         offsets = (0, 6) if state == "ambiguous" else (start,)
         occurrences = tuple(
-            WorkingOccurrenceV1(
+            WorkingOccurrence(
                 source=source,
                 observed_commitment_digest=commitment,
                 byte_length=byte_length,
@@ -741,7 +741,7 @@ def _v4_citation_observation(
                     observed_commitment_digest=commitment,
                     ordinal=ordinal,
                 ),
-                line_overlay=CoverageLineOverlayV1(
+                line_overlay=CoverageLineOverlay(
                     start_byte=offset,
                     end_byte=offset + byte_length,
                     start_line=ordinal + 1,
@@ -752,7 +752,7 @@ def _v4_citation_observation(
         )
     windows = (
         (
-            PlaybillCitationWindowObservationV1(
+            PlaybillCitationWindowObservation(
                 source=source,
                 citation_id=citation_id,
                 commitment_digest=commitment,
@@ -765,14 +765,14 @@ def _v4_citation_observation(
         if state == "gone"
         else ()
     )
-    return PlaybillNextSourceObservationV4(
+    return PlaybillNextSourceObservation(
         source_id=source_id,
         observed_source_digest=source_digest,
         byte_length=len(source_bytes),
         marker_summaries=(),
         occurrences=occurrences,
         commitment_scan_proofs=(
-            CoverageCommitmentScanProofV1(
+            CoverageCommitmentScanProof(
                 source=source,
                 commitment_digest=commitment,
                 byte_length=byte_length,
@@ -801,7 +801,7 @@ def _citation_drifted_v4(
     key = ("citation_drifted", drift_state)
     before = _request(
         instance,
-        workspace=PlaybillNextWorkspaceObservationV1(source_observations=(before_observation,)),
+        workspace=PlaybillNextWorkspaceObservation(source_observations=(before_observation,)),
     )
     row = _row_by_key(instance, key, before)
     assert row.repair.operation == _expected_operation(key)
@@ -830,7 +830,7 @@ def _citation_drifted_v4(
             rationale=f"Adjudicate the mechanically {drift_state} citation.",
             claim_id=current.identity.name,
             predecessor_artifact_digest=claim_artifact_digest(current).tagged,
-            source_selection=DirectForeignSourceSelectionV1(
+            source_selection=DirectForeignSourceSelection(
                 logical_source_identity=source_id,
                 span=ContentSpan(
                     content_digest=source_body.digest,
@@ -858,9 +858,7 @@ def _citation_drifted_v4(
         key,
         _request(
             instance,
-            workspace=PlaybillNextWorkspaceObservationV1(
-                source_observations=(current_observation,)
-            ),
+            workspace=PlaybillNextWorkspaceObservation(source_observations=(current_observation,)),
         ),
     )
 
@@ -877,13 +875,13 @@ def _citation_source_unobserved(root: Path, _monkeypatch: pytest.MonkeyPatch) ->
     instance, _owner, _successor, source_id, _source_digest = _foreign_world(root, bind=True)
     before = _request(
         instance,
-        workspace=PlaybillNextWorkspaceObservationV1(source_observations=()),
+        workspace=PlaybillNextWorkspaceObservation(source_observations=()),
     )
     row = _row(instance, "citation_source_unobserved", before)
     assert row.repair.operation == EXPECTED_OPERATIONS["citation_source_unobserved"]
 
     _current, citation, envelope = _foreign_citation(instance)
-    observed = PlaybillNextWorkspaceObservationV1(
+    observed = PlaybillNextWorkspaceObservation(
         source_observations=(
             _v4_citation_observation(
                 instance=instance,
@@ -900,11 +898,11 @@ def _citation_source_unobserved(root: Path, _monkeypatch: pytest.MonkeyPatch) ->
 def _floor_case(root: Path, reason: str) -> None:
     instance, _owner = initialize_local(root)
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    before_workspace = PlaybillNextWorkspaceObservationV1(floor_status="invalid")
+    before_workspace = PlaybillNextWorkspaceObservation(floor_status="invalid")
     row = _row(instance, reason, _request(instance, workspace=before_workspace))
     assert row.repair.operation == EXPECTED_OPERATIONS[reason]
 
-    current = PlaybillNextWorkspaceObservationV1(
+    current = PlaybillNextWorkspaceObservation(
         floor_status="current",
         installed_coordinate=coordinate,
     )
@@ -1114,7 +1112,7 @@ def _document_modified(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
         phase="closed-loop-document",
     )
     instance.refresh()
-    changed_observation = PlaybillNextWorkspaceObservationV1(
+    changed_observation = PlaybillNextWorkspaceObservation(
         source_observations=(
             PlaybillNextSourceObservationV3(
                 tag="playbill-next-source-observation-v3",
@@ -1242,10 +1240,10 @@ def _workspace_binding_missing(root: Path, _monkeypatch: pytest.MonkeyPatch) -> 
         encoding="utf-8",
     )
 
-    def observed() -> PlaybillNextWorkspaceObservationV1:
+    def observed() -> PlaybillNextWorkspaceObservation:
         # What the client observes of its catalog's bindings; the per-source
         # scans are the coverage enrichment's, and not this row's concern.
-        return PlaybillNextWorkspaceObservationV1.model_validate(
+        return PlaybillNextWorkspaceObservation.model_validate(
             {
                 "source_observations": [],
                 "missing_bindings": observe_playbill_next_workspace(workspace).get(
@@ -1312,7 +1310,7 @@ def _proposal_stale(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     hidden = PlaybillNextRequestV1(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         evaluation_time=EVALUATION_TIME,
-        access_profile=CoverageAccessProfileV1(
+        access_profile=CoverageAccessProfile(
             profile_id="next-closed-loop-public", permitted_access_classes=("public",)
         ),
     )
@@ -1329,7 +1327,7 @@ def _proposal_stale(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
 def _proposal_awaiting_approval(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     from cruxible_client.contracts.approval_policy import (
         APPROVAL_POLICY_PATH,
-        ApprovalPolicyV1,
+        ApprovalPolicy,
         render_approval_policy,
     )
     from tests.test_proposals.test_approval_policy import _activate as _activate_policy
@@ -1342,7 +1340,7 @@ def _proposal_awaiting_approval(root: Path, _monkeypatch: pytest.MonkeyPatch) ->
         {
             **instance.tree_at(instance.accepted_coordinate().git_oid),
             APPROVAL_POLICY_PATH: render_approval_policy(
-                ApprovalPolicyV1(mode="independent_approval_required")
+                ApprovalPolicy(mode="independent_approval_required")
             ),
         },
         name="closed-loop-tighten",
@@ -1385,7 +1383,7 @@ def _proposal_awaiting_approval(root: Path, _monkeypatch: pytest.MonkeyPatch) ->
     hidden = PlaybillNextRequestV1(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         evaluation_time=EVALUATION_TIME,
-        access_profile=CoverageAccessProfileV1(
+        access_profile=CoverageAccessProfile(
             profile_id="next-closed-loop-public", permitted_access_classes=("public",)
         ),
     )
@@ -1456,7 +1454,7 @@ def _mandate_expiring(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     hidden = PlaybillNextRequestV1(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         evaluation_time=EVALUATION_TIME,
-        access_profile=CoverageAccessProfileV1(
+        access_profile=CoverageAccessProfile(
             profile_id="next-closed-loop-public", permitted_access_classes=("public",)
         ),
     )
@@ -1508,7 +1506,7 @@ def _evidence_unavailable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     hidden = PlaybillNextRequestV1(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         evaluation_time=EVALUATION_TIME,
-        access_profile=CoverageAccessProfileV1(
+        access_profile=CoverageAccessProfile(
             profile_id="next-closed-loop-public", permitted_access_classes=("public",)
         ),
     )
@@ -1567,7 +1565,7 @@ def _consumer_stalled(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 def _prediction_settleable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     from datetime import timedelta
 
-    from cruxible_client.contracts.predictions import PlaybillSettleRequestV2
+    from cruxible_client.contracts.predictions import PlaybillSettleRequest
     from cruxible_core.service.procedures.predictions import PredictionRefused
     from tests.test_consumers import test_prediction_settlement as worker
 
@@ -1586,7 +1584,7 @@ def _prediction_settleable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None
     hidden = PlaybillNextRequestV1(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         evaluation_time=worker.FIXED_CLOSES,
-        access_profile=CoverageAccessProfileV1(
+        access_profile=CoverageAccessProfile(
             profile_id="next-closed-loop-public", permitted_access_classes=("public",)
         ),
     )
@@ -1601,7 +1599,7 @@ def _prediction_settleable(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None
     bound = row.detail["bound_contract_id"]
     assert row.repair.command == f"cruxible playbill settle {bound}"
     observation = worker.observe(instance, owner, capture, at="2026-09-02T12:02:00.000000Z")
-    filled = PlaybillSettleRequestV2(observation=observation.identity.name)
+    filled = PlaybillSettleRequest(observation=observation.identity.name)
     # A window id the worker does not hold names no prediction.
     with pytest.raises(PredictionRefused, match="No bound prediction window") as refused:
         worker.served.service_settle_playbill_prediction(
@@ -1644,7 +1642,7 @@ def _prediction_window_unbindable(root: Path, _monkeypatch: pytest.MonkeyPatch) 
     hidden = PlaybillNextRequestV1(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         evaluation_time=EVALUATION_TIME,
-        access_profile=CoverageAccessProfileV1(
+        access_profile=CoverageAccessProfile(
             profile_id="next-closed-loop-public", permitted_access_classes=("public",)
         ),
     )

@@ -7,9 +7,9 @@ from pydantic import ValidationError
 
 import cruxible_core.proposals.proposals as proposal_module
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
-from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.procedures.artifacts import (
-    AcceptedProcedureV1,
+    AcceptedProcedure,
     ProcedureArtifactV1,
     evaluate_procedure_law,
     parse_procedure,
@@ -18,9 +18,9 @@ from cruxible_client.contracts.procedures.artifacts import (
     render_procedure,
 )
 from cruxible_client.contracts.procedures.closure import (
-    LineSlotBindingV1,
-    ProviderExtrasEnvironmentPinMapV1,
-    ProviderImplementationClosureV1,
+    LineSlotBinding,
+    ProviderExtrasEnvironmentPinMap,
+    ProviderImplementationClosure,
 )
 from cruxible_client.contracts.procedures.graph import (
     compute_procedure_definition_digest_v4,
@@ -29,7 +29,7 @@ from cruxible_client.contracts.procedures.graph import (
 from cruxible_client.contracts.procedures.line_specs import (
     LineSpecV1,
     LineSpecV2,
-    ManualTriggerPolicyV1,
+    ManualTriggerPolicy,
     evaluate_line_spec_law,
     line_spec_digest,
     line_spec_path,
@@ -37,14 +37,14 @@ from cruxible_client.contracts.procedures.line_specs import (
     render_line_spec,
 )
 from cruxible_client.contracts.procedures.models import (
-    GuardPredicateV1,
-    PredicateOperandV1,
-    ProcedureBudgetV3,
+    GuardPredicate,
+    PredicateOperand,
+    ProcedureBudget,
     ProcedureDefinitionV4,
-    ProcedureHardCapsV3,
-    ProcedurePinSlotRefV1,
-    ProcedurePinSlotV1,
-    ProviderNodeV4,
+    ProcedureHardCaps,
+    ProcedurePinSlot,
+    ProcedurePinSlotRef,
+    ProviderNode,
     RepeatBodyNodeV4,
     RepeatNodeV4,
 )
@@ -85,7 +85,7 @@ def _definition() -> tuple[ProcedureDefinitionV4, ArtifactPin, ArtifactPin]:
         contract_in=contract_in,
         contract_out=contract_out,
         nodes=(
-            ProviderNodeV4(
+            ProviderNode(
                 node_id="direct",
                 provider=provider_pin,
                 interface=interface_pin,
@@ -96,9 +96,9 @@ def _definition() -> tuple[ProcedureDefinitionV4, ArtifactPin, ArtifactPin]:
                 input={"value": 1},
                 as_="direct_result",
             ),
-            ProviderNodeV4(
+            ProviderNode(
                 node_id="slot",
-                provider=ProcedurePinSlotRefV1(slot_name="provider"),
+                provider=ProcedurePinSlotRef(slot_name="provider"),
                 interface=interface_pin,
                 interface_digest=interface.registration.interface_digest,
                 contract_in=contract_in,
@@ -109,21 +109,21 @@ def _definition() -> tuple[ProcedureDefinitionV4, ArtifactPin, ArtifactPin]:
         ),
         returns="result",
         pin_slots=(
-            ProcedurePinSlotV1(
+            ProcedurePinSlot(
                 slot_name="provider",
                 pin_role="provider",
                 artifact_kind="Provider",
                 interface_digest=interface.registration.interface_digest,
             ),
         ),
-        budget=ProcedureBudgetV3(
-            wall_clock=CanonicalDurationV1(microseconds=2_000_000),
+        budget=ProcedureBudget(
+            wall_clock=CanonicalDuration(microseconds=2_000_000),
             max_provider_calls=2,
             max_capture_bytes=1024,
             max_items=10,
         ),
-        hard_caps=ProcedureHardCapsV3(
-            max_wall_clock=CanonicalDurationV1(microseconds=4_000_000),
+        hard_caps=ProcedureHardCaps(
+            max_wall_clock=CanonicalDuration(microseconds=4_000_000),
             max_provider_calls=4,
             max_capture_bytes=2048,
             max_items=20,
@@ -134,7 +134,7 @@ def _definition() -> tuple[ProcedureDefinitionV4, ArtifactPin, ArtifactPin]:
     return definition, provider_pin, interface_pin
 
 
-def _accepted_procedure() -> AcceptedProcedureV1:
+def _accepted_procedure() -> AcceptedProcedure:
     definition, provider_pin, interface_pin = _definition()
     pins = {
         definition.contract_in,
@@ -158,7 +158,7 @@ def _accepted_procedure() -> AcceptedProcedureV1:
         ),
         activation_policy="drain",
     )
-    return AcceptedProcedureV1(
+    return AcceptedProcedure(
         path=procedure_path(procedure.identity.name),
         procedure=procedure,
         artifact_digest=procedure_artifact_digest(procedure).tagged,
@@ -182,12 +182,12 @@ def _line() -> LineSpecV2:
         value=procedure.artifact_digest,
     )
     implementation = provider.provider.implementations[0]
-    environment_map = ProviderExtrasEnvironmentPinMapV1(
+    environment_map = ProviderExtrasEnvironmentPinMap(
         required_extras=("engine",),
         eligible_environment_pin_keys=("linux-cp311+engine",),
     )
     closures = (
-        ProviderImplementationClosureV1(
+        ProviderImplementationClosure(
             node_id="slot",
             slot_name="provider",
             provider_artifact_digest=provider.artifact_digest,
@@ -202,8 +202,8 @@ def _line() -> LineSpecV2:
         occurrence_epoch=1,
         procedure=procedure_pin,
         parameters={},
-        slot_bindings=(LineSlotBindingV1(slot_name="provider", artifact_pin=provider_pin),),
-        trigger_policy=ManualTriggerPolicyV1(),
+        slot_bindings=(LineSlotBinding(slot_name="provider", artifact_pin=provider_pin),),
+        trigger_policy=ManualTriggerPolicy(),
         requested_terminal_rung=1,
         budgets={
             "max_capture_bytes": 1024,
@@ -312,10 +312,10 @@ def test_repeat_body_provider_has_the_same_explicit_pin_block() -> None:
                 as_="body_result",
             ),
         ),
-        until=GuardPredicateV1(
-            left=PredicateOperandV1(kind="step", alias="body_result"),
+        until=GuardPredicate(
+            left=PredicateOperand(kind="step", alias="body_result"),
             operator="eq",
-            right=PredicateOperandV1(kind="literal", value=True),
+            right=PredicateOperand(kind="literal", value=True),
         ),
         as_="result",
     )
@@ -326,14 +326,14 @@ def test_repeat_body_provider_has_the_same_explicit_pin_block() -> None:
         contract_out=contract_out,
         nodes=(repeat,),
         returns="result",
-        budget=ProcedureBudgetV3(
-            wall_clock=CanonicalDurationV1(microseconds=2_000_000),
+        budget=ProcedureBudget(
+            wall_clock=CanonicalDuration(microseconds=2_000_000),
             max_provider_calls=2,
             max_capture_bytes=1024,
             max_items=10,
         ),
-        hard_caps=ProcedureHardCapsV3(
-            max_wall_clock=CanonicalDurationV1(microseconds=4_000_000),
+        hard_caps=ProcedureHardCaps(
+            max_wall_clock=CanonicalDuration(microseconds=4_000_000),
             max_provider_calls=4,
             max_capture_bytes=2048,
             max_items=20,

@@ -14,7 +14,7 @@ from cruxible_client.authoring.floor_apply import (
     apply_floor_delta,
     read_floor_manifest,
 )
-from cruxible_client.contracts.floor import PlaybillFloorDeltaV1
+from cruxible_client.contracts.floor import PlaybillFloorDelta
 from tests.support.floor_exports import floor_v5_delta
 
 COORDINATE = contracts.PlaybillAcceptedCoordinate(
@@ -58,7 +58,7 @@ def _expected(tmp_path: Path) -> dict[str, bytes]:
     return _tree(directory)
 
 
-def _delta() -> PlaybillFloorDeltaV1:
+def _delta() -> PlaybillFloorDelta:
     return floor_v5_delta(HEAD, coordinate=COORDINATE, generation=5, base=(3, BASE))
 
 
@@ -115,7 +115,7 @@ def test_a_delta_that_does_not_reach_its_head_refuses_before_writing(tmp_path: P
     payload = forged.model_dump(mode="json")
     payload["delta_digest"] = floor_delta_digest(payload)
     with pytest.raises(PlaybillFloorApplyError, match="head manifest digest"):
-        apply_floor_delta(directory, PlaybillFloorDeltaV1.model_validate(payload))
+        apply_floor_delta(directory, PlaybillFloorDelta.model_validate(payload))
     assert _tree(directory) == before
 
 
@@ -198,7 +198,7 @@ def test_a_full_floor_replaces_whatever_the_directory_held(tmp_path: Path) -> No
 # -- review r1: the apply proves the installed floor, through no link ---------------
 
 
-def _resealed(delta: PlaybillFloorDeltaV1, **changes: object) -> dict[str, object]:
+def _resealed(delta: PlaybillFloorDelta, **changes: object) -> dict[str, object]:
     from cruxible_client.contracts.floor import floor_delta_digest
 
     payload = {**delta.model_dump(mode="json"), **changes}
@@ -225,18 +225,18 @@ def test_a_forged_replay_at_the_installed_head_refuses_before_writing(tmp_path: 
         else item.model_dump(mode="json")
         for item in honest.files
     ]
-    forged = PlaybillFloorDeltaV1.model_validate(_resealed(honest, files=files))
+    forged = PlaybillFloorDelta.model_validate(_resealed(honest, files=files))
     assert forged.head_manifest_digest == honest.head_manifest_digest
     with pytest.raises(PlaybillFloorApplyError, match="head manifest digest"):
         apply_floor_delta(directory, forged)
     assert _tree(directory) == installed
     # A head naming another coordinate under the honest digest refuses too.
     other = {**honest.head.model_dump(mode="json"), "semantic_root": "sha256:" + "8" * 64}
-    moved = PlaybillFloorDeltaV1.model_validate(_resealed(honest, head=other))
+    moved = PlaybillFloorDelta.model_validate(_resealed(honest, head=other))
     with pytest.raises(PlaybillFloorApplyError, match="head manifest digest"):
         apply_floor_delta(directory, moved)
     # A replayed tombstone of a file the head still holds refuses as well.
-    removing = PlaybillFloorDeltaV1.model_validate(
+    removing = PlaybillFloorDelta.model_validate(
         _resealed(honest, tombstones=["current/k/a.yaml", "current/k/b.status.txt"])
     )
     with pytest.raises(PlaybillFloorApplyError, match="head manifest digest"):
@@ -310,7 +310,7 @@ def test_a_reserved_tombstone_is_refused_before_any_mutation(
     honest = _delta()
     payload = _resealed(honest, tombstones=sorted({*honest.tombstones, tombstone}))
     with pytest.raises(ValueError, match="reserved"):
-        PlaybillFloorDeltaV1.model_validate(payload)
+        PlaybillFloorDelta.model_validate(payload)
     assert _tree(directory) == before
     # A crash between writes never loses the manifest, so the honest delta resumes.
     assert apply_floor_delta(directory, honest).status == "applied"
@@ -391,7 +391,7 @@ def test_nothing_may_live_under_a_reserved_file(tmp_path: Path, path: str) -> No
     before = _tree(directory)
     honest = _delta()
     with pytest.raises(ValueError, match="reserved"):
-        PlaybillFloorDeltaV1.model_validate(
+        PlaybillFloorDelta.model_validate(
             _resealed(honest, tombstones=sorted({*honest.tombstones, path}))
         )
     # ... and in a manifest inventory, before anything is written.
@@ -460,7 +460,7 @@ def test_a_delta_refuses_a_directory_where_it_writes_or_removes(tmp_path: Path) 
 # -- review r3: installed spellings are matched exactly, never by alias ---------------
 
 
-def _full() -> PlaybillFloorDeltaV1:
+def _full() -> PlaybillFloorDelta:
     return floor_v5_delta(HEAD, coordinate=COORDINATE, generation=5)
 
 

@@ -29,25 +29,25 @@ from cruxible_client.contracts.canonical import (
     canonical_bytes,
     normalize_ledger_path,
 )
-from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicyV1
-from cruxible_client.contracts.procedures.models import ProcedureBudgetV3, ProcedureHardCapsV3
+from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
+from cruxible_client.contracts.procedures.models import ProcedureBudget, ProcedureHardCaps
 from cruxible_client.contracts.provider_execution import (
-    ProviderBudgetTranslationV1,
-    ProviderEgressObservationV1,
-    ProviderExternalOccurrencePlanV1,
-    ProviderSecretBindingIdentityV1,
-    ProviderSecretReferenceV1,
-    ProviderSecretResolutionPlanV1,
-    VerifiedProviderBindingV1,
+    ProviderBudgetTranslation,
+    ProviderEgressObservation,
+    ProviderExternalOccurrencePlan,
+    ProviderSecretBindingIdentity,
+    ProviderSecretReference,
+    ProviderSecretResolutionPlan,
+    VerifiedProviderBinding,
     provider_secret_binding_identity_digest,
 )
 from cruxible_client.contracts.provider_interfaces import (
-    AcceptedProviderInterfaceRegistrationV1,
+    AcceptedProviderInterfaceRegistration,
 )
 from cruxible_client.contracts.providers import (
-    AcceptedProviderV1,
+    AcceptedProvider,
+    Provider,
     ProviderV2,
-    ProviderV3,
 )
 from cruxible_core.providers.provider_process_leases import (
     ProviderDescendantProcessV1,
@@ -289,7 +289,7 @@ def _deployment_identity(deployment: LocalProviderDeploymentV1) -> str:
 
 
 def verify_provider_installation(
-    provider: ProviderV3,
+    provider: Provider,
     deployment: LocalProviderDeploymentV1,
 ) -> ProviderInstallationVerificationV2:
     """Explicit install/reverify operation. It is never invoked by the run binder."""
@@ -374,7 +374,7 @@ def verify_provider_installation(
 
 @dataclass(frozen=True)
 class BoundLocalProviderV1:
-    binding: VerifiedProviderBindingV1
+    binding: VerifiedProviderBinding
     interpreter_path: Path
 
 
@@ -385,14 +385,14 @@ class ProviderDriverOutcomeV1:
     envelope: ProviderRuntimeResultEnvelopeV1
     stderr: str
     duration_seconds: float
-    egress: ProviderEgressObservationV1
-    verified_binding: VerifiedProviderBindingV1
+    egress: ProviderEgressObservation
+    verified_binding: VerifiedProviderBinding
 
 
 class ProviderSecretResolverProtocol(Protocol):
     resolver_kind: str
 
-    def resolve(self, reference: ProviderSecretReferenceV1) -> str: ...
+    def resolve(self, reference: ProviderSecretReference) -> str: ...
 
 
 class EnvironmentProviderSecretResolver:
@@ -401,7 +401,7 @@ class EnvironmentProviderSecretResolver:
     def __init__(self, values: Mapping[str, str] | None = None) -> None:
         self._values = os.environ if values is None else values
 
-    def resolve(self, reference: ProviderSecretReferenceV1) -> str:
+    def resolve(self, reference: ProviderSecretReference) -> str:
         key = provider_environment_secret_key(reference)
         try:
             return self._values[key]
@@ -411,11 +411,11 @@ class EnvironmentProviderSecretResolver:
             ) from exc
 
 
-def provider_environment_secret_key(reference: ProviderSecretReferenceV1) -> str:
+def provider_environment_secret_key(reference: ProviderSecretReference) -> str:
     """Return a collision-free daemon custody key for one secret epoch."""
 
     identity_digest = provider_secret_binding_identity_digest(
-        ProviderSecretBindingIdentityV1(realm=reference.realm, name=reference.name)
+        ProviderSecretBindingIdentity(realm=reference.realm, name=reference.name)
     ).removeprefix("sha256:")
     epoch = reference.epoch.encode("utf-8")
     return f"CRUXIBLE_PROVIDER_SECRET_{identity_digest}_{len(epoch)}_{epoch.hex()}"
@@ -431,7 +431,7 @@ class FileProviderSecretStore:
         root.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(root, 0o700)
 
-    def put(self, reference: ProviderSecretReferenceV1, material: str) -> None:
+    def put(self, reference: ProviderSecretReference, material: str) -> None:
         if reference.resolver_kind != self.resolver_kind:
             raise ProviderLocalRuntimeRefused(
                 "secret_reference_invalid", "file store received a non-file reference"
@@ -451,7 +451,7 @@ class FileProviderSecretStore:
             with contextlib.suppress(FileNotFoundError):
                 os.unlink(temporary)
 
-    def resolve(self, reference: ProviderSecretReferenceV1) -> str:
+    def resolve(self, reference: ProviderSecretReference) -> str:
         try:
             return self._path(reference).read_text(encoding="utf-8")
         except OSError as exc:
@@ -459,7 +459,7 @@ class FileProviderSecretStore:
                 "secret_epoch_unavailable", f"file secret epoch {reference.epoch!r} absent"
             ) from exc
 
-    def _path(self, reference: ProviderSecretReferenceV1) -> Path:
+    def _path(self, reference: ProviderSecretReference) -> Path:
         return self.root / reference.realm / reference.name / reference.epoch
 
 
@@ -467,7 +467,7 @@ class ProviderSecretResolverRegistry:
     def __init__(self, resolvers: tuple[ProviderSecretResolverProtocol, ...]) -> None:
         self._resolvers = {resolver.resolver_kind: resolver for resolver in resolvers}
 
-    def validate_plan(self, plan: ProviderSecretResolutionPlanV1) -> None:
+    def validate_plan(self, plan: ProviderSecretResolutionPlan) -> None:
         for reference in plan.references:
             if reference.resolver_kind not in self._resolvers:
                 raise ProviderLocalRuntimeRefused(
@@ -475,7 +475,7 @@ class ProviderSecretResolverRegistry:
                     f"secret resolver {reference.resolver_kind!r} is not installed",
                 )
 
-    def resolve(self, plan: ProviderSecretResolutionPlanV1) -> dict[str, str]:
+    def resolve(self, plan: ProviderSecretResolutionPlan) -> dict[str, str]:
         self.validate_plan(plan)
         result = {
             reference.ref: self._resolvers[reference.resolver_kind].resolve(reference)
@@ -497,8 +497,8 @@ class ProviderLocalRuntimeInvoker:
         self,
         *,
         deployments_by_digest: Mapping[str, LocalProviderDeploymentV1],
-        accepted_providers_by_digest: Mapping[str, AcceptedProviderV1],
-        accepted_interfaces_by_digest: Mapping[str, AcceptedProviderInterfaceRegistrationV1],
+        accepted_providers_by_digest: Mapping[str, AcceptedProvider],
+        accepted_interfaces_by_digest: Mapping[str, AcceptedProviderInterfaceRegistration],
         secret_resolvers: ProviderSecretResolverRegistry,
         process_leases: ProviderProcessLeaseStore,
         driver: LocalProviderExecutionDriver | None = None,
@@ -513,7 +513,7 @@ class ProviderLocalRuntimeInvoker:
     def bind_provider(
         self,
         *,
-        occurrence: ProviderExternalOccurrencePlanV1,
+        occurrence: ProviderExternalOccurrencePlan,
     ) -> BoundLocalProviderV1:
         try:
             deployment = self._deployments[occurrence.local_execution.deployment_digest]
@@ -552,7 +552,7 @@ class ProviderLocalRuntimeInvoker:
     def invoke_provider(
         self,
         *,
-        occurrence: ProviderExternalOccurrencePlanV1,
+        occurrence: ProviderExternalOccurrencePlan,
         context: ProviderRuntimeRunContextV1,
         invocation_id: str,
         bound: BoundLocalProviderV1,
@@ -579,13 +579,13 @@ class ProviderLocalRuntimeInvoker:
 
 def translate_provider_budget(
     *,
-    budget: ProcedureBudgetV3,
-    hard_caps: ProcedureHardCapsV3,
-    runtime_policy: ProcedureRuntimePolicyV1,
+    budget: ProcedureBudget,
+    hard_caps: ProcedureHardCaps,
+    runtime_policy: ProcedureRuntimePolicy,
     remaining_wall_clock_microseconds: int,
     result_bytes_cap: int,
     produces_capture: bool,
-) -> ProviderBudgetTranslationV1:
+) -> ProviderBudgetTranslation:
     remaining = min(
         remaining_wall_clock_microseconds,
         budget.wall_clock.microseconds,
@@ -615,7 +615,7 @@ def translate_provider_budget(
         candidates.append(hard_output_cap)
     if procedure_output_cap is not None:
         candidates.append(procedure_output_cap)
-    return ProviderBudgetTranslationV1(
+    return ProviderBudgetTranslation(
         remaining_wall_clock_microseconds=remaining_wall_clock_microseconds,
         procedure_wall_clock_microseconds=budget.wall_clock.microseconds,
         hard_cap_wall_clock_microseconds=hard_caps.max_wall_clock.microseconds,
@@ -639,8 +639,8 @@ class LocalProviderExecutionDriver:
 
     def bind(
         self,
-        accepted_provider: AcceptedProviderV1,
-        accepted_interface: AcceptedProviderInterfaceRegistrationV1,
+        accepted_provider: AcceptedProvider,
+        accepted_interface: AcceptedProviderInterfaceRegistration,
         implementation_digest: str,
         deployment: LocalProviderDeploymentV1,
     ) -> BoundLocalProviderV1:
@@ -693,7 +693,7 @@ class LocalProviderExecutionDriver:
             raise ProviderLocalRuntimeRefused(
                 "no_compatible_artifact", "accepted Provider has no matching local environment"
             )
-        if isinstance(provider, ProviderV3):
+        if isinstance(provider, Provider):
             verification = deployment.installation_verification
             if verification is None or provider.runtime_artifact.local_env is None:
                 raise ProviderLocalRuntimeRefused(
@@ -805,8 +805,8 @@ class LocalProviderExecutionDriver:
 
     @staticmethod
     def _bound_result(
-        accepted_provider: AcceptedProviderV1,
-        accepted_interface: AcceptedProviderInterfaceRegistrationV1,
+        accepted_provider: AcceptedProvider,
+        accepted_interface: AcceptedProviderInterfaceRegistration,
         implementation_digest: str,
         deployment: LocalProviderDeploymentV1,
         *,
@@ -835,7 +835,7 @@ class LocalProviderExecutionDriver:
                 "undeclared_interface", "Provider does not pin this accepted interface"
             )
         return BoundLocalProviderV1(
-            binding=VerifiedProviderBindingV1(
+            binding=VerifiedProviderBinding(
                 provider_artifact_digest=provider_artifact_digest,
                 interface_artifact_digest=accepted_interface.artifact_digest,
                 interface_id=registration.interface_id,
@@ -855,7 +855,7 @@ class LocalProviderExecutionDriver:
         binding: BoundLocalProviderV1,
         context: ProviderRuntimeRunContextV1,
         *,
-        secret_plan: ProviderSecretResolutionPlanV1,
+        secret_plan: ProviderSecretResolutionPlan,
         secret_resolvers: ProviderSecretResolverRegistry,
         invocation_id: str,
         process_leases: ProviderProcessLeaseStore,
@@ -948,7 +948,7 @@ class LocalProviderExecutionDriver:
             envelope=envelope,
             stderr=process.stderr.decode("utf-8", "replace"),
             duration_seconds=round(process.duration_seconds, 4),
-            egress=ProviderEgressObservationV1(
+            egress=ProviderEgressObservation(
                 declared_endpoints=declared,
                 observed_endpoints=observed,
                 dynamic_endpoint_forms=dynamic,

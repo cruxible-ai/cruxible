@@ -13,12 +13,12 @@ from cruxible_client.contracts.artifacts import (
     ArtifactPin,
 )
 from cruxible_client.contracts.canonical import ArtifactDigest, canonical_bytes, typed_digest
-from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.procedures.artifacts import (
-    AcceptedProcedureV1,
+    AcceptedProcedure,
+    ProcedureArtifact,
     ProcedureArtifactV1,
-    ProcedureArtifactV2,
-    ProcedureOwnedContractV1,
+    ProcedureOwnedContract,
     evaluate_procedure_law,
     parse_procedure,
     procedure_artifact_digest,
@@ -35,10 +35,10 @@ from cruxible_client.contracts.procedures.contracts import (
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
 from cruxible_client.contracts.procedures.models import (
-    ProcedureBudgetV3,
+    ProcedureBudget,
     ProcedureDefinitionV3,
-    ProcedureHardCapsV3,
-    ProjectNodeV3,
+    ProcedureHardCaps,
+    ProjectNode,
     StateTapNodeV3,
 )
 from cruxible_client.contracts.query.definitions import query_definition_digest
@@ -202,14 +202,14 @@ class _Authority:
         return self.digest
 
 
-def _contract(name: str, fields: dict[str, PropertySchema]) -> ProcedureOwnedContractV1:
-    return ProcedureOwnedContractV1(
+def _contract(name: str, fields: dict[str, PropertySchema]) -> ProcedureOwnedContract:
+    return ProcedureOwnedContract(
         identity=ArtifactIdentity(kind="Contract", name=name),
         schema=ContractSchema(fields=fields),
     )
 
 
-def _accepted_query_procedure(query_digest: str) -> AcceptedProcedureV1:
+def _accepted_query_procedure(query_digest: str) -> AcceptedProcedure:
     input_contract = _contract("empty-input", {})
     output_contract = _contract("query-rows", {"rows": PropertySchema(type="json")})
     contract_in = ArtifactPin(
@@ -239,7 +239,7 @@ def _accepted_query_procedure(query_digest: str) -> AcceptedProcedureV1:
                 as_="query",
                 next="project",
             ),
-            ProjectNodeV3(
+            ProjectNode(
                 node_id="project",
                 fields={"rows": "$steps.query.rows"},
                 contract_out=contract_out,
@@ -247,14 +247,14 @@ def _accepted_query_procedure(query_digest: str) -> AcceptedProcedureV1:
             ),
         ),
         returns="result",
-        budget=ProcedureBudgetV3(
-            wall_clock=CanonicalDurationV1(microseconds=2_000_000),
+        budget=ProcedureBudget(
+            wall_clock=CanonicalDuration(microseconds=2_000_000),
             max_provider_calls=0,
             max_capture_bytes=0,
             max_items=100,
         ),
-        hard_caps=ProcedureHardCapsV3(
-            max_wall_clock=CanonicalDurationV1(microseconds=4_000_000),
+        hard_caps=ProcedureHardCaps(
+            max_wall_clock=CanonicalDuration(microseconds=4_000_000),
             max_provider_calls=0,
             max_capture_bytes=0,
             max_items=200,
@@ -262,7 +262,7 @@ def _accepted_query_procedure(query_digest: str) -> AcceptedProcedureV1:
         ),
         terminal_capability=1,
     )
-    procedure = ProcedureArtifactV2(
+    procedure = ProcedureArtifact(
         identity=ArtifactIdentity(kind="Procedure", name=definition.name),
         definition=definition,
         definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
@@ -286,7 +286,7 @@ def _accepted_query_procedure(query_digest: str) -> AcceptedProcedureV1:
         ),
         activation_policy="abort",
     )
-    return AcceptedProcedureV1(
+    return AcceptedProcedure(
         path=procedure_path(definition.name),
         procedure=procedure,
         artifact_digest=procedure_artifact_digest(procedure).tagged,
@@ -410,7 +410,7 @@ def test_mixed_procedure_v1_v2_ledger_replays_each_historical_wire(tmp_path: Pat
         {"query": "placeholder"},
     ).tagged
     v2 = _accepted_query_procedure(placeholder_query_digest).procedure
-    assert isinstance(v2, ProcedureArtifactV2)
+    assert isinstance(v2, ProcedureArtifact)
     v1 = ProcedureArtifactV1(
         identity=v2.identity,
         definition=v2.definition,
@@ -446,7 +446,7 @@ def test_mixed_procedure_v1_v2_ledger_replays_each_historical_wire(tmp_path: Pat
     )
     assert isinstance(
         parse_procedure(instance.tree_at(instance.accepted_coordinate().git_oid)[path], path=path),
-        ProcedureArtifactV2,
+        ProcedureArtifact,
     )
     assert first.candidate is not None
     assert second.candidate is not None

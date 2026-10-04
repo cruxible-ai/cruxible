@@ -11,14 +11,14 @@ from cruxible_client.contracts.claim_types import (
     claim_type_path,
 )
 from cruxible_client.contracts.claims import (
-    ClaimArtifactV3,
-    ClaimRetirementAttributionV1,
+    ClaimArtifact,
+    ClaimRetirementAttribution,
     LiteralClaimObject,
     claim_artifact_digest,
     claim_path,
     render_claim,
 )
-from cruxible_client.contracts.policies import ClaimAdmissionPolicyV1, FreezeRequirementV1
+from cruxible_client.contracts.policies import ClaimAdmissionPolicy, FreezeRequirement
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import AcceptedSubject, subject_digest, subject_path
 from cruxible_core.indexes.claims import claim_subject_index as index_module
@@ -50,7 +50,7 @@ def _tree(*claims):
 
 
 def _retire(claim):
-    return ClaimArtifactV3(
+    return ClaimArtifact(
         identity=claim.identity,
         statement=claim.statement,
         backing=claim.backing,
@@ -58,7 +58,7 @@ def _retire(claim):
         lifecycle=ArtifactLifecycle(
             state="retired", predecessor_digest=claim_artifact_digest(claim).tagged
         ),
-        retirement=ClaimRetirementAttributionV1(reason="was-rescinded"),
+        retirement=ClaimRetirementAttribution(reason="was-rescinded"),
     )
 
 
@@ -133,9 +133,9 @@ def test_index_keeps_time_and_lifecycle_filtering_fresh_and_matches_full_values(
 def _types():
     status = _claim_type().model_copy(
         update={
-            "admission_policy": ClaimAdmissionPolicyV1(
+            "admission_policy": ClaimAdmissionPolicy(
                 freeze_requirements=(
-                    FreezeRequirementV1(
+                    FreezeRequirement(
                         requirement_id="done-freezes-summary",
                         while_predicate="project.work_item.status",
                         while_values=("done",),

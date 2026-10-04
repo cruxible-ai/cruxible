@@ -15,15 +15,15 @@ from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.authoring.models import (
-    AuthoringClaimStatementV1,
-    ChangeSetAuthoringPayloadV1,
+    AuthoringClaimStatement,
+    ChangeSetAuthoringPayload,
     ClaimAuthoringPayloadV1,
-    ClaimRetirementMemberV1,
-    ClaimTypeAuthoringPayloadV1,
-    ClaimTypeSuccessionDependentV1,
+    ClaimRetirementMember,
+    ClaimTypeAuthoringPayload,
+    ClaimTypeSuccessionDependent,
     ClaimTypeSuccessionDisposition,
-    ClaimTypeSuccessionMemberV1,
-    SelfSourceBodyV1,
+    ClaimTypeSuccessionMember,
+    SelfSourceBody,
     authoring_member_identity,
 )
 from cruxible_client.contracts.claim_types import (
@@ -33,7 +33,7 @@ from cruxible_client.contracts.claim_types import (
     parse_claim_type,
 )
 from cruxible_client.contracts.claims import (
-    ClaimArtifactV3,
+    ClaimArtifact,
     LiteralClaimObject,
     SubjectClaimObject,
     claim_path,
@@ -49,13 +49,13 @@ from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.lowering import AuthoringLoweringError, lower_authoring
 from cruxible_core.authoring.store import AuthoringIntentStore
 from cruxible_core.claims.claim_type_migrations import (
-    ClaimTypeDependentDispositionV3,
-    ClaimTypeMigrationRequestV3,
+    ClaimTypeDependentDisposition,
+    ClaimTypeMigrationRequest,
     ClaimTypeMigrationResultV3,
     MigrationInputDisposition,
     service_migrate_claim_type,
 )
-from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.runtime.playbill_api import _authoring_preflight_result
@@ -160,20 +160,20 @@ def _claim(
     body: str = "package: demo-package\n",
 ) -> ClaimAuthoringPayloadV1:
     return ClaimAuthoringPayloadV1(
-        statement=AuthoringClaimStatementV1(
+        statement=AuthoringClaimStatement(
             subject=SemanticAddress.whole_artifact(subject_path(SUBJECT_KIND, subject_id)),
             predicate=PREDICATE,
             object=value,  # type: ignore[arg-type]
             role="observation",
         ),
         rationale=rationale,
-        source=SelfSourceBodyV1(content_base64=base64.b64encode(body.encode("utf-8")).decode()),
+        source=SelfSourceBody(content_base64=base64.b64encode(body.encode("utf-8")).decode()),
         revises=revises,
     )
 
 
-def _change_set(*members: object) -> ChangeSetAuthoringPayloadV1:
-    return ChangeSetAuthoringPayloadV1(
+def _change_set(*members: object) -> ChangeSetAuthoringPayload:
+    return ChangeSetAuthoringPayload(
         members=tuple(  # type: ignore[arg-type]
             sorted(
                 members,  # type: ignore[type-var]
@@ -280,8 +280,8 @@ def _dependent(
     disposition: str,
     successor_claim_id: str | None = None,
     reason: str | None = None,
-) -> ClaimTypeSuccessionDependentV1:
-    return ClaimTypeSuccessionDependentV1(
+) -> ClaimTypeSuccessionDependent:
+    return ClaimTypeSuccessionDependent(
         identity=ArtifactIdentity(kind="Claim", name=claim_id),
         disposition=disposition,  # type: ignore[arg-type]
         successor_claim_id=successor_claim_id,
@@ -289,7 +289,7 @@ def _dependent(
     )
 
 
-def _re_author(claim_id: str) -> ClaimTypeSuccessionDependentV1:
+def _re_author(claim_id: str) -> ClaimTypeSuccessionDependent:
     """Re-author one dependent as the sibling Claim member that revises it."""
 
     return _dependent(claim_id, disposition="re_author", successor_claim_id=claim_id)
@@ -329,7 +329,7 @@ def test_the_affects_package_migration_lands_as_one_generation(tmp_path: Path) -
 
     # A re-authoring sibling revises the dependent it re-authors, so the whole
     # set is expressible before anything is compiled: no member index is named.
-    succession = ClaimTypeSuccessionMemberV1(
+    succession = ClaimTypeSuccessionMember(
         successor=successor,
         dependents=tuple(
             sorted(
@@ -367,7 +367,7 @@ def test_the_affects_package_migration_lands_as_one_generation(tmp_path: Path) -
     tombstone_path = claim_path(claims["wi-3"])
     tombstone = parse_claim(tree[tombstone_path], path=tombstone_path)
     assert tombstone.lifecycle.state == "retired"
-    assert isinstance(tombstone, ClaimArtifactV3)
+    assert isinstance(tombstone, ClaimArtifact)
     assert tombstone.retirement.reason == "was-rescinded"
     # The exact-coordinate exemption: a tombstone keeps the literal it stated
     # under the vocabulary it was accepted under.
@@ -388,7 +388,7 @@ def test_the_affects_package_migration_lands_as_one_generation(tmp_path: Path) -
         instance,
         request=PlaybillNextRequestV1(
             evaluation_time=datetime(2026, 8, 23, 12, tzinfo=UTC),
-            access_profile=CoverageAccessProfileV1(
+            access_profile=CoverageAccessProfile(
                 profile_id="claim-type-succession",
                 permitted_access_classes=("instance", "public"),
             ),
@@ -411,7 +411,7 @@ def test_a_carry_of_an_out_of_enum_value_refuses(tmp_path: Path) -> None:
     actor = AuthenticatedActor(actor_id="owner")
     successor = _enum_successor(instance, enum=["ready"])
     payload = _change_set(
-        ClaimTypeSuccessionMemberV1(
+        ClaimTypeSuccessionMember(
             successor=successor,
             dependents=tuple(
                 sorted(
@@ -452,7 +452,7 @@ def test_an_enum_narrowing_carries_what_fits_and_re_authors_what_does_not(
         revises=claims["wi-2"],
         rationale="The narrowed vocabulary has one word for this state.",
     )
-    succession = ClaimTypeSuccessionMemberV1(
+    succession = ClaimTypeSuccessionMember(
         successor=successor,
         dependents=tuple(
             sorted(
@@ -491,7 +491,7 @@ def test_an_incomplete_closure_refuses_with_its_exact_required_dependents(
     actor = AuthenticatedActor(actor_id="owner")
     coordinate_before = instance.accepted_coordinate()
     payload = _change_set(
-        ClaimTypeSuccessionMemberV1(
+        ClaimTypeSuccessionMember(
             successor=_enum_successor(instance, enum=["demo-package"]),
             dependents=(_dependent(claims["wi-42"], disposition="successor"),),
         )
@@ -515,11 +515,11 @@ def test_an_incomplete_closure_refuses_with_its_exact_required_dependents(
     # The repair must be applicable as written: a dependent is named by identity
     # alone, so the repair may not ask for a digest the member model has no
     # field to carry. The digest each required row reports is a read.
-    assert not any("digest" in name for name in ClaimTypeSuccessionDependentV1.model_fields)
+    assert not any("digest" in name for name in ClaimTypeSuccessionDependent.model_fields)
     assert "identity" in error.repairs[0].description
     assert "digest" not in error.repairs[0].description
     assert [
-        ClaimTypeSuccessionDependentV1(
+        ClaimTypeSuccessionDependent(
             identity=ArtifactIdentity.model_validate(item["identity"]),
             disposition="successor",
         )
@@ -537,7 +537,7 @@ def test_object_kind_change_refuses_a_carried_live_claim(tmp_path: Path) -> None
     )
     actor = AuthenticatedActor(actor_id="owner")
     payload = _change_set(
-        ClaimTypeSuccessionMemberV1(
+        ClaimTypeSuccessionMember(
             successor=_subject_valued_successor(instance),
             dependents=(_dependent(claims["wi-42"], disposition="successor"),),
         )
@@ -569,7 +569,7 @@ def test_a_re_author_that_names_no_sibling_refuses_naming_the_claim_it_needs(
     actor = AuthenticatedActor(actor_id="owner")
     unknown = "CLM-" + "9" * 32
     payload = _change_set(
-        ClaimTypeSuccessionMemberV1(
+        ClaimTypeSuccessionMember(
             successor=_subject_valued_successor(instance),
             dependents=(
                 _dependent(
@@ -609,19 +609,19 @@ def test_a_re_author_sibling_under_another_type_refuses_with_both_indices(
     )
     actor = AuthenticatedActor(actor_id="owner")
     other = ClaimAuthoringPayloadV1(
-        statement=AuthoringClaimStatementV1(
+        statement=AuthoringClaimStatement(
             subject=SemanticAddress.whole_artifact(subject_path(SUBJECT_KIND, "wi-2")),
             predicate="project.work_item.status",
             object=LiteralClaimObject(value="ready"),
             role="observation",
         ),
         rationale="A Claim of another vocabulary entirely.",
-        source=SelfSourceBodyV1(
+        source=SelfSourceBody(
             content_base64=base64.b64encode(b"status: ready\n").decode(),
         ),
         revises=claims["wi-42"],
     )
-    succession = ClaimTypeSuccessionMemberV1(
+    succession = ClaimTypeSuccessionMember(
         successor=_subject_valued_successor(instance),
         dependents=(_re_author(claims["wi-42"]),),
     )
@@ -662,7 +662,7 @@ def test_a_sibling_claim_of_the_succeeded_type_is_not_a_dependent(tmp_path: Path
     )
     # The closure names the ACCEPTED Claim only; the sibling is not owed a
     # disposition, and a set that dispositioned it would not know its ID anyway.
-    succession = ClaimTypeSuccessionMemberV1(
+    succession = ClaimTypeSuccessionMember(
         successor=successor,
         dependents=(_dependent(claims["wi-42"], disposition="successor"),),
     )
@@ -706,8 +706,8 @@ def test_a_set_cannot_define_a_claim_type_and_succeed_it(tmp_path: Path) -> None
         }
     )
     payload = _change_set(
-        ClaimTypeAuthoringPayloadV1(claim_type=defined),
-        ClaimTypeSuccessionMemberV1(successor=succeeded, dependents=()),
+        ClaimTypeAuthoringPayload(claim_type=defined),
+        ClaimTypeSuccessionMember(successor=succeeded, dependents=()),
     )
     intent = coordinator.create(
         actor=actor,
@@ -728,8 +728,8 @@ def test_a_set_cannot_define_a_claim_type_and_succeed_it(tmp_path: Path) -> None
 def test_the_member_disposition_cannot_drift_from_the_migration_disposition() -> None:
     """Two distributions, one vocabulary: the member mirrors V3 field for field."""
 
-    core = ClaimTypeDependentDispositionV3.model_fields
-    member = ClaimTypeSuccessionDependentV1.model_fields
+    core = ClaimTypeDependentDisposition.model_fields
+    member = ClaimTypeSuccessionDependent.model_fields
     # `successor` is the standalone route's hand-supplied artifact body;
     # `successor_claim_id` is the change set's sibling member. Everything the
     # two roads share is spelled identically.
@@ -744,7 +744,7 @@ def test_the_member_disposition_cannot_drift_from_the_migration_disposition() ->
 
     identity = ArtifactIdentity(kind="Claim", name="CLM-" + "3" * 32)
     naive = datetime(2026, 9, 5, 12)  # noqa: DTZ001 - the point of the test
-    for model in (ClaimTypeDependentDispositionV3, ClaimTypeSuccessionDependentV1):
+    for model in (ClaimTypeDependentDisposition, ClaimTypeSuccessionDependent):
         with pytest.raises(ValidationError, match="timezone-aware"):
             model(
                 identity=identity,
@@ -754,13 +754,13 @@ def test_the_member_disposition_cannot_drift_from_the_migration_disposition() ->
             )
     aware = datetime(2026, 9, 5, 12, tzinfo=UTC)
     assert (
-        ClaimTypeSuccessionDependentV1(
+        ClaimTypeSuccessionDependent(
             identity=identity,
             disposition="retire",
             claim_retirement_reason="was-wrong",
             claim_effective_until=aware,
         ).claim_effective_until
-        == ClaimTypeDependentDispositionV3(
+        == ClaimTypeDependentDisposition(
             identity=identity,
             disposition="retire",
             claim_retirement_reason="was-wrong",
@@ -785,11 +785,11 @@ def test_a_successor_admitting_no_accepted_contract_lints_on_both_roads(
 
     operator = service_migrate_claim_type(
         instance,
-        request=ClaimTypeMigrationRequestV3(
+        request=ClaimTypeMigrationRequest(
             mode="preflight",
             successor=successor,
             dependents=(
-                ClaimTypeDependentDispositionV3(
+                ClaimTypeDependentDisposition(
                     identity=ArtifactIdentity(kind="Claim", name=claims["wi-42"]),
                     disposition="successor",
                 ),
@@ -806,7 +806,7 @@ def test_a_successor_admitting_no_accepted_contract_lints_on_both_roads(
     intent = coordinator.create(
         actor=actor,
         payload=_change_set(
-            ClaimTypeSuccessionMemberV1(
+            ClaimTypeSuccessionMember(
                 successor=successor,
                 dependents=(_dependent(claims["wi-42"], disposition="successor"),),
             )
@@ -831,7 +831,7 @@ def test_the_deprecated_invalidation_word_refuses_typed(tmp_path: Path) -> None:
     )
     actor = AuthenticatedActor(actor_id="owner")
     payload = _change_set(
-        ClaimTypeSuccessionMemberV1(
+        ClaimTypeSuccessionMember(
             successor=_enum_successor(instance, enum=["ready"]),
             dependents=(
                 _dependent(
@@ -863,11 +863,11 @@ def test_the_deprecated_invalidation_word_refuses_typed(tmp_path: Path) -> None:
     # The standalone route still takes the word, with its deprecation warning.
     standalone = service_migrate_claim_type(
         instance,
-        request=ClaimTypeMigrationRequestV3(
+        request=ClaimTypeMigrationRequest(
             mode="preflight",
             successor=_enum_successor(instance, enum=["ready"]),
             dependents=(
-                ClaimTypeDependentDispositionV3(
+                ClaimTypeDependentDisposition(
                     identity=ArtifactIdentity(kind="Claim", name=claims["wi-42"]),
                     disposition="invalidation",
                     claim_retirement_reason="was-rescinded",
@@ -891,7 +891,7 @@ def test_a_dependent_this_set_also_retires_refuses_naming_both_members(
         values=(("wi-42", "ready"), ("wi-2", "ready")),
     )
     actor = AuthenticatedActor(actor_id="owner")
-    succession = ClaimTypeSuccessionMemberV1(
+    succession = ClaimTypeSuccessionMember(
         successor=_enum_successor(instance, enum=["ready"]),
         dependents=tuple(
             sorted(
@@ -903,7 +903,7 @@ def test_a_dependent_this_set_also_retires_refuses_naming_both_members(
             )
         ),
     )
-    retirement = ClaimRetirementMemberV1(retires=claims["wi-2"], reason="was-wrong")
+    retirement = ClaimRetirementMember(retires=claims["wi-2"], reason="was-wrong")
     payload = _change_set(succession, retirement)
     positions = {
         authoring_member_identity(member): index for index, member in enumerate(payload.members)
@@ -943,7 +943,7 @@ def test_a_re_author_sibling_that_moves_the_subject_refuses(tmp_path: Path) -> N
         revises=claims["wi-42"],
         rationale="A revision that quietly changes which work item this is about.",
     )
-    succession = ClaimTypeSuccessionMemberV1(
+    succession = ClaimTypeSuccessionMember(
         successor=_enum_successor(instance, enum=["ready"]),
         dependents=tuple(
             sorted(
@@ -1005,7 +1005,7 @@ def test_a_machine_applying_the_re_author_repair_lands_the_set(tmp_path: Path) -
 
     for _attempt in range(4):
         payload = _change_set(
-            ClaimTypeSuccessionMemberV1(
+            ClaimTypeSuccessionMember(
                 successor=successor,
                 dependents=tuple(
                     sorted(
@@ -1038,7 +1038,7 @@ def test_a_machine_applying_the_re_author_repair_lands_the_set(tmp_path: Path) -
             matched = element_re.match(error.offending_element)
             assert matched is not None, error.offending_element
             member = payload.members[int(matched.group(1))]
-            assert isinstance(member, ClaimTypeSuccessionMemberV1)
+            assert isinstance(member, ClaimTypeSuccessionMember)
             offending = member.dependents[int(matched.group(2))]
             # Exactly what a machine does: write the repair back under the key
             # the refusal named, at the value it carried.
@@ -1061,10 +1061,10 @@ def test_two_successions_of_one_type_cannot_share_a_change_set(tmp_path: Path) -
     )
     successor = _subject_valued_successor(instance)
     with pytest.raises(ValueError, match="member identities must be unique"):
-        ChangeSetAuthoringPayloadV1(
+        ChangeSetAuthoringPayload(
             members=(  # type: ignore[arg-type]
-                ClaimTypeSuccessionMemberV1(successor=successor, dependents=()),
-                ClaimTypeSuccessionMemberV1(successor=successor, dependents=()),
+                ClaimTypeSuccessionMember(successor=successor, dependents=()),
+                ClaimTypeSuccessionMember(successor=successor, dependents=()),
             )
         )
 
@@ -1085,7 +1085,7 @@ def test_both_roads_build_the_same_succession_candidate(tmp_path: Path) -> None:
         )
     )
     payload = _change_set(
-        ClaimTypeSuccessionMemberV1(
+        ClaimTypeSuccessionMember(
             successor=successor,
             dependents=tuple(
                 _dependent(claim_id, disposition="successor") for claim_id in dependents
@@ -1101,11 +1101,11 @@ def test_both_roads_build_the_same_succession_candidate(tmp_path: Path) -> None:
 
     standalone = service_migrate_claim_type(
         instance,
-        request=ClaimTypeMigrationRequestV3(
+        request=ClaimTypeMigrationRequest(
             mode="submit",
             successor=successor,
             dependents=tuple(
-                ClaimTypeDependentDispositionV3(
+                ClaimTypeDependentDisposition(
                     identity=ArtifactIdentity(kind="Claim", name=claim_id),
                     disposition="successor",
                 )
@@ -1132,7 +1132,7 @@ def test_a_succession_rebases_and_replays_byte_identically(tmp_path: Path) -> No
     actor = AuthenticatedActor(actor_id="owner")
     successor = _enum_successor(instance, enum=["ready"])
     payload = _change_set(
-        ClaimTypeSuccessionMemberV1(
+        ClaimTypeSuccessionMember(
             successor=successor,
             dependents=(_dependent(claims["wi-42"], disposition="successor"),),
         ),
@@ -1176,7 +1176,7 @@ def _retiring_succession_world(
     tmp_path: Path,
     *,
     dependents: int,
-) -> tuple[PlaybillInstance, object, AuthoringIntentCoordinator, ClaimTypeSuccessionMemberV1]:
+) -> tuple[PlaybillInstance, object, AuthoringIntentCoordinator, ClaimTypeSuccessionMember]:
     """Accept `dependents` Claims of one predicate, and author the succession that retires them."""
 
     subjects = tuple(f"wi-fan-{index:03d}" for index in range(dependents))
@@ -1201,7 +1201,7 @@ def _retiring_succession_world(
     ).intent
     _accept(instance, owner, coordinator, intent.intent_id, actor)
     minted = {item.member_identity: item.claim_id for item in intent.change_set_claim_identities}
-    succession = ClaimTypeSuccessionMemberV1(
+    succession = ClaimTypeSuccessionMember(
         successor=_enum_successor(instance, enum=["other-package"]),
         dependents=tuple(
             sorted(
@@ -1353,12 +1353,12 @@ def test_carry_all_fills_the_closure_server_side_including_retired_claims(
     actor = AuthenticatedActor(actor_id="owner")
     retire = coordinator.create(
         actor=actor,
-        payload=_change_set(ClaimRetirementMemberV1(retires=claims["wi-3"], reason="was-wrong")),
+        payload=_change_set(ClaimRetirementMember(retires=claims["wi-3"], reason="was-wrong")),
         canonical_timestamp=TIMESTAMP,
     ).intent
     _accept(instance, owner, coordinator, retire.intent_id, actor)
 
-    succession = ClaimTypeSuccessionMemberV1(
+    succession = ClaimTypeSuccessionMember(
         successor=_enum_successor(instance, enum=["demo-package", "other-package"]),
         carry_all=True,
     )
@@ -1402,7 +1402,7 @@ def test_every_authoring_surface_carries_the_carry_all_flag(
     assert "cruxible_playbill_authoring_create" in authoring
     assert "carry_all" in json.dumps(create_app().openapi())
     # The CLI and the SDK send the same model's JSON: the flag survives a round trip.
-    member = ClaimTypeSuccessionMemberV1.model_validate(
+    member = ClaimTypeSuccessionMember.model_validate(
         {
             "successor": _literal_affects_package()
             .model_copy(

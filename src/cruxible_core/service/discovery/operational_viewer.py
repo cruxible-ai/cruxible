@@ -16,7 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from cruxible_client.contracts.line_dispatch import (
-    LineArmPrincipalV1,
+    LineArmPrincipal,
     is_current_arm_principal_record,
 )
 from cruxible_client.contracts.operational_reads import PlaybillArmPrincipalKind
@@ -43,7 +43,7 @@ class OperationalViewer:
         default=None, compare=False, repr=False
     )
 
-    def may_see(self, principal: LineArmPrincipalV1) -> bool:
+    def may_see(self, principal: LineArmPrincipal) -> bool:
         if principal.kind != "runtime_credential":
             # The local operator is one fixed identity with no credential, and
             # a claimed principal's label is its principal ID, which principal
@@ -61,7 +61,7 @@ class OperationalViewer:
         return self.credential_principal(arming) == self.principal_id
 
 
-def may_see_arming(viewer: OperationalViewer | None, principal: LineArmPrincipalV1) -> bool:
+def may_see_arming(viewer: OperationalViewer | None, principal: LineArmPrincipal) -> bool:
     """Whether this reader may see who armed a Line: its runtime credential id and label."""
 
     if principal.kind != "runtime_credential":
@@ -69,7 +69,7 @@ def may_see_arming(viewer: OperationalViewer | None, principal: LineArmPrincipal
     return viewer is not None and viewer.may_see(principal)
 
 
-def arm_principal_kind(record: object, principal: LineArmPrincipalV1) -> PlaybillArmPrincipalKind:
+def arm_principal_kind(record: object, principal: LineArmPrincipal) -> PlaybillArmPrincipalKind:
     """The kind a card shows for a persisted ``armed_by``.
 
     A record persisted before arms named their provenance parses under the

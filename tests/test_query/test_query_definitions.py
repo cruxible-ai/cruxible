@@ -13,21 +13,21 @@ from cruxible_client.contracts.artifacts import (
     ArtifactLifecycle,
     ArtifactPin,
 )
-from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, render_claim_type
 from cruxible_client.contracts.errors import CanonicalEncodingError, ProjectionFormatError
 from cruxible_client.contracts.laws import PLAYBILL_ACCEPTANCE_LAWS, QUERY_DEFINITION_ACCEPTANCE_LAW
 from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicyV1,
+    ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV1,
-    ClaimResolutionPolicyV1,
+    ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.projection_extensions import playbill_runtime_extension_registry
 from cruxible_client.contracts.query.definitions import (
-    AcceptedQueryDefinitionV1,
+    AcceptedQueryDefinition,
+    QueryDefinition,
     QueryDefinitionFormatError,
-    QueryDefinitionV1,
-    QueryEvaluationPolicyV1,
+    QueryEvaluationPolicy,
     evaluate_query_definition_law,
     parse_query_definition,
     query_definition_address,
@@ -36,21 +36,21 @@ from cruxible_client.contracts.query.definitions import (
     render_query_definition,
 )
 from cruxible_client.contracts.query.grammar import (
-    QueryBudgetsV1,
-    QueryClaimPresenceFilterV1,
-    QueryClaimValueRefV1,
-    QueryComparisonFilterV1,
-    QueryConjunctionFilterV1,
-    QueryEntryV1,
-    QueryIncludeV1,
-    QueryLiteralRefV1,
-    QueryOrderingV1,
-    QueryParameterDeclarationV1,
-    QueryParameterRefV1,
-    QueryProjectionFieldV1,
-    QueryProjectionV1,
-    QuerySubjectFieldRefV1,
-    QueryTraversalStepV1,
+    QueryBudgets,
+    QueryClaimPresenceFilter,
+    QueryClaimValueRef,
+    QueryComparisonFilter,
+    QueryConjunctionFilter,
+    QueryEntry,
+    QueryInclude,
+    QueryLiteralRef,
+    QueryOrdering,
+    QueryParameterDeclaration,
+    QueryParameterRef,
+    QueryProjection,
+    QueryProjectionField,
+    QuerySubjectFieldRef,
+    QueryTraversalStep,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.claims.closure import evaluate_dependency_closure, parse_dependency_artifact
@@ -88,8 +88,8 @@ def claim_type(predicate: str, *, object_kind: str = "literal") -> ClaimType:
         cardinality="one" if object_kind == "literal" else "many",
         permitted_roles=("normative",),
         evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(),
-        admission_policy=ClaimAdmissionPolicyV1(),
-        resolution_policy=ClaimResolutionPolicyV1(
+        admission_policy=ClaimAdmissionPolicy(),
+        resolution_policy=ClaimResolutionPolicy(
             cardinality="one" if object_kind == "literal" else "many",
             eligible_verdicts=("supported",),
             selector="only_contender" if object_kind == "literal" else "all",
@@ -105,15 +105,15 @@ def claim_type_pin(predicate: str, *, object_kind: str = "literal") -> ArtifactP
     )
 
 
-def active_work_query(**overrides: object) -> QueryDefinitionV1:
+def active_work_query(**overrides: object) -> QueryDefinition:
     """The reviewed reference query: entry, traversal, filter, include, budgets."""
 
     fields: dict[str, object] = {
         "identity": ArtifactIdentity(kind="QueryDefinition", name="project.active_work"),
         "description": "Active work items with their reviewers and latest status.",
-        "entry": QueryEntryV1(binding="item", subject_kinds=("project.work_item",)),
+        "entry": QueryEntry(binding="item", subject_kinds=("project.work_item",)),
         "traversal": (
-            QueryTraversalStepV1(
+            QueryTraversalStep(
                 binding="reviewer",
                 from_binding="item",
                 predicate=REVIEWER_PREDICATE,
@@ -121,13 +121,13 @@ def active_work_query(**overrides: object) -> QueryDefinitionV1:
                 target_subject_kinds=("project.person",),
             ),
         ),
-        "where": QueryConjunctionFilterV1(
+        "where": QueryConjunctionFilter(
             filters=(
-                QueryClaimPresenceFilterV1(binding="item", predicate=STATUS_PREDICATE),
-                QueryComparisonFilterV1(
-                    left=QueryClaimValueRefV1(binding="item", predicate=STATUS_PREDICATE),
+                QueryClaimPresenceFilter(binding="item", predicate=STATUS_PREDICATE),
+                QueryComparisonFilter(
+                    left=QueryClaimValueRef(binding="item", predicate=STATUS_PREDICATE),
                     operator="eq",
-                    right=QueryParameterRefV1(parameter="status"),
+                    right=QueryParameterRef(parameter="status"),
                     value_type="string",
                 ),
             ),
@@ -136,26 +136,26 @@ def active_work_query(**overrides: object) -> QueryDefinitionV1:
         "result_shape": "path",
         "result_cardinality": "many",
         "dedupe": "path",
-        "projection": QueryProjectionV1(
+        "projection": QueryProjection(
             fields=(
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="item_id",
-                    value=QuerySubjectFieldRefV1(binding="item", field="subject_id"),
+                    value=QuerySubjectFieldRef(binding="item", field="subject_id"),
                 ),
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="reviewer_id",
-                    value=QuerySubjectFieldRefV1(binding="reviewer", field="subject_id"),
+                    value=QuerySubjectFieldRef(binding="reviewer", field="subject_id"),
                 ),
             )
         ),
         "orderings": (
-            QueryOrderingV1(
-                key=QuerySubjectFieldRefV1(binding="item", field="subject_id"),
+            QueryOrdering(
+                key=QuerySubjectFieldRef(binding="item", field="subject_id"),
                 value_type="string",
             ),
         ),
         "includes": (
-            QueryIncludeV1(
+            QueryInclude(
                 name="status",
                 binding="status_holder",
                 from_binding="item",
@@ -164,20 +164,20 @@ def active_work_query(**overrides: object) -> QueryDefinitionV1:
                 max_items=1,
             ),
         ),
-        "parameters": (QueryParameterDeclarationV1(name="status", value_type="string"),),
-        "evaluation_policy": QueryEvaluationPolicyV1(
+        "parameters": (QueryParameterDeclaration(name="status", value_type="string"),),
+        "evaluation_policy": QueryEvaluationPolicy(
             visible_verdicts=("supported",),
             visible_currency=("current",),
             conflict_behavior="surface_conflicts",
-            result_expiry=CanonicalDurationV1(microseconds=3_600_000_000),
+            result_expiry=CanonicalDuration(microseconds=3_600_000_000),
         ),
-        "default_budgets": QueryBudgetsV1(
+        "default_budgets": QueryBudgets(
             max_results=50,
             max_traversal_depth=2,
             max_paths=200,
             max_paths_per_result=5,
         ),
-        "maximum_budgets": QueryBudgetsV1(
+        "maximum_budgets": QueryBudgets(
             max_results=500,
             max_traversal_depth=4,
             max_paths=2000,
@@ -189,47 +189,47 @@ def active_work_query(**overrides: object) -> QueryDefinitionV1:
         ),
     }
     fields.update(overrides)
-    return QueryDefinitionV1(**fields)  # type: ignore[arg-type]
+    return QueryDefinition(**fields)  # type: ignore[arg-type]
 
 
-def single_status_query(**overrides: object) -> QueryDefinitionV1:
+def single_status_query(**overrides: object) -> QueryDefinition:
     """A one-cardinality Subject read that refuses rather than picking a winner."""
 
     fields: dict[str, object] = {
         "identity": ArtifactIdentity(kind="QueryDefinition", name="project.work_item_status"),
-        "entry": QueryEntryV1(
+        "entry": QueryEntry(
             binding="item",
             subject_kinds=("project.work_item",),
-            subject_id=QueryParameterRefV1(parameter="item_id"),
+            subject_id=QueryParameterRef(parameter="item_id"),
         ),
         "result_binding": "item",
         "result_shape": "subject",
         "result_cardinality": "one",
         "dedupe": "subject",
-        "projection": QueryProjectionV1(
+        "projection": QueryProjection(
             fields=(
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="status",
-                    value=QueryClaimValueRefV1(binding="item", predicate=STATUS_PREDICATE),
+                    value=QueryClaimValueRef(binding="item", predicate=STATUS_PREDICATE),
                 ),
             )
         ),
-        "parameters": (QueryParameterDeclarationV1(name="item_id", value_type="string"),),
-        "evaluation_policy": QueryEvaluationPolicyV1(
+        "parameters": (QueryParameterDeclaration(name="item_id", value_type="string"),),
+        "evaluation_policy": QueryEvaluationPolicy(
             visible_verdicts=("supported",),
             visible_currency=("current",),
             conflict_behavior="refuse_on_conflict",
         ),
-        "default_budgets": QueryBudgetsV1(max_results=1, max_traversal_depth=0),
-        "maximum_budgets": QueryBudgetsV1(max_results=1, max_traversal_depth=0),
+        "default_budgets": QueryBudgets(max_results=1, max_traversal_depth=0),
+        "maximum_budgets": QueryBudgets(max_results=1, max_traversal_depth=0),
         "pins": (claim_type_pin(STATUS_PREDICATE),),
     }
     fields.update(overrides)
-    return QueryDefinitionV1(**fields)  # type: ignore[arg-type]
+    return QueryDefinition(**fields)  # type: ignore[arg-type]
 
 
-def accepted_query(query: QueryDefinitionV1) -> AcceptedQueryDefinitionV1:
-    return AcceptedQueryDefinitionV1(
+def accepted_query(query: QueryDefinition) -> AcceptedQueryDefinition:
+    return AcceptedQueryDefinition(
         path=query_definition_path(query.identity.name),
         query=query,
         artifact_digest=query_definition_digest(query).tagged,
@@ -241,7 +241,7 @@ def accepted_query(query: QueryDefinitionV1) -> AcceptedQueryDefinitionV1:
 
 def test_query_definition_parse_render_digest_and_path_match_frozen_golden() -> None:
     fixture = json.loads(GOLDEN.read_bytes())
-    query = QueryDefinitionV1.model_validate(fixture["query_definition"])
+    query = QueryDefinition.model_validate(fixture["query_definition"])
 
     assert query == active_work_query()
     assert query_definition_path(query.identity.name) == QUERY_PATH
@@ -320,7 +320,7 @@ def test_query_grammar_refuses_unknown_filter_ref_and_policy_kinds() -> None:
         "pattern": ".*",
     }
     with pytest.raises(ValidationError):
-        QueryDefinitionV1.model_validate(unknown_filter)
+        QueryDefinition.model_validate(unknown_filter)
 
     unknown_ref = json.loads(json.dumps(payload))
     unknown_ref["orderings"][0]["key"] = {
@@ -330,22 +330,22 @@ def test_query_grammar_refuses_unknown_filter_ref_and_policy_kinds() -> None:
         "property": "status",
     }
     with pytest.raises(ValidationError):
-        QueryDefinitionV1.model_validate(unknown_ref)
+        QueryDefinition.model_validate(unknown_ref)
 
     unknown_policy = json.loads(json.dumps(payload))
     unknown_policy["evaluation_policy"]["conflict_behavior"] = "last_write_wins"
     with pytest.raises(ValidationError):
-        QueryDefinitionV1.model_validate(unknown_policy)
+        QueryDefinition.model_validate(unknown_policy)
 
     unknown_tag = json.loads(json.dumps(payload))
     unknown_tag["evaluation_policy"]["tag"] = "playbill-query-evaluation-policy-v2"
     with pytest.raises(ValidationError):
-        QueryDefinitionV1.model_validate(unknown_tag)
+        QueryDefinition.model_validate(unknown_tag)
 
     extra_field = json.loads(json.dumps(payload))
     extra_field["relationship_state"] = "pending"
     with pytest.raises(ValidationError):
-        QueryDefinitionV1.model_validate(extra_field)
+        QueryDefinition.model_validate(extra_field)
 
 
 def test_query_grammar_requires_canonical_ordering_and_unique_declarations() -> None:
@@ -357,25 +357,25 @@ def test_query_grammar_requires_canonical_ordering_and_unique_declarations() -> 
             )
         )
     with pytest.raises(ValidationError, match="at least two operands"):
-        QueryConjunctionFilterV1(
-            filters=(QueryClaimPresenceFilterV1(binding="item", predicate=STATUS_PREDICATE),)
+        QueryConjunctionFilter(
+            filters=(QueryClaimPresenceFilter(binding="item", predicate=STATUS_PREDICATE),)
         )
     with pytest.raises(ValidationError, match="sorted"):
-        QueryConjunctionFilterV1(
+        QueryConjunctionFilter(
             filters=(
-                QueryClaimPresenceFilterV1(binding="item", predicate=STATUS_PREDICATE),
-                QueryClaimPresenceFilterV1(binding="item", predicate=STATUS_PREDICATE),
+                QueryClaimPresenceFilter(binding="item", predicate=STATUS_PREDICATE),
+                QueryClaimPresenceFilter(binding="item", predicate=STATUS_PREDICATE),
             )
         )
     with pytest.raises(ValidationError, match="not repeat an ordering key"):
         active_work_query(
             orderings=(
-                QueryOrderingV1(
-                    key=QuerySubjectFieldRefV1(binding="item", field="subject_id"),
+                QueryOrdering(
+                    key=QuerySubjectFieldRef(binding="item", field="subject_id"),
                     value_type="string",
                 ),
-                QueryOrderingV1(
-                    key=QuerySubjectFieldRefV1(binding="item", field="subject_id"),
+                QueryOrdering(
+                    key=QuerySubjectFieldRef(binding="item", field="subject_id"),
                     direction="descending",
                     value_type="string",
                 ),
@@ -389,7 +389,7 @@ def test_query_grammar_closes_binding_parameter_and_predicate_references() -> No
     with pytest.raises(ValidationError, match="extend an earlier declared binding"):
         active_work_query(
             traversal=(
-                QueryTraversalStepV1(
+                QueryTraversalStep(
                     binding="reviewer",
                     from_binding="missing",
                     predicate=REVIEWER_PREDICATE,
@@ -400,14 +400,14 @@ def test_query_grammar_closes_binding_parameter_and_predicate_references() -> No
     with pytest.raises(ValidationError, match="result_binding"):
         active_work_query(result_binding="status_holder")
     with pytest.raises(ValidationError, match="own source and target binding"):
-        QueryIncludeV1(
+        QueryInclude(
             name="status",
             binding="status_holder",
             from_binding="item",
             predicate=STATUS_PREDICATE,
             direction="forward",
             max_items=1,
-            where=QueryClaimPresenceFilterV1(binding="reviewer", predicate=STATUS_PREDICATE),
+            where=QueryClaimPresenceFilter(binding="reviewer", predicate=STATUS_PREDICATE),
         )
 
 
@@ -463,10 +463,10 @@ def test_query_result_shape_dedupe_and_traversal_rules_stay_consistent() -> None
         single_status_query(
             result_shape="path",
             dedupe="path",
-            default_budgets=QueryBudgetsV1(
+            default_budgets=QueryBudgets(
                 max_results=1, max_traversal_depth=0, max_paths=1, max_paths_per_result=1
             ),
-            maximum_budgets=QueryBudgetsV1(
+            maximum_budgets=QueryBudgets(
                 max_results=1, max_traversal_depth=0, max_paths=1, max_paths_per_result=1
             ),
         )
@@ -480,7 +480,7 @@ def test_query_result_shape_dedupe_and_traversal_rules_stay_consistent() -> None
             result_binding="item",
             dedupe="subject",
             traversal=(
-                QueryTraversalStepV1(
+                QueryTraversalStep(
                     binding="reviewer",
                     from_binding="item",
                     predicate=REVIEWER_PREDICATE,
@@ -499,11 +499,11 @@ def test_one_cardinality_queries_refuse_or_surface_conflicts_but_never_pick_a_wi
     assert query.default_budgets.max_results == 1
     with pytest.raises(ValidationError, match="bound both budgets to one result"):
         single_status_query(
-            default_budgets=QueryBudgetsV1(max_results=2, max_traversal_depth=0),
-            maximum_budgets=QueryBudgetsV1(max_results=2, max_traversal_depth=0),
+            default_budgets=QueryBudgets(max_results=2, max_traversal_depth=0),
+            maximum_budgets=QueryBudgets(max_results=2, max_traversal_depth=0),
         )
     surfaced = single_status_query(
-        evaluation_policy=QueryEvaluationPolicyV1(
+        evaluation_policy=QueryEvaluationPolicy(
             visible_verdicts=("contradicted", "supported"),
             visible_currency=("current",),
             conflict_behavior="surface_conflicts",
@@ -515,7 +515,7 @@ def test_one_cardinality_queries_refuse_or_surface_conflicts_but_never_pick_a_wi
 def test_many_cardinality_queries_must_surface_rather_than_refuse_conflicts() -> None:
     with pytest.raises(ValidationError, match="surface conflicts rather than refuse"):
         active_work_query(
-            evaluation_policy=QueryEvaluationPolicyV1(
+            evaluation_policy=QueryEvaluationPolicy(
                 visible_verdicts=("supported",),
                 visible_currency=("current",),
                 conflict_behavior="refuse_on_conflict",
@@ -524,7 +524,7 @@ def test_many_cardinality_queries_must_surface_rather_than_refuse_conflicts() ->
 
 
 def test_verdict_policy_reuses_the_accepted_claim_verdict_and_currency_vocabulary() -> None:
-    policy = QueryEvaluationPolicyV1(
+    policy = QueryEvaluationPolicy(
         visible_verdicts=("contradicted", "stale", "supported", "unresolved"),
         visible_currency=("current", "stale"),
         conflict_behavior="surface_conflicts",
@@ -533,25 +533,25 @@ def test_verdict_policy_reuses_the_accepted_claim_verdict_and_currency_vocabular
     assert policy.visible_verdicts == ("contradicted", "stale", "supported", "unresolved")
     assert policy.visible_currency == ("current", "stale")
     with pytest.raises(ValidationError):
-        QueryEvaluationPolicyV1(
+        QueryEvaluationPolicy(
             visible_verdicts=("believed",),
             visible_currency=("current",),
             conflict_behavior="surface_conflicts",
         )
     with pytest.raises(ValidationError):
-        QueryEvaluationPolicyV1(
+        QueryEvaluationPolicy(
             visible_verdicts=("supported",),
             visible_currency=("fresh",),
             conflict_behavior="surface_conflicts",
         )
     with pytest.raises(ValidationError, match="at least one Claim verdict"):
-        QueryEvaluationPolicyV1(
+        QueryEvaluationPolicy(
             visible_verdicts=(),
             visible_currency=("current",),
             conflict_behavior="surface_conflicts",
         )
     with pytest.raises(ValidationError, match="sorted"):
-        QueryEvaluationPolicyV1(
+        QueryEvaluationPolicy(
             visible_verdicts=("supported", "contradicted"),
             visible_currency=("current",),
             conflict_behavior="surface_conflicts",
@@ -563,16 +563,16 @@ def test_execution_must_bind_an_explicit_accepted_coordinate_and_evaluation_time
 
     assert policy.requires_accepted_coordinate is True
     assert policy.requires_explicit_evaluation_time is True
-    assert policy.result_expiry == CanonicalDurationV1(microseconds=3_600_000_000)
+    assert policy.result_expiry == CanonicalDuration(microseconds=3_600_000_000)
     payload = policy.model_dump(mode="json")
     with pytest.raises(ValidationError):
-        QueryEvaluationPolicyV1.model_validate({**payload, "requires_accepted_coordinate": False})
+        QueryEvaluationPolicy.model_validate({**payload, "requires_accepted_coordinate": False})
     with pytest.raises(ValidationError):
-        QueryEvaluationPolicyV1.model_validate(
+        QueryEvaluationPolicy.model_validate(
             {**payload, "requires_explicit_evaluation_time": False}
         )
     assert (
-        QueryEvaluationPolicyV1.model_validate({**payload, "result_expiry": None}).result_expiry
+        QueryEvaluationPolicy.model_validate({**payload, "result_expiry": None}).result_expiry
         is None
     )
 
@@ -580,7 +580,7 @@ def test_execution_must_bind_an_explicit_accepted_coordinate_and_evaluation_time
 def test_query_budgets_are_explicit_bounded_and_ceilinged() -> None:
     with pytest.raises(ValidationError, match="exceed their declared ceiling"):
         active_work_query(
-            default_budgets=QueryBudgetsV1(
+            default_budgets=QueryBudgets(
                 max_results=5000,
                 max_traversal_depth=2,
                 max_paths=200,
@@ -589,7 +589,7 @@ def test_query_budgets_are_explicit_bounded_and_ceilinged() -> None:
         )
     with pytest.raises(ValidationError, match="exceeds its declared depth budget"):
         active_work_query(
-            default_budgets=QueryBudgetsV1(
+            default_budgets=QueryBudgets(
                 max_results=50,
                 max_traversal_depth=0,
                 max_paths=200,
@@ -598,20 +598,20 @@ def test_query_budgets_are_explicit_bounded_and_ceilinged() -> None:
         )
     with pytest.raises(ValidationError, match="path budgets"):
         single_status_query(
-            default_budgets=QueryBudgetsV1(
+            default_budgets=QueryBudgets(
                 max_results=1, max_traversal_depth=0, max_paths=2, max_paths_per_result=1
             ),
-            maximum_budgets=QueryBudgetsV1(
+            maximum_budgets=QueryBudgets(
                 max_results=1, max_traversal_depth=0, max_paths=2, max_paths_per_result=1
             ),
         )
     with pytest.raises(ValidationError, match="path budgets"):
         active_work_query(
-            default_budgets=QueryBudgetsV1(max_results=50, max_traversal_depth=2),
-            maximum_budgets=QueryBudgetsV1(max_results=500, max_traversal_depth=4),
+            default_budgets=QueryBudgets(max_results=50, max_traversal_depth=2),
+            maximum_budgets=QueryBudgets(max_results=500, max_traversal_depth=4),
         )
     with pytest.raises(ValidationError, match="declared together"):
-        QueryBudgetsV1(max_results=1, max_traversal_depth=0, max_paths=2)
+        QueryBudgets(max_results=1, max_traversal_depth=0, max_paths=2)
 
 
 # -- acceptance law ------------------------------------------------------
@@ -768,13 +768,13 @@ def test_accepted_query_definition_refuses_a_digest_or_path_that_does_not_reprod
     query = active_work_query()
 
     with pytest.raises(ValidationError, match="does not reproduce|differs from its exact envelope"):
-        AcceptedQueryDefinitionV1(
+        AcceptedQueryDefinition(
             path=QUERY_PATH,
             query=query,
             artifact_digest="sha256:" + "22" * 32,
         )
     with pytest.raises(QueryDefinitionFormatError, match="identity/path disagreement"):
-        AcceptedQueryDefinitionV1(
+        AcceptedQueryDefinition(
             path="query-definitions/other.json",
             query=query,
             artifact_digest=query_definition_digest(query).tagged,
@@ -1000,8 +1000,8 @@ def test_query_definition_grammar_never_imports_donor_query_symbols() -> None:
 
 
 def test_query_literal_values_stay_inside_the_canonical_value_set() -> None:
-    assert QueryLiteralRefV1(value={"nested": ["a", 1, True, None]}).value == {
+    assert QueryLiteralRef(value={"nested": ["a", 1, True, None]}).value == {
         "nested": ["a", 1, True, None]
     }
     with pytest.raises(CanonicalEncodingError, match="floating-point"):
-        QueryLiteralRefV1(value=1.5)
+        QueryLiteralRef(value=1.5)

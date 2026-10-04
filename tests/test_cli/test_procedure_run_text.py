@@ -3,8 +3,8 @@
 from types import SimpleNamespace
 
 from cruxible_client.contracts.procedures.results import (
-    ProcedureAdmissionRefusalV1,
-    ProcedureNodeRefusalV1,
+    ProcedureAdmissionRefusal,
+    ProcedureNodeRefusal,
 )
 from cruxible_client.contracts.repairs import served_repair_for_refusal
 from cruxible_core.cli.commands.playbill import _echo_run_outcome
@@ -17,7 +17,7 @@ def _echo(capsys, **state) -> str:  # type: ignore[no-untyped-def]
 
 
 def test_a_refused_line_run_names_the_code_and_the_runnable_repair(capsys) -> None:
-    refusal = ProcedureAdmissionRefusalV1(
+    refusal = ProcedureAdmissionRefusal(
         code="line_mandate_required",
         message="This Line can propose or settle and has no mandate.",
         repair=served_repair_for_refusal("line_mandate_required"),
@@ -32,7 +32,7 @@ def test_a_refused_line_run_names_the_code_and_the_runnable_repair(capsys) -> No
 
 
 def test_an_input_refusal_names_the_offending_field(capsys) -> None:
-    refusal = ProcedureNodeRefusalV1(
+    refusal = ProcedureNodeRefusal(
         code="contract_input_refused",
         message="The Procedure node input contract refused its value.",
         node_id="procedure",

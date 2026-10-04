@@ -11,20 +11,20 @@ import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.predictions import (
-    ObservationSettlementEvidenceV2,
-    PlaybillSettleRequestV2,
-    PredictionEqualityRuleV1,
-    PredictionObservationSelectorV1,
+    ObservationSettlementEvidence,
+    PlaybillSettleRequest,
+    PredictionEqualityRule,
+    PredictionObservationSelector,
 )
 from cruxible_client.contracts.procedures.windows import (
-    CaptureEventSelectorV1,
-    CaptureEventWindowV1,
-    TriggerEventReferenceV1,
+    CaptureEventSelector,
+    CaptureEventWindow,
+    TriggerEventReference,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.resolution_contracts import (
-    ResolutionContractReferenceV1,
-    ResolutionContractV1,
+    ResolutionContract,
+    ResolutionContractReference,
     render_resolution_contract,
     resolution_contract_digest,
     resolution_contract_path,
@@ -40,7 +40,7 @@ from tests.support.internal_triggers import fire_internal_triggers
 from tests.test_indexes.test_resolution_contracts import _accept_tree
 from tests.test_procedures.p2b5 import test_served_predictions as served
 
-SELECTOR = CaptureEventSelectorV1(
+SELECTOR = CaptureEventSelector(
     capture_contract_identity=ArtifactIdentity(kind="CaptureContract", name="anchor"),
     capture_contract_digest="sha256:" + "a" * 64,
 )
@@ -83,10 +83,10 @@ def settle(instance, contract, observation, *, event=None):  # type: ignore[no-u
     return served.service_settle_playbill_prediction(
         instance,
         prediction_id=contract.identity.name,
-        request=PlaybillSettleRequestV2(
+        request=PlaybillSettleRequest(
             contract=contract,
             trigger_event=event,
-            evidence=ObservationSettlementEvidenceV2(claim=observation),
+            evidence=ObservationSettlementEvidence(claim=observation),
         ),
         actor_context=served._actor(),
         recorded_at=served.RECORDED_AT + timedelta(days=1),
@@ -130,7 +130,7 @@ def overturn(instance, result) -> None:  # type: ignore[no-untyped-def]
     )
 
 
-def land(instance, *, at: datetime, run: str) -> TriggerEventReferenceV1:  # type: ignore[no-untyped-def]
+def land(instance, *, at: datetime, run: str) -> TriggerEventReference:  # type: ignore[no-untyped-def]
     """One produced Capture landing whose contract the event selector names."""
 
     from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
@@ -166,7 +166,7 @@ def land(instance, *, at: datetime, run: str) -> TriggerEventReferenceV1:  # typ
             "observed_at": "2000-01-01T00:00:00Z",
         },
     )
-    return TriggerEventReferenceV1(
+    return TriggerEventReference(
         run_id=f"RUN-{run}",
         partition_id=partition,
         sequence=stored.record.sequence,
@@ -183,21 +183,21 @@ def accept_event_contract(instance, owner, capture, *, name: str = "event-test")
         served._payload(capture, qualifier="prediction", value="ready"),
         "2026-09-02T12:00:45.000000Z",
     )
-    contract = ResolutionContractV1(
+    contract = ResolutionContract(
         identity=ArtifactIdentity(kind="ResolutionContract", name=name),
         hypothesis=hypothesis,
-        observation=PredictionObservationSelectorV1(
+        observation=PredictionObservationSelector(
             subject=subject_address("wi-42"),
             predicate=served.PREDICATE,
             qualifier="prediction-outcome",
         ),
-        rule=PredictionEqualityRuleV1(),
-        window=CaptureEventWindowV1(event=SELECTOR, duration_seconds=3600),
+        rule=PredictionEqualityRule(),
+        window=CaptureEventWindow(event=SELECTOR, duration_seconds=3600),
     )
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree[resolution_contract_path(name)] = render_resolution_contract(contract)
     _accept_tree(instance, owner, tree, timestamp="2026-09-02T12:01:00.000000Z", proposal_name=name)
-    return contract, ResolutionContractReferenceV1(
+    return contract, ResolutionContractReference(
         identity=contract.identity,
         artifact_digest=resolution_contract_digest(contract).tagged,
         coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
@@ -406,7 +406,7 @@ def test_retiring_a_contract_withdraws_what_it_owed(tmp_path: Path) -> None:
 def test_settling_by_window_id_refuses_a_window_retired_before_the_worker_saw_it(
     tmp_path: Path,
 ) -> None:
-    from cruxible_client.contracts.predictions import PlaybillSettleRequestV2
+    from cruxible_client.contracts.predictions import PlaybillSettleRequest
     from cruxible_core.service.procedures.predictions import PredictionRefused
 
     instance, owner, capture, contract = fixed_world(tmp_path)
@@ -425,7 +425,7 @@ def test_settling_by_window_id_refuses_a_window_retired_before_the_worker_saw_it
         served.service_settle_playbill_prediction(
             instance,
             prediction_id=window.bound_contract_id,
-            request=PlaybillSettleRequestV2(observation=observation.identity.name),
+            request=PlaybillSettleRequest(observation=observation.identity.name),
             actor_context=served._actor(),
             recorded_at=FIXED_CLOSES + timedelta(hours=1),
         )

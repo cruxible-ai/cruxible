@@ -30,21 +30,21 @@ from cruxible_client.contracts.claim_type_structure import claim_type_structural
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_path
 from cruxible_client.contracts.claims import LiteralClaimObject, SubjectClaimObject
 from cruxible_client.contracts.discovery import (
-    DiscoveryHitV1,
+    DiscoveryHit,
     DiscoveryMatchBasis,
-    DiscoveryMatchBasisV1,
-    DiscoveryPageV1,
-    DiscoveryRequestV1,
+    DiscoveryMatchBasisKind,
+    DiscoveryPage,
+    DiscoveryRequest,
     normalize_discovery_term,
     reject_locator_or_secret,
 )
 from cruxible_client.contracts.errors import PlaybillError
-from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
-from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpecV1
-from cruxible_client.contracts.query.definitions import AcceptedQueryDefinitionV1
+from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
+from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpec
+from cruxible_client.contracts.query.definitions import AcceptedQueryDefinition
 from cruxible_client.contracts.query.grammar import byte_sorted
 from cruxible_client.contracts.semantic import SemanticAddress
-from cruxible_client.contracts.source_references import CoverageDescriptorV1
+from cruxible_client.contracts.source_references import CoverageDescriptor
 from cruxible_client.contracts.subjects import subject_reuse_signature
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.query.backends import ClaimQueryFactsV1, SubjectQueryViewV1
@@ -308,9 +308,9 @@ def build_discovery_vocabulary(
     view: SubjectQueryViewV1,
     facts: ClaimQueryFactsV1,
     claim_types: Iterable[ClaimType] = (),
-    definitions: Iterable[AcceptedQueryDefinitionV1] = (),
-    procedures: Iterable[AcceptedProcedureV1] = (),
-    line_specs: Iterable[AcceptedLineSpecV1] = (),
+    definitions: Iterable[AcceptedQueryDefinition] = (),
+    procedures: Iterable[AcceptedProcedure] = (),
+    line_specs: Iterable[AcceptedLineSpec] = (),
 ) -> DiscoveryVocabularyV1:
     """Project the accepted naming layer at one coordinate into discovery entries.
 
@@ -486,9 +486,9 @@ def _with_reverse_dependencies(
 # -- matching -------------------------------------------------------------
 
 
-def _basis(basis: str, matched_text: str | None) -> DiscoveryMatchBasisV1:
-    return DiscoveryMatchBasisV1(
-        basis=cast(DiscoveryMatchBasis, basis),
+def _basis(basis: str, matched_text: str | None) -> DiscoveryMatchBasis:
+    return DiscoveryMatchBasis(
+        basis=cast(DiscoveryMatchBasisKind, basis),
         matched_text=matched_text,
     )
 
@@ -498,8 +498,8 @@ def _direct_bases(
     *,
     query: str,
     entrypoint: str | None,
-) -> tuple[DiscoveryMatchBasisV1, ...]:
-    found: dict[tuple[str, str | None], DiscoveryMatchBasisV1] = {}
+) -> tuple[DiscoveryMatchBasis, ...]:
+    found: dict[tuple[str, str | None], DiscoveryMatchBasis] = {}
 
     def add(basis: str, matched_text: str | None) -> None:
         found[(basis, matched_text)] = _basis(basis, matched_text)
@@ -535,7 +535,7 @@ def _direct_bases(
     )
 
 
-def _hit_priority(bases: tuple[DiscoveryMatchBasisV1, ...]) -> int:
+def _hit_priority(bases: tuple[DiscoveryMatchBasis, ...]) -> int:
     return min(MATCH_BASIS_PRIORITY[item.basis] for item in bases)
 
 
@@ -545,8 +545,8 @@ def _match_entries(
     query: str,
     entrypoint: str | None,
     kinds: frozenset[str],
-) -> tuple[tuple[DiscoveryEntryV1, tuple[DiscoveryMatchBasisV1, ...]], ...]:
-    direct: dict[bytes, tuple[DiscoveryEntryV1, list[DiscoveryMatchBasisV1]]] = {}
+) -> tuple[tuple[DiscoveryEntryV1, tuple[DiscoveryMatchBasis, ...]], ...]:
+    direct: dict[bytes, tuple[DiscoveryEntryV1, list[DiscoveryMatchBasis]]] = {}
     for entry in vocabulary.entries:
         bases = _direct_bases(entry, query=query, entrypoint=entrypoint)
         if not bases:
@@ -591,7 +591,7 @@ def _match_entries(
 
 
 def _selection_basis_digest(
-    request: DiscoveryRequestV1,
+    request: DiscoveryRequest,
     *,
     vocabulary_digest: str,
 ) -> str:
@@ -612,11 +612,11 @@ def _selection_basis_digest(
 
 def _hit(
     entry: DiscoveryEntryV1,
-    bases: tuple[DiscoveryMatchBasisV1, ...],
+    bases: tuple[DiscoveryMatchBasis, ...],
     *,
     at: AcceptedCoordinate,
-) -> DiscoveryHitV1:
-    return DiscoveryHitV1(
+) -> DiscoveryHit:
+    return DiscoveryHit(
         address=entry.address,
         at=at,
         kind=entry.kind,
@@ -632,15 +632,15 @@ def _hit(
     )
 
 
-def _hit_bytes(hits: tuple[DiscoveryHitV1, ...]) -> int:
+def _hit_bytes(hits: tuple[DiscoveryHit, ...]) -> int:
     return len(canonical_bytes([item.model_dump(mode="json") for item in hits]))
 
 
 def discover(
-    request: DiscoveryRequestV1,
+    request: DiscoveryRequest,
     *,
     vocabulary: DiscoveryVocabularyV1,
-) -> DiscoveryPageV1:
+) -> DiscoveryPage:
     """Answer one exact/lexical discovery request without writing anything.
 
     The page is a pure function of the request and the accepted vocabulary
@@ -689,7 +689,7 @@ def discover(
         reasons.add("alias_ambiguous")
 
     available = byte_sorted(tuple({hit.kind for hit in hits}))
-    coverage = CoverageDescriptorV1(
+    coverage = CoverageDescriptor(
         requested_facets=byte_sorted(DISCOVERY_PROFILE_KINDS[request.profile]),
         available_facets=available,
         truncated_facets=byte_sorted(tuple(truncated)),
@@ -708,7 +708,7 @@ def discover(
             "selection_basis_digest": selection_basis_digest,
         },
     ).tagged
-    return DiscoveryPageV1(
+    return DiscoveryPage(
         coordinate_kind="accepted",
         at=request.at,
         evaluation_time=request.evaluation_time,

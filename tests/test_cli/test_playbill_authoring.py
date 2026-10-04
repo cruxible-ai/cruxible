@@ -22,17 +22,17 @@ from cruxible_client.authoring.examples import (
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.inputs import (
-    AuthoringChangeSetMemberInputV1,
-    AuthoringInputV1,
+    AuthoringChangeSetMemberInput,
+    AuthoringInput,
 )
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV1,
-    ProjectionClaimBackingV1,
+    ProjectionClaimBacking,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.authoring.lowering import CHANGE_SET_SINGLETON_ONLY_MEMBERS
 from cruxible_core.claims.claim_type_inputs import (
-    ClaimTypeInputV1,
+    ClaimTypeInputRecord,
     claim_type_input_template,
     lower_claim_type_input,
 )
@@ -252,7 +252,7 @@ def test_cli_claim_type_template_is_complete_model_generated_and_local(monkeypat
     result = CliRunner().invoke(cli, ["playbill", "claim-type", "propose", "--template"])
 
     assert result.exit_code == 0, result.output
-    rendered = ClaimTypeInputV1.model_validate(json.loads(result.stdout))
+    rendered = ClaimTypeInputRecord.model_validate(json.loads(result.stdout))
     assert rendered == claim_type_input_template()
     lowered = lower_claim_type_input(rendered, tree={})
     assert lowered.identity.qualified == "ClaimType:project.work_item.status"
@@ -722,26 +722,26 @@ def test_cli_create_help_names_only_kinds_the_discriminators_admit() -> None:
     """Every kind the `create` docstring advertises must be authorable there.
 
     The docstring is the only place an agent learns which `kind` a payload file
-    may carry, so a kind listed there that `AuthoringInputV1` refuses costs a
+    may carry, so a kind listed there that `AuthoringInput` refuses costs a
     whole create round trip -- and so does a member kind that parses but that
     `_lower_change_set` refuses in every set. Both families are read back off
     the rendered help and checked against the discriminated unions and against
     the lowering's own singleton-only table, never against a literal list.
     """
 
-    top_level = TypeAdapter(AuthoringInputV1)
-    member = TypeAdapter(AuthoringChangeSetMemberInputV1)
+    top_level = TypeAdapter(AuthoringInput)
+    member = TypeAdapter(AuthoringChangeSetMemberInput)
     help_output = CliRunner().invoke(cli, ["playbill", "authoring", "create", "--help"]).output
-    member_kinds = _input_kinds(AuthoringChangeSetMemberInputV1)
+    member_kinds = _input_kinds(AuthoringChangeSetMemberInput)
     singleton_only = {item.kind for item in CHANGE_SET_SINGLETON_ONLY_MEMBERS}
     assert singleton_only and singleton_only < member_kinds
 
     advertised_top_level = _kind_family(help_output, "Input kind family")
-    assert advertised_top_level == tuple(sorted(_input_kinds(AuthoringInputV1)))
+    assert advertised_top_level == tuple(sorted(_input_kinds(AuthoringInput)))
     advertised_members = _kind_family(help_output, "Change-set member kind family")
     assert advertised_members == tuple(sorted(member_kinds - singleton_only))
 
-    for kind in _input_kinds(AuthoringInputV1):
+    for kind in _input_kinds(AuthoringInput):
         with pytest.raises(ValidationError) as refusal:
             top_level.validate_python({"kind": kind})
         assert {error["type"] for error in refusal.value.errors()} == {"missing"}, kind
@@ -1173,7 +1173,7 @@ def test_cli_bind_declared_block_refuses_every_role(
         declared_generation=1,
         declared_coordinate=AcceptedCoordinate.model_validate(COORDINATE.model_dump(mode="json")),
         backing=(
-            ProjectionClaimBackingV1(
+            ProjectionClaimBacking(
                 identity=ArtifactIdentity(kind="Claim", name="CLM-existing"),
                 statement_digest="sha256:" + "8" * 64,
             ),

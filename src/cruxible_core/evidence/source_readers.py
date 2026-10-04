@@ -16,14 +16,14 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.captures import (
-    CaptureContractV1,
+    CaptureContract,
+    CaptureEnvelope,
     CaptureEnvelopeAny,
     CaptureEnvelopeV1,
-    CaptureEnvelopeV2,
     CaptureObjectStoreProtocol,
     CaptureRunCoordinateV1,
-    CaptureSelectionBudgetV1,
-    SourceEffectiveTimeV1,
+    CaptureSelectionBudget,
+    SourceEffectiveTime,
     capture_contract_digest,
     capture_digest,
     render_capture_envelope,
@@ -31,8 +31,8 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.providers import ProviderV1
 from cruxible_client.contracts.source_references import (
-    EvidenceCommitmentV1,
-    ExternalSourceReferenceV1,
+    EvidenceCommitment,
+    ExternalSourceReference,
 )
 
 
@@ -64,7 +64,7 @@ class ProducerBindingV1(_StrictSourceReaderModel):
         if self.provider.kind != "Provider":
             raise ValueError("producer binding must name a Provider")
         # Reuse the locator/secret-free source identity validation.
-        ExternalSourceReferenceV1(
+        ExternalSourceReference(
             source_identity=self.logical_source_identity,
             producer_binding_digest="sha256:" + "00" * 32,
             coordinate_type="binding-check-v1",
@@ -90,7 +90,7 @@ class ProducerBindingV1(_StrictSourceReaderModel):
 
 class ExternalSourceReadRequestV1(_StrictSourceReaderModel):
     tag: Literal["playbill-external-source-read-v1"] = "playbill-external-source-read-v1"
-    contract: CaptureContractV1
+    contract: CaptureContract
     provider: ProviderV1
     binding: ProducerBindingV1
     coordinate_type: str
@@ -100,7 +100,7 @@ class ExternalSourceReadRequestV1(_StrictSourceReaderModel):
     materialization: Literal["external", "none", "cas"]
     run_coordinate: CaptureRunCoordinateV1
     observed_at: datetime
-    resource_budget: CaptureSelectionBudgetV1
+    resource_budget: CaptureSelectionBudget
 
     @field_validator("coordinate", "selector", mode="before")
     @classmethod
@@ -142,7 +142,7 @@ class ExternalSourceReadRequestV1(_StrictSourceReaderModel):
             raise ValueError("external coordinate type is not pinned by the CaptureContract")
         if self.selector_type not in selector_types:
             raise ValueError("external selector type is not pinned by the CaptureContract")
-        ExternalSourceReferenceV1(
+        ExternalSourceReference(
             source_identity=self.binding.logical_source_identity,
             producer_binding_digest=self.binding.digest,
             coordinate_type=self.coordinate_type,
@@ -177,10 +177,10 @@ class CaptureAcquisitionReceiptV1(_StrictSourceReaderModel):
     coordinate: object
     selector_type: str
     selector: object
-    commitment: EvidenceCommitmentV1
+    commitment: EvidenceCommitment
     observed_at: datetime = Field(description="Reads EVALUATION INSTANT.")
     replayability: Literal["exact", "attested_only"]
-    source_effective_time: SourceEffectiveTimeV1 | None = None
+    source_effective_time: SourceEffectiveTime | None = None
 
     @field_validator("capture_contract_digest", "producer_binding_digest")
     @classmethod
@@ -228,9 +228,9 @@ class ExternalCaptureAcquisitionV1(_StrictSourceReaderModel):
             if envelope.run_receipt_digest != self.receipt.digest:
                 raise ValueError("Capture envelope differs from its acquisition receipt")
         else:
-            assert isinstance(envelope, CaptureEnvelopeV2)
+            assert isinstance(envelope, CaptureEnvelope)
             source = envelope.source
-            if not isinstance(source, ExternalSourceReferenceV1) or (
+            if not isinstance(source, ExternalSourceReference) or (
                 self.receipt.capture_contract_digest != envelope.capture_contract_digest
                 or self.receipt.producer != envelope.producer
                 or self.receipt.producer_binding_digest != envelope.producer_binding_digest
@@ -261,7 +261,7 @@ class ExternalSourceReaderProtocol(Protocol):
         store: CaptureObjectStoreProtocol,
     ) -> ExternalCaptureAcquisitionV1: ...
 
-    def replay_available(self, source: ExternalSourceReferenceV1) -> bool: ...
+    def replay_available(self, source: ExternalSourceReference) -> bool: ...
 
 
 class _VersionedRecord(_StrictSourceReaderModel):
@@ -272,7 +272,7 @@ class _VersionedRecord(_StrictSourceReaderModel):
     selector: object
     value: object
     replayability: Literal["exact", "attested_only"]
-    source_effective_time: SourceEffectiveTimeV1 | None = None
+    source_effective_time: SourceEffectiveTime | None = None
     provider_signature_verified: bool = False
 
     @field_validator("coordinate", "selector", "value", mode="before")
@@ -315,7 +315,7 @@ class FakeVersionedExternalSourceReader:
         selector: object,
         value: object,
         replayability: Literal["exact", "attested_only"] = "exact",
-        source_effective_time: SourceEffectiveTimeV1 | None = None,
+        source_effective_time: SourceEffectiveTime | None = None,
         provider_signature_verified: bool = False,
     ) -> None:
         """Fixture-only setup; callers typed as the protocol cannot mutate a source."""
@@ -342,7 +342,7 @@ class FakeVersionedExternalSourceReader:
             raise ExternalSourceError("fake source version is immutable once seeded")
         self._records[key] = record
 
-    def replay_available(self, source: ExternalSourceReferenceV1) -> bool:
+    def replay_available(self, source: ExternalSourceReference) -> bool:
         if source.replayability != "exact":
             return False
         return (
@@ -392,7 +392,7 @@ class FakeVersionedExternalSourceReader:
             stored = store.store(material)
             if stored.digest != digest:
                 raise ExternalSourceError("bounded external material did not reproduce in CAS")
-        commitment = EvidenceCommitmentV1(
+        commitment = EvidenceCommitment(
             digest_kind="canonical_value",
             digest=digest,
             materialization=request.materialization,
@@ -411,7 +411,7 @@ class FakeVersionedExternalSourceReader:
             replayability=replayability,
             source_effective_time=record.source_effective_time,
         )
-        source = ExternalSourceReferenceV1(
+        source = ExternalSourceReference(
             source_identity=request.binding.logical_source_identity,
             producer_binding_digest=request.binding.digest,
             coordinate_type=request.coordinate_type,

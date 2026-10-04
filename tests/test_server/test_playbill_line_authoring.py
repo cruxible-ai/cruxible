@@ -13,9 +13,9 @@ from cruxible_client.authoring.inputs import (
     ChangeSetInput,
     LineInput,
     ProcedureInput,
-    ProcedureMandateInputV1,
+    ProcedureMandateInput,
 )
-from cruxible_client.contracts.procedures.models import ProcedureHardCapsV3
+from cruxible_client.contracts.procedures.models import ProcedureHardCaps
 from cruxible_client.transport.http import CruxibleClient
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
 
@@ -143,10 +143,10 @@ def test_example_templates_agree_on_names_and_caps() -> None:
     mandate = authoring_example("procedure-mandate")
     line = authoring_example("line")
     assert isinstance(procedure, ProcedureInput)
-    assert isinstance(mandate, ProcedureMandateInputV1)
+    assert isinstance(mandate, ProcedureMandateInput)
     assert isinstance(line, LineInput)
     assert procedure.definition["name"] == mandate.procedure_name == line.procedure_name
-    caps = ProcedureHardCapsV3.model_validate(procedure.definition["hard_caps"])
+    caps = ProcedureHardCaps.model_validate(procedure.definition["hard_caps"])
     assert mandate.resource_ceiling == caps
 
 
@@ -155,7 +155,7 @@ def test_a_mandate_wider_than_its_procedure_names_each_widened_cap(
 ) -> None:
     http, instance_id, _key = playbill_http
     mandate = authoring_example("procedure-mandate")
-    assert isinstance(mandate, ProcedureMandateInputV1)
+    assert isinstance(mandate, ProcedureMandateInput)
     wide = mandate.model_copy(
         update={
             "resource_ceiling": mandate.resource_ceiling.model_copy(
@@ -182,20 +182,20 @@ def test_the_run_tier_follows_what_the_line_or_procedure_can_do(
 ) -> None:
     """Observe-only runs are reads; a run that can propose needs governed write."""
 
-    from cruxible_client.contracts.line_dispatch import LineDispatchRequestV1
+    from cruxible_client.contracts.line_dispatch import LineDispatchRequest
     from cruxible_core.errors import PermissionDeniedError
     from cruxible_core.runtime import playbill_api
     from cruxible_core.runtime.permissions import PermissionMode, request_permission_scope
     from cruxible_core.service.procedures.procedure_runs import (
-        LineRunRequestV1,
-        ProcedureRunRequestV2,
+        LineRunRequest,
+        ProcedureRunRequest,
     )
 
     http, instance_id, key = playbill_http
     procedure = authoring_example("procedure")
     mandate = authoring_example("procedure-mandate")
     assert isinstance(procedure, ProcedureInput)
-    assert isinstance(mandate, ProcedureMandateInputV1)
+    assert isinstance(mandate, ProcedureMandateInput)
     proposer = procedure.model_copy(
         update={
             "definition": {**procedure.definition, "name": "proposer", "terminal_capability": 2}
@@ -214,13 +214,11 @@ def test_the_run_tier_follows_what_the_line_or_procedure_can_do(
     _accept(http, instance_id, key, change_set)
 
     def line_run(name: str) -> object:
-        return playbill_api.playbill_line_run(
-            instance_id, name, request=LineRunRequestV1(line=name)
-        )
+        return playbill_api.playbill_line_run(instance_id, name, request=LineRunRequest(line=name))
 
     def procedure_run(name: str) -> object:
         return playbill_api.playbill_procedure_run(
-            instance_id, name, request=ProcedureRunRequestV2(input={})
+            instance_id, name, request=ProcedureRunRequest(input={})
         )
 
     with request_permission_scope(PermissionMode.READ_ONLY):
@@ -230,7 +228,7 @@ def test_the_run_tier_follows_what_the_line_or_procedure_can_do(
             lambda: line_run("proposer"),
             lambda: procedure_run("proposer"),
             lambda: playbill_api.playbill_line_dispatch(
-                instance_id, "proposer", request=LineDispatchRequestV1()
+                instance_id, "proposer", request=LineDispatchRequest()
             ),
         ):
             with pytest.raises(PermissionDeniedError) as refused:

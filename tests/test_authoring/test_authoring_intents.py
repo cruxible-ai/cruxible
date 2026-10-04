@@ -8,11 +8,11 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.contracts.authoring.models import (
-    AuthoringClaimStatementV1,
-    ChangeSetAuthoringPayloadV1,
+    AuthoringClaimStatement,
+    ChangeSetAuthoringPayload,
     ClaimAuthoringPayloadV1,
-    SelfSourceBodyV1,
-    SubjectAuthoringPayloadV1,
+    SelfSourceBody,
+    SubjectAuthoringPayload,
     authoring_payload_digest,
 )
 from cruxible_client.contracts.claims import LiteralClaimObject
@@ -28,14 +28,14 @@ TIMESTAMP = "2026-08-21T12:00:00.000000Z"
 
 def _payload(*, value: str = "ready") -> ClaimAuthoringPayloadV1:
     return ClaimAuthoringPayloadV1(
-        statement=AuthoringClaimStatementV1(
+        statement=AuthoringClaimStatement(
             subject=SemanticAddress.whole_artifact("subjects/work_item/wi-42.json"),
             predicate="work.status",
             object=LiteralClaimObject(value=value),
             role="observation",
         ),
         rationale="The writer observed the current work status.",
-        source=SelfSourceBodyV1(
+        source=SelfSourceBody(
             content_base64=base64.b64encode(f"status: {value}".encode()).decode("ascii")
         ),
     )
@@ -163,11 +163,11 @@ def test_resume_is_actor_scoped_and_payload_update_keeps_machine_identity(tmp_pa
     assert coordinator.resume(created.intent.intent_id, actor=actor) == updated
 
 
-def _prose_set(rationale: str) -> ChangeSetAuthoringPayloadV1:
+def _prose_set(rationale: str) -> ChangeSetAuthoringPayload:
     """One change set whose members never move and whose prose does."""
 
-    return ChangeSetAuthoringPayloadV1(
-        members=(SubjectAuthoringPayloadV1(subject=_shell("wi-42")),),
+    return ChangeSetAuthoringPayload(
+        members=(SubjectAuthoringPayload(subject=_shell("wi-42")),),
         rationale=rationale,
     )
 

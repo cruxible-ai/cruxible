@@ -7,16 +7,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
-from cruxible_client.contracts.acquisition_policies import SourceAcquisitionPolicyV1
+from cruxible_client.contracts.acquisition_policies import SourceAcquisitionPolicy
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.canonical import CanonicalValue
-from cruxible_client.contracts.captures import CaptureContractV1
+from cruxible_client.contracts.captures import CaptureContract
 from cruxible_client.contracts.errors import PlaybillExecutionError, PlaybillJournalError
-from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
+from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.contracts import OwnedProcedureContractValidator
-from cruxible_client.contracts.query.grammar import QueryBudgetsV1
+from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_client.contracts.query.results import (
-    ClaimQueryResultV1,
+    ClaimQueryResult,
 )
 from cruxible_core.documents.workspace_file import WorkspaceFileReader
 from cruxible_core.exhaust import (
@@ -125,7 +125,7 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
         *,
         instance: PlaybillInstance,
         evaluation_time: datetime,
-        budgets: QueryBudgetsV1 | None = None,
+        budgets: QueryBudgets | None = None,
     ) -> None:
         self.instance = instance
         self.evaluation_time = evaluation_time
@@ -137,7 +137,7 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
         query: ArtifactPin,
         parameters: CanonicalValue,
         coordinate: AcceptedCoordinate,
-        budgets: QueryBudgetsV1 | None = None,
+        budgets: QueryBudgets | None = None,
     ) -> StateTapReadResultV1:
         if budgets is not None and self.budgets is not None and not budgets.within(self.budgets):
             raise PlaybillExecutionError("state tap query budget exceeds the run ceiling")
@@ -188,7 +188,7 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
     ) -> StateTapReadResultV1:
         from cruxible_client.contracts.claim_reads import (
             MAX_CLAIM_READ_BATCH,
-            ClaimReadBatchRequestV1,
+            ClaimReadBatchRequest,
         )
         from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest
         from cruxible_client.contracts.claims import claim_artifact_digest, claim_statement_digest
@@ -218,13 +218,13 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
             raise PlaybillExecutionError(
                 "Subject is absent, retired, or outside the ClaimType's admitted kinds"
             )
-        budget = self.budgets or QueryBudgetsV1(max_results=256, max_traversal_depth=0)
+        budget = self.budgets or QueryBudgets(max_results=256, max_traversal_depth=0)
         if cardinality == "all" and (limit is None or limit <= 0):
             raise PlaybillExecutionError("A plural Claim read requires an explicit positive limit")
         limit = (
             2 if cardinality == "one" else min(limit or 0, budget.max_results, MAX_CLAIM_READ_BATCH)
         )
-        request = ClaimReadBatchRequestV1.model_validate(
+        request = ClaimReadBatchRequest.model_validate(
             dict(
                 at=coordinate.model_dump(mode="json"),
                 subject_paths=(path,),
@@ -277,7 +277,7 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
         )
 
 
-def state_tap_value(result: ClaimQueryResultV1) -> dict[str, object]:
+def state_tap_value(result: ClaimQueryResult) -> dict[str, object]:
     """Render one query result as the governed value a state tap consumes.
 
     A tap consumes governed data, not advisories. `verdict_visibility` is
@@ -295,7 +295,7 @@ def state_tap_value(result: ClaimQueryResultV1) -> dict[str, object]:
 
 def service_execute_direct_procedure(
     prepared: PreparedProcedureRunV1,
-    accepted: AcceptedProcedureV1,
+    accepted: AcceptedProcedure,
     *,
     journal: LocalJournalBackend,
     bodies: ContentAddressedBodyStore,
@@ -306,8 +306,8 @@ def service_execute_direct_procedure(
     provider_executor: ProviderExecutorProtocol | None = None,
     provider_runtime_invoker: ProviderRuntimeInvokerProtocol | None = None,
     provider_runtime_invoker_factory: Callable[[], ProviderRuntimeInvokerProtocol] | None = None,
-    acquisition_policy: SourceAcquisitionPolicyV1 | None = None,
-    capture_contracts: Mapping[str, CaptureContractV1] | None = None,
+    acquisition_policy: SourceAcquisitionPolicy | None = None,
+    capture_contracts: Mapping[str, CaptureContract] | None = None,
     workspace_file_reader: WorkspaceFileReader | None = None,
     slot_pins: Mapping[str, ArtifactPin] | None = None,
     effective_rung: EffectiveRungV1 | None = None,

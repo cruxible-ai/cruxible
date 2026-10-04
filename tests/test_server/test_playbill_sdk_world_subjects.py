@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 from cruxible_client.authoring.sdk import Playbill
 from cruxible_client.authoring.sdk_types import AbsentSubject
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
-from cruxible_client.contracts.compact_query import PlaybillQueryRequestV1
+from cruxible_client.contracts.compact_query import PlaybillQueryRequest
 from cruxible_client.contracts.subjects import (
     parse_subject,
     render_subject,
@@ -89,7 +89,7 @@ def pb(playbill_http: tuple[TestClient, str, Path], tmp_path: Path) -> Playbill:
 def _query(pb: Playbill, **fields: object) -> object:
     return pb._client.query_playbill(  # noqa: SLF001
         pb._instance_id,  # noqa: SLF001
-        request=PlaybillQueryRequestV1.model_validate(fields),
+        request=PlaybillQueryRequest.model_validate(fields),
     )
 
 

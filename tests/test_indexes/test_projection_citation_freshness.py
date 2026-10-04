@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 from cruxible_core.coverage.contracts import (
-    CoverageCommitmentScanProofV1,
-    CoverageLineOverlayV1,
-    LogicalSourceIdentityV1,
-    PlaybillCitationWindowObservationV1,
+    CoverageCommitmentScanProof,
+    CoverageLineOverlay,
+    LogicalSourceIdentity,
+    PlaybillCitationWindowObservation,
     occurrence_identity_digest,
 )
-from cruxible_core.coverage.indexes import WorkingOccurrenceV1
+from cruxible_core.coverage.indexes import WorkingOccurrence
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.discovery.next import (
+    PlaybillNextSourceObservation,
     PlaybillNextSourceObservationV3,
-    PlaybillNextSourceObservationV4,
     _CitationCommitment,
     _source_citation_item,
 )
@@ -42,9 +42,9 @@ def _commitment(
     )
 
 
-def _occurrence(start: int = 5, *, ordinal: int = 0) -> WorkingOccurrenceV1:
-    source = LogicalSourceIdentityV1(plane="external", identity=SOURCE_ID)
-    return WorkingOccurrenceV1(
+def _occurrence(start: int = 5, *, ordinal: int = 0) -> WorkingOccurrence:
+    source = LogicalSourceIdentity(plane="external", identity=SOURCE_ID)
+    return WorkingOccurrence(
         source=source,
         observed_commitment_digest=SELECTION,
         byte_length=10,
@@ -54,7 +54,7 @@ def _occurrence(start: int = 5, *, ordinal: int = 0) -> WorkingOccurrenceV1:
             observed_commitment_digest=SELECTION,
             ordinal=ordinal,
         ),
-        line_overlay=CoverageLineOverlayV1(
+        line_overlay=CoverageLineOverlay(
             start_byte=start,
             end_byte=start + 10,
             start_line=1,
@@ -65,7 +65,7 @@ def _occurrence(start: int = 5, *, ordinal: int = 0) -> WorkingOccurrenceV1:
 
 def _observed(
     *,
-    occurrences: tuple[WorkingOccurrenceV1, ...] = (),
+    occurrences: tuple[WorkingOccurrence, ...] = (),
     scanned: tuple[str, ...] = (),
     complete: bool = True,
     digest: str = CHANGED_SOURCE,
@@ -99,20 +99,20 @@ def _repair(
 
 def _observed_v4(
     *,
-    occurrences: tuple[WorkingOccurrenceV1, ...] = (),
+    occurrences: tuple[WorkingOccurrence, ...] = (),
     proof: bool = True,
     addressable: bool = True,
     observed_window_digest: str | None = CHANGED_SOURCE,
-) -> PlaybillNextSourceObservationV4:
-    source = LogicalSourceIdentityV1(plane="external", identity=SOURCE_ID)
-    return PlaybillNextSourceObservationV4(
+) -> PlaybillNextSourceObservation:
+    source = LogicalSourceIdentity(plane="external", identity=SOURCE_ID)
+    return PlaybillNextSourceObservation(
         source_id=SOURCE_ID,
         observed_source_digest=CHANGED_SOURCE,
         byte_length=100,
         marker_summaries=(),
         occurrences=occurrences,
         commitment_scan_proofs=(
-            CoverageCommitmentScanProofV1(
+            CoverageCommitmentScanProof(
                 source=source,
                 commitment_digest=SELECTION,
                 byte_length=10,
@@ -121,7 +121,7 @@ def _observed_v4(
         if proof
         else (),
         citation_window_observations=(
-            PlaybillCitationWindowObservationV1(
+            PlaybillCitationWindowObservation(
                 source=source,
                 citation_id=CITATION,
                 commitment_digest=SELECTION,
@@ -136,7 +136,7 @@ def _observed_v4(
     )
 
 
-def _repair_v4(observed: PlaybillNextSourceObservationV4):  # type: ignore[no-untyped-def]
+def _repair_v4(observed: PlaybillNextSourceObservation):  # type: ignore[no-untyped-def]
     return _source_citation_item(
         citation_id=CITATION,
         commitment=_commitment(with_original_span=True),

@@ -36,9 +36,9 @@ from pydantic import ValidationError
 from cruxible_client.contracts.canonical import CanonicalValue
 from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.procedures.results import (
-    ProcedureBudgetBoundaryObservationV1,
+    ProcedureBudgetBoundaryObservation,
     ProcedureRunBudgetDeclaredV1,
-    ProcedureRunBudgetObservedV1,
+    ProcedureRunBudgetObserved,
     ProcedureRunBudgetV1,
 )
 from cruxible_client.contracts.temporal import format_datetime
@@ -325,9 +325,9 @@ def _append_recovery_records(
                         budget=admission.budget,
                         hard_caps=admission.hard_caps,
                     ),
-                    observed=ProcedureRunBudgetObservedV1(
-                        max_items=ProcedureBudgetBoundaryObservationV1(high_water=0),
-                        result_bytes=ProcedureBudgetBoundaryObservationV1(high_water=0),
+                    observed=ProcedureRunBudgetObserved(
+                        max_items=ProcedureBudgetBoundaryObservation(high_water=0),
+                        result_bytes=ProcedureBudgetBoundaryObservation(high_water=0),
                         provider_calls=fold.provider_calls,
                         capture_bytes=0,
                         wall_clock_microseconds=0,

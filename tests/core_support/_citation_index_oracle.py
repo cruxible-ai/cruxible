@@ -20,10 +20,10 @@ from cruxible_client.contracts.query.grammar import byte_sorted
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import (
     SourceAccessClass,
-    SourceHandleV1,
+    SourceHandle,
     source_handle_digest,
 )
-from cruxible_core.coverage.contracts import CoverageClaimCitationV2, LogicalSourceIdentityV1
+from cruxible_core.coverage.contracts import CoverageClaimCitationV2, LogicalSourceIdentity
 from cruxible_core.coverage.indexes import (
     EvidenceCitationIndexV1,
     EvidenceCitationIndexV2,
@@ -38,7 +38,7 @@ from cruxible_core.indexes.projection import AcceptedCoordinate
 class CaptureCitationInputV1(_StrictCoverageIndexModel):
     """One accepted Capture as the evidence index reads it.
 
-    ``source_handle`` is optional because a `SourceHandleV1` is a read-seam
+    ``source_handle`` is optional because a `SourceHandle` is a read-seam
     projection rather than a stored accepted artifact: the ledger holds the
     Capture envelope, and a handle is built when a read needs one. A caller that
     already projected the handle passes it, and drift cards then bind the
@@ -53,7 +53,7 @@ class CaptureCitationInputV1(_StrictCoverageIndexModel):
     capture_digest: str
     envelope: CaptureEnvelopeAny
     access_class: SourceAccessClass = "instance"
-    source_handle: SourceHandleV1 | None = None
+    source_handle: SourceHandle | None = None
 
     @field_validator("capture_digest")
     @classmethod
@@ -88,7 +88,7 @@ class _CitationRow:
     commitment_digest: str
     digest_kind: Literal["exact_bytes", "canonical_value", "query_result", "provider_statement"]
     byte_length: int | None
-    accepted_source: LogicalSourceIdentityV1 | None
+    accepted_source: LogicalSourceIdentity | None
     access_class: SourceAccessClass
     capture_digests: set[str] = field(default_factory=set)
     claim_paths: set[str] = field(default_factory=set)
@@ -104,7 +104,7 @@ def build_evidence_citation_index(
 ) -> EvidenceCitationIndexV1:
     """Turn accepted Capture and Claim facts into the reverse evidence index.
 
-    The Claim side is the reverse of `ClaimBacking.capture_digests`: a Claim that
+    The Claim side is the reverse of `ClaimBackingV1.capture_digests`: a Claim that
     pins a Capture is a citation of that Capture's commitment, and the count of
     such Claims is the bounded dependent count a drift card reports. A Capture
     nobody has pinned yet is still indexed -- it is accepted evidence with no

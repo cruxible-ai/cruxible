@@ -21,10 +21,10 @@ from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, 
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.policies import (
     AttestationRequirement,
-    ClaimAdmissionPolicyV1,
+    ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV2,
     ClaimEvidenceAdmissionRuleV2,
-    ClaimResolutionPolicyV1,
+    ClaimResolutionPolicy,
 )
 
 ClaimTypeProfileId = Literal[
@@ -44,7 +44,7 @@ class _StrictProfileModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class ClaimTypeProfileDefinitionV1(_StrictProfileModel):
+class ClaimTypeProfileDefinition(_StrictProfileModel):
     tag: Literal["playbill-claim-type-profile-definition-v1"] = (
         "playbill-claim-type-profile-definition-v1"
     )
@@ -71,7 +71,7 @@ class ClaimTypeProfileDefinitionV1(_StrictProfileModel):
         return value
 
     @model_validator(mode="after")
-    def _self_digest(self) -> "ClaimTypeProfileDefinitionV1":
+    def _self_digest(self) -> "ClaimTypeProfileDefinition":
         payload = self.model_dump(mode="json")
         payload.pop("tag")
         payload.pop("profile_digest")
@@ -92,7 +92,7 @@ def _profile(
     *,
     required: tuple[str, ...] = (),
     optional: tuple[str, ...] = (),
-) -> ClaimTypeProfileDefinitionV1:
+) -> ClaimTypeProfileDefinition:
     values: dict[str, object] = {
         "profile_id": profile_id,
         "required_parameters": list(required),
@@ -104,7 +104,7 @@ def _profile(
         "playbill-claim-type-profile-definition-v1",
         values,
     ).tagged
-    return ClaimTypeProfileDefinitionV1(
+    return ClaimTypeProfileDefinition(
         profile_id=profile_id,
         required_parameters=required,
         optional_parameters=optional,
@@ -113,7 +113,7 @@ def _profile(
     )
 
 
-CLAIM_TYPE_AUTHORING_PROFILES: tuple[ClaimTypeProfileDefinitionV1, ...] = (
+CLAIM_TYPE_AUTHORING_PROFILES: tuple[ClaimTypeProfileDefinition, ...] = (
     _profile(
         "append-only-source-observation-v1",
         required=("capture_contract_digest", "evidence_kind"),
@@ -134,7 +134,7 @@ CLAIM_TYPE_AUTHORING_PROFILES: tuple[ClaimTypeProfileDefinitionV1, ...] = (
 )
 
 
-class ClaimTypeProfileInputV1(_StrictProfileModel):
+class ClaimTypeProfileInput(_StrictProfileModel):
     tag: Literal["playbill-claim-type-profile-input-v1"] = "playbill-claim-type-profile-input-v1"
     profile_id: str
     profile_digest: str
@@ -160,7 +160,7 @@ class ClaimTypeProfileInputV1(_StrictProfileModel):
         return {str(key): item for key, item in normalized.items()}
 
 
-class ClaimTypeExpansionEvidenceV1(_StrictProfileModel):
+class ClaimTypeExpansionEvidence(_StrictProfileModel):
     tag: Literal["playbill-claim-type-expansion-evidence-v1"] = (
         "playbill-claim-type-expansion-evidence-v1"
     )
@@ -195,7 +195,7 @@ class ClaimTypeExpansionEvidenceV1(_StrictProfileModel):
         return {str(key): item for key, item in normalized.items()}
 
     @model_validator(mode="after")
-    def _override_binding(self) -> "ClaimTypeExpansionEvidenceV1":
+    def _override_binding(self) -> "ClaimTypeExpansionEvidence":
         expected = typed_digest(
             Sha256Value,
             "playbill-claim-type-profile-overrides-v1",
@@ -206,15 +206,15 @@ class ClaimTypeExpansionEvidenceV1(_StrictProfileModel):
         return self
 
 
-class ClaimTypeExpansionResultV1(_StrictProfileModel):
+class ClaimTypeExpansionResult(_StrictProfileModel):
     tag: Literal["playbill-claim-type-expansion-result-v1"] = (
         "playbill-claim-type-expansion-result-v1"
     )
     claim_type: ClaimType
-    evidence: ClaimTypeExpansionEvidenceV1
+    evidence: ClaimTypeExpansionEvidence
 
 
-def _definitions() -> dict[str, ClaimTypeProfileDefinitionV1]:
+def _definitions() -> dict[str, ClaimTypeProfileDefinition]:
     return {item.profile_id: item for item in CLAIM_TYPE_AUTHORING_PROFILES}
 
 
@@ -241,9 +241,9 @@ def _profile_policies(
     structure: ClaimTypeStructure,
     parameters: dict[str, object],
     overrides: dict[str, object],
-) -> tuple[ClaimEvidenceAdmissionPolicyV2, ClaimAdmissionPolicyV1, ClaimResolutionPolicyV1]:
+) -> tuple[ClaimEvidenceAdmissionPolicyV2, ClaimAdmissionPolicy, ClaimResolutionPolicy]:
     evidence = ClaimEvidenceAdmissionPolicyV2()
-    admission = ClaimAdmissionPolicyV1()
+    admission = ClaimAdmissionPolicy()
     if profile_id in {
         "append-only-source-observation-v1",
         "source-backed-scientific-result-v1",
@@ -285,7 +285,7 @@ def _profile_policies(
     require_current = overrides.get("require_current", True)
     if conflict_result not in {"unresolved", "refuse"} or not isinstance(require_current, bool):
         raise AuthoringProfileError("profile override value is invalid")
-    resolution = ClaimResolutionPolicyV1(
+    resolution = ClaimResolutionPolicy(
         cardinality=structure.cardinality,
         eligible_verdicts=("supported",),
         require_current=require_current,
@@ -295,7 +295,7 @@ def _profile_policies(
     return evidence, admission, resolution
 
 
-def expand_claim_type_profile(request: ClaimTypeProfileInputV1) -> ClaimTypeExpansionResultV1:
+def expand_claim_type_profile(request: ClaimTypeProfileInput) -> ClaimTypeExpansionResult:
     """Expand compact authoring input into the only bytes candidate law will see."""
 
     definition = _definitions().get(request.profile_id)
@@ -337,9 +337,9 @@ def expand_claim_type_profile(request: ClaimTypeProfileInputV1) -> ClaimTypeExpa
         lifecycle=ArtifactLifecycle(),
     )
     rendered = render_claim_type(claim_type)
-    return ClaimTypeExpansionResultV1(
+    return ClaimTypeExpansionResult(
         claim_type=claim_type,
-        evidence=ClaimTypeExpansionEvidenceV1(
+        evidence=ClaimTypeExpansionEvidence(
             profile_id=definition.profile_id,
             profile_digest=definition.profile_digest,
             authoring_source_digest=request.authoring_source_digest,
@@ -361,7 +361,7 @@ def expand_claim_type_profile(request: ClaimTypeProfileInputV1) -> ClaimTypeExpa
 
 
 def verify_claim_type_expansion_evidence(
-    evidence: ClaimTypeExpansionEvidenceV1,
+    evidence: ClaimTypeExpansionEvidence,
     *,
     claim_type: ClaimType,
     compiler_digest: str,
@@ -395,10 +395,10 @@ __all__ = [
     "AuthoringProfileError",
     "CLAIM_TYPE_AUTHORING_PROFILES",
     "ClaimTypeProfileId",
-    "ClaimTypeExpansionEvidenceV1",
-    "ClaimTypeExpansionResultV1",
-    "ClaimTypeProfileDefinitionV1",
-    "ClaimTypeProfileInputV1",
+    "ClaimTypeExpansionEvidence",
+    "ClaimTypeExpansionResult",
+    "ClaimTypeProfileDefinition",
+    "ClaimTypeProfileInput",
     "expand_claim_type_profile",
     "verify_claim_type_expansion_evidence",
 ]

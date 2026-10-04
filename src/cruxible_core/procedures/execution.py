@@ -18,9 +18,9 @@ if TYPE_CHECKING:
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from cruxible_client.contracts.acquisition_policies import (
-    AcquisitionInputDecisionV1,
-    InputAcquisitionRuleV1,
-    SourceAcquisitionPolicyV1,
+    AcquisitionInputDecision,
+    InputAcquisitionRule,
+    SourceAcquisitionPolicy,
     acquisition_policy_digest,
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
@@ -33,11 +33,11 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.captures import (
-    CaptureContractV1,
+    CaptureContract,
     CaptureEnvelopeV1,
     CaptureFormatError,
-    CaptureRetentionErasurePolicyV1,
-    ProviderResultToExternalCaptureV1,
+    CaptureRetentionErasurePolicy,
+    ProviderResultToExternalCapture,
     build_provider_external_capture_v2,
     capture_contract_digest,
 )
@@ -49,10 +49,10 @@ from cruxible_client.contracts.errors import (
     PlaybillJournalIntegrityError,
 )
 from cruxible_client.contracts.procedure_runtime_policy import (
-    ProcedureRuntimePolicyV1,
+    ProcedureRuntimePolicy,
 )
 from cruxible_client.contracts.procedures.artifacts import (
-    AcceptedProcedureV1,
+    AcceptedProcedure,
     procedure_artifact_digest,
 )
 from cruxible_client.contracts.procedures.contracts import (
@@ -61,89 +61,89 @@ from cruxible_client.contracts.procedures.contracts import (
 )
 from cruxible_client.contracts.procedures.graph import analyze_procedure_v3, analyze_procedure_v4
 from cruxible_client.contracts.procedures.line_specs import (
-    AcceptedLineSpecV1,
+    AcceptedLineSpec,
     line_identity_digest,
 )
 from cruxible_client.contracts.procedures.models import (
     TERMINAL_REQUIRED_RUNGS,
+    CaptureEgressNode,
     CaptureEgressNodeV3,
-    CaptureEgressNodeV6,
-    ClaimTapNodeV6,
-    ConstantNodeV6,
-    ExhaustTapNodeV3,
-    GuardNodeV3,
-    GuardPredicateV1,
-    HaltNodeV3,
-    InboxEgressNodeV3,
-    InvokeNodeV6,
-    PredicateOperandV1,
-    ProcedureBudgetV3,
-    ProcedureDefinitionV6,
-    ProcedureHardCapsV3,
-    ProcedurePinSlotRefV1,
-    ProjectNodeV3,
+    ClaimTapNode,
+    ConstantNode,
+    ExhaustTapNode,
+    GuardNode,
+    GuardPredicate,
+    HaltNode,
+    InboxEgressNode,
+    InvokeNode,
+    PredicateOperand,
+    ProcedureBudget,
+    ProcedureDefinition,
+    ProcedureHardCaps,
+    ProcedurePinSlotRef,
+    ProjectNode,
+    ProposeChangeSetNode,
     ProposeChangeSetNodeV3,
-    ProposeChangeSetNodeV6,
+    ProviderNode,
     ProviderNodeV3,
-    ProviderNodeV4,
     RepeatBodyNodeV3,
     RepeatBodyNodeV4,
     RepeatNodeV3,
     RepeatNodeV4,
-    ReturnNodeV6,
-    SelectNodeV6,
+    ReturnNode,
+    SelectNode,
+    SourceNode,
     SourceNodeV3,
-    SourceNodeV4,
+    StateTapNode,
     StateTapNodeV3,
-    StateTapNodeV6,
-    TransformNodeV3,
+    TransformNode,
     authority_for_rung,
     iter_pin_bindings,
 )
 from cruxible_client.contracts.procedures.results import (
-    ProcedureAcquisitionPlanV2,
-    ProcedureAdmissionMaterialManifestV1,
-    ProcedureAdmissionMaterialMemberV1,
-    ProcedureBudgetBoundaryObservationV1,
-    ProcedureBudgetRefusalDetailV1,
-    ProcedureNodeRefusalCodeV1,
+    ProcedureAcquisitionPlan,
+    ProcedureAdmissionMaterialManifest,
+    ProcedureAdmissionMaterialMember,
+    ProcedureBudgetBoundaryObservation,
+    ProcedureBudgetRefusalDetail,
+    ProcedureNodeRefusalCode,
+    ProcedureProviderBinding,
     ProcedureProviderBindingV1,
-    ProcedureProviderBindingV2,
-    ProcedureReplayInputProjectionV1,
+    ProcedureReplayInputProjection,
     ProcedureRunBudgetDeclaredV1,
-    ProcedureRunBudgetObservedV1,
+    ProcedureRunBudgetObserved,
     ProcedureRunBudgetV1,
-    ProcedureSelectionDecisionV1,
-    ProcedureSourceCaptureAssociationV1,
+    ProcedureSelectionDecision,
+    ProcedureSourceCaptureAssociation,
     procedure_acquisition_plan_digest,
     procedure_admission_material_digest,
     procedure_selection_decision_digest,
 )
-from cruxible_client.contracts.procedures.windows import LineTriggerBindingV1
+from cruxible_client.contracts.procedures.windows import LineTriggerBinding
 from cruxible_client.contracts.provider_contracts import validate_provider_value
 from cruxible_client.contracts.provider_execution import (
-    ProviderEgressObservationV1,
-    ProviderExternalOccurrencePlanV1,
-    ProviderInvocationCompletedV1,
-    ProviderInvocationOutcomeV1,
-    ProviderInvocationOutputDigestV1,
-    ProviderInvocationReceiptV1,
-    ProviderInvocationStartedV1,
-    ProviderSecretBindingIdentityV1,
-    ProviderSecretReceiptReferenceV1,
+    ProviderEgressObservation,
+    ProviderExternalOccurrencePlan,
+    ProviderInvocationCompleted,
+    ProviderInvocationOutcome,
+    ProviderInvocationOutputDigest,
+    ProviderInvocationReceipt,
+    ProviderInvocationStarted,
+    ProviderSecretBindingIdentity,
+    ProviderSecretReceiptReference,
     build_procedure_derived_source_request,
     provider_invocation_output_digest,
     provider_invocation_receipt_digest,
     provider_secret_binding_identity_digest,
 )
-from cruxible_client.contracts.query.grammar import QueryBudgetsV1
-from cruxible_client.contracts.resolution_contracts import InvestigationBindingV1
-from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
+from cruxible_client.contracts.query.grammar import QueryBudgets
+from cruxible_client.contracts.resolution_contracts import InvestigationBinding
+from cruxible_client.contracts.source_references import ExternalSourceReference
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, utc_now
 from cruxible_client.contracts.workspace_file import (
     WORKSPACE_FILE_INTERFACE_DIGESTS,
-    SourceReadReceiptV1,
-    WorkspaceFileSourceRequestV1,
+    SourceReadReceipt,
+    WorkspaceFileSourceRequest,
     source_read_receipt_digest,
 )
 from cruxible_core.documents.workspace_file import (
@@ -374,9 +374,9 @@ class ProcedureResourceBudgetV1(_StrictExecutionModel):
 
 
 def resolve_procedure_resource_budget(
-    budget: ProcedureBudgetV3,
-    hard_caps: ProcedureHardCapsV3,
-    policy: ProcedureRuntimePolicyV1,
+    budget: ProcedureBudget,
+    hard_caps: ProcedureHardCaps,
+    policy: ProcedureRuntimePolicy,
 ) -> ProcedureResourceBudgetV1 | None:
     if policy.result_bytes_cap is None and policy.repeat_attempts_cap is None:
         if budget.max_result_bytes is not None or hard_caps.max_result_bytes is not None:
@@ -428,8 +428,8 @@ class ProcedureRunAdmissionV1(_StrictExecutionModel):
     accepted_state_inputs: tuple[AcceptedStateRunInputV1, ...]
     landed_capture_inputs: tuple[LandedCaptureRunInputV1, ...] = ()
     exhaust_inputs: tuple[ExhaustRunInputV1, ...] = ()
-    budget: ProcedureBudgetV3
-    hard_caps: ProcedureHardCapsV3
+    budget: ProcedureBudget
+    hard_caps: ProcedureHardCaps
     actor_context: GovernedActorContext
     invocation_origin: Literal["actor", "line"] = "actor"
     journal_stream: JournalStreamIdentityV1
@@ -620,7 +620,7 @@ class ProcedureRunAdmissionV3(ProcedureRunAdmissionV2):
     line_identity: ArtifactIdentity | None = None
     occurrence_evaluation_time: datetime
     resolved_provider_bindings: tuple[ProcedureProviderBindingV1, ...]
-    selection_decision: ProcedureSelectionDecisionV1
+    selection_decision: ProcedureSelectionDecision
     selection_decision_digest: str
     provider_output_bytes_cap: int = Field(ge=1)
 
@@ -693,14 +693,14 @@ class ProcedureRunAdmissionV4(ProcedureRunAdmissionV3):
     """Line admission successor carrying the complete Provider binding v2."""
 
     tag: Literal["playbill-procedure-run-admission-v4"] = "playbill-procedure-run-admission-v4"  # type: ignore[assignment]
-    resolved_provider_bindings: tuple[ProcedureProviderBindingV2, ...]  # type: ignore[assignment]
+    resolved_provider_bindings: tuple[ProcedureProviderBinding, ...]  # type: ignore[assignment]
 
     @field_validator("resolved_provider_bindings")
     @classmethod
     def _provider_bindings_v2(
         cls,
-        value: tuple[ProcedureProviderBindingV2, ...],
-    ) -> tuple[ProcedureProviderBindingV2, ...]:
+        value: tuple[ProcedureProviderBinding, ...],
+    ) -> tuple[ProcedureProviderBinding, ...]:
         node_ids = tuple(item.node_id for item in value)
         if node_ids != tuple(sorted(set(node_ids), key=lambda item: item.encode("utf-8"))):
             raise ValueError("resolved Provider v2 bindings must be sorted and node-id unique")
@@ -746,15 +746,15 @@ class ProcedureRunAdmissionV6(ProcedureRunAdmissionV2):
     """Direct investigation successor; older admission digest domains stay frozen."""
 
     tag: Literal["playbill-procedure-run-admission-v6"] = "playbill-procedure-run-admission-v6"  # type: ignore[assignment]
-    investigation: InvestigationBindingV1 | None = None
+    investigation: InvestigationBinding | None = None
 
 
 class ProcedureRunAdmissionV7(ProcedureRunAdmissionV5):
     """Acquisition/Line admission with exact investigation and trigger bindings."""
 
     tag: Literal["playbill-procedure-run-admission-v7"] = "playbill-procedure-run-admission-v7"  # type: ignore[assignment]
-    investigation: InvestigationBindingV1 | None = None
-    trigger_binding: LineTriggerBindingV1 | None = None
+    investigation: InvestigationBinding | None = None
+    trigger_binding: LineTriggerBinding | None = None
 
 
 class ProcedureParentBindingV1(_StrictExecutionModel):
@@ -868,7 +868,7 @@ class PreparedProcedureRunV2(PreparedProcedureRunV1):
 class PreparedProcedureRunV3(PreparedProcedureRunV2):
     tag: Literal["playbill-prepared-procedure-run-v3"] = "playbill-prepared-procedure-run-v3"  # type: ignore[assignment]
     admission: ProcedureRunAdmissionV3
-    admission_material_manifest: ProcedureAdmissionMaterialManifestV1
+    admission_material_manifest: ProcedureAdmissionMaterialManifest
     admission_material_manifest_digest: str
 
     @field_validator("admission_material_manifest_digest")
@@ -904,7 +904,7 @@ class PreparedProcedureRunV5(PreparedProcedureRunV4):
 
     tag: Literal["playbill-prepared-procedure-run-v5"] = "playbill-prepared-procedure-run-v5"  # type: ignore[assignment]
     admission: ProcedureRunAdmissionV5
-    acquisition_plan: ProcedureAcquisitionPlanV2
+    acquisition_plan: ProcedureAcquisitionPlan
     acquisition_plan_digest: str
     required_reservation_ids: tuple[str, ...] = ()
 
@@ -986,7 +986,7 @@ class ProcedureAdmissionBoundPayloadV3(_StrictExecutionModel):
         "playbill-procedure-admission-bound-payload-v3"
     )
     admission: ProcedureRunAdmissionV3
-    admission_material_manifest: ProcedureAdmissionMaterialManifestV1
+    admission_material_manifest: ProcedureAdmissionMaterialManifest
     admission_material_manifest_digest: str
 
     @model_validator(mode="after")
@@ -1021,7 +1021,7 @@ class ProcedureAdmissionBoundPayloadV5(ProcedureAdmissionBoundPayloadV4):
         "playbill-procedure-admission-bound-payload-v5"  # type: ignore[assignment]
     )
     admission: ProcedureRunAdmissionV5
-    acquisition_plan: ProcedureAcquisitionPlanV2
+    acquisition_plan: ProcedureAcquisitionPlan
     acquisition_plan_digest: str
     required_reservation_ids: tuple[str, ...] = ()
 
@@ -1045,7 +1045,7 @@ class ProcedureRunRefusalV1(_StrictExecutionModel):
     node_id: str | None = None
     detail_code: str | None = None
     details: object = Field(default_factory=dict)
-    budget: ProcedureBudgetRefusalDetailV1 | None = None
+    budget: ProcedureBudgetRefusalDetail | None = None
 
     @field_validator("details", mode="before")
     @classmethod
@@ -1183,7 +1183,7 @@ class ProviderInvocationResultV1(_StrictExecutionModel):
 class StateTapReadResultV1(_StrictExecutionModel):
     tag: Literal["playbill-state-tap-read-result-v1"] = "playbill-state-tap-read-result-v1"
     value: object
-    effective_budgets: QueryBudgetsV1
+    effective_budgets: QueryBudgets
 
     @field_validator("value", mode="before")
     @classmethod
@@ -1198,7 +1198,7 @@ class StateTapReaderProtocol(Protocol):
         query: ArtifactPin,
         parameters: CanonicalValue,
         coordinate: AcceptedCoordinate,
-        budgets: QueryBudgetsV1 | None = None,
+        budgets: QueryBudgets | None = None,
     ) -> StateTapReadResultV1: ...
 
     def read_accepted_claim(
@@ -1230,13 +1230,13 @@ class ProviderRuntimeInvokerProtocol(Protocol):
     def bind_provider(
         self,
         *,
-        occurrence: ProviderExternalOccurrencePlanV1,
+        occurrence: ProviderExternalOccurrencePlan,
     ) -> BoundLocalProviderV1: ...
 
     def invoke_provider(
         self,
         *,
-        occurrence: ProviderExternalOccurrencePlanV1,
+        occurrence: ProviderExternalOccurrencePlan,
         context: ProviderRuntimeRunContextV1,
         invocation_id: str,
         bound: BoundLocalProviderV1,
@@ -1316,7 +1316,7 @@ def procedure_pin_set_digest(
 
 def procedure_replay_input_projection(
     run_input: ProcedureRunInputV1,
-) -> ProcedureReplayInputProjectionV1:
+) -> ProcedureReplayInputProjection:
     if isinstance(
         run_input, AcceptedStateRunInputV1 | AcceptedStateRunInputV2 | AcceptedClaimRunInputV1
     ):
@@ -1335,7 +1335,7 @@ def procedure_replay_input_projection(
                 else None
             ),
         }
-        return ProcedureReplayInputProjectionV1(
+        return ProcedureReplayInputProjection(
             input_name=run_input.input_name,
             plane="accepted_state",
             kind="claim_selection"
@@ -1349,7 +1349,7 @@ def procedure_replay_input_projection(
             ).tagged,
         )
     if isinstance(run_input, LandedCaptureRunInputV1):
-        return ProcedureReplayInputProjectionV1(
+        return ProcedureReplayInputProjection(
             input_name=run_input.input_name,
             plane="landed_capture",
             kind="capture",
@@ -1364,7 +1364,7 @@ def procedure_replay_input_projection(
                 },
             ).tagged,
         )
-    return ProcedureReplayInputProjectionV1(
+    return ProcedureReplayInputProjection(
         input_name=run_input.input_name,
         plane="exhaust",
         kind="reduced_exhaust",
@@ -1385,13 +1385,13 @@ def procedure_replay_input_projection(
 
 def procedure_replay_input_vector(
     admission: ProcedureRunAdmissionV1,
-) -> tuple[ProcedureReplayInputProjectionV1, ...]:
+) -> tuple[ProcedureReplayInputProjection, ...]:
     return tuple(procedure_replay_input_projection(item) for item in admission.run_inputs)
 
 
 def _validate_admission_material_manifest(
     admission: ProcedureRunAdmissionV3,
-    manifest: ProcedureAdmissionMaterialManifestV1,
+    manifest: ProcedureAdmissionMaterialManifest,
 ) -> None:
     expected: dict[str, tuple[str, str, str | None]] = {
         item.input_name: (
@@ -1425,10 +1425,10 @@ def _validate_admission_material_manifest(
 def capture_admission_material_member(
     run_input: LandedCaptureRunInputV1,
     *,
-    policy: CaptureRetentionErasurePolicyV1,
+    policy: CaptureRetentionErasurePolicy,
     admitted_at: datetime,
     body_digest: str | None,
-) -> ProcedureAdmissionMaterialMemberV1:
+) -> ProcedureAdmissionMaterialMember:
     """Freeze Capture retention into one admission member at its admission time."""
 
     admitted_at = ensure_utc(admitted_at)
@@ -1437,7 +1437,7 @@ def capture_admission_material_member(
         if policy.body_retention == "required_for_duration" and policy.minimum_retention is not None
         else None
     )
-    return ProcedureAdmissionMaterialMemberV1(
+    return ProcedureAdmissionMaterialMember(
         input_name=run_input.input_name,
         plane="landed_capture",
         semantic_digest=run_input.capture_digest,
@@ -1451,7 +1451,7 @@ def capture_admission_material_member(
 
 def read_admission_material_body(
     bodies: ContentAddressedBodyStore,
-    member: ProcedureAdmissionMaterialMemberV1,
+    member: ProcedureAdmissionMaterialMember,
 ) -> bytes:
     """Read one admitted body or classify local absence without inventing erasure proof."""
 
@@ -1516,7 +1516,7 @@ def _source_capture_association_fields(
 
 def verify_line_admission_spec(
     admission: ProcedureRunAdmissionV3,
-    accepted_line: AcceptedLineSpecV1,
+    accepted_line: AcceptedLineSpec,
 ) -> None:
     """Bind a V3 admission to the exact accepted LineSpec that placed it."""
 
@@ -1627,23 +1627,23 @@ def parse_admission_payload(
 def bind_prepared_investigation(
     prepared: PreparedProcedureRunV5,
     *,
-    investigation: InvestigationBindingV1 | None,
-    trigger: LineTriggerBindingV1 | None = None,
+    investigation: InvestigationBinding | None,
+    trigger: LineTriggerBinding | None = None,
 ) -> PreparedProcedureRunV7: ...
 @overload
 def bind_prepared_investigation(
     prepared: PreparedProcedureRunV2,
     *,
-    investigation: InvestigationBindingV1 | None,
-    trigger: LineTriggerBindingV1 | None = None,
+    investigation: InvestigationBinding | None,
+    trigger: LineTriggerBinding | None = None,
 ) -> PreparedProcedureRunV6 | PreparedProcedureRunV7: ...
 
 
 def bind_prepared_investigation(
     prepared: PreparedProcedureRunV2 | PreparedProcedureRunV5,
     *,
-    investigation: InvestigationBindingV1 | None,
-    trigger: LineTriggerBindingV1 | None = None,
+    investigation: InvestigationBinding | None,
+    trigger: LineTriggerBinding | None = None,
 ) -> PreparedProcedureRunV6 | PreparedProcedureRunV7:
     modern = isinstance(prepared, PreparedProcedureRunV5)
     admission_type = ProcedureRunAdmissionV7 if modern else ProcedureRunAdmissionV6
@@ -1706,7 +1706,7 @@ class ProcedureRuntimePolicyAbsent(PlaybillExecutionError):
 
 def bind_line_admission_runtime_policy(
     admission: ProcedureRunAdmissionV3 | ProcedureRunAdmissionV4 | ProcedureRunAdmissionV5,
-    policy: ProcedureRuntimePolicyV1,
+    policy: ProcedureRuntimePolicy,
 ) -> ProcedureRunAdmissionV3 | ProcedureRunAdmissionV4 | ProcedureRunAdmissionV5:
     """Derive the complete Line admission identity from its governed runtime cap."""
 
@@ -1983,14 +1983,14 @@ def procedure_admission_digest(admission: ProcedureRunAdmissionV1) -> str:
 
 
 def _exact_pin(
-    binding: ArtifactPin | ProcedurePinSlotRefV1,
+    binding: ArtifactPin | ProcedurePinSlotRef,
     *,
     label: str,
     slot_pins: Mapping[str, ArtifactPin] | None = None,
 ) -> ArtifactPin:
     """Resolve one binding to an exact pin, using the LineSpec closure when bound."""
 
-    if isinstance(binding, ProcedurePinSlotRefV1):
+    if isinstance(binding, ProcedurePinSlotRef):
         bound = None if slot_pins is None else slot_pins.get(binding.slot_name)
         if bound is None:
             raise PlaybillExecutionError(f"line_binding_required: {label} uses a LineSpec pin slot")
@@ -1999,7 +1999,7 @@ def _exact_pin(
 
 
 def _node_pin_sets(
-    accepted: AcceptedProcedureV1,
+    accepted: AcceptedProcedure,
     slot_pins: Mapping[str, ArtifactPin] | None = None,
 ) -> tuple[ProcedureNodePinSetV1, ...]:
     result: list[ProcedureNodePinSetV1] = []
@@ -2032,7 +2032,7 @@ def _node_pin_sets(
 
 
 def resolve_procedure_pin(
-    binding: ArtifactPin | ProcedurePinSlotRefV1,
+    binding: ArtifactPin | ProcedurePinSlotRef,
     *,
     label: str,
     slot_pins: Mapping[str, ArtifactPin] | None = None,
@@ -2043,7 +2043,7 @@ def resolve_procedure_pin(
 
 
 def procedure_node_pin_sets(
-    accepted: AcceptedProcedureV1,
+    accepted: AcceptedProcedure,
     slot_pins: Mapping[str, ArtifactPin] | None = None,
 ) -> tuple[ProcedureNodePinSetV1, ...]:
     """Public seam for the exact per-node pin commitment one run must reproduce."""
@@ -2051,19 +2051,19 @@ def procedure_node_pin_sets(
     return _node_pin_sets(accepted, slot_pins)
 
 
-def accepted_procedure_pin_set_digest(accepted: AcceptedProcedureV1) -> str:
+def accepted_procedure_pin_set_digest(accepted: AcceptedProcedure) -> str:
     """Reproduce the direct-runtime pin commitment for one accepted Procedure."""
 
     return procedure_pin_set_digest(accepted.procedure.pins, _node_pin_sets(accepted))
 
 
 def state_tap_parameters(
-    node: StateTapNodeV3 | ClaimTapNodeV6,
+    node: StateTapNodeV3 | ClaimTapNode,
     *,
     invocation_input: object,
     values: dict[str, CanonicalValue],
 ) -> CanonicalValue:
-    if isinstance(node, ClaimTapNodeV6):
+    if isinstance(node, ClaimTapNode):
         return _resolve_template(
             {
                 "subject_kind": node.subject_kind,
@@ -2073,19 +2073,19 @@ def state_tap_parameters(
             input_payload=normalize_canonical(invocation_input),
             outputs=values,
         )
-    if isinstance(node, StateTapNodeV6):
+    if isinstance(node, StateTapNode):
         return _resolve_template(
             node.parameters, input_payload=normalize_canonical(invocation_input), outputs=values
         )
     return normalize_canonical(node.parameters)
 
 
-def state_tap_view(node: StateTapNodeV3 | ClaimTapNodeV6, value: object) -> CanonicalValue:
-    if isinstance(node, StateTapNodeV6):
-        from cruxible_client.contracts.query.results import ClaimQueryResultV1
+def state_tap_view(node: StateTapNodeV3 | ClaimTapNode, value: object) -> CanonicalValue:
+    if isinstance(node, StateTapNode):
+        from cruxible_client.contracts.query.results import ClaimQueryResult
         from cruxible_core.query.engine import query_execution_receipt
 
-        result = ClaimQueryResultV1.model_validate(value)
+        result = ClaimQueryResult.model_validate(value)
         return normalize_canonical(
             {
                 "result": value,
@@ -2104,7 +2104,7 @@ def state_tap_view(node: StateTapNodeV3 | ClaimTapNodeV6, value: object) -> Cano
 
 
 def bind_accepted_state_materials(
-    accepted: AcceptedProcedureV1,
+    accepted: AcceptedProcedure,
     *,
     accepted_coordinate: AcceptedCoordinate,
     state_reader: StateTapReaderProtocol,
@@ -2122,17 +2122,17 @@ def bind_accepted_state_materials(
     materials: list[AcceptedStateRunMaterialV2] = []
     values: dict[str, CanonicalValue] = {}
     for node in accepted.procedure.definition.nodes:
-        if isinstance(node, ConstantNodeV6):
+        if isinstance(node, ConstantNode):
             values[node.as_] = normalize_canonical(node.fields)
-        if not isinstance(node, StateTapNodeV3 | ClaimTapNodeV6):
+        if not isinstance(node, StateTapNodeV3 | ClaimTapNode):
             continue
-        binding = node.claim_type if isinstance(node, ClaimTapNodeV6) else node.query
+        binding = node.claim_type if isinstance(node, ClaimTapNode) else node.query
         query = resolve_procedure_pin(
             binding, slot_pins=slot_pins, label=f"state read {node.node_id!r}"
         )
         parameters = state_tap_parameters(node, invocation_input=invocation_input, values=values)
         try:
-            if isinstance(node, ClaimTapNodeV6):
+            if isinstance(node, ClaimTapNode):
                 assert isinstance(parameters, dict)
                 identity = parameters["subject_id"]
                 if not isinstance(identity, str):
@@ -2152,7 +2152,7 @@ def bind_accepted_state_materials(
                     coordinate=accepted_coordinate,
                     **(
                         {"budgets": node.budgets}
-                        if isinstance(node, StateTapNodeV6) and node.budgets is not None
+                        if isinstance(node, StateTapNode) and node.budgets is not None
                         else {}
                     ),
                 )
@@ -2177,7 +2177,7 @@ def bind_accepted_state_materials(
             AcceptedClaimRunInputV1.model_validate(
                 dict(common, claim_type_digest=query.artifact_digest)
             )
-            if isinstance(node, ClaimTapNodeV6)
+            if isinstance(node, ClaimTapNode)
             else AcceptedStateRunInputV2.model_validate(
                 dict(common, query_definition_digest=query.artifact_digest)
             )
@@ -2188,7 +2188,7 @@ def bind_accepted_state_materials(
 
 
 def prepare_direct_procedure_run(
-    accepted: AcceptedProcedureV1,
+    accepted: AcceptedProcedure,
     *,
     instance_id: str,
     run_id: str | None,
@@ -2203,7 +2203,7 @@ def prepare_direct_procedure_run(
     lane: Literal["current", "replay"] = "current",
     admitted_at: datetime,
     attempt: int = 1,
-    runtime_policy: ProcedureRuntimePolicyV1 | None = None,
+    runtime_policy: ProcedureRuntimePolicy | None = None,
 ) -> PreparedProcedureRunV2:
     """Bind exact accepted state and all pins for an actor-authenticated direct run."""
 
@@ -2331,7 +2331,7 @@ class _RunRefusal(Exception):
         node_id: str | None = None,
         detail_code: str | None = None,
         details: object | None = None,
-        budget: ProcedureBudgetRefusalDetailV1 | None = None,
+        budget: ProcedureBudgetRefusalDetail | None = None,
     ) -> None:
         super().__init__(message)
         self.refusal = ProcedureRunRefusalV1(
@@ -2354,7 +2354,7 @@ class ProcedureBoundaryRefused(PlaybillExecutionError):
 
 
 class _ProviderNodeRefusal(_RunRefusal):
-    def __init__(self, outcome: ProviderInvocationOutcomeV1, *, node_id: str) -> None:
+    def __init__(self, outcome: ProviderInvocationOutcome, *, node_id: str) -> None:
         super().__init__(
             outcome.code or "provider_declined",
             outcome.message or "Provider invocation refused.",
@@ -2432,9 +2432,9 @@ class _RunState:
     result_bytes_boundary: str | None = None
     result_bytes_field_path: str | None = None
     wall_clock_microseconds: int = 0
-    acquisition_plan: ProcedureAcquisitionPlanV2 | None = None
+    acquisition_plan: ProcedureAcquisitionPlan | None = None
     invocation_receipt_digests: list[str] = dataclass_field(default_factory=list)
-    source_capture_associations: list[ProcedureSourceCaptureAssociationV1] = dataclass_field(
+    source_capture_associations: list[ProcedureSourceCaptureAssociation] = dataclass_field(
         default_factory=list
     )
     provider_invocations_started: int = 0
@@ -2510,9 +2510,9 @@ class ProcedureExecutor:
         provider_runtime_invoker_factory: Callable[[], ProviderRuntimeInvokerProtocol]
         | None = None,
         provider_classifier_registry: ProviderBucketClassifierRegistry | None = None,
-        capture_contracts: Mapping[str, CaptureContractV1] | None = None,
+        capture_contracts: Mapping[str, CaptureContract] | None = None,
         source_acquirer: ProcedureSourceAcquirerProtocol | None = None,
-        acquisition_policy: SourceAcquisitionPolicyV1 | None = None,
+        acquisition_policy: SourceAcquisitionPolicy | None = None,
         default_authorizations: tuple[str, ...] = (),
         slot_pins: Mapping[str, ArtifactPin] | None = None,
         effective_rung: EffectiveRungV1 | None = None,
@@ -2551,7 +2551,7 @@ class ProcedureExecutor:
 
     def _pin(
         self,
-        binding: ArtifactPin | ProcedurePinSlotRefV1,
+        binding: ArtifactPin | ProcedurePinSlotRef,
         *,
         label: str,
     ) -> ArtifactPin:
@@ -2562,7 +2562,7 @@ class ProcedureExecutor:
     def execute(
         self,
         prepared: PreparedProcedureRunV1,
-        accepted: AcceptedProcedureV1,
+        accepted: AcceptedProcedure,
     ) -> ProcedureRunResultV1:
         admission = prepared.admission
         self._verify_correspondence(admission, accepted, prepared.accepted_state_materials)
@@ -2611,7 +2611,7 @@ class ProcedureExecutor:
                 + terminal_state
             )
         self._require_current(admission)
-        if any(isinstance(node, InvokeNodeV6) for node in accepted.procedure.definition.nodes):
+        if any(isinstance(node, InvokeNode) for node in accepted.procedure.definition.nodes):
             if self.nested_runner is None:
                 raise PlaybillExecutionError("nested Procedure runner is unavailable")
             self.nested_runner.preflight(accepted, admission)
@@ -2791,7 +2791,7 @@ class ProcedureExecutor:
                     code="budget_exhausted",
                     message=failure_message,
                     node_id=exc.node_id,
-                    budget=ProcedureBudgetRefusalDetailV1(
+                    budget=ProcedureBudgetRefusalDetail(
                         budget_kind=exc.budget_kind,
                         limit=exc.limit,
                         observed=exc.observed,
@@ -2850,7 +2850,7 @@ class ProcedureExecutor:
                     },
                     "terminal_capture": state.terminal_capture,
                 }
-                if isinstance(accepted.procedure.definition, ProcedureDefinitionV6)
+                if isinstance(accepted.procedure.definition, ProcedureDefinition)
                 or isinstance(admission, ProcedureRunAdmissionV8)
                 else {}
             ),
@@ -2881,13 +2881,13 @@ class ProcedureExecutor:
                         else 1_048_576
                     ),
                 ),
-                observed=ProcedureRunBudgetObservedV1(
-                    max_items=ProcedureBudgetBoundaryObservationV1(
+                observed=ProcedureRunBudgetObserved(
+                    max_items=ProcedureBudgetBoundaryObservation(
                         high_water=state.max_items_high_water,
                         boundary=state.max_items_boundary,
                         field_path=state.max_items_field_path,
                     ),
-                    result_bytes=ProcedureBudgetBoundaryObservationV1(
+                    result_bytes=ProcedureBudgetBoundaryObservation(
                         high_water=state.result_bytes_high_water,
                         boundary=state.result_bytes_boundary,
                         field_path=state.result_bytes_field_path,
@@ -2916,12 +2916,12 @@ class ProcedureExecutor:
     def _preflight_source_runtime(
         self,
         prepared: PreparedProcedureRunV5,
-        accepted: AcceptedProcedureV1,
+        accepted: AcceptedProcedure,
     ) -> None:
         """Refuse an incomplete Source closure before the first attempt record."""
 
         sources = tuple(
-            node for node in accepted.procedure.definition.nodes if isinstance(node, SourceNodeV4)
+            node for node in accepted.procedure.definition.nodes if isinstance(node, SourceNode)
         )
         if not sources:
             return
@@ -3109,7 +3109,7 @@ class ProcedureExecutor:
     def _verify_correspondence(
         self,
         admission: ProcedureRunAdmissionV1,
-        accepted: AcceptedProcedureV1,
+        accepted: AcceptedProcedure,
         state_materials: tuple[AcceptedStateRunMaterialV1 | AcceptedStateRunMaterialV2, ...],
     ) -> None:
         procedure = accepted.procedure
@@ -3190,13 +3190,13 @@ class ProcedureExecutor:
             {
                 node.as_: normalize_canonical(node.fields)
                 for node in procedure.definition.nodes
-                if isinstance(node, ConstantNodeV6)
+                if isinstance(node, ConstantNode)
             }
         )
         expected_state_inputs = {
             node.as_: (
                 self._pin(
-                    node.claim_type if isinstance(node, ClaimTapNodeV6) else node.query,
+                    node.claim_type if isinstance(node, ClaimTapNode) else node.query,
                     label=f"state read {node.node_id!r}",
                 ),
                 run_value_digest(
@@ -3207,7 +3207,7 @@ class ProcedureExecutor:
                 ),
             )
             for node in procedure.definition.nodes
-            if isinstance(node, StateTapNodeV3 | ClaimTapNodeV6)
+            if isinstance(node, StateTapNodeV3 | ClaimTapNode)
         }
         actual_state_inputs = {item.input_name: item for item in admission.accepted_state_inputs}
         if set(actual_state_inputs) != set(expected_state_inputs):
@@ -3256,7 +3256,7 @@ class ProcedureExecutor:
     def _verify_input_planes(
         self,
         admission: ProcedureRunAdmissionV1,
-        accepted: AcceptedProcedureV1,
+        accepted: AcceptedProcedure,
     ) -> None:
         """Refuse every cross-plane relabel before the first node can observe a value."""
 
@@ -3265,7 +3265,7 @@ class ProcedureExecutor:
             for node in accepted.procedure.definition.nodes
             if isinstance(
                 node,
-                ClaimTapNodeV6 | StateTapNodeV3 | SourceNodeV3 | SourceNodeV4 | ExhaustTapNodeV3,
+                ClaimTapNode | StateTapNodeV3 | SourceNodeV3 | SourceNode | ExhaustTapNode,
             )
         }
         for run_input in admission.run_inputs:
@@ -3278,7 +3278,7 @@ class ProcedureExecutor:
             try:
                 validate_node_input_plane(node, run_input)
                 if isinstance(run_input, LandedCaptureRunInputV1) and isinstance(
-                    node, SourceNodeV3 | SourceNodeV4
+                    node, SourceNodeV3 | SourceNode
                 ):
                     pin = self._pin(node.capture_contract, label=f"source {node.node_id!r}")
                     if pin.artifact_digest != run_input.capture_contract_digest:
@@ -3291,7 +3291,7 @@ class ProcedureExecutor:
         expected_exhaust = {
             node.as_
             for node in accepted.procedure.definition.nodes
-            if isinstance(node, ExhaustTapNodeV3)
+            if isinstance(node, ExhaustTapNode)
         }
         if {item.input_name for item in admission.exhaust_inputs} != expected_exhaust and (
             admission.invocation_origin == "line"
@@ -3302,7 +3302,7 @@ class ProcedureExecutor:
             )
         for exhaust in admission.exhaust_inputs:
             node = nodes[exhaust.input_name]
-            if not isinstance(node, ExhaustTapNodeV3):  # pragma: no cover - plane law covers it
+            if not isinstance(node, ExhaustTapNode):  # pragma: no cover - plane law covers it
                 raise PlaybillExecutionError("exhaust input names a non-exhaust node")
             reducer = self._pin(
                 node.reducer_or_query,
@@ -3386,7 +3386,7 @@ class ProcedureExecutor:
 
     def _walk(
         self,
-        accepted: AcceptedProcedureV1,
+        accepted: AcceptedProcedure,
         *,
         admission: ProcedureRunAdmissionV1,
         state: _RunState,
@@ -3438,7 +3438,7 @@ class ProcedureExecutor:
                     "node_fired",
                     {"node_id": node.node_id, "kind": node.kind, "verdict": "succeeded"},
                 )
-                if isinstance(node, HaltNodeV3):
+                if isinstance(node, HaltNode):
                     raise _Halted(node_id=node.node_id, reason=node.reason)
             except _RunRefusal:
                 self._append_event(
@@ -3461,12 +3461,12 @@ class ProcedureExecutor:
 
             edges = graph.edges[node.node_id]
             target: str | None
-            if isinstance(node, GuardNodeV3):
+            if isinstance(node, GuardNode):
                 target = edges[branch or "on_false"]
             else:
                 target = edges.get("next")
             if target == "$abort":
-                if isinstance(node, GuardNodeV3):
+                if isinstance(node, GuardNode):
                     raise _RunRefusal(
                         "guard_refused",
                         node.message,
@@ -3481,12 +3481,12 @@ class ProcedureExecutor:
                 )
             if target is None:
                 try:
-                    if isinstance(node, ReturnNodeV6):
+                    if isinstance(node, ReturnNode):
                         result = state.outputs[node.as_]
                         state.return_tokens = (
                             state.alias_tokens(frozenset({node.as_})) | state.control
                         )
-                    elif isinstance(node, CaptureEgressNodeV6 | ProposeChangeSetNodeV6):
+                    elif isinstance(node, CaptureEgressNode | ProposeChangeSetNode):
                         result = _resolve_node_template(
                             node.result,
                             node_id=node.node_id,
@@ -3550,13 +3550,13 @@ class ProcedureExecutor:
         self,
         node: object,
         *,
-        accepted: AcceptedProcedureV1,
+        accepted: AcceptedProcedure,
         admission: ProcedureRunAdmissionV1,
         state: _RunState,
         records: list[StoredProcedureJournalRecordV1],
         started_ns: int,
     ) -> Literal["on_true", "on_false"] | None:
-        if isinstance(node, InvokeNodeV6):
+        if isinstance(node, InvokeNode):
             self._run_child(
                 node,
                 accepted=accepted,
@@ -3566,18 +3566,18 @@ class ProcedureExecutor:
                 started_ns=started_ns,
             )
             return None
-        if isinstance(node, StateTapNodeV3 | ClaimTapNodeV6):
+        if isinstance(node, StateTapNodeV3 | ClaimTapNode):
             if node.as_ not in state.outputs:
                 raise PlaybillExecutionError("admitted state_tap material is absent")
             self._extend_alias(state, node.as_, _node_policy_tokens(node) | state.control)
             return None
-        if isinstance(node, SourceNodeV4):
+        if isinstance(node, SourceNode):
             self._run_source_v4(node, admission=admission, state=state, records=records)
             return None
         if isinstance(node, SourceNodeV3):
             self._run_source(node, admission=admission, state=state, records=records)
             return None
-        if isinstance(node, ExhaustTapNodeV3):
+        if isinstance(node, ExhaustTapNode):
             if node.as_ not in state.outputs:
                 raise _RunRefusal(
                     "line_binding_required",
@@ -3586,9 +3586,9 @@ class ProcedureExecutor:
                 )
             self._extend_alias(state, node.as_, _node_policy_tokens(node) | state.control)
             return None
-        if isinstance(node, HaltNodeV3):
+        if isinstance(node, HaltNode):
             return None
-        if isinstance(node, ProviderNodeV4):
+        if isinstance(node, ProviderNode):
             self._run_provider_v4(
                 node,
                 admission=admission,
@@ -3604,7 +3604,7 @@ class ProcedureExecutor:
                 records=records,
             )
             return None
-        if isinstance(node, TransformNodeV3):
+        if isinstance(node, TransformNode):
             declared_spec = _declared_transform_spec(node.transform_kind, node.spec)
             resolved = _resolve_node_template(
                 declared_spec,
@@ -3647,8 +3647,8 @@ class ProcedureExecutor:
                 base=_base_tokens(node, state, declared_spec),
             )
             return None
-        if isinstance(node, ProjectNodeV3 | SelectNodeV6):
-            if isinstance(node, SelectNodeV6):
+        if isinstance(node, ProjectNode | SelectNode):
+            if isinstance(node, SelectNode):
                 present = [alias for alias in node.sources if alias in state.outputs]
                 if len(present) != 1:
                     raise ProcedureBoundaryRefused(
@@ -3661,7 +3661,7 @@ class ProcedureExecutor:
                 fields = node.fields
             value = (
                 normalize_canonical(fields)
-                if isinstance(node, ConstantNodeV6)
+                if isinstance(node, ConstantNode)
                 else _resolve_node_template(
                     fields,
                     node_id=node.node_id,
@@ -3680,7 +3680,7 @@ class ProcedureExecutor:
                 max_items=_effective_max_items(admission),
                 observe_items=state.observe_items,
             )
-            provenance_fields = {} if isinstance(node, ConstantNodeV6) else fields
+            provenance_fields = {} if isinstance(node, ConstantNode) else fields
             state.provenance[node.as_] = _projected_provenance(
                 provenance_fields,
                 state=state,
@@ -3688,7 +3688,7 @@ class ProcedureExecutor:
                 value=state.outputs[node.as_],
             )
             return None
-        if isinstance(node, GuardNodeV3):
+        if isinstance(node, GuardNode):
             try:
                 verdict, trace = _evaluate_predicate(
                     node.predicate,
@@ -3730,7 +3730,7 @@ class ProcedureExecutor:
             return None
         if isinstance(
             node,
-            CaptureEgressNodeV3 | InboxEgressNodeV3 | ProposeChangeSetNodeV3,
+            CaptureEgressNodeV3 | InboxEgressNode | ProposeChangeSetNodeV3,
         ):
             self._run_terminal(node, admission=admission, state=state, records=records)
             return None
@@ -3828,7 +3828,7 @@ class ProcedureExecutor:
 
     def _run_source_v4(
         self,
-        node: SourceNodeV4,
+        node: SourceNode,
         *,
         admission: ProcedureRunAdmissionV1,
         state: _RunState,
@@ -3903,9 +3903,9 @@ class ProcedureExecutor:
                 "provider_protocol_violation",
                 details={"node_id": node.node_id, "reason": "CaptureContract is unavailable"},
             )
-        source_read_receipt: SourceReadReceiptV1 | None = None
+        source_read_receipt: SourceReadReceipt | None = None
         provider_payload = resolved_request
-        workspace_request: WorkspaceFileSourceRequestV1 | None = None
+        workspace_request: WorkspaceFileSourceRequest | None = None
         if occurrence.interface_digest in WORKSPACE_FILE_INTERFACE_DIGESTS:
             if self.workspace_file_reader is None:
                 raise _RunRefusal(
@@ -3919,7 +3919,7 @@ class ProcedureExecutor:
                     },
                 )
             try:
-                workspace_request = WorkspaceFileSourceRequestV1.model_validate(resolved_request)
+                workspace_request = WorkspaceFileSourceRequest.model_validate(resolved_request)
                 workspace_read = self.workspace_file_reader.read(
                     workspace_request,
                     run_id=admission.run_id,
@@ -4026,10 +4026,10 @@ class ProcedureExecutor:
             return
         try:
             if workspace_request is None or source_read_receipt is None:
-                provider_result = ProviderResultToExternalCaptureV1.model_validate(output)
+                provider_result = ProviderResultToExternalCapture.model_validate(output)
             else:
                 material_bytes = canonical_bytes(output)
-                provider_result = ProviderResultToExternalCaptureV1(
+                provider_result = ProviderResultToExternalCapture(
                     source_identity=workspace_request.logical_source,
                     coordinate_type=workspace_request.coordinate_type,
                     coordinate=workspace_request.coordinate,
@@ -4064,7 +4064,7 @@ class ProcedureExecutor:
             )
             envelope = built.envelope
             source = envelope.source
-            assert isinstance(source, ExternalSourceReferenceV1)
+            assert isinstance(source, ExternalSourceReference)
             material_bytes = base64.b64decode(provider_result.content_base64, validate=True)
             material = normalize_canonical(json.loads(material_bytes))
             if canonical_bytes(material) != material_bytes:
@@ -4145,7 +4145,7 @@ class ProcedureExecutor:
         )
         if decision.disposition == "selected":
             state.source_capture_associations.append(
-                ProcedureSourceCaptureAssociationV1(
+                ProcedureSourceCaptureAssociation(
                     occurrence_path=occurrence.occurrence_path,
                     invocation_receipt_digest=invocation_receipt_digest,
                     capture_digest=built.capture_digest,
@@ -4153,7 +4153,7 @@ class ProcedureExecutor:
             )
         reserved_store.release()
 
-    def _acquisition_rule(self, input_name: str) -> InputAcquisitionRuleV1 | None:
+    def _acquisition_rule(self, input_name: str) -> InputAcquisitionRule | None:
         if self.acquisition_policy is None:
             return None
         for rule in self.acquisition_policy.inputs:
@@ -4163,14 +4163,14 @@ class ProcedureExecutor:
 
     def _bind_acquisition(
         self,
-        node: SourceNodeV3 | SourceNodeV4,
+        node: SourceNodeV3 | SourceNode,
         *,
         admission: ProcedureRunAdmissionV1,
         state: _RunState,
         records: list[StoredProcedureJournalRecordV1],
-        rule: InputAcquisitionRuleV1,
+        rule: InputAcquisitionRule,
         result: ProcedureSourceAcquisitionResultV1,
-        decision: AcquisitionInputDecisionV1,
+        decision: AcquisitionInputDecision,
         occurrence_path: str | None = None,
         invocation_receipt_digest: str | None = None,
     ) -> None:
@@ -4184,7 +4184,7 @@ class ProcedureExecutor:
             )
             raise _RunRefusal(
                 cast(
-                    ProcedureNodeRefusalCodeV1,
+                    ProcedureNodeRefusalCode,
                     decision.reason_codes[0]
                     if decision.reason_codes
                     else "playbill.acquisition.refused",
@@ -4278,9 +4278,9 @@ class ProcedureExecutor:
 
     def _run_child(
         self,
-        node: InvokeNodeV6,
+        node: InvokeNode,
         *,
-        accepted: AcceptedProcedureV1,
+        accepted: AcceptedProcedure,
         admission: ProcedureRunAdmissionV1,
         state: _RunState,
         records: list[StoredProcedureJournalRecordV1],
@@ -4454,7 +4454,7 @@ class ProcedureExecutor:
 
     def _run_terminal(
         self,
-        node: CaptureEgressNodeV3 | InboxEgressNodeV3 | ProposeChangeSetNodeV3,
+        node: CaptureEgressNodeV3 | InboxEgressNode | ProposeChangeSetNodeV3,
         *,
         admission: ProcedureRunAdmissionV1,
         state: _RunState,
@@ -4515,7 +4515,7 @@ class ProcedureExecutor:
                 {**payload, "verdict": "refused_effective_rung"},
             )
             raise _RunRefusal(
-                cast(ProcedureNodeRefusalCodeV1, rung.refusal_code),
+                cast(ProcedureNodeRefusalCode, rung.refusal_code),
                 f"Terminal {node.kind!r} requires {authority_for_rung(required)}; the "
                 f"{SERVED_AUTHORITY_TERMS[rung.limiting_term]} term capped this run at "
                 f"{authority_for_rung(rung.effective_rung)}. "
@@ -4627,7 +4627,7 @@ class ProcedureExecutor:
         if isinstance(request, TerminalEgressRequestV2) and request.kind == "emit_capture":
             assert isinstance(receipt, TerminalEgressReceiptV2)  # verified above
             for child in receipt.children:
-                if isinstance(node, CaptureEgressNodeV6) and len(receipt.children) == 1:
+                if isinstance(node, CaptureEgressNode) and len(receipt.children) == 1:
                     state.terminal_capture = child.egress_digest
                     derived = derive_terminal_item_facts(
                         manifest_dependency_tokens(manifests[child.item_key]),
@@ -4682,14 +4682,14 @@ class ProcedureExecutor:
 
         if isinstance(exc, ProposalDeliveryRefused):
             return _RunRefusal(
-                cast(ProcedureNodeRefusalCodeV1, exc.code),
+                cast(ProcedureNodeRefusalCode, exc.code),
                 str(exc),
                 node_id=node_id,
                 details=exc.details,
             )
         if isinstance(exc, TerminalAuthorityRefusal):
             return _RunRefusal(
-                cast(ProcedureNodeRefusalCodeV1, exc.code),
+                cast(ProcedureNodeRefusalCode, exc.code),
                 str(exc),
                 node_id=node_id,
                 details={
@@ -4703,7 +4703,7 @@ class ProcedureExecutor:
 
     def _terminal_egress_request(
         self,
-        node: CaptureEgressNodeV3 | InboxEgressNodeV3 | ProposeChangeSetNodeV3,
+        node: CaptureEgressNodeV3 | InboxEgressNode | ProposeChangeSetNodeV3,
         *,
         admission: ProcedureRunAdmissionV1,
         rung: EffectiveRungV1,
@@ -4786,7 +4786,7 @@ class ProcedureExecutor:
 
     def _record_terminal_items(
         self,
-        node: CaptureEgressNodeV3 | InboxEgressNodeV3 | ProposeChangeSetNodeV3,
+        node: CaptureEgressNodeV3 | InboxEgressNode | ProposeChangeSetNodeV3,
         *,
         admission: ProcedureRunAdmissionV1,
         state: _RunState,
@@ -4801,7 +4801,7 @@ class ProcedureExecutor:
         declared = _terminal_item_templates(node)
         base = _node_policy_tokens(node) | state.control
         values, item_tokens = _terminal_items(declared, state=state)
-        if isinstance(node, ProposeChangeSetNodeV6):
+        if isinstance(node, ProposeChangeSetNode):
             from cruxible_core.procedures.source_candidates import bind_source_candidate
 
             try:
@@ -4893,7 +4893,7 @@ class ProcedureExecutor:
         node_id: str,
         repeat_node_id: str | None,
         occurrence_kind: Literal["provider", "source"],
-    ) -> ProviderExternalOccurrencePlanV1:
+    ) -> ProviderExternalOccurrencePlan:
         plan = state.acquisition_plan
         if plan is None:
             raise _RunRefusal(
@@ -4925,14 +4925,14 @@ class ProcedureExecutor:
         *,
         node_id: str,
         repeat_node_id: str | None,
-        effect_policy: ArtifactPin | ProcedurePinSlotRefV1 | None,
+        effect_policy: ArtifactPin | ProcedurePinSlotRef | None,
         payload: CanonicalValue,
         contract_out: ArtifactPin | None,
         admission: ProcedureRunAdmissionV1,
         state: _RunState,
         records: list[StoredProcedureJournalRecordV1],
-        occurrence: ProviderExternalOccurrencePlanV1 | None = None,
-    ) -> tuple[CanonicalValue, ProviderInvocationReceiptV1, str]:
+        occurrence: ProviderExternalOccurrencePlan | None = None,
+    ) -> tuple[CanonicalValue, ProviderInvocationReceipt, str]:
         occurrence = occurrence or self._planned_external_occurrence(
             state=state,
             node_id=node_id,
@@ -5026,7 +5026,7 @@ class ProcedureExecutor:
             )
             if refusal is not None:
                 raise _RunRefusal(
-                    cast(ProcedureNodeRefusalCodeV1, refusal[0]),
+                    cast(ProcedureNodeRefusalCode, refusal[0]),
                     refusal[1],
                     node_id=node_id,
                 )
@@ -5058,7 +5058,7 @@ class ProcedureExecutor:
             )
             if outcome.outcome_class == "node_refusal":
                 raise _RunRefusal(
-                    cast(ProcedureNodeRefusalCodeV1, outcome.code),
+                    cast(ProcedureNodeRefusalCode, outcome.code),
                     outcome.message or "Provider binding refused.",
                     node_id=node_id,
                     details=outcome.detail,
@@ -5070,7 +5070,7 @@ class ProcedureExecutor:
             raise _InternalFailure(
                 outcome.code or "provider_protocol_violation", details=outcome.detail
             ) from exc
-        started = ProviderInvocationStartedV1(
+        started = ProviderInvocationStarted(
             invocation_id=invocation_id,
             occurrence_path=occurrence.occurrence_path,
             implementation_digest=occurrence.implementation_digest,
@@ -5144,7 +5144,7 @@ class ProcedureExecutor:
         except ProviderRuntimeWireError as exc:
             outcome = map_provider_refusal(exc.code, message=str(exc), detail={})
         if driver_result is None:
-            egress = ProviderEgressObservationV1(
+            egress = ProviderEgressObservation(
                 declared_endpoints=tuple(
                     item
                     for item in occurrence.local_execution.declared_endpoints
@@ -5181,13 +5181,13 @@ class ProcedureExecutor:
             else occurrence.local_execution
         )
         journal_output = (
-            ProviderInvocationOutputDigestV1(
+            ProviderInvocationOutputDigest(
                 output_digest=provider_invocation_output_digest(output)
             ).model_dump(mode="json")
             if occurrence.occurrence_kind == "source" and output is not None
             else output
         )
-        receipt = ProviderInvocationReceiptV1(
+        receipt = ProviderInvocationReceipt(
             invocation_id=invocation_id,
             occurrence_path=occurrence.occurrence_path,
             run_id=admission.run_id,
@@ -5209,9 +5209,9 @@ class ProcedureExecutor:
             secret_references=tuple(
                 sorted(
                     (
-                        ProviderSecretReceiptReferenceV1(
+                        ProviderSecretReceiptReference(
                             binding_identity_digest=provider_secret_binding_identity_digest(
-                                ProviderSecretBindingIdentityV1(
+                                ProviderSecretBindingIdentity(
                                     realm=reference.realm,
                                     name=reference.name,
                                 )
@@ -5229,7 +5229,7 @@ class ProcedureExecutor:
             stderr=stderr,
         )
         receipt_digest = provider_invocation_receipt_digest(receipt)
-        completed = ProviderInvocationCompletedV1(
+        completed = ProviderInvocationCompleted(
             invocation_id=invocation_id,
             receipt=receipt,
             receipt_digest=receipt_digest,
@@ -5291,7 +5291,7 @@ class ProcedureExecutor:
 
     def _run_provider_v4(
         self,
-        node: ProviderNodeV4,
+        node: ProviderNode,
         *,
         admission: ProcedureRunAdmissionV1,
         state: _RunState,
@@ -5408,7 +5408,7 @@ class ProcedureExecutor:
             )
             if refusal is not None:
                 raise _RunRefusal(
-                    cast(ProcedureNodeRefusalCodeV1, refusal[0]),
+                    cast(ProcedureNodeRefusalCode, refusal[0]),
                     refusal[1],
                     node_id=node.node_id,
                 )
@@ -5915,7 +5915,7 @@ def _base_tokens(
 
 
 def _transform_provenance(
-    node: TransformNodeV3 | RepeatBodyNodeV3 | RepeatBodyNodeV4,
+    node: TransformNode | RepeatBodyNodeV3 | RepeatBodyNodeV4,
     *,
     state: _RunState,
     lineage: tuple[tuple[tuple[str, int], ...], ...] | None,
@@ -5976,7 +5976,7 @@ def _projected_provenance(
 
 
 def _terminal_item_templates(
-    node: CaptureEgressNodeV3 | InboxEgressNodeV3 | ProposeChangeSetNodeV3,
+    node: CaptureEgressNodeV3 | InboxEgressNode | ProposeChangeSetNodeV3,
 ) -> object:
     if isinstance(node, ProposeChangeSetNodeV3):
         return list(node.candidate_templates)
@@ -6024,7 +6024,7 @@ def _terminal_items(
     return values, tuple(shared | state.item_tokens(alias, index) for index in range(len(values)))
 
 
-def _decision_digest(run_id: str, decision: AcquisitionInputDecisionV1) -> str:
+def _decision_digest(run_id: str, decision: AcquisitionInputDecision) -> str:
     return typed_digest(
         Sha256Value,
         "playbill-procedure-acquisition-decision-v1",
@@ -6170,7 +6170,7 @@ def _declared_transform_spec(kind: str, spec: object) -> CanonicalValue:
     return normalize_canonical(payload)
 
 
-_TRANSFORM_INPUT_REFUSAL_CODES: dict[str, ProcedureNodeRefusalCodeV1] = {
+_TRANSFORM_INPUT_REFUSAL_CODES: dict[str, ProcedureNodeRefusalCode] = {
     "adapter": "adapter_value_invalid",
     "shape_items": "shape_items_input_invalid",
     "filter_items": "filter_items_input_invalid",
@@ -6210,7 +6210,7 @@ def _resolve_node_template(
             node_id=node_id,
         ) from exc
     except Exception as exc:
-        code: ProcedureNodeRefusalCodeV1 = (
+        code: ProcedureNodeRefusalCode = (
             "result_not_canonical"
             if transform_kind is None
             else _TRANSFORM_INPUT_REFUSAL_CODES[transform_kind]
@@ -6266,7 +6266,7 @@ def _validate_node_contract(
             field_path=exc.field_path or "",
         ) from exc
     except Exception as exc:
-        code: ProcedureNodeRefusalCodeV1 = (
+        code: ProcedureNodeRefusalCode = (
             "contract_input_refused" if direction == "input" else "contract_output_refused"
         )
         details: dict[str, object] = {
@@ -6364,7 +6364,7 @@ def _budget_refusal(
         "budget_exhausted",
         f"Procedure {budget_kind} budget exhausted.",
         node_id=node_id,
-        budget=ProcedureBudgetRefusalDetailV1(
+        budget=ProcedureBudgetRefusalDetail(
             budget_kind=budget_kind,
             limit=limit,
             observed=observed,
@@ -6639,7 +6639,7 @@ def _check_return_budget(
 
 
 def _operand_value(
-    operand: PredicateOperandV1,
+    operand: PredicateOperand,
     *,
     input_payload: CanonicalValue,
     outputs: dict[str, CanonicalValue],
@@ -6707,7 +6707,7 @@ def _compare(left: CanonicalValue, operator: str, right: CanonicalValue) -> bool
 
 
 def _evaluate_predicate(
-    predicate: GuardPredicateV1,
+    predicate: GuardPredicate,
     *,
     input_payload: CanonicalValue,
     outputs: dict[str, CanonicalValue],

@@ -29,7 +29,7 @@ from cruxible_client.contracts.claim_types import claim_type_digest
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
     ClaimArtifactV2,
-    ClaimBackingV2,
+    ClaimBacking,
     ClaimReferentContext,
     ClaimStatement,
     LiteralClaimObject,
@@ -39,24 +39,24 @@ from cruxible_client.contracts.claims import (
     render_claim,
 )
 from cruxible_client.contracts.procedures.artifacts import (
-    AcceptedProcedureV1,
+    AcceptedProcedure,
     ProcedureArtifactV1,
     procedure_artifact_digest,
 )
 from cruxible_client.contracts.procedures.line_specs import (
-    AcceptedLineSpecV1,
+    AcceptedLineSpec,
     LineSpecV1,
     line_spec_digest,
     line_spec_path,
 )
 from cruxible_client.contracts.query.definitions import (
-    AcceptedQueryDefinitionV1,
-    QueryDefinitionV1,
+    AcceptedQueryDefinition,
+    QueryDefinition,
     query_definition_digest,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import subject_path
-from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.query.backends import ClaimFactRowV1, ClaimQueryFactsV1
 from cruxible_core.query.impact import (
@@ -128,7 +128,7 @@ def _claim(
             object=LiteralClaimObject(value=value),
             role="derivation" if input_digests else "normative",
         ),
-        backing=ClaimBackingV2(
+        backing=ClaimBacking(
             referent_context=ClaimReferentContext(
                 subject_content_digest=subject_row.artifact_digest,
                 observed_at=NOW,
@@ -184,7 +184,7 @@ def _claim_pin(row: ClaimFactRowV1) -> ArtifactPin:
     )
 
 
-def _pinning_query(row: ClaimFactRowV1) -> AcceptedQueryDefinitionV1:
+def _pinning_query(row: ClaimFactRowV1) -> AcceptedQueryDefinition:
     base = active_work_query()
     pins = tuple(
         sorted(
@@ -194,15 +194,15 @@ def _pinning_query(row: ClaimFactRowV1) -> AcceptedQueryDefinitionV1:
     )
     payload = base.model_dump(mode="json")
     payload["pins"] = [item.model_dump(mode="json") for item in pins]
-    query = QueryDefinitionV1.model_validate(payload)
-    return AcceptedQueryDefinitionV1(
+    query = QueryDefinition.model_validate(payload)
+    return AcceptedQueryDefinition(
         path=accepted_query(base).path,
         query=query,
         artifact_digest=query_definition_digest(query).tagged,
     )
 
 
-def _pinning_procedure(row: ClaimFactRowV1) -> AcceptedProcedureV1:
+def _pinning_procedure(row: ClaimFactRowV1) -> AcceptedProcedure:
     accepted, _, _ = _accepted_procedure()
     payload = accepted.procedure.model_dump(mode="json")
     payload["pins"] = [
@@ -216,14 +216,14 @@ def _pinning_procedure(row: ClaimFactRowV1) -> AcceptedProcedureV1:
         )
     ]
     procedure = ProcedureArtifactV1.model_validate(payload)
-    return AcceptedProcedureV1(
+    return AcceptedProcedure(
         path=accepted.path,
         procedure=procedure,
         artifact_digest=procedure_artifact_digest(procedure).tagged,
     )
 
 
-def _pinning_line(procedure: AcceptedProcedureV1, row: ClaimFactRowV1) -> AcceptedLineSpecV1:
+def _pinning_line(procedure: AcceptedProcedure, row: ClaimFactRowV1) -> AcceptedLineSpec:
     line, _, _ = _line()
     procedure_pin = ArtifactPin(
         role="procedure",
@@ -244,7 +244,7 @@ def _pinning_line(procedure: AcceptedProcedureV1, row: ClaimFactRowV1) -> Accept
     payload["procedure"] = procedure_pin.model_dump(mode="json")
     payload["pins"] = [item.model_dump(mode="json") for item in pins]
     pinned = LineSpecV1.model_validate(payload)
-    return AcceptedLineSpecV1(
+    return AcceptedLineSpec(
         path=line_spec_path(pinned.identity.name),
         line=pinned,
         artifact_digest=line_spec_digest(pinned).tagged,
@@ -551,7 +551,7 @@ def test_next_coalesces_multiple_stale_inputs_into_one_derived_claim_row(
         object(),  # type: ignore[arg-type]
         coordinate=facts.coordinate,
         evaluation_time=NOW,
-        access_profile=CoverageAccessProfileV1(
+        access_profile=CoverageAccessProfile(
             profile_id="dependency-next-test",
             permitted_access_classes=("instance", "public"),
         ),

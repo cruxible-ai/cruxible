@@ -4,12 +4,12 @@ Three modes, exactly one per call:
 
 - **compact** -- ``kind`` and/or ``contains`` with optional ``where``, ``select``,
   ``follow`` and ``order_by``. A Subject-kind query lowers to a
-  ``QueryDefinitionSpecV1`` wrapped as an inline definition (its own digest, no
+  ``QueryDefinitionSpec`` wrapped as an inline definition (its own digest, no
   accepted path) and runs through the same evaluator as a governed
   QueryDefinition. ``kind: ClaimType`` / ``kind: Procedure`` select definitions
   through the artifact entry. ``contains`` with no kind searches the values of
   every live Claim.
-- **spec** -- a full ``QueryDefinitionSpecV1``, pinned at the coordinate.
+- **spec** -- a full ``QueryDefinitionSpec``, pinned at the coordinate.
 - **name** -- an accepted QueryDefinition with its ``params``, run exactly as
   ``run_query`` runs it.
 
@@ -37,18 +37,21 @@ from typing import Any, Literal, cast
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.claim_types import ClaimType
-from cruxible_client.contracts.claim_verdicts import EvidenceCurrency, EvidenceRelativeClaimVerdict
+from cruxible_client.contracts.claim_verdicts import (
+    EvidenceCurrency,
+    EvidenceRelativeClaimVerdictV1,
+)
 from cruxible_client.contracts.claims import claim_path
 from cruxible_client.contracts.compact_query import (
-    PlaybillQueryClaimV1,
-    PlaybillQueryColumnV1,
-    PlaybillQueryReceiptV1,
-    PlaybillQueryReplayV1,
-    PlaybillQueryRequestV1,
+    PlaybillQueryClaim,
+    PlaybillQueryColumn,
+    PlaybillQueryReceipt,
+    PlaybillQueryReplay,
+    PlaybillQueryRequest,
     PlaybillQueryResult,
     QueryClaimStatus,
+    QueryFilter,
     QueryFilterOperator,
-    QueryFilterV1,
     QueryFlag,
     QueryFollowDirection,
     QueryMode,
@@ -56,43 +59,43 @@ from cruxible_client.contracts.compact_query import (
 from cruxible_client.contracts.get_reads import summary_value
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.procedures.artifacts import (
+    ProcedureArtifact,
     ProcedureArtifactV1,
-    ProcedureArtifactV2,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.query.definitions import (
     CLAIM_TYPE_PIN_ROLE,
-    AcceptedQueryDefinitionV1,
-    QueryDefinitionSpecV1,
-    QueryDefinitionV1,
-    QueryEvaluationPolicyV1,
+    AcceptedQueryDefinition,
+    QueryDefinition,
+    QueryDefinitionSpec,
+    QueryEvaluationPolicy,
     query_definition_digest,
     query_definition_path,
 )
 from cruxible_client.contracts.query.grammar import (
-    QueryArtifactsEntryV2,
-    QueryBudgetsV1,
-    QueryClaimPresenceFilterV1,
-    QueryClaimValueRefV1,
-    QueryComparisonFilterV1,
-    QueryConjunctionFilterV1,
-    QueryDisjunctionFilterV1,
-    QueryEntryV1,
-    QueryEvaluationTimeRefV1,
-    QueryLiteralRefV1,
-    QueryMembershipFilterV1,
-    QueryNegationFilterV1,
-    QueryOrderingV1,
-    QuerySubjectFieldRefV1,
-    QueryTraversalStepV1,
-    QueryValueRefV1,
-    QueryValueTypeV1,
+    QueryArtifactsEntry,
+    QueryBudgets,
+    QueryClaimPresenceFilter,
+    QueryClaimValueRef,
+    QueryComparisonFilter,
+    QueryConjunctionFilter,
+    QueryDisjunctionFilter,
+    QueryEntry,
+    QueryEvaluationTimeRef,
+    QueryLiteralRef,
+    QueryMembershipFilter,
+    QueryNegationFilter,
+    QueryOrdering,
+    QuerySubjectFieldRef,
+    QueryTraversalStep,
+    QueryValueRef,
+    QueryValueType,
     binding_name,
 )
 from cruxible_client.contracts.query.grammar import (
-    QueryFilterV1 as GrammarFilter,
+    QueryFilter as GrammarFilter,
 )
-from cruxible_client.contracts.query.results import ClaimQueryResultV1
+from cruxible_client.contracts.query.results import ClaimQueryResult
 from cruxible_client.contracts.temporal import utc_now
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 from cruxible_core.query.backends import ClaimQueryFactsV1
@@ -154,7 +157,7 @@ DEFAULT_COLUMN_CAP = 12
 INLINE_DEFINITION_NAME = "inline"
 ROOT = "subject"
 ARTIFACT_KINDS = ("ClaimType", "Procedure")
-_ALL_VERDICTS: tuple[EvidenceRelativeClaimVerdict, ...] = (
+_ALL_VERDICTS: tuple[EvidenceRelativeClaimVerdictV1, ...] = (
     "contradicted",
     "stale",
     "supported",
@@ -163,7 +166,7 @@ _ALL_VERDICTS: tuple[EvidenceRelativeClaimVerdict, ...] = (
 )
 _ALL_CURRENCY: tuple[EvidenceCurrency, ...] = ("current", "not_applicable", "stale")
 _CONTAINS_DIGEST_DOMAIN = "playbill-compact-contains-v1"
-_ENGINE_TYPES: dict[str, QueryValueTypeV1] = {
+_ENGINE_TYPES: dict[str, QueryValueType] = {
     "string": "string",
     "enum": "string",
     "date": "string",
@@ -182,7 +185,7 @@ _ANSWER_STATUSES = frozenset({"accepted", "conflicted"})
 # -- mode and coordinate ------------------------------------------------------
 
 
-def _mode(request: PlaybillQueryRequestV1) -> QueryMode:
+def _mode(request: PlaybillQueryRequest) -> QueryMode:
     compact = request.kind is not None or request.contains is not None
     shaping = bool(request.where or request.select or request.follow or request.order_by)
     chosen = [
@@ -243,13 +246,13 @@ class _Answer:
     mode: QueryMode
     kind: str | None
     spec_digest: str
-    columns: tuple[PlaybillQueryColumnV1, ...]
+    columns: tuple[PlaybillQueryColumn, ...]
     candidates: Sequence[Any]
     keys: Sequence[tuple[str, ...]]
     render: Callable[[Sequence[Any]], list[dict[str, Any]]]
     capped: tuple[str, ...] = ()
     notes: tuple[str, ...] = ()
-    replay: PlaybillQueryReplayV1 | None = None
+    replay: PlaybillQueryReplay | None = None
     # The Claim paths the rendered rows served; ``render`` fills it.
     served: set[str] = field(default_factory=set)
 
@@ -375,18 +378,18 @@ def _column_keys(wanted: Sequence[_Wanted]) -> list[str]:
     return [key for key in keys if key is not None]
 
 
-def _column(item: _Field | _Follow, *, name: str) -> PlaybillQueryColumnV1:
+def _column(item: _Field | _Follow, *, name: str) -> PlaybillQueryColumn:
     if isinstance(item, _Follow):
-        return PlaybillQueryColumnV1(
+        return PlaybillQueryColumn(
             name=name,
             predicate=item.info.predicate,
             type="subject",
             cardinality="one",
         )
     if isinstance(item.info, str):
-        return PlaybillQueryColumnV1(name=name, type="string", cardinality="one")
+        return PlaybillQueryColumn(name=name, type="string", cardinality="one")
     info = item.info
-    return PlaybillQueryColumnV1(
+    return PlaybillQueryColumn(
         name=name,
         predicate=info.predicate,
         type=object_label(info),
@@ -401,7 +404,7 @@ def _column(item: _Field | _Follow, *, name: str) -> PlaybillQueryColumnV1:
 class _CompactPlan:
     """A validated compact request against one Subject kind."""
 
-    def __init__(self, vocabulary: QueryVocabulary, request: PlaybillQueryRequestV1) -> None:
+    def __init__(self, vocabulary: QueryVocabulary, request: PlaybillQueryRequest) -> None:
         assert request.kind is not None
         self.vocabulary = vocabulary
         self.kind = vocabulary.require_kind(request.kind)
@@ -534,8 +537,8 @@ class _CompactPlan:
         return f"{follow.alias}.{self.vocabulary.field_name(item.info, follow.target_kinds)}"
 
 
-def _literal(value: object) -> QueryLiteralRefV1:
-    return QueryLiteralRefV1(value=value)
+def _literal(value: object) -> QueryLiteralRef:
+    return QueryLiteralRef(value=value)
 
 
 def _engine_literal(info: PredicateInfo | Literal["subject_id"], value: object) -> object:
@@ -544,13 +547,13 @@ def _engine_literal(info: PredicateInfo | Literal["subject_id"], value: object) 
     return value
 
 
-def _value_ref(item: _Field) -> QueryValueRefV1:
+def _value_ref(item: _Field) -> QueryValueRef:
     if isinstance(item.info, str):
-        return QuerySubjectFieldRefV1(binding=item.binding, field="subject_id")
-    return QueryClaimValueRefV1(binding=item.binding, predicate=item.info.predicate)
+        return QuerySubjectFieldRef(binding=item.binding, field="subject_id")
+    return QueryClaimValueRef(binding=item.binding, predicate=item.info.predicate)
 
 
-def _engine_type(item: _Field) -> QueryValueTypeV1:
+def _engine_type(item: _Field) -> QueryValueType:
     if isinstance(item.info, str):
         return "string"
     return _ENGINE_TYPES[item.info.value_type]
@@ -569,7 +572,7 @@ def _lowerable(item: _Field, operator: str) -> bool:
 def _lower_filter(item: _Field, operator: str, value: object) -> GrammarFilter:
     if operator == "exists":
         assert not isinstance(item.info, str)
-        return QueryClaimPresenceFilterV1(
+        return QueryClaimPresenceFilter(
             binding=item.binding, predicate=item.info.predicate, negated=not value
         )
     left = _value_ref(item)
@@ -580,7 +583,7 @@ def _lower_filter(item: _Field, operator: str, value: object) -> GrammarFilter:
             canonical_bytes(ref.model_dump(mode="json")): ref
             for ref in (_literal(_engine_literal(item.info, entry)) for entry in value)
         }
-        return QueryMembershipFilterV1(
+        return QueryMembershipFilter(
             left=left,
             values=tuple(literals[key] for key in sorted(literals)),
             value_type=value_type,
@@ -589,18 +592,18 @@ def _lower_filter(item: _Field, operator: str, value: object) -> GrammarFilter:
     if operator == "ne":
         # No value equals: a Subject without the value matches, and a contested
         # slot matches no value filter (its comparison is a conflict, never true).
-        differs = QueryComparisonFilterV1(
+        differs = QueryComparisonFilter(
             left=left, operator="ne", right=right, value_type=value_type
         )
         if isinstance(item.info, str):
             return differs
-        absent = QueryNegationFilterV1(
-            operand=QueryClaimPresenceFilterV1(binding=item.binding, predicate=item.info.predicate)
+        absent = QueryNegationFilter(
+            operand=QueryClaimPresenceFilter(binding=item.binding, predicate=item.info.predicate)
         )
         operands: list[GrammarFilter] = [differs, absent]
         operands.sort(key=lambda entry: canonical_bytes(entry.model_dump(mode="json")))
-        return QueryDisjunctionFilterV1(filters=tuple(operands))
-    return QueryComparisonFilterV1(
+        return QueryDisjunctionFilter(filters=tuple(operands))
+    return QueryComparisonFilter(
         left=left,
         operator=cast(Literal["eq", "gt", "gte", "lt", "lte"], operator),
         right=right,
@@ -615,11 +618,11 @@ def _all_of(filters: Sequence[GrammarFilter]) -> GrammarFilter | None:
         return None
     if len(ordered) == 1:
         return ordered[0]
-    return QueryConjunctionFilterV1(filters=tuple(ordered))
+    return QueryConjunctionFilter(filters=tuple(ordered))
 
 
 def _checked_filters(
-    plan: _CompactPlan, where: Sequence[QueryFilterV1]
+    plan: _CompactPlan, where: Sequence[QueryFilter]
 ) -> list[tuple[_Field, QueryFilterOperator, object]]:
     checked: list[tuple[_Field, QueryFilterOperator, object]] = []
     for index, item in enumerate(where):
@@ -798,16 +801,16 @@ def _pins(vocabulary: QueryVocabulary, predicates: Sequence[str]) -> tuple[Artif
     )
 
 
-def _accepted(query: QueryDefinitionV1) -> AcceptedQueryDefinitionV1:
-    strict = QueryDefinitionV1.model_validate(query.model_dump(mode="json"))
-    return AcceptedQueryDefinitionV1(
+def _accepted(query: QueryDefinition) -> AcceptedQueryDefinition:
+    strict = QueryDefinition.model_validate(query.model_dump(mode="json"))
+    return AcceptedQueryDefinition(
         path=query_definition_path(strict.identity.name),
         query=strict,
         artifact_digest=query_definition_digest(strict).tagged,
     )
 
 
-def _refuse_engine(result: ClaimQueryResultV1, *, declared: Sequence[str] = ()) -> None:
+def _refuse_engine(result: ClaimQueryResult, *, declared: Sequence[str] = ()) -> None:
     if result.refusal is None:
         return
     code = result.refusal.code
@@ -821,7 +824,7 @@ def _refuse_engine(result: ClaimQueryResultV1, *, declared: Sequence[str] = ()) 
     raise query_refusal(code, result.refusal.message, nearest=declared, repair=repair)
 
 
-def _server_budgets(budgets: QueryBudgetsV1, ceiling: int) -> QueryBudgetsV1:
+def _server_budgets(budgets: QueryBudgets, ceiling: int) -> QueryBudgets:
     """A definition's own budgets held under the query surface's server ceiling."""
 
     return budgets.model_copy(
@@ -837,7 +840,7 @@ def _server_budgets(budgets: QueryBudgetsV1, ceiling: int) -> QueryBudgetsV1:
     )
 
 
-def _capped(result: ClaimQueryResultV1) -> tuple[tuple[str, ...], tuple[str, ...]]:
+def _capped(result: ClaimQueryResult) -> tuple[tuple[str, ...], tuple[str, ...]]:
     clipped = tuple(
         item for item in result.truncation.clipped_budgets if item != "include_max_items"
     )
@@ -920,12 +923,12 @@ class _RowRenderer:
         retired = self.retired.slot(path, predicate) if "retired" in self.status else []
         return live, list(retired)
 
-    def _cell_claim(self, item: LiveValue, reads: Mapping[str, ClaimRead]) -> PlaybillQueryClaimV1:
+    def _cell_claim(self, item: LiveValue, reads: Mapping[str, ClaimRead]) -> PlaybillQueryClaim:
         value: object = item.value
         if item.exact:
             value = self.content.value(str(item.value), item.span)
         read = reads.get(item.identity)
-        return PlaybillQueryClaimV1(
+        return PlaybillQueryClaim(
             claim=item.identity.removeprefix("Claim:"),
             value=summary_value(value),
             verdict="retired" if read is None else read.verdict,
@@ -1085,8 +1088,8 @@ def _searchable(item: LiveValue, content: ExactContentReader) -> str | None:
 
 
 def _compact_columns(
-    plan: _CompactPlan, request: PlaybillQueryRequestV1
-) -> tuple[list[_Column], list[PlaybillQueryColumnV1], tuple[str, ...]]:
+    plan: _CompactPlan, request: PlaybillQueryRequest
+) -> tuple[list[_Column], list[PlaybillQueryColumn], tuple[str, ...]]:
     """The columns a compact query serves, each under its own row key."""
 
     wanted: dict[tuple[str, ...], _Wanted] = {}
@@ -1126,7 +1129,7 @@ def _compact_columns(
             want(follow, (follow.alias,))
     items = list(wanted.values())
     columns: list[_Column] = []
-    output: list[PlaybillQueryColumnV1] = []
+    output: list[PlaybillQueryColumn] = []
     for item, key in zip(items, _column_keys(items), strict=True):
         if isinstance(item.item, _Follow):
             columns.append(_Column(name=key, binding=item.item.alias, field=None))
@@ -1140,7 +1143,7 @@ def _compact_subject_query(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
     vocabulary: QueryVocabulary,
-    request: PlaybillQueryRequestV1,
+    request: PlaybillQueryRequest,
     evaluation_time: datetime,
     *,
     content: ExactContentReader,
@@ -1155,7 +1158,7 @@ def _compact_subject_query(
             lowered.append(_lower_filter(resolved, operator, value))
         else:
             inline.append(_InlineFilter(field=resolved, operator=operator, value=value))
-    orderings: list[QueryOrderingV1] = []
+    orderings: list[QueryOrdering] = []
     for index, raw in enumerate(request.order_by):
         path = f"order_by[{index}]"
         descending = raw.startswith("-")
@@ -1171,7 +1174,7 @@ def _compact_subject_query(
                 field_path=path,
             )
         orderings.append(
-            QueryOrderingV1(
+            QueryOrdering(
                 key=_value_ref(resolved),
                 direction="descending" if descending else "ascending",
                 value_type=_engine_type(resolved),
@@ -1182,7 +1185,7 @@ def _compact_subject_query(
 
     follows = tuple(plan.follows.values())
     path_shape = bool(follows)
-    budgets = QueryBudgetsV1(
+    budgets = QueryBudgets(
         max_results=COMPACT_QUERY_MAX_RESULTS,
         max_traversal_depth=len(follows),
         max_paths=COMPACT_QUERY_MAX_RESULTS if path_shape else None,
@@ -1199,9 +1202,9 @@ def _compact_subject_query(
     draft: dict[str, Any] = {
         "artifact_format": "playbill-query-definition-v1",
         "identity": ArtifactIdentity(kind="QueryDefinition", name=INLINE_DEFINITION_NAME),
-        "entry": QueryEntryV1(binding=ROOT, subject_kinds=(plan.kind,)),
+        "entry": QueryEntry(binding=ROOT, subject_kinds=(plan.kind,)),
         "traversal": tuple(
-            QueryTraversalStepV1(
+            QueryTraversalStep(
                 binding=follow.alias,
                 from_binding=ROOT,
                 predicate=follow.info.predicate,
@@ -1217,7 +1220,7 @@ def _compact_subject_query(
         "result_cardinality": "many",
         "dedupe": "path" if path_shape else "subject",
         "orderings": tuple(orderings),
-        "evaluation_policy": QueryEvaluationPolicyV1(
+        "evaluation_policy": QueryEvaluationPolicy(
             visible_verdicts=_ALL_VERDICTS,
             visible_currency=_ALL_CURRENCY,
             conflict_behavior="surface_conflicts",
@@ -1225,8 +1228,8 @@ def _compact_subject_query(
         "default_budgets": budgets,
         "maximum_budgets": budgets,
     }
-    unpinned = QueryDefinitionSpecV1(**draft)
-    spec = QueryDefinitionSpecV1(
+    unpinned = QueryDefinitionSpec(**draft)
+    spec = QueryDefinitionSpec(
         **{**draft, "pins": _pins(vocabulary, unpinned.referenced_predicates)}
     )
     definition = _accepted(spec)
@@ -1432,7 +1435,7 @@ def _contains_everywhere(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
     vocabulary: QueryVocabulary,
-    request: PlaybillQueryRequestV1,
+    request: PlaybillQueryRequest,
     evaluation_time: datetime,
     *,
     content: ExactContentReader,
@@ -1498,10 +1501,10 @@ def _contains_everywhere(
         kind=None,
         spec_digest=spec_digest,
         columns=(
-            PlaybillQueryColumnV1(name="kind", type="string"),
-            PlaybillQueryColumnV1(name="predicate", type="string"),
-            PlaybillQueryColumnV1(name="value", type="string"),
-            PlaybillQueryColumnV1(name="claim", type="string"),
+            PlaybillQueryColumn(name="kind", type="string"),
+            PlaybillQueryColumn(name="predicate", type="string"),
+            PlaybillQueryColumn(name="value", type="string"),
+            PlaybillQueryColumn(name="claim", type="string"),
         ),
         candidates=matches,
         keys=[(item.identity,) for item in matches],
@@ -1516,21 +1519,21 @@ _ARTIFACT_FIELDS: dict[str, tuple[str, ...]] = {
     "ClaimType": ("namespace", "name", "subject_kind"),
     "Procedure": ("namespace", "name"),
 }
-_ARTIFACT_COLUMNS: dict[str, tuple[PlaybillQueryColumnV1, ...]] = {
+_ARTIFACT_COLUMNS: dict[str, tuple[PlaybillQueryColumn, ...]] = {
     "ClaimType": (
-        PlaybillQueryColumnV1(name="predicate", type="string"),
-        PlaybillQueryColumnV1(name="subject_kinds", type="string", cardinality="many"),
-        PlaybillQueryColumnV1(name="object", type="string"),
-        PlaybillQueryColumnV1(
+        PlaybillQueryColumn(name="predicate", type="string"),
+        PlaybillQueryColumn(name="subject_kinds", type="string", cardinality="many"),
+        PlaybillQueryColumn(name="object", type="string"),
+        PlaybillQueryColumn(
             name="cardinality", type="enum", members=("many", "one"), cardinality="one"
         ),
-        PlaybillQueryColumnV1(name="members", type="string", cardinality="many"),
-        PlaybillQueryColumnV1(name="description", type="string"),
-        PlaybillQueryColumnV1(name="evidence", type="string", cardinality="many"),
+        PlaybillQueryColumn(name="members", type="string", cardinality="many"),
+        PlaybillQueryColumn(name="description", type="string"),
+        PlaybillQueryColumn(name="evidence", type="string", cardinality="many"),
     ),
     "Procedure": (
-        PlaybillQueryColumnV1(name="name", type="string"),
-        PlaybillQueryColumnV1(
+        PlaybillQueryColumn(name="name", type="string"),
+        PlaybillQueryColumn(
             name="runnable",
             type="enum",
             members=("binding_required", "directly_runnable"),
@@ -1557,11 +1560,11 @@ def _artifact_answer(
     vocabulary: QueryVocabulary,
     *,
     kind: str,
-    definition: AcceptedQueryDefinitionV1,
+    definition: AcceptedQueryDefinition,
     evaluation_time: datetime,
     mode: QueryMode,
-    request: PlaybillQueryRequestV1 | None,
-    budgets: QueryBudgetsV1 | None = None,
+    request: PlaybillQueryRequest | None,
+    budgets: QueryBudgets | None = None,
 ) -> _Answer:
     result = evaluate_accepted_query(
         instance,
@@ -1601,7 +1604,7 @@ def _artifact_answer(
                 )
             rows.append(claim_type_row(info, contracts))
         else:
-            assert isinstance(source, (ProcedureArtifactV1, ProcedureArtifactV2))
+            assert isinstance(source, (ProcedureArtifactV1, ProcedureArtifact))
             rows.append(
                 {
                     "name": source.identity.name,
@@ -1633,8 +1636,8 @@ def _shape_artifact_rows(
     kind: str,
     rows: list[dict[str, Any]],
     identities: list[str],
-    request: PlaybillQueryRequestV1,
-) -> tuple[list[dict[str, Any]], list[str], tuple[PlaybillQueryColumnV1, ...]]:
+    request: PlaybillQueryRequest,
+) -> tuple[list[dict[str, Any]], list[str], tuple[PlaybillQueryColumn, ...]]:
     fields = _ARTIFACT_FIELDS[kind]
     checks: list[tuple[str, QueryFilterOperator, object]] = []
     for index, item in enumerate(request.where):
@@ -1720,7 +1723,7 @@ def _shape_artifact_rows(
         kept_rows = [kept_rows[position] for position in order]
         kept_ids = [kept_ids[position] for position in order]
     if request.select:
-        chosen: list[PlaybillQueryColumnV1] = []
+        chosen: list[PlaybillQueryColumn] = []
         for index, name in enumerate(request.select):
             match = next((column for column in columns if column.name == name), None)
             if match is None:
@@ -1745,7 +1748,7 @@ def _require_artifact_names(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
     vocabulary: QueryVocabulary,
-    request: PlaybillQueryRequestV1,
+    request: PlaybillQueryRequest,
 ) -> None:
     """A definition filter naming a namespace, name or kind that is not accepted refuses."""
 
@@ -1780,8 +1783,8 @@ def _require_artifact_names(
 
 
 def _artifact_definition(
-    vocabulary: QueryVocabulary, request: PlaybillQueryRequestV1
-) -> AcceptedQueryDefinitionV1:
+    vocabulary: QueryVocabulary, request: PlaybillQueryRequest
+) -> AcceptedQueryDefinition:
     kind = cast(Literal["ClaimType", "Procedure"], request.kind)
     selection: Literal["all", "namespaces", "name_prefixes"] = "all"
     namespaces: tuple[str, ...] = ()
@@ -1793,11 +1796,11 @@ def _artifact_definition(
         names = tuple(sorted({str(entry) for entry in raw}, key=lambda value: value.encode()))
         try:
             if kind == "ClaimType":
-                QueryArtifactsEntryV2(artifact_kind=kind, selection="namespaces", namespaces=names)
+                QueryArtifactsEntry(artifact_kind=kind, selection="namespaces", namespaces=names)
                 selection, namespaces = "namespaces", names
             else:
                 candidate = tuple(sorted(f"{name}." for name in names))
-                QueryArtifactsEntryV2(
+                QueryArtifactsEntry(
                     artifact_kind=kind, selection="name_prefixes", name_prefixes=candidate
                 )
                 selection, prefixes = "name_prefixes", candidate
@@ -1811,11 +1814,11 @@ def _artifact_definition(
                 field_path="where",
             ) from None
         break
-    budgets = QueryBudgetsV1(max_results=ARTIFACT_QUERY_MAX_RESULTS, max_traversal_depth=0)
-    query = QueryDefinitionSpecV1(
+    budgets = QueryBudgets(max_results=ARTIFACT_QUERY_MAX_RESULTS, max_traversal_depth=0)
+    query = QueryDefinitionSpec(
         artifact_format="playbill-query-definition-v2",
         identity=ArtifactIdentity(kind="QueryDefinition", name=INLINE_DEFINITION_NAME),
-        entry=QueryArtifactsEntryV2(
+        entry=QueryArtifactsEntry(
             artifact_kind=kind,
             selection=selection,
             namespaces=namespaces,
@@ -1825,7 +1828,7 @@ def _artifact_definition(
         result_shape="artifact_definition",
         result_cardinality="many",
         dedupe="artifact",
-        evaluation_policy=QueryEvaluationPolicyV1(
+        evaluation_policy=QueryEvaluationPolicy(
             visible_verdicts=_ALL_VERDICTS,
             visible_currency=_ALL_CURRENCY,
             conflict_behavior="surface_conflicts",
@@ -1839,8 +1842,8 @@ def _artifact_definition(
 # -- spec and named queries -------------------------------------------------------
 
 
-def _pinned_spec(vocabulary: QueryVocabulary, spec: QueryDefinitionSpecV1) -> QueryDefinitionV1:
-    if isinstance(spec.entry, QueryEntryV1):
+def _pinned_spec(vocabulary: QueryVocabulary, spec: QueryDefinitionSpec) -> QueryDefinition:
+    if isinstance(spec.entry, QueryEntry):
         for index, kind in enumerate(spec.entry.subject_kinds):
             vocabulary.require_kind(kind, field_path=f"spec.entry.subject_kinds[{index}]")
     referenced = spec.referenced_predicates
@@ -1874,7 +1877,7 @@ def _pinned_spec(vocabulary: QueryVocabulary, spec: QueryDefinitionSpecV1) -> Qu
         )
     )
     try:
-        return QueryDefinitionV1.model_validate(
+        return QueryDefinition.model_validate(
             {
                 **spec.model_dump(mode="json"),
                 "pins": [pin.model_dump(mode="json") for pin in pins],
@@ -1884,30 +1887,30 @@ def _pinned_spec(vocabulary: QueryVocabulary, spec: QueryDefinitionSpecV1) -> Qu
         raise query_refusal(
             "playbill.query.spec_invalid",
             f"the spec does not validate once pinned: {str(exc).splitlines()[0]}",
-            repair="check the spec against QueryDefinitionSpecV1",
+            repair="check the spec against QueryDefinitionSpec",
             field_path="spec",
         ) from exc
 
 
 def _field_column(
-    vocabulary: QueryVocabulary, name: str, ref: QueryValueRefV1
-) -> PlaybillQueryColumnV1:
-    if isinstance(ref, QueryClaimValueRefV1):
+    vocabulary: QueryVocabulary, name: str, ref: QueryValueRef
+) -> PlaybillQueryColumn:
+    if isinstance(ref, QueryClaimValueRef):
         info = vocabulary.predicates.get(ref.predicate)
         if info is not None:
-            return PlaybillQueryColumnV1(
+            return PlaybillQueryColumn(
                 name=name,
                 predicate=info.predicate,
                 type=object_label(info),
                 members=info.members or None,
                 cardinality=info.cardinality,
             )
-        return PlaybillQueryColumnV1(name=name, predicate=ref.predicate, type="json")
-    if isinstance(ref, QuerySubjectFieldRefV1):
-        return PlaybillQueryColumnV1(name=name, type="string")
-    if isinstance(ref, QueryEvaluationTimeRefV1):
-        return PlaybillQueryColumnV1(name=name, type="timestamp")
-    return PlaybillQueryColumnV1(name=name, type="json")
+        return PlaybillQueryColumn(name=name, predicate=ref.predicate, type="json")
+    if isinstance(ref, QuerySubjectFieldRef):
+        return PlaybillQueryColumn(name=name, type="string")
+    if isinstance(ref, QueryEvaluationTimeRef):
+        return PlaybillQueryColumn(name=name, type="timestamp")
+    return PlaybillQueryColumn(name=name, type="json")
 
 
 def _engine_answer(
@@ -1915,8 +1918,8 @@ def _engine_answer(
     coordinate: AcceptedProjectionCoordinate,
     vocabulary: QueryVocabulary,
     *,
-    definition: AcceptedQueryDefinitionV1,
-    result: ClaimQueryResultV1,
+    definition: AcceptedQueryDefinition,
+    result: ClaimQueryResult,
     evaluation_time: datetime,
     mode: QueryMode,
     content: ExactContentReader,
@@ -1928,13 +1931,13 @@ def _engine_answer(
     projection = query.projection
     notes: tuple[str, ...] = ()
     renderer_columns: list[_Column] = []
-    output: list[PlaybillQueryColumnV1] = []
+    output: list[PlaybillQueryColumn] = []
     if projection is not None:
         output = [
             _field_column(vocabulary, _out(item.name), item.value) for item in projection.fields
         ]
     elif (
-        isinstance(query.entry, QueryEntryV1)
+        isinstance(query.entry, QueryEntry)
         and len(query.entry.subject_kinds) == 1
         and (query.result_binding == query.entry.binding)
     ):
@@ -1963,11 +1966,11 @@ def _engine_answer(
     )
     # A projected exact-content field reads as text too, from the live values of
     # the slot it projects, with its digests beside it.
-    exact_fields: dict[str, QueryClaimValueRefV1] = {}
+    exact_fields: dict[str, QueryClaimValueRef] = {}
     if projection is not None:
         for projected_field in projection.fields:
             ref = projected_field.value
-            if not isinstance(ref, QueryClaimValueRefV1):
+            if not isinstance(ref, QueryClaimValueRef):
                 continue
             info = vocabulary.predicates.get(ref.predicate)
             if info is not None and info.value_type == "exact_content":
@@ -2051,7 +2054,7 @@ def _engine_answer(
         mode=mode,
         kind=(
             query.entry.subject_kinds[0]
-            if isinstance(query.entry, QueryEntryV1) and len(query.entry.subject_kinds) == 1
+            if isinstance(query.entry, QueryEntry) and len(query.entry.subject_kinds) == 1
             else None
         ),
         spec_digest=definition.artifact_digest,
@@ -2065,7 +2068,7 @@ def _engine_answer(
     )
 
 
-def _engine_selected(row: Any, ref: QueryClaimValueRefV1) -> frozenset[str]:
+def _engine_selected(row: Any, ref: QueryClaimValueRef) -> frozenset[str]:
     """The Claim identities the engine read for one projected claim-value field."""
 
     subject = next(
@@ -2135,7 +2138,7 @@ def _named_answer(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
     vocabulary: QueryVocabulary,
-    request: PlaybillQueryRequestV1,
+    request: PlaybillQueryRequest,
     evaluation_time: datetime,
     *,
     content: ExactContentReader,
@@ -2153,7 +2156,7 @@ def _named_answer(
     from cruxible_core.service.discovery.query_definitions import accepted_query_definition
 
     definition = accepted_query_definition(instance, name=request.name, coordinate=coordinate)
-    artifacts = isinstance(definition.query.entry, QueryArtifactsEntryV2)
+    artifacts = isinstance(definition.query.entry, QueryArtifactsEntry)
     # A caller's own budgets run as given, up to the definition's maximum (the
     # engine refuses past it). A full receipt is a replay, so it runs the
     # definition's declared budgets exactly as run_query did: its result and
@@ -2178,7 +2181,7 @@ def _named_answer(
     )
     _refuse_engine(run.result, declared=tuple(item.name for item in definition.query.parameters))
     replay = (
-        PlaybillQueryReplayV1(
+        PlaybillQueryReplay(
             definition_path=run.definition_path,
             result=run.result,
             execution=run.receipt,
@@ -2186,7 +2189,7 @@ def _named_answer(
         if request.receipt == "full"
         else None
     )
-    if isinstance(definition.query.entry, QueryArtifactsEntryV2):
+    if isinstance(definition.query.entry, QueryArtifactsEntry):
         answer = _artifact_answer(
             instance,
             coordinate,
@@ -2217,7 +2220,7 @@ def _spec_answer(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
     vocabulary: QueryVocabulary,
-    request: PlaybillQueryRequestV1,
+    request: PlaybillQueryRequest,
     evaluation_time: datetime,
     *,
     content: ExactContentReader,
@@ -2226,12 +2229,12 @@ def _spec_answer(
     definition = _accepted(_pinned_spec(vocabulary, request.spec))
     # The server ceiling is an execution input, never part of the spec, so the
     # submitted spec keeps its digest while every budget is clipped.
-    artifacts = isinstance(definition.query.entry, QueryArtifactsEntryV2)
+    artifacts = isinstance(definition.query.entry, QueryArtifactsEntry)
     budgets = _server_budgets(
         definition.query.default_budgets,
         ARTIFACT_QUERY_MAX_RESULTS if artifacts else COMPACT_QUERY_MAX_RESULTS,
     )
-    if isinstance(definition.query.entry, QueryArtifactsEntryV2):
+    if isinstance(definition.query.entry, QueryArtifactsEntry):
         return _artifact_answer(
             instance,
             coordinate,
@@ -2266,7 +2269,7 @@ def _spec_answer(
 # -- the verb ---------------------------------------------------------------------
 
 
-def _selection(request: PlaybillQueryRequestV1, mode: QueryMode) -> dict[str, Any]:
+def _selection(request: PlaybillQueryRequest, mode: QueryMode) -> dict[str, Any]:
     """The digest of everything that shapes the listing, so a cursor binds to it compactly."""
 
     body = request.model_dump(
@@ -2382,7 +2385,7 @@ def _decode_cursor(cursor: str, *, selection: str) -> _QueryCursor:
 def service_playbill_query(
     instance: PlaybillInstance,
     *,
-    request: PlaybillQueryRequestV1,
+    request: PlaybillQueryRequest,
     served_claims: set[str] | None = None,
 ) -> PlaybillQueryResult:
     """Answer one ``query`` call: one page of values, flags and paging.
@@ -2519,7 +2522,7 @@ def service_playbill_query(
         next_cursor=next_cursor,
         capped=answer.capped,
         notes=answer.notes,
-        receipt=PlaybillQueryReceiptV1(
+        receipt=PlaybillQueryReceipt(
             mode=answer.mode,
             spec_digest=answer.spec_digest,
             coordinate=served,

@@ -7,7 +7,7 @@ from pathlib import Path
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
 )
-from cruxible_client.contracts.candidates import SemanticCandidate, candidate_digest
+from cruxible_client.contracts.candidates import SemanticCandidateV1, candidate_digest
 from cruxible_client.contracts.canonical import manifest_root, semantic_diff
 from cruxible_client.contracts.subjects import SubjectShell, render_subject
 from cruxible_core.compiler.compiler import current_compiler_coordinate
@@ -30,7 +30,7 @@ def test_provisional_subject_projection_is_coordinate_labeled(tmp_path: Path) ->
         update={"compiler": current_compiler_coordinate()}
     )
     difference, scope = semantic_diff({}, tree)
-    candidate = SemanticCandidate(
+    candidate = SemanticCandidateV1(
         parent_semantic_root=canonical.semantic_root,
         candidate_manifest_root=manifest_root(tree).tagged,
         semantic_diff_digest=difference.tagged,

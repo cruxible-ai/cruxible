@@ -15,10 +15,10 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 
-from cruxible_client.contracts.capture_reads import CaptureReadRequestV1
-from cruxible_client.contracts.compact_query import PlaybillQueryRequestV1
+from cruxible_client.contracts.capture_reads import CaptureReadRequest
+from cruxible_client.contracts.compact_query import PlaybillQueryRequest
 from cruxible_client.contracts.errors import ReadRefusalError
-from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
+from cruxible_client.contracts.get_reads import PlaybillGetRequest
 from cruxible_core.cli.main import cli
 from cruxible_core.mcp import handlers
 from cruxible_core.service.discovery.compact_query import service_playbill_query
@@ -41,7 +41,7 @@ def world(tmp_path_factory: pytest.TempPathFactory):  # type: ignore[no-untyped-
 
 def _get(instance: Any, ref: str, **fields: Any):  # type: ignore[no-untyped-def]
     return service_playbill_get(
-        instance, request=PlaybillGetRequestV1(ref=ref, **fields), access=_ACCESS
+        instance, request=PlaybillGetRequest(ref=ref, **fields), access=_ACCESS
     )
 
 
@@ -56,12 +56,12 @@ def test_an_evidence_handle_reads_back_through_get_and_read_capture(world) -> No
 
     assert _get(instance, handle).ref == f"Capture:{capture_digest}"
     read = service_read_playbill_capture(
-        instance, request=CaptureReadRequestV1(capture_digest=handle), access=_ACCESS
+        instance, request=CaptureReadRequest(capture_digest=handle), access=_ACCESS
     )
     assert read.status == "verified" and read.capture_digest == capture_digest
     prefixed = service_read_playbill_capture(
         instance,
-        request=CaptureReadRequestV1(capture_digest=capture_digest[: len("sha256:") + 14]),
+        request=CaptureReadRequest(capture_digest=capture_digest[: len("sha256:") + 14]),
         access=_ACCESS,
     )
     assert prefixed.capture_digest == capture_digest
@@ -75,7 +75,7 @@ def test_read_capture_refuses_an_unknown_or_ambiguous_prefix(
 
     with pytest.raises(ReadRefusalError) as unknown:
         service_read_playbill_capture(
-            instance, request=CaptureReadRequestV1(capture_digest="CAP-" + "0" * 12), access=_ACCESS
+            instance, request=CaptureReadRequest(capture_digest="CAP-" + "0" * 12), access=_ACCESS
         )
     assert unknown.value.error_code == "playbill.capture.not_found"
     assert unknown.value.http_status == 404
@@ -88,7 +88,7 @@ def test_read_capture_refuses_an_unknown_or_ambiguous_prefix(
     monkeypatch.setattr(operational, "captures_with_prefix", lambda *_a, **_k: twins)
     with pytest.raises(ReadRefusalError) as ambiguous:
         service_read_playbill_capture(
-            instance, request=CaptureReadRequestV1(capture_digest="CAP-" + "1" * 12), access=_ACCESS
+            instance, request=CaptureReadRequest(capture_digest="CAP-" + "1" * 12), access=_ACCESS
         )
     assert ambiguous.value.error_code == "playbill.capture.ref_ambiguous"
     assert ambiguous.value.http_status == 409
@@ -114,7 +114,7 @@ def test_a_handle_the_bounded_lookup_cannot_settle_refuses_in_every_read(
     for read in (
         lambda: _get(instance, handle),
         lambda: service_read_playbill_capture(
-            instance, request=CaptureReadRequestV1(capture_digest=handle), access=_ACCESS
+            instance, request=CaptureReadRequest(capture_digest=handle), access=_ACCESS
         ),
     ):
         with pytest.raises(ReadRefusalError) as refused:
@@ -131,7 +131,7 @@ def test_read_capture_still_checks_permission_before_resolving_a_prefix() -> Non
     with pytest.raises(PermissionDeniedError):
         service_read_playbill_capture(
             None,  # type: ignore[arg-type]
-            request=CaptureReadRequestV1(capture_digest="CAP-" + "a" * 12),
+            request=CaptureReadRequest(capture_digest="CAP-" + "a" * 12),
             access=BodyAccessContext(principal_id="reader", can_read_body=False),
         )
 
@@ -153,7 +153,7 @@ def test_a_generation_number_reads_the_same_generation_as_its_oid(world) -> None
     assert by_number.coordinate.generation == older.sequence
 
     queried = service_playbill_query(
-        instance, request=PlaybillQueryRequestV1(kind="ClaimType", at=str(older.sequence))
+        instance, request=PlaybillQueryRequest(kind="ClaimType", at=str(older.sequence))
     )
     assert queried.receipt.coordinate.git_oid == older.oid
 
@@ -205,11 +205,11 @@ def test_the_cli_passes_a_generation_and_a_capture_handle(
     requests: list[Any] = []
 
     class _Stub:
-        def playbill_get(self, instance_id: str, *, request: PlaybillGetRequestV1) -> Any:
+        def playbill_get(self, instance_id: str, *, request: PlaybillGetRequest) -> Any:
             requests.append(request)
             raise ReadRefusalError("playbill.get.ref_not_found", "stub", http_status=404)
 
-        def read_playbill_capture(self, instance_id: str, request: CaptureReadRequestV1) -> Any:
+        def read_playbill_capture(self, instance_id: str, request: CaptureReadRequest) -> Any:
             requests.append(request)
             raise ReadRefusalError("playbill.capture.not_found", "stub", http_status=404)
 

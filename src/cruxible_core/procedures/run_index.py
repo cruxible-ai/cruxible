@@ -11,8 +11,8 @@ from pydantic import BaseModel, ConfigDict, field_validator
 from cruxible_client.contracts.canonical import CanonicalValue, Sha256Value
 from cruxible_client.contracts.errors import PlaybillExecutionError
 from cruxible_client.contracts.provider_execution import (
-    ProviderInvocationCompletedV1,
-    ProviderInvocationStartedV1,
+    ProviderInvocationCompleted,
+    ProviderInvocationStarted,
 )
 from cruxible_core.exhaust import (
     StoredProcedureJournalRecordV1,
@@ -186,7 +186,7 @@ class ProcedureRunIndex:
             )
         elif record.event_kind == "provider_invocation_started":
             try:
-                started = ProviderInvocationStartedV1.model_validate(payload)
+                started = ProviderInvocationStarted.model_validate(payload)
             except ValueError as exc:
                 raise PlaybillExecutionError(
                     "Provider invocation start payload is invalid"
@@ -210,7 +210,7 @@ class ProcedureRunIndex:
             )
         elif record.event_kind == "provider_invocation_completed":
             try:
-                completed = ProviderInvocationCompletedV1.model_validate(payload)
+                completed = ProviderInvocationCompleted.model_validate(payload)
             except ValueError as exc:
                 raise PlaybillExecutionError(
                     "Provider invocation completion payload is invalid"

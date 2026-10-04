@@ -19,9 +19,9 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.cas_contracts import BodyAccessContext, BodyProjectionProtocol
 from cruxible_client.contracts.claim_verdicts import ObservationTrustGrade, observation_trust_grade
 from cruxible_client.contracts.claims import (
+    ClaimCitation,
     ClaimCitationReference,
-    ClaimCitationV1,
-    LegacyCitationReferenceV1,
+    LegacyCitationReference,
 )
 from cruxible_client.contracts.errors import ProjectionFormatError
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -127,13 +127,13 @@ def coverage_rows(
                     continue
                 reference: ClaimCitationReference
                 if use["origin"] == "legacy" and use["role"] == "legacy":
-                    reference = LegacyCitationReferenceV1(
+                    reference = LegacyCitationReference(
                         citation_id=str(use["use_key"]),
                         capture_digest=digest,
                         claim_identity=parse_artifact_identity(str(use["owner_key"])),
                     )
                 else:
-                    reference = ClaimCitationV1.model_validate(
+                    reference = ClaimCitation.model_validate(
                         {
                             "citation_id": use["use_key"],
                             "capture_digest": digest,

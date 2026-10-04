@@ -7,7 +7,7 @@ import pytest
 from cruxible_client.authoring.queries import QueryBinding, QueryParameters
 from cruxible_client.authoring.sdk import Playbill
 from cruxible_client.contracts.query.definitions import query_definition_digest
-from cruxible_client.contracts.query.grammar import QueryParameterDeclarationV1
+from cruxible_client.contracts.query.grammar import QueryParameterDeclaration
 from tests.support.scoped_query_oracle import _scoped_facts_answer_as_whole_facts  # noqa: F401
 from tests.test_client.test_playbill_sdk import _Client, _workspace
 from tests.test_query.test_query_definitions import active_work_query
@@ -15,7 +15,7 @@ from tests.test_query.test_query_definitions import active_work_query
 
 def test_parameters_use_query_types_and_reject_unknown_or_missing_fields():
     query = active_work_query(
-        parameters=(QueryParameterDeclarationV1(name="status", value_type="string"),)
+        parameters=(QueryParameterDeclaration(name="status", value_type="string"),)
     )
     constructor = QueryParameters(query)
     assert constructor(status="ready").status == "ready"
@@ -36,7 +36,7 @@ def test_parameters_use_query_types_and_reject_unknown_or_missing_fields():
 )
 def test_parameters_reuse_the_evaluator_type_rules(kind, valid, invalid):
     query = active_work_query(
-        parameters=(QueryParameterDeclarationV1(name="status", value_type=kind),)
+        parameters=(QueryParameterDeclaration(name="status", value_type=kind),)
     )
     constructor = QueryParameters(query)
     assert constructor(status=valid)["status"] == valid

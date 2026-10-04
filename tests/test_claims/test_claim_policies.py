@@ -6,16 +6,16 @@ import pytest
 from pydantic import ValidationError
 
 from cruxible_client.contracts.policies import (
-    ClaimAdmissionCandidateContextV1,
-    ClaimAdmissionPolicyV1,
-    ClaimCorroborationResultV1,
+    ClaimAdmissionCandidateContext,
+    ClaimAdmissionPolicy,
+    ClaimCorroborationResult,
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionRuleV1,
-    ClaimResolutionPolicyV1,
-    CorroborationRequirementV1,
-    EvidenceAdmissionInputV1,
-    FreezeRequirementV1,
-    ResolutionContenderV1,
+    ClaimResolutionPolicy,
+    CorroborationRequirement,
+    EvidenceAdmissionInput,
+    FreezeRequirement,
+    ResolutionContender,
     evaluate_claim_admission_candidate,
     evaluate_claim_evidence_admission,
     evaluate_claim_evidence_admission_trace,
@@ -26,17 +26,17 @@ DIGEST_A = "sha256:" + "11" * 32
 DIGEST_B = "sha256:" + "22" * 32
 
 
-def _review_policy() -> ClaimAdmissionPolicyV1:
-    return ClaimAdmissionPolicyV1(
+def _review_policy() -> ClaimAdmissionPolicy:
+    return ClaimAdmissionPolicy(
         corroboration_requirements=(
-            CorroborationRequirementV1(
+            CorroborationRequirement(
                 requirement_id="one-valid-approval",
                 query_definition_digest=DIGEST_A,
                 min_count=1,
             ),
         ),
         freeze_requirements=(
-            FreezeRequirementV1(
+            FreezeRequirement(
                 requirement_id="approved-review-freeze",
                 while_predicate="review.status",
                 while_values=("approved",),
@@ -51,8 +51,8 @@ def _context(
     parent_status: str = "open",
     candidate_status: str = "approved",
     truncated: bool = False,
-) -> ClaimAdmissionCandidateContextV1:
-    return ClaimAdmissionCandidateContextV1(
+) -> ClaimAdmissionCandidateContext:
+    return ClaimAdmissionCandidateContext(
         evaluation_time="2026-08-16T12:00:00.000000Z",
         declared_predicates=("review.change_head", "review.status", "review.summary"),
         parent_values={
@@ -66,7 +66,7 @@ def _context(
             "review.summary": ("summary",),
         },
         corroboration_results=(
-            ClaimCorroborationResultV1(
+            ClaimCorroborationResult(
                 requirement_id="one-valid-approval",
                 query_definition_digest=DIGEST_A,
                 parameter_digest=DIGEST_A,
@@ -109,19 +109,19 @@ def test_deleted_admission_policy_fields_refuse(field: str, value: object) -> No
     payload = _review_policy().model_dump(mode="json")
     payload[field] = value
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
-        ClaimAdmissionPolicyV1.model_validate(payload)
+        ClaimAdmissionPolicy.model_validate(payload)
 
 
 @pytest.mark.parametrize("field", ("parameters", "max_rows", "max_traversal_depth"))
 def test_deleted_corroboration_requirement_fields_refuse(field: str) -> None:
-    payload = CorroborationRequirementV1(
+    payload = CorroborationRequirement(
         requirement_id="one-valid-approval",
         query_definition_digest=DIGEST_A,
         min_count=1,
     ).model_dump(mode="json")
     payload[field] = {} if field == "parameters" else 1
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
-        CorroborationRequirementV1.model_validate(payload)
+        CorroborationRequirement.model_validate(payload)
 
 
 def test_admission_refuses_freeze_bypass_and_unknown_predicate() -> None:
@@ -147,7 +147,7 @@ def test_retained_freeze_exception_must_name_an_existing_transition() -> None:
     payload["freeze_requirements"][0]["except_transition_requirements"] = ["retired-transition"]
 
     with pytest.raises(ValidationError, match="unknown transition requirement"):
-        ClaimAdmissionPolicyV1.model_validate(payload)
+        ClaimAdmissionPolicy.model_validate(payload)
 
 
 def _evidence_policy() -> ClaimEvidenceAdmissionPolicyV1:
@@ -166,7 +166,7 @@ def _evidence_policy() -> ClaimEvidenceAdmissionPolicyV1:
     )
 
 
-def _evidence(**updates: object) -> EvidenceAdmissionInputV1:
+def _evidence(**updates: object) -> EvidenceAdmissionInput:
     values: dict[str, object] = {
         "claim_role": "observation",
         "capture_contract_digest": DIGEST_A,
@@ -175,7 +175,7 @@ def _evidence(**updates: object) -> EvidenceAdmissionInputV1:
         "source_subject_bound": True,
     }
     values.update(updates)
-    return EvidenceAdmissionInputV1.model_validate(values)
+    return EvidenceAdmissionInput.model_validate(values)
 
 
 def test_evidence_admission_is_conjunctive_and_never_grants_claim_authority() -> None:
@@ -252,17 +252,17 @@ def test_evidence_policy_refuses_duplicate_rules_and_illegal_reducer_shapes() ->
 
 
 def test_resolution_preserves_conflict_and_rejects_deleted_authority_selector() -> None:
-    policy = ClaimResolutionPolicyV1(
+    policy = ClaimResolutionPolicy(
         cardinality="one",
         eligible_verdicts=("supported",),
         selector="only_contender",
     )
-    first = ResolutionContenderV1(
+    first = ResolutionContender(
         claim_identity="CLM-" + "0a" * 16,
         object_value="open",
         verdict="supported",
     )
-    second = ResolutionContenderV1(
+    second = ResolutionContender(
         claim_identity="CLM-" + "0b" * 16,
         object_value="closed",
         verdict="supported",
@@ -275,7 +275,7 @@ def test_resolution_preserves_conflict_and_rejects_deleted_authority_selector() 
         "CLM-" + "0b" * 16,
     }
     with pytest.raises(ValidationError):
-        ClaimResolutionPolicyV1.model_validate(
+        ClaimResolutionPolicy.model_validate(
             {
                 **policy.model_dump(mode="json"),
                 "selector": "authority_rule",
@@ -288,21 +288,21 @@ def test_unknown_policy_requirement_field_refuses_fail_closed() -> None:
     payload = _review_policy().model_dump(mode="json")
     payload["transition_requirements"] = [{"tag": "playbill-transition-requirement-v2"}]
     with pytest.raises(ValidationError):
-        ClaimAdmissionPolicyV1.model_validate(payload)
+        ClaimAdmissionPolicy.model_validate(payload)
 
 
 def test_requirement_ids_cannot_alias_across_policy_kinds() -> None:
     with pytest.raises(ValidationError, match="unique across"):
-        ClaimAdmissionPolicyV1(
+        ClaimAdmissionPolicy(
             corroboration_requirements=(
-                CorroborationRequirementV1(
+                CorroborationRequirement(
                     requirement_id="same-id",
                     query_definition_digest=DIGEST_A,
                     min_count=1,
                 ),
             ),
             freeze_requirements=(
-                FreezeRequirementV1(
+                FreezeRequirement(
                     requirement_id="same-id",
                     while_predicate="review.status",
                     while_values=("approved",),

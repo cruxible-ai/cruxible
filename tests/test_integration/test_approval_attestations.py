@@ -19,8 +19,8 @@ from cruxible_client.contracts.attestations import (
 )
 from cruxible_client.contracts.candidates import (
     CandidateMemberEvidence,
-    CandidateRecord,
-    SemanticCandidate,
+    CandidateRecordV1,
+    SemanticCandidateV1,
     candidate_digest,
 )
 from cruxible_client.contracts.errors import ApprovalIntegrityError
@@ -48,15 +48,15 @@ def _candidate(
     *,
     parent: str = ROOT,
     approval_requirements: tuple[ApprovalRequirement, ...] = (),
-) -> CandidateRecord:
-    semantic = SemanticCandidate(
+) -> CandidateRecordV1:
+    semantic = SemanticCandidateV1(
         parent_semantic_root=parent,
         candidate_manifest_root="sha256:" + "22" * 32,
         semantic_diff_digest="sha256:" + "33" * 32,
         scope=("documents/design.json",),
         timestamp="2026-08-12T12:00:00.000000Z",
     )
-    return CandidateRecord(
+    return CandidateRecordV1(
         candidate=semantic,
         candidate_digest=candidate_digest(semantic).tagged,
         required_tier="graph_write",
@@ -79,7 +79,7 @@ def _candidate(
 
 def _submission(
     private: Ed25519PrivateKey,
-    candidate: CandidateRecord,
+    candidate: CandidateRecordV1,
     *,
     signer_id: str,
     submitted_by: str = "api-client",

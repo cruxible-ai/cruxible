@@ -24,11 +24,11 @@ from pydantic import ValidationError
 from cruxible_client.contracts.candidates import (
     PRODUCED_CANDIDATE_VERSION,
     CandidateRecord,
+    CandidateRecordV1,
     CandidateRecordV2,
-    CandidateRecordV3,
-    ClosureProofV3,
+    ClosureProof,
     SemanticCandidate,
-    SemanticCandidateV2,
+    SemanticCandidateV1,
     candidate_digest,
     render_candidate_record,
 )
@@ -104,7 +104,7 @@ def _document_tree(instance: Any) -> tuple[dict[str, bytes], dict[str, bytes]]:
     return base_tree, {**base_tree, DOCUMENT_PATH: render_document(shell)}
 
 
-def _candidate_v2(**overrides: object) -> SemanticCandidateV2:
+def _candidate_v2(**overrides: object) -> SemanticCandidate:
     values: dict[str, object] = {
         "parent_semantic_root": PARENT_ROOT,
         "candidate_manifest_root": MERKLE_ROOT,
@@ -112,7 +112,7 @@ def _candidate_v2(**overrides: object) -> SemanticCandidateV2:
         "scope": ("claims/alpha.json",),
         "timestamp": TIMESTAMP,
     }
-    return SemanticCandidateV2.model_validate({**values, **overrides})
+    return SemanticCandidate.model_validate({**values, **overrides})
 
 
 def _record_v3() -> ChangeSetRecordV3:
@@ -122,9 +122,9 @@ def _record_v3() -> ChangeSetRecordV3:
     return record
 
 
-def _candidate_record_v3() -> CandidateRecordV3:
+def _candidate_record_v3() -> CandidateRecord:
     record = _record_v3()
-    return CandidateRecordV3(
+    return CandidateRecord(
         candidate=record.candidate,
         candidate_digest=record.candidate_digest,
         required_tier=record.required_tier,
@@ -152,7 +152,7 @@ def test_candidate_v2_carries_the_merkle_root_and_never_the_flat_one() -> None:
     with pytest.raises(ValidationError, match="candidate_manifest_root"):
         _candidate_v2(candidate_manifest_root=FLAT_ROOT)
     with pytest.raises(ValidationError, match="candidate_manifest_root"):
-        SemanticCandidate.model_validate(
+        SemanticCandidateV1.model_validate(
             {
                 "parent_semantic_root": PARENT_ROOT,
                 "candidate_manifest_root": MERKLE_ROOT,
@@ -163,7 +163,7 @@ def test_candidate_v2_carries_the_merkle_root_and_never_the_flat_one() -> None:
         )
     # The two versions carry one root each, never both, and never the other's.
     assert set(candidate.model_dump()) == set(
-        SemanticCandidate(
+        SemanticCandidateV1(
             parent_semantic_root=PARENT_ROOT,
             candidate_manifest_root=FLAT_ROOT,
             semantic_diff_digest=DIFF_DIGEST,
@@ -183,14 +183,14 @@ def test_candidate_v2_keeps_every_other_v1_field_law() -> None:
     with pytest.raises(ValidationError):
         _candidate_v2(parent_semantic_root=MERKLE_ROOT)
     with pytest.raises(ValidationError):
-        SemanticCandidateV2.model_validate(
+        SemanticCandidate.model_validate(
             {**_candidate_v2().model_dump(mode="json"), "base_oid": "0" * 40}
         )
 
 
 def test_the_two_candidate_versions_never_share_a_digest_domain() -> None:
     v2 = _candidate_v2()
-    v1 = SemanticCandidate(
+    v1 = SemanticCandidateV1(
         parent_semantic_root=PARENT_ROOT,
         candidate_manifest_root=FLAT_ROOT,
         semantic_diff_digest=DIFF_DIGEST,
@@ -218,7 +218,7 @@ def test_the_two_candidate_versions_never_share_a_digest_domain() -> None:
 def test_candidate_v2_preimage_and_digest_match_golden() -> None:
     golden = json.loads(CANDIDATE_GOLDEN.read_bytes())
     assert golden["format"] == "playbill-candidate-v2-golden-v1"
-    candidate = SemanticCandidateV2.model_validate(golden["candidate"])
+    candidate = SemanticCandidate.model_validate(golden["candidate"])
     payload = candidate.model_dump(mode="json")
     payload.pop("tag")
     assert (
@@ -227,7 +227,7 @@ def test_candidate_v2_preimage_and_digest_match_golden() -> None:
     )
     assert candidate_digest(candidate).tagged == golden["candidate_digest"]
 
-    sibling = SemanticCandidate.model_validate(golden["flat_rooted_v1_sibling"]["candidate"])
+    sibling = SemanticCandidateV1.model_validate(golden["flat_rooted_v1_sibling"]["candidate"])
     assert candidate_digest(sibling).tagged == golden["flat_rooted_v1_sibling"]["candidate_digest"]
     assert candidate_digest(sibling).tagged != golden["candidate_digest"]
 
@@ -407,7 +407,7 @@ def test_closure_proof_v3_refuses_a_root_from_any_other_family() -> None:
     DependencyEdgeRoot.from_tagged(proof.dependency_edge_root)
     for wrong in ("sha256:" + "ab" * 32, "merkle-sha256:" + "ab" * 32):
         with pytest.raises(ValidationError, match="dependency_edge_root"):
-            ClosureProofV3.model_validate(
+            ClosureProof.model_validate(
                 {**proof.model_dump(mode="json"), "dependency_edge_root": wrong}
             )
 
@@ -431,7 +431,7 @@ def test_record_v3_round_trips_and_matches_golden() -> None:
     assert record.model_dump(mode="json") == golden["record"]
 
     # The embedded versions are exactly the two that moved.
-    assert isinstance(record.candidate, SemanticCandidateV2)
+    assert isinstance(record.candidate, SemanticCandidate)
     assert record.closure_proof.tag == "playbill-closure-proof-v3"
     assert record.members[0].tag == "playbill-candidate-member-law-evidence-v2"
     assert record.law_evidence[0].tag == "playbill-member-law-evaluation-v2"
@@ -450,7 +450,7 @@ def test_record_v3_closes_the_same_correspondence_the_v2_record_closes() -> None
     candidate_record = _candidate_record_v3()
     assert render_candidate_record(candidate_record).endswith(b"\n")
     with pytest.raises(ValidationError, match="v3 closure member-evidence digest"):
-        CandidateRecordV3.model_validate(
+        CandidateRecord.model_validate(
             {
                 **candidate_record.model_dump(mode="json"),
                 "closure_proof": {
@@ -495,9 +495,9 @@ def test_a_new_proposal_produces_the_whole_succession_and_nothing_older(
         actor_id="owner",
     )
     candidate = evaluation.candidate
-    assert isinstance(candidate, CandidateRecordV3)
+    assert isinstance(candidate, CandidateRecord)
     assert candidate.tag == PRODUCED_CANDIDATE_VERSION
-    assert isinstance(candidate.candidate, SemanticCandidateV2)
+    assert isinstance(candidate.candidate, SemanticCandidate)
     SemanticMerkleRoot.from_tagged(candidate.candidate.candidate_manifest_root)
     assert candidate.closure_proof.tag == "playbill-closure-proof-v3"
     DependencyEdgeRoot.from_tagged(candidate.closure_proof.dependency_edge_root)
@@ -535,7 +535,7 @@ def test_the_manifest_root_a_new_candidate_signs_is_the_trie_over_its_own_member
         actor_id="owner",
     )
     candidate = evaluation.candidate
-    assert isinstance(candidate, CandidateRecordV3)
+    assert isinstance(candidate, CandidateRecord)
     assert candidate.candidate.candidate_manifest_root == (
         merkle_manifest_root(semantic_projection(proposed)).tagged
     )
@@ -572,17 +572,17 @@ def test_a_superseded_wire_version_is_reachable_only_by_naming_it(tmp_path: Path
         ).candidate
 
     produced = evaluate(None)
-    assert isinstance(produced, CandidateRecordV3)
+    assert isinstance(produced, CandidateRecord)
     v2 = evaluate("playbill-validated-candidate-v2")
     v1 = evaluate("playbill-validated-candidate-v1")
     assert isinstance(v2, CandidateRecordV2)
-    assert isinstance(v1, CandidateRecord)
+    assert isinstance(v1, CandidateRecordV1)
 
     # v1 and v2 records embed the same frozen `C_s`, so they sign the same digest
     # and only the record around it moved. v3 signs a different `C_s` under its
     # own domain, so no approval raised over one can be replayed onto the other.
-    assert isinstance(v2.candidate, SemanticCandidate)
-    assert isinstance(v1.candidate, SemanticCandidate)
+    assert isinstance(v2.candidate, SemanticCandidateV1)
+    assert isinstance(v1.candidate, SemanticCandidateV1)
     assert v1.candidate_digest == v2.candidate_digest
     assert produced.candidate_digest != v2.candidate_digest
     assert v2.closure_proof.tag == "playbill-closure-proof-v2"

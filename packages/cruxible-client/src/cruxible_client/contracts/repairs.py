@@ -9,27 +9,27 @@ from typing import Any, TypeAlias
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-class RepairOperationV1(BaseModel):
+class RepairOperation(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     operation: str = Field(min_length=1)
     arguments: dict[str, Any] = Field(default_factory=dict)
 
 
-class HandEditInstructionV1(BaseModel):
+class HandEditInstruction(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     target: str = Field(min_length=1)
     required_change: str = Field(min_length=1)
 
 
-class HandEditRepairV1(BaseModel):
+class HandEditRepair(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    hand_edit: HandEditInstructionV1
+    hand_edit: HandEditInstruction
 
 
-ServedRepairV1: TypeAlias = RepairOperationV1 | HandEditRepairV1
+ServedRepair: TypeAlias = RepairOperation | HandEditRepair
 
 # A refusal whose specific change has not been declared says exactly that and
 # nothing more. Deriving a token from the code (``repair_<code>``) reads like a
@@ -199,14 +199,14 @@ DECLARED_HAND_EDIT_CHANGES: Mapping[str, str] = {
 # than no repair at all. The table lives beside the vocabularies it covers so
 # every served refusal producer -- core service, client authoring, CLI -- reads
 # the same one instead of re-inventing prose at its own boundary.
-RUNNABLE_REFUSAL_REPAIRS: Mapping[str, RepairOperationV1] = {
-    "binding_required": RepairOperationV1(operation="playbill.procedure.bind"),
-    "line_mandate_required": RepairOperationV1(
+RUNNABLE_REFUSAL_REPAIRS: Mapping[str, RepairOperation] = {
+    "binding_required": RepairOperation(operation="playbill.procedure.bind"),
+    "line_mandate_required": RepairOperation(
         operation="playbill.authoring.create",
         arguments={"example": "procedure-mandate"},
     ),
     # Nothing renews a mandate: its successor, or its retirement, is authored.
-    "mandate_expiring": RepairOperationV1(
+    "mandate_expiring": RepairOperation(
         operation="playbill.authoring.create",
         arguments={"example": "procedure-mandate"},
     ),
@@ -215,102 +215,100 @@ RUNNABLE_REFUSAL_REPAIRS: Mapping[str, RepairOperationV1] = {
     # answers each. A producer that knows the source and block names the repin
     # itself, with its arguments; this fallback is the runnable command for a
     # caller that knows only the code.
-    "block_backing_changed": RepairOperationV1(
+    "block_backing_changed": RepairOperation(
         operation="playbill.block.sync", arguments={"all": True}
     ),
-    "block_backing_overturned": RepairOperationV1(
+    "block_backing_overturned": RepairOperation(
         operation="playbill.block.sync", arguments={"all": True}
     ),
-    "block_backing_missing": RepairOperationV1(
+    "block_backing_missing": RepairOperation(
         operation="playbill.block.sync", arguments={"all": True}
     ),
     # A retired member cannot be un-retired, so the block either stops holding
     # it or the marker leaves the page. The producer names `sync --detach PATH`
     # with the path it knows; this fallback names the sweep that finds them.
-    "block_backing_retired": RepairOperationV1(
+    "block_backing_retired": RepairOperation(
         operation="playbill.block.sync", arguments={"all": True}
     ),
-    "block_concurrent_edit": RepairOperationV1(
+    "block_concurrent_edit": RepairOperation(
         operation="playbill.block.sync", arguments={"all": True}
     ),
     # The prose moved away from what the stamp committed. The author wrote it, so
     # the repair is to re-read the block against its backings and re-stamp it;
     # the producer names that repin with its source and block.
-    "block_locally_modified": RepairOperationV1(
+    "block_locally_modified": RepairOperation(
         operation="playbill.block.sync", arguments={"all": True}
     ),
-    "block_successor_ambiguous": RepairOperationV1(operation="playbill.block.repin"),
-    "block_sync_failed": RepairOperationV1(
+    "block_successor_ambiguous": RepairOperation(operation="playbill.block.repin"),
+    "block_sync_failed": RepairOperation(operation="playbill.block.sync", arguments={"all": True}),
+    "projection_backing_stale": RepairOperation(
         operation="playbill.block.sync", arguments={"all": True}
     ),
-    "projection_backing_stale": RepairOperationV1(
-        operation="playbill.block.sync", arguments={"all": True}
-    ),
-    "projection_dirty": RepairOperationV1(operation="playbill.block.sync", arguments={"all": True}),
+    "projection_dirty": RepairOperation(operation="playbill.block.sync", arguments={"all": True}),
     # A Source run needs an accepted SourceAcquisitionPolicy covering exactly
     # its declared source inputs; authoring one is the repair, so the runnable
     # command is the authoring create the caller would run next.
-    "source_acquisition_policy_required": RepairOperationV1(
+    "source_acquisition_policy_required": RepairOperation(
         operation="playbill.authoring.create",
         arguments={"example": "source-acquisition-policy"},
     ),
     # The policy is accepted but its rule denies a declared input. Authoring a
     # successor policy is the repair; the run itself is not retryable as-is.
-    "source_acquisition_refused": RepairOperationV1(
+    "source_acquisition_refused": RepairOperation(
         operation="playbill.authoring.create",
         arguments={"example": "source-acquisition-policy"},
     ),
     # Measurement doors. A declaration, run, or subject that does not fit is
     # repaired by inspecting what stands (the readings door is read-only) or
     # by re-running the evaluation once the named fault is corrected.
-    "measurement_not_declared": RepairOperationV1(operation="playbill.procedure.readings"),
-    "measurement_run_mismatch": RepairOperationV1(operation="playbill.procedure.readings"),
-    "measurement_subject_absent": RepairOperationV1(operation="playbill.procedure.readings"),
-    "measurement_subject_mismatch": RepairOperationV1(operation="playbill.procedure.readings"),
-    "measurement_basis_unsupported": RepairOperationV1(operation="playbill.procedure.readings"),
-    "measurement_reading_conflict": RepairOperationV1(operation="playbill.procedure.readings"),
-    "measurement_resolution_conflict": RepairOperationV1(operation="playbill.procedure.measure"),
-    "occurrence_not_due": RepairOperationV1(operation="playbill.line.run"),
-    "occurrence_id_mismatch": RepairOperationV1(operation="playbill.line.run"),
-    "evaluation_instant_skewed": RepairOperationV1(operation="playbill.line.run"),
-    "line_identity_mismatch": RepairOperationV1(operation="playbill.line.run"),
-    "document_modified": RepairOperationV1(operation="playbill.document.propose"),
+    "measurement_not_declared": RepairOperation(operation="playbill.procedure.readings"),
+    "measurement_run_mismatch": RepairOperation(operation="playbill.procedure.readings"),
+    "measurement_subject_absent": RepairOperation(operation="playbill.procedure.readings"),
+    "measurement_subject_mismatch": RepairOperation(operation="playbill.procedure.readings"),
+    "measurement_basis_unsupported": RepairOperation(operation="playbill.procedure.readings"),
+    "measurement_reading_conflict": RepairOperation(operation="playbill.procedure.readings"),
+    "measurement_resolution_conflict": RepairOperation(operation="playbill.procedure.measure"),
+    "occurrence_not_due": RepairOperation(operation="playbill.line.run"),
+    "occurrence_id_mismatch": RepairOperation(operation="playbill.line.run"),
+    "evaluation_instant_skewed": RepairOperation(operation="playbill.line.run"),
+    "line_identity_mismatch": RepairOperation(operation="playbill.line.run"),
+    "document_modified": RepairOperation(operation="playbill.document.propose"),
     # A next page cursor names the whole queue it continues; once that queue
     # moves, the repair is to read page one again.
-    "playbill.next.cursor_mismatch": RepairOperationV1(operation="playbill.next"),
-    "workspace_binding_invalid": RepairOperationV1(
+    "playbill.next.cursor_mismatch": RepairOperation(operation="playbill.next"),
+    "workspace_binding_invalid": RepairOperation(
         operation="playbill.host.create",
         arguments={"workspace": ".", "replace": True},
     ),
-    "workspace_instance_mismatch": RepairOperationV1(
+    "workspace_instance_mismatch": RepairOperation(
         operation="playbill.host.create",
         arguments={"workspace": ".", "replace": True},
     ),
-    "workspace_not_attached": RepairOperationV1(
+    "workspace_not_attached": RepairOperation(
         operation="playbill.host.create", arguments={"workspace": "."}
     ),
 }
 
 
-class ServedRepairEnvelopeV1(BaseModel):
+class ServedRepairEnvelope(BaseModel):
     """Validation utility proving the repair union has exactly one branch."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    repair: ServedRepairV1
+    repair: ServedRepair
 
     @model_validator(mode="after")
-    def _one_branch(self) -> "ServedRepairEnvelopeV1":
-        if isinstance(self.repair, RepairOperationV1) == isinstance(self.repair, HandEditRepairV1):
+    def _one_branch(self) -> "ServedRepairEnvelope":
+        if isinstance(self.repair, RepairOperation) == isinstance(self.repair, HandEditRepair):
             raise ValueError("repair must select exactly one structured branch")
         return self
 
 
-def hand_edit_repair(code: str, *, required_change: str | None = None) -> HandEditRepairV1:
+def hand_edit_repair(code: str, *, required_change: str | None = None) -> HandEditRepair:
     """Return an explicit non-command repair for a refusal needing judgment."""
 
-    return HandEditRepairV1(
-        hand_edit=HandEditInstructionV1(
+    return HandEditRepair(
+        hand_edit=HandEditInstruction(
             target=f"refusal/{code}",
             required_change=(
                 required_change
@@ -321,7 +319,7 @@ def hand_edit_repair(code: str, *, required_change: str | None = None) -> HandEd
     )
 
 
-def render_served_repair(repair: ServedRepairV1) -> str:
+def render_served_repair(repair: ServedRepair) -> str:
     """Render one structured repair for a terminal without inventing a command.
 
     A runnable repair prints the served operation and the exact arguments it
@@ -329,7 +327,7 @@ def render_served_repair(repair: ServedRepairV1) -> str:
     branch composes an invocation the caller could paste and have fail.
     """
 
-    if isinstance(repair, HandEditRepairV1):
+    if isinstance(repair, HandEditRepair):
         return f"hand edit {repair.hand_edit.target}: {repair.hand_edit.required_change}"
     if not repair.arguments:
         return repair.operation
@@ -337,7 +335,7 @@ def render_served_repair(repair: ServedRepairV1) -> str:
     return f"{repair.operation} {arguments}"
 
 
-def served_repair_for_refusal(code: str) -> ServedRepairV1:
+def served_repair_for_refusal(code: str) -> ServedRepair:
     """Resolve one served refusal code to its declared structured repair.
 
     Producers call this instead of building a repair at their own boundary, so
@@ -357,11 +355,11 @@ __all__ = [
     "DECLARED_HAND_EDIT_CHANGES",
     "RUNNABLE_REFUSAL_REPAIRS",
     "UNDECLARED_HAND_EDIT_CHANGE",
-    "HandEditInstructionV1",
-    "HandEditRepairV1",
-    "RepairOperationV1",
-    "ServedRepairEnvelopeV1",
-    "ServedRepairV1",
+    "HandEditInstruction",
+    "HandEditRepair",
+    "RepairOperation",
+    "ServedRepairEnvelope",
+    "ServedRepair",
     "hand_edit_repair",
     "render_served_repair",
     "served_repair_for_refusal",

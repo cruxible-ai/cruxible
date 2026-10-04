@@ -8,25 +8,25 @@ import pytest
 from pydantic import ValidationError
 
 from cruxible_client.contracts.acquisition_policies import (
-    IndependentCoherenceV1,
-    InputAcquisitionRuleV1,
-    SourceAcquisitionPolicyV1,
+    IndependentCoherence,
+    InputAcquisitionRule,
+    SourceAcquisitionPolicy,
     acquisition_policy_digest,
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.procedures.results import (
-    ProcedureAcquisitionPlanV2,
-    ProcedureAdmissionMaterialManifestV1,
-    ProcedureRunReceiptV6,
-    ProcedureSourceCaptureAssociationV1,
+    ProcedureAcquisitionPlan,
+    ProcedureAdmissionMaterialManifest,
+    ProcedureRunReceipt,
+    ProcedureSourceCaptureAssociation,
     procedure_acquisition_plan_digest,
     procedure_admission_material_digest,
 )
 from cruxible_client.contracts.provider_execution import (
-    ProviderBudgetTranslationV1,
-    ProviderExternalOccurrencePlanV1,
-    ProviderSecretResolutionPlanV1,
-    VerifiedProviderBindingV1,
+    ProviderBudgetTranslation,
+    ProviderExternalOccurrencePlan,
+    ProviderSecretResolutionPlan,
+    VerifiedProviderBinding,
 )
 from cruxible_core.procedures.execution import (
     PreparedProcedureRunV5,
@@ -52,14 +52,14 @@ from tests.test_procedures.test_procedure_execution import (
 
 def _plan_and_admission(
     tmp_path: Path,
-) -> tuple[ProcedureAcquisitionPlanV2, ProcedureRunAdmissionV5]:
+) -> tuple[ProcedureAcquisitionPlan, ProcedureRunAdmissionV5]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     fixture = _fixture(tmp_path)
     accepted = _state_procedure()
     v4 = _line_admission_v4(accepted, fixture)
     binding = v4.resolved_provider_bindings[0]
     classification = binding.classification_plan
-    local = VerifiedProviderBindingV1(
+    local = VerifiedProviderBinding(
         provider_artifact_digest=binding.provider_artifact_digest,
         interface_artifact_digest=classification.interface_artifact_digest,
         interface_id="demo.interface",
@@ -75,7 +75,7 @@ def _plan_and_admission(
         v4.budget.wall_clock.microseconds,
         v4.hard_caps.max_wall_clock.microseconds,
     )
-    budget = ProviderBudgetTranslationV1(
+    budget = ProviderBudgetTranslation(
         remaining_wall_clock_microseconds=remaining,
         procedure_wall_clock_microseconds=v4.budget.wall_clock.microseconds,
         hard_cap_wall_clock_microseconds=v4.hard_caps.max_wall_clock.microseconds,
@@ -88,7 +88,7 @@ def _plan_and_admission(
         max_items=v4.budget.max_items,
         result_bytes_cap=1024,
     )
-    occurrence = ProviderExternalOccurrencePlanV1(
+    occurrence = ProviderExternalOccurrencePlan(
         occurrence_path="provider",
         occurrence_kind="provider",
         node_id=binding.node_id,
@@ -104,10 +104,10 @@ def _plan_and_admission(
         contract_input_digest=_digest("contract-in"),
         contract_output_digest=_digest("contract-out"),
         local_execution=local,
-        secret_plan=ProviderSecretResolutionPlanV1(),
+        secret_plan=ProviderSecretResolutionPlan(),
         budget_translation=budget,
     )
-    plan = ProcedureAcquisitionPlanV2(
+    plan = ProcedureAcquisitionPlan(
         accepted_coordinate=v4.accepted_coordinate,
         line_identity=v4.line_identity,
         line_spec_digest=v4.line_spec_digest or "",
@@ -213,7 +213,7 @@ def test_prepared_v5_requires_exact_plan_and_complete_provider_coverage(tmp_path
     accepted = _state_procedure()
     direct = _prepare(accepted, fixture, _StateReader())
     plan, admission = _plan_and_admission(tmp_path / "other")
-    manifest = ProcedureAdmissionMaterialManifestV1(members=())
+    manifest = ProcedureAdmissionMaterialManifest(members=())
 
     prepared = PreparedProcedureRunV5(
         admission=admission,
@@ -324,7 +324,7 @@ def test_reserved_b4_source_capture_association_requires_canonical_occurrence_pa
     occurrence_path: str,
 ) -> None:
     with pytest.raises(ValidationError, match="occurrence path"):
-        ProcedureSourceCaptureAssociationV1(
+        ProcedureSourceCaptureAssociation(
             occurrence_path=occurrence_path,
             invocation_receipt_digest=_digest("receipt"),
             capture_digest=_digest("capture"),
@@ -332,24 +332,24 @@ def test_reserved_b4_source_capture_association_requires_canonical_occurrence_pa
 
 
 def test_reserved_b4_source_capture_associations_are_path_sorted_and_unique() -> None:
-    first = ProcedureSourceCaptureAssociationV1(
+    first = ProcedureSourceCaptureAssociation(
         occurrence_path="a/provider",
         invocation_receipt_digest=_digest("receipt-a"),
         capture_digest=_digest("capture-a"),
     )
-    second = ProcedureSourceCaptureAssociationV1(
+    second = ProcedureSourceCaptureAssociation(
         occurrence_path="b/provider",
         invocation_receipt_digest=_digest("receipt-b"),
         capture_digest=_digest("capture-b"),
     )
-    assert ProcedureRunReceiptV6._source_associations((first, second)) == (  # noqa: SLF001
+    assert ProcedureRunReceipt._source_associations((first, second)) == (  # noqa: SLF001
         first,
         second,
     )
     with pytest.raises(ValueError, match="path-sorted and unique"):
-        ProcedureRunReceiptV6._source_associations((second, first))  # noqa: SLF001
+        ProcedureRunReceipt._source_associations((second, first))  # noqa: SLF001
     with pytest.raises(ValueError, match="path-sorted and unique"):
-        ProcedureRunReceiptV6._source_associations((first, first))  # noqa: SLF001
+        ProcedureRunReceipt._source_associations((first, first))  # noqa: SLF001
 
 
 def test_a_declared_input_with_no_planned_occurrence_is_not_scored(tmp_path: Path) -> None:
@@ -365,10 +365,10 @@ def test_a_declared_input_with_no_planned_occurrence_is_not_scored(tmp_path: Pat
     """
 
     plan, _admission = _plan_and_admission(tmp_path)
-    strict = SourceAcquisitionPolicyV1(
+    strict = SourceAcquisitionPolicy(
         identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="tally-reads"),
         inputs=(
-            InputAcquisitionRuleV1(
+            InputAcquisitionRule(
                 input_name="tally",
                 requirement="required",
                 permitted_replayability=("exact",),
@@ -378,7 +378,7 @@ def test_a_declared_input_with_no_planned_occurrence_is_not_scored(tmp_path: Pat
                 on_conflict="refuse",
             ),
         ),
-        coherence=IndependentCoherenceV1(),
+        coherence=IndependentCoherence(),
     )
     assert all(item.occurrence_kind != "source" for item in plan.external_occurrences)
 

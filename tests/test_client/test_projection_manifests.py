@@ -19,7 +19,7 @@ from cruxible_client.contracts.declared_blocks import (
     projection_manifest,
     stamped_projection_windows,
 )
-from cruxible_core.coverage.adapter import WorkingSourceObservationV1, observed_commitment
+from cruxible_core.coverage.adapter import WorkingSourceObservation, observed_commitment
 from tests.test_client.test_playbill_block_sync import OLD_BODY, _stamp
 from tests.test_client.test_playbill_projection_repin import NOW, _RepinClient, _workspace
 
@@ -85,7 +85,7 @@ def test_manifest_limits_and_server_observation() -> None:
         parse_projection_blocks(
             page, source_id=stamp.source_id, manifests={str(i): b"x" for i in range(129)}
         )
-    observation = WorkingSourceObservationV1(
+    observation = WorkingSourceObservation(
         source={"plane": "external", "identity": stamp.source_id},
         content_base64=base64.b64encode(page).decode(),
         content_digest=observed_commitment(page),
@@ -99,7 +99,7 @@ def test_manifest_limits_and_server_observation() -> None:
         == stamp
     )
     with pytest.raises(ValueError):
-        WorkingSourceObservationV1.model_validate(
+        WorkingSourceObservation.model_validate(
             {**observation.model_dump(), "projection_manifests": {digest: "eA=="}}
         )
 
@@ -212,7 +212,7 @@ def test_compact_observation_allows_adjacent_unstamped_draft() -> None:
     digest, manifest = projection_manifest(stamp)
     page = frame_projection_block(stamp=stamp, body=OLD_BODY, compact=True)
     page += b"<!-- playbill:block:draft -->\nUnfinished prose.\n<!-- /playbill:block:draft -->\n"
-    observation = WorkingSourceObservationV1(
+    observation = WorkingSourceObservation(
         source={"plane": "external", "identity": stamp.source_id},
         content_base64=base64.b64encode(page).decode(),
         content_digest=observed_commitment(page),
@@ -232,7 +232,7 @@ def test_compact_observation_allows_adjacent_unstamped_draft() -> None:
 def test_manifest_processing_budget_is_configurable(tmp_path: Path) -> None:
     from cruxible_client.contracts.declared_blocks import (
         ProjectionProcessingLimitExceeded,
-        ProjectionProcessingPolicyV1,
+        ProjectionProcessingPolicy,
         projection_processing_budget,
     )
 
@@ -240,7 +240,7 @@ def test_manifest_processing_budget_is_configurable(tmp_path: Path) -> None:
     digest, manifest = projection_manifest(stamp)
     page = frame_projection_block(stamp=stamp, body=OLD_BODY, compact=True)
     retain_local_manifests(tmp_path, {digest: manifest})
-    with projection_processing_budget(ProjectionProcessingPolicyV1(max_bytes=len(page))):
+    with projection_processing_budget(ProjectionProcessingPolicy(max_bytes=len(page))):
         with pytest.raises(ProjectionProcessingLimitExceeded):
             load_projection_manifests(tmp_path, page)
     assert load_projection_manifests(tmp_path, page) == {digest: manifest}

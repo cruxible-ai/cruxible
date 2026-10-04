@@ -47,18 +47,18 @@ from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.query.grammar import byte_sorted
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import (
-    CasSourceReferenceV1,
-    ExternalSourceReferenceV1,
-    LedgerSourceReferenceV1,
+    CasSourceReference,
+    ExternalSourceReference,
+    LedgerSourceReference,
     SourceAccessClass,
-    SourceReferenceV1,
+    SourceReference,
 )
 from cruxible_core.coverage.contracts import (
     CoverageClaimCitationV2,
-    CoverageCommitmentScanProofV1,
+    CoverageCommitmentScanProof,
     CoverageError,
-    CoverageLineOverlayV1,
-    LogicalSourceIdentityV1,
+    CoverageLineOverlay,
+    LogicalSourceIdentity,
     logical_sources_sorted,
     occurrence_identity_digest,
 )
@@ -76,7 +76,7 @@ class _StrictCoverageIndexModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-def accepted_logical_source(source: SourceReferenceV1) -> LogicalSourceIdentityV1 | None:
+def accepted_logical_source(source: SourceReference) -> LogicalSourceIdentity | None:
     """Name the logical source an accepted reference cites, when it has one.
 
     A CAS reference returns ``None`` deliberately: it is addressed by content,
@@ -85,11 +85,11 @@ def accepted_logical_source(source: SourceReferenceV1) -> LogicalSourceIdentityV
     logical source the ledger never recorded.
     """
 
-    if isinstance(source, LedgerSourceReferenceV1):
-        return LogicalSourceIdentityV1(plane="ledger", identity=source.address.artifact_path)
-    if isinstance(source, ExternalSourceReferenceV1):
-        return LogicalSourceIdentityV1(plane="external", identity=source.source_identity)
-    if isinstance(source, CasSourceReferenceV1):
+    if isinstance(source, LedgerSourceReference):
+        return LogicalSourceIdentity(plane="ledger", identity=source.address.artifact_path)
+    if isinstance(source, ExternalSourceReference):
+        return LogicalSourceIdentity(plane="external", identity=source.source_identity)
+    if isinstance(source, CasSourceReference):
         return None
     raise CoverageError("unknown source reference kind in coverage index")
 
@@ -106,7 +106,7 @@ class EvidenceCitationV1(_StrictCoverageIndexModel):
     commitment_digest: str
     digest_kind: Literal["exact_bytes", "canonical_value", "query_result", "provider_statement"]
     byte_length: int | None = Field(default=None, ge=0)
-    accepted_source: LogicalSourceIdentityV1 | None = None
+    accepted_source: LogicalSourceIdentity | None = None
     access_class: SourceAccessClass
     capture_digests: tuple[str, ...] = ()
     claim_addresses: tuple[SemanticAddress, ...] = ()
@@ -189,7 +189,7 @@ class EvidenceCitationIndexV1(_StrictCoverageIndexModel):
     def by_commitment(self, commitment_digest: str) -> tuple[EvidenceCitationV1, ...]:
         return tuple(item for item in self.citations if item.commitment_digest == commitment_digest)
 
-    def by_logical_source(self, source: LogicalSourceIdentityV1) -> tuple[EvidenceCitationV1, ...]:
+    def by_logical_source(self, source: LogicalSourceIdentity) -> tuple[EvidenceCitationV1, ...]:
         key = source.sort_key
         return tuple(
             item
@@ -240,11 +240,11 @@ class WorkingSourceContent:
     working bodies would be a body store nobody asked for.
     """
 
-    source: LogicalSourceIdentityV1
+    source: LogicalSourceIdentity
     content: bytes
 
 
-class CoverageScanBudgetV1(_StrictCoverageIndexModel):
+class CoverageScanBudget(_StrictCoverageIndexModel):
     """The bound on relocation scanning, in bytes fed through SHA-256."""
 
     tag: Literal["playbill-coverage-scan-budget-v1"] = "playbill-coverage-scan-budget-v1"
@@ -257,7 +257,7 @@ class WorkingSourceCommitmentV1(_StrictCoverageIndexModel):
     tag: Literal["playbill-coverage-working-source-commitment-v1"] = (
         "playbill-coverage-working-source-commitment-v1"
     )
-    source: LogicalSourceIdentityV1
+    source: LogicalSourceIdentity
     content_digest: str
     byte_length: int = Field(ge=0)
 
@@ -268,18 +268,18 @@ class WorkingSourceCommitmentV1(_StrictCoverageIndexModel):
         return value
 
 
-class WorkingOccurrenceV1(_StrictCoverageIndexModel):
+class WorkingOccurrence(_StrictCoverageIndexModel):
     """One observed occurrence: stable identity, presentation overlay beside it."""
 
     tag: Literal["playbill-coverage-working-occurrence-v1"] = (
         "playbill-coverage-working-occurrence-v1"
     )
-    source: LogicalSourceIdentityV1
+    source: LogicalSourceIdentity
     observed_commitment_digest: str
     byte_length: int = Field(ge=0)
     ordinal: int = Field(ge=0)
     identity_digest: str
-    line_overlay: CoverageLineOverlayV1
+    line_overlay: CoverageLineOverlay
 
     @field_validator("observed_commitment_digest", "identity_digest")
     @classmethod
@@ -288,7 +288,7 @@ class WorkingOccurrenceV1(_StrictCoverageIndexModel):
         return value
 
     @model_validator(mode="after")
-    def _identity_reproduces(self) -> "WorkingOccurrenceV1":
+    def _identity_reproduces(self) -> "WorkingOccurrence":
         expected = occurrence_identity_digest(
             source=self.source,
             observed_commitment_digest=self.observed_commitment_digest,
@@ -314,7 +314,7 @@ class WorkingOccurrenceOverlayV1(_StrictCoverageIndexModel):
         "playbill-coverage-occurrence-overlay-v1"
     )
     sources: tuple[WorkingSourceCommitmentV1, ...] = ()
-    occurrences: tuple[WorkingOccurrenceV1, ...] = ()
+    occurrences: tuple[WorkingOccurrence, ...] = ()
     scanned_selections: tuple[str, ...] = ()
     truncated: bool = False
     truncation_reason_codes: tuple[str, ...] = ()
@@ -331,9 +331,7 @@ class WorkingOccurrenceOverlayV1(_StrictCoverageIndexModel):
 
     @field_validator("occurrences")
     @classmethod
-    def _occurrences(
-        cls, value: tuple[WorkingOccurrenceV1, ...]
-    ) -> tuple[WorkingOccurrenceV1, ...]:
+    def _occurrences(cls, value: tuple[WorkingOccurrence, ...]) -> tuple[WorkingOccurrence, ...]:
         keys = tuple(item.sort_key for item in value)
         if keys != tuple(sorted(set(keys))):
             raise ValueError("overlay occurrences must be sorted and unique by occurrence identity")
@@ -352,14 +350,14 @@ class WorkingOccurrenceOverlayV1(_StrictCoverageIndexModel):
             raise ValueError("overlay truncation must be stated with its reason codes")
         return self
 
-    def commitment_for(self, source: LogicalSourceIdentityV1) -> WorkingSourceCommitmentV1 | None:
+    def commitment_for(self, source: LogicalSourceIdentity) -> WorkingSourceCommitmentV1 | None:
         key = source.sort_key
         for item in self.sources:
             if item.source.sort_key == key:
                 return item
         return None
 
-    def occurrences_for(self, source: LogicalSourceIdentityV1) -> tuple[WorkingOccurrenceV1, ...]:
+    def occurrences_for(self, source: LogicalSourceIdentity) -> tuple[WorkingOccurrence, ...]:
         key = source.sort_key
         return tuple(item for item in self.occurrences if item.source.sort_key == key)
 
@@ -369,7 +367,7 @@ class WorkingOccurrenceOverlayV1(_StrictCoverageIndexModel):
         return commitment_digest in self.scanned_selections
 
     @property
-    def scope(self) -> tuple[LogicalSourceIdentityV1, ...]:
+    def scope(self) -> tuple[LogicalSourceIdentity, ...]:
         return logical_sources_sorted(tuple(item.source for item in self.sources))
 
 
@@ -380,8 +378,8 @@ class WorkingOccurrenceOverlayV2(_StrictCoverageIndexModel):
         "playbill-coverage-occurrence-overlay-v2"
     )
     sources: tuple[WorkingSourceCommitmentV1, ...] = ()
-    occurrences: tuple[WorkingOccurrenceV1, ...] = ()
-    source_scan_proofs: tuple[CoverageCommitmentScanProofV1, ...] = ()
+    occurrences: tuple[WorkingOccurrence, ...] = ()
+    source_scan_proofs: tuple[CoverageCommitmentScanProof, ...] = ()
     truncated: bool = False
     truncation_reason_codes: tuple[str, ...] = ()
 
@@ -397,9 +395,7 @@ class WorkingOccurrenceOverlayV2(_StrictCoverageIndexModel):
 
     @field_validator("occurrences")
     @classmethod
-    def _occurrences(
-        cls, value: tuple[WorkingOccurrenceV1, ...]
-    ) -> tuple[WorkingOccurrenceV1, ...]:
+    def _occurrences(cls, value: tuple[WorkingOccurrence, ...]) -> tuple[WorkingOccurrence, ...]:
         keys = tuple(item.sort_key for item in value)
         if keys != tuple(sorted(set(keys))):
             raise ValueError("overlay occurrences must be sorted and unique by occurrence identity")
@@ -408,8 +404,8 @@ class WorkingOccurrenceOverlayV2(_StrictCoverageIndexModel):
     @field_validator("source_scan_proofs")
     @classmethod
     def _source_scan_proofs(
-        cls, value: tuple[CoverageCommitmentScanProofV1, ...]
-    ) -> tuple[CoverageCommitmentScanProofV1, ...]:
+        cls, value: tuple[CoverageCommitmentScanProof, ...]
+    ) -> tuple[CoverageCommitmentScanProof, ...]:
         keys = tuple(item.sort_key for item in value)
         if keys != tuple(sorted(set(keys))):
             raise ValueError("source scan proofs must be sorted and unique")
@@ -428,20 +424,20 @@ class WorkingOccurrenceOverlayV2(_StrictCoverageIndexModel):
             raise ValueError("overlay truncation must be stated with its reason codes")
         return self
 
-    def commitment_for(self, source: LogicalSourceIdentityV1) -> WorkingSourceCommitmentV1 | None:
+    def commitment_for(self, source: LogicalSourceIdentity) -> WorkingSourceCommitmentV1 | None:
         key = source.sort_key
         for item in self.sources:
             if item.source.sort_key == key:
                 return item
         return None
 
-    def occurrences_for(self, source: LogicalSourceIdentityV1) -> tuple[WorkingOccurrenceV1, ...]:
+    def occurrences_for(self, source: LogicalSourceIdentity) -> tuple[WorkingOccurrence, ...]:
         key = source.sort_key
         return tuple(item for item in self.occurrences if item.source.sort_key == key)
 
     def scanned(
         self,
-        source: LogicalSourceIdentityV1,
+        source: LogicalSourceIdentity,
         commitment_digest: str,
         byte_length: int,
     ) -> bool:
@@ -449,7 +445,7 @@ class WorkingOccurrenceOverlayV2(_StrictCoverageIndexModel):
         return any(item.sort_key == key for item in self.source_scan_proofs)
 
     @property
-    def scope(self) -> tuple[LogicalSourceIdentityV1, ...]:
+    def scope(self) -> tuple[LogicalSourceIdentity, ...]:
         return logical_sources_sorted(tuple(item.source for item in self.sources))
 
 
@@ -462,11 +458,11 @@ def _line_starts(content: bytes) -> Sequence[int]:
     return starts
 
 
-def _overlay(starts: Sequence[int], *, start_byte: int, end_byte: int) -> CoverageLineOverlayV1:
+def _overlay(starts: Sequence[int], *, start_byte: int, end_byte: int) -> CoverageLineOverlay:
     start_line = bisect.bisect_right(starts, start_byte)
     last_byte = end_byte - 1 if end_byte > start_byte else start_byte
     end_line = bisect.bisect_right(starts, last_byte)
-    return CoverageLineOverlayV1(
+    return CoverageLineOverlay(
         start_byte=start_byte,
         end_byte=end_byte,
         start_line=max(start_line, 1),
@@ -478,7 +474,7 @@ def build_working_occurrence_overlay(
     sources: Iterable[WorkingSourceContent],
     *,
     wanted: Iterable[tuple[str, int, bytes | None]] = (),
-    budget: CoverageScanBudgetV1 = CoverageScanBudgetV1(),
+    budget: CoverageScanBudget = CoverageScanBudget(),
 ) -> WorkingOccurrenceOverlayV2:
     """Observe the working snapshot: whole-source content, then cited selections.
 
@@ -533,7 +529,7 @@ def build_working_occurrence_overlay(
     commitments: list[WorkingSourceCommitmentV1] = []
     found: dict[tuple[bytes, str], list[tuple[int, int]]] = {}
     line_starts: dict[bytes, Sequence[int]] = {}
-    proofs: list[CoverageCommitmentScanProofV1] = []
+    proofs: list[CoverageCommitmentScanProof] = []
     reasons: set[str] = set()
     remaining = budget.max_scanned_bytes
 
@@ -558,7 +554,7 @@ def build_working_occurrence_overlay(
             selections = wanted_by_length[byte_length]
             if len(content) < byte_length:
                 proofs.extend(
-                    CoverageCommitmentScanProofV1(
+                    CoverageCommitmentScanProof(
                         source=material.source,
                         commitment_digest=digest,
                         byte_length=byte_length,
@@ -592,7 +588,7 @@ def build_working_occurrence_overlay(
                 remaining -= debit
                 found.setdefault((source_key, digest), []).extend(candidate_spans)
                 proofs.append(
-                    CoverageCommitmentScanProofV1(
+                    CoverageCommitmentScanProof(
                         source=material.source,
                         commitment_digest=digest,
                         byte_length=byte_length,
@@ -619,7 +615,7 @@ def build_working_occurrence_overlay(
             for digest in sorted(fallback_digests):
                 found.setdefault((source_key, digest), []).extend(fallback_spans[digest])
                 proofs.append(
-                    CoverageCommitmentScanProofV1(
+                    CoverageCommitmentScanProof(
                         source=material.source,
                         commitment_digest=digest,
                         byte_length=byte_length,
@@ -627,12 +623,12 @@ def build_working_occurrence_overlay(
                 )
 
     by_key = {item.source.sort_key: item.source for item in materials}
-    occurrences: list[WorkingOccurrenceV1] = []
+    occurrences: list[WorkingOccurrence] = []
     for (source_key, digest), spans in found.items():
         source = by_key[source_key]
         for ordinal, (start_byte, end_byte) in enumerate(sorted(set(spans))):
             occurrences.append(
-                WorkingOccurrenceV1(
+                WorkingOccurrence(
                     source=source,
                     observed_commitment_digest=digest,
                     byte_length=end_byte - start_byte,
@@ -678,14 +674,14 @@ __all__ = [
     "EVIDENCE_INDEX_V2_DIGEST_DOMAIN",
     "OCCURRENCE_OVERLAY_DIGEST_DOMAIN",
     "OCCURRENCE_OVERLAY_V2_DIGEST_DOMAIN",
-    "CoverageScanBudgetV1",
+    "CoverageScanBudget",
     "EvidenceCitationIndexV1",
     "EvidenceCitationIndexV2",
     "EvidenceCitationV1",
     "EvidenceCitationV2",
     "WorkingOccurrenceOverlayV1",
     "WorkingOccurrenceOverlayV2",
-    "WorkingOccurrenceV1",
+    "WorkingOccurrence",
     "WorkingSourceCommitmentV1",
     "WorkingSourceContent",
     "accepted_logical_source",

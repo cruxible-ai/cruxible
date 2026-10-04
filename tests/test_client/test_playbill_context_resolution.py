@@ -428,9 +428,9 @@ def test_context_show_reports_typed_daemon_config_disagreement(
     class StubClient:
         def playbill_host_workspace_registration(
             self, instance_id: str
-        ) -> contracts.PlaybillHostWorkspaceRegistrationV1:
+        ) -> contracts.PlaybillHostWorkspaceRegistration:
             assert instance_id == "inst_workspace"
-            return contracts.PlaybillHostWorkspaceRegistrationV1(
+            return contracts.PlaybillHostWorkspaceRegistration(
                 instance_id=instance_id,
                 status="not_registered",
             )
@@ -469,8 +469,8 @@ def test_context_show_names_workspace_attach_for_missing_local_config(
     class StubClient:
         def playbill_host_workspace_registration(
             self, instance_id: str
-        ) -> contracts.PlaybillHostWorkspaceRegistrationV1:
-            return contracts.PlaybillHostWorkspaceRegistrationV1(
+        ) -> contracts.PlaybillHostWorkspaceRegistration:
+            return contracts.PlaybillHostWorkspaceRegistration(
                 instance_id=instance_id,
                 status="registered",
                 workspace_path=str(workspace.resolve()),

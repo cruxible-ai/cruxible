@@ -12,10 +12,10 @@ from pydantic import ValidationError
 from cruxible_client import contracts
 from cruxible_client.contracts.candidates import (
     CandidateMemberEvidence,
-    CandidateMemberLawEvidenceV2,
+    CandidateMemberLawEvidence,
 )
 from cruxible_client.contracts.errors import PlaybillSinceRequestInvalid
-from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.runtime import playbill_api
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
@@ -308,7 +308,7 @@ def test_v2_v3_normalization_preserves_every_disposition_and_null_delete(
     candidate_is_none: bool,
 ) -> None:
     digest = "sha256:" + "a" * 64
-    member = CandidateMemberLawEvidenceV2.model_construct(
+    member = CandidateMemberLawEvidence.model_construct(
         path=f"documents/{disposition}.json",
         artifact_kind="Document",
         disposition=disposition,
@@ -364,6 +364,6 @@ def test_non_changeset_accepted_source_is_rejected() -> None:
             cast(Any, fake),
             lower_generation=0,
             head_generation=1,
-            access_profile=CoverageAccessProfileV1(profile_id="since-test"),
+            access_profile=CoverageAccessProfile(profile_id="since-test"),
         )
     assert getattr(raised.value, "code") == "playbill.since.accepted_state_invalid"

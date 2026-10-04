@@ -42,34 +42,34 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.captures import (
-    CaptureContractV1,
+    CaptureContract,
     CaptureObjectStoreProtocol,
+    CaptureRunCoordinate,
     CaptureRunCoordinateV1,
-    CaptureRunCoordinateV2,
     build_cas_capture,
     build_procedure_capture_v2,
     capture_contract_digest,
 )
 from cruxible_client.contracts.errors import PlaybillFormatError, ProjectionIntegrityError
 from cruxible_client.contracts.procedure_mandates import (
+    ProcedureMandate,
     ProcedureMandateAny,
-    ProcedureMandateInvocationV1,
+    ProcedureMandateInvocation,
     ProcedureMandateV1,
-    ProcedureMandateV2,
     evaluate_procedure_mandate,
     procedure_mandate_digest,
 )
 from cruxible_client.contracts.procedures.models import (
     TERMINAL_REQUIRED_RUNGS,
-    ProcedureHardCapsV3,
+    ProcedureHardCaps,
     authority_for_rung,
 )
-from cruxible_client.contracts.procedures.results import ServedAuthorityTermV1
+from cruxible_client.contracts.procedures.results import ServedAuthorityTerm
 from cruxible_client.contracts.repairs import (
-    HandEditInstructionV1,
-    HandEditRepairV1,
-    RepairOperationV1,
-    ServedRepairV1,
+    HandEditInstruction,
+    HandEditRepair,
+    RepairOperation,
+    ServedRepair,
 )
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_core.governance.actor_context import GovernedActorContext
@@ -118,7 +118,7 @@ EFFECTIVE_RUNG_TERMS: tuple[EffectiveRungTermV1, ...] = (
 )
 
 #: What a served result calls each term: the Line's ceiling is authored as a verb.
-SERVED_AUTHORITY_TERMS: dict[EffectiveRungTermV1, ServedAuthorityTermV1] = {
+SERVED_AUTHORITY_TERMS: dict[EffectiveRungTermV1, ServedAuthorityTerm] = {
     "procedure_terminal_capability": "procedure_terminal_capability",
     "line_requested_rung": "line_max_authority",
     "propagated_sensitivity": "propagated_sensitivity",
@@ -623,7 +623,7 @@ class TerminalEgressRequestV2(TerminalEgressRequestV1):
     tag: Literal["playbill-terminal-egress-request-v2"] = "playbill-terminal-egress-request-v2"  # type: ignore[assignment]
     procedure_mandate_digest: str | None = None
     calibration_reading_digests: tuple[str, ...] = ()
-    requested_authority: ProcedureHardCapsV3
+    requested_authority: ProcedureHardCaps
     target_paths: tuple[str, ...] = ()
     evaluation_time: datetime = Field(description="Reads EVALUATION INSTANT.")
     operation_key: str | None = None
@@ -715,7 +715,7 @@ class TerminalAuthorityRefusal(TerminalEgressError):
             "rebind_admission",
             "use_declared_rung",
         ],
-        repair: ServedRepairV1,
+        repair: ServedRepair,
     ) -> None:
         normalized = (codes,) if isinstance(codes, str) else tuple(codes)
         if not normalized:
@@ -735,12 +735,12 @@ class TerminalAuthorityRefusal(TerminalEgressError):
         )
 
 
-PROCEDURE_MANDATE_REPAIR = RepairOperationV1(
+PROCEDURE_MANDATE_REPAIR = RepairOperation(
     operation="playbill.authoring.create",
     arguments={"example": "procedure-mandate"},
 )
-PROCEDURE_ADMISSION_REPAIR = HandEditRepairV1(
-    hand_edit=HandEditInstructionV1(
+PROCEDURE_ADMISSION_REPAIR = HandEditRepair(
+    hand_edit=HandEditInstruction(
         target="terminal-egress/admission",
         required_change="rebuild_from_exact_admitted_run",
     )
@@ -1022,8 +1022,8 @@ def require_procedure_mandate(
             "Only rung-2 and rung-3 terminals consume Procedure mandates.",
             request=request,
             repair_kind="use_declared_rung",
-            repair=HandEditRepairV1(
-                hand_edit=HandEditInstructionV1(
+            repair=HandEditRepair(
+                hand_edit=HandEditInstruction(
                     target="terminal-egress/required-rung",
                     required_change="use_declared_terminal_rung",
                 )
@@ -1042,7 +1042,7 @@ def require_procedure_mandate(
     assert digest is not None
     evaluation = evaluate_procedure_mandate(
         mandate,
-        ProcedureMandateInvocationV1(
+        ProcedureMandateInvocation(
             procedure_identity=authority.target,
             procedure_artifact_digest=authority.artifact_digest,
             requested_rung=request.required_rung,  # type: ignore[arg-type]
@@ -1092,7 +1092,7 @@ def require_procedure_mandate_at_head(
         if row is not None:
             mandate = projection.typed.source(row[0])
             if (
-                not isinstance(mandate, ProcedureMandateV1 | ProcedureMandateV2)
+                not isinstance(mandate, ProcedureMandateV1 | ProcedureMandate)
                 or procedure_mandate_digest(mandate).tagged != digest
             ):
                 raise ProjectionIntegrityError(
@@ -1203,7 +1203,7 @@ class CaptureTerminalEgressSink:
         self,
         *,
         store: CaptureObjectStoreProtocol,
-        contracts: Mapping[str, CaptureContractV1],
+        contracts: Mapping[str, CaptureContract],
         producer: ArtifactIdentity,
         producer_binding_digest: str,
     ) -> None:
@@ -1251,7 +1251,7 @@ class CaptureTerminalEgressSink:
                 "Capture egress sink producer differs from the Procedure request"
             )
         run_coordinate = (
-            CaptureRunCoordinateV2(
+            CaptureRunCoordinate(
                 run_kind="procedure",
                 run_id=request.run_id,
                 bound_generation=request.accepted_coordinate.generation_root,
@@ -1282,7 +1282,7 @@ class CaptureTerminalEgressSink:
                     store=self.store,
                     contract=contract,
                     source_body=canonical_bytes(item.value),
-                    run_coordinate=cast(CaptureRunCoordinateV2, run_coordinate),
+                    run_coordinate=cast(CaptureRunCoordinate, run_coordinate),
                     producer_receipt_digest=producer_receipt_digest,
                     producer=self.producer,
                     producer_binding_digest=self.producer_binding_digest,

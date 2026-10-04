@@ -28,9 +28,9 @@ from cruxible_client.contracts.errors import (
     SubjectNotFoundError,
 )
 from cruxible_client.contracts.repairs import (
-    HandEditRepairV1,
-    RepairOperationV1,
-    ServedRepairV1,
+    HandEditRepair,
+    RepairOperation,
+    ServedRepair,
     hand_edit_repair,
 )
 from cruxible_client.errors import ErrorResponse, response_to_error
@@ -124,15 +124,15 @@ def _message_for_error(exc: CoreError) -> str:
     return exc.__class__.__name__
 
 
-def _repair_for_error(exc: CoreError) -> ServedRepairV1:
+def _repair_for_error(exc: CoreError) -> ServedRepair:
     carried = getattr(exc, "repair", None)
-    if isinstance(carried, RepairOperationV1 | HandEditRepairV1):
+    if isinstance(carried, RepairOperation | HandEditRepair):
         return carried
     # Both credential refusals are repaired by minting the credential the
     # operation requires, which is one served CLI leaf; the refused operation
     # and the accepted credential kinds travel as its arguments.
     if isinstance(exc, DaemonOperationScopeError):
-        return RepairOperationV1(
+        return RepairOperation(
             operation=CREDENTIAL_REPAIR_OPERATION,
             arguments={
                 "refused_operation": exc.operation,
@@ -141,14 +141,14 @@ def _repair_for_error(exc: CoreError) -> ServedRepairV1:
             },
         )
     if isinstance(exc, ProposalNotFoundError):
-        return RepairOperationV1(operation="playbill.proposal.list")
+        return RepairOperation(operation="playbill.proposal.list")
     if isinstance(exc, BootstrapClaimRefusedError):
-        return RepairOperationV1(
+        return RepairOperation(
             operation=_BOOTSTRAP_REPAIR_OPERATIONS[exc.error_code],
             arguments={"instance_id": exc.instance_id},
         )
     if isinstance(exc, AuthenticationError):
-        return RepairOperationV1(
+        return RepairOperation(
             operation=CREDENTIAL_REPAIR_OPERATION,
             arguments={
                 "credential_options": [

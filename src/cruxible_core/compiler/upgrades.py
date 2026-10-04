@@ -5,10 +5,10 @@ from typing import Protocol, cast
 
 from cruxible_client.contracts.candidates import (
     CandidateMemberEvidence,
-    CandidateMemberLawEvidenceV2,
-    MemberLawEvaluationV2,
+    CandidateMemberLawEvidence,
+    MemberLawEvaluation,
 )
-from cruxible_client.contracts.compiler_upgrade import COMPILER_UPGRADE_PATH, CompilerUpgradeV1
+from cruxible_client.contracts.compiler_upgrade import COMPILER_UPGRADE_PATH, CompilerUpgrade
 from cruxible_client.contracts.errors import SettlementIntegrityError
 from cruxible_client.contracts.laws import (
     AUTHORITY_VERBS_UPGRADE_LAW,
@@ -72,7 +72,7 @@ class CompilerBoundRecord(Protocol):
     def compiler_digest(self) -> str: ...
 
     @property
-    def members(self) -> Sequence[CandidateMemberEvidence | CandidateMemberLawEvidenceV2]: ...
+    def members(self) -> Sequence[CandidateMemberEvidence | CandidateMemberLawEvidence]: ...
 
 
 def upgrade_law(source: CompilerCoordinate, target: CompilerCoordinate) -> InstalledAcceptanceLaw:
@@ -198,7 +198,7 @@ def supported_upgrade_targets(source: CompilerCoordinate) -> tuple[str, ...]:
     return tuple(targets)
 
 
-def upgrade_base_matches(value: CompilerUpgradeV1, base: AcceptedProjectionCoordinate) -> bool:
+def upgrade_base_matches(value: CompilerUpgrade, base: AcceptedProjectionCoordinate) -> bool:
     """Whether the upgrade is bound to exactly this accepted base."""
 
     return (
@@ -210,7 +210,7 @@ def upgrade_base_matches(value: CompilerUpgradeV1, base: AcceptedProjectionCoord
     )
 
 
-def validate_upgrade(value: CompilerUpgradeV1, base: AcceptedProjectionCoordinate) -> None:
+def validate_upgrade(value: CompilerUpgrade, base: AcceptedProjectionCoordinate) -> None:
     """Explicit supported edges; installing another compiler never implies permission to use it."""
     if not upgrade_base_matches(value, base):
         raise ValueError("compiler upgrade is bound to a different accepted base")
@@ -226,7 +226,7 @@ def compiler_after_record(record: CompilerBoundRecord) -> CompilerCoordinate:
         return source
     if len(members) != 1 or upgrades[0].path != COMPILER_UPGRADE_PATH:
         raise SettlementIntegrityError("compiler upgrade must be a sole-purpose generation")
-    evidence = cast(tuple[MemberLawEvaluationV2, ...], getattr(record, "law_evidence", ()))
+    evidence = cast(tuple[MemberLawEvaluation, ...], getattr(record, "law_evidence", ()))
     if len(evidence) != 1:
         raise SettlementIntegrityError("compiler upgrade law evidence is missing")
     target = CompilerCoordinate.model_validate(evidence[0].result["target_compiler"])

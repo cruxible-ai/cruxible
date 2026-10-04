@@ -24,7 +24,7 @@ _FIELD_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _PREDICATE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})+$")
 _SUBJECT_KIND_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*$")
 
-QueryValueTypeV1 = Literal[
+QueryValueType = Literal[
     "string",
     "integer",
     "boolean",
@@ -32,9 +32,9 @@ QueryValueTypeV1 = Literal[
     "timestamp",
     "subject_reference",
 ]
-QueryComparisonOperatorV1 = Literal["eq", "ne", "gt", "gte", "lt", "lte"]
-QueryTraversalDirectionV1 = Literal["forward", "reverse"]
-QuerySubjectFieldV1 = Literal["subject_id", "subject_kind"]
+QueryComparisonOperator = Literal["eq", "ne", "gt", "gte", "lt", "lte"]
+QueryTraversalDirection = Literal["forward", "reverse"]
+QuerySubjectField = Literal["subject_id", "subject_kind"]
 
 
 class _StrictQueryModel(BaseModel):
@@ -87,29 +87,29 @@ def subject_kind_name(value: str, *, label: str = "query Subject kind") -> str:
 
 
 @dataclass(frozen=True)
-class QueryReferenceInventoryV1:
+class QueryReferenceInventory:
     """Exact bindings, parameters, and predicates one declaration references."""
 
     bindings: frozenset[str] = frozenset()
     parameters: frozenset[str] = frozenset()
     predicates: frozenset[str] = frozenset()
 
-    def merged(self, other: "QueryReferenceInventoryV1") -> "QueryReferenceInventoryV1":
-        return QueryReferenceInventoryV1(
+    def merged(self, other: "QueryReferenceInventory") -> "QueryReferenceInventory":
+        return QueryReferenceInventory(
             bindings=self.bindings | other.bindings,
             parameters=self.parameters | other.parameters,
             predicates=self.predicates | other.predicates,
         )
 
 
-def _merge(*items: QueryReferenceInventoryV1) -> QueryReferenceInventoryV1:
-    result = QueryReferenceInventoryV1()
+def _merge(*items: QueryReferenceInventory) -> QueryReferenceInventory:
+    result = QueryReferenceInventory()
     for item in items:
         result = result.merged(item)
     return result
 
 
-class QueryLiteralRefV1(_StrictQueryModel):
+class QueryLiteralRef(_StrictQueryModel):
     """One canonical constant supplied by the accepted declaration itself."""
 
     tag: Literal["playbill-query-literal-ref-v1"] = "playbill-query-literal-ref-v1"
@@ -122,11 +122,11 @@ class QueryLiteralRefV1(_StrictQueryModel):
         return normalize_canonical(value)
 
     @property
-    def references(self) -> QueryReferenceInventoryV1:
-        return QueryReferenceInventoryV1()
+    def references(self) -> QueryReferenceInventory:
+        return QueryReferenceInventory()
 
 
-class QueryParameterRefV1(_StrictQueryModel):
+class QueryParameterRef(_StrictQueryModel):
     """One caller-bound parameter declared by the owning QueryDefinition."""
 
     tag: Literal["playbill-query-parameter-ref-v1"] = "playbill-query-parameter-ref-v1"
@@ -139,11 +139,11 @@ class QueryParameterRefV1(_StrictQueryModel):
         return _identifier(value, _PARAMETER_RE, label="query parameter name")
 
     @property
-    def references(self) -> QueryReferenceInventoryV1:
-        return QueryReferenceInventoryV1(parameters=frozenset({self.parameter}))
+    def references(self) -> QueryReferenceInventory:
+        return QueryReferenceInventory(parameters=frozenset({self.parameter}))
 
 
-class QueryClaimValueRefV1(_StrictQueryModel):
+class QueryClaimValueRef(_StrictQueryModel):
     """The object of a bound Subject's Claim for one exact predicate."""
 
     tag: Literal["playbill-query-claim-value-ref-v1"] = "playbill-query-claim-value-ref-v1"
@@ -162,20 +162,20 @@ class QueryClaimValueRefV1(_StrictQueryModel):
         return predicate_name(value)
 
     @property
-    def references(self) -> QueryReferenceInventoryV1:
-        return QueryReferenceInventoryV1(
+    def references(self) -> QueryReferenceInventory:
+        return QueryReferenceInventory(
             bindings=frozenset({self.binding}),
             predicates=frozenset({self.predicate}),
         )
 
 
-class QuerySubjectFieldRefV1(_StrictQueryModel):
+class QuerySubjectFieldRef(_StrictQueryModel):
     """A bound Subject's own stable identity, never a Claim-carried property."""
 
     tag: Literal["playbill-query-subject-field-ref-v1"] = "playbill-query-subject-field-ref-v1"
     kind: Literal["subject_field"] = "subject_field"
     binding: str
-    field: QuerySubjectFieldV1
+    field: QuerySubjectField
 
     @field_validator("binding")
     @classmethod
@@ -183,59 +183,59 @@ class QuerySubjectFieldRefV1(_StrictQueryModel):
         return binding_name(value)
 
     @property
-    def references(self) -> QueryReferenceInventoryV1:
-        return QueryReferenceInventoryV1(bindings=frozenset({self.binding}))
+    def references(self) -> QueryReferenceInventory:
+        return QueryReferenceInventory(bindings=frozenset({self.binding}))
 
 
-class QueryEvaluationTimeRefV1(_StrictQueryModel):
+class QueryEvaluationTimeRef(_StrictQueryModel):
     """The run's explicit evaluation time; never an implicit wall clock."""
 
     tag: Literal["playbill-query-evaluation-time-ref-v1"] = "playbill-query-evaluation-time-ref-v1"
     kind: Literal["evaluation_time"] = "evaluation_time"
 
     @property
-    def references(self) -> QueryReferenceInventoryV1:
-        return QueryReferenceInventoryV1()
+    def references(self) -> QueryReferenceInventory:
+        return QueryReferenceInventory()
 
 
-QueryValueRefV1 = Annotated[
-    QueryLiteralRefV1
-    | QueryParameterRefV1
-    | QueryClaimValueRefV1
-    | QuerySubjectFieldRefV1
-    | QueryEvaluationTimeRefV1,
+QueryValueRef = Annotated[
+    QueryLiteralRef
+    | QueryParameterRef
+    | QueryClaimValueRef
+    | QuerySubjectFieldRef
+    | QueryEvaluationTimeRef,
     Field(discriminator="kind"),
 ]
 
 
-class QueryComparisonFilterV1(_StrictQueryModel):
+class QueryComparisonFilter(_StrictQueryModel):
     """One typed comparison; the declared value type is never inferred at run time."""
 
     tag: Literal["playbill-query-comparison-filter-v1"] = "playbill-query-comparison-filter-v1"
     kind: Literal["comparison"] = "comparison"
-    left: QueryValueRefV1
-    operator: QueryComparisonOperatorV1
-    right: QueryValueRefV1
-    value_type: QueryValueTypeV1
+    left: QueryValueRef
+    operator: QueryComparisonOperator
+    right: QueryValueRef
+    value_type: QueryValueType
 
     @property
-    def references(self) -> QueryReferenceInventoryV1:
+    def references(self) -> QueryReferenceInventory:
         return _merge(self.left.references, self.right.references)
 
 
-class QueryMembershipFilterV1(_StrictQueryModel):
+class QueryMembershipFilter(_StrictQueryModel):
     """Set membership over an explicit, nonempty, canonically ordered value list."""
 
     tag: Literal["playbill-query-membership-filter-v1"] = "playbill-query-membership-filter-v1"
     kind: Literal["membership"] = "membership"
-    left: QueryValueRefV1
-    values: tuple[QueryValueRefV1, ...]
-    value_type: QueryValueTypeV1
+    left: QueryValueRef
+    values: tuple[QueryValueRef, ...]
+    value_type: QueryValueType
     negated: bool = False
 
     @field_validator("values")
     @classmethod
-    def _values(cls, value: tuple[QueryValueRefV1, ...]) -> tuple[QueryValueRefV1, ...]:
+    def _values(cls, value: tuple[QueryValueRef, ...]) -> tuple[QueryValueRef, ...]:
         encoded = tuple(canonical_bytes(item.model_dump(mode="json")) for item in value)
         if not value:
             raise ValueError("query membership filter requires at least one candidate value")
@@ -244,11 +244,11 @@ class QueryMembershipFilterV1(_StrictQueryModel):
         return value
 
     @property
-    def references(self) -> QueryReferenceInventoryV1:
+    def references(self) -> QueryReferenceInventory:
         return _merge(self.left.references, *(item.references for item in self.values))
 
 
-class QueryClaimPresenceFilterV1(_StrictQueryModel):
+class QueryClaimPresenceFilter(_StrictQueryModel):
     """Whether the bound Subject carries any Claim of one exact predicate."""
 
     tag: Literal["playbill-query-claim-presence-filter-v1"] = (
@@ -270,75 +270,75 @@ class QueryClaimPresenceFilterV1(_StrictQueryModel):
         return predicate_name(value)
 
     @property
-    def references(self) -> QueryReferenceInventoryV1:
-        return QueryReferenceInventoryV1(
+    def references(self) -> QueryReferenceInventory:
+        return QueryReferenceInventory(
             bindings=frozenset({self.binding}),
             predicates=frozenset({self.predicate}),
         )
 
 
-class QueryConjunctionFilterV1(_StrictQueryModel):
+class QueryConjunctionFilter(_StrictQueryModel):
     """Deterministic all-of composition over canonically ordered operands."""
 
     tag: Literal["playbill-query-conjunction-filter-v1"] = "playbill-query-conjunction-filter-v1"
     kind: Literal["all_of"] = "all_of"
-    filters: tuple["QueryFilterV1", ...]
+    filters: tuple["QueryFilter", ...]
 
     @field_validator("filters")
     @classmethod
-    def _filters(cls, value: tuple["QueryFilterV1", ...]) -> tuple["QueryFilterV1", ...]:
+    def _filters(cls, value: tuple["QueryFilter", ...]) -> tuple["QueryFilter", ...]:
         return _validate_operands(value, label="query all_of")
 
     @property
-    def references(self) -> QueryReferenceInventoryV1:
+    def references(self) -> QueryReferenceInventory:
         return _merge(*(item.references for item in self.filters))
 
 
-class QueryDisjunctionFilterV1(_StrictQueryModel):
+class QueryDisjunctionFilter(_StrictQueryModel):
     """Deterministic any-of composition over canonically ordered operands."""
 
     tag: Literal["playbill-query-disjunction-filter-v1"] = "playbill-query-disjunction-filter-v1"
     kind: Literal["any_of"] = "any_of"
-    filters: tuple["QueryFilterV1", ...]
+    filters: tuple["QueryFilter", ...]
 
     @field_validator("filters")
     @classmethod
-    def _filters(cls, value: tuple["QueryFilterV1", ...]) -> tuple["QueryFilterV1", ...]:
+    def _filters(cls, value: tuple["QueryFilter", ...]) -> tuple["QueryFilter", ...]:
         return _validate_operands(value, label="query any_of")
 
     @property
-    def references(self) -> QueryReferenceInventoryV1:
+    def references(self) -> QueryReferenceInventory:
         return _merge(*(item.references for item in self.filters))
 
 
-class QueryNegationFilterV1(_StrictQueryModel):
+class QueryNegationFilter(_StrictQueryModel):
     """Negation of exactly one operand; refusal semantics never widen a result."""
 
     tag: Literal["playbill-query-negation-filter-v1"] = "playbill-query-negation-filter-v1"
     kind: Literal["not"] = "not"
-    operand: "QueryFilterV1"
+    operand: "QueryFilter"
 
     @property
-    def references(self) -> QueryReferenceInventoryV1:
+    def references(self) -> QueryReferenceInventory:
         return self.operand.references
 
 
-QueryFilterV1 = Annotated[
-    QueryComparisonFilterV1
-    | QueryMembershipFilterV1
-    | QueryClaimPresenceFilterV1
-    | QueryConjunctionFilterV1
-    | QueryDisjunctionFilterV1
-    | QueryNegationFilterV1,
+QueryFilter = Annotated[
+    QueryComparisonFilter
+    | QueryMembershipFilter
+    | QueryClaimPresenceFilter
+    | QueryConjunctionFilter
+    | QueryDisjunctionFilter
+    | QueryNegationFilter,
     Field(discriminator="kind"),
 ]
 
 
 def _validate_operands(
-    value: tuple["QueryFilterV1", ...],
+    value: tuple["QueryFilter", ...],
     *,
     label: str,
-) -> tuple["QueryFilterV1", ...]:
+) -> tuple["QueryFilter", ...]:
     if len(value) < 2:
         raise ValueError(f"{label} requires at least two operands")
     encoded = tuple(canonical_bytes(item.model_dump(mode="json")) for item in value)
@@ -347,17 +347,17 @@ def _validate_operands(
     return value
 
 
-QueryConjunctionFilterV1.model_rebuild()
-QueryDisjunctionFilterV1.model_rebuild()
-QueryNegationFilterV1.model_rebuild()
+QueryConjunctionFilter.model_rebuild()
+QueryDisjunctionFilter.model_rebuild()
+QueryNegationFilter.model_rebuild()
 
 
-class QueryParameterDeclarationV1(_StrictQueryModel):
+class QueryParameterDeclaration(_StrictQueryModel):
     """One typed caller parameter; unresolved references refuse fail-closed."""
 
     tag: Literal["playbill-query-parameter-v1"] = "playbill-query-parameter-v1"
     name: str
-    value_type: QueryValueTypeV1
+    value_type: QueryValueType
     required: bool = True
     default: object = None
 
@@ -372,19 +372,19 @@ class QueryParameterDeclarationV1(_StrictQueryModel):
         return normalize_canonical(value)
 
     @model_validator(mode="after")
-    def _shape(self) -> "QueryParameterDeclarationV1":
+    def _shape(self) -> "QueryParameterDeclaration":
         if self.required and self.default is not None:
             raise ValueError("a required query parameter cannot declare a default")
         return self
 
 
-class QueryEntryV1(_StrictQueryModel):
+class QueryEntry(_StrictQueryModel):
     """The Subject-kind addressed entry row set for one query."""
 
     tag: Literal["playbill-query-entry-v1"] = "playbill-query-entry-v1"
     binding: str
     subject_kinds: tuple[str, ...]
-    subject_id: QueryParameterRefV1 | None = None
+    subject_id: QueryParameterRef | None = None
 
     @field_validator("binding")
     @classmethod
@@ -401,13 +401,13 @@ class QueryEntryV1(_StrictQueryModel):
         return sorted_unique(value, label="query entry Subject kinds")
 
     @property
-    def references(self) -> QueryReferenceInventoryV1:
+    def references(self) -> QueryReferenceInventory:
         if self.subject_id is None:
-            return QueryReferenceInventoryV1()
+            return QueryReferenceInventory()
         return self.subject_id.references
 
 
-class QueryArtifactsEntryV2(_StrictQueryModel):
+class QueryArtifactsEntry(_StrictQueryModel):
     """Select live definitions independently of Claim connectivity.
 
     A predicate ``security.asset.owner`` belongs to ``security.asset`` only.
@@ -429,7 +429,7 @@ class QueryArtifactsEntryV2(_StrictQueryModel):
         return binding_name(value)
 
     @model_validator(mode="after")
-    def _selection(self) -> "QueryArtifactsEntryV2":
+    def _selection(self) -> "QueryArtifactsEntry":
         if (self.selection == "namespaces") != bool(self.namespaces):
             raise ValueError("namespaces selection requires names; all selection forbids them")
         if (self.selection == "name_prefixes") != bool(self.name_prefixes):
@@ -454,21 +454,21 @@ class QueryArtifactsEntryV2(_StrictQueryModel):
         return ()
 
     @property
-    def references(self) -> QueryReferenceInventoryV1:
-        return QueryReferenceInventoryV1()
+    def references(self) -> QueryReferenceInventory:
+        return QueryReferenceInventory()
 
 
-class QueryTraversalStepV1(_StrictQueryModel):
+class QueryTraversalStep(_StrictQueryModel):
     """One relation-Claim hop from an earlier binding to a new bound Subject."""
 
     tag: Literal["playbill-query-traversal-step-v1"] = "playbill-query-traversal-step-v1"
     binding: str
     from_binding: str
     predicate: str
-    direction: QueryTraversalDirectionV1
+    direction: QueryTraversalDirection
     required: bool = True
     target_subject_kinds: tuple[str, ...] = ()
-    where: QueryFilterV1 | None = None
+    where: QueryFilter | None = None
 
     @field_validator("binding", "from_binding")
     @classmethod
@@ -488,33 +488,33 @@ class QueryTraversalStepV1(_StrictQueryModel):
         return sorted_unique(value, label="query traversal target Subject kinds")
 
     @model_validator(mode="after")
-    def _shape(self) -> "QueryTraversalStepV1":
+    def _shape(self) -> "QueryTraversalStep":
         if self.binding == self.from_binding:
             raise ValueError("a traversal step cannot rebind its own source binding")
         return self
 
     @property
-    def references(self) -> QueryReferenceInventoryV1:
-        inventory = QueryReferenceInventoryV1(predicates=frozenset({self.predicate}))
+    def references(self) -> QueryReferenceInventory:
+        inventory = QueryReferenceInventory(predicates=frozenset({self.predicate}))
         if self.where is not None:
             inventory = inventory.merged(self.where.references)
         return inventory
 
 
-class QueryOrderingV1(_StrictQueryModel):
+class QueryOrdering(_StrictQueryModel):
     """One typed ordering key; canonical address bytes remain the final tiebreak."""
 
     tag: Literal["playbill-query-ordering-v1"] = "playbill-query-ordering-v1"
-    key: QueryValueRefV1
+    key: QueryValueRef
     direction: Literal["ascending", "descending"] = "ascending"
-    value_type: QueryValueTypeV1
+    value_type: QueryValueType
 
     @property
-    def references(self) -> QueryReferenceInventoryV1:
+    def references(self) -> QueryReferenceInventory:
         return self.key.references
 
 
-def validate_ordering_keys(value: tuple[QueryOrderingV1, ...], *, label: str) -> None:
+def validate_ordering_keys(value: tuple[QueryOrdering, ...], *, label: str) -> None:
     """Refuse a repeated ordering key so declared ordering stays a total rule."""
 
     encoded = tuple(canonical_bytes(item.key.model_dump(mode="json")) for item in value)
@@ -522,12 +522,12 @@ def validate_ordering_keys(value: tuple[QueryOrderingV1, ...], *, label: str) ->
         raise ValueError(f"{label} must not repeat an ordering key")
 
 
-class QueryProjectionFieldV1(_StrictQueryModel):
+class QueryProjectionField(_StrictQueryModel):
     """One named projected value drawn from bound Subjects and their Claims."""
 
     tag: Literal["playbill-query-projection-field-v1"] = "playbill-query-projection-field-v1"
     name: str
-    value: QueryValueRefV1
+    value: QueryValueRef
 
     @field_validator("name")
     @classmethod
@@ -535,21 +535,19 @@ class QueryProjectionFieldV1(_StrictQueryModel):
         return _identifier(value, _FIELD_NAME_RE, label="query projection field name")
 
     @property
-    def references(self) -> QueryReferenceInventoryV1:
+    def references(self) -> QueryReferenceInventory:
         return self.value.references
 
 
-class QueryProjectionV1(_StrictQueryModel):
+class QueryProjection(_StrictQueryModel):
     """The complete projected row shape; absent projection means whole Subject views."""
 
     tag: Literal["playbill-query-projection-v1"] = "playbill-query-projection-v1"
-    fields: tuple[QueryProjectionFieldV1, ...]
+    fields: tuple[QueryProjectionField, ...]
 
     @field_validator("fields")
     @classmethod
-    def _fields(
-        cls, value: tuple[QueryProjectionFieldV1, ...]
-    ) -> tuple[QueryProjectionFieldV1, ...]:
+    def _fields(cls, value: tuple[QueryProjectionField, ...]) -> tuple[QueryProjectionField, ...]:
         if not value:
             raise ValueError("a declared query projection requires at least one field")
         names = tuple(item.name for item in value)
@@ -557,11 +555,11 @@ class QueryProjectionV1(_StrictQueryModel):
         return value
 
     @property
-    def references(self) -> QueryReferenceInventoryV1:
+    def references(self) -> QueryReferenceInventory:
         return _merge(*(item.references for item in self.fields))
 
 
-class QueryIncludeV1(_StrictQueryModel):
+class QueryInclude(_StrictQueryModel):
     """One bounded one-hop side context attached to each primary row."""
 
     tag: Literal["playbill-query-include-v1"] = "playbill-query-include-v1"
@@ -569,11 +567,11 @@ class QueryIncludeV1(_StrictQueryModel):
     binding: str
     from_binding: str
     predicate: str
-    direction: QueryTraversalDirectionV1
+    direction: QueryTraversalDirection
     many: bool = False
     max_items: int = Field(ge=1)
-    where: QueryFilterV1 | None = None
-    orderings: tuple[QueryOrderingV1, ...] = ()
+    where: QueryFilter | None = None
+    orderings: tuple[QueryOrdering, ...] = ()
 
     @field_validator("name")
     @classmethod
@@ -591,7 +589,7 @@ class QueryIncludeV1(_StrictQueryModel):
         return predicate_name(value)
 
     @model_validator(mode="after")
-    def _shape(self) -> "QueryIncludeV1":
+    def _shape(self) -> "QueryInclude":
         if self.binding == self.from_binding:
             raise ValueError("a query include cannot rebind its own source binding")
         if not self.many and self.max_items != 1:
@@ -604,14 +602,14 @@ class QueryIncludeV1(_StrictQueryModel):
         return self
 
     @property
-    def references(self) -> QueryReferenceInventoryV1:
-        inventory = QueryReferenceInventoryV1(predicates=frozenset({self.predicate}))
+    def references(self) -> QueryReferenceInventory:
+        inventory = QueryReferenceInventory(predicates=frozenset({self.predicate}))
         if self.where is not None:
             inventory = inventory.merged(self.where.references)
         return _merge(inventory, *(item.references for item in self.orderings))
 
 
-class QueryBudgetsV1(_StrictQueryModel):
+class QueryBudgets(_StrictQueryModel):
     """Explicit result, depth, and path budgets; an unbounded read is never declarable."""
 
     tag: Literal["playbill-query-budgets-v1"] = "playbill-query-budgets-v1"
@@ -621,7 +619,7 @@ class QueryBudgetsV1(_StrictQueryModel):
     max_paths_per_result: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="after")
-    def _shape(self) -> "QueryBudgetsV1":
+    def _shape(self) -> "QueryBudgets":
         if (self.max_paths is None) != (self.max_paths_per_result is None):
             raise ValueError("query path budgets must be declared together or not at all")
         if (
@@ -632,7 +630,7 @@ class QueryBudgetsV1(_StrictQueryModel):
             raise ValueError("query max_paths_per_result cannot exceed max_paths")
         return self
 
-    def within(self, ceiling: "QueryBudgetsV1") -> bool:
+    def within(self, ceiling: "QueryBudgets") -> bool:
         """Return whether this budget is admissible under a declared ceiling."""
 
         if (self.max_paths is None) != (ceiling.max_paths is None):
@@ -651,34 +649,34 @@ class QueryBudgetsV1(_StrictQueryModel):
 
 
 __all__ = [
-    "QueryBudgetsV1",
-    "QueryClaimPresenceFilterV1",
-    "QueryClaimValueRefV1",
-    "QueryComparisonFilterV1",
-    "QueryComparisonOperatorV1",
-    "QueryConjunctionFilterV1",
-    "QueryDisjunctionFilterV1",
-    "QueryEntryV1",
-    "QueryArtifactsEntryV2",
-    "QueryArtifactsEntryV2",
-    "QueryEvaluationTimeRefV1",
-    "QueryFilterV1",
-    "QueryIncludeV1",
-    "QueryLiteralRefV1",
-    "QueryMembershipFilterV1",
-    "QueryNegationFilterV1",
-    "QueryOrderingV1",
-    "QueryParameterDeclarationV1",
-    "QueryParameterRefV1",
-    "QueryProjectionFieldV1",
-    "QueryProjectionV1",
-    "QueryReferenceInventoryV1",
-    "QuerySubjectFieldRefV1",
-    "QuerySubjectFieldV1",
-    "QueryTraversalDirectionV1",
-    "QueryTraversalStepV1",
-    "QueryValueRefV1",
-    "QueryValueTypeV1",
+    "QueryBudgets",
+    "QueryClaimPresenceFilter",
+    "QueryClaimValueRef",
+    "QueryComparisonFilter",
+    "QueryComparisonOperator",
+    "QueryConjunctionFilter",
+    "QueryDisjunctionFilter",
+    "QueryEntry",
+    "QueryArtifactsEntry",
+    "QueryArtifactsEntry",
+    "QueryEvaluationTimeRef",
+    "QueryFilter",
+    "QueryInclude",
+    "QueryLiteralRef",
+    "QueryMembershipFilter",
+    "QueryNegationFilter",
+    "QueryOrdering",
+    "QueryParameterDeclaration",
+    "QueryParameterRef",
+    "QueryProjectionField",
+    "QueryProjection",
+    "QueryReferenceInventory",
+    "QuerySubjectFieldRef",
+    "QuerySubjectField",
+    "QueryTraversalDirection",
+    "QueryTraversalStep",
+    "QueryValueRef",
+    "QueryValueType",
     "binding_name",
     "byte_sorted",
     "sorted_unique",

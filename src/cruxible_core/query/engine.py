@@ -35,55 +35,55 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
     typed_digest,
 )
-from cruxible_client.contracts.claim_verdicts import EvidenceRelativeClaimVerdict
+from cruxible_client.contracts.claim_verdicts import EvidenceRelativeClaimVerdictV1
 from cruxible_client.contracts.claims import ExactContentClaimObject, SubjectClaimObject
 from cruxible_client.contracts.errors import CanonicalEncodingError, PlaybillError
 from cruxible_client.contracts.query.definitions import (
-    AcceptedQueryDefinitionV1,
-    QueryDefinitionV1,
-    QueryEvaluationPolicyV1,
+    AcceptedQueryDefinition,
+    QueryDefinition,
+    QueryEvaluationPolicy,
 )
 from cruxible_client.contracts.query.grammar import (
-    QueryArtifactsEntryV2,
-    QueryBudgetsV1,
-    QueryClaimPresenceFilterV1,
-    QueryComparisonFilterV1,
-    QueryConjunctionFilterV1,
-    QueryDisjunctionFilterV1,
-    QueryEntryV1,
-    QueryEvaluationTimeRefV1,
-    QueryFilterV1,
-    QueryIncludeV1,
-    QueryLiteralRefV1,
-    QueryMembershipFilterV1,
-    QueryNegationFilterV1,
-    QueryOrderingV1,
-    QueryParameterRefV1,
-    QuerySubjectFieldRefV1,
-    QueryTraversalDirectionV1,
-    QueryValueRefV1,
-    QueryValueTypeV1,
+    QueryArtifactsEntry,
+    QueryBudgets,
+    QueryClaimPresenceFilter,
+    QueryComparisonFilter,
+    QueryConjunctionFilter,
+    QueryDisjunctionFilter,
+    QueryEntry,
+    QueryEvaluationTimeRef,
+    QueryFilter,
+    QueryInclude,
+    QueryLiteralRef,
+    QueryMembershipFilter,
+    QueryNegationFilter,
+    QueryOrdering,
+    QueryParameterRef,
+    QuerySubjectFieldRef,
+    QueryTraversalDirection,
+    QueryValueRef,
+    QueryValueType,
     byte_sorted,
 )
 from cruxible_client.contracts.query.results import (
-    ClaimQueryResultV1,
-    QueryArtifactDefinitionV2,
-    QueryClaimVisibilityV1,
-    QueryClippedBudgetV1,
-    QueryConflictV1,
-    QueryExecutionReceiptV1,
-    QueryIncludeItemV1,
-    QueryIncludeResultV1,
-    QueryParameterBindingV1,
+    ClaimQueryResult,
+    QueryArtifactDefinition,
+    QueryClaimVisibility,
+    QueryClippedBudget,
+    QueryConflict,
+    QueryExecutionReceipt,
+    QueryIncludeItem,
+    QueryIncludeResult,
+    QueryParameterBinding,
+    QueryProjectedField,
     QueryProjectedFields,
-    QueryProjectedFieldV1,
-    QueryRefusalV1,
-    QueryResultRowV1,
-    QueryRowBindingV1,
-    QueryTruncationV1,
-    QueryValueStateV1,
-    QueryVerdictExclusionV1,
-    QueryVerdictVisibilityV1,
+    QueryRefusal,
+    QueryResultRow,
+    QueryRowBinding,
+    QueryTruncation,
+    QueryValueState,
+    QueryVerdictExclusion,
+    QueryVerdictVisibility,
 )
 from cruxible_client.contracts.query.values import QueryTypedValue, coerce_query_value
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
@@ -114,7 +114,7 @@ TRAVERSAL_OBJECT_NOT_SUBJECT = "playbill.query.traversal_object_not_subject"
 VALUE_TYPE_MISMATCH = "playbill.query.value_type_mismatch"
 
 
-def query_parameter_digest(parameters: Sequence[QueryParameterBindingV1]) -> str:
+def query_parameter_digest(parameters: Sequence[QueryParameterBinding]) -> str:
     """Digest the exact resolved parameter binding of one evaluation."""
 
     return typed_digest(
@@ -149,7 +149,7 @@ def query_attempted_parameter_digest(parameters: Mapping[str, object] | None) ->
     ).tagged
 
 
-def claim_query_result_digest(result: ClaimQueryResultV1) -> str:
+def claim_query_result_digest(result: ClaimQueryResult) -> str:
     """Digest one complete result, ordering and truncation accounting included.
 
     `verdict_visibility` sits outside the preimage. It is advisory accounting of
@@ -165,10 +165,10 @@ def claim_query_result_digest(result: ClaimQueryResultV1) -> str:
     return typed_digest(Sha256Value, result.tag, payload).tagged
 
 
-def query_execution_receipt(result: ClaimQueryResultV1) -> QueryExecutionReceiptV1:
+def query_execution_receipt(result: ClaimQueryResult) -> QueryExecutionReceipt:
     """Model the replay receipt of one evaluation without journalling it."""
 
-    return QueryExecutionReceiptV1(
+    return QueryExecutionReceipt(
         definition_path=result.definition_path,
         definition_digest=result.definition_digest,
         parameter_digest=result.parameter_digest,
@@ -185,7 +185,7 @@ def query_execution_receipt(result: ClaimQueryResultV1) -> QueryExecutionReceipt
 # -- typed value handling -------------------------------------------------
 
 
-def _compare(left: object, right: object, value_type: QueryValueTypeV1) -> int:
+def _compare(left: object, right: object, value_type: QueryValueType) -> int:
     first: Any = int(bool(left)) if value_type == "boolean" else left
     second: Any = int(bool(right)) if value_type == "boolean" else right
     if first == second:
@@ -215,7 +215,7 @@ class ClaimQueryError(PlaybillError):
 class _RefusalSignal(Exception):
     """Internal fail-closed signal carrying one typed query refusal."""
 
-    def __init__(self, refusal: QueryRefusalV1) -> None:
+    def __init__(self, refusal: QueryRefusal) -> None:
         super().__init__(refusal.code)
         self.refusal = refusal
 
@@ -228,7 +228,7 @@ def _refuse(
     subject_identities: tuple[str, ...] = (),
 ) -> _RefusalSignal:
     return _RefusalSignal(
-        QueryRefusalV1(
+        QueryRefusal(
             code=code,
             message=message,
             statement_digests=byte_sorted(statement_digests),
@@ -244,7 +244,7 @@ def relation_edges(
     backend: ClaimQueryBackendV1,
     artifact_path: str,
     predicate: str,
-    direction: QueryTraversalDirectionV1,
+    direction: QueryTraversalDirection,
 ) -> tuple[tuple[VisibleClaimRow, str], ...]:
     """Return the visible relation-Claim edges leaving one bound Subject.
 
@@ -283,10 +283,10 @@ def relation_edges(
 @dataclass
 class _Row:
     bindings: dict[str, str | None]
-    edges: tuple[tuple[str, QueryClaimVisibilityV1], ...] = ()
-    reads: dict[str, QueryClaimVisibilityV1] = field(default_factory=dict)
-    conflicts: dict[bytes, QueryConflictV1] = field(default_factory=dict)
-    includes: tuple[QueryIncludeResultV1, ...] = ()
+    edges: tuple[tuple[str, QueryClaimVisibility], ...] = ()
+    reads: dict[str, QueryClaimVisibility] = field(default_factory=dict)
+    conflicts: dict[bytes, QueryConflict] = field(default_factory=dict)
+    includes: tuple[QueryIncludeResult, ...] = ()
 
     def copy(self) -> "_Row":
         return _Row(
@@ -305,23 +305,23 @@ class _Row:
             }
         )
 
-    def record(self, visibility: QueryClaimVisibilityV1) -> None:
+    def record(self, visibility: QueryClaimVisibility) -> None:
         self.reads[visibility.claim_path] = visibility
 
-    def record_conflict(self, conflict: QueryConflictV1) -> None:
+    def record_conflict(self, conflict: QueryConflict) -> None:
         self.conflicts[canonical_bytes(conflict.model_dump(mode="json"))] = conflict
 
-    def ordered_reads(self) -> tuple[QueryClaimVisibilityV1, ...]:
+    def ordered_reads(self) -> tuple[QueryClaimVisibility, ...]:
         keys = sorted(self.reads, key=lambda item: item.encode("utf-8"))
         return tuple(self.reads[key] for key in keys)
 
-    def ordered_conflicts(self) -> tuple[QueryConflictV1, ...]:
+    def ordered_conflicts(self) -> tuple[QueryConflict, ...]:
         return tuple(self.conflicts[key] for key in sorted(self.conflicts))
 
 
 @dataclass(frozen=True)
 class _Value:
-    state: QueryValueStateV1
+    state: QueryValueState
     value: object = None
 
 
@@ -343,7 +343,7 @@ class _Evaluator:
 
     def __init__(
         self,
-        definition: QueryDefinitionV1,
+        definition: QueryDefinition,
         *,
         backend: ClaimQueryBackendV1,
         parameters: Mapping[str, object],
@@ -396,7 +396,7 @@ class _Evaluator:
                 subject_identities=(subject.shell.identity.qualified,),
             )
         row.record_conflict(
-            QueryConflictV1(
+            QueryConflict(
                 kind="claim_object",
                 binding=binding,
                 predicate=predicate,
@@ -406,18 +406,18 @@ class _Evaluator:
         )
         return _CONFLICT
 
-    def resolve(self, row: _Row, ref: QueryValueRefV1) -> _Value:
+    def resolve(self, row: _Row, ref: QueryValueRef) -> _Value:
         """Resolve one declared value reference against a bound row."""
 
-        if isinstance(ref, QueryLiteralRefV1):
+        if isinstance(ref, QueryLiteralRef):
             return _Value(state="present", value=ref.value)
-        if isinstance(ref, QueryParameterRefV1):
+        if isinstance(ref, QueryParameterRef):
             if ref.parameter not in self._parameters:
                 return _ABSENT
             return _Value(state="present", value=self._parameters[ref.parameter])
-        if isinstance(ref, QueryEvaluationTimeRefV1):
+        if isinstance(ref, QueryEvaluationTimeRef):
             return _Value(state="present", value=_render_time(self._evaluation_time))
-        if isinstance(ref, QuerySubjectFieldRefV1):
+        if isinstance(ref, QuerySubjectFieldRef):
             subject_path = row.bindings.get(ref.binding)
             if subject_path is None:
                 if ref.binding in row.bindings:
@@ -441,8 +441,8 @@ class _Evaluator:
     def typed(
         self,
         row: _Row,
-        ref: QueryValueRefV1,
-        value_type: QueryValueTypeV1,
+        ref: QueryValueRef,
+        value_type: QueryValueType,
     ) -> QueryTypedValue | None:
         """Return the declared-type comparable, or None when the value is absent."""
 
@@ -457,16 +457,16 @@ class _Evaluator:
             )
         return coerced
 
-    def matches(self, row: _Row, filter_: QueryFilterV1) -> bool:
+    def matches(self, row: _Row, filter_: QueryFilter) -> bool:
         """Evaluate one declared filter; an absent or conflicted value never matches."""
 
-        if isinstance(filter_, QueryConjunctionFilterV1):
+        if isinstance(filter_, QueryConjunctionFilter):
             return all(self.matches(row, item) for item in filter_.filters)
-        if isinstance(filter_, QueryDisjunctionFilterV1):
+        if isinstance(filter_, QueryDisjunctionFilter):
             return any(self.matches(row, item) for item in filter_.filters)
-        if isinstance(filter_, QueryNegationFilterV1):
+        if isinstance(filter_, QueryNegationFilter):
             return not self.matches(row, filter_.operand)
-        if isinstance(filter_, QueryClaimPresenceFilterV1):
+        if isinstance(filter_, QueryClaimPresenceFilter):
             subject_path = row.bindings.get(filter_.binding)
             present = False
             if subject_path is not None:
@@ -475,7 +475,7 @@ class _Evaluator:
                     row.record(claim.visibility)
                 present = bool(claims)
             return present != filter_.negated
-        if isinstance(filter_, QueryComparisonFilterV1):
+        if isinstance(filter_, QueryComparisonFilter):
             left = self.typed(row, filter_.left, filter_.value_type)
             right = self.typed(row, filter_.right, filter_.value_type)
             if left is None or right is None:
@@ -485,7 +485,7 @@ class _Evaluator:
             )
         return self._membership(row, filter_)
 
-    def _membership(self, row: _Row, filter_: QueryMembershipFilterV1) -> bool:
+    def _membership(self, row: _Row, filter_: QueryMembershipFilter) -> bool:
         left = self.typed(row, filter_.left, filter_.value_type)
         if left is None:
             return filter_.negated
@@ -500,7 +500,7 @@ class _Evaluator:
     def order(
         self,
         rows: Sequence[_Row],
-        orderings: tuple[QueryOrderingV1, ...],
+        orderings: tuple[QueryOrdering, ...],
         *,
         tiebreaks: Sequence[bytes] | None = None,
     ) -> list[int]:
@@ -540,9 +540,9 @@ class _Evaluator:
 
 
 def resolve_query_parameters(
-    definition: QueryDefinitionV1,
+    definition: QueryDefinition,
     parameters: Mapping[str, object] | None,
-) -> tuple[QueryParameterBindingV1, ...]:
+) -> tuple[QueryParameterBinding, ...]:
     """Bind caller parameters to their declarations or refuse fail-closed."""
 
     supplied = dict(parameters or {})
@@ -553,7 +553,7 @@ def resolve_query_parameters(
             PARAMETER_UNDECLARED,
             f"The query does not declare the parameter {unknown[0]!r}.",
         )
-    bindings: list[QueryParameterBindingV1] = []
+    bindings: list[QueryParameterBinding] = []
     for name in sorted(declared, key=lambda item: item.encode("utf-8")):
         declaration = declared[name]
         if name in supplied:
@@ -571,15 +571,15 @@ def resolve_query_parameters(
                 f"Parameter {name!r} is not of its declared {declaration.value_type} type.",
             )
         bindings.append(
-            QueryParameterBindingV1(name=name, value_type=declaration.value_type, value=value)
+            QueryParameterBinding(name=name, value_type=declaration.value_type, value=value)
         )
     return tuple(bindings)
 
 
 def _effective_budgets(
-    definition: QueryDefinitionV1,
-    budgets: QueryBudgetsV1 | None,
-) -> QueryBudgetsV1:
+    definition: QueryDefinition,
+    budgets: QueryBudgets | None,
+) -> QueryBudgets:
     effective = budgets or definition.default_budgets
     if not effective.within(definition.maximum_budgets):
         raise _refuse(
@@ -594,7 +594,7 @@ def _effective_budgets(
     return effective
 
 
-def _expiry(definition: QueryDefinitionV1, evaluation_time: datetime) -> datetime | None:
+def _expiry(definition: QueryDefinition, evaluation_time: datetime) -> datetime | None:
     expiry = definition.evaluation_policy.result_expiry
     if expiry is None:
         return None
@@ -605,12 +605,12 @@ def _binding_row(
     backend: ClaimQueryBackendV1,
     binding: str,
     path: str | None,
-) -> QueryRowBindingV1:
+) -> QueryRowBinding:
     if path is None:
-        return QueryRowBindingV1(binding=binding)
+        return QueryRowBinding(binding=binding)
     subject = backend.subject(path)
     assert subject is not None
-    return QueryRowBindingV1(
+    return QueryRowBinding(
         binding=binding,
         subject_identity=subject.shell.identity.qualified,
         subject_kind=subject.shell.subject_kind,
@@ -619,7 +619,7 @@ def _binding_row(
     )
 
 
-def _dedupe_key(row: _Row, definition: QueryDefinitionV1) -> bytes | None:
+def _dedupe_key(row: _Row, definition: QueryDefinition) -> bytes | None:
     if definition.dedupe == "none":
         return None
     if definition.dedupe == "subject":
@@ -628,15 +628,15 @@ def _dedupe_key(row: _Row, definition: QueryDefinitionV1) -> bytes | None:
 
 
 def evaluate_claim_query(
-    definition: AcceptedQueryDefinitionV1,
+    definition: AcceptedQueryDefinition,
     *,
     facts: ClaimQueryFactsV1,
     coordinate: AcceptedProjectionCoordinate,
     evaluation_time: datetime,
     parameters: Mapping[str, object] | None = None,
-    budgets: QueryBudgetsV1 | None = None,
+    budgets: QueryBudgets | None = None,
     backend_factory: ClaimQueryBackendFactoryV1 = DirectClaimFactIndex,
-) -> ClaimQueryResultV1:
+) -> ClaimQueryResult:
     """Evaluate one accepted QueryDefinition against accepted Claim facts.
 
     The result is a pure function of the definition digest, the resolved
@@ -646,14 +646,14 @@ def evaluate_claim_query(
     """
 
     query = definition.query
-    if isinstance(query.entry, QueryArtifactsEntryV2):
+    if isinstance(query.entry, QueryArtifactsEntry):
         raise ValueError("artifact definition queries require the indexed artifact reader")
     if evaluation_time.tzinfo is None or evaluation_time.utcoffset() is None:
         raise ClaimQueryError(
             EVALUATION_TIME_NOT_ABSOLUTE,
             "a query evaluation time must be an explicit absolute instant",
         )
-    bindings: tuple[QueryParameterBindingV1, ...] | None = None
+    bindings: tuple[QueryParameterBinding, ...] | None = None
     try:
         if canonical_bytes(coordinate.model_dump(mode="json")) != canonical_bytes(
             facts.coordinate.model_dump(mode="json")
@@ -673,7 +673,7 @@ def evaluate_claim_query(
             backend_factory=backend_factory,
         )
     except _RefusalSignal as signal:
-        return ClaimQueryResultV1(
+        return ClaimQueryResult(
             verdict="refused",
             definition_path=definition.path,
             definition_digest=definition.artifact_digest,
@@ -690,46 +690,46 @@ def evaluate_claim_query(
             result_cardinality=query.result_cardinality,
             result_binding=query.result_binding,
             dedupe=query.dedupe,
-            truncation=QueryTruncationV1(),
+            truncation=QueryTruncation(),
             refusal=signal.refusal,
         )
 
 
 def evaluate_artifact_query(
-    definition: AcceptedQueryDefinitionV1,
+    definition: AcceptedQueryDefinition,
     *,
-    read: Callable[[QueryArtifactsEntryV2, int], tuple[int, tuple[QueryArtifactDefinitionV2, ...]]],
+    read: Callable[[QueryArtifactsEntry, int], tuple[int, tuple[QueryArtifactDefinition, ...]]],
     coordinate: AcceptedProjectionCoordinate,
     evaluation_time: datetime,
     parameters: Mapping[str, object] | None = None,
-    budgets: QueryBudgetsV1 | None = None,
-) -> ClaimQueryResultV1:
+    budgets: QueryBudgets | None = None,
+) -> ClaimQueryResult:
     """Evaluate definition membership using the coordinate-bound indexed reader."""
     query = definition.query
-    assert isinstance(query.entry, QueryArtifactsEntryV2)
+    assert isinstance(query.entry, QueryArtifactsEntry)
     if evaluation_time.tzinfo is None or evaluation_time.utcoffset() is None:
         raise ClaimQueryError(EVALUATION_TIME_NOT_ABSOLUTE, "query time must be absolute")
     bindings = None
     refusal = None
-    rows: tuple[QueryResultRowV1, ...] = ()
-    truncation = QueryTruncationV1()
+    rows: tuple[QueryResultRow, ...] = ()
+    truncation = QueryTruncation()
     effective = budgets or query.default_budgets
     try:
         bindings = resolve_query_parameters(query, parameters)
         effective = _effective_budgets(query, budgets)
         count, definitions = read(query.entry, effective.max_results)
         rows = tuple(
-            QueryResultRowV1(tag="playbill-query-result-row-v2", bindings=(), artifact=item)
+            QueryResultRow(tag="playbill-query-result-row-v2", bindings=(), artifact=item)
             for item in definitions
         )
-        truncation = QueryTruncationV1(
+        truncation = QueryTruncation(
             clipped_budgets=("max_results",) if count > len(rows) else (),
             candidate_result_count=count,
             returned_result_count=len(rows),
         )
     except _RefusalSignal as signal:
         refusal = signal.refusal
-    return ClaimQueryResultV1(
+    return ClaimQueryResult(
         tag="playbill-query-result-v2",
         verdict="refused" if refusal else "completed",
         definition_path=definition.path,
@@ -753,11 +753,11 @@ def evaluate_artifact_query(
 
 
 def _entry_rows(
-    query: QueryDefinitionV1,
+    query: QueryDefinition,
     backend: ClaimQueryBackendV1,
     parameters: Mapping[str, object],
 ) -> list[_Row]:
-    assert isinstance(query.entry, QueryEntryV1)
+    assert isinstance(query.entry, QueryEntry)
     subject_id: str | None = None
     if query.entry.subject_id is not None:
         supplied = parameters.get(query.entry.subject_id.parameter)
@@ -774,12 +774,12 @@ def _entry_rows(
 
 
 def _traverse(
-    query: QueryDefinitionV1,
+    query: QueryDefinition,
     evaluator: _Evaluator,
     backend: ClaimQueryBackendV1,
     rows: list[_Row],
-    budgets: QueryBudgetsV1,
-    clipped: set[QueryClippedBudgetV1],
+    budgets: QueryBudgets,
+    clipped: set[QueryClippedBudget],
 ) -> list[_Row]:
     for step in query.traversal:
         produced: list[_Row] = []
@@ -821,8 +821,8 @@ def _hydrate(
     evaluator: _Evaluator,
     backend: ClaimQueryBackendV1,
     row: _Row,
-    include: QueryIncludeV1,
-) -> QueryIncludeResultV1:
+    include: QueryInclude,
+) -> QueryIncludeResult:
     source = row.bindings.get(include.from_binding)
     pairs: list[tuple[VisibleClaimRow, str | None]] = []
     if source is not None:
@@ -856,10 +856,10 @@ def _hydrate(
             row.record(visibility)
         for conflict in scoped[position].ordered_conflicts():
             row.record_conflict(conflict)
-    return QueryIncludeResultV1(
+    return QueryIncludeResult(
         name=include.name,
         items=tuple(
-            QueryIncludeItemV1(
+            QueryIncludeItem(
                 claim_object=candidates[position][0].row.accepted.claim.statement.object.model_dump(
                     mode="json"
                 ),
@@ -882,7 +882,7 @@ def _hydrate(
 
 def _result_subject_identities(
     backend: ClaimQueryBackendV1,
-    query: QueryDefinitionV1,
+    query: QueryDefinition,
     rows: Sequence[_Row],
 ) -> tuple[str, ...]:
     return byte_sorted(
@@ -897,15 +897,15 @@ def _result_subject_identities(
 
 
 def _evaluate(
-    definition: AcceptedQueryDefinitionV1,
+    definition: AcceptedQueryDefinition,
     *,
     facts: ClaimQueryFactsV1,
     coordinate: AcceptedProjectionCoordinate,
     evaluation_time: datetime,
-    bindings: tuple[QueryParameterBindingV1, ...],
-    budgets: QueryBudgetsV1,
+    bindings: tuple[QueryParameterBinding, ...],
+    budgets: QueryBudgets,
     backend_factory: ClaimQueryBackendFactoryV1,
-) -> ClaimQueryResultV1:
+) -> ClaimQueryResult:
     query = definition.query
     backend = backend_factory(facts, definition=query, evaluation_time=evaluation_time)
     if canonical_bytes(backend.coordinate.model_dump(mode="json")) != canonical_bytes(
@@ -922,7 +922,7 @@ def _evaluate(
         parameters=parameters,
         evaluation_time=evaluation_time,
     )
-    clipped: set[QueryClippedBudgetV1] = set()
+    clipped: set[QueryClippedBudget] = set()
 
     rows = _traverse(
         query,
@@ -970,7 +970,7 @@ def _evaluate(
 
     rows = [rows[position] for position in evaluator.order(rows, query.orderings)]
     candidate_result_count = len(rows)
-    conflicts: dict[bytes, QueryConflictV1] = {}
+    conflicts: dict[bytes, QueryConflict] = {}
     if query.result_cardinality == "one" and candidate_result_count > 1:
         identities = _result_subject_identities(backend, query, rows)
         if query.evaluation_policy.conflict_behavior == "refuse_on_conflict":
@@ -979,19 +979,19 @@ def _evaluate(
                 "A one-cardinality query resolves to more than one accepted row.",
                 subject_identities=identities,
             )
-        conflict = QueryConflictV1(kind="result_cardinality", subject_identities=identities)
+        conflict = QueryConflict(kind="result_cardinality", subject_identities=identities)
         conflicts[canonical_bytes(conflict.model_dump(mode="json"))] = conflict
     if candidate_result_count > budgets.max_results:
         rows = rows[: budgets.max_results]
         clipped.add("max_results")
 
-    result_rows: list[QueryResultRowV1] = []
+    result_rows: list[QueryResultRow] = []
     for row in rows:
-        fields: list[QueryProjectedFieldV1] = []
+        fields: list[QueryProjectedField] = []
         for declared in () if query.projection is None else query.projection.fields:
             resolved = evaluator.resolve(row, declared.value)
             fields.append(
-                QueryProjectedFieldV1(
+                QueryProjectedField(
                     name=declared.name,
                     state=resolved.state,
                     value=resolved.value if resolved.state == "present" else None,
@@ -1004,7 +1004,7 @@ def _evaluate(
         for conflict in row.ordered_conflicts():
             conflicts[canonical_bytes(conflict.model_dump(mode="json"))] = conflict
         result_rows.append(
-            QueryResultRowV1(
+            QueryResultRow(
                 bindings=tuple(
                     _binding_row(backend, binding, row.bindings.get(binding))
                     for binding in query.row_bindings
@@ -1021,10 +1021,10 @@ def _evaluate(
             )
         )
 
-    ordered_budgets: tuple[QueryClippedBudgetV1, ...] = tuple(
+    ordered_budgets: tuple[QueryClippedBudget, ...] = tuple(
         item for item in _CLIPPED_BUDGET_ORDER if item in clipped
     )
-    return ClaimQueryResultV1(
+    return ClaimQueryResult(
         verdict="completed",
         definition_path=definition.path,
         definition_digest=definition.artifact_digest,
@@ -1040,7 +1040,7 @@ def _evaluate(
         dedupe=query.dedupe,
         rows=tuple(result_rows),
         conflicts=tuple(conflicts[key] for key in sorted(conflicts)),
-        truncation=QueryTruncationV1(
+        truncation=QueryTruncation(
             clipped_budgets=ordered_budgets,
             truncated_includes=byte_sorted(tuple(truncated_includes)),
             candidate_result_count=candidate_result_count,
@@ -1055,8 +1055,8 @@ def _evaluate(
 def _verdict_visibility(
     backend: ClaimQueryBackendV1,
     *,
-    policy: QueryEvaluationPolicyV1,
-) -> QueryVerdictVisibilityV1 | None:
+    policy: QueryEvaluationPolicy,
+) -> QueryVerdictVisibility | None:
     """Account for the Claims this evaluation's policy declined to show.
 
     None when the policy hid nothing, so a definition that shows everything it
@@ -1066,11 +1066,11 @@ def _verdict_visibility(
     excluded = tuple(backend.excluded_by_verdict)
     if not excluded:
         return None
-    return QueryVerdictVisibilityV1(
+    return QueryVerdictVisibility(
         excluded_claim_count=sum(count for _verdict, count in excluded),
         excluded_by_verdict=tuple(
-            QueryVerdictExclusionV1(
-                verdict=cast(EvidenceRelativeClaimVerdict, verdict),
+            QueryVerdictExclusion(
+                verdict=cast(EvidenceRelativeClaimVerdictV1, verdict),
                 excluded_claim_count=count,
             )
             for verdict, count in excluded
@@ -1079,7 +1079,7 @@ def _verdict_visibility(
     )
 
 
-_CLIPPED_BUDGET_ORDER: tuple[QueryClippedBudgetV1, ...] = (
+_CLIPPED_BUDGET_ORDER: tuple[QueryClippedBudget, ...] = (
     "include_max_items",
     "max_paths",
     "max_paths_per_result",

@@ -23,15 +23,15 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV1,
-    ProjectionClaimBackingV1,
-    ProjectionMarkerSummaryV1,
+    ProjectionClaimBacking,
+    ProjectionMarkerSummary,
 )
 from cruxible_client.contracts.errors import PlaybillGitError, ProjectionIntegrityError
 from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionRuleV1,
 )
-from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.exhaust.consumption import consumption_artifacts_for_paths
 from cruxible_core.indexes import logical_digest
 from cruxible_core.indexes import sqlite as playbill_projection
@@ -45,8 +45,8 @@ from cruxible_core.service.claims.claims import (
 from cruxible_core.service.discovery import next as playbill_next
 from cruxible_core.service.discovery.next import (
     PlaybillNextRequestV1,
-    PlaybillNextSourceObservationV4,
-    PlaybillNextWorkspaceObservationV1,
+    PlaybillNextSourceObservation,
+    PlaybillNextWorkspaceObservation,
     service_playbill_next,
 )
 from cruxible_core.service.discovery.query import build_accepted_query_facts
@@ -67,7 +67,7 @@ def _consumption_receipts_on(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 EVALUATION_TIME = datetime(2026, 8, 21, 14, tzinfo=UTC)
-ACCESS = CoverageAccessProfileV1(profile_id="read-latency-test")
+ACCESS = CoverageAccessProfile(profile_id="read-latency-test")
 
 
 def _orient(instance: Any) -> Any:
@@ -211,7 +211,7 @@ def test_a_serving_piece_is_verified_once_and_a_tampered_piece_is_refused(
 
 def _declared_projection_observation(
     instance: Any,
-) -> PlaybillNextWorkspaceObservationV1:
+) -> PlaybillNextWorkspaceObservation:
     """Observe one declared block, so `next` reaches the resolution fold.
 
     Without a marker summary `_projection_items` returns before the fold ever
@@ -227,21 +227,21 @@ def _declared_projection_observation(
         declared_generation=0,
         declared_coordinate=coordinate,
         backing=(
-            ProjectionClaimBackingV1(
+            ProjectionClaimBacking(
                 identity=row.accepted.claim.identity,
                 statement_digest=row.accepted.statement_digest,
             ),
         ),
         body_digest="sha256:" + "b" * 64,
     )
-    return PlaybillNextWorkspaceObservationV1(
+    return PlaybillNextWorkspaceObservation(
         source_observations=(
-            PlaybillNextSourceObservationV4(
+            PlaybillNextSourceObservation(
                 source_id="fixture.work-items",
                 observed_source_digest="sha256:" + "0" * 64,
                 byte_length=1000,
                 marker_summaries=(
-                    ProjectionMarkerSummaryV1(
+                    ProjectionMarkerSummary(
                         stamp=stamp,
                         observed_body_digest="sha256:" + "b" * 64,
                         start_byte=0,
@@ -359,11 +359,11 @@ def test_one_claim_read_materializes_no_generation_and_still_receipts(
     monkeypatch.setattr(runtime_api, "get_playbill_manager", lambda: _Manager())
 
     counted = _count_read_trees(monkeypatch)
-    from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
+    from cruxible_client.contracts.get_reads import PlaybillGetRequest
 
     view = runtime_api.playbill_get(
         instance.descriptor.instance_id,
-        request=PlaybillGetRequestV1(ref=identity, detail="proof", evaluation_time=EVALUATION_TIME),
+        request=PlaybillGetRequest(ref=identity, detail="proof", evaluation_time=EVALUATION_TIME),
     ).proof
     assert view is not None
 
@@ -390,8 +390,8 @@ def _scanned_source_observation(
     *,
     source_id: str,
     scan_notes: tuple[str, ...],
-) -> PlaybillNextSourceObservationV4:
-    return PlaybillNextSourceObservationV4(
+) -> PlaybillNextSourceObservation:
+    return PlaybillNextSourceObservation(
         source_id=source_id,
         observed_source_digest="sha256:" + "0" * 64,
         byte_length=64,
@@ -423,7 +423,7 @@ def _unobserved_rows(
             at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
             evaluation_time=EVALUATION_TIME,
             access_profile=ACCESS,
-            workspace_observation=PlaybillNextWorkspaceObservationV1(
+            workspace_observation=PlaybillNextWorkspaceObservation(
                 source_observations=tuple(
                     sorted(sources, key=lambda item: item.source_id.encode("utf-8"))
                 )

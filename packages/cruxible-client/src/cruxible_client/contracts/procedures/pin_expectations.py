@@ -13,26 +13,26 @@ from dataclasses import dataclass
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.procedures.models import (
     CaptureEgressNodeV3,
-    ClaimTapNodeV6,
-    ExhaustTapNodeV3,
-    InvokeNodeV6,
+    ClaimTapNode,
+    ExhaustTapNode,
+    InvokeNode,
     ProcedureDefinitionAny,
-    ProcedurePinBindingV1,
-    ProcedurePinSlotRefV1,
-    ProcedurePinSlotV1,
-    ProjectNodeV3,
-    ProposeChangeSetNodeV6,
+    ProcedurePinBinding,
+    ProcedurePinSlot,
+    ProcedurePinSlotRef,
+    ProjectNode,
+    ProposeChangeSetNode,
+    ProviderNode,
     ProviderNodeV3,
-    ProviderNodeV4,
     RepeatBodyNodeV3,
     RepeatBodyNodeV4,
     RepeatNodeV3,
     RepeatNodeV4,
-    SelectNodeV6,
+    SelectNode,
+    SourceNode,
     SourceNodeV3,
-    SourceNodeV4,
     StateTapNodeV3,
-    TransformNodeV3,
+    TransformNode,
 )
 
 
@@ -81,16 +81,16 @@ def validate_exact_pin_expectation(
 
 
 def _validate_binding_expectation(
-    binding: ProcedurePinBindingV1,
+    binding: ProcedurePinBinding,
     expectation: PinExpectation,
     *,
     location: str,
-    slots: dict[str, ProcedurePinSlotV1],
+    slots: dict[str, ProcedurePinSlot],
 ) -> None:
     if isinstance(binding, ArtifactPin):
         validate_exact_pin_expectation(binding, expectation, location=location)
         return
-    if not isinstance(binding, ProcedurePinSlotRefV1):  # pragma: no cover - closed union
+    if not isinstance(binding, ProcedurePinSlotRef):  # pragma: no cover - closed union
         raise TypeError(f"unsupported Procedure pin binding at {location}")
     declaration = slots.get(binding.slot_name)
     if declaration is None:
@@ -110,7 +110,7 @@ def validate_procedure_pin_expectations(definition: ProcedureDefinitionAny) -> N
     slots = {slot.slot_name: slot for slot in definition.pin_slots}
 
     def check(
-        binding: ProcedurePinBindingV1 | None,
+        binding: ProcedurePinBinding | None,
         expectation: PinExpectation,
         location: str,
     ) -> None:
@@ -132,44 +132,44 @@ def validate_procedure_pin_expectations(definition: ProcedureDefinitionAny) -> N
 
     for node in definition.nodes:
         prefix = f"Procedure node {node.node_id!r}"
-        if isinstance(node, InvokeNodeV6):
+        if isinstance(node, InvokeNode):
             check(
                 node.procedure, PinExpectation((("procedure", "Procedure"),)), f"{prefix} procedure"
             )
-        elif isinstance(node, ClaimTapNodeV6):
+        elif isinstance(node, ClaimTapNode):
             check(
                 node.claim_type,
                 PinExpectation((("claim-type", "ClaimType"),)),
                 f"{prefix} claim_type",
             )
-        elif isinstance(node, ProposeChangeSetNodeV6):
+        elif isinstance(node, ProposeChangeSetNode):
             for pin in node.claim_types:
                 check(pin, PinExpectation((("claim-type", "ClaimType"),)), f"{prefix} claim_type")
         elif isinstance(node, StateTapNodeV3):
             check(node.query, QUERY, f"{prefix} query")
-        elif isinstance(node, SourceNodeV3 | SourceNodeV4):
+        elif isinstance(node, SourceNodeV3 | SourceNode):
             check(node.capture_contract, CAPTURE_CONTRACT, f"{prefix} capture_contract")
             check(node.provider, PROVIDER, f"{prefix} provider")
-            if isinstance(node, SourceNodeV4):
+            if isinstance(node, SourceNode):
                 validate_exact_pin_expectation(
                     node.interface,
                     PROVIDER_INTERFACE,
                     location=f"{prefix} interface",
                 )
-                if isinstance(node.provider, ProcedurePinSlotRefV1):
+                if isinstance(node.provider, ProcedurePinSlotRef):
                     slot = slots[node.provider.slot_name]
                     if slot.interface_digest != node.interface_digest:
                         raise ValueError(
                             f"{prefix} interface_digest disagrees with Provider slot "
                             f"{node.provider.slot_name!r}"
                         )
-        elif isinstance(node, ExhaustTapNodeV3):
+        elif isinstance(node, ExhaustTapNode):
             check(
                 node.reducer_or_query,
                 REDUCER_OR_QUERY,
                 f"{prefix} reducer_or_query",
             )
-        elif isinstance(node, ProviderNodeV3 | ProviderNodeV4):
+        elif isinstance(node, ProviderNodeV3 | ProviderNode):
             check(node.provider, PROVIDER, f"{prefix} provider")
             check(node.contract_in, CONTRACT_IN, f"{prefix} contract_in")
             check(node.contract_out, CONTRACT_OUT, f"{prefix} contract_out")
@@ -181,7 +181,7 @@ def validate_procedure_pin_expectations(definition: ProcedureDefinitionAny) -> N
                     PROVIDER_INTERFACE,
                     location=f"{prefix} interface",
                 )
-                if isinstance(node.provider, ProcedurePinSlotRefV1):
+                if isinstance(node.provider, ProcedurePinSlotRef):
                     slot = slots[node.provider.slot_name]
                     if slot.interface_digest != node.interface_digest:
                         raise ValueError(
@@ -189,10 +189,10 @@ def validate_procedure_pin_expectations(definition: ProcedureDefinitionAny) -> N
                             f"{node.provider.slot_name!r}"
                         )
             check(node.effect_policy, EFFECT_POLICY, f"{prefix} effect_policy")
-        elif isinstance(node, TransformNodeV3):
+        elif isinstance(node, TransformNode):
             check(node.contract_in, CONTRACT_IN, f"{prefix} contract_in")
             check(node.contract_out, CONTRACT_OUT, f"{prefix} contract_out")
-        elif isinstance(node, ProjectNodeV3 | SelectNodeV6):
+        elif isinstance(node, ProjectNode | SelectNode):
             check(node.contract_out, CONTRACT_OUT, f"{prefix} contract_out")
         elif isinstance(node, RepeatNodeV3 | RepeatNodeV4):
             for body in node.body:
@@ -210,7 +210,7 @@ def validate_procedure_pin_expectations(definition: ProcedureDefinitionAny) -> N
                         PROVIDER_INTERFACE,
                         location=f"{body_prefix} interface",
                     )
-                    if isinstance(body.provider, ProcedurePinSlotRefV1):
+                    if isinstance(body.provider, ProcedurePinSlotRef):
                         slot = slots[body.provider.slot_name]
                         if slot.interface_digest != body.interface_digest:
                             raise ValueError(

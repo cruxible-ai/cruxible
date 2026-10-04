@@ -20,39 +20,39 @@ from fastapi.testclient import TestClient
 
 from cruxible_client import Playbill
 from cruxible_client.authoring.inputs import CarriedContractInput, ProcedureInput
-from cruxible_client.contracts import PlaybillClaimViewV2
+from cruxible_client.contracts import ClaimViewRecord
 from cruxible_client.contracts.acquisition_policies import (
-    IndependentCoherenceV1,
-    InputAcquisitionRuleV1,
-    SourceAcquisitionPolicyV1,
+    IndependentCoherence,
+    InputAcquisitionRule,
+    SourceAcquisitionPolicy,
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
-from cruxible_client.contracts.capture_reads import CaptureReadRequestV1
-from cruxible_client.contracts.captures import CanonicalDurationV1, capture_contract_digest
+from cruxible_client.contracts.capture_reads import CaptureReadRequest
+from cruxible_client.contracts.captures import CanonicalDuration, capture_contract_digest
 from cruxible_client.contracts.claim_types import ClaimType
-from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
+from cruxible_client.contracts.get_reads import PlaybillGetRequest
 from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicyV1,
+    ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionRuleV1,
-    ClaimResolutionPolicyV1,
+    ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.procedures.artifacts import procedure_owned_contract_digest
 from cruxible_client.contracts.procedures.line_specs import line_identity_digest
 from cruxible_client.contracts.procedures.models import (
     CaptureEgressNodeV3,
-    ProcedureBudgetV3,
+    ProcedureBudget,
     ProcedureDefinitionV5,
-    ProcedureHardCapsV3,
-    ProjectNodeV3,
+    ProcedureHardCaps,
+    ProjectNode,
     ProposeChangeSetNodeV3,
-    SourceNodeV4,
+    SourceNode,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, subject_path
 from cruxible_client.contracts.workspace_file import (
     WORKSPACE_FILE_INTERFACE_V2_DIGEST,
-    WorkspaceFileSourceRequestV1,
+    WorkspaceFileSourceRequest,
 )
 from cruxible_client.provider_installation import install_provider_package
 from cruxible_client.transport.http import CruxibleClient
@@ -184,8 +184,8 @@ def _claim_type(contract_digest: str) -> ClaimType:
                 ),
             )
         ),
-        admission_policy=ClaimAdmissionPolicyV1(),
-        resolution_policy=ClaimResolutionPolicyV1(
+        admission_policy=ClaimAdmissionPolicy(),
+        resolution_policy=ClaimResolutionPolicy(
             cardinality="one",
             eligible_verdicts=("supported",),
             selector="only_contender",
@@ -193,22 +193,22 @@ def _claim_type(contract_digest: str) -> ClaimType:
     )
 
 
-def _policy() -> SourceAcquisitionPolicyV1:
-    return SourceAcquisitionPolicyV1(
+def _policy() -> SourceAcquisitionPolicy:
+    return SourceAcquisitionPolicy(
         identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name=POLICY_NAME),
         inputs=(
-            InputAcquisitionRuleV1(
+            InputAcquisitionRule(
                 input_name="advisory",
                 requirement="required",
                 permitted_replayability=("attested_only", "exact"),
-                max_age=CanonicalDurationV1(microseconds=3_600_000_000),
+                max_age=CanonicalDuration(microseconds=3_600_000_000),
                 on_unavailable="refuse",
                 on_stale="refuse",
                 on_oversized="refuse",
                 on_conflict="preserve",
             ),
         ),
-        coherence=IndependentCoherenceV1(),
+        coherence=IndependentCoherence(),
     )
 
 
@@ -251,7 +251,7 @@ def _procedure_definition(
         target=output_contract.identity,
         artifact_digest=procedure_owned_contract_digest(output_contract).tagged,
     )
-    request = WorkspaceFileSourceRequestV1(
+    request = WorkspaceFileSourceRequest(
         logical_source="commerce.production.orders",
         relative_path=RELATIVE_PATH,
         workspace_binding_digest=_binding_digest(workspace),
@@ -267,7 +267,7 @@ def _procedure_definition(
         contract_in=contract_in,
         contract_out=contract_out,
         nodes=(
-            SourceNodeV4(
+            SourceNode(
                 node_id="read",
                 capture_contract=contract_pin,
                 provider=ArtifactPin(
@@ -293,7 +293,7 @@ def _procedure_definition(
                 as_="advisory",
                 next="shape",
             ),
-            ProjectNodeV3(
+            ProjectNode(
                 node_id="shape",
                 fields={"severity": "$steps.advisory.content.text"},
                 contract_out=contract_out,
@@ -309,14 +309,14 @@ def _procedure_definition(
             ),
         ),
         returns="result",
-        budget=ProcedureBudgetV3(
-            wall_clock=CanonicalDurationV1(microseconds=5_000_000),
+        budget=ProcedureBudget(
+            wall_clock=CanonicalDuration(microseconds=5_000_000),
             max_provider_calls=2,
             max_capture_bytes=65_536,
             max_items=None,
         ),
-        hard_caps=ProcedureHardCapsV3(
-            max_wall_clock=CanonicalDurationV1(microseconds=10_000_000),
+        hard_caps=ProcedureHardCaps(
+            max_wall_clock=CanonicalDuration(microseconds=10_000_000),
             max_provider_calls=4,
             max_capture_bytes=131_072,
             max_items=200,
@@ -380,12 +380,12 @@ def _claim_proof(
     claim_id: str,
     *,
     evaluation_time: datetime | None = None,
-) -> PlaybillClaimViewV2:
+) -> ClaimViewRecord:
     proof = transport.playbill_get(
         instance_id,
-        request=PlaybillGetRequestV1(ref=claim_id, detail="proof", evaluation_time=evaluation_time),
+        request=PlaybillGetRequest(ref=claim_id, detail="proof", evaluation_time=evaluation_time),
     ).proof
-    return PlaybillClaimViewV2.model_validate(proof)
+    return ClaimViewRecord.model_validate(proof)
 
 
 @pytest.mark.parametrize("terminal_kind", ["propose_change_set", "emit_capture"])
@@ -472,11 +472,11 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
     from pydantic import TypeAdapter
 
     from cruxible_client.contracts.authoring.models import (
-        AuthoringChangeSetMemberV1,
+        AuthoringChangeSetMember,
         authoring_member_identity,
     )
 
-    adapter = TypeAdapter(AuthoringChangeSetMemberV1)
+    adapter = TypeAdapter(AuthoringChangeSetMember)
     members.sort(
         key=lambda item: authoring_member_identity(adapter.validate_python(item)).encode("utf-8")
     )
@@ -592,7 +592,7 @@ def test_the_rung2_loop_runs_over_public_surfaces_only(
         assert view.admission_accounts[0].capture_digest == capture_digest
         assert view.admission_accounts[0].status == "admitted"
         missing = transport.read_playbill_capture(
-            instance_id, CaptureReadRequestV1(capture_digest="sha256:" + "f" * 64)
+            instance_id, CaptureReadRequest(capture_digest="sha256:" + "f" * 64)
         )
         assert missing.status == "unavailable"
         get_playbill_manager().clear()

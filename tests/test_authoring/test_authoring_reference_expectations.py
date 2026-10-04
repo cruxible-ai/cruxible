@@ -6,8 +6,8 @@ from pathlib import Path
 
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
 from cruxible_client.contracts.authoring.models import (
-    AuthoringIntentV2,
-    AuthoringReferenceExpectationV1,
+    AuthoringIntent,
+    AuthoringReferenceExpectation,
     authoring_create_fingerprint,
     authoring_payload_digest,
     reference_expectations_digest,
@@ -79,9 +79,9 @@ def _accept_subject_successor(
     instance.refresh()
 
 
-def _expectation(coordinate: AcceptedCoordinate) -> tuple[AuthoringReferenceExpectationV1, ...]:
+def _expectation(coordinate: AcceptedCoordinate) -> tuple[AuthoringReferenceExpectation, ...]:
     return (
-        AuthoringReferenceExpectationV1(
+        AuthoringReferenceExpectation(
             payload_path="statement.subject",
             artifact_kind="Subject",
             address="project.work_item/wi-42",
@@ -131,7 +131,7 @@ def test_stale_ref_names_the_successor_coordinate_and_retry_converges(tmp_path: 
         canonical_timestamp=TIMESTAMP,
         reference_expectations=_expectation(current),
     ).intent
-    assert isinstance(retried, AuthoringIntentV2)
+    assert isinstance(retried, AuthoringIntent)
     assert retried.intent_id == first.intent_id
     assert retried.semantic_identity == first.semantic_identity
     assert retried.payload_digest == first.payload_digest

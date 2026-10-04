@@ -18,8 +18,8 @@ from cruxible_client.contracts.attestations import verify_candidate_approvals
 from cruxible_client.contracts.candidates import (
     CandidateRecord,
     CandidateRecordAnyVersion,
+    CandidateRecordV1,
     CandidateRecordV2,
-    CandidateRecordV3,
 )
 from cruxible_client.contracts.canonical import (
     GenerationRoot,
@@ -427,7 +427,7 @@ def _candidate_from_record(
     """
 
     if isinstance(record, ChangeSetRecordV3):
-        return CandidateRecordV3(
+        return CandidateRecord(
             candidate=record.candidate,
             candidate_digest=record.candidate_digest,
             required_tier=record.required_tier,
@@ -452,7 +452,7 @@ def _candidate_from_record(
             law_digests=record.law_digests,
             compiler_digest=record.compiler_digest,
         )
-    return CandidateRecord(
+    return CandidateRecordV1(
         candidate=record.candidate,
         candidate_digest=record.candidate_digest,
         required_tier=record.required_tier,

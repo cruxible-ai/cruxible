@@ -22,7 +22,7 @@ import pytest
 
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_core.coverage.adapter import (
-    WorkingSourceObservationV1,
+    WorkingSourceObservation,
     coverage_span_requests,
 )
 from cruxible_core.coverage.contracts import (
@@ -74,11 +74,11 @@ class _Recorder:
     """
 
     def __init__(self) -> None:
-        self.calls: list[tuple[WorkingSourceObservationV1, ...]] = []
+        self.calls: list[tuple[WorkingSourceObservation, ...]] = []
 
     def __call__(
         self,
-        observations: Sequence[WorkingSourceObservationV1],
+        observations: Sequence[WorkingSourceObservation],
     ) -> CoverageResultV3:
         ordered = tuple(observations)
         self.calls.append(ordered)
@@ -97,7 +97,7 @@ class _Recorder:
         )
 
     @property
-    def observed(self) -> tuple[WorkingSourceObservationV1, ...]:
+    def observed(self) -> tuple[WorkingSourceObservation, ...]:
         assert len(self.calls) == 1, f"expected exactly one resolve, got {len(self.calls)}"
         return self.calls[0]
 
@@ -617,7 +617,7 @@ def test_current_floor_is_silent_and_invalid_floor_is_explicitly_unavailable(
 def test_an_unreachable_resolver_degrades_to_the_original_plus_one_line(
     workspace: Path,
 ) -> None:
-    def explode(_: Sequence[WorkingSourceObservationV1]) -> CoverageResultV3:
+    def explode(_: Sequence[WorkingSourceObservation]) -> CoverageResultV3:
         raise RuntimeError("connection refused")
 
     middleware = coverage_middleware(root=workspace, config=_config(), resolve=explode)
@@ -651,7 +651,7 @@ def test_an_unreadable_working_file_degrades_the_same_way(workspace: Path) -> No
 def test_a_degraded_delivery_carries_no_cards_at_all(workspace: Path) -> None:
     """Fail open on infrastructure, fail closed on semantics."""
 
-    def explode(_: Sequence[WorkingSourceObservationV1]) -> CoverageResultV3:
+    def explode(_: Sequence[WorkingSourceObservation]) -> CoverageResultV3:
         raise RuntimeError("boom")
 
     middleware = coverage_middleware(root=workspace, config=_config(), resolve=explode)

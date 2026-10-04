@@ -48,7 +48,7 @@ def test_claim_type_uses_typed_proposal_input_not_a_coordinator_example() -> Non
     assert "claim-type" not in get_args(contracts.PlaybillAuthoringExampleName)
     assert "ClaimType" not in tool_description("cruxible_playbill_authoring_example")
     description = tool_description("cruxible_playbill_propose_claim_type")
-    assert "ClaimTypeInputV1" in description
+    assert "ClaimTypeInputRecord" in description
     assert "cruxible playbill claim-type propose --template" in description
 
 
@@ -152,9 +152,9 @@ def test_readmit_and_migration_delegate_to_existing_client_routes(
             instance_id: str,
             *,
             request: dict[str, Any],
-        ) -> contracts.PlaybillClaimTypeMigrationResult:
+        ) -> contracts.PlaybillClaimTypeMigrationResultV1:
             calls.append(f"migrate:{request['tag']}")
-            return contracts.PlaybillClaimTypeMigrationResult(
+            return contracts.PlaybillClaimTypeMigrationResultV1(
                 tag="playbill-claim-type-migration-result-v1",
                 operation_digest="sha256:" + "6" * 64,
                 semantic_delta=[],

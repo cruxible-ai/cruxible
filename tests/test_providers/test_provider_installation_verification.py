@@ -8,9 +8,9 @@ import pytest
 
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.providers import (
-    AcceptedProviderV1,
-    ProviderRuntimeArtifactPayloadV2,
-    ProviderV3,
+    AcceptedProvider,
+    Provider,
+    ProviderRuntimeArtifactPayload,
     provider_digest,
     provider_expected_implementation_records,
     provider_path,
@@ -49,8 +49,8 @@ def installation(tmp_path: Path):
     document = provider.runtime_artifact.model_dump(mode="json")
     document["distribution"]["sha256"] = digest(wheel.read_bytes())
     document["local_env"]["lock_sha256"] = digest(lock.read_bytes())
-    payload = ProviderRuntimeArtifactPayloadV2.model_validate(document)
-    provider = ProviderV3.model_validate(
+    payload = ProviderRuntimeArtifactPayload.model_validate(document)
+    provider = Provider.model_validate(
         {
             **provider.model_dump(mode="json"),
             "runtime_artifact": payload,
@@ -96,9 +96,9 @@ def installation(tmp_path: Path):
     return provider, deployment
 
 
-def bind(provider: ProviderV3, deployment: LocalProviderDeploymentV1):
+def bind(provider: Provider, deployment: LocalProviderDeploymentV1):
     return LocalProviderExecutionDriver().bind(
-        AcceptedProviderV1(
+        AcceptedProvider(
             path=provider_path(provider.identity.name),
             provider=provider,
             artifact_digest=provider_digest(provider).tagged,

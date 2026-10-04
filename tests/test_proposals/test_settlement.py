@@ -10,15 +10,15 @@ from pydantic import ValidationError
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring_profiles import (
     CLAIM_TYPE_AUTHORING_PROFILES,
-    ClaimTypeProfileInputV1,
+    ClaimTypeProfileInput,
     expand_claim_type_profile,
 )
-from cruxible_client.contracts.candidates import CandidateRecordV3, candidate_digest
+from cruxible_client.contracts.candidates import CandidateRecord, candidate_digest
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, render_claim_type
 from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicyV1,
+    ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV1,
-    ClaimResolutionPolicyV1,
+    ClaimResolutionPolicy,
 )
 from cruxible_core.compiler.compiler import current_compiler_coordinate
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
@@ -47,8 +47,8 @@ def claim_type() -> ClaimType:
         cardinality="one",
         permitted_roles=("normative",),
         evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(),
-        admission_policy=ClaimAdmissionPolicyV1(),
-        resolution_policy=ClaimResolutionPolicyV1(
+        admission_policy=ClaimAdmissionPolicy(),
+        resolution_policy=ClaimResolutionPolicy(
             cardinality="one",
             eligible_verdicts=("supported",),
             selector="only_contender",
@@ -73,7 +73,7 @@ def test_v2_changeset_keeps_frozen_candidate_and_approval_preimages(tmp_path: Pa
         candidate_tree=tree,
         timestamp=TIMESTAMP,
     )
-    assert isinstance(proposal.candidate, CandidateRecordV3)
+    assert isinstance(proposal.candidate, CandidateRecord)
     candidate = proposal.candidate
     # The daemon settles the tree evaluation re-committed, which is the only tree
     # carrying the derivative cards settlement re-derives and byte-verifies.
@@ -129,7 +129,7 @@ def test_claim_type_v2_generation_projects_and_replays_after_restart(tmp_path: P
         candidate_tree=tree,
         timestamp=TIMESTAMP,
     )
-    assert isinstance(evaluated.candidate, CandidateRecordV3)
+    assert isinstance(evaluated.candidate, CandidateRecord)
     candidate = evaluated.candidate
     assert evaluated.evaluation.evaluated_tree_oid is not None
     settled_tree = instance.proposal_tree(evaluated.evaluation.evaluated_tree_oid)
@@ -189,7 +189,7 @@ def test_profile_law_evidence_reproduces_during_settlement(tmp_path: Path) -> No
         if item.profile_id == "ordinary-project-fact-v1"
     )
     expansion = expand_claim_type_profile(
-        ClaimTypeProfileInputV1(
+        ClaimTypeProfileInput(
             profile_id=profile.profile_id,
             profile_digest=profile.profile_digest,
             authoring_source_digest="sha256:" + "81" * 32,
@@ -213,7 +213,7 @@ def test_profile_law_evidence_reproduces_during_settlement(tmp_path: Path) -> No
         candidate_tree=tree,
         timestamp=TIMESTAMP,
     )
-    assert isinstance(proposal.candidate, CandidateRecordV3)
+    assert isinstance(proposal.candidate, CandidateRecord)
     candidate = proposal.candidate
     assert proposal.evaluation.evaluated_tree_oid is not None
     settled_tree = instance.proposal_tree(proposal.evaluation.evaluated_tree_oid)

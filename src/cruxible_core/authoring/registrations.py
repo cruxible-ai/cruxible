@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from cruxible_client.contracts.authoring.models import PublicationPreparationV2
+from cruxible_client.contracts.authoring.models import PublicationPreparation
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.errors import PlaybillError, PlaybillFormatError
 from cruxible_client.contracts.projection import AcceptedCoordinate
@@ -34,7 +34,7 @@ class BoundPublicationRegistration:
     intent_id: str
     claim_identity: str
     claim_statement_digest: str
-    preparation: PublicationPreparationV2
+    preparation: PublicationPreparation
 
 
 # The fold consumes validated current publication states. One `block sync --check` can

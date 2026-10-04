@@ -15,8 +15,8 @@ from typing import Literal, Protocol, runtime_checkable
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from cruxible_client.contracts.acquisition_policies import (
-    AcquisitionInputDecisionV1,
-    InputAcquisitionRuleV1,
+    AcquisitionInputDecision,
+    InputAcquisitionRule,
 )
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.canonical import (
@@ -25,7 +25,7 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
 )
 from cruxible_client.contracts.captures import (
-    CaptureContractV1,
+    CaptureContract,
     CaptureEnvelopeAny,
     capture_contract_is_self_asserted,
     capture_digest,
@@ -139,7 +139,7 @@ class ProcedureSourceAcquirerProtocol(Protocol):
     def dereference(self, capture_digest_value: str) -> ProcedureCaptureMaterialV1: ...
 
 
-def capture_provenance_grade(contract: CaptureContractV1) -> EvidenceProvenanceGrade:
+def capture_provenance_grade(contract: CaptureContract) -> EvidenceProvenanceGrade:
     """Reuse the accepted Claim-side derivation; never invent a second ladder."""
 
     if capture_contract_is_self_asserted(contract):
@@ -163,7 +163,7 @@ def _refusal(
 
 
 def capture_selection_failure(
-    rule: InputAcquisitionRuleV1,
+    rule: InputAcquisitionRule,
     envelope: CaptureEnvelopeAny,
     *,
     evaluation_time: datetime,
@@ -179,12 +179,12 @@ def capture_selection_failure(
 
 
 def apply_acquisition_result(
-    rule: InputAcquisitionRuleV1,
+    rule: InputAcquisitionRule,
     result: ProcedureSourceAcquisitionResultV1,
     *,
     default_authorized: bool,
     evaluation_time: datetime,
-) -> AcquisitionInputDecisionV1:
+) -> AcquisitionInputDecision:
     """Apply the declared failure behaviour to a real typed acquisition result only."""
 
     if result.input_name != rule.input_name:
@@ -205,7 +205,7 @@ def apply_acquisition_result(
         elif failure == ACQUISITION_STALE:
             behavior, reason = rule.on_stale, ACQUISITION_STALE
         else:
-            return AcquisitionInputDecisionV1(
+            return AcquisitionInputDecision(
                 input_name=rule.input_name,
                 disposition="selected",
                 considered_capture_digests=considered,
@@ -220,21 +220,21 @@ def apply_acquisition_result(
         }[result.outcome]
         reason = _OUTCOME_REASONS[result.outcome]
     if behavior == "omit_optional" and rule.requirement == "optional":
-        return AcquisitionInputDecisionV1(
+        return AcquisitionInputDecision(
             input_name=rule.input_name,
             disposition="omitted",
             considered_capture_digests=considered,
             reason_codes=(reason,),
         )
     if behavior == "declared_conservative_default" and default_authorized:
-        return AcquisitionInputDecisionV1(
+        return AcquisitionInputDecision(
             input_name=rule.input_name,
             disposition="defaulted",
             considered_capture_digests=considered,
             default_value=rule.conservative_default,
             reason_codes=(reason,),
         )
-    return AcquisitionInputDecisionV1(
+    return AcquisitionInputDecision(
         input_name=rule.input_name,
         disposition="refused",
         considered_capture_digests=considered,

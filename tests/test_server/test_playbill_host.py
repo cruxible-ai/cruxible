@@ -24,7 +24,7 @@ from cruxible_client.contracts.errors import (
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import utc_now
-from cruxible_client.contracts.workspace_file import WorkspaceFileSourceRequestV1
+from cruxible_client.contracts.workspace_file import WorkspaceFileSourceRequest
 from cruxible_core.documents.workspace_file import (
     WorkspaceFileReader,
     WorkspaceFileReadRefused,
@@ -52,7 +52,7 @@ from cruxible_core.service.authoring.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
 )
-from cruxible_core.service.procedures.procedure_runs import ProcedureRunRequestV2
+from cruxible_core.service.procedures.procedure_runs import ProcedureRunRequest
 from tests.test_ledger.test_activation import _sign
 
 
@@ -588,7 +588,7 @@ def test_independent_approval_init_creates_no_provider_proposal(
 
 
 def _read_workspace_path(reader: WorkspaceFileReader, root: Path, relative_path: str) -> None:
-    request = WorkspaceFileSourceRequestV1(
+    request = WorkspaceFileSourceRequest(
         logical_source="workspace.docs",
         workspace_binding_digest=workspace_binding_digest(
             instance_id=reader.instance_id, canonical_root=root
@@ -705,7 +705,7 @@ def test_unavailable_workspace_configuration_reaches_run_service_as_typed_absenc
         playbill_api.playbill_procedure_run(
             "inst_unavailable_workspace",
             "non-workspace-procedure",
-            request=ProcedureRunRequestV2(input={}),
+            request=ProcedureRunRequest(input={}),
         )
 
 

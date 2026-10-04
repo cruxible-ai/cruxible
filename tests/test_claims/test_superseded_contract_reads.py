@@ -16,9 +16,9 @@ from typing import Any
 
 from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayloadV1,
-    WorkingAnchorWindowV1,
-    WorkingDigestCoordinateV1,
-    WorkingSelectionObservationV1,
+    WorkingAnchorWindow,
+    WorkingDigestCoordinate,
+    WorkingSelectionObservation,
 )
 from cruxible_client.contracts.captures import render_capture_contract
 from cruxible_client.contracts.claims import parse_claim
@@ -48,14 +48,14 @@ def _observe(world: Any, text: bytes, *, revises: str | None = None) -> str:
     payload = ClaimAuthoringPayloadV1(
         statement=_self_source_payload().statement,
         rationale="The repository snapshot says the work is ready.",
-        source=WorkingSelectionObservationV1(
+        source=WorkingSelectionObservation(
             source_id=SOURCE,
-            coordinate=WorkingDigestCoordinateV1(
+            coordinate=WorkingDigestCoordinate(
                 source_content_digest=digest, source_byte_length=len(text)
             ),
             selected_content_base64=base64.b64encode(text).decode("ascii"),
             selected_bytes_digest=digest,
-            selector=WorkingAnchorWindowV1(
+            selector=WorkingAnchorWindow(
                 anchor=text.decode("ascii"),
                 start_byte=0,
                 end_byte=len(text),

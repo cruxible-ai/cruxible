@@ -17,20 +17,20 @@ from pydantic import BaseModel, ConfigDict
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
-    AuthoringClaimStatementV1,
-    AuthoringExistingClaimDispositionV1,
+    AuthoringClaimStatement,
+    AuthoringExistingClaimDisposition,
     ClaimAuthoringPayloadV1,
     ClaimAuthoringPayloadV2,
-    ClaimDependencyDraftsV1,
-    SelfSourceBodyV1,
-    WorkingAnchorWindowV1,
-    WorkingDigestCoordinateV1,
-    WorkingSelectionObservationV1,
+    ClaimDependencyDrafts,
+    SelfSourceBody,
+    WorkingAnchorWindow,
+    WorkingDigestCoordinate,
+    WorkingSelectionObservation,
 )
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
-    DirectClaimSelectionV1,
-    DirectForeignSourceSelectionV1,
+    DirectClaimSelection,
+    DirectForeignSourceSelection,
     capture_contract_digest,
     capture_contract_path,
     foreign_source_capture_contract,
@@ -89,7 +89,7 @@ class DirectClaimAuthoringV1(_StrictFixtureModel):
     predecessor_artifact_digest: str | None = None
     retire: bool = False
     materialize_source: bool = True
-    source_selection: DirectClaimSelectionV1 | None = None
+    source_selection: DirectClaimSelection | None = None
     subject_shell: SubjectShell | None = None
     claim_type_artifact: ClaimType | None = None
     dependency_subject_shells: tuple[SubjectShell, ...] = ()
@@ -119,7 +119,7 @@ class DirectClaimProposalV1(AuthoredClaimV1):
 def _dispositions(
     instance: PlaybillInstance,
     authoring: DirectClaimAuthoringV1,
-) -> tuple[AuthoringExistingClaimDispositionV1, ...]:
+) -> tuple[AuthoringExistingClaimDisposition, ...]:
     by_statement: dict[str, str] = {}
     same_slot: dict[
         str,
@@ -142,7 +142,7 @@ def _dispositions(
     return tuple(
         sorted(
             (
-                AuthoringExistingClaimDispositionV1(
+                AuthoringExistingClaimDisposition(
                     claim_id=claim_id,
                     disposition=disposition,
                 )
@@ -164,7 +164,7 @@ def _payload(
     statement = authoring.statement
     source = authoring.source_selection
     citation_role: Literal["evidence"] | None = None
-    if isinstance(source, DirectForeignSourceSelectionV1):
+    if isinstance(source, DirectForeignSourceSelection):
         content = instance.body_store().read(
             source.span.content_digest,
             access=BodyAccessContext(principal_id="claim-fixture", can_read_body=True),
@@ -172,15 +172,15 @@ def _payload(
         selected = content[source.span.start_byte : source.span.end_byte]
         anchor = content.decode("utf-8").strip()
         selected_digest = "sha256:" + hashlib.sha256(selected).hexdigest()
-        source_value = WorkingSelectionObservationV1(
+        source_value = WorkingSelectionObservation(
             source_id=source.logical_source_identity,
-            coordinate=WorkingDigestCoordinateV1(
+            coordinate=WorkingDigestCoordinate(
                 source_content_digest="sha256:" + hashlib.sha256(content).hexdigest(),
                 source_byte_length=len(content),
             ),
             selected_content_base64=base64.b64encode(selected).decode("ascii"),
             selected_bytes_digest=selected_digest,
-            selector=WorkingAnchorWindowV1(
+            selector=WorkingAnchorWindow(
                 anchor=anchor,
                 start_byte=source.span.start_byte,
                 end_byte=source.span.end_byte,
@@ -197,15 +197,15 @@ def _payload(
         if capture_contract_path(fixture_contract.identity.name) in accepted_tree:
             selected = statement.object.model_dump_json().encode("utf-8")
             digest = "sha256:" + hashlib.sha256(selected).hexdigest()
-            source_value = WorkingSelectionObservationV1(
+            source_value = WorkingSelectionObservation(
                 source_id=fixture_source_id,
-                coordinate=WorkingDigestCoordinateV1(
+                coordinate=WorkingDigestCoordinate(
                     source_content_digest=digest,
                     source_byte_length=len(selected),
                 ),
                 selected_content_base64=base64.b64encode(selected).decode("ascii"),
                 selected_bytes_digest=digest,
-                selector=WorkingAnchorWindowV1(
+                selector=WorkingAnchorWindow(
                     anchor=selected.decode("utf-8"),
                     start_byte=0,
                     end_byte=len(selected),
@@ -214,13 +214,13 @@ def _payload(
             )
             citation_role = "evidence"
         else:
-            source_value = SelfSourceBodyV1(
+            source_value = SelfSourceBody(
                 content_base64=base64.b64encode(
                     statement.object.model_dump_json().encode("utf-8")
                 ).decode("ascii")
             )
     base = {
-        "statement": AuthoringClaimStatementV1(
+        "statement": AuthoringClaimStatement(
             subject=statement.subject,
             predicate=statement.predicate,
             qualifier=statement.qualifier,
@@ -271,7 +271,7 @@ def _payload(
         )
     return ClaimAuthoringPayloadV2(
         **base,
-        dependency_drafts=ClaimDependencyDraftsV1(
+        dependency_drafts=ClaimDependencyDrafts(
             subject=authoring.subject_shell,
             claim_type=claim_type,
         ),

@@ -11,11 +11,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.captures import (
+    CaptureEnvelope,
     CaptureEnvelopeAny,
     CaptureEnvelopeV1,
-    CaptureEnvelopeV2,
+    CaptureRunCoordinate,
     CaptureRunCoordinateV1,
-    CaptureRunCoordinateV2,
     capture_digest,
 )
 from cruxible_client.contracts.errors import PlaybillFormatError
@@ -78,7 +78,7 @@ class CaptureLandingEventV1(_StrictJournalModel):
         )
 
 
-class CaptureLandingEventV2(_StrictJournalModel):
+class CaptureLandingEvent(_StrictJournalModel):
     """Landing successor whose sequence and cursor read SETTLEMENT ORDER.
 
     ``landed_at`` reads EVALUATION INSTANT.
@@ -96,7 +96,7 @@ class CaptureLandingEventV2(_StrictJournalModel):
     idempotency_key: str
     capture_digest: str
     capture_contract_digest: str
-    run_coordinate: CaptureRunCoordinateV2
+    run_coordinate: CaptureRunCoordinate
     producer_receipt_digest: str
     producer_binding_digest: str
     previous_event_digest: str | None
@@ -135,12 +135,12 @@ class CaptureLandingEventV2(_StrictJournalModel):
 
 
 CaptureLandingEventAny: TypeAlias = Annotated[
-    CaptureLandingEventV1 | CaptureLandingEventV2,
+    CaptureLandingEventV1 | CaptureLandingEvent,
     Field(discriminator="tag"),
 ]
 
 
-class CaptureCursorV1(_StrictJournalModel):
+class CaptureCursor(_StrictJournalModel):
     tag: Literal["playbill-capture-cursor-v1"] = "playbill-capture-cursor-v1"
     partition_id: str
     sequence: int = Field(ge=0, le=(2**64) - 1)
@@ -154,7 +154,7 @@ class CaptureCursorV1(_StrictJournalModel):
         return value
 
     @classmethod
-    def parse(cls, value: str) -> "CaptureCursorV1":
+    def parse(cls, value: str) -> "CaptureCursor":
         prefix = "playbill-capture-cursor-v1:"
         if not value.startswith(prefix):
             raise CaptureJournalError("Capture cursor has an unsupported version")
@@ -184,7 +184,7 @@ def capture_landing_idempotency_key(
     instance_id: str,
     envelope: CaptureEnvelopeAny,
 ) -> str:
-    if isinstance(envelope, CaptureEnvelopeV2):
+    if isinstance(envelope, CaptureEnvelope):
         return typed_digest(
             Sha256Value,
             "playbill-capture-landing-idempotency-v2",
@@ -306,7 +306,7 @@ class InMemoryCaptureLandingJournal:
                 {**common, "run_receipt_digest": envelope.run_receipt_digest}
             )
             if isinstance(envelope, CaptureEnvelopeV1)
-            else CaptureLandingEventV2.model_validate(
+            else CaptureLandingEvent.model_validate(
                 {**common, "producer_receipt_digest": envelope.producer_receipt_digest}
             )
         )
@@ -322,7 +322,7 @@ class InMemoryCaptureLandingJournal:
                 for partition_id in sorted(self._partitions)
                 for event in self._partitions[partition_id]
             )
-        parsed = CaptureCursorV1.parse(cursor)
+        parsed = CaptureCursor.parse(cursor)
         partition = self._partitions.get(parsed.partition_id)
         if partition is None or parsed.sequence >= len(partition):
             raise CaptureJournalError("Capture cursor does not resolve in this journal")
@@ -331,9 +331,9 @@ class InMemoryCaptureLandingJournal:
             raise CaptureJournalError("Capture cursor event does not match its partition chain")
         return tuple(partition[parsed.sequence + 1 :])
 
-    def vector_cursor(self) -> tuple[CaptureCursorV1, ...]:
+    def vector_cursor(self) -> tuple[CaptureCursor, ...]:
         return tuple(
-            CaptureCursorV1(
+            CaptureCursor(
                 partition_id=partition_id,
                 sequence=events[-1].sequence,
                 event_id=events[-1].event_id,
@@ -383,10 +383,10 @@ class InMemoryCaptureLandingJournal:
 
 
 __all__ = [
-    "CaptureCursorV1",
+    "CaptureCursor",
     "CaptureJournalError",
     "CaptureLandingEventV1",
-    "CaptureLandingEventV2",
+    "CaptureLandingEvent",
     "CaptureLandingEventAny",
     "CaptureLandingJournalProtocol",
     "InMemoryCaptureLandingJournal",

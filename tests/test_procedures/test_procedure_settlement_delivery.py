@@ -17,9 +17,9 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.claims import parse_claim
 from cruxible_client.contracts.procedure_mandates import (
-    MandateClaimScopeV1,
-    MandateConditionV1,
-    ProcedureMandateV2,
+    MandateClaimScope,
+    MandateCondition,
+    ProcedureMandate,
     procedure_mandate_path,
     render_procedure_mandate,
 )
@@ -36,26 +36,26 @@ from cruxible_client.contracts.procedures.line_specs import (
 )
 from cruxible_client.contracts.procedures.models import SettleChangeSetNodeV3
 from cruxible_client.contracts.query.definitions import (
-    QueryDefinitionV1,
-    QueryEvaluationPolicyV1,
+    QueryDefinition,
+    QueryEvaluationPolicy,
     query_definition_digest,
     query_definition_path,
     render_query_definition,
 )
 from cruxible_client.contracts.query.grammar import (
-    QueryBudgetsV1,
-    QueryComparisonFilterV1,
-    QueryEntryV1,
-    QueryLiteralRefV1,
-    QueryParameterDeclarationV1,
-    QueryParameterRefV1,
-    QueryProjectionFieldV1,
-    QueryProjectionV1,
-    QuerySubjectFieldRefV1,
+    QueryBudgets,
+    QueryComparisonFilter,
+    QueryEntry,
+    QueryLiteralRef,
+    QueryParameterDeclaration,
+    QueryParameterRef,
+    QueryProjection,
+    QueryProjectionField,
+    QuerySubjectFieldRef,
 )
 from cruxible_client.contracts.subjects import render_subject, subject_path
 from cruxible_core.service.procedures.procedure_runs import (
-    LineRunRequestV1,
+    LineRunRequest,
     service_run_playbill_line,
 )
 from tests.core_support._pc_c_support import capture_contract
@@ -70,21 +70,21 @@ from tests.test_procedures.test_procedure_proposal_delivery import (
 )
 
 
-def _condition(*, only_subject: str | None) -> QueryDefinitionV1:
-    return QueryDefinitionV1(
+def _condition(*, only_subject: str | None) -> QueryDefinition:
+    return QueryDefinition(
         identity=ArtifactIdentity(kind="QueryDefinition", name="security.settle-condition"),
-        entry=QueryEntryV1(
+        entry=QueryEntry(
             binding="advisory",
             subject_kinds=(SUBJECT_KIND,),
-            subject_id=QueryParameterRefV1(parameter="advisory_id"),
+            subject_id=QueryParameterRef(parameter="advisory_id"),
         ),
         where=(
             None
             if only_subject is None
-            else QueryComparisonFilterV1(
-                left=QuerySubjectFieldRefV1(binding="advisory", field="subject_id"),
+            else QueryComparisonFilter(
+                left=QuerySubjectFieldRef(binding="advisory", field="subject_id"),
                 operator="eq",
-                right=QueryLiteralRefV1(value=only_subject),
+                right=QueryLiteralRef(value=only_subject),
                 value_type="string",
             )
         ),
@@ -92,22 +92,22 @@ def _condition(*, only_subject: str | None) -> QueryDefinitionV1:
         result_shape="subject",
         result_cardinality="one",
         dedupe="subject",
-        projection=QueryProjectionV1(
+        projection=QueryProjection(
             fields=(
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="id",
-                    value=QuerySubjectFieldRefV1(binding="advisory", field="subject_id"),
+                    value=QuerySubjectFieldRef(binding="advisory", field="subject_id"),
                 ),
             )
         ),
-        parameters=(QueryParameterDeclarationV1(name="advisory_id", value_type="string"),),
-        evaluation_policy=QueryEvaluationPolicyV1(
+        parameters=(QueryParameterDeclaration(name="advisory_id", value_type="string"),),
+        evaluation_policy=QueryEvaluationPolicy(
             visible_verdicts=("supported",),
             visible_currency=("current",),
             conflict_behavior="refuse_on_conflict",
         ),
-        default_budgets=QueryBudgetsV1(max_results=1, max_traversal_depth=0),
-        maximum_budgets=QueryBudgetsV1(max_results=1, max_traversal_depth=0),
+        default_budgets=QueryBudgets(max_results=1, max_traversal_depth=0),
+        maximum_budgets=QueryBudgets(max_results=1, max_traversal_depth=0),
     )
 
 
@@ -154,7 +154,7 @@ def settle_world(  # type: ignore[no-untyped-def]
             capture_contract_path,
             render_capture_contract,
         )
-        from cruxible_client.contracts.triggers import CaptureLandingScheduleV1
+        from cruxible_client.contracts.triggers import CaptureLandingSchedule
         from tests.support.lines import line_trigger
         from tests.support.lines import trigger_members as trigger_files
         from tests.test_procedures.test_line_triggers import SELECTOR
@@ -164,7 +164,7 @@ def settle_world(  # type: ignore[no-untyped-def]
                 line_trigger(
                     "settle-on-landing",
                     line=line.identity.name,
-                    schedule=CaptureLandingScheduleV1(event=SELECTOR),
+                    schedule=CaptureLandingSchedule(event=SELECTOR),
                 )
             )
         )
@@ -183,7 +183,7 @@ def settle_world(  # type: ignore[no-untyped-def]
         query_definition_path(query.identity.name): render_query_definition(query),
     }
     for index in range(mandates):
-        mandate = ProcedureMandateV2(
+        mandate = ProcedureMandate(
             identity=ArtifactIdentity(kind="ProcedureMandate", name=f"settle-{index}"),
             procedure=ArtifactPin(
                 role="procedure",
@@ -196,7 +196,7 @@ def settle_world(  # type: ignore[no-untyped-def]
             valid_from=datetime(2020, 1, 1, tzinfo=UTC),
             expires_at=datetime(2099, 1, 1, tzinfo=UTC),
             scope=(
-                MandateClaimScopeV1(
+                MandateClaimScope(
                     claim_type=ArtifactPin(
                         role="claim-type",
                         target=claim_type.identity,
@@ -205,7 +205,7 @@ def settle_world(  # type: ignore[no-untyped-def]
                     change_kinds=("create", "revise"),
                 ),
             ),
-            condition=MandateConditionV1(
+            condition=MandateCondition(
                 query=ArtifactPin(
                     role="condition-query",
                     target=query.identity,
@@ -227,7 +227,7 @@ def run_settle(instance, root, line, *, caller_rung: int = 3):  # type: ignore[n
     return service_run_playbill_line(
         instance,
         path_identity_digest=identity_digest,
-        request=LineRunRequestV1(
+        request=LineRunRequest(
             line_identity_digest=identity_digest, occurrence_id=None, evaluation_time=None
         ),
         actor_context=fixtures._actor(instance).model_copy(update={"timestamp": fixtures.NOW}),
@@ -534,7 +534,7 @@ def test_an_armed_capture_triggered_line_settles_or_falls_back_on_its_own(
     from datetime import timedelta
     from types import SimpleNamespace
 
-    from cruxible_client.contracts.line_dispatch import LineArmPrincipalV1
+    from cruxible_client.contracts.line_dispatch import LineArmPrincipal
     from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
     from cruxible_core.runtime import line_arms
     from cruxible_core.runtime.line_arms import dispatch_armed_line
@@ -568,7 +568,7 @@ def test_an_armed_capture_triggered_line_settles_or_falls_back_on_its_own(
     service_arm_line(
         instance,
         line.identity.name,
-        principal=LineArmPrincipalV1(
+        principal=LineArmPrincipal(
             kind="runtime_credential", credential_id="cred-arm", label="owner"
         ),
         actor=actor,
@@ -612,7 +612,7 @@ def test_an_armed_capture_triggered_line_settles_or_falls_back_on_its_own(
 
 
 def _stale_row(instance, proposal_id: str):  # type: ignore[no-untyped-def]
-    from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+    from cruxible_core.coverage.contracts import CoverageAccessProfile
     from cruxible_core.service.discovery.next import PlaybillNextRequestV1, service_playbill_next
 
     # Head moves past the proposal's base, so it can no longer activate.
@@ -632,7 +632,7 @@ def _stale_row(instance, proposal_id: str):  # type: ignore[no-untyped-def]
         instance,
         request=PlaybillNextRequestV1(
             evaluation_time=fixtures.NOW,
-            access_profile=CoverageAccessProfileV1(
+            access_profile=CoverageAccessProfile(
                 profile_id="settle-stale", permitted_access_classes=("instance",)
             ),
         ),

@@ -28,15 +28,15 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.claims import claim_path, claim_statement_address
 from cruxible_client.contracts.errors import PlaybillExecutionError
-from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
+from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.measurements import (
-    ClaimAttestationProcedureMeasurementV1,
-    ClaimStatementProcedureMeasurementV1,
-    ProcedureMeasurementDeclarationV1,
+    ClaimAttestationProcedureMeasurement,
+    ClaimStatementProcedureMeasurement,
+    ProcedureMeasurementDeclaration,
 )
 from cruxible_client.contracts.resolution_contracts import (
-    InvestigationBindingV1,
-    ResolutionContractV1,
+    InvestigationBinding,
+    ResolutionContract,
     resolution_contract_digest,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -141,7 +141,7 @@ class ResolutionContractActivationV1(_StrictResolutionModel):
     procedure_artifact_digest: str
     definition_digest: str
     measurement_name: str
-    declaration: ProcedureMeasurementDeclarationV1
+    declaration: ProcedureMeasurementDeclaration
     subject_grain: Literal["procedure_unit", "node", "arm"]
     subject: ResolutionSubjectV1
     node_id: str | None = None
@@ -330,8 +330,8 @@ class ResolutionContractActivationV3(_StrictResolutionModel):
     )
     contract_id: str
     activation_id: str
-    contract: ResolutionContractV1
-    investigation: InvestigationBindingV1
+    contract: ResolutionContract
+    investigation: InvestigationBinding
     activated_at: datetime
 
     @field_validator("activated_at")
@@ -407,7 +407,7 @@ class ResolutionContractActivationV3(_StrictResolutionModel):
 
 
 def build_independent_activation(
-    contract: ResolutionContractV1, investigation: InvestigationBindingV1, *, activated_at: datetime
+    contract: ResolutionContract, investigation: InvestigationBinding, *, activated_at: datetime
 ) -> ResolutionContractActivationV3:
     provisional = ResolutionContractActivationV3.model_construct(
         contract=contract,
@@ -446,7 +446,7 @@ def procedure_arm_content_digest(
 
 
 def derive_resolution_activations(
-    accepted: AcceptedProcedureV1,
+    accepted: AcceptedProcedure,
     *,
     accepted_coordinate: AcceptedCoordinate,
     activated_at: datetime,
@@ -1026,7 +1026,7 @@ def evaluate_procedure_resolution(
         )
     if isinstance(
         measurement,
-        ClaimAttestationProcedureMeasurementV1 | ClaimStatementProcedureMeasurementV1,
+        ClaimAttestationProcedureMeasurement | ClaimStatementProcedureMeasurement,
     ):
         subject = measurement.claim_statement
         if any(
@@ -1037,7 +1037,7 @@ def evaluate_procedure_resolution(
                 "resolution.measurement_subject_mismatch",
                 "Resolution proof targets another Claim statement.",
             )
-    if isinstance(measurement, ClaimStatementProcedureMeasurementV1):
+    if isinstance(measurement, ClaimStatementProcedureMeasurement):
         holds = isinstance(resolution.value, str) and (
             resolution.value in measurement.acceptable_verdicts
         )

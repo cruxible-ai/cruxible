@@ -20,13 +20,13 @@ from cruxible_client.contracts import PlaybillSemanticFieldDelta
 from cruxible_client.contracts.attestations import ApprovalStatement, approval_digest
 from cruxible_client.contracts.candidates import (
     CandidateMemberEvidence,
-    CandidateMemberLawEvidenceV2,
-    CandidateRecord,
+    CandidateMemberLawEvidence,
     CandidateRecordAnyVersion,
+    CandidateRecordV1,
 )
 from cruxible_client.contracts.declared_blocks import (
     PlaybillPresentationPolicyV1,
-    PlaybillReviewWorkspaceObservationV1,
+    PlaybillReviewWorkspaceObservation,
     upgrade_playbill_presentation_policy,
 )
 from cruxible_client.contracts.documents import parse_document
@@ -138,7 +138,7 @@ class PlaybillProposalReview(_StrictReviewModel):
     parent_semantic_root: str
     settlement_base: AcceptedCoordinate
     base_oid: str
-    complete_members: tuple[CandidateMemberEvidence | CandidateMemberLawEvidenceV2, ...]
+    complete_members: tuple[CandidateMemberEvidence | CandidateMemberLawEvidence, ...]
     members: tuple[PlaybillReviewedMember, ...]
     governance: dict[str, object]
     provenance: dict[str, object]
@@ -199,7 +199,7 @@ def _readable_diff(
 def _review_document(
     instance: PlaybillInstance,
     *,
-    member: CandidateMemberEvidence | CandidateMemberLawEvidenceV2,
+    member: CandidateMemberEvidence | CandidateMemberLawEvidence,
     base_tree: dict[str, bytes],
     candidate_tree: dict[str, bytes],
     access: BodyAccessContext,
@@ -274,7 +274,7 @@ def _review_members(
     ) -> tuple[PlaybillSemanticFieldDelta, ...]:
         return semantic_field_delta(base or {}, candidate_value or {})
 
-    if not isinstance(candidate, CandidateRecord):
+    if not isinstance(candidate, CandidateRecordV1):
         evidence_by_path = {item.path: item for item in candidate.law_evidence}
         reviewed: list[PlaybillReviewedMember] = []
         for versioned_member in candidate.members:
@@ -334,14 +334,14 @@ def _projection_advisory(
     members: tuple[PlaybillReviewedMember, ...],
     candidate_tree: dict[str, bytes],
     settlement_base: AcceptedCoordinate,
-    workspace_observation: PlaybillReviewWorkspaceObservationV1 | Mapping[str, object] | None,
+    workspace_observation: PlaybillReviewWorkspaceObservation | Mapping[str, object] | None,
     eligible_coordinates: tuple[AcceptedCoordinate, ...] | None = None,
 ) -> PlaybillProjectionAdvisory | None:
     if workspace_observation is None:
         return None
-    if not isinstance(workspace_observation, PlaybillReviewWorkspaceObservationV1):
+    if not isinstance(workspace_observation, PlaybillReviewWorkspaceObservation):
         try:
-            workspace_observation = PlaybillReviewWorkspaceObservationV1.model_validate(
+            workspace_observation = PlaybillReviewWorkspaceObservation.model_validate(
                 workspace_observation
             )
         except ValidationError:
@@ -393,9 +393,9 @@ def _assess_projection_evidence(
     instance: PlaybillInstance,
     *,
     settlement_base: AcceptedCoordinate,
-    workspace_observation: PlaybillReviewWorkspaceObservationV1 | Mapping[str, object] | None,
+    workspace_observation: PlaybillReviewWorkspaceObservation | Mapping[str, object] | None,
 ) -> tuple[
-    PlaybillReviewWorkspaceObservationV1 | None,
+    PlaybillReviewWorkspaceObservation | None,
     PlaybillProjectionEvidence | None,
     tuple[AcceptedCoordinate, ...],
 ]:
@@ -412,9 +412,9 @@ def _assess_projection_evidence(
     eligible = history[base_index:]
     if workspace_observation is None:
         return None, None, eligible
-    if not isinstance(workspace_observation, PlaybillReviewWorkspaceObservationV1):
+    if not isinstance(workspace_observation, PlaybillReviewWorkspaceObservation):
         try:
-            workspace_observation = PlaybillReviewWorkspaceObservationV1.model_validate(
+            workspace_observation = PlaybillReviewWorkspaceObservation.model_validate(
                 workspace_observation
             )
         except ValidationError:
@@ -475,9 +475,7 @@ def service_review_playbill_proposal(
     *,
     proposal_id: str,
     access: BodyAccessContext,
-    workspace_observation: PlaybillReviewWorkspaceObservationV1
-    | Mapping[str, object]
-    | None = None,
+    workspace_observation: PlaybillReviewWorkspaceObservation | Mapping[str, object] | None = None,
 ) -> PlaybillProposalReview:
     """Render one immutable candidate from its recorded base and proposal tree."""
 

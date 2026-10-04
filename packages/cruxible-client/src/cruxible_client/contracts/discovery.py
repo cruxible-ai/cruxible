@@ -10,12 +10,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import (
-    CoverageDescriptorV1,
-    SemanticReadCoordinateV1,
-    SourceHandleV1,
+    CoverageDescriptor,
+    SemanticReadCoordinate,
+    SourceHandle,
 )
 
-DiscoveryMatchBasis = Literal[
+DiscoveryMatchBasisKind = Literal[
     "exact_address",
     "exact_alias",
     "structural_signature",
@@ -75,68 +75,68 @@ def reject_locator_or_secret(value: str, *, label: str) -> str:
     return value
 
 
-class DiscoveryBudgetV1(_StrictDiscoveryModel):
+class DiscoveryBudget(_StrictDiscoveryModel):
     tag: Literal["playbill-discovery-budget-v1"] = "playbill-discovery-budget-v1"
     max_hits: int = Field(default=20, ge=1)
     max_bytes: int = Field(default=16_384, ge=1)
 
 
-class DiscoveryMatchBasisV1(_StrictDiscoveryModel):
-    basis: DiscoveryMatchBasis
+class DiscoveryMatchBasis(_StrictDiscoveryModel):
+    basis: DiscoveryMatchBasisKind
     matched_text: str | None = None
 
 
-class DiscoveryHitV1(_StrictDiscoveryModel):
+class DiscoveryHit(_StrictDiscoveryModel):
     tag: Literal["playbill-discovery-hit-v1"] = "playbill-discovery-hit-v1"
     address: SemanticAddress
-    at: SemanticReadCoordinateV1
+    at: SemanticReadCoordinate
     kind: str
     label: str
     aliases: tuple[str, ...] = ()
     tags: tuple[str, ...] = ()
-    match_basis: tuple[DiscoveryMatchBasisV1, ...]
+    match_basis: tuple[DiscoveryMatchBasis, ...]
     role: str | None = None
     verdict: str | None = None
     currency: Literal["current", "stale", "not_applicable"]
-    source_handles: tuple[SourceHandleV1, ...] = ()
+    source_handles: tuple[SourceHandle, ...] = ()
     dependency_addresses: tuple[SemanticAddress, ...] = ()
     dependent_addresses: tuple[SemanticAddress, ...] = ()
 
 
-class DiscoveryRequestV1(_StrictDiscoveryModel):
+class DiscoveryRequest(_StrictDiscoveryModel):
     tag: Literal["playbill-discovery-request-v1"] = "playbill-discovery-request-v1"
     query: str | None = None
     entrypoint: str | None = None
-    at: SemanticReadCoordinateV1
+    at: SemanticReadCoordinate
     evaluation_time: str
     profile: Literal["interfaces", "subjects", "all"] = "interfaces"
-    budget: DiscoveryBudgetV1 = DiscoveryBudgetV1()
+    budget: DiscoveryBudget = DiscoveryBudget()
 
     @model_validator(mode="after")
-    def _selection(self) -> "DiscoveryRequestV1":
+    def _selection(self) -> "DiscoveryRequest":
         if (self.query is None) == (self.entrypoint is None):
             raise ValueError("discover requires exactly one query or entrypoint")
         return self
 
 
-class DiscoveryPageV1(_StrictDiscoveryModel):
+class DiscoveryPage(_StrictDiscoveryModel):
     tag: Literal["playbill-discovery-page-v1"] = "playbill-discovery-page-v1"
     coordinate_kind: Literal["accepted", "candidate", "local_only"]
-    at: SemanticReadCoordinateV1 | None
+    at: SemanticReadCoordinate | None
     evaluation_time: str
-    hits: tuple[DiscoveryHitV1, ...]
+    hits: tuple[DiscoveryHit, ...]
     selection_basis_digest: str
     receipt_digest: str
-    coverage: CoverageDescriptorV1
+    coverage: CoverageDescriptor
 
 
 __all__ = [
-    "DiscoveryBudgetV1",
-    "DiscoveryHitV1",
+    "DiscoveryBudget",
+    "DiscoveryHit",
+    "DiscoveryMatchBasisKind",
     "DiscoveryMatchBasis",
-    "DiscoveryMatchBasisV1",
-    "DiscoveryPageV1",
-    "DiscoveryRequestV1",
+    "DiscoveryPage",
+    "DiscoveryRequest",
     "normalize_discovery_term",
     "reject_locator_or_secret",
 ]

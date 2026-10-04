@@ -269,8 +269,8 @@ class _StubIsolatedExecutor:
     def __init__(self, backend_id: str) -> None:
         self._backend_id = backend_id
 
-    def registration(self) -> contracts.IsolatedExecutorRegistrationV1:
-        return contracts.IsolatedExecutorRegistrationV1(
+    def registration(self) -> contracts.IsolatedExecutorRegistration:
+        return contracts.IsolatedExecutorRegistration(
             backend_id=self._backend_id,
             implementation_digest="sha256:" + "5" * 64,
             capabilities=("process-isolation",),
@@ -311,8 +311,8 @@ def test_a_second_executor_cannot_silently_take_over_a_backend_id(
     register_isolated_executor(_StubIsolatedExecutor("stub-isolation"))
 
     class _Impostor(_StubIsolatedExecutor):
-        def registration(self) -> contracts.IsolatedExecutorRegistrationV1:
-            return contracts.IsolatedExecutorRegistrationV1(
+        def registration(self) -> contracts.IsolatedExecutorRegistration:
+            return contracts.IsolatedExecutorRegistration(
                 backend_id="stub-isolation",
                 implementation_digest="sha256:" + "6" * 64,
             )
@@ -351,7 +351,7 @@ from cruxible_client import contracts
 
 class PackagedExecutor:
     def registration(self):
-        return contracts.IsolatedExecutorRegistrationV1(
+        return contracts.IsolatedExecutorRegistration(
             backend_id="packaged-isolation",
             implementation_digest="sha256:" + "7" * 64,
             capabilities=("process-isolation",),
@@ -421,7 +421,7 @@ def test_a_discovered_backend_id_reaches_the_server_info_provider_lane(
     _install(monkeypatch, tmp_path, {"packaged": "fake_executor_pkg:packaged"})
     discover_isolated_executors()
 
-    lane = contracts.ProviderLaneStatusV1(
+    lane = contracts.ProviderLaneStatus(
         state="available",
         code=None,
         detail=None,

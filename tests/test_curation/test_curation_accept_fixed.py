@@ -18,7 +18,7 @@ from cruxible_client.contracts.documents import (
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.subjects import subject_digest, subject_path
-from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.curation.curation import (
     CurationAcceptedFixedV1,
     CurationDetectorCoverageV1,
@@ -293,7 +293,7 @@ def test_dead_vocabulary_auto_resolves_to_the_accepted_retirement_changeset(
         instance,
         request=PlaybillCurationListRequestV1(
             evaluation_time=NOW,
-            access_profile=CoverageAccessProfileV1(profile_id="test-curation"),
+            access_profile=CoverageAccessProfile(profile_id="test-curation"),
         ),
         actor_context=_actor(),
     )

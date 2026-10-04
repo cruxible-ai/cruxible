@@ -28,10 +28,10 @@ from cruxible_client.artifacts import (
 from cruxible_client.artifacts.oci import sha256_digest
 from cruxible_client.artifacts.registry import environment_credentials
 from cruxible_client.contracts.kits import (
-    KitArtifactBytesV1,
-    KitArtifactV1,
-    KitBundleV1,
-    KitManifestV1,
+    KitArtifact,
+    KitArtifactBytes,
+    KitBundle,
+    KitManifest,
 )
 from cruxible_client.kits import KIT_ARTIFACT, fetch_kit_image, resolve_kit
 
@@ -150,17 +150,17 @@ NOTE: ArtifactKind[dict[str, str]] = ArtifactKind(
 )
 
 
-def _bundle() -> KitBundleV1:
+def _bundle() -> KitBundle:
     content = b'{"x": 1}\n'
     path = "claim-types/acme.account/seats.json"
-    return KitBundleV1(
-        manifest=KitManifestV1(
+    return KitBundle(
+        manifest=KitManifest(
             kit_id="acme",
             version="1.0.0",
             owns=("acme.",),
-            artifacts=(KitArtifactV1(path=path, artifact_digest="sha256:" + "a" * 64),),
+            artifacts=(KitArtifact(path=path, artifact_digest="sha256:" + "a" * 64),),
         ),
-        artifacts=(KitArtifactBytesV1.of(path, content),),
+        artifacts=(KitArtifactBytes.of(path, content),),
     )
 
 

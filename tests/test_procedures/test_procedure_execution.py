@@ -12,7 +12,7 @@ from pydantic import TypeAdapter
 import cruxible_client.contracts.procedures.results as procedure_result_contracts
 import cruxible_core.procedures.execution as execution_module
 import cruxible_core.service.procedures.procedure_runs as procedure_run_service
-from cruxible_client.contracts.acquisition_policies import AcquisitionInputDecisionV1
+from cruxible_client.contracts.acquisition_policies import AcquisitionInputDecision
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactPin,
@@ -25,15 +25,15 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.captures import (
-    CanonicalDurationV1,
-    CaptureRetentionErasurePolicyV1,
+    CanonicalDuration,
+    CaptureRetentionErasurePolicy,
 )
 from cruxible_client.contracts.errors import PlaybillExecutionError
 from cruxible_client.contracts.procedures.artifacts import (
-    AcceptedProcedureV1,
+    AcceptedProcedure,
+    ProcedureArtifact,
     ProcedureArtifactV1,
-    ProcedureArtifactV2,
-    ProcedureOwnedContractV1,
+    ProcedureOwnedContract,
     procedure_artifact_digest,
     procedure_owned_contract_digest,
     procedure_path,
@@ -49,43 +49,43 @@ from cruxible_client.contracts.procedures.graph import (
     compute_procedure_definition_digest_v4,
 )
 from cruxible_client.contracts.procedures.line_specs import (
-    AcceptedLineSpecV1,
+    AcceptedLineSpec,
     LineSpecV1,
-    ManualTriggerPolicyV1,
+    ManualTriggerPolicy,
     line_spec_digest,
     line_spec_path,
 )
 from cruxible_client.contracts.procedures.models import (
-    ExhaustTapNodeV3,
-    GuardNodeV3,
-    GuardPredicateV1,
-    HaltNodeV3,
-    PredicateOperandV1,
-    ProcedureBudgetV3,
+    ExhaustTapNode,
+    GuardNode,
+    GuardPredicate,
+    HaltNode,
+    PredicateOperand,
+    ProcedureBudget,
     ProcedureDefinitionV3,
     ProcedureDefinitionV4,
-    ProcedureHardCapsV3,
-    ProcedureTransformSpecV1,
-    ProjectNodeV3,
+    ProcedureHardCaps,
+    ProcedureTransformSpec,
+    ProjectNode,
+    ProviderNode,
     ProviderNodeV3,
-    ProviderNodeV4,
     RepeatBodyNodeV3,
     RepeatBodyNodeV4,
     RepeatNodeV3,
     RepeatNodeV4,
+    SourceNode,
     SourceNodeV3,
-    SourceNodeV4,
     StateTapNodeV3,
-    TransformNodeV3,
+    TransformNode,
 )
 from cruxible_client.contracts.procedures.results import (
-    ProcedureAdmissionRefusalV1,
-    ProcedureProviderBindingV2,
+    ProcedureAdmissionRefusal,
+    ProcedureProviderBinding,
     ProcedureRunReceiptV4,
     ProcedureRunReceiptV5,
-    ProviderBucketClassificationPlanV1,
+    ProviderBucketClassificationPlan,
 )
-from cruxible_client.contracts.query.grammar import QueryBudgetsV1
+from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_core.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
     JournalStreamIdentityV1,
@@ -103,15 +103,15 @@ from cruxible_core.procedures.execution import (
     PreparedProcedureRunV4,
     ProcedureAdmissionBoundPayloadV2,
     ProcedureAdmissionBoundPayloadV3,
-    ProcedureAdmissionMaterialManifestV1,
-    ProcedureAdmissionMaterialMemberV1,
+    ProcedureAdmissionMaterialManifest,
+    ProcedureAdmissionMaterialMember,
     ProcedureExecutor,
     ProcedureProviderBindingV1,
     ProcedureRunAdmissionV2,
     ProcedureRunAdmissionV3,
     ProcedureRunAdmissionV4,
     ProcedureRunRefusalV1,
-    ProcedureSelectionDecisionV1,
+    ProcedureSelectionDecision,
     ProviderInvocationResultV1,
     StateTapReadResultV1,
     _apply_transform,
@@ -195,18 +195,18 @@ def _actor() -> GovernedActorContext:
     )
 
 
-def _budget(*, providers: int = 0, items: int = 100) -> ProcedureBudgetV3:
-    return ProcedureBudgetV3(
-        wall_clock=CanonicalDurationV1(microseconds=1_000_000),
+def _budget(*, providers: int = 0, items: int = 100) -> ProcedureBudget:
+    return ProcedureBudget(
+        wall_clock=CanonicalDuration(microseconds=1_000_000),
         max_provider_calls=providers,
         max_capture_bytes=0,
         max_items=items,
     )
 
 
-def _hard_caps(*, providers: int = 0, items: int = 100) -> ProcedureHardCapsV3:
-    return ProcedureHardCapsV3(
-        max_wall_clock=CanonicalDurationV1(microseconds=2_000_000),
+def _hard_caps(*, providers: int = 0, items: int = 100) -> ProcedureHardCaps:
+    return ProcedureHardCaps(
+        max_wall_clock=CanonicalDuration(microseconds=2_000_000),
         max_provider_calls=providers,
         max_capture_bytes=0,
         max_items=items,
@@ -219,7 +219,7 @@ def _accepted(
     *,
     pins: tuple[ArtifactPin, ...],
     activation_policy: str = "abort",
-) -> AcceptedProcedureV1:
+) -> AcceptedProcedure:
     procedure = ProcedureArtifactV1(
         identity=ArtifactIdentity(kind="Procedure", name=definition.name),
         definition=definition,
@@ -236,21 +236,21 @@ def _accepted(
         ),
         activation_policy=activation_policy,  # type: ignore[arg-type]
     )
-    return AcceptedProcedureV1(
+    return AcceptedProcedure(
         path=procedure_path(definition.name),
         procedure=procedure,
         artifact_digest=procedure_artifact_digest(procedure).tagged,
     )
 
 
-def _state_procedure(*, false_branch: bool = False, max_items: int = 100) -> AcceptedProcedureV1:
+def _state_procedure(*, false_branch: bool = False, max_items: int = 100) -> AcceptedProcedure:
     contract_in = _pin("contract-in", "Contract", "input")
     contract_out = _pin("contract-out", "Contract", "output")
     query = _pin("query", "QueryDefinition", "accepted-items")
-    predicate = GuardPredicateV1(
-        left=PredicateOperandV1(kind="count", alias="rows"),
+    predicate = GuardPredicate(
+        left=PredicateOperand(kind="count", alias="rows"),
         operator="gt",
-        right=PredicateOperandV1(kind="literal", value=100 if false_branch else 0),
+        right=PredicateOperand(kind="literal", value=100 if false_branch else 0),
     )
     definition = ProcedureDefinitionV3(
         name="state-procedure",
@@ -264,7 +264,7 @@ def _state_procedure(*, false_branch: bool = False, max_items: int = 100) -> Acc
                 as_="rows",
                 next="gate",
             ),
-            GuardNodeV3(
+            GuardNode(
                 node_id="gate",
                 predicate=predicate,
                 on_true="project",
@@ -272,7 +272,7 @@ def _state_procedure(*, false_branch: bool = False, max_items: int = 100) -> Acc
                 refusal_code="no-items",
                 message="No accepted items satisfy the query.",
             ),
-            ProjectNodeV3(
+            ProjectNode(
                 node_id="project",
                 fields={"items": "$steps.rows.items", "status": "ok"},
                 contract_out=contract_out,
@@ -287,7 +287,7 @@ def _state_procedure(*, false_branch: bool = False, max_items: int = 100) -> Acc
     return _accepted(definition, pins=(contract_in, contract_out, query))
 
 
-def _exhaust_procedure() -> AcceptedProcedureV1:
+def _exhaust_procedure() -> AcceptedProcedure:
     contract_in = _pin("contract-in", "Contract", "input")
     contract_out = _pin("contract-out", "Contract", "output")
     reducer = ArtifactPin(
@@ -300,14 +300,14 @@ def _exhaust_procedure() -> AcceptedProcedureV1:
         contract_in=contract_in,
         contract_out=contract_out,
         nodes=(
-            ExhaustTapNodeV3(
+            ExhaustTapNode(
                 node_id="read-prior",
                 reducer_or_query=reducer,
                 journal_identity="upstream-journal",
                 as_="prior_rows",
                 next="project",
             ),
-            ProjectNodeV3(
+            ProjectNode(
                 node_id="project",
                 fields={"items": "$steps.prior_rows.rows", "status": "ok"},
                 contract_out=contract_out,
@@ -322,14 +322,14 @@ def _exhaust_procedure() -> AcceptedProcedureV1:
     return _accepted(definition, pins=(contract_in, contract_out, reducer))
 
 
-def _owned_contract(name: str, fields: dict[str, PropertySchema]) -> ProcedureOwnedContractV1:
-    return ProcedureOwnedContractV1(
+def _owned_contract(name: str, fields: dict[str, PropertySchema]) -> ProcedureOwnedContract:
+    return ProcedureOwnedContract(
         identity=ArtifactIdentity(kind="Contract", name=name),
         schema=ContractSchema(fields=fields),
     )
 
 
-def _owned_pin(role: str, contract: ProcedureOwnedContractV1) -> ArtifactPin:
+def _owned_pin(role: str, contract: ProcedureOwnedContract) -> ArtifactPin:
     return ArtifactPin(
         role=role,
         target=contract.identity,
@@ -340,11 +340,11 @@ def _owned_pin(role: str, contract: ProcedureOwnedContractV1) -> ArtifactPin:
 def _owned_accepted(
     definition: ProcedureDefinitionV3,
     *,
-    contracts: tuple[ProcedureOwnedContractV1, ...],
+    contracts: tuple[ProcedureOwnedContract, ...],
     pins: tuple[ArtifactPin, ...],
-) -> AcceptedProcedureV1:
+) -> AcceptedProcedure:
     unique_pins = {(pin.role, pin.target.qualified, pin.artifact_digest): pin for pin in pins}
-    procedure = ProcedureArtifactV2(
+    procedure = ProcedureArtifact(
         identity=ArtifactIdentity(kind="Procedure", name=definition.name),
         definition=definition,
         definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
@@ -363,14 +363,14 @@ def _owned_accepted(
         ),
         activation_policy="abort",
     )
-    return AcceptedProcedureV1(
+    return AcceptedProcedure(
         path=procedure_path(definition.name),
         procedure=procedure,
         artifact_digest=procedure_artifact_digest(procedure).tagged,
     )
 
 
-def _owned_boundary_procedure(boundary: str) -> AcceptedProcedureV1:
+def _owned_boundary_procedure(boundary: str) -> AcceptedProcedure:
     empty = _owned_contract("empty-input", {})
     opaque = _owned_contract("opaque-output", {"items": PropertySchema(type="json")})
     typed = _owned_contract(
@@ -395,7 +395,7 @@ def _owned_boundary_procedure(boundary: str) -> AcceptedProcedureV1:
         next="compute",
     )
     if boundary == "contract-in":
-        compute = TransformNodeV3(
+        compute = TransformNode(
             node_id="compute",
             transform_kind="adapter",
             contract_in=typed_in,
@@ -407,7 +407,7 @@ def _owned_boundary_procedure(boundary: str) -> AcceptedProcedureV1:
         contracts = (empty, opaque, typed)
         pins = (entry_pin, typed_in, opaque_out, query)
     else:
-        compute = ProjectNodeV3(
+        compute = ProjectNode(
             node_id="compute",
             fields={"items": "$steps.rows.items"},
             contract_out=typed_out if boundary == "contract-out" else opaque_out,
@@ -429,7 +429,7 @@ def _owned_boundary_procedure(boundary: str) -> AcceptedProcedureV1:
     return _owned_accepted(definition, contracts=contracts, pins=pins)
 
 
-def _transform_spec(kind: str, spec: object) -> ProcedureTransformSpecV1:
+def _transform_spec(kind: str, spec: object) -> ProcedureTransformSpec:
     if kind != "adapter":
         assert isinstance(spec, dict)
     payload = (
@@ -437,10 +437,10 @@ def _transform_spec(kind: str, spec: object) -> ProcedureTransformSpecV1:
         if kind == "adapter"
         else {"tag": f"playbill-transform-{kind.replace('_', '-')}-spec-v1", **spec}
     )
-    return TypeAdapter(ProcedureTransformSpecV1).validate_python(payload)
+    return TypeAdapter(ProcedureTransformSpec).validate_python(payload)
 
 
-def _transform_procedure(kind: str, spec: object) -> AcceptedProcedureV1:
+def _transform_procedure(kind: str, spec: object) -> AcceptedProcedure:
     contract_in = _pin("contract-in", "Contract", "input")
     contract_out = _pin("contract-out", "Contract", "output")
     definition = ProcedureDefinitionV3(
@@ -448,7 +448,7 @@ def _transform_procedure(kind: str, spec: object) -> AcceptedProcedureV1:
         contract_in=contract_in,
         contract_out=contract_out,
         nodes=(
-            TransformNodeV3(
+            TransformNode(
                 node_id="transform",
                 transform_kind=kind,  # type: ignore[arg-type]
                 contract_in=contract_in,
@@ -465,7 +465,7 @@ def _transform_procedure(kind: str, spec: object) -> AcceptedProcedureV1:
     return _accepted(definition, pins=(contract_in, contract_out))
 
 
-def _repeat_transform_procedure(*, max_items: int = 100) -> AcceptedProcedureV1:
+def _repeat_transform_procedure(*, max_items: int = 100) -> AcceptedProcedure:
     contract_in = _pin("contract-in", "Contract", "input")
     contract_out = _pin("contract-out", "Contract", "output")
     definition = ProcedureDefinitionV3(
@@ -491,10 +491,10 @@ def _repeat_transform_procedure(*, max_items: int = 100) -> AcceptedProcedureV1:
                         as_="shaped",
                     ),
                 ),
-                until=GuardPredicateV1(
-                    left=PredicateOperandV1(kind="exists", alias="shaped"),
+                until=GuardPredicate(
+                    left=PredicateOperand(kind="exists", alias="shaped"),
                     operator="eq",
-                    right=PredicateOperandV1(kind="literal", value=True),
+                    right=PredicateOperand(kind="literal", value=True),
                 ),
                 as_="repeated",
             ),
@@ -507,13 +507,13 @@ def _repeat_transform_procedure(*, max_items: int = 100) -> AcceptedProcedureV1:
     return _accepted(definition, pins=(contract_in, contract_out))
 
 
-def _owned_repeat_transform_boundary_procedure(boundary: str) -> AcceptedProcedureV1:
+def _owned_repeat_transform_boundary_procedure(boundary: str) -> AcceptedProcedure:
     empty = _owned_contract("repeat-empty-input", {})
-    opaque = ProcedureOwnedContractV1(
+    opaque = ProcedureOwnedContract(
         identity=ArtifactIdentity(kind="Contract", name="repeat-opaque"),
         schema=ContractSchema(fields={}, allow_extra=True),
     )
-    list_input = ProcedureOwnedContractV1(
+    list_input = ProcedureOwnedContract(
         identity=ArtifactIdentity(kind="Contract", name="repeat-list-input"),
         schema=ContractSchema(
             fields={
@@ -525,7 +525,7 @@ def _owned_repeat_transform_boundary_procedure(boundary: str) -> AcceptedProcedu
             allow_extra=True,
         ),
     )
-    list_output = ProcedureOwnedContractV1(
+    list_output = ProcedureOwnedContract(
         identity=ArtifactIdentity(kind="Contract", name="repeat-list-output"),
         schema=ContractSchema(
             fields={
@@ -586,10 +586,10 @@ def _owned_repeat_transform_boundary_procedure(boundary: str) -> AcceptedProcedu
                         as_="shaped",
                     ),
                 ),
-                until=GuardPredicateV1(
-                    left=PredicateOperandV1(kind="exists", alias="shaped"),
+                until=GuardPredicate(
+                    left=PredicateOperand(kind="exists", alias="shaped"),
                     operator="eq",
-                    right=PredicateOperandV1(kind="literal", value=True),
+                    right=PredicateOperand(kind="literal", value=True),
                 ),
                 as_="repeated",
             ),
@@ -618,15 +618,15 @@ def _owned_repeat_transform_boundary_procedure(boundary: str) -> AcceptedProcedu
     )
 
 
-def _typed_transform_node(**values: object) -> TransformNodeV3:
-    return TransformNodeV3.model_validate(values)
+def _typed_transform_node(**values: object) -> TransformNode:
+    return TransformNode.model_validate(values)
 
 
 def _guarded_filter_procedure(
     *,
     operator: str,
     result_next: str | None = None,
-) -> AcceptedProcedureV1:
+) -> AcceptedProcedure:
     item_fields = {
         "id": PropertySchema(type="string"),
         "keep": PropertySchema(type="bool"),
@@ -681,12 +681,12 @@ def _guarded_filter_procedure(
                 as_="filtered",
                 next="gate",
             ),
-            GuardNodeV3(
+            GuardNode(
                 node_id="gate",
-                predicate=GuardPredicateV1(
-                    left=PredicateOperandV1(kind="count", alias="filtered"),
+                predicate=GuardPredicate(
+                    left=PredicateOperand(kind="count", alias="filtered"),
                     operator=operator,  # type: ignore[arg-type]
-                    right=PredicateOperandV1(kind="literal", value=0),
+                    right=PredicateOperand(kind="literal", value=0),
                 ),
                 on_true="aggregate",
                 on_false="stop",
@@ -705,7 +705,7 @@ def _guarded_filter_procedure(
                 as_="result",
                 next=result_next,
             ),
-            HaltNodeV3(node_id="stop", reason="No filtered items."),
+            HaltNode(node_id="stop", reason="No filtered items."),
         ),
         returns="result",
         budget=_budget(),
@@ -723,7 +723,7 @@ def _guarded_scalar_procedure(
     *,
     alias: str = "summary",
     path: tuple[str, ...] = ("count",),
-) -> AcceptedProcedureV1:
+) -> AcceptedProcedure:
     empty = _owned_contract("scalar-empty-input", {})
     count_result = _owned_contract(
         "scalar-count-result",
@@ -749,12 +749,12 @@ def _guarded_scalar_procedure(
                 as_="summary",
                 next="gate",
             ),
-            GuardNodeV3(
+            GuardNode(
                 node_id="gate",
-                predicate=GuardPredicateV1(
-                    left=PredicateOperandV1(kind="step", alias=alias, path=path),
+                predicate=GuardPredicate(
+                    left=PredicateOperand(kind="step", alias=alias, path=path),
                     operator="gt",
-                    right=PredicateOperandV1(kind="literal", value=0),
+                    right=PredicateOperand(kind="literal", value=0),
                 ),
                 on_true="emit",
                 on_false="stop",
@@ -772,7 +772,7 @@ def _guarded_scalar_procedure(
                 },
                 as_="result",
             ),
-            HaltNodeV3(node_id="stop", reason="Summary count was not positive."),
+            HaltNode(node_id="stop", reason="Summary count was not positive."),
         ),
         returns="result",
         budget=_budget(),
@@ -838,7 +838,7 @@ class _StateReader:
         self.calls.append((query, parameters, coordinate))
         return StateTapReadResultV1(
             value=self.value,
-            effective_budgets=QueryBudgetsV1(
+            effective_budgets=QueryBudgets(
                 max_results=100,
                 max_traversal_depth=0,
             ),
@@ -920,7 +920,7 @@ def _fixture(tmp_path) -> _Fixture:
     )
 
 
-def _prepare(accepted: AcceptedProcedureV1, fixture: _Fixture, reader: _StateReader, **kwargs):
+def _prepare(accepted: AcceptedProcedure, fixture: _Fixture, reader: _StateReader, **kwargs):
     return prepare_direct_procedure_run(
         accepted,
         instance_id="instance-a",
@@ -993,7 +993,7 @@ def test_independent_execution_commits_one_semantic_result_across_partitions(tmp
 
 
 def _line_admission(
-    accepted: AcceptedProcedureV1,
+    accepted: AcceptedProcedure,
     fixture: _Fixture,
     *,
     occurrence_id: str = "OCC-0001",
@@ -1005,7 +1005,7 @@ def _line_admission(
 ) -> ProcedureRunAdmissionV3:
     direct = _prepare(accepted, fixture, _StateReader()).admission
     policy_digest = _digest("acquisition-policy")
-    decision = ProcedureSelectionDecisionV1(
+    decision = ProcedureSelectionDecision(
         policy_digest=policy_digest,
         verdict="selected",
         decisions=(),
@@ -1062,11 +1062,11 @@ def _line_admission(
 
 
 def _line_admission_v4(
-    accepted: AcceptedProcedureV1,
+    accepted: AcceptedProcedure,
     fixture: _Fixture,
 ) -> ProcedureRunAdmissionV4:
     v3 = _line_admission(accepted, fixture)
-    plan = ProviderBucketClassificationPlanV1(
+    plan = ProviderBucketClassificationPlan(
         node_id="provider",
         interface_artifact_digest=_digest("interface-artifact"),
         interface_digest=_digest("interface"),
@@ -1074,7 +1074,7 @@ def _line_admission_v4(
         classifier_digest=_digest("classifier"),
         accepted_bucket_selectors=("size=*",),
     )
-    binding = ProcedureProviderBindingV2(
+    binding = ProcedureProviderBinding(
         node_id=plan.node_id,
         provider_artifact_digest=_digest("provider"),
         classification_plan=plan,
@@ -1114,8 +1114,8 @@ def _line_admission_v4(
 
 def _accepted_line_for_admission(
     admission: ProcedureRunAdmissionV3,
-    accepted_procedure: AcceptedProcedureV1,
-) -> AcceptedLineSpecV1:
+    accepted_procedure: AcceptedProcedure,
+) -> AcceptedLineSpec:
     procedure_pin = ArtifactPin(
         role="procedure",
         target=accepted_procedure.procedure.identity,
@@ -1132,7 +1132,7 @@ def _accepted_line_for_admission(
         procedure=procedure_pin,
         parameters={},
         slot_bindings=(),
-        trigger_policy=ManualTriggerPolicyV1(),
+        trigger_policy=ManualTriggerPolicy(),
         acquisition_policy=acquisition_pin,
         requested_terminal_rung=1,
         budgets={},
@@ -1144,7 +1144,7 @@ def _accepted_line_for_admission(
             )
         ),
     )
-    return AcceptedLineSpecV1(
+    return AcceptedLineSpec(
         path=line_spec_path(line.identity.name),
         line=line,
         artifact_digest=line_spec_digest(line).tagged,
@@ -1236,7 +1236,7 @@ def test_served_line_admission_binds_the_accepted_runtime_policy_or_refuses(
             admission=admission,
             accepted_line=accepted_line,
         )
-    assert isinstance(refused, ProcedureAdmissionRefusalV1)
+    assert isinstance(refused, ProcedureAdmissionRefusal)
     assert refused.code == "procedure_runtime_policy_absent"
 
     mismatched = service_prepare_playbill_line_admission(
@@ -1244,18 +1244,18 @@ def test_served_line_admission_binds_the_accepted_runtime_policy_or_refuses(
         admission=admission,
         accepted_line=accepted_line.model_copy(update={"artifact_digest": "sha256:" + "9" * 64}),
     )
-    assert isinstance(mismatched, ProcedureAdmissionRefusalV1)
+    assert isinstance(mismatched, ProcedureAdmissionRefusal)
     assert mismatched.code == "artifact_binding_mismatch"
     assert "another accepted LineSpec" in mismatched.message
 
 
 def test_replay_carriers_have_one_client_contract_definition_source() -> None:
     for name in (
-        "ProcedureAdmissionMaterialManifestV1",
-        "ProcedureAdmissionMaterialMemberV1",
+        "ProcedureAdmissionMaterialManifest",
+        "ProcedureAdmissionMaterialMember",
         "ProcedureProviderBindingV1",
-        "ProcedureReplayInputProjectionV1",
-        "ProcedureSelectionDecisionV1",
+        "ProcedureReplayInputProjection",
+        "ProcedureSelectionDecision",
     ):
         assert getattr(execution_module, name) is getattr(procedure_result_contracts, name)
 
@@ -1273,7 +1273,7 @@ def test_equal_line_admission_digests_retrieve_two_exact_runs(tmp_path, monkeypa
         admitted_at=NOW + timedelta(hours=2),
     )
     assert first.admission_binding_digest == second.admission_binding_digest
-    manifest = ProcedureAdmissionMaterialManifestV1(members=())
+    manifest = ProcedureAdmissionMaterialManifest(members=())
     prepared = tuple(
         PreparedProcedureRunV3(
             admission=admission,
@@ -1340,11 +1340,11 @@ def test_line_v3_replay_key_includes_byte_inputs_and_excludes_provenance(tmp_pat
         changed = admission.model_copy(update=update)
         assert procedure_semantic_replay_key_digest(changed) == baseline
 
-    alternate_decision = ProcedureSelectionDecisionV1(
+    alternate_decision = ProcedureSelectionDecision(
         policy_digest=admission.selection_decision.policy_digest,
         verdict="refused",
         decisions=(
-            AcquisitionInputDecisionV1(
+            AcquisitionInputDecision(
                 input_name="source",
                 disposition="refused",
                 reason_codes=("unavailable",),
@@ -1378,11 +1378,11 @@ def test_line_v3_replay_key_membership_is_closed(tmp_path) -> None:
         reducer_or_query_digest=_digest("key-reducer"),
         result_digest=_digest("key-exhaust-result"),
     )
-    decision = ProcedureSelectionDecisionV1(
+    decision = ProcedureSelectionDecision(
         policy_digest=_digest("acquisition-policy"),
         verdict="selected",
         decisions=(
-            AcquisitionInputDecisionV1(
+            AcquisitionInputDecision(
                 input_name="capture",
                 disposition="selected",
                 considered_capture_digests=(_digest("considered-capture"),),
@@ -1668,9 +1668,9 @@ def test_executor_recognizes_graph_v4_source_as_a_landed_capture_input(tmp_path)
     accepted = _accepted_provider_v4_procedure()
     definition = accepted.procedure.definition
     provider = definition.nodes[0]
-    assert isinstance(provider, ProviderNodeV4)
+    assert isinstance(provider, ProviderNode)
     capture_contract = _pin("capture-contract", "CaptureContract", "v4-source")
-    source = SourceNodeV4(
+    source = SourceNode(
         node_id="source",
         capture_contract=capture_contract,
         provider=provider.provider,
@@ -1700,7 +1700,7 @@ def test_executor_recognizes_graph_v4_source_as_a_landed_capture_input(tmp_path)
             "pins": pins,
         }
     )
-    source_accepted = AcceptedProcedureV1(
+    source_accepted = AcceptedProcedure(
         path=accepted.path,
         procedure=procedure,
         artifact_digest=procedure_artifact_digest(procedure).tagged,
@@ -1740,7 +1740,7 @@ def test_executor_recognizes_graph_v4_source_as_a_landed_capture_input(tmp_path)
 
 
 def test_admission_material_manifest_is_sorted_and_missing_is_typed(tmp_path) -> None:
-    member = ProcedureAdmissionMaterialMemberV1(
+    member = ProcedureAdmissionMaterialMember(
         input_name="capture",
         plane="landed_capture",
         semantic_digest=_digest("capture"),
@@ -1748,7 +1748,7 @@ def test_admission_material_manifest_is_sorted_and_missing_is_typed(tmp_path) ->
         retention_authority_digest=_digest("capture-contract"),
         body_retention="never_materialize",
     )
-    manifest = ProcedureAdmissionMaterialManifestV1(members=(member,))
+    manifest = ProcedureAdmissionMaterialManifest(members=(member,))
     assert procedure_admission_material_digest(manifest).startswith("sha256:")
     bodies_root = tmp_path / "material-cas"
     bodies_root.mkdir()
@@ -1768,7 +1768,7 @@ def test_admission_material_manifest_is_sorted_and_missing_is_typed(tmp_path) ->
         execution_module.read_admission_material_body(bodies, absent_optional)
     assert getattr(absent_optional_exc.value, "code") == "admission_material_unavailable_by_policy"
 
-    required_missing = ProcedureAdmissionMaterialMemberV1.model_validate(
+    required_missing = ProcedureAdmissionMaterialMember.model_validate(
         {
             **optional.model_dump(mode="python"),
             "body_digest": _digest("absent-required"),
@@ -1802,7 +1802,7 @@ def test_admission_material_manifest_is_sorted_and_missing_is_typed(tmp_path) ->
     assert getattr(corrupt_exc.value, "code") == "admission_material_corrupt"
 
     with pytest.raises(ValueError, match="never_materialize"):
-        ProcedureAdmissionMaterialMemberV1(
+        ProcedureAdmissionMaterialMember(
             **{
                 **member.model_dump(mode="python"),
                 "body_digest": _digest("forbidden-body"),
@@ -1815,9 +1815,9 @@ def test_admission_material_manifest_is_sorted_and_missing_is_typed(tmp_path) ->
         capture_contract_digest=_digest("retained-capture-contract"),
         landing_cursor="partition:0001",
     )
-    policy = CaptureRetentionErasurePolicyV1(
+    policy = CaptureRetentionErasurePolicy(
         body_retention="required_for_duration",
-        minimum_retention=CanonicalDurationV1(microseconds=3_000_000),
+        minimum_retention=CanonicalDuration(microseconds=3_000_000),
         erasure="prohibited",
         selector_privacy="direct_allowed",
     )
@@ -1844,7 +1844,7 @@ def test_admission_bound_manifest_matches_the_exact_three_plane_admission(tmp_pa
         fixture,
         landed_capture_inputs=(capture_input,),
     )
-    member = ProcedureAdmissionMaterialMemberV1(
+    member = ProcedureAdmissionMaterialMember(
         input_name="capture",
         plane="landed_capture",
         semantic_digest=capture_input.capture_digest,
@@ -1852,7 +1852,7 @@ def test_admission_bound_manifest_matches_the_exact_three_plane_admission(tmp_pa
         retention_authority_digest=capture_input.capture_contract_digest,
         body_retention="optional",
     )
-    manifest = ProcedureAdmissionMaterialManifestV1(members=(member,))
+    manifest = ProcedureAdmissionMaterialManifest(members=(member,))
     bound = ProcedureAdmissionBoundPayloadV3(
         admission=admission,
         admission_material_manifest=manifest,
@@ -1860,7 +1860,7 @@ def test_admission_bound_manifest_matches_the_exact_three_plane_admission(tmp_pa
     )
     assert bound.admission_material_manifest == manifest
 
-    wrong = ProcedureAdmissionMaterialManifestV1(
+    wrong = ProcedureAdmissionMaterialManifest(
         members=(member.model_copy(update={"semantic_digest": _digest("substituted")}),)
     )
     with pytest.raises(ValueError, match="disagrees with its admitted input"):
@@ -1897,7 +1897,7 @@ def test_line_v3_admission_bound_persists_manifest_not_material_values(
         plane="exhaust",
         content=canonical_bytes(exhaust_value),
     )
-    member = ProcedureAdmissionMaterialMemberV1(
+    member = ProcedureAdmissionMaterialMember(
         input_name=exhaust_input.input_name,
         plane="exhaust",
         semantic_digest=exhaust_input.result_digest,
@@ -1905,7 +1905,7 @@ def test_line_v3_admission_bound_persists_manifest_not_material_values(
         retention_authority_digest=exhaust_input.reducer_or_query_digest,
         body_retention="optional",
     )
-    manifest = ProcedureAdmissionMaterialManifestV1(members=(member,))
+    manifest = ProcedureAdmissionMaterialManifest(members=(member,))
     prepared = PreparedProcedureRunV3(
         admission=admission,
         accepted_state_materials=direct.accepted_state_materials,
@@ -2010,7 +2010,7 @@ def test_line_v4_admission_and_v5_receipt_carry_the_exact_provider_plan(
     accepted = _state_procedure()
     direct = _prepare(accepted, fixture, _StateReader())
     admission = _line_admission_v4(accepted, fixture)
-    manifest = ProcedureAdmissionMaterialManifestV1(members=())
+    manifest = ProcedureAdmissionMaterialManifest(members=())
     prepared = PreparedProcedureRunV4(
         admission=admission,
         accepted_state_materials=direct.accepted_state_materials,
@@ -2132,7 +2132,7 @@ def test_line_track_fold_reads_real_v2_and_v3_nested_admission_payloads(tmp_path
             "admission_binding_digest": procedure_admission_digest(provisional_v2),
         }
     )
-    manifest = ProcedureAdmissionMaterialManifestV1(members=())
+    manifest = ProcedureAdmissionMaterialManifest(members=())
     payloads = (
         ProcedureAdmissionBoundPayloadV2(
             admission=v2,
@@ -2485,7 +2485,7 @@ def test_graph_v4_transform_only_repeat_dispatches_through_existing_kernel(
             "definition_digest": compute_procedure_definition_digest_v4(definition_v4).tagged,
         }
     )
-    accepted_v4 = AcceptedProcedureV1(
+    accepted_v4 = AcceptedProcedure(
         path=accepted_v3.path,
         procedure=procedure_v4,
         artifact_digest=procedure_artifact_digest(procedure_v4).tagged,
@@ -3251,7 +3251,7 @@ def test_json_escape_hatch_is_not_charged_as_a_typed_collection(tmp_path) -> Non
                 as_="rows",
                 next="project",
             ),
-            ProjectNodeV3(
+            ProjectNode(
                 node_id="project",
                 fields={"items": "$steps.rows.items", "status": "ok"},
                 contract_out=output_pin,
@@ -3441,11 +3441,11 @@ def test_unmatched_effect_intent_never_redispatches_on_retry(tmp_path) -> None:
 
 @pytest.mark.parametrize("cap,expected", [(1024, "refused"), (2 * 1024 * 1024, "succeeded")])
 def test_runtime_result_budget_survives_execution_and_reopen(tmp_path, cap, expected):
-    from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicyV1
+    from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
 
     fixture = _fixture(tmp_path)
     accepted = _state_procedure()
-    policy = ProcedureRuntimePolicyV1(
+    policy = ProcedureRuntimePolicy(
         provider_output_bytes_cap=4 * 1024 * 1024, result_bytes_cap=cap, repeat_attempts_cap=100
     )
     prepared = _prepare(
@@ -3481,10 +3481,10 @@ def test_runtime_result_budget_survives_execution_and_reopen(tmp_path, cap, expe
 
 
 def test_resource_budget_intersection_and_replay_identity(tmp_path):
-    from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicyV1
+    from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
     from cruxible_core.procedures.execution import resolve_procedure_resource_budget
 
-    policy = ProcedureRuntimePolicyV1(
+    policy = ProcedureRuntimePolicy(
         provider_output_bytes_cap=1024, result_bytes_cap=10000, repeat_attempts_cap=100
     )
     budget = _budget().model_copy(update={"max_result_bytes": 8000})
@@ -3508,7 +3508,7 @@ def test_resource_budget_intersection_and_replay_identity(tmp_path):
 
 
 def test_repeat_above_legacy_ceiling_uses_admitted_policy(tmp_path):
-    from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicyV1
+    from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
     from cruxible_core.procedures.execution import ProcedureBoundaryRefused
 
     fixture = _fixture(tmp_path)
@@ -3521,7 +3521,7 @@ def test_repeat_above_legacy_ceiling_uses_admitted_policy(tmp_path):
         }
     )
     accepted = _accepted(definition, pins=original.procedure.pins)
-    policy = ProcedureRuntimePolicyV1(
+    policy = ProcedureRuntimePolicy(
         provider_output_bytes_cap=1024, result_bytes_cap=10000, repeat_attempts_cap=30
     )
     prepared = _prepare(accepted, fixture, _StateReader(), runtime_policy=policy)

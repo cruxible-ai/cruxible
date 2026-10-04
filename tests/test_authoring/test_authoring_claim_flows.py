@@ -7,10 +7,10 @@ import hashlib
 from pathlib import Path
 
 from cruxible_client.contracts.authoring.models import (
-    AuthoringExactContentObjectV1,
-    WorkingAnchorWindowV1,
-    WorkingDigestCoordinateV1,
-    WorkingSelectionObservationV1,
+    AuthoringExactContentObject,
+    WorkingAnchorWindow,
+    WorkingDigestCoordinate,
+    WorkingSelectionObservation,
 )
 from cruxible_client.contracts.captures import foreign_source_capture_contract
 from cruxible_client.contracts.claims import (
@@ -74,16 +74,16 @@ def test_flow_a_binds_only_the_selection_and_can_pass_existing_claim_laws(
     selected_digest = "sha256:" + hashlib.sha256(selected).hexdigest()
     payload = _self_source_payload().model_copy(
         update={
-            "source": WorkingSelectionObservationV1(
+            "source": WorkingSelectionObservation(
                 source_id=source_id,
-                coordinate=WorkingDigestCoordinateV1(
+                coordinate=WorkingDigestCoordinate(
                     source_content_digest="sha256:"
                     + hashlib.sha256(b"status: ready\n").hexdigest(),
                     source_byte_length=len(b"status: ready\n"),
                 ),
                 selected_content_base64=base64.b64encode(selected).decode("ascii"),
                 selected_bytes_digest=selected_digest,
-                selector=WorkingAnchorWindowV1(
+                selector=WorkingAnchorWindow(
                     anchor="status: ready",
                     start_byte=0,
                     end_byte=len(selected),
@@ -136,7 +136,7 @@ def test_exact_content_body_digest_and_span_are_daemon_derived(tmp_path: Path) -
         update={
             "statement": _self_source_payload().statement.model_copy(
                 update={
-                    "object": AuthoringExactContentObjectV1(
+                    "object": AuthoringExactContentObject(
                         content_base64=base64.b64encode(body).decode("ascii")
                     )
                 }

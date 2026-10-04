@@ -30,13 +30,13 @@ from cruxible_client.contracts.captures import (
     foreign_source_capture_contract,
 )
 from cruxible_client.contracts.claim_types import (
-    ClaimAttestationConsequencePolicyV1,
-    ClaimAttestationConsequenceRuleV1,
-    ClaimEvidenceFreshnessV1,
-    ClaimFreshnessDurationV1,
+    ClaimAttestationConsequencePolicy,
+    ClaimAttestationConsequenceRule,
+    ClaimEvidenceFreshness,
+    ClaimFreshnessDuration,
 )
 from cruxible_client.contracts.procedures.artifacts import (
-    ProcedureArtifactV2,
+    ProcedureArtifact,
     parse_procedure,
     procedure_owned_contract_digest,
 )
@@ -46,7 +46,7 @@ from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.lowering import lower_authoring
 from cruxible_core.authoring.store import AuthoringIntentStore
 from cruxible_core.claims.claim_type_inputs import (
-    ClaimTypeInputV1,
+    ClaimTypeInputRecord,
     ClaimTypeInputValidationError,
     claim_type_input_template,
     lint_claim_type_input,
@@ -313,7 +313,7 @@ def test_carried_contract_input_computes_exact_pins_and_procedure_v2(tmp_path: P
     lowered = lower_authoring(instance, intent=intent, actor_id="owner")
     procedure_path, content = lowered.changed_members[0]
     procedure = parse_procedure(content, path=procedure_path)
-    assert isinstance(procedure, ProcedureArtifactV2)
+    assert isinstance(procedure, ProcedureArtifact)
     contracts = {contract.identity.name: contract for contract in procedure.owned_contracts}
     expected_pins = {
         ("contract-in", "Contract:empty-input"): (
@@ -357,7 +357,7 @@ def test_claim_type_example_is_tagless_and_source_intent_is_lint_only(
         "playbill.claim_type.evidence_policy_admits_no_accepted_contract"
     )
 
-    source_intent = ClaimTypeInputV1.model_validate(
+    source_intent = ClaimTypeInputRecord.model_validate(
         {
             **example.model_dump(mode="json"),
             "anticipated_source_ids": ["repo.work-items"],
@@ -370,7 +370,7 @@ def test_claim_type_example_is_tagless_and_source_intent_is_lint_only(
     assert "anticipated_source_ids" not in lowered.model_dump(mode="json")
 
     with pytest.raises(ValidationError, match="byte-sorted and unique"):
-        ClaimTypeInputV1.model_validate(
+        ClaimTypeInputRecord.model_validate(
             {
                 **example.model_dump(mode="json"),
                 "anticipated_source_ids": ["repo.z", "repo.a"],
@@ -511,10 +511,10 @@ def test_fresh_template_claim_reaches_supported_through_flow_a(
 
 def test_claim_type_input_preserves_optional_freshness_in_v5() -> None:
     original = claim_type_input_example()
-    freshness = ClaimEvidenceFreshnessV1(
-        stale_after=ClaimFreshnessDurationV1(microseconds=2_592_000_000_000)
+    freshness = ClaimEvidenceFreshness(
+        stale_after=ClaimFreshnessDuration(microseconds=2_592_000_000_000)
     )
-    fresh = ClaimTypeInputV1.model_validate(
+    fresh = ClaimTypeInputRecord.model_validate(
         {
             **original.model_dump(mode="json"),
             "evidence_freshness": freshness.model_dump(mode="json"),
@@ -533,9 +533,9 @@ def test_claim_type_input_preserves_optional_freshness_in_v5() -> None:
 
 def test_claim_type_input_preserves_attestation_consequences_in_v5() -> None:
     original = claim_type_input_example()
-    policy = ClaimAttestationConsequencePolicyV1(
+    policy = ClaimAttestationConsequencePolicy(
         rules=(
-            ClaimAttestationConsequenceRuleV1(
+            ClaimAttestationConsequenceRule(
                 rule_id="two-independent-unsure",
                 stance="unsure",
                 minimum_independent_control_components=2,
@@ -543,7 +543,7 @@ def test_claim_type_input_preserves_attestation_consequences_in_v5() -> None:
         )
     )
     governed = lower_claim_type_input(
-        ClaimTypeInputV1.model_validate(
+        ClaimTypeInputRecord.model_validate(
             {
                 **original.model_dump(mode="json"),
                 "attestation_consequence_policy": policy.model_dump(mode="json"),
@@ -606,7 +606,7 @@ def test_claim_type_source_intent_produces_an_actionable_per_source_warning(
 ) -> None:
     instance, owner = initialize_local(tmp_path)
     _seed_claim_surface(instance, owner)
-    input_value = ClaimTypeInputV1.model_validate(
+    input_value = ClaimTypeInputRecord.model_validate(
         {
             **claim_type_input_example().model_dump(mode="json"),
             "anticipated_source_ids": ["corpus.runbook"],
@@ -693,16 +693,16 @@ def test_a_procedure_input_names_its_acquisition_policy_and_lowering_owns_the_di
 def test_a_zero_attestation_threshold_lints_as_a_disabled_rule(tmp_path: Path) -> None:
     instance, _owner = initialize_local(tmp_path)
     template = claim_type_input_template()
-    policy = ClaimAttestationConsequencePolicyV1(
+    policy = ClaimAttestationConsequencePolicy(
         rules=(
-            ClaimAttestationConsequenceRuleV1(
+            ClaimAttestationConsequenceRule(
                 rule_id="never-escalates",
                 stance="unsure",
                 minimum_independent_control_components=0,
             ),
         )
     )
-    value = ClaimTypeInputV1.model_validate(
+    value = ClaimTypeInputRecord.model_validate(
         {
             **template.model_dump(mode="json"),
             "attestation_consequence_policy": policy.model_dump(mode="json"),

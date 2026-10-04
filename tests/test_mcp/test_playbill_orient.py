@@ -21,8 +21,8 @@ COORDINATE = contracts.PlaybillAcceptedCoordinate(
 )
 
 
-def _answer() -> contracts.PlaybillOrientResultV1:
-    return contracts.PlaybillOrientResultV1(
+def _answer() -> contracts.PlaybillOrientResult:
+    return contracts.PlaybillOrientResult(
         instance="inst",
         coordinate=AcceptedCoordinate.model_validate(COORDINATE.model_dump(mode="json")),
         generation=4,
@@ -36,7 +36,7 @@ def _answer() -> contracts.PlaybillOrientResultV1:
 def test_local_mcp_orient_renders_for_mcp_and_passes_typed_inputs(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     seen: dict[str, Any] = {}
 
-    def orient_stub(instance_id: str, **values: Any) -> contracts.PlaybillOrientResultV1:
+    def orient_stub(instance_id: str, **values: Any) -> contracts.PlaybillOrientResult:
         seen.update(values, instance_id=instance_id)
         return _answer()
 
@@ -109,7 +109,7 @@ def test_mcp_orient_forwards_the_advertised_tools(
 ) -> None:
     seen: dict[str, Any] = {}
 
-    def orient_stub(instance_id: str, **values: Any) -> contracts.PlaybillOrientResultV1:
+    def orient_stub(instance_id: str, **values: Any) -> contracts.PlaybillOrientResult:
         seen.update(values)
         return _answer()
 
@@ -143,4 +143,4 @@ def test_mcp_orient_reports_the_mcp_workspace_floor(monkeypatch, tmp_path) -> No
 
     result = handlers.handle_playbill_orient("inst")
 
-    assert result.floor == contracts.PlaybillOrientFloorV1(at="9" * 64, generations_behind=3)
+    assert result.floor == contracts.PlaybillOrientFloor(at="9" * 64, generations_behind=3)

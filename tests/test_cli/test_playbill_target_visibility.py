@@ -157,9 +157,9 @@ def test_remembered_playbill_write_marks_remembered_target(
     class StubClient:
         def resolve_playbill_proposal_selector(
             self, instance_id: str, selector: str
-        ) -> contracts.PlaybillProposalSelectorResultV1:
+        ) -> contracts.PlaybillProposalSelectorResult:
             assert instance_id == "inst_remembered"
-            return contracts.PlaybillProposalSelectorResultV1(
+            return contracts.PlaybillProposalSelectorResult(
                 selector=selector,
                 proposal_id=selector,
             )
@@ -477,8 +477,8 @@ def test_host_show_is_a_silent_read_and_cli_adds_transport(
     assert ("playbill", "host", "show") not in MUTATING_COMMAND_TARGETS
 
     class StubClient:
-        def show_playbill_host(self, instance_id: str) -> contracts.PlaybillHostInspectionV1:
-            return contracts.PlaybillHostInspectionV1(
+        def show_playbill_host(self, instance_id: str) -> contracts.PlaybillHostInspection:
+            return contracts.PlaybillHostInspection(
                 instance_id=instance_id,
                 managed_root=str(tmp_path / "state"),
                 workspace_root=None,
@@ -546,9 +546,9 @@ def test_workspace_attach_writes_config_only_after_exact_daemon_registration(
     class StubClient:
         def playbill_host_workspace_registration(
             self, instance_id: str
-        ) -> contracts.PlaybillHostWorkspaceRegistrationV1:
+        ) -> contracts.PlaybillHostWorkspaceRegistration:
             assert instance_id == "inst_attached"
-            return contracts.PlaybillHostWorkspaceRegistrationV1(
+            return contracts.PlaybillHostWorkspaceRegistration(
                 instance_id=instance_id,
                 status="registered",
                 workspace_path=str(workspace.resolve()),
@@ -608,9 +608,9 @@ def test_workspace_attach_marks_a_remembered_target_as_remembered(
     class StubClient:
         def playbill_host_workspace_registration(
             self, instance_id: str
-        ) -> contracts.PlaybillHostWorkspaceRegistrationV1:
+        ) -> contracts.PlaybillHostWorkspaceRegistration:
             assert instance_id == "inst_remembered"
-            return contracts.PlaybillHostWorkspaceRegistrationV1(
+            return contracts.PlaybillHostWorkspaceRegistration(
                 instance_id=instance_id,
                 status="registered",
                 workspace_path=str(workspace.resolve()),
@@ -640,8 +640,8 @@ def test_workspace_attach_refuses_a_different_registration_without_writing(
     class StubClient:
         def playbill_host_workspace_registration(
             self, instance_id: str
-        ) -> contracts.PlaybillHostWorkspaceRegistrationV1:
-            return contracts.PlaybillHostWorkspaceRegistrationV1(
+        ) -> contracts.PlaybillHostWorkspaceRegistration:
+            return contracts.PlaybillHostWorkspaceRegistration(
                 instance_id=instance_id,
                 status="registered",
                 workspace_path=str(other.resolve()),
@@ -677,9 +677,9 @@ def test_instance_decommission_names_the_instance_it_is_about_to_end(
     class StubClient:
         def decommission_playbill_instance(
             self, instance_id: str, *, reason: str, dry_run: bool | None, at: str | None
-        ) -> contracts.PlaybillInstanceDecommissionResultV1:
+        ) -> contracts.PlaybillInstanceDecommissionResult:
             calls.append((instance_id, reason, dry_run, at))
-            return contracts.PlaybillInstanceDecommissionResultV1(
+            return contracts.PlaybillInstanceDecommissionResult(
                 status="decommissioned",
                 instance_id=instance_id,
                 reason=reason,
@@ -762,9 +762,9 @@ def test_the_world_stub_leaf_is_a_read_and_stays_out_of_the_mutating_inventory(
     class StubClient:
         """The world stub reads the head, the ClaimType section and one proof batch."""
 
-        def playbill_head(self, instance_id: str, **_values: object) -> contracts.PlaybillHeadV1:
+        def playbill_head(self, instance_id: str, **_values: object) -> contracts.PlaybillHead:
             assert instance_id == "inst_read"
-            return contracts.PlaybillHeadV1(
+            return contracts.PlaybillHead(
                 instance=instance_id,
                 coordinate=coordinate.model_dump(mode="json"),  # type: ignore[arg-type]
                 generation=1,

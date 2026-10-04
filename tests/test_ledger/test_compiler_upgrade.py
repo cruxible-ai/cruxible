@@ -475,8 +475,8 @@ def test_provider_installation_uses_accepted_compiler_after_upgrade_and_reopen(
     tmp_path, monkeypatch
 ):
     from cruxible_client.contracts.provider_installation import (
-        PlaybillProviderInstallRequestV1,
-        ProviderWheelObjectV1,
+        PlaybillProviderInstallRequest,
+        ProviderWheelObject,
     )
     from cruxible_core.compiler.compiler import PROVIDER_PACKAGE_COMPILER
     from cruxible_core.errors import ConfigError
@@ -485,10 +485,8 @@ def test_provider_installation_uses_accepted_compiler_after_upgrade_and_reopen(
 
     instance, _, reviewer = old_instance(tmp_path, monkeypatch, UPGRADE_COMPILER)
     operator = ProviderRuntimeOperator(tmp_path / "operator")
-    request = PlaybillProviderInstallRequestV1(
-        wheel=ProviderWheelObjectV1(
-            filename="demo-1-py3-none-any.whl", digest="sha256:" + "a" * 64
-        ),
+    request = PlaybillProviderInstallRequest(
+        wheel=ProviderWheelObject(filename="demo-1-py3-none-any.whl", digest="sha256:" + "a" * 64),
         lock_digest="sha256:" + "b" * 64,
     )
     reached = []
@@ -529,7 +527,7 @@ def test_the_governed_triggers_upgrade_waits_for_every_embedded_trigger_line_to_
     from cruxible_client.contracts.procedures.artifacts import render_procedure
     from cruxible_client.contracts.procedures.line_specs import (
         LineSpecV5,
-        ManualTriggerPolicyV1,
+        ManualTriggerPolicy,
         line_spec_digest,
         line_spec_path,
         render_line_spec,
@@ -553,7 +551,7 @@ def test_the_governed_triggers_upgrade_waits_for_every_embedded_trigger_line_to_
     )
     for field in ("artifact_format", "trigger_input", "trigger_event"):
         value.pop(field)
-    embedded = LineSpecV5.model_validate({**value, "trigger_policy": ManualTriggerPolicyV1()})
+    embedded = LineSpecV5.model_validate({**value, "trigger_policy": ManualTriggerPolicy()})
     tree.update(
         {
             accepted.path: render_procedure(accepted.procedure),

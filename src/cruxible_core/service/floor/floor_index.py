@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from weakref import WeakKeyDictionary
 
 from cruxible_client.contracts.captures import (
-    CaptureContractV1,
+    CaptureContract,
     capture_contract_digest,
     parse_capture_contract,
 )
@@ -33,7 +33,7 @@ from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, pa
 from cruxible_client.contracts.claims import ClaimArtifactAny, SubjectClaimObject, parse_claim
 from cruxible_client.contracts.errors import PlaybillError, ProjectionIntegrityError
 from cruxible_client.contracts.floor import (
-    PlaybillFloorManifestV5,
+    PlaybillFloorManifest,
     build_floor_manifest,
     content_digest,
     floor_notes_digest,
@@ -107,7 +107,7 @@ class FloorInputs:
     objects: Mapping[str, tuple[tuple[int, str], ...]] = field(default_factory=dict)
     # Accepted Document paths, and CaptureContracts by path.
     documents: frozenset[str] = frozenset()
-    capture_contracts: Mapping[str, CaptureContractV1] = field(default_factory=dict)
+    capture_contracts: Mapping[str, CaptureContract] = field(default_factory=dict)
 
     def pointed_at(self) -> dict[str, frozenset[str]]:
         """Subject path -> every Claim that ever pointed at it, any lifecycle."""
@@ -156,7 +156,7 @@ class FloorRender:
     def generation(self) -> int:
         return self.inputs.generation
 
-    def manifest(self) -> PlaybillFloorManifestV5:
+    def manifest(self) -> PlaybillFloorManifest:
         return build_floor_manifest(
             renderer=self.renderer,
             coordinate=self.inputs.coordinate,
@@ -180,7 +180,7 @@ def _parse_into(
     claims: dict[str, ClaimArtifactAny],
     claim_types: dict[str, ClaimType],
     documents: set[str],
-    contracts: dict[str, CaptureContractV1],
+    contracts: dict[str, CaptureContract],
 ) -> None:
     if path.startswith(SUBJECTS_PREFIX):
         subjects[path] = parse_subject(content, path=path)
@@ -271,7 +271,7 @@ def build_floor_inputs(
     subjects: dict[str, SubjectShell] = {}
     claims: dict[str, ClaimArtifactAny] = {}
     claim_types: dict[str, ClaimType] = {}
-    contracts: dict[str, CaptureContractV1] = {}
+    contracts: dict[str, CaptureContract] = {}
     for path, content in raw.items():
         if content is not None:
             _parse_into(

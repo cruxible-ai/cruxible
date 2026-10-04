@@ -159,7 +159,7 @@ def test_status_reports_daemon_metadata(monkeypatch, runner: CliRunner) -> None:
                 instance_count=3,
                 auth_enabled=True,
                 auth_required=True,
-                provider_lane=contracts.ProviderLaneStatusV1(
+                provider_lane=contracts.ProviderLaneStatus(
                     state="available", code=None, detail=None
                 ),
             )
@@ -195,7 +195,7 @@ def test_status_json_includes_transport(monkeypatch, runner: CliRunner) -> None:
                 instance_count=1,
                 auth_enabled=False,
                 auth_required=False,
-                provider_lane=contracts.ProviderLaneStatusV1(
+                provider_lane=contracts.ProviderLaneStatus(
                     state="available", code=None, detail=None
                 ),
             )
@@ -229,7 +229,7 @@ def test_status_reports_typed_provider_lane_degradation(monkeypatch, runner: Cli
                 instance_count=1,
                 auth_enabled=False,
                 auth_required=False,
-                provider_lane=contracts.ProviderLaneStatusV1(
+                provider_lane=contracts.ProviderLaneStatus(
                     state="unavailable",
                     code="provider_runtime_recovery_failed",
                     detail="journal recovery failed",
@@ -313,9 +313,9 @@ def test_status_answers_an_instance_scoped_token_with_its_own_host(
         def version(self) -> str:
             return "0.5.1"
 
-        def show_playbill_host(self, instance_id: str) -> contracts.PlaybillHostInspectionV1:
+        def show_playbill_host(self, instance_id: str) -> contracts.PlaybillHostInspection:
             assert instance_id == "inst_scoped"
-            return contracts.PlaybillHostInspectionV1(
+            return contracts.PlaybillHostInspection(
                 instance_id=instance_id,
                 managed_root=None,
                 workspace_root=None,

@@ -23,7 +23,7 @@ from typing import Any
 
 from cruxible_client.contracts.approval_policy import (
     APPROVAL_POLICY_PATH,
-    ApprovalPolicyV1,
+    ApprovalPolicy,
     render_approval_policy,
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity
@@ -36,10 +36,10 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, render_claim_type
 from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicyV1,
+    ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionRuleV1,
-    ClaimResolutionPolicyV1,
+    ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
 from cruxible_core.governance.keys import GeneratedKeyMaterial
@@ -92,8 +92,8 @@ def _claim_type(
         evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(
             rules=(_rule("source", roles, capture_contract_digest(contract).tagged),)
         ),
-        admission_policy=ClaimAdmissionPolicyV1(),
-        resolution_policy=ClaimResolutionPolicyV1(
+        admission_policy=ClaimAdmissionPolicy(),
+        resolution_policy=ClaimResolutionPolicy(
             cardinality=cardinality,  # type: ignore[arg-type]
             eligible_verdicts=("supported",),
             selector="all" if cardinality == "many" else "only_contender",
@@ -182,7 +182,7 @@ def seed_write_surface(
             candidate_tree={
                 **instance.tree_at(instance.accepted_coordinate().git_oid),
                 APPROVAL_POLICY_PATH: render_approval_policy(
-                    ApprovalPolicyV1(mode="independent_approval_required")
+                    ApprovalPolicy(mode="independent_approval_required")
                 ),
             },
             timestamp="2026-09-29T11:59:30.000000Z",

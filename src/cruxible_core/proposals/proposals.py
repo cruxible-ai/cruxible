@@ -17,7 +17,7 @@ from pydantic import (
 )
 
 from cruxible_client.contracts.acquisition_policies import (
-    AcceptedSourceAcquisitionPolicyV1,
+    AcceptedSourceAcquisitionPolicy,
     SourceAcquisitionPolicyError,
     acquisition_policy_digest,
     evaluate_acquisition_policy_law,
@@ -32,24 +32,24 @@ from cruxible_client.contracts.approval_policy import (
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.authoring_profiles import (
     AuthoringProfileError,
-    ClaimTypeExpansionEvidenceV1,
+    ClaimTypeExpansionEvidence,
     verify_claim_type_expansion_evidence,
 )
 from cruxible_client.contracts.candidates import (
     PRODUCED_CANDIDATE_VERSION,
     CandidateMemberEvidence,
-    CandidateMemberLawEvidenceV2,
+    CandidateMemberLawEvidence,
     CandidateRecord,
     CandidateRecordAnyVersion,
+    CandidateRecordV1,
     CandidateRecordV2,
-    CandidateRecordV3,
     CandidateWireVersion,
+    ClosureProof,
     ClosureProofV2,
-    ClosureProofV3,
-    LawEvaluationCoordinateV1,
-    MemberLawEvaluationV2,
+    LawEvaluationCoordinate,
+    MemberLawEvaluation,
     SemanticCandidate,
-    SemanticCandidateV2,
+    SemanticCandidateV1,
     candidate_digest,
     candidate_member_evidence_digest,
     member_law_evidence_digest,
@@ -93,8 +93,8 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
+    ClaimArtifact,
     ClaimArtifactAny,
-    ClaimArtifactV3,
     ClaimFormatError,
     ClaimLawEvidenceAny,
     ExactContentClaimObject,
@@ -155,12 +155,12 @@ from cruxible_client.contracts.merkle import (
 )
 from cruxible_client.contracts.persistent import PersistentMap
 from cruxible_client.contracts.policies import (
-    ClaimAdmissionCandidateContextV1,
-    ClaimAdmissionCandidateResultV1,
-    ClaimAdmissionEvaluationAccountV1,
-    ClaimAdmissionPolicyV1,
-    ClaimCorroborationResultV1,
-    ClaimEvidenceAdmissionRuleV3,
+    ClaimAdmissionCandidateContext,
+    ClaimAdmissionCandidateResult,
+    ClaimAdmissionEvaluationAccount,
+    ClaimAdmissionPolicy,
+    ClaimCorroborationResult,
+    ClaimEvidenceAdmissionRule,
     evaluate_claim_admission_candidate,
 )
 from cruxible_client.contracts.principals import (
@@ -168,10 +168,10 @@ from cruxible_client.contracts.principals import (
     principal_registry_from_tree,
 )
 from cruxible_client.contracts.procedure_mandates import (
-    AcceptedProcedureMandateV1,
+    AcceptedProcedureMandate,
+    ProcedureMandate,
     ProcedureMandateError,
-    ProcedureMandateV2,
-    ScopedClaimTypeV1,
+    ScopedClaimType,
     evaluate_procedure_mandate_law,
     evaluate_procedure_mandate_v2_law,
     parse_procedure_mandate_any,
@@ -184,7 +184,7 @@ from cruxible_client.contracts.procedure_runtime_policy import (
     procedure_runtime_policy_digest,
 )
 from cruxible_client.contracts.procedures.artifacts import (
-    AcceptedProcedureV1,
+    AcceptedProcedure,
     ProcedureFormatError,
     evaluate_procedure_law,
     parse_procedure,
@@ -192,54 +192,54 @@ from cruxible_client.contracts.procedures.artifacts import (
 )
 from cruxible_client.contracts.procedures.line_specs import (
     EMBEDDED_TRIGGER_LINE_FORMATS,
-    AcceptedLineSpecV1,
+    AcceptedLineSpec,
+    LineSpec,
     LineSpecFormatError,
-    LineSpecV6,
     evaluate_line_spec_law,
     line_spec_digest,
     parse_line_spec,
 )
-from cruxible_client.contracts.procedures.windows import CaptureEventWindowV1
+from cruxible_client.contracts.procedures.windows import CaptureEventWindow
 from cruxible_client.contracts.proposal_models import (
     AuthenticatedActor,
     ProposalAdmissionRecord,
     ProposalAdmissionRequest,
     ProposalEvaluationRecord,
-    ProposalPreviewEvaluationV1,
-    ProposalPreviewV1,
-    ProposalReadmissionLinkV1,
+    ProposalPreview,
+    ProposalPreviewEvaluation,
+    ProposalReadmissionLink,
     ProposalReceiveLimits,
     ProposalResult,
-    ProposalSettleSubmissionV1,
+    ProposalSettleSubmission,
     ProposalTransportProtocol,
-    ProposalWithdrawalRecordV1,
+    ProposalWithdrawalRecord,
     _StrictProposalModel,
     claim_admission_account_order_key,
 )
 from cruxible_client.contracts.provider_interfaces import (
-    AcceptedProviderInterfaceRegistrationV1,
+    AcceptedProviderInterfaceRegistration,
     ProviderInterfaceFormatError,
     evaluate_provider_interface_law,
     parse_provider_interface,
     provider_interface_digest,
 )
 from cruxible_client.contracts.providers import (
-    AcceptedProviderV1,
+    AcceptedProvider,
     ProviderFormatError,
     evaluate_provider_law,
     parse_provider,
     provider_digest,
 )
 from cruxible_client.contracts.query.definitions import (
-    AcceptedQueryDefinitionV1,
+    AcceptedQueryDefinition,
+    QueryDefinition,
     QueryDefinitionFormatError,
-    QueryDefinitionV1,
     evaluate_query_definition_law,
     parse_query_definition,
     query_definition_digest,
 )
 from cruxible_client.contracts.resolution_contracts import (
-    ResolutionContractV1,
+    ResolutionContract,
     parse_resolution_contract,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -250,10 +250,10 @@ from cruxible_client.contracts.subjects import (
     subject_digest,
 )
 from cruxible_client.contracts.triggers import (
-    AcceptedTriggerV1,
-    CaptureEventInputV1,
-    NoTriggerInputV1,
-    TriggerInputV1,
+    AcceptedTrigger,
+    CaptureEventInput,
+    NoTriggerInput,
+    TriggerInputRecord,
     evaluate_trigger_law,
     parse_trigger,
     schedule_satisfies_input,
@@ -624,23 +624,23 @@ class CandidateEvaluation:
     diagnostics: tuple[CompilerDiagnostic, ...]
     rebased: bool
     state: "EvaluatedTreeState | None" = None
-    claim_admission_accounts: tuple[ClaimAdmissionEvaluationAccountV1, ...] = ()
+    claim_admission_accounts: tuple[ClaimAdmissionEvaluationAccount, ...] = ()
 
 
 def claim_type_expansions_from_candidate(
     candidate: CandidateRecordAnyVersion,
-) -> tuple[ClaimTypeExpansionEvidenceV1, ...]:
+) -> tuple[ClaimTypeExpansionEvidence, ...]:
     """Recover and revalidate authoring-only evidence committed by member law output."""
 
-    if isinstance(candidate, CandidateRecord):
+    if isinstance(candidate, CandidateRecordV1):
         return ()
-    expansions: list[ClaimTypeExpansionEvidenceV1] = []
+    expansions: list[ClaimTypeExpansionEvidence] = []
     for evidence in candidate.law_evidence:
         raw = evidence.result.get("authoring_expansion")
         if raw is None:
             continue
         try:
-            expansions.append(ClaimTypeExpansionEvidenceV1.model_validate(raw))
+            expansions.append(ClaimTypeExpansionEvidence.model_validate(raw))
         except (PlaybillError, ValidationError) as exc:
             raise ProposalIntegrityError(
                 "candidate contains invalid ClaimType authoring expansion evidence"
@@ -655,12 +655,12 @@ def claim_type_expansions_from_candidate(
 
 def claim_admission_accounts_from_candidate(
     candidate: CandidateRecordAnyVersion,
-) -> tuple[ClaimAdmissionEvaluationAccountV1, ...]:
+) -> tuple[ClaimAdmissionEvaluationAccount, ...]:
     """Recover the daemon-produced admission accounts committed by member evidence."""
 
-    if isinstance(candidate, CandidateRecord):
+    if isinstance(candidate, CandidateRecordV1):
         return ()
-    accounts: dict[tuple[str, str, str], ClaimAdmissionEvaluationAccountV1] = {}
+    accounts: dict[tuple[str, str, str], ClaimAdmissionEvaluationAccount] = {}
     committed_query_digests: set[str] = set()
     for evidence in candidate.law_evidence:
         committed_query_digests.update(evidence.query_receipt_digests)
@@ -674,7 +674,7 @@ def claim_admission_accounts_from_candidate(
             if raw_account is None:
                 continue
             try:
-                account = ClaimAdmissionEvaluationAccountV1.model_validate(raw_account)
+                account = ClaimAdmissionEvaluationAccount.model_validate(raw_account)
             except ValidationError as exc:
                 raise ProposalIntegrityError(
                     "candidate contains invalid Claim admission account"
@@ -922,7 +922,7 @@ _CORROBORATION_BINDING_TYPES = {
 def _accepted_query(
     tree: Mapping[str, bytes],
     digest: str,
-) -> AcceptedQueryDefinitionV1 | None:
+) -> AcceptedQueryDefinition | None:
     reader = getattr(tree, "_accepted_reader", None)
     if reader is not None:
         with reader() as projection:
@@ -944,16 +944,14 @@ def _accepted_query(
     for path, content in sources:
         query = parse_query_definition(content, path=path)
         if query.lifecycle.state == "live" and query_definition_digest(query).tagged == digest:
-            matched.append(
-                AcceptedQueryDefinitionV1(path=path, query=query, artifact_digest=digest)
-            )
+            matched.append(AcceptedQueryDefinition(path=path, query=query, artifact_digest=digest))
     if len(matched) > 1:
         raise ProposalIntegrityError("accepted QueryDefinition digest is not unique")
     return matched[0] if matched else None
 
 
 def _corroboration_parameters(
-    definition: AcceptedQueryDefinitionV1,
+    definition: AcceptedQueryDefinition,
     *,
     subject: AcceptedSubject,
     predicate: str,
@@ -979,21 +977,21 @@ def _corroboration_parameters(
 
 def _run_corroboration_requirements(
     *,
-    policy: ClaimAdmissionPolicyV1,
+    policy: ClaimAdmissionPolicy,
     accepted_type: AcceptedClaimType,
     subject: AcceptedSubject,
-    definition_for_digest: Callable[[str], AcceptedQueryDefinitionV1 | None],
-    facts_for: Callable[[AcceptedQueryDefinitionV1], ClaimQueryFactsV1],
+    definition_for_digest: Callable[[str], AcceptedQueryDefinition | None],
+    facts_for: Callable[[AcceptedQueryDefinition], ClaimQueryFactsV1],
     current: AcceptedProjectionCoordinate,
     timestamp: str,
 ) -> tuple[
-    tuple[ClaimCorroborationResultV1, ...],
+    tuple[ClaimCorroborationResult, ...],
     tuple[tuple[str, str], ...],
 ]:
     evaluated_at = datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%S.%fZ").replace(
         tzinfo=timezone.utc
     )
-    results: list[ClaimCorroborationResultV1] = []
+    results: list[ClaimCorroborationResult] = []
     issues: list[tuple[str, str]] = []
     for requirement in policy.corroboration_requirements:
         definition = definition_for_digest(requirement.query_definition_digest)
@@ -1033,7 +1031,7 @@ def _run_corroboration_requirements(
         receipt = query_execution_receipt(result)
         observed_count = len(result.rows)
         satisfied = result.verdict == "completed" and observed_count >= requirement.min_count
-        requirement_result = ClaimCorroborationResultV1(
+        requirement_result = ClaimCorroborationResult(
             requirement_id=requirement.requirement_id,
             query_definition_digest=requirement.query_definition_digest,
             parameter_digest=receipt.parameter_digest,
@@ -1077,14 +1075,14 @@ def _claim_admission_evaluations(
     claim_types: Mapping[str, AcceptedClaimType],
     current: AcceptedProjectionCoordinate,
     query_facts_provider: ClaimQueryFactsProvider | None,
-    replay_accounts: tuple[ClaimAdmissionEvaluationAccountV1, ...] | None,
+    replay_accounts: tuple[ClaimAdmissionEvaluationAccount, ...] | None,
     parent_claim_index: ClaimSubjectIndex | None = None,
     candidate_claim_index: ClaimSubjectIndex | None = None,
 ) -> tuple[
     dict[str, tuple[dict[str, object], ...]],
     dict[str, tuple[str, ...]],
     dict[str, tuple[str, ...]],
-    tuple[ClaimAdmissionEvaluationAccountV1, ...],
+    tuple[ClaimAdmissionEvaluationAccount, ...],
     tuple[CompilerDiagnostic, ...],
 ]:
     """Evaluate the authored ClaimType policy for each changed Claim member."""
@@ -1113,11 +1111,11 @@ def _claim_admission_evaluations(
     entries_by_path: dict[str, tuple[dict[str, object], ...]] = {}
     digests_by_path: dict[str, tuple[str, ...]] = {}
     query_digests_by_path: dict[str, tuple[str, ...]] = {}
-    accounts: list[ClaimAdmissionEvaluationAccountV1] = []
+    accounts: list[ClaimAdmissionEvaluationAccount] = []
     diagnostics: list[CompilerDiagnostic] = []
     facts_by_predicates: dict[tuple[str, ...], ClaimQueryFactsV1] = {}
 
-    def facts_for(definition: AcceptedQueryDefinitionV1) -> ClaimQueryFactsV1:
+    def facts_for(definition: AcceptedQueryDefinition) -> ClaimQueryFactsV1:
         if query_facts_provider is None:
             raise ProposalIntegrityError("Claim corroboration requires accepted query facts")
         predicates = definition.query.referenced_predicates
@@ -1152,15 +1150,15 @@ def _claim_admission_evaluations(
         Evaluation = tuple[
             AcceptedClaimType,
             str,
-            ClaimAdmissionCandidateResultV1,
-            tuple[ClaimCorroborationResultV1, ...],
+            ClaimAdmissionCandidateResult,
+            tuple[ClaimCorroborationResult, ...],
             tuple[tuple[str, str], ...],
             bool,
         ]
 
         def evaluate_type_policy(
             accepted_type: AcceptedClaimType,
-            policy: ClaimAdmissionPolicyV1,
+            policy: ClaimAdmissionPolicy,
             *,
             carries_corroboration: bool,
         ) -> Evaluation:
@@ -1222,7 +1220,7 @@ def _claim_admission_evaluations(
                 "playbill-claim-admission-policy-v1",
                 accepted_type.claim_type.admission_policy,
             )
-            results: tuple[ClaimCorroborationResultV1, ...] = ()
+            results: tuple[ClaimCorroborationResult, ...] = ()
             issues: tuple[tuple[str, str], ...] = ()
             if policy.corroboration_requirements:
                 if query_facts_provider is None:
@@ -1238,7 +1236,7 @@ def _claim_admission_evaluations(
                     current=current,
                     timestamp=timestamp,
                 )
-            context = ClaimAdmissionCandidateContextV1(
+            context = ClaimAdmissionCandidateContext(
                 evaluation_time=timestamp,
                 declared_predicates=declared_predicates,
                 parent_values=parent_values.get(subject_path, {}),
@@ -1320,13 +1318,13 @@ def _claim_admission_evaluations(
                 evaluations.values(),
                 key=lambda item: item[0].claim_type.identity.qualified.encode("utf-8"),
             ):
-                account: ClaimAdmissionEvaluationAccountV1 | None = None
+                account: ClaimAdmissionEvaluationAccount | None = None
                 if carries_corroboration:
                     requirements = (
                         governing_type.claim_type.admission_policy.corroboration_requirements
                     )
                     complete = len(results) == len(requirements)
-                    account = ClaimAdmissionEvaluationAccountV1(
+                    account = ClaimAdmissionEvaluationAccount(
                         claim_path=changed_path,
                         claim_type_identity=governing_type.claim_type.identity.qualified,
                         claim_type_digest=governing_type.artifact_digest,
@@ -1599,12 +1597,12 @@ class _ResolvedArtifacts:
     subjects: Mapping[str, AcceptedSubject]
     claim_types: Mapping[str, AcceptedClaimType]
     capture_contracts: Mapping[str, AcceptedCaptureContract]
-    providers: Mapping[str, AcceptedProviderV1]
-    provider_interfaces: Mapping[str, AcceptedProviderInterfaceRegistrationV1]
-    procedures: Mapping[str, AcceptedProcedureV1]
-    resolution_contracts: Mapping[str, ResolutionContractV1]
-    lines: Mapping[str, AcceptedLineSpecV1]
-    triggers: Mapping[str, AcceptedTriggerV1]
+    providers: Mapping[str, AcceptedProvider]
+    provider_interfaces: Mapping[str, AcceptedProviderInterfaceRegistration]
+    procedures: Mapping[str, AcceptedProcedure]
+    resolution_contracts: Mapping[str, ResolutionContract]
+    lines: Mapping[str, AcceptedLineSpec]
+    triggers: Mapping[str, AcceptedTrigger]
 
 
 @dataclass(frozen=True)
@@ -1635,7 +1633,7 @@ class _MemberContext:
     claim_admission_by_path: Mapping[str, tuple[dict[str, object], ...]]
     claim_admission_digests_by_path: Mapping[str, tuple[str, ...]]
     claim_admission_query_digests_by_path: Mapping[str, tuple[str, ...]]
-    claim_type_expansions: tuple[ClaimTypeExpansionEvidenceV1, ...]
+    claim_type_expansions: tuple[ClaimTypeExpansionEvidence, ...]
     used_expansions: set[str]
     acceptance_laws: AcceptanceLawRegistry
     historical_law_coordinate: tuple[str, str] | None
@@ -1725,17 +1723,17 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
             SDK_SOURCE_PROCEDURE_LAW,
             SOURCE_CHECKED_PROCEDURE_LAW,
         )
-        from cruxible_client.contracts.procedures.artifacts import ProcedureArtifactV2
-        from cruxible_client.contracts.procedures.models import ProcedureDefinitionV6
+        from cruxible_client.contracts.procedures.artifacts import ProcedureArtifact
+        from cruxible_client.contracts.procedures.models import ProcedureDefinition
         from cruxible_client.contracts.query.definitions import (
             parse_query_definition,
             query_definition_path,
         )
         from cruxible_core.authoring.procedure_source import verify_source_bindings
 
-        if not isinstance(procedure, ProcedureArtifactV2):
+        if not isinstance(procedure, ProcedureArtifact):
             raise ValueError("graph-v6 requires the owner-carried Contract envelope")
-        assert isinstance(procedure.definition, ProcedureDefinitionV6)
+        assert isinstance(procedure.definition, ProcedureDefinition)
         source_law = (
             SOURCE_CHECKED_PROCEDURE_LAW
             if procedure.definition.source is not None
@@ -1765,7 +1763,7 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
             selected = mapping.get(identity)
             return None if selected is None else getattr(selected, attribute)
 
-        assert isinstance(procedure.definition, ProcedureDefinitionV6)
+        assert isinstance(procedure.definition, ProcedureDefinition)
         source = procedure.definition.source
         type_ids = tuple(
             "ClaimType:" + name for name in (() if source is None else source.claim_types)
@@ -1813,10 +1811,10 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
         ):
             raise ProposalIntegrityError("graph-v5 requires its exact operation-contract law")
         installed = PROVIDER_CONTRACT_PROCEDURE_LAW
-    predecessor: AcceptedProcedureV1 | None = None
+    predecessor: AcceptedProcedure | None = None
     if context.parent_content is not None:
         previous = parse_procedure(context.parent_content, path=context.path)
-        predecessor = AcceptedProcedureV1(
+        predecessor = AcceptedProcedure(
             path=context.path,
             procedure=previous,
             artifact_digest=procedure_artifact_digest(previous).tagged,
@@ -1953,15 +1951,15 @@ def _admits_triggers(compiler: CompilerCoordinate) -> bool:
     return any(entry.kind == "trigger" for entry in artifact_kinds_for_compiler(compiler).entries())
 
 
-def _line_trigger_input(line: LineSpecV6) -> TriggerInputV1:
+def _line_trigger_input(line: LineSpec) -> TriggerInputRecord:
     """The event a Line accepts: exactly its declared one when it binds its Capture."""
 
     if line.trigger_input is None:
-        return NoTriggerInputV1()
-    return CaptureEventInputV1(event=line.trigger_event)
+        return NoTriggerInput()
+    return CaptureEventInput(event=line.trigger_event)
 
 
-def _line_trigger_dependents(context: _MemberContext, line: LineSpecV6) -> tuple[str, ...]:
+def _line_trigger_dependents(context: _MemberContext, line: LineSpec) -> tuple[str, ...]:
     """Live Triggers a Line change would strand, read in the final candidate.
 
     A Trigger retired or retargeted in the same ChangeSet no longer counts. A
@@ -2001,7 +1999,7 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
                     ),
                 )
             )
-    elif isinstance(line, LineSpecV6):
+    elif isinstance(line, LineSpec):
         return _MemberVerdict(
             diagnostics=(
                 _diagnostic(
@@ -2022,10 +2020,10 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
                 ),
             )
         )
-    predecessor: AcceptedLineSpecV1 | None = None
+    predecessor: AcceptedLineSpec | None = None
     if context.parent_content is not None:
         previous = parse_line_spec(context.parent_content, path=context.path)
-        predecessor = AcceptedLineSpecV1(
+        predecessor = AcceptedLineSpec(
             path=context.path,
             line=previous,
             artifact_digest=line_spec_digest(previous).tagged,
@@ -2062,7 +2060,7 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
     if law.artifact_digest is None or law.required_tier is None:
         raise ProposalIntegrityError("accepted LineSpec law result is incomplete")
-    if isinstance(line, LineSpecV6):
+    if isinstance(line, LineSpec):
         stranded = _line_trigger_dependents(context, line)
         if stranded:
             return _MemberVerdict(
@@ -2105,22 +2103,22 @@ def _trigger_member(context: _MemberContext) -> _MemberVerdict:
             )
         )
     trigger = parse_trigger(context.content, path=context.path)
-    predecessor: AcceptedTriggerV1 | None = None
+    predecessor: AcceptedTrigger | None = None
     if context.parent_content is not None:
         previous = parse_trigger(context.parent_content, path=context.path)
-        predecessor = AcceptedTriggerV1(
+        predecessor = AcceptedTrigger(
             path=context.path, trigger=previous, artifact_digest=trigger_digest(previous).tagged
         )
     line_live: bool | None = None
-    line_input: TriggerInputV1 | None = None
+    line_input: TriggerInputRecord | None = None
     if trigger.line is not None:
         target = context.resolved.lines.get(trigger.line.qualified)
         line_live = (
             target is not None
-            and isinstance(target.line, LineSpecV6)
+            and isinstance(target.line, LineSpec)
             and target.line.lifecycle.state == "live"
         )
-        if target is not None and isinstance(target.line, LineSpecV6):
+        if target is not None and isinstance(target.line, LineSpec):
             line_input = _line_trigger_input(target.line)
     law = evaluate_trigger_law(
         trigger,
@@ -2147,7 +2145,7 @@ def _trigger_member(context: _MemberContext) -> _MemberVerdict:
 
 
 def _literal_object_traversal(
-    query: QueryDefinitionV1,
+    query: QueryDefinition,
     *,
     claim_types: Mapping[str, AcceptedClaimType],
 ) -> CompilerDiagnostic | None:
@@ -2192,10 +2190,10 @@ def _corroboration_digests(claim_type: ClaimType) -> frozenset[str]:
 
 def _query_definition_member(context: _MemberContext) -> _MemberVerdict:
     query = parse_query_definition(context.content, path=context.path)
-    predecessor: AcceptedQueryDefinitionV1 | None = None
+    predecessor: AcceptedQueryDefinition | None = None
     if context.parent_content is not None:
         previous = parse_query_definition(context.parent_content, path=context.path)
-        predecessor = AcceptedQueryDefinitionV1(
+        predecessor = AcceptedQueryDefinition(
             path=context.path,
             query=previous,
             artifact_digest=query_definition_digest(previous).tagged,
@@ -2263,10 +2261,10 @@ def _query_definition_member(context: _MemberContext) -> _MemberVerdict:
 
 def _provider_member(context: _MemberContext) -> _MemberVerdict:
     provider = parse_provider(context.content, path=context.path)
-    predecessor: AcceptedProviderV1 | None = None
+    predecessor: AcceptedProvider | None = None
     if context.parent_content is not None:
         previous = parse_provider(context.parent_content, path=context.path)
-        predecessor = AcceptedProviderV1(
+        predecessor = AcceptedProvider(
             path=context.path,
             provider=previous,
             artifact_digest=provider_digest(previous).tagged,
@@ -2296,10 +2294,10 @@ def _provider_member(context: _MemberContext) -> _MemberVerdict:
 
 def _provider_interface_member(context: _MemberContext) -> _MemberVerdict:
     registration = parse_provider_interface(context.content, path=context.path)
-    predecessor: AcceptedProviderInterfaceRegistrationV1 | None = None
+    predecessor: AcceptedProviderInterfaceRegistration | None = None
     if context.parent_content is not None:
         previous = parse_provider_interface(context.parent_content, path=context.path)
-        predecessor = AcceptedProviderInterfaceRegistrationV1(
+        predecessor = AcceptedProviderInterfaceRegistration(
             path=context.path,
             registration=previous,
             artifact_digest=provider_interface_digest(previous).tagged,
@@ -2329,10 +2327,10 @@ def _provider_interface_member(context: _MemberContext) -> _MemberVerdict:
 
 def _acquisition_policy_member(context: _MemberContext) -> _MemberVerdict:
     policy = parse_acquisition_policy(context.content, path=context.path)
-    predecessor: AcceptedSourceAcquisitionPolicyV1 | None = None
+    predecessor: AcceptedSourceAcquisitionPolicy | None = None
     if context.parent_content is not None:
         previous = parse_acquisition_policy(context.parent_content, path=context.path)
-        predecessor = AcceptedSourceAcquisitionPolicyV1(
+        predecessor = AcceptedSourceAcquisitionPolicy(
             path=context.path,
             policy=previous,
             artifact_digest=acquisition_policy_digest(previous).tagged,
@@ -2372,15 +2370,15 @@ def _procedure_mandate_member(context: _MemberContext) -> _MemberVerdict:
                 ),
             )
         )
-    predecessor: AcceptedProcedureMandateV1 | None = None
+    predecessor: AcceptedProcedureMandate | None = None
     if context.parent_content is not None:
         previous = parse_procedure_mandate_any(context.parent_content, path=context.path)
-        predecessor = AcceptedProcedureMandateV1(
+        predecessor = AcceptedProcedureMandate(
             path=context.path,
             mandate=previous,
             artifact_digest=procedure_mandate_digest(previous).tagged,
         )
-    if isinstance(mandate, ProcedureMandateV2):
+    if isinstance(mandate, ProcedureMandate):
         law = evaluate_procedure_mandate_v2_law(
             mandate,
             path=context.path,
@@ -2390,7 +2388,7 @@ def _procedure_mandate_member(context: _MemberContext) -> _MemberVerdict:
             condition_query=_condition_query(context, mandate),
         )
     else:
-        if predecessor is not None and isinstance(predecessor.mandate, ProcedureMandateV2):
+        if predecessor is not None and isinstance(predecessor.mandate, ProcedureMandate):
             return _MemberVerdict(
                 diagnostics=(
                     _diagnostic(
@@ -2425,17 +2423,17 @@ def _procedure_mandate_member(context: _MemberContext) -> _MemberVerdict:
 
 
 def _scoped_claim_types(
-    context: _MemberContext, mandate: ProcedureMandateV2
-) -> dict[ArtifactIdentity, ScopedClaimTypeV1]:
+    context: _MemberContext, mandate: ProcedureMandate
+) -> dict[ArtifactIdentity, ScopedClaimType]:
     """The candidate-state ClaimTypes a settle scope pins, reduced to what its law reads."""
 
-    scoped: dict[ArtifactIdentity, ScopedClaimTypeV1] = {}
+    scoped: dict[ArtifactIdentity, ScopedClaimType] = {}
     for item in mandate.scope:
         accepted = context.resolved.claim_types.get(item.claim_type.target.qualified)
         if accepted is None:
             continue
         claim_type = accepted.claim_type
-        scoped[item.claim_type.target] = ScopedClaimTypeV1(
+        scoped[item.claim_type.target] = ScopedClaimType(
             identity=claim_type.identity,
             artifact_digest=accepted.artifact_digest,
             object_kind=claim_type.object_kind,
@@ -2446,8 +2444,8 @@ def _scoped_claim_types(
 
 
 def _condition_query(
-    context: _MemberContext, mandate: ProcedureMandateV2
-) -> AcceptedQueryDefinitionV1 | None:
+    context: _MemberContext, mandate: ProcedureMandate
+) -> AcceptedQueryDefinition | None:
     """The candidate-state query a settle condition pins, or None when it is absent."""
 
     from cruxible_client.contracts.query.definitions import (
@@ -2462,7 +2460,7 @@ def _condition_query(
     if content is None:
         return None
     query = parse_query_definition(content, path=path)
-    return AcceptedQueryDefinitionV1(
+    return AcceptedQueryDefinition(
         path=path, query=query, artifact_digest=query_definition_digest(query).tagged
     )
 
@@ -2717,14 +2715,14 @@ def _capture_contract_dependents(
 
             if successor_digest is None:
                 return False
-            if isinstance(rule, ClaimEvidenceAdmissionRuleV3):
+            if isinstance(rule, ClaimEvidenceAdmissionRule):
                 return any(item.target.qualified == identity for item in rule.capture_contracts)
             return successor_digest in getattr(rule, "capture_contract_digests", ())
 
         for rule in rules:
             names_moving = (
                 any(item.target.qualified == identity for item in rule.capture_contracts)
-                if isinstance(rule, ClaimEvidenceAdmissionRuleV3)
+                if isinstance(rule, ClaimEvidenceAdmissionRule)
                 else previous_digest in rule.capture_contract_digests
             )
             if not names_moving:
@@ -2747,7 +2745,7 @@ def _capture_contract_dependents(
         window = resolution.window
         if (
             resolution.lifecycle.state == "live"
-            and isinstance(window, CaptureEventWindowV1)
+            and isinstance(window, CaptureEventWindow)
             and window.event.capture_contract_identity.qualified == identity
             and window.event.capture_contract_digest == previous_digest
         ):
@@ -3695,13 +3693,13 @@ def _resolved_artifacts(
         ),
         rows(
             "provider",
-            lambda path, content, digest: AcceptedProviderV1(
+            lambda path, content, digest: AcceptedProvider(
                 path=path, provider=parse_provider(content, path=path), artifact_digest=digest
             ),
         ),
         rows(
             "provider-interface",
-            lambda path, content, digest: AcceptedProviderInterfaceRegistrationV1(
+            lambda path, content, digest: AcceptedProviderInterfaceRegistration(
                 path=path,
                 registration=parse_provider_interface(content, path=path),
                 artifact_digest=digest,
@@ -3709,7 +3707,7 @@ def _resolved_artifacts(
         ),
         rows(
             "procedure",
-            lambda path, content, digest: AcceptedProcedureV1(
+            lambda path, content, digest: AcceptedProcedure(
                 path=path, procedure=parse_procedure(content, path=path), artifact_digest=digest
             ),
         ),
@@ -3720,13 +3718,13 @@ def _resolved_artifacts(
         ),
         rows(
             "line",
-            lambda path, content, digest: AcceptedLineSpecV1(
+            lambda path, content, digest: AcceptedLineSpec(
                 path=path, line=parse_line_spec(content, path=path), artifact_digest=digest
             ),
         ),
         rows(
             "trigger",
-            lambda path, content, digest: AcceptedTriggerV1(
+            lambda path, content, digest: AcceptedTrigger(
                 path=path, trigger=parse_trigger(content, path=path), artifact_digest=digest
             ),
         ),
@@ -3845,11 +3843,11 @@ def _evaluate_scoped_members(
     actor_id: str | None,
     rebased: bool,
     wire_version: CandidateWireVersion,
-    claim_type_expansions: tuple[ClaimTypeExpansionEvidenceV1, ...],
+    claim_type_expansions: tuple[ClaimTypeExpansionEvidence, ...],
     promotion_verifier: ExhaustPromotionVerifierProtocol | None,
     producer_receipt_resolver: ProducerReceiptResolverProtocol | None,
     query_facts_provider: ClaimQueryFactsProvider | None,
-    replay_claim_admission_accounts: tuple[ClaimAdmissionEvaluationAccountV1, ...] | None,
+    replay_claim_admission_accounts: tuple[ClaimAdmissionEvaluationAccount, ...] | None,
     acceptance_laws: AcceptanceLawRegistry,
     principal_registry_provider: Callable[[AcceptedProjectionCoordinate], PrincipalRegistrySnapshot]
     | None,
@@ -4000,7 +3998,7 @@ def _evaluate_scoped_members(
     claim_admission_by_path: dict[str, tuple[dict[str, object], ...]] = {}
     claim_admission_digests_by_path: dict[str, tuple[str, ...]] = {}
     claim_admission_query_digests_by_path: dict[str, tuple[str, ...]] = {}
-    claim_admission_accounts: tuple[ClaimAdmissionEvaluationAccountV1, ...] = ()
+    claim_admission_accounts: tuple[ClaimAdmissionEvaluationAccount, ...] = ()
     diagnostics: list[CompilerDiagnostic] = []
     for path in scope:
         parent_content = current_tree.get(path)
@@ -4009,7 +4007,7 @@ def _evaluate_scoped_members(
             continue
         previous_claim = parse_claim(parent_content, path=path)
         candidate_claim = parse_claim(candidate_content, path=path)
-        if not isinstance(candidate_claim, ClaimArtifactV3):
+        if not isinstance(candidate_claim, ClaimArtifact):
             continue
         for previous_pin, candidate_pin in claim_retirement_pin_digest_updates(
             candidate_claim,
@@ -4246,7 +4244,7 @@ def _multi_member_evidence(
     closure: ClosureEvaluationV2 | ClosureEvaluationV3,
     current: AcceptedProjectionCoordinate,
     timestamp: str,
-) -> tuple[tuple[CandidateMemberLawEvidenceV2, ...], tuple[MemberLawEvaluationV2, ...]]:
+) -> tuple[tuple[CandidateMemberLawEvidence, ...], tuple[MemberLawEvaluation, ...]]:
     """Render what the member laws returned as the member/law evidence pair.
 
     The evidence shape is the same on both sides of the succession -- only the
@@ -4254,16 +4252,16 @@ def _multi_member_evidence(
     it is rendered once and both record versions carry the identical bytes.
     """
 
-    law_evidence: list[MemberLawEvaluationV2] = []
-    members: list[CandidateMemberLawEvidenceV2] = []
+    law_evidence: list[MemberLawEvaluation] = []
+    members: list[CandidateMemberLawEvidence] = []
     for item in accepted:
         proofs = closure.proofs_for(item.path)
-        evidence = MemberLawEvaluationV2(
+        evidence = MemberLawEvaluation(
             path=item.path,
             law_identifier=item.law_identifier,
             law_digest=item.law_digest,
             evaluation_time=timestamp,
-            evaluation_coordinate=LawEvaluationCoordinateV1(
+            evaluation_coordinate=LawEvaluationCoordinate(
                 git_oid=current.git_oid,
                 semantic_root=current.semantic_root,
                 generation_root=current.generation_root,
@@ -4281,7 +4279,7 @@ def _multi_member_evidence(
             retired=item.retired,
         )
         members.append(
-            CandidateMemberLawEvidenceV2(
+            CandidateMemberLawEvidence(
                 path=item.path,
                 artifact_kind=item.artifact_kind,
                 disposition=disposition,
@@ -4332,10 +4330,10 @@ def _candidate_record_v3(
     manifest_root_value: str,
     timestamp: str,
     approval_requirements: tuple[ApprovalRequirement, ...],
-) -> CandidateRecordV3:
+) -> CandidateRecord:
     """Assemble the candidate this build produces: merkle root, edge root."""
 
-    semantic_candidate = SemanticCandidateV2(
+    semantic_candidate = SemanticCandidate(
         parent_semantic_root=current.semantic_root,
         candidate_manifest_root=manifest_root_value,
         semantic_diff_digest=diff_digest.tagged,
@@ -4348,13 +4346,13 @@ def _candidate_record_v3(
         current=current,
         timestamp=timestamp,
     )
-    return CandidateRecordV3(
+    return CandidateRecord(
         candidate=semantic_candidate,
         candidate_digest=candidate_digest(semantic_candidate).tagged,
         required_tier=_aggregate_tier([item.required_tier for item in accepted]),
         approval_requirements=approval_requirements,
         activation_policy=_aggregate_activation([item.activation_policy for item in accepted]),
-        closure_proof=ClosureProofV3(
+        closure_proof=ClosureProof(
             paths=scope,
             dependency_edge_root=closure.dependency_edge_root,
             member_evidence_digest=candidate_member_evidence_digest(members),
@@ -4385,7 +4383,7 @@ def _candidate_record_v2(
     be compared loosely.
     """
 
-    semantic_candidate = SemanticCandidate(
+    semantic_candidate = SemanticCandidateV1(
         parent_semantic_root=current.semantic_root,
         candidate_manifest_root=manifest_root_value,
         semantic_diff_digest=diff_digest.tagged,
@@ -4435,7 +4433,7 @@ def _candidate_record_v1(
     manifest_root_value: str,
     timestamp: str,
     approval_requirements: tuple[ApprovalRequirement, ...],
-) -> CandidateRecord:
+) -> CandidateRecordV1:
     """Reproduce the candidate an accepted v1 generation was judged against.
 
     A v1 candidate is always one member of one of three kinds, records that
@@ -4457,14 +4455,14 @@ def _candidate_record_v1(
         disposition = (
             "replacement" if item.predecessor_artifact_digest is None else "hand-authored-successor"
         )
-    semantic_candidate = SemanticCandidate(
+    semantic_candidate = SemanticCandidateV1(
         parent_semantic_root=current.semantic_root,
         candidate_manifest_root=manifest_root_value,
         semantic_diff_digest=diff_digest.tagged,
         scope=scope,
         timestamp=timestamp,
     )
-    return CandidateRecord(
+    return CandidateRecordV1(
         candidate=semantic_candidate,
         candidate_digest=candidate_digest(semantic_candidate).tagged,
         required_tier=item.required_tier,
@@ -4496,13 +4494,13 @@ def evaluate_proposal_tree(
     timestamp: str,
     rebased: bool,
     actor_id: str | None = None,
-    claim_type_expansions: tuple[ClaimTypeExpansionEvidenceV1, ...] = (),
+    claim_type_expansions: tuple[ClaimTypeExpansionEvidence, ...] = (),
     promotion_verifier: ExhaustPromotionVerifierProtocol | None = None,
     producer_receipt_resolver: ProducerReceiptResolverProtocol | None = None,
     parent_state: EvaluatedTreeState | None = None,
     wire_version: CandidateWireVersion = PRODUCED_CANDIDATE_VERSION,
     query_facts_provider: ClaimQueryFactsProvider | None = None,
-    replay_claim_admission_accounts: tuple[ClaimAdmissionEvaluationAccountV1, ...] | None = None,
+    replay_claim_admission_accounts: tuple[ClaimAdmissionEvaluationAccount, ...] | None = None,
     acceptance_laws: AcceptanceLawRegistry = PLAYBILL_ACCEPTANCE_LAWS,
     historical_law_coordinates: Mapping[str, tuple[str, str]] | None = None,
     candidate_card_renderer_digest: str | None = None,
@@ -4788,9 +4786,9 @@ class ProposalService:
         ]
         | None,
         prepared: PreparedEvaluationScope | None,
-        settle_submission: ProposalSettleSubmissionV1 | None,
+        settle_submission: ProposalSettleSubmission | None,
         expected_candidate: tuple[str, str] | None,
-        readmits: ProposalReadmissionLinkV1 | None,
+        readmits: ProposalReadmissionLink | None,
     ) -> _AdmissionEvaluation:
         """Everything a submission does before its first write: one shared path.
 
@@ -4933,8 +4931,8 @@ class ProposalService:
         request: ProposalAdmissionRequest,
         candidate_tree: Mapping[str, bytes],
         timestamp: str,
-        readmits: ProposalReadmissionLinkV1 | None = None,
-    ) -> ProposalPreviewV1:
+        readmits: ProposalReadmissionLink | None = None,
+    ) -> ProposalPreview:
         """Evaluate one candidate tree exactly as `submit` would, and write nothing.
 
         The same admission checks, receive limits, rebase and evaluation run as
@@ -4955,8 +4953,8 @@ class ProposalService:
             readmits=readmits,
         )
         candidate = evaluated.outcome.candidate
-        return ProposalPreviewV1(
-            evaluation=ProposalPreviewEvaluationV1(
+        return ProposalPreview(
+            evaluation=ProposalPreviewEvaluation(
                 verdict="candidate" if candidate is not None else "refused",
                 evaluated_base_oid=evaluated.current.git_oid,
                 rebased=evaluated.is_rebase,
@@ -4978,9 +4976,9 @@ class ProposalService:
         ]
         | None = None,
         prepared: PreparedEvaluationScope | None = None,
-        settle_submission: ProposalSettleSubmissionV1 | None = None,
+        settle_submission: ProposalSettleSubmission | None = None,
         expected_candidate: tuple[str, str] | None = None,
-        readmits: ProposalReadmissionLinkV1 | None = None,
+        readmits: ProposalReadmissionLink | None = None,
         confirm_head: Callable[[str], None] | None = None,
     ) -> ProposalResult:
         """Admit one candidate tree under the actor's ref.
@@ -5221,8 +5219,8 @@ __all__ = [
     "ProposalCandidateMismatchError",
     "ProposalHeadMovedError",
     "ProposalReceiveLimits",
-    "ProposalWithdrawalRecordV1",
-    "ProposalPreviewV1",
+    "ProposalWithdrawalRecord",
+    "ProposalPreview",
     "ProposalResult",
     "ProposalService",
     "ProposalTransportProtocol",

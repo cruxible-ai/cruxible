@@ -28,12 +28,12 @@ from pydantic import (
 )
 
 from cruxible_client.contracts.authoring.models import (
+    AuthoringIntent,
     AuthoringIntentV1,
-    AuthoringIntentV2,
-    AuthoringPayloadV1,
-    AuthoringProgramStampV1,
-    CandidateStatusV1,
-    InsertionExpectationV2,
+    AuthoringPayload,
+    AuthoringProgramStamp,
+    CandidateStatus,
+    InsertionExpectation,
     _AuthoringIntentDecodeContext,
     authoring_program_stamp_operation_key,
 )
@@ -127,7 +127,7 @@ class AuthoringIntentEventV2(_StrictStoreModel):
     sequence: int = Field(ge=0)
     previous_event_digest: str | None
     operation_key: str
-    intent: AuthoringIntentV2
+    intent: AuthoringIntent
     event_digest: str
 
     @field_validator("previous_event_digest", "operation_key", "event_digest")
@@ -148,8 +148,8 @@ class AuthoringIntentEventV3(_StrictStoreModel):
     sequence: int = Field(ge=0)
     previous_event_digest: str | None
     operation_key: str
-    intent: AuthoringIntentV2
-    program_stamp: AuthoringProgramStampV1
+    intent: AuthoringIntent
+    program_stamp: AuthoringProgramStamp
     event_digest: str
 
     @field_validator("previous_event_digest", "operation_key", "event_digest")
@@ -232,7 +232,7 @@ class AuthoringIntentPublicationState:
     """Current publication protocol fields, without authored bodies or preflight."""
 
     intent_id: str
-    insertion_expectations: tuple[InsertionExpectationV2, ...]
+    insertion_expectations: tuple[InsertionExpectation, ...]
 
 
 @dataclass(frozen=True)
@@ -359,11 +359,11 @@ def build_authoring_intent_event(
     previous_event_digest: str | None,
     operation_key: str,
     intent: AuthoringIntentV1,
-    program_stamp: AuthoringProgramStampV1 | None = None,
+    program_stamp: AuthoringProgramStamp | None = None,
 ) -> AuthoringIntentEventAny:
     placeholder = "sha256:" + "0" * 64
     if program_stamp is not None:
-        if not isinstance(intent, AuthoringIntentV2):
+        if not isinstance(intent, AuthoringIntent):
             raise ValueError("program stamps require a v2 AuthoringIntent")
         event_v3 = AuthoringIntentEventV3.model_construct(
             tag="playbill-authoring-intent-event-v3",
@@ -382,7 +382,7 @@ def build_authoring_intent_event(
             program_stamp=program_stamp,
             event_digest=authoring_intent_event_digest(event_v3),
         )
-    if isinstance(intent, AuthoringIntentV2):
+    if isinstance(intent, AuthoringIntent):
         event_v2 = AuthoringIntentEventV2.model_construct(
             tag="playbill-authoring-intent-event-v2",
             sequence=sequence,
@@ -755,7 +755,7 @@ class AuthoringIntentStore:
         operation_key: str,
         transform: Callable[[AuthoringIntentV1], AuthoringIntentV1],
         allow_rebase: bool = False,
-        program_stamp: AuthoringProgramStampV1 | None = None,
+        program_stamp: AuthoringProgramStamp | None = None,
     ) -> AuthoringIntentV1:
         """Append one idempotent state transition under the store-wide CAS lock."""
 
@@ -775,7 +775,7 @@ class AuthoringIntentStore:
         *,
         actor_id: str,
         operation_key: str,
-        status: CandidateStatusV1,
+        status: CandidateStatus,
     ) -> AuthoringIntentV1:
         """Record a finished candidate status, once, however many callers race.
 
@@ -810,7 +810,7 @@ class AuthoringIntentStore:
         operation_key: str,
         transform: Callable[[AuthoringIntentV1], AuthoringIntentV1],
         allow_rebase: bool = False,
-        program_stamp: AuthoringProgramStampV1 | None = None,
+        program_stamp: AuthoringProgramStamp | None = None,
     ) -> AuthoringIntentV1:
         self._recover_creating_directories()
         directory = self.root / intent_id
@@ -842,7 +842,7 @@ class AuthoringIntentStore:
         intent_id: str,
         *,
         actor_id: str,
-        program_stamp: AuthoringProgramStampV1,
+        program_stamp: AuthoringProgramStamp,
     ) -> AuthoringIntentV1:
         current = self.get(intent_id, actor_id=actor_id)
         operation_key = authoring_program_stamp_operation_key(
@@ -1061,7 +1061,7 @@ class AuthoringIntentStore:
         # revisions that differ only in prose share one payload digest and are
         # not one payload. The fingerprint digests the whole payload, so equal
         # fingerprints on one reproduced event mean equal payloads.
-        payloads: dict[tuple[type[object], str], AuthoringPayloadV1] = {
+        payloads: dict[tuple[type[object], str], AuthoringPayload] = {
             (
                 type(item.event.intent.payload),
                 item.event.intent.create_fingerprint,

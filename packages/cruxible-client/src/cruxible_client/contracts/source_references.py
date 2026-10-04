@@ -8,7 +8,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_client.contracts.candidates import SemanticCandidate, candidate_digest
+from cruxible_client.contracts.candidates import SemanticCandidateV1, candidate_digest
 from cruxible_client.contracts.canonical import (
     CandidateDigest,
     GenerationRoot,
@@ -51,14 +51,14 @@ class _StrictSourceModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class ProvisionalSemanticReadCoordinateV1(_StrictSourceModel):
+class ProvisionalSemanticReadCoordinate(_StrictSourceModel):
     """Locator-free candidate read bound to one exact accepted base."""
 
     tag: Literal["playbill-provisional-read-coordinate-v1"] = (
         "playbill-provisional-read-coordinate-v1"
     )
     accepted_base: AcceptedCoordinate
-    candidate: SemanticCandidate
+    candidate: SemanticCandidateV1
     candidate_digest: str
 
     @field_validator("candidate_digest")
@@ -68,7 +68,7 @@ class ProvisionalSemanticReadCoordinateV1(_StrictSourceModel):
         return value
 
     @model_validator(mode="after")
-    def _binding(self) -> "ProvisionalSemanticReadCoordinateV1":
+    def _binding(self) -> "ProvisionalSemanticReadCoordinate":
         if self.candidate.parent_semantic_root != self.accepted_base.semantic_root:
             raise ValueError("provisional read candidate differs from its accepted base")
         if candidate_digest(self.candidate).tagged != self.candidate_digest:
@@ -76,14 +76,14 @@ class ProvisionalSemanticReadCoordinateV1(_StrictSourceModel):
         return self
 
 
-class CandidateGenerationReadCoordinateV1(_StrictSourceModel):
+class CandidateGenerationReadCoordinate(_StrictSourceModel):
     """Locator-free verified prebuild coordinate; still not accepted state."""
 
     tag: Literal["playbill-candidate-generation-read-coordinate-v1"] = (
         "playbill-candidate-generation-read-coordinate-v1"
     )
     accepted_base: AcceptedCoordinate
-    candidate: SemanticCandidate
+    candidate: SemanticCandidateV1
     candidate_digest: str
     generation_git_oid: str
     semantic_root: str
@@ -115,7 +115,7 @@ class CandidateGenerationReadCoordinateV1(_StrictSourceModel):
         return value
 
     @model_validator(mode="after")
-    def _binding(self) -> "CandidateGenerationReadCoordinateV1":
+    def _binding(self) -> "CandidateGenerationReadCoordinate":
         if self.candidate.parent_semantic_root != self.accepted_base.semantic_root:
             raise ValueError("candidate generation differs from its accepted base")
         if candidate_digest(self.candidate).tagged != self.candidate_digest:
@@ -125,16 +125,16 @@ class CandidateGenerationReadCoordinateV1(_StrictSourceModel):
         return self
 
 
-SemanticReadCoordinateV1 = Annotated[
-    AcceptedCoordinate | ProvisionalSemanticReadCoordinateV1 | CandidateGenerationReadCoordinateV1,
+SemanticReadCoordinate = Annotated[
+    AcceptedCoordinate | ProvisionalSemanticReadCoordinate | CandidateGenerationReadCoordinate,
     Field(discriminator="tag"),
 ]
 
 
 def validate_local_read_coordinate(
     coordinate: AcceptedCoordinate
-    | ProvisionalSemanticReadCoordinateV1
-    | CandidateGenerationReadCoordinateV1,
+    | ProvisionalSemanticReadCoordinate
+    | CandidateGenerationReadCoordinate,
     *,
     expected_accepted: AcceptedCoordinate,
 ) -> None:
@@ -145,14 +145,14 @@ def validate_local_read_coordinate(
         raise ValueError("remote or unverified accepted-state coordinate is forbidden in v1")
 
 
-class LedgerSourceReferenceV1(_StrictSourceModel):
+class LedgerSourceReference(_StrictSourceModel):
     tag: Literal["playbill-ledger-source-reference-v1"] = "playbill-ledger-source-reference-v1"
     kind: Literal["ledger"] = "ledger"
     address: SemanticAddress
     coordinate: AcceptedCoordinate
 
 
-class CasSourceReferenceV1(_StrictSourceModel):
+class CasSourceReference(_StrictSourceModel):
     tag: Literal["playbill-cas-source-reference-v1"] = "playbill-cas-source-reference-v1"
     kind: Literal["cas"] = "cas"
     content_digest: str
@@ -204,7 +204,7 @@ def _reject_secret_or_locator(
             )
 
 
-class ExternalSourceReferenceV1(_StrictSourceModel):
+class ExternalSourceReference(_StrictSourceModel):
     tag: Literal["playbill-external-source-reference-v1"] = "playbill-external-source-reference-v1"
     kind: Literal["external"] = "external"
     source_identity: str
@@ -243,8 +243,8 @@ class ExternalSourceReferenceV1(_StrictSourceModel):
         return normalized
 
 
-SourceReferenceV1 = Annotated[
-    LedgerSourceReferenceV1 | CasSourceReferenceV1 | ExternalSourceReferenceV1,
+SourceReference = Annotated[
+    LedgerSourceReference | CasSourceReference | ExternalSourceReference,
     Field(discriminator="kind"),
 ]
 
@@ -269,14 +269,14 @@ class SourceSchemaRegistry:
             raise ValueError("source schema registry contains an invalid identifier")
         return values
 
-    def require(self, reference: ExternalSourceReferenceV1) -> None:
+    def require(self, reference: ExternalSourceReference) -> None:
         if reference.coordinate_type not in self.coordinate_types:
             raise ValueError(f"unregistered external coordinate type: {reference.coordinate_type}")
         if reference.selector_type not in self.selector_types:
             raise ValueError(f"unregistered external selector type: {reference.selector_type}")
 
 
-class EvidenceCommitmentV1(_StrictSourceModel):
+class EvidenceCommitment(_StrictSourceModel):
     tag: Literal["playbill-evidence-commitment-v1"] = "playbill-evidence-commitment-v1"
     digest_kind: Literal[
         "exact_bytes",
@@ -295,15 +295,15 @@ class EvidenceCommitmentV1(_StrictSourceModel):
         return value
 
     @model_validator(mode="after")
-    def _byte_shape(self) -> "EvidenceCommitmentV1":
+    def _byte_shape(self) -> "EvidenceCommitment":
         if (self.byte_length is not None) != (self.digest_kind == "exact_bytes"):
             raise ValueError("byte_length is required exactly for exact_bytes commitments")
         return self
 
 
 def validate_source_commitment(
-    source: LedgerSourceReferenceV1 | CasSourceReferenceV1 | ExternalSourceReferenceV1,
-    commitment: EvidenceCommitmentV1,
+    source: LedgerSourceReference | CasSourceReference | ExternalSourceReference,
+    commitment: EvidenceCommitment,
 ) -> None:
     """Enforce source-kind/materialization/replayability correspondence."""
 
@@ -322,7 +322,7 @@ def validate_source_commitment(
             raise ValueError("no materialization requires attested-only replayability")
 
 
-class CoverageDescriptorV1(_StrictSourceModel):
+class CoverageDescriptor(_StrictSourceModel):
     tag: Literal["playbill-coverage-descriptor-v1"] = "playbill-coverage-descriptor-v1"
     requested_facets: tuple[str, ...] = ()
     available_facets: tuple[str, ...] = ()
@@ -344,12 +344,12 @@ class CoverageDescriptorV1(_StrictSourceModel):
         return value
 
 
-class SourceHandleV1(_StrictSourceModel):
+class SourceHandle(_StrictSourceModel):
     tag: Literal["playbill-source-handle-v1"] = "playbill-source-handle-v1"
     subject: SemanticAddress
-    at: SemanticReadCoordinateV1
-    source: SourceReferenceV1
-    commitment: EvidenceCommitmentV1
+    at: SemanticReadCoordinate
+    source: SourceReference
+    commitment: EvidenceCommitment
     media_type: str | None = None
     exact_spans: tuple[ContentSpan, ...] = ()
     access_class: SourceAccessClass
@@ -380,7 +380,7 @@ class SourceHandleV1(_StrictSourceModel):
         return value
 
     @model_validator(mode="after")
-    def _source_binding(self) -> "SourceHandleV1":
+    def _source_binding(self) -> "SourceHandle":
         validate_source_commitment(self.source, self.commitment)
         if self.exact_spans:
             if self.commitment.digest_kind != "exact_bytes":
@@ -394,7 +394,7 @@ class SourceHandleV1(_StrictSourceModel):
         return self
 
 
-def source_handle_digest(handle: SourceHandleV1) -> str:
+def source_handle_digest(handle: SourceHandle) -> str:
     payload = handle.model_dump(mode="json")
     payload.pop("tag")
     return typed_digest(
@@ -404,7 +404,7 @@ def source_handle_digest(handle: SourceHandleV1) -> str:
     ).tagged
 
 
-class BodyAccessResultV1(_StrictSourceModel):
+class BodyAccessResult(_StrictSourceModel):
     tag: Literal["playbill-body-access-result-v1"] = "playbill-body-access-result-v1"
     status: Literal["available", "unavailable"]
     content_digest: str | None = None
@@ -412,7 +412,7 @@ class BodyAccessResultV1(_StrictSourceModel):
     body_base64: str | None = None
 
     @model_validator(mode="after")
-    def _shape(self) -> "BodyAccessResultV1":
+    def _shape(self) -> "BodyAccessResult":
         if self.status == "available":
             if self.content_digest is None or self.byte_length is None or self.body_base64 is None:
                 raise ValueError("available body access requires digest, length, and bytes")
@@ -430,7 +430,7 @@ class BodyAccessResultV1(_StrictSourceModel):
         return self
 
 
-class SourceDereferenceResultV1(_StrictSourceModel):
+class SourceDereferenceResult(_StrictSourceModel):
     tag: Literal["playbill-source-dereference-result-v1"] = "playbill-source-dereference-result-v1"
     source_handle_digest: str
     status: Literal["verified", "drifted", "attested_only", "unavailable", "denied"]
@@ -438,8 +438,8 @@ class SourceDereferenceResultV1(_StrictSourceModel):
     observed_commitment_digest: str | None = None
     material_kind: Literal["bytes", "canonical_value", "query_result", "metadata_only"]
     canonical_material: object | None = None
-    body_access: BodyAccessResultV1 | None = None
-    coverage: CoverageDescriptorV1
+    body_access: BodyAccessResult | None = None
+    coverage: CoverageDescriptor
 
     @field_validator("source_handle_digest", "observed_commitment_digest")
     @classmethod
@@ -454,7 +454,7 @@ class SourceDereferenceResultV1(_StrictSourceModel):
         return None if value is None else normalize_canonical(value)
 
     @model_validator(mode="after")
-    def _status_shape(self) -> "SourceDereferenceResultV1":
+    def _status_shape(self) -> "SourceDereferenceResult":
         if self.status == "verified" and not self.commitment_verified:
             raise ValueError("verified dereference must reproduce the commitment")
         if self.status in {"attested_only", "unavailable", "denied"}:
@@ -467,28 +467,28 @@ class SourceDereferenceResultV1(_StrictSourceModel):
         return self
 
 
-class OpenSourceRequestV1(_StrictSourceModel):
+class OpenSourceRequest(_StrictSourceModel):
     tag: Literal["playbill-open-source-request-v1"] = "playbill-open-source-request-v1"
-    source_handle: SourceHandleV1
+    source_handle: SourceHandle
     structural_context_bytes: int = Field(default=0, ge=0)
     resource_budget_bytes: int = Field(ge=0)
 
 
 __all__ = [
     "AttestationCoverage",
-    "BodyAccessResultV1",
-    "CandidateGenerationReadCoordinateV1",
-    "CasSourceReferenceV1",
-    "CoverageDescriptorV1",
-    "EvidenceCommitmentV1",
-    "ExternalSourceReferenceV1",
-    "LedgerSourceReferenceV1",
-    "OpenSourceRequestV1",
-    "ProvisionalSemanticReadCoordinateV1",
-    "SemanticReadCoordinateV1",
-    "SourceDereferenceResultV1",
-    "SourceHandleV1",
-    "SourceReferenceV1",
+    "BodyAccessResult",
+    "CandidateGenerationReadCoordinate",
+    "CasSourceReference",
+    "CoverageDescriptor",
+    "EvidenceCommitment",
+    "ExternalSourceReference",
+    "LedgerSourceReference",
+    "OpenSourceRequest",
+    "ProvisionalSemanticReadCoordinate",
+    "SemanticReadCoordinate",
+    "SourceDereferenceResult",
+    "SourceHandle",
+    "SourceReference",
     "SourceSchemaRegistry",
     "source_handle_digest",
     "validate_local_read_coordinate",

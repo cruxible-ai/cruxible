@@ -7,7 +7,7 @@ import pytest
 
 from cruxible_client import Playbill
 from cruxible_client.authoring.world import WorldStructureError
-from cruxible_client.contracts.claim_reads import ClaimReadBatchResultV1
+from cruxible_client.contracts.claim_reads import ClaimReadBatchResult
 from tests.test_client.test_playbill_sdk_world import (
     _COORDINATE,
     _MOVED_COORDINATE,
@@ -39,7 +39,7 @@ def install(client: _WorldClient, monkeypatch, *, paged=False, invalid=False):
             _instance_id, "Claim:CLM-" + ("8" if request.cursor else "9") * 32
         )
         client.claim_reads.pop()  # fixture construction is not a transport request
-        return ClaimReadBatchResultV1(
+        return ClaimReadBatchResult(
             coordinate=_MOVED_COORDINATE if invalid else _COORDINATE,
             claims=(view,),
             truncated=paged and request.cursor is None,
@@ -104,7 +104,7 @@ def test_prefetch_preserves_json_suffix_in_bare_subject_id(connection, monkeypat
 
     def empty(_instance_id, *, request):
         captured.append(request)
-        return ClaimReadBatchResultV1(coordinate=_COORDINATE, claims=())
+        return ClaimReadBatchResult(coordinate=_COORDINATE, claims=())
 
     monkeypatch.setattr(client, "read_playbill_claim_batch", empty, raising=False)
     world.prefetch(subjects=["sec.package/report.json"])

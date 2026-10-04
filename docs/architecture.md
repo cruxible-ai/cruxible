@@ -78,7 +78,7 @@ small canonical envelope is governed.
 Claims and Procedures are the target semantic families:
 
 - a Claim governs a typed proposition about one or more subjects;
-- a ClaimAttestation records support, contradiction, or uncertainty without
+- a ClaimAttestationV1 records support, contradiction, or uncertainty without
   silently changing the Claim;
 - a Procedure governs a deterministic, bounded way of acting, including its
   contracts, pins, and track record.

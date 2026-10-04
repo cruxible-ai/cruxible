@@ -4,9 +4,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from cruxible_client.contracts.provider_installation import (
-    PlaybillProviderInstallRequestV1,
-    PlaybillProviderInstallResultV1,
-    ProviderWheelObjectV1,
+    PlaybillProviderInstallRequest,
+    PlaybillProviderInstallResult,
+    ProviderWheelObject,
 )
 
 if TYPE_CHECKING:
@@ -23,21 +23,21 @@ def install_provider_package(
     extras: tuple[str, ...] = (),
     control_domain: str = "operator",
     reverify: bool = False,
-) -> PlaybillProviderInstallResultV1:
+) -> PlaybillProviderInstallResult:
     """Paths are consumed here on the client; the daemon receives only CAS references."""
 
-    def transfer(path: Path) -> ProviderWheelObjectV1:
+    def transfer(path: Path) -> ProviderWheelObject:
         # Validate the filename before uploading any bytes.
-        ProviderWheelObjectV1(filename=path.name, digest="sha256:" + "0" * 64)
+        ProviderWheelObject(filename=path.name, digest="sha256:" + "0" * 64)
         stored = client.store_playbill_body(instance_id, path.read_bytes())
-        return ProviderWheelObjectV1(filename=path.name, digest=stored.digest)
+        return ProviderWheelObject(filename=path.name, digest=stored.digest)
 
     root = transfer(wheel)
     dependencies = tuple(transfer(path) for path in dependency_wheels)
     retained_lock = client.store_playbill_body(instance_id, lock.read_bytes())
     return client.install_playbill_provider(
         instance_id,
-        PlaybillProviderInstallRequestV1(
+        PlaybillProviderInstallRequest(
             wheel=root,
             lock_digest=retained_lock.digest,
             dependencies=dependencies,

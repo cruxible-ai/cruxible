@@ -9,8 +9,8 @@ from typing import get_args
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV1,
-    ProjectionClaimBackingV1,
-    ProjectionMarkerSummaryV1,
+    ProjectionClaimBacking,
+    ProjectionMarkerSummary,
 )
 from cruxible_client.contracts.documents import (
     DocumentAuthority,
@@ -18,7 +18,7 @@ from cruxible_client.contracts.documents import (
     DocumentShell,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.curation.curation_detectors import _block_churn
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.service.authoring.documents import service_propose_playbill_document
@@ -31,13 +31,13 @@ from cruxible_core.service.discovery.curation import (
 )
 from cruxible_core.service.discovery.next import (
     PlaybillNextSourceObservationV3,
-    PlaybillNextWorkspaceObservationV1,
+    PlaybillNextWorkspaceObservation,
 )
 from tests.core_support._knowledge_loop_support import accept_proposal
 from tests.core_support._support import initialize_local
 
 NOW = datetime(2026, 8, 26, 15, 0, tzinfo=timezone.utc)
-ACCESS = CoverageAccessProfileV1(profile_id="test-curation")
+ACCESS = CoverageAccessProfile(profile_id="test-curation")
 
 
 def test_observation_omission_reasons_exhaust_the_closed_wire_vocabulary() -> None:
@@ -86,15 +86,15 @@ def _instance_with_document(tmp_path: Path):  # type: ignore[no-untyped-def]
     return instance
 
 
-def _marker(coordinate: AcceptedCoordinate) -> ProjectionMarkerSummaryV1:
-    return ProjectionMarkerSummaryV1(
+def _marker(coordinate: AcceptedCoordinate) -> ProjectionMarkerSummary:
+    return ProjectionMarkerSummary(
         stamp=ProjectionBlockStampV1(
             source_id="docs.runbook",
             block_id="status",
             declared_generation=1,
             declared_coordinate=coordinate,
             backing=(
-                ProjectionClaimBackingV1(
+                ProjectionClaimBacking(
                     identity=ArtifactIdentity(kind="Claim", name="CLM-" + "a" * 32),
                     statement_digest="sha256:" + "b" * 64,
                 ),
@@ -136,7 +136,7 @@ def test_valid_stamped_v3_observation_persists_once_and_remains_client_observed(
     request = PlaybillCurationListRequestV1(
         evaluation_time=NOW,
         access_profile=ACCESS,
-        workspace_observation=PlaybillNextWorkspaceObservationV1(
+        workspace_observation=PlaybillNextWorkspaceObservation(
             source_observations=(_v3(coordinate),)
         ),
     )
@@ -162,7 +162,7 @@ def test_incomplete_and_unresolved_document_sources_are_coverage_omissions(
     request = PlaybillCurationListRequestV1(
         evaluation_time=NOW,
         access_profile=ACCESS,
-        workspace_observation=PlaybillNextWorkspaceObservationV1(
+        workspace_observation=PlaybillNextWorkspaceObservation(
             source_observations=(
                 _v3(coordinate, complete=False),
                 _v3(coordinate, document_id="missing").model_copy(
@@ -210,7 +210,7 @@ def test_bootstrap_and_malformed_markers_are_explicit_coverage_omissions(
         request=PlaybillCurationListRequestV1(
             evaluation_time=NOW,
             access_profile=ACCESS,
-            workspace_observation=PlaybillNextWorkspaceObservationV1(source_observations=(source,)),
+            workspace_observation=PlaybillNextWorkspaceObservation(source_observations=(source,)),
         ),
         actor_context=_actor(),
     )
@@ -234,7 +234,7 @@ def test_unaccepted_marker_coordinate_is_an_explicit_coverage_omission(
         request=PlaybillCurationListRequestV1(
             evaluation_time=NOW,
             access_profile=ACCESS,
-            workspace_observation=PlaybillNextWorkspaceObservationV1(
+            workspace_observation=PlaybillNextWorkspaceObservation(
                 source_observations=(_v3(unaccepted),)
             ),
         ),

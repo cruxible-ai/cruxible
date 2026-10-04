@@ -12,9 +12,9 @@ from cruxible_client.contracts.write import (
     Change,
     Evidence,
     FileEvidence,
-    PlaybillRetireRequestV1,
-    PlaybillSetRequestV1,
-    PlaybillWriteRequestV1,
+    PlaybillRetireRequest,
+    PlaybillSetRequest,
+    PlaybillWriteRequest,
     RetireChange,
     SelfEvidence,
     SetChange,
@@ -63,7 +63,7 @@ def test_changes_discriminate_on_op_and_evidence_on_kind() -> None:
 )
 def test_malformed_changes_refuse_at_the_schema(change: dict[str, object]) -> None:
     with pytest.raises(ValidationError):
-        PlaybillWriteRequestV1.model_validate({"because": "why", "changes": [change]})
+        PlaybillWriteRequest.model_validate({"because": "why", "changes": [change]})
 
 
 def test_scalar_values_keep_their_types() -> None:
@@ -74,14 +74,14 @@ def test_scalar_values_keep_their_types() -> None:
 
 def test_set_and_retire_are_batches_of_one() -> None:
     lowered = as_write_request(
-        PlaybillSetRequestV1(
+        PlaybillSetRequest(
             because="why", subject="dev.item/a", field="status", value="done", at="0" * 12
         )
     )
     assert lowered.changes == (SetChange(subject="dev.item/a", field="status", value="done"),)
     assert lowered.at == "0" * 12 and lowered.because == "why"
     retired = as_write_request(
-        PlaybillRetireRequestV1(because="gone", target=_CLAIM, reason="was-wrong", dry_run=True)
+        PlaybillRetireRequest(because="gone", target=_CLAIM, reason="was-wrong", dry_run=True)
     )
     assert retired.changes == (RetireChange(target=_CLAIM, reason="was-wrong"),)
     assert retired.dry_run is True
@@ -147,15 +147,15 @@ def test_expect_is_one_value_or_every_value_and_travels_through_the_batch() -> N
     with pytest.raises(ValidationError):
         SetChange(subject="dev.item/a", field="f", value="x", expect={"nested": 1})  # type: ignore[arg-type]
     lowered = as_write_request(
-        PlaybillSetRequestV1(subject="dev.item/a", field="f", value="x", because="y", expect="w")
+        PlaybillSetRequest(subject="dev.item/a", field="f", value="x", because="y", expect="w")
     )
     assert lowered.changes[0].expect == "w"  # type: ignore[union-attr]
-    retired = as_write_request(PlaybillRetireRequestV1(target=_CLAIM, because="y", expect=["w"]))
+    retired = as_write_request(PlaybillRetireRequest(target=_CLAIM, because="y", expect=["w"]))
     assert retired.changes[0].expect == ("w",)  # type: ignore[union-attr]
 
 
 def test_a_write_may_name_its_subject_once() -> None:
-    request = PlaybillWriteRequestV1.model_validate(
+    request = PlaybillWriteRequest.model_validate(
         {
             "because": "x",
             "subject": "dev.item/a",
@@ -170,7 +170,7 @@ def test_a_write_may_name_its_subject_once() -> None:
     target = request.changes[1].target  # type: ignore[union-attr]
     assert isinstance(target, SlotRef) and target.subject is None
     with pytest.raises(ValidationError):
-        PlaybillWriteRequestV1.model_validate(
+        PlaybillWriteRequest.model_validate(
             {"because": "x", "subject": "no-slash", "changes": [{"op": "retire", "target": _CLAIM}]}
         )
 

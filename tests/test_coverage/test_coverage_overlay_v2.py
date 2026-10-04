@@ -13,7 +13,7 @@ from cruxible_core.coverage.contracts import (
     CoverageCommitmentMaterializationCorrupt,
 )
 from cruxible_core.coverage.indexes import (
-    CoverageScanBudgetV1,
+    CoverageScanBudget,
     WorkingOccurrenceOverlayV2,
     WorkingSourceContent,
     build_working_occurrence_overlay,
@@ -70,12 +70,12 @@ def test_route_budget_admission_is_atomic_and_shared_fallback_is_not_k_fold() ->
     admitted = build_working_occurrence_overlay(
         (_source(HANDBOOK, content),),
         wanted=((sha256(first), 2, None), (sha256(second), 2, None)),
-        budget=CoverageScanBudgetV1(max_scanned_bytes=fallback_debit),
+        budget=CoverageScanBudget(max_scanned_bytes=fallback_debit),
     )
     refused = build_working_occurrence_overlay(
         (_source(HANDBOOK, content),),
         wanted=((sha256(first), 2, None), (sha256(second), 2, None)),
-        budget=CoverageScanBudgetV1(max_scanned_bytes=fallback_debit - 1),
+        budget=CoverageScanBudget(max_scanned_bytes=fallback_debit - 1),
     )
 
     assert len(admitted.source_scan_proofs) == 2
@@ -91,12 +91,12 @@ def test_needle_route_debits_the_whole_pair_before_admitting_its_proof() -> None
     admitted = build_working_occurrence_overlay(
         (_source(HANDBOOK, content),),
         wanted=((sha256(needle), len(needle), needle),),
-        budget=CoverageScanBudgetV1(max_scanned_bytes=pair_debit),
+        budget=CoverageScanBudget(max_scanned_bytes=pair_debit),
     )
     refused = build_working_occurrence_overlay(
         (_source(HANDBOOK, content),),
         wanted=((sha256(needle), len(needle), needle),),
-        budget=CoverageScanBudgetV1(max_scanned_bytes=pair_debit - 1),
+        budget=CoverageScanBudget(max_scanned_bytes=pair_debit - 1),
     )
 
     assert len(admitted.source_scan_proofs) == 1
@@ -113,7 +113,7 @@ def test_one_commitment_can_be_proven_while_another_stays_unobserved_in_one_sour
     overlay = build_working_occurrence_overlay(
         (_source(HANDBOOK, content),),
         wanted=selections,
-        budget=CoverageScanBudgetV1(max_scanned_bytes=one_pair_debit),
+        budget=CoverageScanBudget(max_scanned_bytes=one_pair_debit),
     )
 
     first_digest, first_length, _ = selections[0]
@@ -129,7 +129,7 @@ def test_zero_length_commitments_never_bypass_the_bounded_scanner() -> None:
     overlay = build_working_occurrence_overlay(
         (_source(HANDBOOK, b"six boundaries"),),
         wanted=((empty, 0, b""),),
-        budget=CoverageScanBudgetV1(max_scanned_bytes=0),
+        budget=CoverageScanBudget(max_scanned_bytes=0),
     )
 
     assert overlay.scanned(HANDBOOK, empty, 0) is False
@@ -141,7 +141,7 @@ def test_one_source_completion_survives_another_source_truncation() -> None:
     overlay = build_working_occurrence_overlay(
         (_source(HANDBOOK, b"x"), _source(SCRATCH, b"abc")),
         wanted=((digest, 3, None),),
-        budget=CoverageScanBudgetV1(max_scanned_bytes=0),
+        budget=CoverageScanBudget(max_scanned_bytes=0),
     )
 
     assert overlay.scanned(HANDBOOK, digest, 3) is True

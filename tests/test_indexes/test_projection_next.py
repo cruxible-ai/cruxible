@@ -20,28 +20,28 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.claims import claim_artifact_digest
 from cruxible_client.contracts.declared_blocks import (
-    PlaybillPresentationPolicyV2,
-    PlaybillProjectionAdvisoryPolicyV1,
-    PlaybillProjectionCoverageBindingV1,
-    PlaybillProjectionCoverageObservationV1,
-    ProjectionArtifactBackingV1,
-    ProjectionBackingV1,
+    PlaybillPresentationPolicy,
+    PlaybillProjectionAdvisoryPolicy,
+    PlaybillProjectionCoverageBinding,
+    PlaybillProjectionCoverageObservation,
+    ProjectionArtifactBacking,
+    ProjectionBacking,
     ProjectionBlockStampV1,
-    ProjectionClaimBackingV1,
-    ProjectionMarkerSummaryV1,
-    ProjectionQueryBackingV1,
-    ProjectionResolvedParameterBindingV1,
+    ProjectionClaimBacking,
+    ProjectionMarkerSummary,
+    ProjectionQueryBacking,
+    ProjectionResolvedParameterBinding,
     projection_parameter_digest,
     projection_query_semantic_result_digest,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate as ClientAcceptedCoordinate
 from cruxible_client.contracts.query.grammar import (
-    QueryEntryV1,
-    QueryParameterDeclarationV1,
-    QueryParameterRefV1,
+    QueryEntry,
+    QueryParameterDeclaration,
+    QueryParameterRef,
 )
 from cruxible_client.contracts.source_catalog import ProcedureProjectionCatalogEntry
-from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.indexes.typed_state import ProcedureInventoryRow, TypedStateReader
 from cruxible_core.query.engine import evaluate_claim_query
@@ -53,7 +53,7 @@ from cruxible_core.service.claims.claims import (
 from cruxible_core.service.discovery.next import (
     PlaybillNextRequestV1,
     PlaybillNextSourceObservationV3,
-    PlaybillNextWorkspaceObservationV1,
+    PlaybillNextWorkspaceObservation,
     _procedure_catalog_health,
     service_playbill_next,
 )
@@ -120,10 +120,10 @@ def _registration(source_id: str, block_id: str) -> SimpleNamespace:
     )
 
 
-def _claim_backing(instance: PlaybillInstance, *, stale: bool = False) -> ProjectionClaimBackingV1:
+def _claim_backing(instance: PlaybillInstance, *, stale: bool = False) -> ProjectionClaimBacking:
     facts = build_accepted_query_facts(instance, coordinate=instance.accepted_coordinate())
     row = facts.claims[0]
-    return ProjectionClaimBackingV1(
+    return ProjectionClaimBacking(
         identity=row.accepted.claim.identity,
         statement_digest=("sha256:" + "f" * 64) if stale else row.accepted.statement_digest,
     )
@@ -134,9 +134,9 @@ def _query_backing(
     *,
     name: str = QUERY_NAME,
     at: datetime = NOW,
-    parameters: tuple[ProjectionResolvedParameterBindingV1, ...] = (),
+    parameters: tuple[ProjectionResolvedParameterBinding, ...] = (),
     stale: bool = False,
-) -> ProjectionQueryBackingV1:
+) -> ProjectionQueryBacking:
     coordinate = instance.accepted_coordinate()
     definition = accepted_query_definition(instance, name=name, coordinate=coordinate)
     result = evaluate_claim_query(
@@ -147,7 +147,7 @@ def _query_backing(
         parameters={binding.name: binding.value for binding in parameters},
     )
     assert result.verdict == "completed"
-    return ProjectionQueryBackingV1(
+    return ProjectionQueryBacking(
         identity=definition.query.identity,
         definition_digest=definition.artifact_digest,
         resolved_parameter_bindings=parameters,
@@ -162,7 +162,7 @@ def _query_backing(
 def _request(
     instance: PlaybillInstance,
     *,
-    backing: tuple[ProjectionBackingV1, ...],
+    backing: tuple[ProjectionBacking, ...],
     dirty: bool = False,
     evaluation_time: datetime = NOW,
     permitted: tuple[str, ...] = ("instance", "public"),
@@ -179,7 +179,7 @@ def _request(
         backing=tuple(sorted(backing, key=lambda item: item.identity.qualified.encode())),
         body_digest=BODY,
     )
-    marker = ProjectionMarkerSummaryV1(
+    marker = ProjectionMarkerSummary(
         stamp=stamp,
         observed_body_digest=EDITED_BODY if dirty else BODY,
         start_byte=start_byte,
@@ -188,11 +188,11 @@ def _request(
     return PlaybillNextRequestV1(
         at=coordinate,
         evaluation_time=evaluation_time,
-        access_profile=CoverageAccessProfileV1(
+        access_profile=CoverageAccessProfile(
             profile_id="projection-test",
             permitted_access_classes=permitted,  # type: ignore[arg-type]
         ),
-        workspace_observation=PlaybillNextWorkspaceObservationV1(
+        workspace_observation=PlaybillNextWorkspaceObservation(
             source_observations=(
                 PlaybillNextSourceObservationV3(
                     tag="playbill-next-source-observation-v3",
@@ -249,17 +249,17 @@ def test_unprojected_procedure_advisory_is_coordinate_bound_and_policy_controlle
     public = ClientAcceptedCoordinate.model_validate(
         AcceptedCoordinate.from_internal(coordinate).model_dump(mode="json")
     )
-    base_observation = PlaybillNextWorkspaceObservationV1(
-        presentation_policy=PlaybillPresentationPolicyV2(
-            projection_advisories=PlaybillProjectionAdvisoryPolicyV1(procedure=True)
+    base_observation = PlaybillNextWorkspaceObservation(
+        presentation_policy=PlaybillPresentationPolicy(
+            projection_advisories=PlaybillProjectionAdvisoryPolicy(procedure=True)
         ),
-        projection_coverage=PlaybillProjectionCoverageObservationV1(
+        projection_coverage=PlaybillProjectionCoverageObservation(
             coordinate=public,
             complete_kinds=("Procedure",),
             bindings=(),
         ),
     )
-    profile = CoverageAccessProfileV1(
+    profile = CoverageAccessProfile(
         profile_id="procedure-projection-test",
         permitted_access_classes=("instance",),
     )
@@ -292,11 +292,11 @@ def test_unprojected_procedure_advisory_is_coordinate_bound_and_policy_controlle
 
     projected = base_observation.model_copy(
         update={
-            "projection_coverage": PlaybillProjectionCoverageObservationV1(
+            "projection_coverage": PlaybillProjectionCoverageObservation(
                 coordinate=public,
                 complete_kinds=("Procedure",),
                 bindings=(
-                    PlaybillProjectionCoverageBindingV1(
+                    PlaybillProjectionCoverageBinding(
                         artifact=procedure.procedure.identity,
                         workspace_path="runbooks/procedure.md",
                         evidence_kind="procedure_catalog",
@@ -309,15 +309,15 @@ def test_unprojected_procedure_advisory_is_coordinate_bound_and_policy_controlle
 
     disabled = base_observation.model_copy(
         update={
-            "presentation_policy": PlaybillPresentationPolicyV2(
-                projection_advisories=PlaybillProjectionAdvisoryPolicyV1(procedure=False)
+            "presentation_policy": PlaybillPresentationPolicy(
+                projection_advisories=PlaybillProjectionAdvisoryPolicy(procedure=False)
             )
         }
     )
     assert catalog(disabled).state == "not_required"
     # Off unless a kit or workspace turns it on.
     default = base_observation.model_copy(
-        update={"presentation_policy": PlaybillPresentationPolicyV2()}
+        update={"presentation_policy": PlaybillPresentationPolicy()}
     )
     assert catalog(default).state == "not_required"
 
@@ -358,11 +358,11 @@ def test_a_malformed_presentation_policy_fails_the_projection_advisory_closed(
     public = ClientAcceptedCoordinate.model_validate(
         AcceptedCoordinate.from_internal(before).model_dump(mode="json")
     )
-    observation = PlaybillNextWorkspaceObservationV1(
-        presentation_policy=PlaybillPresentationPolicyV2(
-            projection_advisories=PlaybillProjectionAdvisoryPolicyV1(procedure=True)
+    observation = PlaybillNextWorkspaceObservation(
+        presentation_policy=PlaybillPresentationPolicy(
+            projection_advisories=PlaybillProjectionAdvisoryPolicy(procedure=True)
         ),
-        projection_coverage=PlaybillProjectionCoverageObservationV1(
+        projection_coverage=PlaybillProjectionCoverageObservation(
             coordinate=public,
             complete_kinds=("Procedure",),
             bindings=(),
@@ -370,7 +370,7 @@ def test_a_malformed_presentation_policy_fails_the_projection_advisory_closed(
     )
     request = PlaybillNextRequestV1(
         evaluation_time=NOW,
-        access_profile=CoverageAccessProfileV1(
+        access_profile=CoverageAccessProfile(
             profile_id="presentation-policy-fail-closed",
             permitted_access_classes=("instance",),
         ),
@@ -412,15 +412,15 @@ def test_service_next_coalesces_projection_advice_in_its_own_observed_domain(
     )
     request = PlaybillNextRequestV1(
         evaluation_time=NOW,
-        access_profile=CoverageAccessProfileV1(
+        access_profile=CoverageAccessProfile(
             profile_id="procedure-service-test",
             permitted_access_classes=("instance",),
         ),
-        workspace_observation=PlaybillNextWorkspaceObservationV1(
-            presentation_policy=PlaybillPresentationPolicyV2(
-                projection_advisories=PlaybillProjectionAdvisoryPolicyV1(procedure=True)
+        workspace_observation=PlaybillNextWorkspaceObservation(
+            presentation_policy=PlaybillPresentationPolicy(
+                projection_advisories=PlaybillProjectionAdvisoryPolicy(procedure=True)
             ),
-            projection_coverage=PlaybillProjectionCoverageObservationV1(
+            projection_coverage=PlaybillProjectionCoverageObservation(
                 coordinate=public,
                 complete_kinds=("Procedure",),
                 bindings=(),
@@ -492,15 +492,15 @@ def test_many_unprojected_procedures_coalesce_without_a_cardinality_cap(
 
     request = PlaybillNextRequestV1(
         evaluation_time=NOW,
-        access_profile=CoverageAccessProfileV1(
+        access_profile=CoverageAccessProfile(
             profile_id="many-procedures",
             permitted_access_classes=("instance",),
         ),
-        workspace_observation=PlaybillNextWorkspaceObservationV1(
-            presentation_policy=PlaybillPresentationPolicyV2(
-                projection_advisories=PlaybillProjectionAdvisoryPolicyV1(procedure=True)
+        workspace_observation=PlaybillNextWorkspaceObservation(
+            presentation_policy=PlaybillPresentationPolicy(
+                projection_advisories=PlaybillProjectionAdvisoryPolicy(procedure=True)
             ),
-            projection_coverage=PlaybillProjectionCoverageObservationV1(
+            projection_coverage=PlaybillProjectionCoverageObservation(
                 coordinate=public,
                 complete_kinds=("Procedure",),
                 bindings=(),
@@ -621,7 +621,7 @@ def test_ontology_claim_type_marker_goes_stale_after_claim_type_migration(
     request = _request(
         instance,
         backing=(
-            ProjectionArtifactBackingV1(
+            ProjectionArtifactBacking(
                 identity=ontology_type.identity,
                 artifact_digest=original_digest,
             ),
@@ -675,7 +675,7 @@ def test_missing_backing_does_not_hide_dirty_body(
     accepted_world: PlaybillInstance,
 ) -> None:
     visible = _claim_backing(accepted_world)
-    hidden = ProjectionClaimBackingV1(
+    hidden = ProjectionClaimBacking(
         identity=ArtifactIdentity(kind="Claim", name="CLM-00000000000000000000000000000000"),
         statement_digest="sha256:" + "b" * 64,
     )
@@ -870,13 +870,13 @@ def test_retired_claim_backing_requires_depublication_without_access_disclosure(
     assert _projection_rows(instance, access_hidden) == ()
 
 
-def _claim_type_backing(instance: PlaybillInstance) -> ProjectionArtifactBackingV1:
+def _claim_type_backing(instance: PlaybillInstance) -> ProjectionArtifactBacking:
     """One held member the retirement of a Claim cannot move: an accepted ClaimType."""
 
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     path = next(item for item in sorted(tree) if item.startswith("claim-types/"))
     parsed = parse_claim_type(tree[path], path=path)
-    return ProjectionArtifactBackingV1(
+    return ProjectionArtifactBacking(
         identity=parsed.identity,
         artifact_digest=claim_type_digest(parsed).tagged,
     )
@@ -963,7 +963,7 @@ def test_overturned_claim_backing_requires_depublication(
     )
     activate(instance, owner, proposed)
     overturned = _claim_from_view(service_list_playbill_claims(instance).claims[0])
-    backing = ProjectionClaimBackingV1(
+    backing = ProjectionClaimBacking(
         identity=overturned.identity,
         statement_digest=proposed.statement_digest,
     )
@@ -1031,7 +1031,7 @@ def test_unselected_many_cardinality_backing_is_not_overturned(tmp_path: Path) -
     )
     activate(instance, owner, proposed)
     unselected = _claim_from_view(service_list_playbill_claims(instance).claims[0])
-    backing = ProjectionClaimBackingV1(
+    backing = ProjectionClaimBacking(
         identity=unselected.identity,
         statement_digest=proposed.statement_digest,
     )
@@ -1059,12 +1059,12 @@ def test_query_backing_replays_actual_resolved_parameter_values(tmp_path: Path) 
     instance, owner = seed_claims(tmp_path)
     query = work_item_query("project.one_item").model_copy(
         update={
-            "entry": QueryEntryV1(
+            "entry": QueryEntry(
                 binding="item",
                 subject_kinds=(SUBJECT_KIND,),
-                subject_id=QueryParameterRefV1(parameter="subject"),
+                subject_id=QueryParameterRef(parameter="subject"),
             ),
-            "parameters": (QueryParameterDeclarationV1(name="subject", value_type="string"),),
+            "parameters": (QueryParameterDeclaration(name="subject", value_type="string"),),
         }
     )
     proposal = submit_query_definition_candidate(
@@ -1076,7 +1076,7 @@ def test_query_backing_replays_actual_resolved_parameter_values(tmp_path: Path) 
     )
     accept_proposal(instance, owner, proposal)
     parameters = (
-        ProjectionResolvedParameterBindingV1(name="subject", value_type="string", value="wi-42"),
+        ProjectionResolvedParameterBinding(name="subject", value_type="string", value="wi-42"),
     )
     backing = _query_backing(instance, name=query.identity.name, parameters=parameters)
 
@@ -1085,7 +1085,7 @@ def test_query_backing_replays_actual_resolved_parameter_values(tmp_path: Path) 
     mismatched = backing.model_copy(
         update={
             "resolved_parameter_bindings": (
-                ProjectionResolvedParameterBindingV1(name="subject", value_type="string", value=17),
+                ProjectionResolvedParameterBinding(name="subject", value_type="string", value=17),
             ),
         }
     )
@@ -1182,8 +1182,8 @@ def test_shared_check_query_definition_drift_batch_reuse_and_unchecked_siblings(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from cruxible_client.contracts.authoring.models import PlaybillProjectionCheckRequestV1
-    from cruxible_client.contracts.declared_blocks import ProjectionBlockStampV2
+    from cruxible_client.contracts.authoring.models import PlaybillProjectionCheckRequest
+    from cruxible_client.contracts.declared_blocks import ProjectionBlockStamp
     from cruxible_core.service.authoring import projection_sync
 
     instance, owner = _instance_with_query(tmp_path)
@@ -1192,7 +1192,7 @@ def test_shared_check_query_definition_drift_batch_reuse_and_unchecked_siblings(
     observation = request.workspace_observation
     source = observation.source_observations[0]
     marker = source.marker_summaries[0]
-    stamp = ProjectionBlockStampV2.model_validate(
+    stamp = ProjectionBlockStamp.model_validate(
         {
             **marker.stamp.model_dump(mode="json"),
             "tag": "playbill-projection-stamp-v2",
@@ -1225,7 +1225,7 @@ def test_shared_check_query_definition_drift_batch_reuse_and_unchecked_siblings(
     at = ClientAcceptedCoordinate.from_internal(instance.accepted_coordinate())
     result = projection_sync.service_check_projection_blocks(
         instance,
-        request=PlaybillProjectionCheckRequestV1(
+        request=PlaybillProjectionCheckRequest(
             stamps=(stamp, stamp.model_copy(update={"block_id": "other"})),
             at=at,
             evaluation_time=NOW,
@@ -1272,7 +1272,7 @@ def test_shared_check_query_definition_drift_batch_reuse_and_unchecked_siblings(
     )
     unchecked = projection_sync.service_check_projection_blocks(
         instance,
-        request=PlaybillProjectionCheckRequestV1(stamps=(mixed,), at=at, evaluation_time=NOW),
+        request=PlaybillProjectionCheckRequest(stamps=(mixed,), at=at, evaluation_time=NOW),
     )
     assert {i.status for i in unchecked.results[0].issues} == {"invalid", "unchecked"}
     rows = _projection_rows(instance, observed(stamp))
@@ -1293,7 +1293,7 @@ def test_shared_check_query_definition_drift_batch_reuse_and_unchecked_siblings(
     )
     clipped = projection_sync.service_check_projection_blocks(
         instance,
-        request=PlaybillProjectionCheckRequestV1(stamps=(stamp,), at=at, evaluation_time=NOW),
+        request=PlaybillProjectionCheckRequest(stamps=(stamp,), at=at, evaluation_time=NOW),
     )
     assert clipped.results[0].status == "unchecked"
     assert "truncated" in clipped.results[0].detail
@@ -1302,6 +1302,6 @@ def test_shared_check_query_definition_drift_batch_reuse_and_unchecked_siblings(
     repaired = stamp.model_copy(update={"declared_coordinate": at, "backing": (current_backing,)})
     clean = projection_sync.service_check_projection_blocks(
         instance,
-        request=PlaybillProjectionCheckRequestV1(stamps=(repaired,), at=at, evaluation_time=NOW),
+        request=PlaybillProjectionCheckRequest(stamps=(repaired,), at=at, evaluation_time=NOW),
     )
     assert clean.results[0].status == "current"

@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from cruxible_client.contracts.line_dispatch import LineArmV1, LineTriggerVersionV1
+from cruxible_client.contracts.line_dispatch import LineArm, LineTriggerVersion
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_core.exhaust.backends import LocalJournalBackend
@@ -254,15 +254,15 @@ class LineDispatchStore:
     @staticmethod
     def arm_view(
         data: dict[str, Any], *, pending_automatic: int = 0, pending_explicit: int = 0
-    ) -> LineArmV1:
+    ) -> LineArm:
         stopped = data["stops_at"] is not None and data.get("stop_reason") is not None
-        return LineArmV1(
+        return LineArm(
             arm_id=data["arm_id"],
             line=data["line"],
             line_artifact_digest=data["line_artifact_digest"],
             occurrence_epoch=data["occurrence_epoch"],
             triggers=tuple(
-                LineTriggerVersionV1(trigger=trigger, artifact_digest=digest)
+                LineTriggerVersion(trigger=trigger, artifact_digest=digest)
                 for trigger, digest in sorted(
                     data.get("trigger_pins", {}).items(), key=lambda item: item[0].encode()
                 )

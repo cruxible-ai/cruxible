@@ -30,12 +30,12 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.errors import PlaybillFormatError
-from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
-from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpecV1
+from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
+from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpec
 from cruxible_client.contracts.procedures.models import (
-    ExhaustTapNodeV3,
+    ExhaustTapNode,
+    SourceNode,
     SourceNodeV3,
-    SourceNodeV4,
     StateTapNodeV3,
 )
 from cruxible_client.contracts.projection_extensions import ProjectionFact
@@ -128,8 +128,8 @@ def line_track_record_dimension_key(dimensions: LineTrackRecordDimensionsV1) -> 
 
 
 def line_slot_interface_digest(
-    accepted_line: AcceptedLineSpecV1,
-    accepted_procedure: AcceptedProcedureV1,
+    accepted_line: AcceptedLineSpec,
+    accepted_procedure: AcceptedProcedure,
 ) -> str:
     """Digest the nominal interface surface this LineSpec closed.
 
@@ -164,7 +164,7 @@ def line_slot_interface_digest(
 
 
 def line_declared_inputs(
-    accepted_procedure: AcceptedProcedureV1,
+    accepted_procedure: AcceptedProcedure,
 ) -> tuple[LineDeclaredInputV1, ...]:
     """Return the declared input planes of one accepted Procedure definition."""
 
@@ -172,9 +172,9 @@ def line_declared_inputs(
     for node in accepted_procedure.procedure.definition.nodes:
         if isinstance(node, StateTapNodeV3):
             declared.append(LineDeclaredInputV1(plane="accepted_state", input_name=node.as_))
-        elif isinstance(node, SourceNodeV3 | SourceNodeV4):
+        elif isinstance(node, SourceNodeV3 | SourceNode):
             declared.append(LineDeclaredInputV1(plane="landed_capture", input_name=node.as_))
-        elif isinstance(node, ExhaustTapNodeV3):
+        elif isinstance(node, ExhaustTapNode):
             declared.append(LineDeclaredInputV1(plane="exhaust", input_name=node.as_))
     declared.sort(
         key=lambda item: (_INPUT_PLANES.index(item.plane), item.input_name.encode("utf-8"))
@@ -193,8 +193,8 @@ def line_declared_input_bucket(declared: tuple[LineDeclaredInputV1, ...]) -> str
 
 
 def line_track_record_dimensions(
-    accepted_line: AcceptedLineSpecV1,
-    accepted_procedure: AcceptedProcedureV1,
+    accepted_line: AcceptedLineSpec,
+    accepted_procedure: AcceptedProcedure,
 ) -> LineTrackRecordDimensionsV1:
     """Compute the three separate dimensions of one Line/Procedure binding."""
 
@@ -458,8 +458,8 @@ def _tally(readings: tuple[LineEgressReadingV1, ...]) -> LineEgressTallyV1:
 def build_line_track_record(
     records: tuple[VerifiedExhaustRecordV1, ...],
     *,
-    accepted_line: AcceptedLineSpecV1,
-    accepted_procedure: AcceptedProcedureV1,
+    accepted_line: AcceptedLineSpec,
+    accepted_procedure: AcceptedProcedure,
 ) -> LineTrackRecordV1:
     """Fold one verified exhaust range into one Line's track record.
 
@@ -514,8 +514,8 @@ def build_line_track_record(
 
 
 def line_track_record_reducer_digest(
-    accepted_line: AcceptedLineSpecV1,
-    accepted_procedure: AcceptedProcedureV1,
+    accepted_line: AcceptedLineSpec,
+    accepted_procedure: AcceptedProcedure,
 ) -> str:
     """Address the reducer by the exact LineSpec and implementation it folds."""
 
@@ -535,8 +535,8 @@ class LineTrackRecordReducer:
     def __init__(
         self,
         *,
-        accepted_line: AcceptedLineSpecV1,
-        accepted_procedure: AcceptedProcedureV1,
+        accepted_line: AcceptedLineSpec,
+        accepted_procedure: AcceptedProcedure,
     ) -> None:
         self._line = accepted_line
         self._procedure = accepted_procedure

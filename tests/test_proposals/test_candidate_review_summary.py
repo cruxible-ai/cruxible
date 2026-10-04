@@ -10,8 +10,8 @@ from unittest.mock import patch
 import pytest
 
 from cruxible_client.contracts.candidates import (
-    CandidateRecord,
-    SemanticCandidate,
+    CandidateRecordV1,
+    SemanticCandidateV1,
     candidate_digest,
     render_candidate_record,
 )
@@ -25,14 +25,14 @@ from tests.test_proposals.test_proposal_notes import _submit
 
 def _legacy():
     path = "documents/design.json"
-    candidate = SemanticCandidate(
+    candidate = SemanticCandidateV1(
         parent_semantic_root="sha256:" + "11" * 32,
         candidate_manifest_root="sha256:" + "22" * 32,
         semantic_diff_digest="sha256:" + "33" * 32,
         scope=(path,),
         timestamp="2026-08-11T12:30:00.000000Z",
     )
-    return CandidateRecord(
+    return CandidateRecordV1(
         candidate=candidate,
         candidate_digest=candidate_digest(candidate).tagged,
         required_tier="governed_write",

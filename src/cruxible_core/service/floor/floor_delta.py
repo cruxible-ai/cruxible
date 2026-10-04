@@ -16,8 +16,8 @@ import base64
 
 from cruxible_client.contracts.errors import PlaybillError, ProjectionIntegrityError
 from cruxible_client.contracts.floor import (
-    PlaybillFloorDeltaV1,
-    PlaybillFloorHeadV1,
+    PlaybillFloorDelta,
+    PlaybillFloorHead,
     content_digest,
     floor_manifest_digest,
     seal_floor_delta,
@@ -67,7 +67,7 @@ def service_playbill_floor_delta(
     head: AcceptedCoordinate,
     base_generation: int | None,
     base_renderer: str | None,
-) -> PlaybillFloorDeltaV1:
+) -> PlaybillFloorDelta:
     """The delta from the client's ``base`` floor to the floor at ``head``.
 
     ``kind="delta"`` carries every file whose ``changed_at`` is after the base
@@ -86,7 +86,7 @@ def service_playbill_floor_delta(
     accepted = render.inputs.coordinate
     payload: dict[str, object] = {
         "renderer": render.renderer,
-        "head": PlaybillFloorHeadV1(
+        "head": PlaybillFloorHead(
             git_oid=accepted.git_oid,
             generation=render.generation,
             semantic_root=accepted.semantic_root,

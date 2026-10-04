@@ -25,13 +25,13 @@ from pydantic import ValidationError
 from cruxible_client.authoring.workspace import _projection_marker_observation
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
 from cruxible_client.contracts.authoring.models import (
-    AuthoringExistingClaimDispositionV1,
-    InsertionAnchorWindowV1,
-    InsertionExpectationV2,
-    InsertionTargetV2,
-    PublicationSourceObservationV2,
-    SelfSourceBodyV1,
-    WorkingDigestCoordinateV1,
+    AuthoringExistingClaimDisposition,
+    InsertionAnchorWindow,
+    InsertionExpectation,
+    InsertionTarget,
+    PublicationSourceObservation,
+    SelfSourceBody,
+    WorkingDigestCoordinate,
     insertion_prepare_terminal_operation_v2_key,
     insertion_target_v2_digest,
     publication_block_id,
@@ -57,8 +57,8 @@ from cruxible_core.authoring.insertions import (
 from cruxible_core.authoring.store import AuthoringIntentStore
 from cruxible_core.coverage.adapter import observe_working_source
 from cruxible_core.coverage.contracts import (
-    CoverageAccessProfileV1,
-    LogicalSourceIdentityV1,
+    CoverageAccessProfile,
+    LogicalSourceIdentity,
 )
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -69,9 +69,9 @@ from cruxible_core.service.authoring.documents import (
 from cruxible_core.service.discovery.coverage import service_resolve_playbill_coverage
 from cruxible_core.service.discovery.next import (
     PlaybillNextRequestV1,
+    PlaybillNextSourceObservation,
     PlaybillNextSourceObservationV3,
-    PlaybillNextSourceObservationV4,
-    PlaybillNextWorkspaceObservationV1,
+    PlaybillNextWorkspaceObservation,
     _registered_publication_blocks,
     _registrations_released_by_retirement,
     service_playbill_next,
@@ -180,11 +180,11 @@ def _successor_payload(claim_id: str, *, value: str):  # type: ignore[no-untyped
             "statement": payload.statement.model_copy(
                 update={"object": LiteralClaimObject(value=value)}
             ),
-            "source": SelfSourceBodyV1(
+            "source": SelfSourceBody(
                 content_base64=base64.b64encode(value.encode()).decode("ascii")
             ),
             "existing_claim_dispositions": (
-                AuthoringExistingClaimDispositionV1(
+                AuthoringExistingClaimDisposition(
                     claim_id=claim_id,
                     disposition="not_tested",
                 ),
@@ -202,16 +202,16 @@ def test_terminal_prepare_operation_key_is_a_public_deterministic_helper() -> No
     assert first == second
 
 
-def _target(content: bytes = b"status: \n") -> InsertionTargetV2:
-    return InsertionTargetV2(
+def _target(content: bytes = b"status: \n") -> InsertionTarget:
+    return InsertionTarget(
         source_id="repo.work-items",
-        coordinate=WorkingDigestCoordinateV1(
+        coordinate=WorkingDigestCoordinate(
             source_content_digest=_digest(content),
             source_byte_length=len(content),
         ),
         initial_preimage_digest=_digest(content),
         initial_preimage_byte_length=len(content),
-        selector=InsertionAnchorWindowV1(
+        selector=InsertionAnchorWindow(
             anchor_content_base64=base64.b64encode(content).decode("ascii"),
             anchor_bytes_digest=_digest(content),
             start_byte=0,
@@ -223,8 +223,8 @@ def _target(content: bytes = b"status: \n") -> InsertionTargetV2:
     )
 
 
-def _observation(content: bytes) -> PublicationSourceObservationV2:
-    return PublicationSourceObservationV2(
+def _observation(content: bytes) -> PublicationSourceObservation:
+    return PublicationSourceObservation(
         source_id="repo.work-items",
         content_base64=base64.b64encode(content).decode("ascii"),
         content_digest=_digest(content),
@@ -287,7 +287,7 @@ def _registered_publication(
     preimage: bytes,
     *,
     observed_at: datetime = datetime(2026, 8, 22, 12, tzinfo=UTC),
-) -> tuple[InsertionExpectationV2, bytes]:
+) -> tuple[InsertionExpectation, bytes]:
     """Land the bound registration, and the page bytes, an old instance holds.
 
     The Claim is accepted, so its artifact and statement digests are read back
@@ -337,11 +337,11 @@ def _published_publication_next_request(tmp_path: Path):  # type: ignore[no-unty
     request = PlaybillNextRequestV1(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         evaluation_time=datetime(2026, 8, 23, 12, tzinfo=UTC),
-        access_profile=CoverageAccessProfileV1(
+        access_profile=CoverageAccessProfile(
             profile_id="publication-orphan-test",
             permitted_access_classes=("instance", "public"),
         ),
-        workspace_observation=PlaybillNextWorkspaceObservationV1(
+        workspace_observation=PlaybillNextWorkspaceObservation(
             source_observations=(
                 PlaybillNextSourceObservationV3(
                     tag="playbill-next-source-observation-v3",
@@ -363,7 +363,7 @@ def _published_publication_next_request(tmp_path: Path):  # type: ignore[no-unty
 
 def test_v2_target_and_source_observation_digest_exact_bytes() -> None:
     target = _target()
-    source = PublicationSourceObservationV2(
+    source = PublicationSourceObservation(
         source_id=target.source_id,
         content_base64=base64.b64encode(b"status: ").decode("ascii"),
         content_digest=_digest(b"status: "),
@@ -377,14 +377,14 @@ def test_v2_target_and_source_observation_digest_exact_bytes() -> None:
 
 def test_v2_source_observation_refuses_noncanonical_base64_and_wrong_digest() -> None:
     with pytest.raises(ValidationError, match="canonical base64"):
-        PublicationSourceObservationV2(
+        PublicationSourceObservation(
             source_id="repo.work-items",
             content_base64="c3RhdHVzOiA",
             content_digest=_digest(b"status: "),
             byte_length=8,
         )
     with pytest.raises(ValidationError, match="digest does not reproduce"):
-        PublicationSourceObservationV2(
+        PublicationSourceObservation(
             source_id="repo.work-items",
             content_base64=base64.b64encode(b"status: ").decode("ascii"),
             content_digest=_digest(b"different"),
@@ -477,7 +477,7 @@ def test_registered_publication_resolves_exact_then_drifted_coverage(tmp_path: P
     )
     bound, landed = _registered_publication(instance, coordinator, actor, intent_id, preimage)
     assert bound.preparation is not None
-    source = LogicalSourceIdentityV1(plane="external", identity="repo.work-items")
+    source = LogicalSourceIdentity(plane="external", identity="repo.work-items")
 
     exact = service_resolve_playbill_coverage(
         instance,
@@ -538,7 +538,7 @@ def test_registered_publication_coverage_fold_is_lock_free_and_nonrecovering(
         raise AssertionError("coverage reads must not recover the authoring store")
 
     monkeypatch.setattr(AuthoringIntentStore, "_recover_creating_directories", fail_recovery)
-    source = LogicalSourceIdentityV1(plane="external", identity="repo.work-items")
+    source = LogicalSourceIdentity(plane="external", identity="repo.work-items")
     result = service_resolve_playbill_coverage(
         instance,
         instance_id=instance.descriptor.instance_id,
@@ -558,7 +558,7 @@ def test_registered_publication_only_promotes_its_exact_block_occurrence(
     _bound, landed = _registered_publication(instance, coordinator, actor, intent_id, preimage)
 
     duplicate = PUBLISHED_BODY + landed
-    source = LogicalSourceIdentityV1(plane="external", identity="repo.work-items")
+    source = LogicalSourceIdentity(plane="external", identity="repo.work-items")
     result = service_resolve_playbill_coverage(
         instance,
         instance_id=instance.descriptor.instance_id,
@@ -616,7 +616,7 @@ def test_registered_publication_never_promotes_a_nonmatching_live_claim(
 
     monkeypatch.setattr(instance, "blobs_at", blobs_at)
 
-    source = LogicalSourceIdentityV1(plane="external", identity="repo.work-items")
+    source = LogicalSourceIdentity(plane="external", identity="repo.work-items")
     result = service_resolve_playbill_coverage(
         instance,
         instance_id=instance.descriptor.instance_id,
@@ -736,7 +736,7 @@ def test_bound_publication_marker_corruption_surfaces_exact_blocking_repair(
             marker_notes=marker_notes,
         )
     else:
-        source_observation = PlaybillNextSourceObservationV4(
+        source_observation = PlaybillNextSourceObservation(
             source_id=source_id,
             observed_source_digest=_digest(corrupted),
             byte_length=len(corrupted),
@@ -749,7 +749,7 @@ def test_bound_publication_marker_corruption_surfaces_exact_blocking_repair(
         )
     corrupted_request = request.model_copy(
         update={
-            "workspace_observation": PlaybillNextWorkspaceObservationV1(
+            "workspace_observation": PlaybillNextWorkspaceObservation(
                 source_observations=(source_observation,)
             )
         }
@@ -1051,11 +1051,11 @@ def test_a_retired_backing_releases_the_marker_it_backed(tmp_path: Path) -> None
     request = PlaybillNextRequestV1(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         evaluation_time=datetime(2026, 8, 23, 12, tzinfo=UTC),
-        access_profile=CoverageAccessProfileV1(
+        access_profile=CoverageAccessProfile(
             profile_id="publication-retirement-test",
             permitted_access_classes=("instance", "public"),
         ),
-        workspace_observation=PlaybillNextWorkspaceObservationV1(
+        workspace_observation=PlaybillNextWorkspaceObservation(
             source_observations=(
                 PlaybillNextSourceObservationV3(
                     tag="playbill-next-source-observation-v3",
@@ -1109,11 +1109,11 @@ def test_depublishing_releases_the_registration_and_leaves_the_marker_to_remove(
         request = PlaybillNextRequestV1(
             at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
             evaluation_time=datetime(2026, 8, 23, 12, tzinfo=UTC),
-            access_profile=CoverageAccessProfileV1(
+            access_profile=CoverageAccessProfile(
                 profile_id="depublication-sequence-test",
                 permitted_access_classes=("instance", "public"),
             ),
-            workspace_observation=PlaybillNextWorkspaceObservationV1(
+            workspace_observation=PlaybillNextWorkspaceObservation(
                 source_observations=(
                     PlaybillNextSourceObservationV3(
                         tag="playbill-next-source-observation-v3",

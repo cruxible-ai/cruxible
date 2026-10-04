@@ -7,11 +7,11 @@ from cruxible_client.contracts.captures import (
     capture_contract_digest,
     foreign_source_capture_contract,
 )
-from cruxible_core.claims.claim_type_inputs import ClaimTypeInputV1
+from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord
 
 
-def claim_type_input_example() -> ClaimTypeInputV1:
-    return ClaimTypeInputV1(
+def claim_type_input_example() -> ClaimTypeInputRecord:
+    return ClaimTypeInputRecord(
         predicate="project.work_item.replace_me",
         allowed_subject_kinds=("project.work_item",),
         object_kind="literal",
@@ -34,7 +34,7 @@ def claim_type_input_example() -> ClaimTypeInputV1:
     )
 
 
-def defaulted_claim_type_input_example() -> ClaimTypeInputV1:
+def defaulted_claim_type_input_example() -> ClaimTypeInputRecord:
     example = claim_type_input_example()
     source_id = "repo.replace-me"
     contract_digests = sorted(

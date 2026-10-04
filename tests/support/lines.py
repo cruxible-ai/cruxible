@@ -6,25 +6,25 @@ from typing import Literal
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactRef
 from cruxible_client.contracts.procedures.artifacts import (
-    AcceptedProcedureV1,
-    ProcedureArtifactV2,
+    AcceptedProcedure,
+    ProcedureArtifact,
     procedure_artifact_digest,
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v4
 from cruxible_client.contracts.procedures.line_specs import (
     RUNG_AUTHORITY,
+    LineSpec,
     LineSpecAny,
-    LineSpecV6,
     line_requested_rung,
 )
 from cruxible_client.contracts.procedures.models import ProcedureDefinitionV4
 from cruxible_client.contracts.triggers import (
     TRIGGER_LINE_REF_ROLE,
-    ActionTargetV1,
-    CadenceScheduleV1,
-    LineTargetV1,
-    TriggerScheduleV1,
-    TriggerV1,
+    ActionTarget,
+    CadenceSchedule,
+    LineTarget,
+    Trigger,
+    TriggerSchedule,
     render_trigger,
     trigger_digest,
     trigger_path,
@@ -32,21 +32,21 @@ from cruxible_client.contracts.triggers import (
 )
 
 
-def graph_v4(accepted: AcceptedProcedureV1) -> AcceptedProcedureV1:
+def graph_v4(accepted: AcceptedProcedure) -> AcceptedProcedure:
     """The same Procedure as a graph-v4 definition, which a Line v6 instantiates."""
 
     base = accepted.procedure
     definition = ProcedureDefinitionV4.model_validate(
         {**base.definition.model_dump(mode="python"), "graph_format": 4}
     )
-    procedure = ProcedureArtifactV2.model_validate(
+    procedure = ProcedureArtifact.model_validate(
         {
             **base.model_dump(mode="python"),
             "definition": definition,
             "definition_digest": compute_procedure_definition_digest_v4(definition).tagged,
         }
     )
-    return AcceptedProcedureV1(
+    return AcceptedProcedure(
         path=accepted.path,
         procedure=procedure,
         artifact_digest=procedure_artifact_digest(procedure).tagged,
@@ -64,7 +64,7 @@ _EMBEDDED_TRIGGER_PIN_ROLES = frozenset(
 )
 
 
-def as_v6(line: LineSpecAny) -> LineSpecV6:
+def as_v6(line: LineSpecAny) -> LineSpec:
     """The same Line with its embedded trigger removed: what compiler revision 32 accepts.
 
     Its authority is the verb its rung meant; any trigger pins go with the trigger.
@@ -76,22 +76,22 @@ def as_v6(line: LineSpecAny) -> LineSpecV6:
     value["max_authority"] = RUNG_AUTHORITY[line_requested_rung(line)]
     value.setdefault("provider_implementation_closures", ())
     value["pins"] = tuple(pin for pin in line.pins if pin.role not in _EMBEDDED_TRIGGER_PIN_ROLES)
-    return LineSpecV6.model_validate(value)
+    return LineSpec.model_validate(value)
 
 
 def line_trigger(
     name: str,
     *,
     line: str,
-    schedule: TriggerScheduleV1,
+    schedule: TriggerSchedule,
     lifecycle: ArtifactLifecycle | None = None,
-) -> TriggerV1:
+) -> Trigger:
     """A Trigger that runs the named Line on `schedule`."""
 
-    return TriggerV1(
+    return Trigger(
         identity=ArtifactIdentity(kind="Trigger", name=name),
         schedule=schedule,
-        target=LineTargetV1(
+        target=LineTarget(
             line=ArtifactRef(
                 role=TRIGGER_LINE_REF_ROLE,
                 target=ArtifactIdentity(kind="Line", name=line.removeprefix("Line:")),
@@ -107,34 +107,34 @@ def action_trigger(
     *,
     action: str,
     interval_seconds: int | None = None,
-    schedule: TriggerScheduleV1 | None = None,
+    schedule: TriggerSchedule | None = None,
     lifecycle: ArtifactLifecycle | None = None,
-) -> TriggerV1:
+) -> Trigger:
     """A Trigger that fires one internal action, on a cadence unless given a schedule."""
 
     if schedule is None:
         assert interval_seconds is not None
-        schedule = CadenceScheduleV1(interval_seconds=interval_seconds)
-    return TriggerV1(
+        schedule = CadenceSchedule(interval_seconds=interval_seconds)
+    return Trigger(
         identity=ArtifactIdentity(kind="Trigger", name=name),
         schedule=schedule,
-        target=ActionTargetV1(action=action),
+        target=ActionTarget(action=action),
         pins=trigger_schedule_pins(schedule),
         lifecycle=lifecycle or ArtifactLifecycle(),
     )
 
 
 def successor(
-    trigger: TriggerV1,
+    trigger: Trigger,
     *,
-    schedule: TriggerScheduleV1 | None = None,
-    target: LineTargetV1 | ActionTargetV1 | None = None,
+    schedule: TriggerSchedule | None = None,
+    target: LineTarget | ActionTarget | None = None,
     state: Literal["live", "retired"] = "live",
-) -> TriggerV1:
+) -> Trigger:
     """The next version of a Trigger, pinning its exact predecessor."""
 
     schedule = schedule or trigger.schedule
-    return TriggerV1(
+    return Trigger(
         identity=trigger.identity,
         schedule=schedule,
         target=target or trigger.target,
@@ -143,7 +143,7 @@ def successor(
     )
 
 
-def trigger_members(*triggers: TriggerV1) -> dict[str, bytes]:
+def trigger_members(*triggers: Trigger) -> dict[str, bytes]:
     """Tree members for Triggers, keyed by their ledger paths."""
 
     return {trigger_path(item.identity.name): render_trigger(item) for item in triggers}

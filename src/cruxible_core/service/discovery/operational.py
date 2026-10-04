@@ -35,53 +35,53 @@ from cruxible_client.contracts.operational_reads import (
     LINE_CARD_ARMS,
     LINE_CARD_RUNS,
     OPERATIONAL_CARD_LIST_LIMIT,
-    PlaybillGetCaptureCardV1,
-    PlaybillGetLineArmV1,
-    PlaybillGetLineCardV1,
-    PlaybillGetLineOccurrenceV1,
-    PlaybillGetMandateCardV1,
-    PlaybillGetPredictionWindowV1,
-    PlaybillGetResolutionContractCardV1,
+    PlaybillGetCaptureCard,
+    PlaybillGetLineArm,
+    PlaybillGetLineCard,
+    PlaybillGetLineOccurrence,
+    PlaybillGetMandateCard,
+    PlaybillGetPredictionWindow,
+    PlaybillGetResolutionContractCard,
     PlaybillLineArmState,
-    PlaybillLiveHeadV1,
-    PlaybillLiveViewV1,
+    PlaybillLiveHead,
+    PlaybillLiveView,
     PlaybillMandateState,
-    PlaybillOrientCaptureContractV1,
-    PlaybillOrientCaptureV1,
-    PlaybillOrientLineV1,
-    PlaybillOrientMandateV1,
-    PlaybillOrientPredictionV1,
+    PlaybillOrientCapture,
+    PlaybillOrientCaptureContract,
+    PlaybillOrientLine,
+    PlaybillOrientMandate,
+    PlaybillOrientPrediction,
     capture_handle,
 )
 from cruxible_client.contracts.procedure_mandates import (
+    ProcedureMandate,
     ProcedureMandateV1,
-    ProcedureMandateV2,
     mandate_grant,
 )
 from cruxible_client.contracts.procedures.line_specs import (
-    CadenceTriggerPolicyV1,
+    CadenceTriggerPolicy,
+    CaptureLandingTriggerPolicy,
     CaptureLandingTriggerPolicyV1,
-    CaptureLandingTriggerPolicyV2,
+    LineSpec,
     LineSpecAny,
-    LineSpecV6,
+    WindowCloseTriggerPolicy,
     WindowCloseTriggerPolicyV1,
-    WindowCloseTriggerPolicyV2,
     line_identity_digest,
     line_requested_rung,
 )
 from cruxible_client.contracts.procedures.models import RUNG_AUTHORITY
-from cruxible_client.contracts.procedures.windows import CaptureEventWindowV1, FixedWindowV1
-from cruxible_client.contracts.resolution_contracts import ResolutionContractV1
+from cruxible_client.contracts.procedures.windows import CaptureEventWindow, FixedWindow
+from cruxible_client.contracts.resolution_contracts import ResolutionContract
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_client.contracts.triggers import (
-    CadenceScheduleV1,
-    CaptureLandingScheduleV1,
-    CronScheduleV1,
-    GenerationAcceptedScheduleV1,
+    CadenceSchedule,
+    CaptureLandingSchedule,
+    CronSchedule,
+    GenerationAcceptedSchedule,
+    Trigger,
     TriggerFormatError,
-    TriggerScheduleV1,
-    TriggerV1,
-    WindowCloseScheduleV1,
+    TriggerSchedule,
+    WindowCloseSchedule,
 )
 from cruxible_core.exhaust.line_dispatch import LineDispatchStore, dispatch_root
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
@@ -107,15 +107,15 @@ _LINE_DIGEST = re.compile(r"^sha256:[0-9a-f]{12,64}$")
 RenderGet = Callable[[str, str | None], str]
 
 
-def live_view(instance: PlaybillInstance, fields: tuple[str, ...]) -> PlaybillLiveViewV1:
+def live_view(instance: PlaybillInstance, fields: tuple[str, ...]) -> PlaybillLiveView:
     """The marker an answer carries for the parts of it read live, at the current head."""
 
     head = instance.accepted_coordinate()
     generation = next(
         item.sequence for item in reversed(instance.accepted_history()) if item.oid == head.git_oid
     )
-    return PlaybillLiveViewV1(
-        as_of=PlaybillLiveHeadV1(git_oid=head.git_oid[:12], generation=generation),
+    return PlaybillLiveView(
+        as_of=PlaybillLiveHead(git_oid=head.git_oid[:12], generation=generation),
         fields=fields,
     )
 
@@ -204,7 +204,7 @@ def uncited_capture_present(instance: PlaybillInstance, digest: str) -> bool:
 # -- Lines -----------------------------------------------------------------------------
 
 
-def trigger_summary(line: LineSpecAny, triggers: tuple[TriggerV1, ...]) -> tuple[str, str | None]:
+def trigger_summary(line: LineSpecAny, triggers: tuple[Trigger, ...]) -> tuple[str, str | None]:
     """A Line's trigger kind, and one line saying when it fires.
 
     A v6 Line embeds no trigger: the live Triggers aimed at it say when it
@@ -212,7 +212,7 @@ def trigger_summary(line: LineSpecAny, triggers: tuple[TriggerV1, ...]) -> tuple
     run explicitly. An older Line answers from the trigger it embeds.
     """
 
-    if isinstance(line, LineSpecV6):
+    if isinstance(line, LineSpec):
         if not triggers:
             return "manual", "runs only when run explicitly"
         kinds = sorted({item.schedule.kind for item in triggers})
@@ -221,62 +221,62 @@ def trigger_summary(line: LineSpecAny, triggers: tuple[TriggerV1, ...]) -> tuple
             for item in triggers
         )
     trigger = line.trigger_policy
-    if isinstance(trigger, CadenceTriggerPolicyV1):
+    if isinstance(trigger, CadenceTriggerPolicy):
         return trigger.kind, f"every {trigger.interval_seconds}s"
-    if isinstance(trigger, CaptureLandingTriggerPolicyV2):
+    if isinstance(trigger, CaptureLandingTriggerPolicy):
         return trigger.kind, f"when {trigger.event.capture_contract_identity.qualified} lands"
     if isinstance(trigger, CaptureLandingTriggerPolicyV1):
         return trigger.kind, (
             f"when a Capture of contract {_short(trigger.anchor_capture_contract_digest)} lands"
         )
-    if isinstance(trigger, WindowCloseTriggerPolicyV2):
+    if isinstance(trigger, WindowCloseTriggerPolicy):
         return trigger.kind, "when " + window_summary(trigger.window) + " closes"
     if isinstance(trigger, WindowCloseTriggerPolicyV1):
         return trigger.kind, f"when a {trigger.window_seconds}s window closes"
     return trigger.kind, None
 
 
-def schedule_summary(schedule: TriggerScheduleV1) -> str:
+def schedule_summary(schedule: TriggerSchedule) -> str:
     """One phrase saying when a Trigger schedule fires."""
 
-    if isinstance(schedule, CadenceScheduleV1):
+    if isinstance(schedule, CadenceSchedule):
         return f"every {schedule.interval_seconds}s"
-    if isinstance(schedule, CronScheduleV1):
+    if isinstance(schedule, CronSchedule):
         return f"on cron {schedule.expression} (UTC)"
-    if isinstance(schedule, CaptureLandingScheduleV1):
+    if isinstance(schedule, CaptureLandingSchedule):
         return f"when {schedule.event.capture_contract_identity.qualified} lands"
-    if isinstance(schedule, WindowCloseScheduleV1):
+    if isinstance(schedule, WindowCloseSchedule):
         return "when " + window_summary(schedule.window) + " closes"
-    if isinstance(schedule, GenerationAcceptedScheduleV1):
+    if isinstance(schedule, GenerationAcceptedSchedule):
         return "when a new generation is accepted"
     raise TriggerFormatError(f"unsupported Trigger schedule kind {schedule.kind!r}")
 
 
-def aimed_triggers(projection: Any, lines: tuple[str, ...]) -> dict[str, tuple[TriggerV1, ...]]:
+def aimed_triggers(projection: Any, lines: tuple[str, ...]) -> dict[str, tuple[Trigger, ...]]:
     """The live Triggers aimed at each named Line in a bound projection, in identity order."""
 
     if not lines:
         return {}
     marks = ",".join("?" * len(lines))
-    found: dict[str, list[TriggerV1]] = {}
+    found: dict[str, list[Trigger]] = {}
     for identity, target in projection.typed.connection.execute(
         "SELECT identity,target FROM triggers WHERE target_kind='line' AND lifecycle='live' "
         f"AND target IN ({marks}) ORDER BY identity",
         lines,
     ):
         found.setdefault(str(target), []).append(
-            cast(TriggerV1, projection.typed.source(str(identity)))
+            cast(Trigger, projection.typed.source(str(identity)))
         )
     return {line: tuple(items) for line, items in found.items()}
 
 
 def window_summary(window: object) -> str:
-    if isinstance(window, FixedWindowV1):
+    if isinstance(window, FixedWindow):
         return (
             f"the fixed window from {format_datetime(window.starts_at)} "
             f"({window.duration_seconds}s)"
         )
-    if isinstance(window, CaptureEventWindowV1):
+    if isinstance(window, CaptureEventWindow):
         return (
             f"the {window.duration_seconds}s window after each "
             f"{window.event.capture_contract_identity.qualified} Capture"
@@ -298,11 +298,11 @@ def _line_stall_after() -> timedelta:
 class LineOperations:
     """What the Line dispatch projection holds for one Line, as of ``now``."""
 
-    arms: tuple[PlaybillGetLineArmV1, ...] = ()
+    arms: tuple[PlaybillGetLineArm, ...] = ()
     arms_total: int = 0
     due: int = 0
     waiting: int = 0
-    occurrences: tuple[PlaybillGetLineOccurrenceV1, ...] = ()
+    occurrences: tuple[PlaybillGetLineOccurrence, ...] = ()
 
     @property
     def arm_state(self) -> PlaybillLineArmState | None:
@@ -316,7 +316,7 @@ def _arm(
     *,
     now: datetime,
     viewer: OperationalViewer | None,
-) -> PlaybillGetLineArmV1:
+) -> PlaybillGetLineArm:
     active = data["stops_at"] is None
     automatic = (
         int(
@@ -346,7 +346,7 @@ def _arm(
     else:
         state = "disarmed" if view.stop_reason in {None, "disarmed"} else "stopped"
     visible = may_see_arming(viewer, view.armed_by)
-    return PlaybillGetLineArmV1(
+    return PlaybillGetLineArm(
         arm=view.arm_id,
         state=state,
         principal_kind=arm_principal_kind(data["armed_by"], view.armed_by),
@@ -424,7 +424,7 @@ def _line_operations(
         (stamp, line_digest),
     ).fetchone()
     occurrences = tuple(
-        PlaybillGetLineOccurrenceV1(
+        PlaybillGetLineOccurrence(
             occurrence=str(occurrence_id),
             eligible_at=_instant(str(eligible_at)),
             state="due" if str(eligible_at) <= stamp else "waiting",
@@ -453,7 +453,7 @@ def line_card(
     evaluation_time: datetime,
     render: RenderGet,
     viewer: OperationalViewer | None = None,
-) -> PlaybillGetLineCardV1:
+) -> PlaybillGetLineCard:
     with instance.bind_accepted_projection(coordinate) as projection:
         line = cast(LineSpecAny, projection.typed.source(identity))
         triggers = aimed_triggers(projection, (line.identity.qualified,))
@@ -475,7 +475,7 @@ def line_card(
     )
     next_steps.extend(render(f"ProcedureRun:{row.run}", None) for row in runs[:1])
     next_steps.append(render(line.identity.qualified, "history"))
-    return PlaybillGetLineCardV1(
+    return PlaybillGetLineCard(
         line=line.identity.qualified,
         identity_digest=digest,
         lifecycle=line.lifecycle.state,
@@ -494,7 +494,7 @@ def line_rows(
     coordinate: AcceptedProjectionCoordinate,
     *,
     evaluation_time: datetime,
-) -> tuple[PlaybillOrientLineV1, ...]:
+) -> tuple[PlaybillOrientLine, ...]:
     """Every accepted Line as a compact row, with its live arm state and pending counts."""
 
     with instance.bind_accepted_projection(coordinate) as projection:
@@ -519,11 +519,11 @@ def line_rows(
                     arm_limit=1,
                     occurrence_limit=0,
                 )
-    rows: list[PlaybillOrientLineV1] = []
+    rows: list[PlaybillOrientLine] = []
     for line in lines:
         operations = operations_by_line.get(line.identity.qualified, LineOperations())
         rows.append(
-            PlaybillOrientLineV1(
+            PlaybillOrientLine(
                 line=line.identity.qualified,
                 lifecycle="retired" if line.lifecycle.state == "retired" else "live",
                 procedure=line.procedure.target.qualified,
@@ -565,7 +565,7 @@ def capture_card(
     *,
     render: RenderGet,
     read_capture: Callable[[str], str],
-) -> PlaybillGetCaptureCardV1:
+) -> PlaybillGetCaptureCard:
     """One Capture: cited ones from the accepted index, an uncited one from its envelope."""
 
     with instance.bind_accepted_projection(coordinate) as projection:
@@ -625,7 +625,7 @@ def capture_card(
     status, status_detail = _availability(instance, digest)
     next_steps = [render(claim, None) for claim in citing[:1]]
     next_steps.append(read_capture(digest))
-    return PlaybillGetCaptureCardV1(
+    return PlaybillGetCaptureCard(
         capture=capture_handle(digest),
         digest=digest,
         contract=contract,
@@ -658,7 +658,7 @@ def capture_rows(
     *,
     limit: int,
     after: CaptureKey | None,
-) -> tuple[tuple[PlaybillOrientCaptureV1, ...], CaptureKey | None]:
+) -> tuple[tuple[PlaybillOrientCapture, ...], CaptureKey | None]:
     """Cited Captures, newest observation first, one keyset page and where it stopped."""
 
     with instance.bind_accepted_projection(coordinate) as projection:
@@ -680,7 +680,7 @@ def capture_rows(
             args,
         ).fetchall()
         page = [
-            PlaybillOrientCaptureV1(
+            PlaybillOrientCapture(
                 capture=capture_handle(str(digest)),
                 contract=names.name(str(contract_digest), qualified=True),
                 observed_at=_from_microseconds(int(observed_us)),
@@ -702,10 +702,10 @@ def capture_count(instance: PlaybillInstance, coordinate: AcceptedProjectionCoor
 
 def capture_contract_rows(
     instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate
-) -> tuple[PlaybillOrientCaptureContractV1, ...]:
+) -> tuple[PlaybillOrientCaptureContract, ...]:
     """Every accepted CaptureContract, with its version and how many ClaimTypes admit it."""
 
-    from cruxible_client.contracts.captures import CaptureContractV1
+    from cruxible_client.contracts.captures import CaptureContract
     from cruxible_client.contracts.claim_types import ClaimType
 
     with instance.bind_accepted_projection(coordinate) as projection:
@@ -724,12 +724,12 @@ def capture_contract_rows(
             )
         ]
         admitted = [set(names.admitted(item, qualified=True)) for item in claim_types]
-    rows: list[PlaybillOrientCaptureContractV1] = []
+    rows: list[PlaybillOrientCaptureContract] = []
     for identity, digest, contract in contracts:
-        if not isinstance(contract, CaptureContractV1):
+        if not isinstance(contract, CaptureContract):
             continue
         rows.append(
-            PlaybillOrientCaptureContractV1(
+            PlaybillOrientCaptureContract(
                 contract=identity,
                 version=names.version_number(identity, digest),
                 lifecycle=contract.lifecycle.state,
@@ -773,11 +773,11 @@ def resolution_contract_card(
     *,
     evaluation_time: datetime,
     render: RenderGet,
-) -> PlaybillGetResolutionContractCardV1:
+) -> PlaybillGetResolutionContractCard:
     from cruxible_core.consumers.next.predictions import contract_windows
 
     with instance.bind_accepted_projection(coordinate) as projection:
-        contract = cast(ResolutionContractV1, projection.typed.source(identity))
+        contract = cast(ResolutionContract, projection.typed.source(identity))
         (rule_kind,) = projection.typed.connection.execute(
             "SELECT rule_kind FROM resolution_contracts WHERE identity=?", (identity,)
         ).fetchone()
@@ -791,7 +791,7 @@ def resolution_contract_card(
     if found is not None:
         windows, counts = found
         fields["windows"] = tuple(
-            PlaybillGetPredictionWindowV1(
+            PlaybillGetPredictionWindow(
                 window=window_id,
                 starts_at=window.starts_at,
                 ends_at=window.ends_at,
@@ -800,7 +800,7 @@ def resolution_contract_card(
             for window_id, window, status in windows
         )
         fields["windows_total"] = sum(counts.values())
-    return PlaybillGetResolutionContractCardV1(
+    return PlaybillGetResolutionContractCard(
         contract=identity,
         lifecycle=contract.lifecycle.state,
         hypothesis=claim_id,
@@ -822,14 +822,14 @@ def prediction_rows(
     coordinate: AcceptedProjectionCoordinate,
     *,
     evaluation_time: datetime,
-) -> tuple[PlaybillOrientPredictionV1, ...]:
+) -> tuple[PlaybillOrientPrediction, ...]:
     """Every live ResolutionContract with its bound windows counted by status."""
 
     from cruxible_core.consumers.next.predictions import window_tallies
 
     with instance.bind_accepted_projection(coordinate) as projection:
         contracts = [
-            cast(ResolutionContractV1, projection.typed.source(str(identity)))
+            cast(ResolutionContract, projection.typed.source(str(identity)))
             for (identity,) in projection.typed.connection.execute(
                 "SELECT identity FROM resolution_contracts WHERE lifecycle='live' ORDER BY identity"
             )
@@ -839,11 +839,11 @@ def prediction_rows(
         [item.identity.qualified for item in contracts],
         evaluation_time=evaluation_time,
     )
-    rows: list[PlaybillOrientPredictionV1] = []
+    rows: list[PlaybillOrientPrediction] = []
     for contract in contracts:
         tally = tallies.get(contract.identity.qualified)
         rows.append(
-            PlaybillOrientPredictionV1(
+            PlaybillOrientPrediction(
                 contract=contract.identity.qualified,
                 hypothesis=contract.hypothesis.identity.name,
                 window=contract.window.kind,
@@ -860,11 +860,11 @@ def prediction_rows(
 
 
 def mandate_state(
-    mandate: ProcedureMandateV1 | ProcedureMandateV2, *, now: datetime
+    mandate: ProcedureMandateV1 | ProcedureMandate, *, now: datetime
 ) -> PlaybillMandateState:
     if mandate.lifecycle.state == "retired":
         return "retired"
-    if isinstance(mandate, ProcedureMandateV2) and mandate.suspended:
+    if isinstance(mandate, ProcedureMandate) and mandate.suspended:
         return "suspended"
     if now < mandate.valid_from:
         return "not_yet_valid"
@@ -882,11 +882,11 @@ def mandate_card(
     *,
     evaluation_time: datetime,
     render: RenderGet,
-) -> PlaybillGetMandateCardV1:
+) -> PlaybillGetMandateCard:
     with instance.bind_accepted_projection(coordinate) as projection:
-        mandate = cast(ProcedureMandateV1 | ProcedureMandateV2, projection.typed.source(identity))
+        mandate = cast(ProcedureMandateV1 | ProcedureMandate, projection.typed.source(identity))
     procedure = mandate.procedure.target.qualified
-    return PlaybillGetMandateCardV1(
+    return PlaybillGetMandateCard(
         mandate=identity,
         procedure=procedure,
         grants=mandate_grant(mandate),
@@ -904,16 +904,16 @@ def mandate_rows(
     coordinate: AcceptedProjectionCoordinate,
     *,
     evaluation_time: datetime,
-) -> tuple[PlaybillOrientMandateV1, ...]:
+) -> tuple[PlaybillOrientMandate, ...]:
     with instance.bind_accepted_projection(coordinate) as projection:
         mandates = [
-            cast(ProcedureMandateV1 | ProcedureMandateV2, projection.typed.source(str(identity)))
+            cast(ProcedureMandateV1 | ProcedureMandate, projection.typed.source(str(identity)))
             for (identity,) in projection.typed.connection.execute(
                 "SELECT identity FROM procedure_mandates ORDER BY identity"
             )
         ]
     return tuple(
-        PlaybillOrientMandateV1(
+        PlaybillOrientMandate(
             mandate=mandate.identity.qualified,
             procedure=mandate.procedure.target.qualified,
             grants=mandate_grant(mandate),

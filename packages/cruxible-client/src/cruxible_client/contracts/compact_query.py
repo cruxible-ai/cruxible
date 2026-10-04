@@ -6,9 +6,9 @@
   ``where`` filters, ``select`` columns, one-hop ``follow`` relations (forward
   along the kind's own Subject-valued predicate, or reverse along another
   kind's predicate that points at it) and ``order_by`` keys. It lowers to a
-  ``QueryDefinitionSpecV1`` and runs through the same evaluator as a governed
+  ``QueryDefinitionSpec`` and runs through the same evaluator as a governed
   QueryDefinition.
-- **spec**: a full ``QueryDefinitionSpecV1`` evaluated inline.
+- **spec**: a full ``QueryDefinitionSpec`` evaluated inline.
 - **name**: an accepted named QueryDefinition with its ``params``.
 
 A filter is a union discriminated by its operator key, so the schema fixes the
@@ -32,9 +32,9 @@ from pydantic import BaseModel, ConfigDict, Discriminator, Field, Tag, field_val
 
 from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.query.definitions import QueryDefinitionSpecV1
-from cruxible_client.contracts.query.grammar import QueryBudgetsV1
-from cruxible_client.contracts.query.results import ClaimQueryResultV1, QueryExecutionReceiptV1
+from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
+from cruxible_client.contracts.query.grammar import QueryBudgets
+from cruxible_client.contracts.query.results import ClaimQueryResult, QueryExecutionReceipt
 
 PLAYBILL_QUERY_DEFAULT_LIMIT = 50
 PLAYBILL_QUERY_MAX_LIMIT = 500
@@ -97,55 +97,55 @@ class _QueryFilterBase(BaseModel):
         return getattr(self, self.operator if self.operator != "in" else "in_")
 
 
-class QueryFilterEqV1(_QueryFilterBase):
+class QueryFilterEq(_QueryFilterBase):
     """The value equals this one."""
 
     operator: ClassVar[QueryFilterOperator] = "eq"
     eq: QueryScalar
 
 
-class QueryFilterNeV1(_QueryFilterBase):
+class QueryFilterNe(_QueryFilterBase):
     """No value equals this one; a Subject without the value matches."""
 
     operator: ClassVar[QueryFilterOperator] = "ne"
     ne: QueryScalar
 
 
-class QueryFilterLtV1(_QueryFilterBase):
+class QueryFilterLt(_QueryFilterBase):
     operator: ClassVar[QueryFilterOperator] = "lt"
     lt: QueryScalar
 
 
-class QueryFilterLteV1(_QueryFilterBase):
+class QueryFilterLte(_QueryFilterBase):
     operator: ClassVar[QueryFilterOperator] = "lte"
     lte: QueryScalar
 
 
-class QueryFilterGtV1(_QueryFilterBase):
+class QueryFilterGt(_QueryFilterBase):
     operator: ClassVar[QueryFilterOperator] = "gt"
     gt: QueryScalar
 
 
-class QueryFilterGteV1(_QueryFilterBase):
+class QueryFilterGte(_QueryFilterBase):
     operator: ClassVar[QueryFilterOperator] = "gte"
     gte: QueryScalar
 
 
-class QueryFilterInV1(_QueryFilterBase):
+class QueryFilterIn(_QueryFilterBase):
     """The value is one of these."""
 
     operator: ClassVar[QueryFilterOperator] = "in"
     in_: tuple[QueryScalar, ...] = Field(alias="in", min_length=1, max_length=256)
 
 
-class QueryFilterExistsV1(_QueryFilterBase):
+class QueryFilterExists(_QueryFilterBase):
     """The Subject carries (true) or lacks (false) a live Claim of this predicate."""
 
     operator: ClassVar[QueryFilterOperator] = "exists"
     exists: bool
 
 
-class QueryFilterContainsV1(_QueryFilterBase):
+class QueryFilterContains(_QueryFilterBase):
     """Case-insensitive substring of a string value; compact queries only."""
 
     operator: ClassVar[QueryFilterOperator] = "contains"
@@ -162,17 +162,17 @@ def _filter_operator(value: object) -> str | None:
     return None
 
 
-QueryFilterV1 = Annotated[
+QueryFilter = Annotated[
     Union[
-        Annotated[QueryFilterEqV1, Tag("eq")],
-        Annotated[QueryFilterNeV1, Tag("ne")],
-        Annotated[QueryFilterLtV1, Tag("lt")],
-        Annotated[QueryFilterLteV1, Tag("lte")],
-        Annotated[QueryFilterGtV1, Tag("gt")],
-        Annotated[QueryFilterGteV1, Tag("gte")],
-        Annotated[QueryFilterInV1, Tag("in")],
-        Annotated[QueryFilterExistsV1, Tag("exists")],
-        Annotated[QueryFilterContainsV1, Tag("contains")],
+        Annotated[QueryFilterEq, Tag("eq")],
+        Annotated[QueryFilterNe, Tag("ne")],
+        Annotated[QueryFilterLt, Tag("lt")],
+        Annotated[QueryFilterLte, Tag("lte")],
+        Annotated[QueryFilterGt, Tag("gt")],
+        Annotated[QueryFilterGte, Tag("gte")],
+        Annotated[QueryFilterIn, Tag("in")],
+        Annotated[QueryFilterExists, Tag("exists")],
+        Annotated[QueryFilterContains, Tag("contains")],
     ],
     Discriminator(
         _filter_operator,
@@ -186,19 +186,19 @@ QueryFilterV1 = Annotated[
 ]
 
 _FILTER_MODELS: dict[str, type[_QueryFilterBase]] = {
-    "eq": QueryFilterEqV1,
-    "ne": QueryFilterNeV1,
-    "lt": QueryFilterLtV1,
-    "lte": QueryFilterLteV1,
-    "gt": QueryFilterGtV1,
-    "gte": QueryFilterGteV1,
-    "in": QueryFilterInV1,
-    "exists": QueryFilterExistsV1,
-    "contains": QueryFilterContainsV1,
+    "eq": QueryFilterEq,
+    "ne": QueryFilterNe,
+    "lt": QueryFilterLt,
+    "lte": QueryFilterLte,
+    "gt": QueryFilterGt,
+    "gte": QueryFilterGte,
+    "in": QueryFilterIn,
+    "exists": QueryFilterExists,
+    "contains": QueryFilterContains,
 }
 
 
-def query_filter(field: str, operator: str, value: object) -> QueryFilterV1:
+def query_filter(field: str, operator: str, value: object) -> QueryFilter:
     """Build one typed filter from a field, an operator name and its value."""
 
     model = _FILTER_MODELS.get(operator)
@@ -213,7 +213,7 @@ def _is_forward(value: object) -> bool:
     return value == "forward"
 
 
-class QueryFollowV1(BaseModel):
+class QueryFollow(BaseModel):
     """One hop along a Subject-valued relation Claim, bound under an alias; one row per pair."""
 
     # ``reverse`` follows ANOTHER kind's predicate backwards: ``field`` names it
@@ -254,7 +254,7 @@ def _is_none(value: object) -> bool:
     return value is None
 
 
-class PlaybillQueryRequestV1(BaseModel):
+class PlaybillQueryRequest(BaseModel):
     """One ``query`` call. Exactly one mode: compact (kind/contains), spec, or name.
 
     ``status`` and ``claims`` shape a compact Subject-kind query's cells;
@@ -268,7 +268,7 @@ class PlaybillQueryRequestV1(BaseModel):
         max_length=256,
         description="A Subject kind, or ClaimType / Procedure for definitions.",
     )
-    where: tuple[QueryFilterV1, ...] = Field(default=(), max_length=PLAYBILL_QUERY_MAX_FILTERS)
+    where: tuple[QueryFilter, ...] = Field(default=(), max_length=PLAYBILL_QUERY_MAX_FILTERS)
     contains: str | None = Field(
         default=None,
         min_length=1,
@@ -276,7 +276,7 @@ class PlaybillQueryRequestV1(BaseModel):
         description="Case-insensitive text in any live Claim value; without kind, across kinds.",
     )
     select: tuple[str, ...] = Field(default=(), max_length=PLAYBILL_QUERY_MAX_SELECT)
-    follow: tuple[QueryFollowV1, ...] = Field(default=(), max_length=PLAYBILL_QUERY_MAX_FOLLOWS)
+    follow: tuple[QueryFollow, ...] = Field(default=(), max_length=PLAYBILL_QUERY_MAX_FOLLOWS)
     order_by: tuple[str, ...] = Field(
         default=(),
         max_length=8,
@@ -298,10 +298,10 @@ class PlaybillQueryRequestV1(BaseModel):
     )
     limit: int = Field(default=PLAYBILL_QUERY_DEFAULT_LIMIT, ge=1, le=PLAYBILL_QUERY_MAX_LIMIT)
     cursor: str | None = Field(default=None, max_length=512)
-    spec: QueryDefinitionSpecV1 | None = None
+    spec: QueryDefinitionSpec | None = None
     name: str | None = Field(default=None, max_length=256)
     params: dict[str, QueryParameterValue] | None = None
-    budgets: QueryBudgetsV1 | None = Field(
+    budgets: QueryBudgets | None = Field(
         default=None,
         description="Named query budgets, up to the definition's maximum; default its own.",
     )
@@ -332,7 +332,7 @@ class PlaybillQueryRequestV1(BaseModel):
         return value
 
 
-class PlaybillQueryClaimV1(BaseModel):
+class PlaybillQueryClaim(BaseModel):
     """One Claim behind a cell value: ``rows[i].claims[column]`` lists them.
 
     ``status`` tells a slot's winner (``accepted``) from the Claims resolution
@@ -351,14 +351,14 @@ class PlaybillQueryClaimV1(BaseModel):
     qualifier: str | None = Field(default=None, exclude_if=_is_none)
 
 
-class PlaybillQueryClaimValueV1(PlaybillQueryClaimV1):
+class PlaybillQueryClaimValue(PlaybillQueryClaim):
     """One Claim's value with the Subject and predicate its cell sits in."""
 
     subject: str
     predicate: str
 
 
-class PlaybillQueryColumnV1(BaseModel):
+class PlaybillQueryColumn(BaseModel):
     """One typed column of a query answer."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -370,7 +370,7 @@ class PlaybillQueryColumnV1(BaseModel):
     cardinality: Literal["one", "many"] = "one"
 
 
-class PlaybillQueryReplayV1(BaseModel):
+class PlaybillQueryReplay(BaseModel):
     """A named query's replay receipt: the engine's whole result and its execution receipt.
 
     ``result`` names every row's bindings, the Claims each row read, traversal
@@ -381,11 +381,11 @@ class PlaybillQueryReplayV1(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     definition_path: str
-    result: ClaimQueryResultV1
-    execution: QueryExecutionReceiptV1
+    result: ClaimQueryResult
+    execution: QueryExecutionReceipt
 
 
-class PlaybillQueryReceiptV1(BaseModel):
+class PlaybillQueryReceipt(BaseModel):
     """What ran: the mode, the definition digest, the coordinate and the time.
 
     ``replay`` is present when a named query asked for ``receipt="full"``.
@@ -397,7 +397,7 @@ class PlaybillQueryReceiptV1(BaseModel):
     spec_digest: str
     coordinate: AcceptedCoordinate
     evaluation_time: datetime
-    replay: PlaybillQueryReplayV1 | None = Field(default=None, exclude_if=_is_none)
+    replay: PlaybillQueryReplay | None = Field(default=None, exclude_if=_is_none)
 
 
 class PlaybillQueryResult(BaseModel):
@@ -413,13 +413,13 @@ class PlaybillQueryResult(BaseModel):
 
     tag: Literal["playbill-query-page-v1"] = "playbill-query-page-v1"
     kind: str | None = None
-    columns: tuple[PlaybillQueryColumnV1, ...]
+    columns: tuple[PlaybillQueryColumn, ...]
     rows: tuple[dict[str, Any], ...]
     truncated: bool = False
     next_cursor: str | None = None
     capped: tuple[str, ...] = ()
     notes: tuple[str, ...] = ()
-    receipt: PlaybillQueryReceiptV1
+    receipt: PlaybillQueryReceipt
 
 
 __all__ = [
@@ -429,29 +429,29 @@ __all__ = [
     "PLAYBILL_QUERY_MAX_LIMIT",
     "PLAYBILL_QUERY_MAX_SELECT",
     "QUERY_FILTER_OPERATORS",
-    "PlaybillQueryClaimV1",
-    "PlaybillQueryClaimValueV1",
-    "PlaybillQueryColumnV1",
-    "PlaybillQueryReceiptV1",
-    "PlaybillQueryReplayV1",
-    "PlaybillQueryRequestV1",
+    "PlaybillQueryClaim",
+    "PlaybillQueryClaimValue",
+    "PlaybillQueryColumn",
+    "PlaybillQueryReceipt",
+    "PlaybillQueryReplay",
+    "PlaybillQueryRequest",
     "PlaybillQueryResult",
-    "QueryFilterContainsV1",
-    "QueryFilterEqV1",
-    "QueryFilterExistsV1",
-    "QueryFilterGteV1",
-    "QueryFilterGtV1",
-    "QueryFilterInV1",
-    "QueryFilterLteV1",
-    "QueryFilterLtV1",
-    "QueryFilterNeV1",
+    "QueryFilterContains",
+    "QueryFilterEq",
+    "QueryFilterExists",
+    "QueryFilterGte",
+    "QueryFilterGt",
+    "QueryFilterIn",
+    "QueryFilterLte",
+    "QueryFilterLt",
+    "QueryFilterNe",
     "QueryFilterOperator",
     "QueryCellClaimStatus",
     "QueryClaimStatus",
-    "QueryFilterV1",
+    "QueryFilter",
     "QueryFlag",
     "QueryFollowDirection",
-    "QueryFollowV1",
+    "QueryFollow",
     "QueryMode",
     "QueryReceiptDetail",
     "QueryParameterValue",

@@ -8,12 +8,12 @@ import pytest
 from pydantic import BaseModel
 
 from cruxible_client.contracts.authoring.models import (
+    AuthoringIntentCompileRequest,
     AuthoringIntentCompileRequestV1,
     AuthoringIntentCompileRequestV2,
-    AuthoringIntentCompileRequestV3,
+    AuthoringIntentCreateRequest,
     AuthoringIntentCreateRequestV1,
     AuthoringIntentCreateRequestV2,
-    AuthoringIntentCreateRequestV3,
 )
 from cruxible_core.server import playbill_request_models as server_models
 
@@ -34,10 +34,10 @@ def _request_shape(model: type[BaseModel]) -> dict[str, Any]:
     [
         (AuthoringIntentCreateRequestV1, server_models.PlaybillAuthoringCreateRequest),
         (AuthoringIntentCreateRequestV2, server_models.PlaybillAuthoringCreateRequestV2),
-        (AuthoringIntentCreateRequestV3, server_models.PlaybillAuthoringCreateRequestV3),
+        (AuthoringIntentCreateRequest, server_models.PlaybillAuthoringCreateRequestV3),
         (AuthoringIntentCompileRequestV1, server_models.PlaybillAuthoringCompileRequest),
         (AuthoringIntentCompileRequestV2, server_models.PlaybillAuthoringCompileRequestV2),
-        (AuthoringIntentCompileRequestV3, server_models.PlaybillAuthoringCompileRequestV3),
+        (AuthoringIntentCompileRequest, server_models.PlaybillAuthoringCompileRequestV3),
     ],
     ids=("create-v1", "create-v2", "create-v3", "compile-v1", "compile-v2", "compile-v3"),
 )

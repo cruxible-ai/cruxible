@@ -38,7 +38,7 @@ from cruxible_client.contracts.documents import (
     document_path,
     render_document,
 )
-from cruxible_client.contracts.floor import PlaybillFloorDeltaV1
+from cruxible_client.contracts.floor import PlaybillFloorDelta
 from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeDependentDispositionV1,
     ClaimTypeMigrationRequestV1,
@@ -177,12 +177,12 @@ def _two_locators(instance: PlaybillInstance, workspace: Path) -> None:
 
 
 def _describe_external(original: Any) -> Any:
-    from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
+    from cruxible_client.contracts.source_references import ExternalSourceReference
     from cruxible_core.service.floor.floor_sources import CaptureSource
 
     def describe(contract_digest: str, source: object) -> Any:
         found = original(contract_digest, source)
-        if isinstance(source, ExternalSourceReferenceV1) and isinstance(source.selector, dict):
+        if isinstance(source, ExternalSourceReference) and isinstance(source.selector, dict):
             locator = _EXTERNAL_LOCATORS.get(str(source.selector.get("claim_id")))
             if locator is not None:
                 return CaptureSource(contract_digest, found.source, locator)
@@ -245,7 +245,7 @@ def _coordinate(instance: PlaybillInstance, generation: int) -> AcceptedCoordina
 
 def _delta(
     instance: PlaybillInstance, head: int, base: int | None, renderer: str | None
-) -> PlaybillFloorDeltaV1:
+) -> PlaybillFloorDelta:
     return service_playbill_floor_delta(
         instance,
         head=_coordinate(instance, head),
@@ -316,7 +316,7 @@ def test_a_floor_installed_before_the_notes_moved_reaches_every_head(
             directory = tmp_path / f"sync-{base}-{target}"
             shutil.copytree(world["installed"] / str(base), directory)
 
-            def fetch(generation: int | None, renderer: str | None) -> PlaybillFloorDeltaV1:
+            def fetch(generation: int | None, renderer: str | None) -> PlaybillFloorDelta:
                 return _delta(instance, target, generation, renderer)
 
             sync_floor_directory(fetch, directory)
@@ -329,7 +329,7 @@ def test_deltas_are_the_same_cold_warm_and_coalesced(world: dict[str, Any]) -> N
     renderer = _delta(instance, head, None, None).renderer
     pairs = [(base, target) for target in range(head + 1) for base in range(target + 1)]
 
-    def every() -> list[PlaybillFloorDeltaV1]:
+    def every() -> list[PlaybillFloorDelta]:
         return [_delta(instance, target, base, renderer) for base, target in pairs]
 
     warm = every()

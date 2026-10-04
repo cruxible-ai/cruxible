@@ -8,11 +8,11 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Literal, NoReturn, TypeVar
 
 from cruxible_client.contracts.artifacts import ArtifactPin
-from cruxible_client.contracts.captures import CaptureContractV1, capture_contract_digest
+from cruxible_client.contracts.captures import CaptureContract, capture_contract_digest
 from cruxible_client.contracts.claim_type_structure import ClaimTypeStructure
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest
 from cruxible_client.contracts.procedures.artifacts import (
-    ProcedureArtifactV2,
+    ProcedureArtifact,
     procedure_artifact_digest,
     procedure_owned_contract_digest,
 )
@@ -20,10 +20,10 @@ from cruxible_client.contracts.procedures.contract_schema import ContractSchema
 from cruxible_client.contracts.procedures.graph import analyze_procedure_v4
 from cruxible_client.contracts.procedures.models import (
     TERMINAL_REQUIRED_RUNGS,
-    CaptureEgressNodeV6,
-    InvokeNodeV6,
+    CaptureEgressNode,
+    InvokeNode,
     ProcedureDefinitionV5,
-    ProcedurePinSlotRefV1,
+    ProcedurePinSlotRef,
 )
 from cruxible_client.contracts.procedures.source_compiler import (
     CompiledSource,
@@ -31,7 +31,7 @@ from cruxible_client.contracts.procedures.source_compiler import (
     compile_source,
 )
 from cruxible_client.contracts.procedures.source_program import (
-    ProcedureSourceV1,
+    ProcedureSource,
     SourceBinding,
     SourceClaimType,
     SourceDiagnostic,
@@ -41,7 +41,7 @@ from cruxible_client.contracts.procedures.source_program import (
     SourceSpan,
 )
 from cruxible_client.contracts.procedures.source_requests import (
-    ProcedureSourceRequestV1,
+    ProcedureSourceRequest,
     SourceProcedureSelection,
     SourceProviderSelection,
     SourceQuerySelection,
@@ -52,7 +52,7 @@ from cruxible_client.contracts.provider_interfaces import (
     provider_interface_digest,
 )
 from cruxible_client.contracts.providers import ProviderV2, provider_digest
-from cruxible_client.contracts.query.definitions import QueryDefinitionV1, query_definition_digest
+from cruxible_client.contracts.query.definitions import QueryDefinition, query_definition_digest
 
 if TYPE_CHECKING:
     from cruxible_core.indexes.evaluated_state import EvaluationRows
@@ -80,9 +80,7 @@ def source_ontology_names(text: str) -> frozenset[str]:
     return frozenset(names)
 
 
-def resolve_indexed_source(
-    request: ProcedureSourceRequestV1, rows: EvaluationRows
-) -> CompiledSource:
+def resolve_indexed_source(request: ProcedureSourceRequest, rows: EvaluationRows) -> CompiledSource:
     identities, kinds = rows.claim_type_names(source_ontology_names(request.text))
     sources: dict[str, Any] = {}
 
@@ -100,7 +98,7 @@ def resolve_indexed_source(
 
 
 def resolve_source(
-    request: ProcedureSourceRequestV1,
+    request: ProcedureSourceRequest,
     *,
     lookup: SourceLookup,
     claim_types: Iterable[object],
@@ -138,7 +136,7 @@ def resolve_source(
 
     child_shapes: dict[str, tuple[bool, int]] = {}
 
-    def child_shape(child: ProcedureArtifactV2, active: tuple[str, ...]) -> tuple[bool, int]:
+    def child_shape(child: ProcedureArtifact, active: tuple[str, ...]) -> tuple[bool, int]:
         identity = child.identity.name
         if identity in active:
             fail(
@@ -155,15 +153,15 @@ def resolve_source(
             if not graph.successors[node.node_id] and node.kind != "halt"
         ]
         capture = bool(leaves) and all(
-            isinstance(node, CaptureEgressNodeV6) and isinstance(node.input, str) for node in leaves
+            isinstance(node, CaptureEgressNode) and isinstance(node.input, str) for node in leaves
         )
         required = max(
             (TERMINAL_REQUIRED_RUNGS.get(node.kind, 0) for node in child.definition.nodes),
             default=0,
         )
         for node in child.definition.nodes:
-            if isinstance(node, InvokeNodeV6):
-                nested = require("Procedure", node.procedure.target.name, ProcedureArtifactV2)
+            if isinstance(node, InvokeNode):
+                nested = require("Procedure", node.procedure.target.name, ProcedureArtifact)
                 if procedure_artifact_digest(nested).tagged != node.procedure.artifact_digest:
                     fail(f"{identity} has a child binding that is not current at this coordinate")
                 required = max(required, child_shape(nested, (*active, identity))[1])
@@ -198,16 +196,16 @@ def resolve_source(
                 operation=read_provider_operation_contract(interface.interface_bytes_hex),
             )
         elif isinstance(selected, SourceQuerySelection):
-            query = require("QueryDefinition", selected.name, QueryDefinitionV1)
+            query = require("QueryDefinition", selected.name, QueryDefinition)
             bindings[name] = SourceQueryBinding(
                 name=query.identity.name,
                 version=query_definition_digest(query).tagged,
                 definition=query,
             )
         else:
-            child = require("Procedure", selected.name, ProcedureArtifactV2)
+            child = require("Procedure", selected.name, ProcedureArtifact)
 
-            def contract(pin: ArtifactPin | ProcedurePinSlotRefV1) -> ContractSchema:
+            def contract(pin: ArtifactPin | ProcedurePinSlotRef) -> ContractSchema:
                 if isinstance(pin, ArtifactPin):
                     for contract in child.owned_contracts:
                         if (
@@ -244,7 +242,7 @@ def resolve_source(
             and isinstance(node.value.value, str)
         ):
             name = node.value.value.removeprefix("CaptureContract:")
-            artifact = require("CaptureContract", name, CaptureContractV1)
+            artifact = require("CaptureContract", name, CaptureContract)
             captures[name] = capture_contract_digest(artifact).tagged
     types: dict[str, SourceClaimType] = {}
     kinds: set[str] = set(subject_kinds)
@@ -261,7 +259,7 @@ def resolve_source(
         )
         kinds.update(claim_type.allowed_subject_kinds)
         kinds.update(claim_type.allowed_object_subject_kinds)
-    program = ProcedureSourceV1(
+    program = ProcedureSource(
         rules=rules,
         text=request.text,
         # Retain a portable source coordinate. The caller's filesystem location
@@ -315,7 +313,7 @@ def resolve_source(
 
 
 def verify_source_bindings(
-    procedure: ProcedureArtifactV2,
+    procedure: ProcedureArtifact,
     *,
     lookup: SourceLookup,
     claim_types: Iterable[object],
@@ -327,12 +325,12 @@ def verify_source_bindings(
     This additional acceptance check prevents forged schema metadata from claiming
     to describe an accepted provider, query, ClaimType, or child Procedure.
     """
-    from cruxible_client.contracts.procedures.models import ProcedureDefinitionV6
+    from cruxible_client.contracts.procedures.models import ProcedureDefinition
     from cruxible_client.contracts.procedures.source_program import SourceContract
     from cruxible_client.contracts.procedures.source_requests import SourceSelection
 
     definition = procedure.definition
-    if not isinstance(definition, ProcedureDefinitionV6) or definition.source is None:
+    if not isinstance(definition, ProcedureDefinition) or definition.source is None:
         return
     program = definition.source
     selections: dict[str, SourceSelection] = {}
@@ -347,13 +345,13 @@ def verify_source_bindings(
             selections[name] = SourceProcedureSelection(name=binding.name)
     owned = {c.identity.qualified: c for c in procedure.owned_contracts}
 
-    def root(pin: ArtifactPin | ProcedurePinSlotRefV1) -> SourceContract:
+    def root(pin: ArtifactPin | ProcedurePinSlotRef) -> SourceContract:
         if not isinstance(pin, ArtifactPin) or pin.target.qualified not in owned:
             raise ValueError("Source Procedure root requires an owned Contract")
         contract = owned[pin.target.qualified]
         return SourceContract(name=contract.identity.name, schema=contract.contract_schema)
 
-    request = ProcedureSourceRequestV1(
+    request = ProcedureSourceRequest(
         name=definition.name,
         text=program.text,
         filename=program.filename,

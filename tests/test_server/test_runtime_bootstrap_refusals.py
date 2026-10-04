@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.repairs import RepairOperationV1
+from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_client.errors import AuthenticationError as ClientAuthenticationError
 from cruxible_client.errors import response_to_error
 from cruxible_core.errors import AuthenticationError, BootstrapClaimRefusedError
@@ -119,9 +119,7 @@ def test_each_refusal_is_a_401_with_its_code_and_repair(code: str, operation: st
 
     assert status == 401
     assert body.error_code == code
-    assert body.repair == RepairOperationV1(
-        operation=operation, arguments={"instance_id": "inst_a"}
-    )
+    assert body.repair == RepairOperation(operation=operation, arguments={"instance_id": "inst_a"})
     client_error = response_to_error(status, body)
     assert isinstance(client_error, ClientAuthenticationError)
     assert getattr(client_error, "error_code") == code

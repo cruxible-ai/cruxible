@@ -9,16 +9,16 @@ import pytest
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_attestation_store import (
-    ClaimAttestationEventV1,
-    ClaimAttestationHeadMapEntryV1,
-    ClaimAttestationPartitionHeadV1,
-    ClaimAttestationPublishedPointerV1,
+    ClaimAttestationEvent,
+    ClaimAttestationHeadMapEntry,
+    ClaimAttestationPartitionHead,
+    ClaimAttestationPublishedPointer,
     claim_attestation_partition_head_digest,
 )
 from cruxible_client.contracts.claim_attestations import (
-    ClaimAttestationStatementV2,
-    ClaimAttestationV2,
-    VerifiedClaimAttestationV2,
+    ClaimAttestation,
+    ClaimAttestationStatement,
+    VerifiedClaimAttestation,
     claim_attestation_v2_envelope_digest,
     claim_attestation_v2_statement_digest,
 )
@@ -45,8 +45,8 @@ def _attestation(
     stance: str = "support",
     claim_id: str = "CLM-0123456789abcdef0123456789abcdef",
     attested_at: datetime = NOW,
-) -> ClaimAttestationV2:
-    statement = ClaimAttestationStatementV2(
+) -> ClaimAttestation:
+    statement = ClaimAttestationStatement(
         instance_id="inst_test",
         referent_coordinate=COORDINATE,
         claim_identity=ArtifactIdentity(kind="Claim", name=claim_id),
@@ -60,11 +60,11 @@ def _attestation(
         cited_capture_digests=(CAPTURE,),
         attested_at=attested_at,
     )
-    return ClaimAttestationV2(statement=statement, signature="01" * 64)
+    return ClaimAttestation(statement=statement, signature="01" * 64)
 
 
-def _account(attestation: ClaimAttestationV2) -> VerifiedClaimAttestationV2:
-    return VerifiedClaimAttestationV2(
+def _account(attestation: ClaimAttestation) -> VerifiedClaimAttestation:
+    return VerifiedClaimAttestation(
         statement_digest=claim_attestation_v2_statement_digest(attestation.statement),
         envelope_digest=claim_attestation_v2_envelope_digest(attestation),
         statement=attestation.statement,
@@ -238,7 +238,7 @@ def test_accelerator_is_verified_rebuilt_and_selects_reducer_frontier(
 
 
 def _write_pointer(store: ClaimAttestationEvidenceStore, root_digest: str) -> None:
-    pointer = ClaimAttestationPublishedPointerV1(root_digest=root_digest)
+    pointer = ClaimAttestationPublishedPointer(root_digest=root_digest)
     (store.root / "published.json").write_bytes(
         canonical_bytes(pointer.model_dump(mode="json")) + b"\n"
     )
@@ -300,14 +300,14 @@ def test_transition_replay_refuses_unrelated_partition_map_change_typed(
     second_event = store._load_marker(second_marker)
     second_head = store._partition_head(second_event)
     unrelated_partition = "sha256:" + "9" * 64
-    unrelated_draft = ClaimAttestationPartitionHeadV1.model_construct(
+    unrelated_draft = ClaimAttestationPartitionHead.model_construct(
         tag="playbill-claim-attestation-partition-head-v1",
         partition_digest=unrelated_partition,
         sequence=1,
         event_digest=second_event.event_digest,
         head_digest="sha256:" + "0" * 64,
     )
-    unrelated = ClaimAttestationPartitionHeadV1(
+    unrelated = ClaimAttestationPartitionHead(
         partition_digest=unrelated_partition,
         sequence=1,
         event_digest=second_event.event_digest,
@@ -316,11 +316,11 @@ def test_transition_replay_refuses_unrelated_partition_map_change_typed(
     forged_map = store._head_map(
         (
             *node.entries,
-            ClaimAttestationHeadMapEntryV1(
+            ClaimAttestationHeadMapEntry(
                 partition_digest=second_head.partition_digest,
                 head=second_head,
             ),
-            ClaimAttestationHeadMapEntryV1(
+            ClaimAttestationHeadMapEntry(
                 partition_digest=unrelated.partition_digest,
                 head=unrelated,
             ),
@@ -363,14 +363,14 @@ def test_transition_replay_refuses_true_published_root_fork_typed(tmp_path: Path
     third_event = store._load_object(
         "event",
         third_receipt.event_digest,
-        ClaimAttestationEventV1,
+        ClaimAttestationEvent,
     )
-    assert isinstance(third_event, ClaimAttestationEventV1)
+    assert isinstance(third_event, ClaimAttestationEvent)
     first_heads = {item.partition_digest: item.head for item in first_map.entries}
     first_heads[third_event.partition_digest] = store._partition_head(third_event)
     fork_map = store._head_map(
         tuple(
-            ClaimAttestationHeadMapEntryV1(partition_digest=key, head=value)
+            ClaimAttestationHeadMapEntry(partition_digest=key, head=value)
             for key, value in first_heads.items()
         )
     )

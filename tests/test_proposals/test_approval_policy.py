@@ -10,7 +10,7 @@ import cruxible_core.ledger.bootstrap as playbill_bootstrap_module
 import cruxible_core.runtime.instance as playbill_instance_module
 from cruxible_client.contracts.approval_policy import (
     APPROVAL_POLICY_PATH,
-    ApprovalPolicyV1,
+    ApprovalPolicy,
     parse_approval_policy,
     render_approval_policy,
 )
@@ -20,7 +20,7 @@ from cruxible_client.contracts.governance import INDEPENDENT_APPROVAL_REQUIREMEN
 from cruxible_client.contracts.principal_rendering import render_principal
 from cruxible_client.contracts.procedure_runtime_policy import (
     PROCEDURE_RUNTIME_POLICY_PATH,
-    ProcedureRuntimePolicyV1,
+    ProcedureRuntimePolicy,
     parse_procedure_runtime_policy,
     render_procedure_runtime_policy,
 )
@@ -115,7 +115,7 @@ def test_default_genesis_is_solo_capable_and_policy_is_governed(tmp_path: Path) 
         path=APPROVAL_POLICY_PATH,
     )
 
-    assert policy == ApprovalPolicyV1(mode="self_approval_allowed")
+    assert policy == ApprovalPolicy(mode="self_approval_allowed")
     assert instance.inspect().approval_policy_mode == "self_approval_allowed"
     runtime_policy = parse_procedure_runtime_policy(
         instance.tree_at(instance.accepted_coordinate().git_oid)[PROCEDURE_RUNTIME_POLICY_PATH],
@@ -129,7 +129,7 @@ def test_runtime_policy_changes_by_singleton_proposal_and_lists_in_force(
 ) -> None:
     instance, _owner = initialize_local(tmp_path)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    successor = ProcedureRuntimePolicyV1(provider_output_bytes_cap=2_097_152)
+    successor = ProcedureRuntimePolicy(provider_output_bytes_cap=2_097_152)
     proposal = _submit_tree(
         instance,
         {
@@ -194,7 +194,7 @@ def test_write_gate_uses_artifact_codec_lineage_before_candidate_time(
     candidate_tree = {
         **tree,
         APPROVAL_POLICY_PATH: render_approval_policy(
-            ApprovalPolicyV1(mode="independent_approval_required")
+            ApprovalPolicy(mode="independent_approval_required")
         ),
     }
 
@@ -222,7 +222,7 @@ def test_policy_tightening_and_loosening_follow_the_parent_policy(
         {
             **tree,
             APPROVAL_POLICY_PATH: render_approval_policy(
-                ApprovalPolicyV1(mode="independent_approval_required")
+                ApprovalPolicy(mode="independent_approval_required")
             ),
         },
         name="tighten-policy",
@@ -275,7 +275,7 @@ def test_policy_tightening_and_loosening_follow_the_parent_policy(
         {
             **instance.tree_at(instance.accepted_coordinate().git_oid),
             APPROVAL_POLICY_PATH: render_approval_policy(
-                ApprovalPolicyV1(mode="self_approval_allowed")
+                ApprovalPolicy(mode="self_approval_allowed")
             ),
         },
         name="loosen-policy",
@@ -297,7 +297,7 @@ def test_independent_mode_refuses_revocation_below_two_ordinaries(tmp_path: Path
         {
             **tree,
             APPROVAL_POLICY_PATH: render_approval_policy(
-                ApprovalPolicyV1(mode="independent_approval_required")
+                ApprovalPolicy(mode="independent_approval_required")
             ),
         },
         name="tighten-before-revoke",
@@ -395,7 +395,7 @@ def test_independent_principal_registration_needs_creator_binding_and_other_appr
         {
             **instance.tree_at(instance.accepted_coordinate().git_oid),
             APPROVAL_POLICY_PATH: render_approval_policy(
-                ApprovalPolicyV1(mode="independent_approval_required")
+                ApprovalPolicy(mode="independent_approval_required")
             ),
         },
         name="tighten-before-registration",

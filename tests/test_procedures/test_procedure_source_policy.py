@@ -6,11 +6,11 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.contracts.acquisition_policies import (
-    BoundedWindowCoherenceV1,
-    InputAcquisitionRuleV1,
+    BoundedWindowCoherence,
+    InputAcquisitionRule,
     acquisition_policy_digest,
 )
-from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_core.evidence.source_readers import (
     ExternalSourceReadRequestV1,
     FakeVersionedExternalSourceReader,
@@ -72,8 +72,8 @@ def test_source_refuses_unsupported_coherence_before_read_or_provider(
 ) -> None:
     policy = source._policy().model_copy(
         update={
-            "coherence": BoundedWindowCoherenceV1(
-                max_cross_source_skew=CanonicalDurationV1(microseconds=1_000_000)
+            "coherence": BoundedWindowCoherence(
+                max_cross_source_skew=CanonicalDuration(microseconds=1_000_000)
             )
         }
     )
@@ -167,14 +167,14 @@ def test_acquired_eligibility_applies_declared_failure_and_default_authority(
     authorized: bool,
     expected: str,
 ) -> None:
-    rule = InputAcquisitionRuleV1.model_validate(
+    rule = InputAcquisitionRule.model_validate(
         {
             "input_name": "advisory",
             "requirement": requirement,
             "permitted_replayability": ("attested_only",)
             if reason == "replayability"
             else ("exact",),
-            "max_age": CanonicalDurationV1(microseconds=1_000_000),
+            "max_age": CanonicalDuration(microseconds=1_000_000),
             "on_unavailable": behavior,
             "on_stale": behavior,
             "on_oversized": behavior,
@@ -204,8 +204,8 @@ def test_acquired_eligibility_applies_declared_failure_and_default_authority(
 def test_nonindependent_policy_does_not_refuse_source_free_plan() -> None:
     policy = source._policy().model_copy(
         update={
-            "coherence": BoundedWindowCoherenceV1(
-                max_cross_source_skew=CanonicalDurationV1(microseconds=1)
+            "coherence": BoundedWindowCoherence(
+                max_cross_source_skew=CanonicalDuration(microseconds=1)
             )
         }
     )
@@ -225,7 +225,7 @@ def test_capture_at_maximum_age_remains_eligible(
     rule = (
         source._policy()
         .inputs[0]
-        .model_copy(update={"max_age": CanonicalDurationV1(microseconds=1_000_000)})
+        .model_copy(update={"max_age": CanonicalDuration(microseconds=1_000_000)})
     )
     decision = apply_acquisition_result(
         rule, acquired, default_authorized=False, evaluation_time=NOW + timedelta(seconds=1)

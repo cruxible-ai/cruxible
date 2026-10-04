@@ -43,12 +43,12 @@ from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.declared_blocks import (
     MAX_PROJECTION_CARDS_PER_SOURCE,
     MAX_PROJECTION_COVERAGE_BINDINGS,
+    PlaybillPresentationPolicy,
     PlaybillPresentationPolicyAny,
-    PlaybillPresentationPolicyNoteV1,
+    PlaybillPresentationPolicyNote,
     PlaybillPresentationPolicyV1,
-    PlaybillPresentationPolicyV2,
-    PlaybillProjectionCoverageBindingV1,
-    PlaybillProjectionCoverageObservationV1,
+    PlaybillProjectionCoverageBinding,
+    PlaybillProjectionCoverageObservation,
     projection_manifest_refs,
     projection_processing_policy,
     read_projection_source,
@@ -59,8 +59,8 @@ from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.floor import (
     PLAYBILL_FLOOR_FORMAT,
     PLAYBILL_FLOOR_LOCAL_PATHS,
-    PlaybillFloorApplyResultV1,
-    PlaybillFloorDeltaV1,
+    PlaybillFloorApplyResult,
+    PlaybillFloorDelta,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.workspace_layout import PLAYBILL_FLOOR_PATH
@@ -435,11 +435,11 @@ def _presentation_policy(
     root: Path,
     *,
     known_source_ids: Sequence[str],
-) -> tuple[PlaybillPresentationPolicyV2 | None, tuple[PlaybillPresentationPolicyNoteV1, ...]]:
+) -> tuple[PlaybillPresentationPolicy | None, tuple[PlaybillPresentationPolicyNote, ...]]:
     path = root / ".playbill" / "presentation-policy.json"
     try:
         if not path.exists():
-            return PlaybillPresentationPolicyV2(), ()
+            return PlaybillPresentationPolicy(), ()
         resolved = path.resolve(strict=True)
     except OSError:
         return None, ("presentation_policy_unreadable",)
@@ -448,7 +448,7 @@ def _presentation_policy(
     try:
         raw = json.loads(read_regular_file(path).decode("utf-8"))
         if isinstance(raw, Mapping) and raw.get("tag") == "playbill-presentation-policy-v2":
-            parsed: PlaybillPresentationPolicyAny = PlaybillPresentationPolicyV2.model_validate(raw)
+            parsed: PlaybillPresentationPolicyAny = PlaybillPresentationPolicy.model_validate(raw)
         else:
             parsed = PlaybillPresentationPolicyV1.model_validate(raw)
         policy = upgrade_playbill_presentation_policy(parsed)
@@ -497,14 +497,14 @@ class _FloorClient(Protocol):
         at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
         base_generation: int | None = None,
         base_renderer: str | None = None,
-    ) -> PlaybillFloorDeltaV1: ...
+    ) -> PlaybillFloorDelta: ...
 
     def check_playbill_projection_blocks(
         self,
         instance_id: str,
         *,
-        request: contracts.PlaybillProjectionCheckRequestV1,
-    ) -> contracts.PlaybillProjectionCheckResultV1: ...
+        request: contracts.PlaybillProjectionCheckRequest,
+    ) -> contracts.PlaybillProjectionCheckResult: ...
 
 
 class _CoverageClient(Protocol):
@@ -518,7 +518,7 @@ class _CoverageClient(Protocol):
         scan_budget: Mapping[str, Any] | None = None,
     ) -> contracts.PlaybillCoverageResult: ...
 
-    def playbill_head(self, instance_id: str) -> contracts.PlaybillHeadV1: ...
+    def playbill_head(self, instance_id: str) -> contracts.PlaybillHead: ...
 
 
 def _canonical_json(value: object) -> bytes:
@@ -1052,12 +1052,12 @@ def floor_export_parts(
     return {"include": tuple(sorted(set(include)))} if include else {}
 
 
-FloorDeltaFetch = Callable[[int | None, str | None], PlaybillFloorDeltaV1]
+FloorDeltaFetch = Callable[[int | None, str | None], PlaybillFloorDelta]
 
 
 def sync_floor_directory(
     fetch_delta: FloorDeltaFetch, floor_dir: Path
-) -> tuple[PlaybillFloorDeltaV1, PlaybillFloorApplyResultV1]:
+) -> tuple[PlaybillFloorDelta, PlaybillFloorApplyResult]:
     """Bring ``floor_dir`` to the daemon's answer through the one shared apply.
 
     Sends the generation and renderer of the floor the directory holds, so the
@@ -1084,7 +1084,7 @@ class _FloorDeliveryClient(Protocol):
 
     def playbill_host_workspace_registration(
         self, instance_id: str
-    ) -> contracts.PlaybillHostWorkspaceRegistrationV1: ...
+    ) -> contracts.PlaybillHostWorkspaceRegistration: ...
 
     def deliver_playbill_floor_now(
         self,
@@ -1092,7 +1092,7 @@ class _FloorDeliveryClient(Protocol):
         *,
         include: tuple[contracts.PlaybillFloorExportPart, ...] = (),
         at: contracts.PlaybillAcceptedCoordinate | None = None,
-    ) -> contracts.PlaybillFloorDeliveryResultV1: ...
+    ) -> contracts.PlaybillFloorDeliveryResult: ...
 
 
 def daemon_floor_delivery(
@@ -1102,7 +1102,7 @@ def daemon_floor_delivery(
     *,
     include: tuple[contracts.PlaybillFloorExportPart, ...] = (),
     at: contracts.PlaybillAcceptedCoordinate | None = None,
-) -> contracts.PlaybillFloorDeliveryResultV1 | None:
+) -> contracts.PlaybillFloorDeliveryResult | None:
     """A local daemon opted into this exact workspace is its floor's only writer."""
 
     if getattr(client, "socket_path", None) is None:
@@ -1127,8 +1127,8 @@ def write_workspace_floor_delta(
     force: bool = True,
     server_url: str | None = None,
     server_socket: str | None = None,
-    delivery: Callable[[], contracts.PlaybillFloorDeliveryResultV1 | None] | None = None,
-) -> tuple[PlaybillFloorDeltaV1, contracts.PlaybillWorkspaceFloorWriteResult]:
+    delivery: Callable[[], contracts.PlaybillFloorDeliveryResult | None] | None = None,
+) -> tuple[PlaybillFloorDelta, contracts.PlaybillWorkspaceFloorWriteResult]:
     """Write the default floor through the shared apply and record its refresh profile.
 
     The CLI and MCP write path for a floor without opt-in parts: it asks for a
@@ -1183,7 +1183,7 @@ def write_workspace_floor(
     force: bool = True,
     server_url: str | None = None,
     server_socket: str | None = None,
-    delivery: Callable[[], contracts.PlaybillFloorDeliveryResultV1 | None] | None = None,
+    delivery: Callable[[], contracts.PlaybillFloorDeliveryResult | None] | None = None,
 ) -> tuple[contracts.PlaybillFloorExport, contracts.PlaybillWorkspaceFloorWriteResult]:
     """Write an exported floor into the workspace and record its refresh profile.
 
@@ -1270,8 +1270,8 @@ def inspect_workspace_floor(
 
 def workspace_floor_freshness(
     workspace: str | Path,
-    orientation: contracts.PlaybillOrientResultV1,
-) -> contracts.PlaybillOrientResultV1:
+    orientation: contracts.PlaybillOrientResult,
+) -> contracts.PlaybillOrientResult:
     """``orientation`` with ``floor`` set when the workspace holds this instance's floor.
 
     Cheap by construction: it reads the floor's manifest (its coordinate and
@@ -1300,7 +1300,7 @@ def workspace_floor_freshness(
         if isinstance(generation, int) and not isinstance(generation, bool):
             behind = max(0, orientation.generation - generation)
     return orientation.model_copy(
-        update={"floor": contracts.PlaybillOrientFloorV1(at=at, generations_behind=behind)}
+        update={"floor": contracts.PlaybillOrientFloor(at=at, generations_behind=behind)}
     )
 
 
@@ -1325,7 +1325,7 @@ def observe_playbill_next_workspace(workspace: str | Path) -> dict[str, object]:
             else floor.installed_coordinate.model_dump(mode="json")
         ),
         "drift_observations": None,
-        "presentation_policy": PlaybillPresentationPolicyV2().model_dump(mode="json"),
+        "presentation_policy": PlaybillPresentationPolicy().model_dump(mode="json"),
         "presentation_policy_notes": [],
     }
     try:
@@ -1446,7 +1446,7 @@ def observe_playbill_projection_coverage(
         return None
 
     accepted = contracts.PlaybillAcceptedCoordinate.model_validate(coordinate)
-    procedure_bindings: list[PlaybillProjectionCoverageBindingV1] = []
+    procedure_bindings: list[PlaybillProjectionCoverageBinding] = []
     procedures_complete = True
     for procedure_entry in sources.procedure_projection_entries:
         try:
@@ -1456,14 +1456,14 @@ def observe_playbill_projection_coverage(
             procedure_bindings.clear()
             break
         procedure_bindings.append(
-            PlaybillProjectionCoverageBindingV1(
+            PlaybillProjectionCoverageBinding(
                 artifact=procedure_entry.procedure_identity,
                 workspace_path=procedure_entry.locator,
                 evidence_kind="procedure_catalog",
             )
         )
 
-    claim_bindings: list[PlaybillProjectionCoverageBindingV1] = []
+    claim_bindings: list[PlaybillProjectionCoverageBinding] = []
     claims_complete = True
     scanned_bytes = 0
     for document_entry in sources.document_entries:
@@ -1494,7 +1494,7 @@ def observe_playbill_projection_coverage(
             for backing in block.stamp.backing:
                 if backing.identity.kind == "Claim":
                     claim_bindings.append(
-                        PlaybillProjectionCoverageBindingV1(
+                        PlaybillProjectionCoverageBinding(
                             artifact=backing.identity,
                             workspace_path=document_entry.locator,
                             evidence_kind="claim_marker",
@@ -1504,7 +1504,7 @@ def observe_playbill_projection_coverage(
         claim_bindings.clear()
 
     complete_kinds: list[Literal["Claim", "Procedure"]] = []
-    bindings: list[PlaybillProjectionCoverageBindingV1] = []
+    bindings: list[PlaybillProjectionCoverageBinding] = []
     if claims_complete and len(claim_bindings) <= MAX_PROJECTION_COVERAGE_BINDINGS:
         complete_kinds.append("Claim")
         bindings.extend(claim_bindings)
@@ -1523,7 +1523,7 @@ def observe_playbill_projection_coverage(
             ),
         )
     )
-    result = PlaybillProjectionCoverageObservationV1(
+    result = PlaybillProjectionCoverageObservation(
         coordinate=AcceptedCoordinate.model_validate(accepted.model_dump(mode="json")),
         complete_kinds=tuple(sorted(complete_kinds, key=lambda item: item.encode("utf-8"))),
         bindings=ordered_bindings,
@@ -2050,7 +2050,7 @@ def refresh_workspace_floor(
         root = _workspace_root(workspace)
         destination = _relative_destination(root, relative_path)
 
-        def fetch(generation: int | None, renderer: str | None) -> PlaybillFloorDeltaV1:
+        def fetch(generation: int | None, renderer: str | None) -> PlaybillFloorDelta:
             delta = client.playbill_floor_delta(
                 instance_id, at=at, base_generation=generation, base_renderer=renderer
             )
@@ -2107,21 +2107,21 @@ def activate_with_workspace_refresh(
                 item.reason == "workspace_not_attached" for item in block_sync.items
             ):
                 skipped = tuple(
-                    contracts.PlaybillBlockSyncItemV1.model_validate(
+                    contracts.PlaybillBlockSyncItem.model_validate(
                         {**item.model_dump(mode="json"), "outcome": "skipped"}
                     )
                     for item in block_sync.items
                 )
-                block_sync = contracts.PlaybillBlockSyncResultV1(
+                block_sync = contracts.PlaybillBlockSyncResult(
                     items=skipped,
                     changed_file_count=0,
                     would_change=False,
                     has_refusals=False,
                 )
         except Exception as exc:  # report activation and sync truth together
-            block_sync = contracts.PlaybillBlockSyncResultV1(
+            block_sync = contracts.PlaybillBlockSyncResult(
                 items=(
-                    contracts.PlaybillBlockSyncItemV1(
+                    contracts.PlaybillBlockSyncItem(
                         path=".",
                         outcome="refused",
                         reason="block_sync_failed",

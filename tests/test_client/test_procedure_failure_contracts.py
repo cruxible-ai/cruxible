@@ -8,18 +8,18 @@ from pydantic import TypeAdapter, ValidationError
 
 from cruxible_client.contracts.errors import CanonicalEncodingError
 from cruxible_client.contracts.procedures.results import (
-    ProcedureAdmissionRefusalV1,
-    ProcedureInternalFailureV1,
-    ProcedureJournalCoordinateV1,
-    ProcedureNodeRefusalCodeV1,
-    ProcedureNodeRefusalV1,
-    ProcedureOperationalFailureV1,
-    ProcedureTerminalV1,
+    ProcedureAdmissionRefusal,
+    ProcedureInternalFailure,
+    ProcedureJournalCoordinate,
+    ProcedureNodeRefusal,
+    ProcedureNodeRefusalCode,
+    ProcedureOperationalFailure,
+    ProcedureTerminal,
 )
 
 
-def _coordinate() -> ProcedureJournalCoordinateV1:
-    return ProcedureJournalCoordinateV1(
+def _coordinate() -> ProcedureJournalCoordinate:
+    return ProcedureJournalCoordinate(
         stream_instance_id="instance-a",
         journal_family="procedure-exhaust-v1",
         stream_id="procedures",
@@ -31,31 +31,31 @@ def _coordinate() -> ProcedureJournalCoordinateV1:
 
 def test_terminal_union_round_trips_all_four_classes() -> None:
     terminals = (
-        ProcedureAdmissionRefusalV1(
+        ProcedureAdmissionRefusal(
             code="binding_required",
             message="Bindings are incomplete.",
             details={"required_slots": ["query"]},
         ),
-        ProcedureNodeRefusalV1(
+        ProcedureNodeRefusal(
             code="guard_refused",
             message="Guard refused.",
             node_id="gate",
             journal_coordinate=_coordinate(),
             detail_code="query.empty",
         ),
-        ProcedureOperationalFailureV1(
+        ProcedureOperationalFailure(
             code="journal_append_failed",
             message="Journal append failed.",
             journal_coordinate=_coordinate(),
         ),
-        ProcedureInternalFailureV1(
+        ProcedureInternalFailure(
             code="unexpected_exception",
             message="Procedure execution failed unexpectedly; inspect daemon logs.",
             correlation_id="RUN-abc",
             journal_coordinate=_coordinate(),
         ),
     )
-    adapter = TypeAdapter(ProcedureTerminalV1)
+    adapter = TypeAdapter(ProcedureTerminal)
 
     for terminal in terminals:
         assert adapter.validate_python(terminal.model_dump(mode="json")) == terminal
@@ -63,7 +63,7 @@ def test_terminal_union_round_trips_all_four_classes() -> None:
 
 def test_terminal_contracts_are_closed_and_details_are_canonical() -> None:
     try:
-        ProcedureAdmissionRefusalV1.model_validate(
+        ProcedureAdmissionRefusal.model_validate(
             {
                 "code": "unknown",
                 "message": "bad",
@@ -76,7 +76,7 @@ def test_terminal_contracts_are_closed_and_details_are_canonical() -> None:
         raise AssertionError("unknown admission code was accepted")
 
     try:
-        ProcedureAdmissionRefusalV1(
+        ProcedureAdmissionRefusal(
             code="binding_required",
             message="bad",
             details={"value": 1.5},
@@ -174,7 +174,7 @@ def test_node_refusal_vocabulary_covers_every_executor_code() -> None:
         "redirect_limit",
         "provider_protocol_violation",
     }
-    assert set(get_args(ProcedureNodeRefusalCodeV1)) == expected
+    assert set(get_args(ProcedureNodeRefusalCode)) == expected
 
     for code in sorted(expected):
         values: dict[str, object] = {
@@ -190,4 +190,4 @@ def test_node_refusal_vocabulary_covers_every_executor_code() -> None:
                 "limit": 0,
                 "observed": 1,
             }
-        assert ProcedureNodeRefusalV1.model_validate(values).code == code
+        assert ProcedureNodeRefusal.model_validate(values).code == code

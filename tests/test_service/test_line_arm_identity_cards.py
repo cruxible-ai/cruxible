@@ -15,9 +15,9 @@ from typing import Any
 
 import pytest
 
-from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
-from cruxible_client.contracts.line_dispatch import LineArmPrincipalV1
-from cruxible_client.contracts.operational_reads import PlaybillGetLineCardV1
+from cruxible_client.contracts.get_reads import PlaybillGetRequest
+from cruxible_client.contracts.line_dispatch import LineArmPrincipal
+from cruxible_client.contracts.operational_reads import PlaybillGetLineCard
 from cruxible_core.runtime import line_arms
 from cruxible_core.service.discovery.get import service_playbill_get
 from cruxible_core.service.discovery.operational import OperationalViewer
@@ -41,11 +41,11 @@ class _LegacyArmPrincipal:
 def _card(instance: Any, line: Any, when: Any, viewer: OperationalViewer | None = None) -> Any:
     card = service_playbill_get(
         instance,
-        request=PlaybillGetRequestV1(ref=line.identity.qualified, evaluation_time=when),
+        request=PlaybillGetRequest(ref=line.identity.qualified, evaluation_time=when),
         access=_ACCESS,
         viewer=viewer,
     ).card
-    assert isinstance(card, PlaybillGetLineCardV1)
+    assert isinstance(card, PlaybillGetLineCard)
     (arm,) = card.arms
     return arm
 
@@ -102,7 +102,7 @@ def test_an_old_format_credential_arm_stays_withheld_from_other_readers(
 def test_a_claimed_principal_arm_shows_its_principal_to_every_reader(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    claim = LineArmPrincipalV1(kind="principal_claim", label="owner")
+    claim = LineArmPrincipal(kind="principal_claim", label="owner")
     instance, line, _procedure, start = _armed_world(tmp_path, principal=claim)
 
     for viewer in (None, OperationalViewer(credential_id="cred-x", admin=False)):

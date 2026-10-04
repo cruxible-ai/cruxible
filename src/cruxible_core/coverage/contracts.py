@@ -14,7 +14,7 @@ freshness-free ``exact`` are unrepresentable rather than merely discouraged.
 *identity versus presentation* -- a source-occurrence identity is
 ``(logical source, observed commitment digest, ordinal among equal digests)``
 and nothing else. Byte offsets and line numbers ride along in
-``CoverageLineOverlayV1``, which is excluded from every preimage, so unchanged
+``CoverageLineOverlay``, which is excluded from every preimage, so unchanged
 cited content that moved within its source keeps its identity and stays
 deterministically discoverable. Line movement alone can never break ``exact``.
 
@@ -39,15 +39,15 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import Sha256Value, normalize_ledger_path, typed_digest
 from cruxible_client.contracts.claim_verdicts import ObservationTrustGrade
 from cruxible_client.contracts.claims import (
-    ClaimCitationV1,
-    LegacyCitationReferenceV1,
+    ClaimCitation,
+    LegacyCitationReference,
     claim_citation_id,
 )
-from cruxible_client.contracts.discovery import DiscoveryMatchBasis
+from cruxible_client.contracts.discovery import DiscoveryMatchBasisKind
 from cruxible_client.contracts.errors import CanonicalEncodingError, PlaybillError
 from cruxible_client.contracts.query.grammar import byte_sorted
 from cruxible_client.contracts.semantic import SemanticAddress
-from cruxible_client.contracts.source_references import CoverageDescriptorV1, SourceAccessClass
+from cruxible_client.contracts.source_references import CoverageDescriptor, SourceAccessClass
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.query.semantic_discovery import MATCH_BASIS_RESOLVES_EQUIVALENCE
 
@@ -147,7 +147,7 @@ class _StrictCoverageModel(BaseModel):
 _EXTERNAL_IDENTITY_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 
 
-class LogicalSourceIdentityV1(_StrictCoverageModel):
+class LogicalSourceIdentity(_StrictCoverageModel):
     """The stable logical source a coverage answer is keyed on.
 
     Not a filesystem path, not a line number, not a byte offset, and not a
@@ -167,7 +167,7 @@ class LogicalSourceIdentityV1(_StrictCoverageModel):
     identity: str
 
     @model_validator(mode="after")
-    def _identity_grammar(self) -> "LogicalSourceIdentityV1":
+    def _identity_grammar(self) -> "LogicalSourceIdentity":
         if self.plane == "ledger":
             try:
                 normalized = normalize_ledger_path(self.identity)
@@ -185,13 +185,13 @@ class LogicalSourceIdentityV1(_StrictCoverageModel):
         return f"{self.plane}\x00{self.identity}".encode()
 
 
-class CoverageCommitmentScanProofV1(_StrictCoverageModel):
+class CoverageCommitmentScanProof(_StrictCoverageModel):
     """Complete local scan proof for one source/commitment/length tuple."""
 
     tag: Literal["playbill-coverage-commitment-scan-proof-v1"] = (
         "playbill-coverage-commitment-scan-proof-v1"
     )
-    source: LogicalSourceIdentityV1
+    source: LogicalSourceIdentity
     commitment_digest: str
     byte_length: int = Field(ge=0)
     complete: Literal[True] = True
@@ -211,13 +211,13 @@ class CoverageCommitmentScanProofV1(_StrictCoverageModel):
         )
 
 
-class PlaybillCitationWindowObservationV1(_StrictCoverageModel):
+class PlaybillCitationWindowObservation(_StrictCoverageModel):
     """Observed bytes at one accepted citation's original source window."""
 
     tag: Literal["playbill-citation-window-observation-v1"] = (
         "playbill-citation-window-observation-v1"
     )
-    source: LogicalSourceIdentityV1
+    source: LogicalSourceIdentity
     citation_id: str
     commitment_digest: str
     original_start: int = Field(ge=0)
@@ -233,7 +233,7 @@ class PlaybillCitationWindowObservationV1(_StrictCoverageModel):
         return value
 
     @model_validator(mode="after")
-    def _window_shape(self) -> "PlaybillCitationWindowObservationV1":
+    def _window_shape(self) -> "PlaybillCitationWindowObservation":
         if self.original_end < self.original_start:
             raise ValueError("citation window end must not precede its start")
         if self.addressable != (self.observed_window_digest is not None):
@@ -245,18 +245,18 @@ class PlaybillCitationWindowObservationV1(_StrictCoverageModel):
 
 
 def logical_sources_sorted(
-    values: tuple[LogicalSourceIdentityV1, ...],
-) -> tuple[LogicalSourceIdentityV1, ...]:
+    values: tuple[LogicalSourceIdentity, ...],
+) -> tuple[LogicalSourceIdentity, ...]:
     """Return logical sources in canonical order without duplicates."""
 
-    seen: dict[bytes, LogicalSourceIdentityV1] = {item.sort_key: item for item in values}
+    seen: dict[bytes, LogicalSourceIdentity] = {item.sort_key: item for item in values}
     return tuple(seen[key] for key in sorted(seen))
 
 
 # -- occurrence identity and its presentation overlay ---------------------
 
 
-class CoverageLineOverlayV1(_StrictCoverageModel):
+class CoverageLineOverlay(_StrictCoverageModel):
     """Where an occurrence currently sits, for rendering only.
 
     Every field here is a presentation overlay over the stable source-occurrence
@@ -272,7 +272,7 @@ class CoverageLineOverlayV1(_StrictCoverageModel):
     end_line: int = Field(ge=1)
 
     @model_validator(mode="after")
-    def _range(self) -> "CoverageLineOverlayV1":
+    def _range(self) -> "CoverageLineOverlay":
         if self.end_byte < self.start_byte:
             raise ValueError("coverage overlay byte range must be increasing")
         if self.end_line < self.start_line:
@@ -282,7 +282,7 @@ class CoverageLineOverlayV1(_StrictCoverageModel):
 
 def occurrence_identity_digest(
     *,
-    source: LogicalSourceIdentityV1,
+    source: LogicalSourceIdentity,
     observed_commitment_digest: str,
     ordinal: int,
 ) -> str:
@@ -311,7 +311,7 @@ def occurrence_identity_digest(
 # -- request grammar ------------------------------------------------------
 
 
-class CoverageSelectionV1(_StrictCoverageModel):
+class CoverageSelection(_StrictCoverageModel):
     """The byte window of a working source a caller is asking about."""
 
     tag: Literal["playbill-coverage-selection-v1"] = "playbill-coverage-selection-v1"
@@ -319,7 +319,7 @@ class CoverageSelectionV1(_StrictCoverageModel):
     end_byte: int = Field(ge=0)
 
     @model_validator(mode="after")
-    def _range(self) -> "CoverageSelectionV1":
+    def _range(self) -> "CoverageSelection":
         if self.end_byte <= self.start_byte:
             raise ValueError("coverage selection must be a non-empty increasing byte range")
         return self
@@ -329,11 +329,11 @@ class CoverageSpanRequestV1(_StrictCoverageModel):
     """One span to resolve: a whole working source, or a window within it."""
 
     tag: Literal["playbill-coverage-span-request-v1"] = "playbill-coverage-span-request-v1"
-    source: LogicalSourceIdentityV1
-    selection: CoverageSelectionV1 | None = None
+    source: LogicalSourceIdentity
+    selection: CoverageSelection | None = None
 
 
-class CoverageCardBudgetV1(_StrictCoverageModel):
+class CoverageCardBudget(_StrictCoverageModel):
     """§11.6.4: candidate cards stay conservatively budgeted and say when clipped."""
 
     tag: Literal["playbill-coverage-card-budget-v1"] = "playbill-coverage-card-budget-v1"
@@ -341,7 +341,7 @@ class CoverageCardBudgetV1(_StrictCoverageModel):
     max_candidate_cards_per_span: int = Field(default=4, ge=0)
 
 
-class CoverageAccessProfileV1(_StrictCoverageModel):
+class CoverageAccessProfile(_StrictCoverageModel):
     """Which access classes this caller may be told about, and how to refuse.
 
     ``disclose_restricted_existence`` is the §11.6.3 non-disclosure branch: when
@@ -373,7 +373,7 @@ class CoverageRequestV1(_StrictCoverageModel):
     instance_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
     at: AcceptedCoordinate
     spans: tuple[CoverageSpanRequestV1, ...]
-    budget: CoverageCardBudgetV1 = CoverageCardBudgetV1()
+    budget: CoverageCardBudget = CoverageCardBudget()
 
     @field_validator("spans")
     @classmethod
@@ -399,7 +399,7 @@ class CoverageCardV1(_StrictCoverageModel):
 
     tag: Literal["playbill-coverage-card-v1"] = "playbill-coverage-card-v1"
     match_state: Literal["exact", "drifted", "candidate"]
-    match_basis: DiscoveryMatchBasis | None = None
+    match_basis: DiscoveryMatchBasisKind | None = None
     resolves_equivalence: Literal[False] = False
     grants_mutation_authority: Literal[False] = False
     at: AcceptedCoordinate
@@ -407,10 +407,10 @@ class CoverageCardV1(_StrictCoverageModel):
     capture_digests: tuple[str, ...] = ()
     expected_commitment_digest: str
     observed_commitment_digest: str | None = None
-    accepted_source: LogicalSourceIdentityV1 | None = None
-    observed_source: LogicalSourceIdentityV1
+    accepted_source: LogicalSourceIdentity | None = None
+    observed_source: LogicalSourceIdentity
     occurrence_identity_digest: str | None = None
-    line_overlay: CoverageLineOverlayV1 | None = None
+    line_overlay: CoverageLineOverlay | None = None
     dereference_handle_digest: str | None = None
     dependent_claim_count: int | None = Field(default=None, ge=0)
     reason_codes: tuple[str, ...] = ()
@@ -481,7 +481,7 @@ class CoverageCardV1(_StrictCoverageModel):
 
 
 CoverageCitationReferenceV2: TypeAlias = Annotated[
-    ClaimCitationV1 | LegacyCitationReferenceV1,
+    ClaimCitation | LegacyCitationReference,
     Field(discriminator="tag"),
 ]
 
@@ -510,7 +510,7 @@ class CoverageClaimCitationV2(_StrictCoverageModel):
         claim_name = self.claim_address.artifact_path.rsplit("/", 1)[-1].removesuffix(".json")
         if not re.fullmatch(r"CLM-[0-9a-f]{32}", claim_name):
             raise ValueError("coverage citation address has no Claim identity")
-        if isinstance(self.reference, LegacyCitationReferenceV1):
+        if isinstance(self.reference, LegacyCitationReference):
             expected_path = self.claim_address.artifact_path
             if not expected_path.endswith(f"/{self.reference.claim_identity.name}.json"):
                 raise ValueError("legacy coverage citation addresses a different Claim")
@@ -572,9 +572,9 @@ class CoverageSpanResultV3(_StrictCoverageModel):
     cards: tuple[CoverageCardV2, ...] = ()
     ambiguous_occurrence_count: int = Field(default=0, ge=0)
     omitted_card_count: int = Field(default=0, ge=0)
-    commitment_scan_proofs: tuple[CoverageCommitmentScanProofV1, ...] = ()
-    citation_window_observations: tuple[PlaybillCitationWindowObservationV1, ...] = ()
-    coverage: CoverageDescriptorV1
+    commitment_scan_proofs: tuple[CoverageCommitmentScanProof, ...] = ()
+    citation_window_observations: tuple[PlaybillCitationWindowObservation, ...] = ()
+    coverage: CoverageDescriptor
 
     @model_validator(mode="after")
     def _span_law(self) -> "CoverageSpanResultV3":
@@ -648,14 +648,14 @@ class CoverageResultV3(_StrictCoverageModel):
     manifest_digest: str | None
     epoch: int | None = Field(default=None, ge=0)
     watcher_health: CoverageWatcherHealthV1
-    access_profile: CoverageAccessProfileV1
-    scope: tuple[LogicalSourceIdentityV1, ...] = ()
+    access_profile: CoverageAccessProfile
+    scope: tuple[LogicalSourceIdentity, ...] = ()
     spans: tuple[CoverageSpanResultV3, ...]
     summary: CoverageBatchSummaryV3
     health: CoverageHealthV1
     global_scan_complete: bool
     truncation_reason_codes: tuple[str, ...] = ()
-    coverage: CoverageDescriptorV1
+    coverage: CoverageDescriptor
 
     @field_validator("index_digest", "overlay_digest", "manifest_digest")
     @classmethod
@@ -743,7 +743,7 @@ class CoverageManifestProfileV1(_StrictCoverageModel):
     epoch: int | None = Field(default=None, ge=0)
     completeness: Literal["complete", "partial"]
     truncation_reason_codes: tuple[str, ...] = ()
-    scope: tuple[LogicalSourceIdentityV1, ...] = ()
+    scope: tuple[LogicalSourceIdentity, ...] = ()
 
     @field_validator("index_digest")
     @classmethod
@@ -760,9 +760,7 @@ class CoverageManifestProfileV1(_StrictCoverageModel):
 
     @field_validator("scope")
     @classmethod
-    def _scope(
-        cls, value: tuple[LogicalSourceIdentityV1, ...]
-    ) -> tuple[LogicalSourceIdentityV1, ...]:
+    def _scope(cls, value: tuple[LogicalSourceIdentity, ...]) -> tuple[LogicalSourceIdentity, ...]:
         if value != logical_sources_sorted(value):
             raise ValueError("manifest scope sources must be sorted and unique")
         return value
@@ -815,30 +813,30 @@ __all__ = [
     "COVERAGE_MATCH_STATES",
     "MATCH_STATE_PRECEDENCE",
     "OCCURRENCE_IDENTITY_DIGEST_DOMAIN",
-    "CoverageAccessProfileV1",
+    "CoverageAccessProfile",
     "CoverageBatchSummaryV3",
-    "CoverageCardBudgetV1",
+    "CoverageCardBudget",
     "CoverageCardV1",
     "CoverageCardV2",
     "CoverageClaimCitationV2",
     "CoverageCommitmentMaterializationCorrupt",
-    "CoverageCommitmentScanProofV1",
+    "CoverageCommitmentScanProof",
     "CoverageError",
     "CoverageHealthV1",
-    "CoverageLineOverlayV1",
+    "CoverageLineOverlay",
     "CoverageManifestProfileV1",
     "CoverageManifestProfileV2",
     "CoverageMatchStateV1",
     "CoverageRequestV1",
     "CoverageResultAny",
     "CoverageResultV3",
-    "CoverageSelectionV1",
+    "CoverageSelection",
     "CoverageSpanRequestV1",
     "CoverageSpanResultV3",
     "CoverageWatcherHealthV1",
     "coverage_span_match_state",
-    "LogicalSourceIdentityV1",
-    "PlaybillCitationWindowObservationV1",
+    "LogicalSourceIdentity",
+    "PlaybillCitationWindowObservation",
     "logical_sources_sorted",
     "strongest_match_state",
     "occurrence_identity_digest",

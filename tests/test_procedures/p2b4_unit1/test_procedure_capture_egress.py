@@ -8,8 +8,8 @@ import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.captures import (
-    CaptureEnvelopeV2,
-    ProcedureEgressCaptureEvidenceV1,
+    CaptureEnvelope,
+    ProcedureEgressCaptureEvidence,
     capture_contract_digest,
     parse_capture_envelope,
     verify_capture,
@@ -79,13 +79,13 @@ def test_procedure_capture_is_below_the_exact_pre_egress_producer_receipt(
             access=BodyAccessContext(principal_id="unit-test", can_read_body=True),
         )
     )
-    assert isinstance(capture, CaptureEnvelopeV2)
+    assert isinstance(capture, CaptureEnvelope)
     assert capture.producer_receipt_digest == expected_producer_digest
     assert capture.producer == admission.procedure_identity
     assert capture.producer_binding_digest == admission.procedure_artifact_digest
     assert capture.observed_at == request.evaluation_time
     assert capture.source_effective_time is None
-    assert capture.production_evidence == ProcedureEgressCaptureEvidenceV1(
+    assert capture.production_evidence == ProcedureEgressCaptureEvidence(
         procedure_producer_receipt_digest=expected_producer_digest
     )
     assert (

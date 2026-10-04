@@ -192,7 +192,7 @@ Execution is permitted only when an isolated executor is REGISTERED in the
 running build, not when one is merely named in the environment. Registration
 goes through the typed seam in `runtime/execution_policy.py`:
 `register_isolated_executor()` takes an object publishing an
-`IsolatedExecutorRegistrationV1` record -- a `backend_id`, the exact
+`IsolatedExecutorRegistration` record -- a `backend_id`, the exact
 `implementation_digest` doing the isolating, and its `capabilities` -- and
 `registered_isolated_executors()` reports what this process has. Core registers
 none, so `CRUXIBLE_HOSTED_ISOLATED_EXECUTION_BACKEND` cannot re-enable execution
@@ -233,7 +233,7 @@ the Provider lane, so an operator can confirm what a started daemon discovered.
 
 **The trust boundary is installation, and nothing else.** Any distribution on
 the daemon's `sys.path` that writes this group into its entry-point metadata
-gets its object loaded, and the `IsolatedExecutorRegistrationV1` that object
+gets its object loaded, and the `IsolatedExecutorRegistration` that object
 reports about ITSELF becomes the evidence that unlocks Provider execution under
 the shared profile. There is no provenance check, no allow-list, no signature
 and no digest pin on a discovered executor. That is defensible because anyone

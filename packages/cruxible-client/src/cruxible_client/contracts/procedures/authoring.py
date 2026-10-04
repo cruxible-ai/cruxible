@@ -22,14 +22,14 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
 from cruxible_client.contracts.procedures.models import (
-    ExhaustTapNodeV3,
-    GuardNodeV3,
-    GuardPredicateV1,
-    PredicateOperandV1,
-    ProcedureBudgetV3,
+    ExhaustTapNode,
+    GuardNode,
+    GuardPredicate,
+    PredicateOperand,
+    ProcedureBudget,
     ProcedureDefinitionV3,
-    ProcedureHardCapsV3,
-    ProjectNodeV3,
+    ProcedureHardCaps,
+    ProjectNode,
     SourceNodeV3,
     StateTapNodeV3,
 )
@@ -49,7 +49,7 @@ def _pin_key(pin: ArtifactPin) -> tuple[bytes, bytes, bytes]:
     )
 
 
-class GuardBuilderCommonV1(_StrictBuilderModel):
+class GuardBuilderCommon(_StrictBuilderModel):
     name: str
     contract_in: ArtifactPin
     contract_out: ArtifactPin
@@ -69,8 +69,8 @@ class GuardBuilderCommonV1(_StrictBuilderModel):
     ] = "eq"
     refusal_code: str
     refusal_message: str
-    budget: ProcedureBudgetV3
-    hard_caps: ProcedureHardCapsV3
+    budget: ProcedureBudget
+    hard_caps: ProcedureHardCaps
     authoring_source_digest: str
 
     @field_validator("observed_path")
@@ -95,7 +95,7 @@ class GuardBuilderCommonV1(_StrictBuilderModel):
         return value
 
     @model_validator(mode="after")
-    def _contracts(self) -> "GuardBuilderCommonV1":
+    def _contracts(self) -> "GuardBuilderCommon":
         if self.contract_in.role != "contract-in" or self.contract_in.target.kind != "Contract":
             raise ValueError("guard builder contract_in must be an exact Contract pin")
         if self.contract_out.role != "contract-out" or self.contract_out.target.kind != "Contract":
@@ -103,7 +103,7 @@ class GuardBuilderCommonV1(_StrictBuilderModel):
         return self
 
 
-class AcceptedClaimGuardBuilderV1(GuardBuilderCommonV1):
+class AcceptedClaimGuardBuilder(GuardBuilderCommon):
     tag: Literal["playbill-accepted-claim-guard-builder-v1"] = (
         "playbill-accepted-claim-guard-builder-v1"
     )
@@ -118,7 +118,7 @@ class AcceptedClaimGuardBuilderV1(GuardBuilderCommonV1):
         return normalize_canonical(value)
 
     @model_validator(mode="after")
-    def _pins(self) -> "AcceptedClaimGuardBuilderV1":
+    def _pins(self) -> "AcceptedClaimGuardBuilder":
         if self.query.role != "query" or self.query.target.kind != "QueryDefinition":
             raise ValueError("accepted-Claim builder requires an exact QueryDefinition pin")
         if self.claim_type.role != "claim-type" or self.claim_type.target.kind != "ClaimType":
@@ -126,7 +126,7 @@ class AcceptedClaimGuardBuilderV1(GuardBuilderCommonV1):
         return self
 
 
-class SourceCaptureGuardBuilderV1(GuardBuilderCommonV1):
+class SourceCaptureGuardBuilder(GuardBuilderCommon):
     tag: Literal["playbill-source-capture-guard-builder-v1"] = (
         "playbill-source-capture-guard-builder-v1"
     )
@@ -141,7 +141,7 @@ class SourceCaptureGuardBuilderV1(GuardBuilderCommonV1):
         return normalize_canonical(value)
 
     @model_validator(mode="after")
-    def _pins(self) -> "SourceCaptureGuardBuilderV1":
+    def _pins(self) -> "SourceCaptureGuardBuilder":
         expected = (
             (self.capture_contract, "capture-contract", "CaptureContract"),
             (self.provider, "provider", "Provider"),
@@ -153,14 +153,14 @@ class SourceCaptureGuardBuilderV1(GuardBuilderCommonV1):
         return self
 
 
-class ExhaustGuardBuilderV1(GuardBuilderCommonV1):
+class ExhaustGuardBuilder(GuardBuilderCommon):
     tag: Literal["playbill-exhaust-guard-builder-v1"] = "playbill-exhaust-guard-builder-v1"
     reducer_or_query: ArtifactPin
     acquisition_policy: ArtifactPin
     journal_identity: str
 
     @model_validator(mode="after")
-    def _pins(self) -> "ExhaustGuardBuilderV1":
+    def _pins(self) -> "ExhaustGuardBuilder":
         if self.reducer_or_query.role not in {"query", "reducer"} or (
             self.reducer_or_query.target.kind not in {"QueryDefinition", "Reducer"}
         ):
@@ -173,7 +173,7 @@ class ExhaustGuardBuilderV1(GuardBuilderCommonV1):
         return self
 
 
-class BuilderSourceMappingV1(_StrictBuilderModel):
+class BuilderSourceMapping(_StrictBuilderModel):
     tag: Literal["playbill-procedure-builder-source-map-v1"] = (
         "playbill-procedure-builder-source-map-v1"
     )
@@ -181,7 +181,7 @@ class BuilderSourceMappingV1(_StrictBuilderModel):
     compact_field: str
 
 
-class ProcedureGuardExpansionV1(_StrictBuilderModel):
+class ProcedureGuardExpansion(_StrictBuilderModel):
     tag: Literal["playbill-procedure-guard-expansion-v1"] = "playbill-procedure-guard-expansion-v1"
     builder_kind: Literal["accepted_claim", "source_capture", "exhaust"]
     authoring_source_digest: str
@@ -190,7 +190,7 @@ class ProcedureGuardExpansionV1(_StrictBuilderModel):
     definition_digest: str
     envelope_pins: tuple[ArtifactPin, ...]
     required_acquisition_policy: ArtifactPin | None
-    source_mappings: tuple[BuilderSourceMappingV1, ...]
+    source_mappings: tuple[BuilderSourceMapping, ...]
     expanded_output_digest: str
 
     @field_validator(
@@ -205,7 +205,7 @@ class ProcedureGuardExpansionV1(_StrictBuilderModel):
         return value
 
     @model_validator(mode="after")
-    def _reproduce(self) -> "ProcedureGuardExpansionV1":
+    def _reproduce(self) -> "ProcedureGuardExpansion":
         definition_digest = compute_procedure_definition_digest_v3(self.definition).tagged
         if self.definition_digest != definition_digest:
             raise ValueError("guard expansion definition digest does not reproduce")
@@ -230,32 +230,32 @@ class ProcedureGuardExpansionV1(_StrictBuilderModel):
         return self
 
 
-GuardBuilderV1 = AcceptedClaimGuardBuilderV1 | SourceCaptureGuardBuilderV1 | ExhaustGuardBuilderV1
+GuardBuilder = AcceptedClaimGuardBuilder | SourceCaptureGuardBuilder | ExhaustGuardBuilder
 
 
 def _guard_and_project(
-    spec: GuardBuilderCommonV1,
+    spec: GuardBuilderCommon,
     *,
-    input_node: StateTapNodeV3 | SourceNodeV3 | ExhaustTapNodeV3,
-) -> tuple[StateTapNodeV3 | SourceNodeV3 | ExhaustTapNodeV3 | GuardNodeV3 | ProjectNodeV3, ...]:
+    input_node: StateTapNodeV3 | SourceNodeV3 | ExhaustTapNode,
+) -> tuple[StateTapNodeV3 | SourceNodeV3 | ExhaustTapNode | GuardNode | ProjectNode, ...]:
     return (
         input_node,
-        GuardNodeV3(
+        GuardNode(
             node_id="guard",
-            predicate=GuardPredicateV1(
-                left=PredicateOperandV1(
+            predicate=GuardPredicate(
+                left=PredicateOperand(
                     kind="step",
                     alias="observed",
                     path=spec.observed_path,
                 ),
                 operator=spec.operator,
-                right=PredicateOperandV1(kind="literal", value=spec.expected_value),
+                right=PredicateOperand(kind="literal", value=spec.expected_value),
             ),
             on_false="$abort",
             refusal_code=spec.refusal_code,
             message=spec.refusal_message,
         ),
-        ProjectNodeV3.model_validate(
+        ProjectNode.model_validate(
             {
                 "node_id": "project",
                 "fields": {"value": "$steps.observed"},
@@ -267,14 +267,14 @@ def _guard_and_project(
 
 
 def _expansion(
-    spec: GuardBuilderV1,
+    spec: GuardBuilder,
     *,
     builder_kind: Literal["accepted_claim", "source_capture", "exhaust"],
-    input_node: StateTapNodeV3 | SourceNodeV3 | ExhaustTapNodeV3,
+    input_node: StateTapNodeV3 | SourceNodeV3 | ExhaustTapNode,
     dependency_pins: tuple[ArtifactPin, ...],
     acquisition_policy: ArtifactPin | None,
     compiler_rule_digest: str,
-) -> ProcedureGuardExpansionV1:
+) -> ProcedureGuardExpansion:
     Sha256Value.from_tagged(compiler_rule_digest)
     definition = ProcedureDefinitionV3(
         name=spec.name,
@@ -301,9 +301,9 @@ def _expansion(
         )
     )
     mappings = (
-        BuilderSourceMappingV1(node_id="input", compact_field="input_plane"),
-        BuilderSourceMappingV1(node_id="guard", compact_field="predicate"),
-        BuilderSourceMappingV1(node_id="project", compact_field="output"),
+        BuilderSourceMapping(node_id="input", compact_field="input_plane"),
+        BuilderSourceMapping(node_id="guard", compact_field="predicate"),
+        BuilderSourceMapping(node_id="project", compact_field="output"),
     )
     definition_digest = compute_procedure_definition_digest_v3(definition).tagged
     output_digest = typed_digest(
@@ -318,7 +318,7 @@ def _expansion(
             "source_mappings": [mapping.model_dump(mode="json") for mapping in mappings],
         },
     ).tagged
-    return ProcedureGuardExpansionV1(
+    return ProcedureGuardExpansion(
         builder_kind=builder_kind,
         authoring_source_digest=spec.authoring_source_digest,
         compiler_rule_digest=compiler_rule_digest,
@@ -332,10 +332,10 @@ def _expansion(
 
 
 def build_accepted_claim_guard(
-    spec: AcceptedClaimGuardBuilderV1,
+    spec: AcceptedClaimGuardBuilder,
     *,
     compiler_rule_digest: str,
-) -> ProcedureGuardExpansionV1:
+) -> ProcedureGuardExpansion:
     return _expansion(
         spec,
         builder_kind="accepted_claim",
@@ -354,10 +354,10 @@ def build_accepted_claim_guard(
 
 
 def build_source_capture_guard(
-    spec: SourceCaptureGuardBuilderV1,
+    spec: SourceCaptureGuardBuilder,
     *,
     compiler_rule_digest: str,
-) -> ProcedureGuardExpansionV1:
+) -> ProcedureGuardExpansion:
     return _expansion(
         spec,
         builder_kind="source_capture",
@@ -377,14 +377,14 @@ def build_source_capture_guard(
 
 
 def build_exhaust_guard(
-    spec: ExhaustGuardBuilderV1,
+    spec: ExhaustGuardBuilder,
     *,
     compiler_rule_digest: str,
-) -> ProcedureGuardExpansionV1:
+) -> ProcedureGuardExpansion:
     return _expansion(
         spec,
         builder_kind="exhaust",
-        input_node=ExhaustTapNodeV3.model_validate(
+        input_node=ExhaustTapNode.model_validate(
             {
                 "node_id": "input",
                 "reducer_or_query": spec.reducer_or_query,
@@ -399,12 +399,12 @@ def build_exhaust_guard(
 
 
 __all__ = [
-    "AcceptedClaimGuardBuilderV1",
-    "BuilderSourceMappingV1",
-    "ExhaustGuardBuilderV1",
-    "GuardBuilderCommonV1",
-    "ProcedureGuardExpansionV1",
-    "SourceCaptureGuardBuilderV1",
+    "AcceptedClaimGuardBuilder",
+    "BuilderSourceMapping",
+    "ExhaustGuardBuilder",
+    "GuardBuilderCommon",
+    "ProcedureGuardExpansion",
+    "SourceCaptureGuardBuilder",
     "build_accepted_claim_guard",
     "build_exhaust_guard",
     "build_source_capture_guard",

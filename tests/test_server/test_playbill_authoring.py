@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from cruxible_client import contracts
 from cruxible_client.authoring.examples import claim_flow_a_example, procedure_example
 from cruxible_client.contracts.authoring.inputs import CarriedContractInput, lower_authoring_input
-from cruxible_client.contracts.authoring.models import ProcedureAuthoringPayloadV2
+from cruxible_client.contracts.authoring.models import ProcedureAuthoringPayload
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_core.claims.claim_type_inputs import (
     lower_claim_type_input,
@@ -29,20 +29,20 @@ INTENT_ID = "AIT-" + "5" * 32
 def test_http_raw_intent_cannot_assert_procedure_execution(playbill_http):
     from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
     from cruxible_client.contracts.authoring.models import (
-        ClaimAuthoringPayloadV3,
-        ClaimDependencyDraftsV1,
-        ClaimDerivationBindingV1,
+        ClaimAuthoringPayload,
+        ClaimDependencyDrafts,
+        ClaimDerivationBinding,
     )
     from tests.test_authoring.test_authoring_preflight import _self_source_payload
 
     client, instance_id, _private_key = playbill_http
     original = _self_source_payload()
-    payload = ClaimAuthoringPayloadV3(
+    payload = ClaimAuthoringPayload(
         statement=original.statement.model_copy(update={"role": "derivation"}),
         rationale="A raw caller cannot supply execution provenance.",
         source=original.source,
-        dependency_drafts=ClaimDependencyDraftsV1(),
-        derivation=ClaimDerivationBindingV1(
+        dependency_drafts=ClaimDependencyDrafts(),
+        derivation=ClaimDerivationBinding(
             procedure=ArtifactPin(
                 role="reducer",
                 target=ArtifactIdentity(kind="Procedure", name="unexecuted"),
@@ -346,7 +346,7 @@ def test_http_unsorted_owned_contracts_use_the_typed_artifact_validation_refusal
 ) -> None:
     client, instance_id, _private_key = playbill_http
     payload = lower_authoring_input(procedure_example())
-    assert isinstance(payload, ProcedureAuthoringPayloadV2)
+    assert isinstance(payload, ProcedureAuthoringPayload)
     assert len(payload.owned_contracts) > 1
     unsorted = payload.model_copy(
         update={"owned_contracts": tuple(reversed(payload.owned_contracts))}
@@ -369,7 +369,7 @@ def test_http_unsorted_owned_contracts_use_the_typed_artifact_validation_refusal
     assert diagnostic["stage"] == "lowering"
     assert diagnostic["offending_element"] == "procedure"
     assert "owned Contracts must be canonically byte-sorted" in diagnostic["message"]
-    assert "<ProcedureOwnedContractV1>" in diagnostic["message"]
+    assert "<ProcedureOwnedContract>" in diagnostic["message"]
     assert "arrays must be concrete lists" not in diagnostic["message"]
 
 
@@ -425,7 +425,7 @@ def test_http_migration_route_delegates_the_typed_request(
 
     def migrate_stub(selected: str, *, request: object):
         seen.append((selected, request))
-        return contracts.PlaybillClaimTypeMigrationResult(
+        return contracts.PlaybillClaimTypeMigrationResultV1(
             operation_digest="sha256:" + "1" * 64,
             semantic_delta=[],
             dependents=[],
@@ -655,7 +655,7 @@ def test_http_whoami_and_proposal_inventory_are_typed_reads(
         status_filter="open",
         entries=[],
     )
-    selector = contracts.PlaybillProposalSelectorResultV1(
+    selector = contracts.PlaybillProposalSelectorResult(
         selector="refs/proposals/operator/example",
         proposal_id="sha256:" + "5" * 64,
     )

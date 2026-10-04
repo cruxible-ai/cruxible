@@ -11,12 +11,12 @@ from click.testing import CliRunner
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
-    PlaybillBlockSyncItemV1,
-    PlaybillBlockSyncResultV1,
+    PlaybillBlockSyncItem,
+    PlaybillBlockSyncResult,
 )
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV1,
-    ProjectionClaimBackingV1,
+    ProjectionClaimBacking,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.cli.main import cli
@@ -34,7 +34,7 @@ def _stamp() -> ProjectionBlockStampV1:
             compiler_digest="sha256:" + "4" * 64,
         ),
         backing=(
-            ProjectionClaimBackingV1(
+            ProjectionClaimBacking(
                 identity=ArtifactIdentity(kind="Claim", name="CLM-existing"),
                 statement_digest="sha256:" + "5" * 64,
             ),
@@ -135,12 +135,12 @@ def test_cli_sync_passes_local_edit_and_path_controls(
 ) -> None:
     calls: list[dict[str, Any]] = []
 
-    def sync(client: object, instance_id: str, **values: Any) -> PlaybillBlockSyncResultV1:
+    def sync(client: object, instance_id: str, **values: Any) -> PlaybillBlockSyncResult:
         assert instance_id == "inst_projection"
         calls.append(values)
-        return PlaybillBlockSyncResultV1(
+        return PlaybillBlockSyncResult(
             items=(
-                PlaybillBlockSyncItemV1(
+                PlaybillBlockSyncItem(
                     path="corpus/runbook.md",
                     source_id="corpus.runbook",
                     block_id="summary",
@@ -186,9 +186,9 @@ def test_cli_sync_passes_local_edit_and_path_controls(
 def test_cli_sync_check_exits_nonzero_when_safe_bytes_would_change(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    result = PlaybillBlockSyncResultV1(
+    result = PlaybillBlockSyncResult(
         items=(
-            PlaybillBlockSyncItemV1(
+            PlaybillBlockSyncItem(
                 path="corpus/runbook.md",
                 source_id="corpus.runbook",
                 block_id="summary",

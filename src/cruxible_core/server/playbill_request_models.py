@@ -15,20 +15,20 @@ from cruxible_client.contracts import (
     PlaybillFloorExportPart,
 )
 from cruxible_client.contracts.attestations import ApprovalAttestation
-from cruxible_client.contracts.authoring.inputs import AuthoringInputV1
+from cruxible_client.contracts.authoring.inputs import AuthoringInput
 from cruxible_client.contracts.authoring.models import (
+    AuthoringIntentCompileRequest,
     AuthoringIntentCompileRequestV1,
     AuthoringIntentCompileRequestV2,
-    AuthoringIntentCompileRequestV3,
+    AuthoringIntentCreateRequest,
     AuthoringIntentCreateRequestV1,
     AuthoringIntentCreateRequestV2,
-    AuthoringIntentCreateRequestV3,
 )
 from cruxible_client.contracts.change_control import DryRun, PreviewAt
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.declared_blocks import (
-    PlaybillReviewWorkspaceObservationV1,
-    ProjectionBlockStamp,
+    PlaybillReviewWorkspaceObservation,
+    ProjectionBlockStampAny,
 )
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.ledger_mirror import MIRROR_URL_MAX_LENGTH
@@ -42,10 +42,10 @@ from cruxible_client.contracts.types import (
     PrincipalRecord,
     validate_decommission_prose,
 )
-from cruxible_core.claims.claim_type_inputs import ClaimTypeInputV1
-from cruxible_core.coverage.adapter import WorkingSourceObservationV1
-from cruxible_core.coverage.contracts import CoverageCardBudgetV1
-from cruxible_core.coverage.indexes import CoverageScanBudgetV1
+from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord
+from cruxible_core.coverage.adapter import WorkingSourceObservation
+from cruxible_core.coverage.contracts import CoverageCardBudget
+from cruxible_core.coverage.indexes import CoverageScanBudget
 from cruxible_core.curation.curation_calibration import (
     AUDIT_BUDGET_DEFAULT_MAX_BYTES,
     AUDIT_BUDGET_DEFAULT_MAX_ROWS,
@@ -61,10 +61,10 @@ class _StrictPlaybillRequest(BaseModel):
 # the canonical client-owned wire models rather than parallel definitions.
 PlaybillAuthoringCreateRequest = AuthoringIntentCreateRequestV1
 PlaybillAuthoringCreateRequestV2 = AuthoringIntentCreateRequestV2
-PlaybillAuthoringCreateRequestV3 = AuthoringIntentCreateRequestV3
+PlaybillAuthoringCreateRequestV3 = AuthoringIntentCreateRequest
 PlaybillAuthoringCompileRequest = AuthoringIntentCompileRequestV1
 PlaybillAuthoringCompileRequestV2 = AuthoringIntentCompileRequestV2
-PlaybillAuthoringCompileRequestV3 = AuthoringIntentCompileRequestV3
+PlaybillAuthoringCompileRequestV3 = AuthoringIntentCompileRequest
 
 
 class PlaybillInitRequest(_StrictPlaybillRequest):
@@ -152,7 +152,7 @@ class PlaybillApprovalRequest(_StrictPlaybillRequest):
 
 class PlaybillReviewRequest(_StrictPlaybillRequest):
     include_body: bool = False
-    workspace_observation: PlaybillReviewWorkspaceObservationV1 | None = None
+    workspace_observation: PlaybillReviewWorkspaceObservation | None = None
 
 
 class PlaybillApprovalChallengeRequest(_StrictPlaybillRequest):
@@ -190,7 +190,7 @@ class PlaybillProposeClaimTypeInputRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-claim-type-input-propose-request-v1"] = (
         "playbill-claim-type-input-propose-request-v1"
     )
-    input: ClaimTypeInputV1
+    input: ClaimTypeInputRecord
     proposal_name: str
     dry_run: DryRun = None
     at: PreviewAt = None
@@ -200,14 +200,14 @@ class PlaybillAuthoringInputCreateRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-authoring-input-create-request-v1"] = (
         "playbill-authoring-input-create-request-v1"
     )
-    input: AuthoringInputV1
+    input: AuthoringInput
 
 
 class PlaybillAuthoringInputCompileRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-authoring-input-compile-request-v1"] = (
         "playbill-authoring-input-compile-request-v1"
     )
-    input: AuthoringInputV1
+    input: AuthoringInput
     intent_id: str | None = None
 
 
@@ -237,7 +237,7 @@ class PlaybillInsertionAbandonRequest(_StrictPlaybillRequest):
 class PlaybillBlockDeclareRequest(_StrictPlaybillRequest):
     """The stamp a workspace just wrote, offered to the instance for registration."""
 
-    stamp: ProjectionBlockStamp
+    stamp: ProjectionBlockStampAny
 
 
 class PlaybillBlockDepublishRequest(_StrictPlaybillRequest):
@@ -262,7 +262,7 @@ class PlaybillProposalWithdrawRequest(_StrictPlaybillRequest):
     at: PreviewAt = None
 
 
-class PlaybillNextRequest(_StrictPlaybillRequest):
+class PlaybillNextRequestV1(_StrictPlaybillRequest):
     tag: Literal["playbill-next-request-v1"] = "playbill-next-request-v1"
     at: AcceptedCoordinate | None = None
     evaluation_time: datetime
@@ -278,7 +278,7 @@ class PlaybillNextRequest(_StrictPlaybillRequest):
     caller_tools: tuple[str, ...] | None = None
 
 
-class PlaybillNextRequestV2(_StrictPlaybillRequest):
+class PlaybillNextRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-next-request-v2"] = "playbill-next-request-v2"
     at: AcceptedCoordinate | None = None
     evaluation_time: datetime
@@ -376,9 +376,9 @@ class PlaybillResolveCoverageRequest(_StrictPlaybillRequest):
     """
 
     at: AcceptedCoordinate | None = None
-    observations: tuple[WorkingSourceObservationV1, ...]
-    budget: CoverageCardBudgetV1 | None = None
-    scan_budget: CoverageScanBudgetV1 | None = None
+    observations: tuple[WorkingSourceObservation, ...]
+    budget: CoverageCardBudget | None = None
+    scan_budget: CoverageScanBudget | None = None
 
 
 class PlaybillFloorDeltaRequest(_StrictPlaybillRequest):

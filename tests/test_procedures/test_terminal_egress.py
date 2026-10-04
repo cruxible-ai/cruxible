@@ -6,11 +6,11 @@ from types import SimpleNamespace
 
 import cruxible_core.service.procedures.procedure_runs as procedure_run_service
 from cruxible_client.contracts.procedures.models import (
-    InboxEgressNodeV3,
+    InboxEgressNode,
     ProcedureDefinitionV3,
     StateTapNodeV3,
 )
-from cruxible_client.contracts.procedures.results import ProcedureNodeRefusalV1
+from cruxible_client.contracts.procedures.results import ProcedureNodeRefusal
 from cruxible_core.exhaust import parse_journal_payload
 from cruxible_core.procedures.egress import (
     TerminalEgressChildReceiptV1,
@@ -56,7 +56,7 @@ def _terminal_procedure():
                 as_="rows",
                 next="inbox",
             ),
-            InboxEgressNodeV3(node_id="inbox", input={"items": "$steps.rows.items"}),
+            InboxEgressNode(node_id="inbox", input={"items": "$steps.rows.items"}),
         ),
         returns="rows",
         budget=_budget(items=100),
@@ -263,7 +263,7 @@ def test_proposal_refusal_projects_as_a_repairable_public_node_terminal(
         run_id=prepared.admission.run_id,
         receipt=result.receipt,
     )
-    assert isinstance(state.terminal, ProcedureNodeRefusalV1)
+    assert isinstance(state.terminal, ProcedureNodeRefusal)
     assert state.terminal.code == "proposal_target_paths_mismatch"
     # The live proposal refusal retains its declared repair through journal projection.
     assert state.terminal.repair.hand_edit.required_change == (

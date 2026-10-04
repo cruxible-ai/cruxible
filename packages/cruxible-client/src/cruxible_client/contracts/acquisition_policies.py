@@ -27,16 +27,16 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.capture_journal import (
+    CaptureLandingEvent,
     CaptureLandingEventAny,
     CaptureLandingEventV1,
-    CaptureLandingEventV2,
 )
 from cruxible_client.contracts.captures import (
     PLAYBILL_CAPTURE_COMPONENTS,
-    CanonicalDurationV1,
+    CanonicalDuration,
     CaptureEnvelopeAny,
     CaptureEnvelopeV1,
-    CaptureSelectionBudgetV1,
+    CaptureSelectionBudget,
     capture_digest,
 )
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
@@ -44,7 +44,7 @@ from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.semantic import SemanticAddress
 
-AcquisitionFailureBehaviorV1 = Literal["refuse", "omit_optional", "declared_conservative_default"]
+AcquisitionFailureBehavior = Literal["refuse", "omit_optional", "declared_conservative_default"]
 _INPUT_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
 _POLICY_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 
@@ -68,17 +68,17 @@ def _sorted_unique(values: tuple[str, ...], *, label: str) -> tuple[str, ...]:
     return values
 
 
-class InputAcquisitionRuleV1(_StrictAcquisitionModel):
+class InputAcquisitionRule(_StrictAcquisitionModel):
     tag: Literal["playbill-input-acquisition-rule-v1"] = "playbill-input-acquisition-rule-v1"
     input_name: str
     requirement: Literal["required", "optional", "conservative_default"]
     permitted_replayability: tuple[Literal["exact", "attested_only"], ...]
-    max_age: CanonicalDurationV1 | None = None
+    max_age: CanonicalDuration | None = None
     correlation_keys: tuple[str, ...] = ()
     join_semantics_digest: str | None = None
-    on_unavailable: AcquisitionFailureBehaviorV1
-    on_stale: AcquisitionFailureBehaviorV1
-    on_oversized: AcquisitionFailureBehaviorV1
+    on_unavailable: AcquisitionFailureBehavior
+    on_stale: AcquisitionFailureBehavior
+    on_oversized: AcquisitionFailureBehavior
     on_conflict: Literal["preserve", "refuse"]
     conservative_default: object | None = None
 
@@ -114,7 +114,7 @@ class InputAcquisitionRuleV1(_StrictAcquisitionModel):
         return None if value is None else normalize_canonical(value)
 
     @model_validator(mode="after")
-    def _shape(self) -> "InputAcquisitionRuleV1":
+    def _shape(self) -> "InputAcquisitionRule":
         behaviors = (self.on_unavailable, self.on_stale, self.on_oversized)
         if self.requirement == "required" and any(item != "refuse" for item in behaviors):
             raise ValueError("required inputs must refuse on unavailable, stale, or oversized")
@@ -132,18 +132,18 @@ class InputAcquisitionRuleV1(_StrictAcquisitionModel):
         return self
 
 
-class IndependentCoherenceV1(_StrictAcquisitionModel):
+class IndependentCoherence(_StrictAcquisitionModel):
     tag: Literal["playbill-independent-coherence-v1"] = "playbill-independent-coherence-v1"
     kind: Literal["independent"] = "independent"
 
 
-class BoundedWindowCoherenceV1(_StrictAcquisitionModel):
+class BoundedWindowCoherence(_StrictAcquisitionModel):
     tag: Literal["playbill-bounded-window-coherence-v1"] = "playbill-bounded-window-coherence-v1"
     kind: Literal["bounded_window"] = "bounded_window"
-    max_cross_source_skew: CanonicalDurationV1
+    max_cross_source_skew: CanonicalDuration
 
 
-class DeclaredSnapshotGroupCoherenceV1(_StrictAcquisitionModel):
+class DeclaredSnapshotGroupCoherence(_StrictAcquisitionModel):
     tag: Literal["playbill-declared-snapshot-group-coherence-v1"] = (
         "playbill-declared-snapshot-group-coherence-v1"
     )
@@ -158,8 +158,8 @@ class DeclaredSnapshotGroupCoherenceV1(_StrictAcquisitionModel):
         return value
 
 
-SourceCoherenceV1 = Annotated[
-    IndependentCoherenceV1 | BoundedWindowCoherenceV1 | DeclaredSnapshotGroupCoherenceV1,
+SourceCoherence = Annotated[
+    IndependentCoherence | BoundedWindowCoherence | DeclaredSnapshotGroupCoherence,
     Field(discriminator="kind"),
 ]
 
@@ -168,21 +168,19 @@ def _pin_key(pin: ArtifactPin) -> tuple[bytes, bytes]:
     return pin.role.encode("utf-8"), pin.target.qualified.encode("utf-8")
 
 
-class SourceAcquisitionPolicyV1(_StrictAcquisitionModel):
+class SourceAcquisitionPolicy(_StrictAcquisitionModel):
     artifact_format: Literal["playbill-source-acquisition-policy-v1"] = (
         "playbill-source-acquisition-policy-v1"
     )
     identity: ArtifactIdentity
-    inputs: tuple[InputAcquisitionRuleV1, ...]
-    coherence: SourceCoherenceV1
+    inputs: tuple[InputAcquisitionRule, ...]
+    coherence: SourceCoherence
     pins: tuple[ArtifactPin, ...] = ()
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
 
     @field_validator("inputs")
     @classmethod
-    def _inputs(
-        cls, value: tuple[InputAcquisitionRuleV1, ...]
-    ) -> tuple[InputAcquisitionRuleV1, ...]:
+    def _inputs(cls, value: tuple[InputAcquisitionRule, ...]) -> tuple[InputAcquisitionRule, ...]:
         names = tuple(item.input_name for item in value)
         if not value or names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
             raise ValueError("acquisition inputs must be nonempty, sorted, and unique")
@@ -196,7 +194,7 @@ class SourceAcquisitionPolicyV1(_StrictAcquisitionModel):
         return value
 
     @model_validator(mode="after")
-    def _identity(self) -> "SourceAcquisitionPolicyV1":
+    def _identity(self) -> "SourceAcquisitionPolicy":
         if self.identity.kind != "SourceAcquisitionPolicy" or not _POLICY_NAME_RE.fullmatch(
             self.identity.name
         ):
@@ -204,7 +202,7 @@ class SourceAcquisitionPolicyV1(_StrictAcquisitionModel):
         return self
 
 
-def acquisition_policy_digest(policy: SourceAcquisitionPolicyV1) -> ArtifactDigest:
+def acquisition_policy_digest(policy: SourceAcquisitionPolicy) -> ArtifactDigest:
     return typed_digest(
         ArtifactDigest,
         "playbill-envelope-v1",
@@ -218,7 +216,7 @@ def acquisition_policy_path(name: str) -> str:
     return f"source-acquisition-policies/{name}.json"
 
 
-def render_acquisition_policy(policy: SourceAcquisitionPolicyV1) -> bytes:
+def render_acquisition_policy(policy: SourceAcquisitionPolicy) -> bytes:
     return pretty_canonical_bytes(policy.model_dump(mode="json"))
 
 
@@ -227,9 +225,9 @@ def parse_acquisition_policy(
     *,
     path: str,
     codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
-) -> SourceAcquisitionPolicyV1:
+) -> SourceAcquisitionPolicy:
     try:
-        policy = SourceAcquisitionPolicyV1.model_validate(json.loads(content))
+        policy = SourceAcquisitionPolicy.model_validate(json.loads(content))
     except (UnicodeDecodeError, ValueError) as exc:
         raise SourceAcquisitionPolicyError(
             "SourceAcquisitionPolicy failed strict v1 validation"
@@ -241,13 +239,13 @@ def parse_acquisition_policy(
     return policy
 
 
-class AcceptedSourceAcquisitionPolicyV1(_StrictAcquisitionModel):
+class AcceptedSourceAcquisitionPolicy(_StrictAcquisitionModel):
     path: str
-    policy: SourceAcquisitionPolicyV1
+    policy: SourceAcquisitionPolicy
     artifact_digest: str
 
     @model_validator(mode="after")
-    def _binding(self) -> "AcceptedSourceAcquisitionPolicyV1":
+    def _binding(self) -> "AcceptedSourceAcquisitionPolicy":
         if self.path != acquisition_policy_path(self.policy.identity.name) or (
             self.artifact_digest != acquisition_policy_digest(self.policy).tagged
         ):
@@ -255,7 +253,7 @@ class AcceptedSourceAcquisitionPolicyV1(_StrictAcquisitionModel):
         return self
 
 
-class SourceAcquisitionPolicyLawResultV1(_StrictAcquisitionModel):
+class SourceAcquisitionPolicyLawResult(_StrictAcquisitionModel):
     verdict: Literal["accepted", "refused"]
     artifact_digest: str | None = None
     required_tier: PermissionTier | None = None
@@ -268,8 +266,8 @@ def _law_refusal(
     message: str,
     *,
     path: str,
-) -> SourceAcquisitionPolicyLawResultV1:
-    return SourceAcquisitionPolicyLawResultV1(
+) -> SourceAcquisitionPolicyLawResult:
+    return SourceAcquisitionPolicyLawResult(
         verdict="refused",
         diagnostics=(
             CompilerDiagnostic(
@@ -283,11 +281,11 @@ def _law_refusal(
 
 
 def evaluate_acquisition_policy_law(
-    policy: SourceAcquisitionPolicyV1,
+    policy: SourceAcquisitionPolicy,
     *,
     path: str,
-    predecessor: AcceptedSourceAcquisitionPolicyV1 | None,
-) -> SourceAcquisitionPolicyLawResultV1:
+    predecessor: AcceptedSourceAcquisitionPolicy | None,
+) -> SourceAcquisitionPolicyLawResult:
     if path != acquisition_policy_path(policy.identity.name):
         return _law_refusal(
             "playbill.acquisition_policy.path_mismatch",
@@ -309,7 +307,7 @@ def evaluate_acquisition_policy_law(
                 "SourceAcquisitionPolicy successor identity or predecessor differs.",
                 path=path,
             )
-    if isinstance(policy.coherence, DeclaredSnapshotGroupCoherenceV1):
+    if isinstance(policy.coherence, DeclaredSnapshotGroupCoherence):
         required = (
             ("coordinate-grammar", policy.coherence.coordinate_grammar_digest),
             ("proof-adapter", policy.coherence.proof_adapter_digest),
@@ -330,7 +328,7 @@ def evaluate_acquisition_policy_law(
                 "proof-adapter pins.",
                 path=path,
             )
-    return SourceAcquisitionPolicyLawResultV1(
+    return SourceAcquisitionPolicyLawResult(
         verdict="accepted",
         artifact_digest=acquisition_policy_digest(policy).tagged,
         required_tier="governed_write",
@@ -338,14 +336,14 @@ def evaluate_acquisition_policy_law(
     )
 
 
-class AcquisitionCandidateV1(_StrictAcquisitionModel):
+class AcquisitionCandidate(_StrictAcquisitionModel):
     tag: Literal["playbill-acquisition-candidate-v1"] = "playbill-acquisition-candidate-v1"
     input_name: str
     envelope: CaptureEnvelopeAny
     capture_digest: str
     landing_event: CaptureLandingEventAny
     current_replay_available: bool
-    selection_budget: CaptureSelectionBudgetV1
+    selection_budget: CaptureSelectionBudget
     selected_bytes: int = Field(ge=0)
     selected_rows: int = Field(ge=0)
     selected_items: int = Field(ge=0)
@@ -361,7 +359,7 @@ class AcquisitionCandidateV1(_StrictAcquisitionModel):
         return value
 
     @model_validator(mode="after")
-    def _bindings(self) -> "AcquisitionCandidateV1":
+    def _bindings(self) -> "AcquisitionCandidate":
         if capture_digest(self.envelope).tagged != self.capture_digest:
             raise ValueError("acquisition candidate Capture digest does not reproduce")
         if self.landing_event.capture_digest != self.capture_digest:
@@ -371,14 +369,14 @@ class AcquisitionCandidateV1(_StrictAcquisitionModel):
                 raise ValueError("acquisition candidate crosses Capture landing versions")
             if self.landing_event.run_receipt_digest != self.envelope.run_receipt_digest:
                 raise ValueError("acquisition landing receipt differs from its Capture")
-        elif not isinstance(self.landing_event, CaptureLandingEventV2):
+        elif not isinstance(self.landing_event, CaptureLandingEvent):
             raise ValueError("acquisition candidate crosses Capture landing versions")
         elif self.landing_event.producer_receipt_digest != self.envelope.producer_receipt_digest:
             raise ValueError("acquisition landing receipt differs from its Capture")
         return self
 
 
-class AcquisitionInputDecisionV1(_StrictAcquisitionModel):
+class AcquisitionInputDecision(_StrictAcquisitionModel):
     input_name: str
     disposition: Literal["selected", "omitted", "defaulted", "refused"]
     considered_capture_digests: tuple[str, ...] = ()
@@ -393,13 +391,13 @@ class AcquisitionInputDecisionV1(_StrictAcquisitionModel):
         return None if value is None else normalize_canonical(value)
 
 
-class SourceSelectionReceiptV1(_StrictAcquisitionModel):
+class SourceSelectionReceipt(_StrictAcquisitionModel):
     tag: Literal["playbill-source-selection-receipt-v1"] = "playbill-source-selection-receipt-v1"
     policy_digest: str
     anchor_cursor: str
     evaluation_time: datetime
     verdict: Literal["selected", "refused"]
-    decisions: tuple[AcquisitionInputDecisionV1, ...]
+    decisions: tuple[AcquisitionInputDecision, ...]
     coordinate_time_vector: tuple[dict[str, object], ...]
     coherence_proof_digest: str | None = None
 
@@ -429,29 +427,29 @@ class SourceSelectionReceiptV1(_StrictAcquisitionModel):
 
 
 def _behavior_decision(
-    rule: InputAcquisitionRuleV1,
-    behavior: AcquisitionFailureBehaviorV1,
+    rule: InputAcquisitionRule,
+    behavior: AcquisitionFailureBehavior,
     *,
     considered: tuple[str, ...],
     reason: str,
     default_authorized: bool,
-) -> AcquisitionInputDecisionV1:
+) -> AcquisitionInputDecision:
     if behavior == "omit_optional" and rule.requirement == "optional":
-        return AcquisitionInputDecisionV1(
+        return AcquisitionInputDecision(
             input_name=rule.input_name,
             disposition="omitted",
             considered_capture_digests=considered,
             reason_codes=(reason,),
         )
     if behavior == "declared_conservative_default" and default_authorized:
-        return AcquisitionInputDecisionV1(
+        return AcquisitionInputDecision(
             input_name=rule.input_name,
             disposition="defaulted",
             considered_capture_digests=considered,
             default_value=rule.conservative_default,
             reason_codes=(reason,),
         )
-    return AcquisitionInputDecisionV1(
+    return AcquisitionInputDecision(
         input_name=rule.input_name,
         disposition="refused",
         considered_capture_digests=considered,
@@ -460,28 +458,26 @@ def _behavior_decision(
 
 
 def select_sources(
-    policy: SourceAcquisitionPolicyV1,
-    candidates: tuple[AcquisitionCandidateV1, ...],
+    policy: SourceAcquisitionPolicy,
+    candidates: tuple[AcquisitionCandidate, ...],
     *,
     anchor: CaptureLandingEventAny,
     evaluation_time: datetime,
     default_authorizations: tuple[str, ...] = (),
-) -> SourceSelectionReceiptV1:
+) -> SourceSelectionReceipt:
     """Select one dependency vector without inventing cross-source total order."""
 
     if evaluation_time.tzinfo is None or evaluation_time.utcoffset() is None:
         raise ValueError("source selection evaluation time must be timezone-aware")
     if default_authorizations != tuple(sorted(set(default_authorizations))):
         raise ValueError("default authorizations must be sorted and unique")
-    grouped: dict[str, list[AcquisitionCandidateV1]] = {
-        rule.input_name: [] for rule in policy.inputs
-    }
+    grouped: dict[str, list[AcquisitionCandidate]] = {rule.input_name: [] for rule in policy.inputs}
     for candidate in candidates:
         if candidate.input_name not in grouped:
             raise ValueError("candidate names an undeclared acquisition input")
         grouped[candidate.input_name].append(candidate)
-    decisions: list[AcquisitionInputDecisionV1] = []
-    selected: list[AcquisitionCandidateV1] = []
+    decisions: list[AcquisitionInputDecision] = []
+    selected: list[AcquisitionCandidate] = []
     for rule in policy.inputs:
         contenders = tuple(
             sorted(
@@ -505,8 +501,8 @@ def select_sources(
                 )
             )
             continue
-        eligible: list[AcquisitionCandidateV1] = []
-        failure: tuple[AcquisitionFailureBehaviorV1, str] | None = None
+        eligible: list[AcquisitionCandidate] = []
+        failure: tuple[AcquisitionFailureBehavior, str] | None = None
         for candidate in contenders:
             replayability = getattr(candidate.envelope.source, "replayability", "exact")
             if replayability not in rule.permitted_replayability or (
@@ -548,7 +544,7 @@ def select_sources(
         )
         if conflict and rule.on_conflict == "refuse":
             decisions.append(
-                AcquisitionInputDecisionV1(
+                AcquisitionInputDecision(
                     input_name=rule.input_name,
                     disposition="refused",
                     considered_capture_digests=considered,
@@ -559,7 +555,7 @@ def select_sources(
         chosen = tuple(eligible) if conflict else (eligible[-1],)
         selected.extend(chosen)
         decisions.append(
-            AcquisitionInputDecisionV1(
+            AcquisitionInputDecision(
                 input_name=rule.input_name,
                 disposition="selected",
                 considered_capture_digests=considered,
@@ -570,22 +566,22 @@ def select_sources(
         )
     coherence_proof: str | None = None
     selected_times = [item.envelope.observed_at for item in selected]
-    if isinstance(policy.coherence, BoundedWindowCoherenceV1) and selected_times:
+    if isinstance(policy.coherence, BoundedWindowCoherence) and selected_times:
         skew = max(selected_times) - min(selected_times)
         if skew > timedelta(microseconds=policy.coherence.max_cross_source_skew.microseconds):
             decisions.append(
-                AcquisitionInputDecisionV1(
+                AcquisitionInputDecision(
                     input_name="coherence",
                     disposition="refused",
                     reason_codes=("playbill.acquisition.cross_source_skew",),
                 )
             )
-    if isinstance(policy.coherence, DeclaredSnapshotGroupCoherenceV1) and selected:
+    if isinstance(policy.coherence, DeclaredSnapshotGroupCoherence) and selected:
         groups = {item.snapshot_group for item in selected}
         proofs = {item.snapshot_proof_digest for item in selected}
         if None in groups or len(groups) != 1 or None in proofs:
             decisions.append(
-                AcquisitionInputDecisionV1(
+                AcquisitionInputDecision(
                     input_name="coherence",
                     disposition="refused",
                     reason_codes=("playbill.acquisition.snapshot_group_unproved",),
@@ -622,7 +618,7 @@ def select_sources(
             key=lambda candidate: canonical_bytes(candidate.model_dump(mode="json")),
         )
     )
-    return SourceSelectionReceiptV1(
+    return SourceSelectionReceipt(
         policy_digest=acquisition_policy_digest(policy).tagged,
         anchor_cursor=anchor.cursor,
         evaluation_time=evaluation_time,
@@ -635,18 +631,18 @@ def select_sources(
 
 __all__ = [
     "ACQUISITION_POLICY_PIN_ROLE",
-    "AcceptedSourceAcquisitionPolicyV1",
-    "AcquisitionCandidateV1",
-    "AcquisitionFailureBehaviorV1",
-    "AcquisitionInputDecisionV1",
-    "BoundedWindowCoherenceV1",
-    "DeclaredSnapshotGroupCoherenceV1",
-    "IndependentCoherenceV1",
-    "InputAcquisitionRuleV1",
-    "SourceAcquisitionPolicyV1",
+    "AcceptedSourceAcquisitionPolicy",
+    "AcquisitionCandidate",
+    "AcquisitionFailureBehavior",
+    "AcquisitionInputDecision",
+    "BoundedWindowCoherence",
+    "DeclaredSnapshotGroupCoherence",
+    "IndependentCoherence",
+    "InputAcquisitionRule",
+    "SourceAcquisitionPolicy",
     "SourceAcquisitionPolicyError",
-    "SourceAcquisitionPolicyLawResultV1",
-    "SourceSelectionReceiptV1",
+    "SourceAcquisitionPolicyLawResult",
+    "SourceSelectionReceipt",
     "acquisition_policy_digest",
     "acquisition_policy_path",
     "evaluate_acquisition_policy_law",

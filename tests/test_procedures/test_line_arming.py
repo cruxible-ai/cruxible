@@ -11,11 +11,11 @@ from types import SimpleNamespace
 import pytest
 
 from cruxible_client.contracts.line_dispatch import (
-    LineArmPrincipalV1,
-    LineDispatchRequestV1,
-    LineEvaluateRequestV1,
+    LineArmPrincipal,
+    LineDispatchRequest,
+    LineEvaluateRequest,
 )
-from cruxible_client.contracts.triggers import CadenceScheduleV1, CaptureLandingScheduleV1
+from cruxible_client.contracts.triggers import CadenceSchedule, CaptureLandingSchedule
 from cruxible_core.consumers.lines import LINE_ARMS
 from cruxible_core.consumers.protocol import ConsumerWork
 from cruxible_core.consumers.runner import ConsumerRunner
@@ -37,8 +37,8 @@ from cruxible_core.service.procedures.procedure_runs import _journal, _stream
 from tests.test_procedures.test_line_triggers import SELECTOR, capture, line_world
 from tests.test_procedures.test_procedure_run_surface import READ_TIME, _actor
 
-LOCAL = LineArmPrincipalV1(kind="local_operator", label="operator")
-CREDENTIAL = LineArmPrincipalV1(
+LOCAL = LineArmPrincipal(kind="local_operator", label="operator")
+CREDENTIAL = LineArmPrincipal(
     kind="runtime_credential", credential_id="cred-arm", label="line-operator"
 )
 
@@ -57,7 +57,7 @@ def _admissions(instance) -> int:  # type: ignore[no-untyped-def]
 
 
 def _armed_world(tmp_path, *, principal=LOCAL):  # type: ignore[no-untyped-def]
-    instance, line, procedure = line_world(tmp_path, CaptureLandingScheduleV1(event=SELECTOR))
+    instance, line, procedure = line_world(tmp_path, CaptureLandingSchedule(event=SELECTOR))
     start = READ_TIME + timedelta(seconds=10)
     service_arm_line(
         instance,
@@ -112,7 +112,7 @@ def test_an_armed_line_admits_the_occurrence_its_daemon_matched(tmp_path, monkey
 
 
 def test_the_daemon_listener_runs_armed_work_on_its_own(tmp_path, monkeypatch):
-    instance, line, procedure = line_world(tmp_path, CaptureLandingScheduleV1(event=SELECTOR))
+    instance, line, procedure = line_world(tmp_path, CaptureLandingSchedule(event=SELECTOR))
     monkeypatch.setattr(
         "cruxible_core.consumers.runner.get_registry",
         lambda: SimpleNamespace(
@@ -175,13 +175,13 @@ def test_a_restart_keeps_the_arm_forward_only_and_leaves_earlier_work_explicit(t
 
 
 def test_arming_never_drains_a_backlog_that_explicit_evaluation_left(tmp_path):
-    instance, line, procedure = line_world(tmp_path, CaptureLandingScheduleV1(event=SELECTOR))
+    instance, line, procedure = line_world(tmp_path, CaptureLandingSchedule(event=SELECTOR))
     capture(instance, procedure)
     now = READ_TIME + timedelta(seconds=2)
     service_evaluate_line(
         instance,
         line.identity.name,
-        LineEvaluateRequestV1(since=READ_TIME, until=now),
+        LineEvaluateRequest(since=READ_TIME, until=now),
         actor=_actor(instance),
         now=now,
     )
@@ -265,7 +265,7 @@ def test_a_credential_that_no_longer_holds_stops_the_arm_before_admission(
     explicit = service_dispatch_line(
         instance,
         line.identity.name,
-        LineDispatchRequestV1(),
+        LineDispatchRequest(),
         actor=_actor(instance),
         now=start + timedelta(seconds=5),
         caller_rung=3,
@@ -323,7 +323,7 @@ def test_automatic_and_explicit_dispatch_admit_one_occurrence_once(tmp_path):
         return service_dispatch_line(
             instance,
             line.identity.name,
-            LineDispatchRequestV1(),
+            LineDispatchRequest(),
             actor=_actor(instance),
             now=now,
             caller_rung=3,
@@ -493,7 +493,7 @@ def test_a_same_epoch_revision_accepted_during_matching_never_runs_under_the_old
     from tests.test_indexes.test_resolution_contracts import _accept_tree
 
     instance, line, procedure, owner = line_world(
-        tmp_path, CaptureLandingScheduleV1(event=SELECTOR), with_owner=True
+        tmp_path, CaptureLandingSchedule(event=SELECTOR), with_owner=True
     )
     service_arm_line(
         instance,
@@ -540,7 +540,7 @@ def test_a_same_epoch_revision_accepted_during_matching_never_runs_under_the_old
 
 
 def _cadence_world(tmp_path):  # type: ignore[no-untyped-def]
-    return line_world(tmp_path, CadenceScheduleV1(interval_seconds=60))
+    return line_world(tmp_path, CadenceSchedule(interval_seconds=60))
 
 
 def test_a_restart_lapses_the_pending_cadence_tick_and_the_arm_keeps_ticking(tmp_path):
@@ -562,7 +562,7 @@ def test_a_restart_lapses_the_pending_cadence_tick_and_the_arm_keeps_ticking(tmp
         for item in service_check_line_trigger(
             instance,
             line.identity.name,
-            LineEvaluateRequestV1(
+            LineEvaluateRequest(
                 since=READ_TIME - timedelta(seconds=2), until=READ_TIME + timedelta(seconds=1)
             ),
             now=READ_TIME + timedelta(seconds=1),
@@ -581,7 +581,7 @@ def test_a_restart_lapses_the_pending_cadence_tick_and_the_arm_keeps_ticking(tmp
     retried = service_dispatch_line(
         instance,
         line.identity.name,
-        LineDispatchRequestV1(occurrence_id=lapsed_id, retry=True),
+        LineDispatchRequest(occurrence_id=lapsed_id, retry=True),
         actor=_actor(instance),
         now=restarted + timedelta(seconds=121),
         caller_rung=3,
@@ -655,7 +655,7 @@ def test_explicit_evaluation_during_an_arm_never_starves_its_ticks(tmp_path):
     evaluated = service_evaluate_line(
         instance,
         line.identity.name,
-        LineEvaluateRequestV1(
+        LineEvaluateRequest(
             since=READ_TIME - timedelta(seconds=1), until=READ_TIME + timedelta(seconds=1)
         ),
         actor=_actor(instance),
@@ -694,7 +694,7 @@ def test_a_lapsed_tick_is_retried_as_itself_after_a_newer_tick_ran(tmp_path):
     retried = service_dispatch_line(
         instance,
         line.identity.name,
-        LineDispatchRequestV1(occurrence_id=lapsing, retry=True),
+        LineDispatchRequest(occurrence_id=lapsing, retry=True),
         actor=_actor(instance),
         now=later + timedelta(seconds=61),
         caller_rung=3,
@@ -796,7 +796,7 @@ def test_a_retried_lapsed_tick_never_blocks_the_arms_own_ticks(tmp_path):
     retried = service_dispatch_line(
         instance,
         line.identity.name,
-        LineDispatchRequestV1(occurrence_id=lapsing, retry=True),
+        LineDispatchRequest(occurrence_id=lapsing, retry=True),
         actor=_actor(instance),
         now=READ_TIME + timedelta(seconds=181),
         caller_rung=3,
@@ -826,7 +826,7 @@ def test_status_disarm_and_unknown_lines_refuse_with_codes_that_name_the_line(tm
         LineRunNotAccepted,
     )
 
-    instance, line, _procedure = line_world(tmp_path, CaptureLandingScheduleV1(event=SELECTOR))
+    instance, line, _procedure = line_world(tmp_path, CaptureLandingSchedule(event=SELECTOR))
     name = line.identity.name
 
     with pytest.raises(LineNeverArmed) as never:
@@ -847,7 +847,7 @@ def test_status_disarm_and_unknown_lines_refuse_with_codes_that_name_the_line(tm
 
 
 def test_arm_and_disarm_are_idempotent_and_a_changed_arm_rebinds(tmp_path):
-    instance, line, _procedure = line_world(tmp_path, CaptureLandingScheduleV1(event=SELECTOR))
+    instance, line, _procedure = line_world(tmp_path, CaptureLandingSchedule(event=SELECTOR))
     name = line.identity.name
     start = READ_TIME + timedelta(seconds=10)
 
@@ -898,10 +898,10 @@ def test_a_line_with_two_triggers_runs_each_ones_occurrences_exactly_once(tmp_pa
         None,
         triggers=(
             line_trigger(
-                TRIGGER, line="trigger-test", schedule=CaptureLandingScheduleV1(event=SELECTOR)
+                TRIGGER, line="trigger-test", schedule=CaptureLandingSchedule(event=SELECTOR)
             ),
             line_trigger(
-                ticking, line="trigger-test", schedule=CadenceScheduleV1(interval_seconds=60)
+                ticking, line="trigger-test", schedule=CadenceSchedule(interval_seconds=60)
             ),
         ),
     )
@@ -963,7 +963,7 @@ def test_a_trigger_change_while_armed_stops_the_arm_before_anything_runs(tmp_pat
     from tests.test_procedures.test_line_triggers import TRIGGER
 
     instance, line, procedure, owner = line_world(
-        tmp_path, CaptureLandingScheduleV1(event=SELECTOR), with_owner=True
+        tmp_path, CaptureLandingSchedule(event=SELECTOR), with_owner=True
     )
     start = READ_TIME + timedelta(seconds=10)
     service_arm_line(
@@ -979,13 +979,13 @@ def test_a_trigger_change_while_armed_stops_the_arm_before_anything_runs(tmp_pat
     (arm,) = armed_work(instance, now=start + timedelta(seconds=2))
 
     current = line_trigger(
-        TRIGGER, line=line.identity.name, schedule=CaptureLandingScheduleV1(event=SELECTOR)
+        TRIGGER, line=line.identity.name, schedule=CaptureLandingSchedule(event=SELECTOR)
     )
     changed = {
         "added": line_trigger(
-            "another", line=line.identity.name, schedule=CadenceScheduleV1(interval_seconds=60)
+            "another", line=line.identity.name, schedule=CadenceSchedule(interval_seconds=60)
         ),
-        "rescheduled": successor(current, schedule=CadenceScheduleV1(interval_seconds=60)),
+        "rescheduled": successor(current, schedule=CadenceSchedule(interval_seconds=60)),
         "retired": successor(current, state="retired"),
     }[change]
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
@@ -1043,7 +1043,7 @@ def test_a_trigger_accepted_just_before_admission_stops_the_arm_instead_of_runni
     from tests.test_indexes.test_resolution_contracts import _accept_tree
 
     instance, line, procedure, owner = line_world(
-        tmp_path, CaptureLandingScheduleV1(event=SELECTOR), with_owner=True
+        tmp_path, CaptureLandingSchedule(event=SELECTOR), with_owner=True
     )
     start = READ_TIME + timedelta(seconds=10)
     service_arm_line(
@@ -1062,7 +1062,7 @@ def test_a_trigger_accepted_just_before_admission_stops_the_arm_instead_of_runni
     tree.update(
         trigger_members(
             line_trigger(
-                "another", line=line.identity.name, schedule=CadenceScheduleV1(interval_seconds=60)
+                "another", line=line.identity.name, schedule=CadenceSchedule(interval_seconds=60)
             )
         )
     )
@@ -1103,7 +1103,7 @@ def test_an_acceptance_during_executor_preflight_never_records_an_admission(
     from tests.test_indexes.test_resolution_contracts import _accept_tree
 
     instance, line, procedure, owner = line_world(
-        tmp_path, CaptureLandingScheduleV1(event=SELECTOR), with_owner=True
+        tmp_path, CaptureLandingSchedule(event=SELECTOR), with_owner=True
     )
     start = READ_TIME + timedelta(seconds=10)
     service_arm_line(
@@ -1125,7 +1125,7 @@ def test_an_acceptance_during_executor_preflight_never_records_an_admission(
                 line_trigger(
                     "another",
                     line=line.identity.name,
-                    schedule=CadenceScheduleV1(interval_seconds=60),
+                    schedule=CadenceSchedule(interval_seconds=60),
                 )
             )
         )
@@ -1176,10 +1176,10 @@ def test_an_acceptance_during_executor_preflight_never_records_an_admission(
 
 def test_an_armed_cron_line_ticks_on_calendar_instants_forward_only(tmp_path):
     from cruxible_client.contracts.temporal import parse_datetime
-    from cruxible_client.contracts.triggers import CronScheduleV1
+    from cruxible_client.contracts.triggers import CronSchedule
     from cruxible_core.exhaust.line_dispatch import LineDispatchStore
 
-    instance, line, _procedure = line_world(tmp_path, CronScheduleV1(expression="*/5 * * * *"))
+    instance, line, _procedure = line_world(tmp_path, CronSchedule(expression="*/5 * * * *"))
 
     def ticks():  # type: ignore[no-untyped-def]
         # The calendar instant each admitted occurrence was due at.
@@ -1271,7 +1271,7 @@ def test_a_credential_arm_stops_and_revokes_once_its_principal_is_revoked(monkey
 
 def test_a_claimed_local_arm_stops_once_its_principal_is_no_longer_active(monkeypatch):
     monkeypatch.setattr(line_arms, "is_server_auth_enabled", lambda: False)
-    claimed = LineArmPrincipalV1(kind="principal_claim", label="line-operator")
+    claimed = LineArmPrincipal(kind="principal_claim", label="line-operator")
 
     with pytest.raises(LineArmAuthorityLost) as lost:
         arm_authority(
@@ -1427,7 +1427,7 @@ def test_arming_and_disarming_preview_on_their_own_path_and_write_nothing(tmp_pa
 
     from tests.support.store_snapshot import assert_writes_nothing
 
-    instance, line, procedure = line_world(tmp_path, CaptureLandingScheduleV1(event=SELECTOR))
+    instance, line, procedure = line_world(tmp_path, CaptureLandingSchedule(event=SELECTOR))
     start = READ_TIME + timedelta(seconds=10)
 
     def arm(dry_run):  # type: ignore[no-untyped-def]
@@ -1470,7 +1470,7 @@ def test_an_arm_preview_answers_with_its_coordinate_and_a_stale_one_refuses(tmp_
 
     from cruxible_core.errors import ChangeRefusedError
 
-    instance, line, _procedure = line_world(tmp_path, CaptureLandingScheduleV1(event=SELECTOR))
+    instance, line, _procedure = line_world(tmp_path, CaptureLandingSchedule(event=SELECTOR))
     start = READ_TIME + timedelta(seconds=10)
 
     def arm(**control):  # type: ignore[no-untyped-def]
@@ -1534,7 +1534,7 @@ def test_a_revision_accepted_mid_arm_refuses_a_pinned_arm_and_disarm(tmp_path, m
     from tests.test_server.test_playbill_line_run_refusals import _acquisition_policy
 
     instance, line, _procedure, owner = line_world(
-        tmp_path, CaptureLandingScheduleV1(event=SELECTOR), with_owner=True
+        tmp_path, CaptureLandingSchedule(event=SELECTOR), with_owner=True
     )
     start = READ_TIME + timedelta(seconds=10)
     original = line_dispatch._accepted_line_by_reference
@@ -1631,9 +1631,9 @@ def _accept_generation(instance, owner, name, instant):
 
 
 def test_generation_line_coalesces_and_skips_accepts_before_listening_or_restart(tmp_path):
-    from cruxible_client.contracts.triggers import GenerationAcceptedScheduleV1
+    from cruxible_client.contracts.triggers import GenerationAcceptedSchedule
 
-    instance, line, _, owner = line_world(tmp_path, GenerationAcceptedScheduleV1(), with_owner=True)
+    instance, line, _, owner = line_world(tmp_path, GenerationAcceptedSchedule(), with_owner=True)
     start = READ_TIME + timedelta(seconds=10)
     _accept_generation(instance, owner, "before-listening", start - timedelta(seconds=1))
     service_arm_line(
@@ -1661,10 +1661,10 @@ def test_generation_line_coalesces_and_skips_accepts_before_listening_or_restart
 
 
 def test_generation_line_accepts_once_then_reaches_a_fixed_point(tmp_path, monkeypatch):
-    from cruxible_client.contracts.triggers import GenerationAcceptedScheduleV1
+    from cruxible_client.contracts.triggers import GenerationAcceptedSchedule
     from cruxible_core.service.procedures import line_dispatch
 
-    instance, line, _, owner = line_world(tmp_path, GenerationAcceptedScheduleV1(), with_owner=True)
+    instance, line, _, owner = line_world(tmp_path, GenerationAcceptedSchedule(), with_owner=True)
     start = READ_TIME + timedelta(seconds=10)
     service_arm_line(
         instance,
@@ -1694,7 +1694,7 @@ def test_generation_line_accepts_once_then_reaches_a_fixed_point(tmp_path, monke
         service_dispatch_line(
             instance,
             line.identity.name,
-            LineDispatchRequestV1(),
+            LineDispatchRequest(),
             actor=_actor(instance),
             caller_rung=3,
             now=start + timedelta(seconds=offset),
@@ -1707,11 +1707,11 @@ def test_generation_line_accepts_once_then_reaches_a_fixed_point(tmp_path, monke
 def test_generation_line_retains_its_cursor_without_reading_prior_admissions(tmp_path, monkeypatch):
     import json
 
-    from cruxible_client.contracts.triggers import GenerationAcceptedScheduleV1
+    from cruxible_client.contracts.triggers import GenerationAcceptedSchedule
     from cruxible_core.exhaust.line_dispatch import LineDispatchStore
     from cruxible_core.service.procedures import line_triggers
 
-    instance, line, _, owner = line_world(tmp_path, GenerationAcceptedScheduleV1(), with_owner=True)
+    instance, line, _, owner = line_world(tmp_path, GenerationAcceptedSchedule(), with_owner=True)
     start = READ_TIME + timedelta(seconds=10)
     service_arm_line(
         instance,

@@ -17,7 +17,7 @@ from cruxible_core.coverage.contracts import (
     COVERAGE_MATCH_STATES,
     MATCH_STATE_PRECEDENCE,
     CoverageCardV2,
-    CoverageSelectionV1,
+    CoverageSelection,
     CoverageSpanRequestV1,
     CoverageSpanResultV3,
     coverage_span_match_state,
@@ -126,7 +126,7 @@ def test_selection_windowing_excludes_an_out_of_window_citation() -> None:
             "spans": (
                 CoverageSpanRequestV1(
                     source=HANDBOOK,
-                    selection=CoverageSelectionV1(start_byte=0, end_byte=4),
+                    selection=CoverageSelection(start_byte=0, end_byte=4),
                 ),
             )
         }

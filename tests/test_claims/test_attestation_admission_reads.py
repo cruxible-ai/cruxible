@@ -8,8 +8,8 @@ from cruxible_client.contracts.accepted_attestations import (
     render_accepted_attestation,
 )
 from cruxible_client.contracts.authoring.models import (
-    AttestationAuthoringPayloadV1,
-    ChangeSetAuthoringPayloadV1,
+    AttestationAuthoringPayload,
+    ChangeSetAuthoringPayload,
     authoring_member_identity,
 )
 from cruxible_client.contracts.claim_attestations import (
@@ -81,10 +81,10 @@ def test_historical_attestation_batch_reuses_exact_principal_and_indexed_referen
     def no_scan(*args, **kwargs):
         raise AssertionError("served admission must not parse the full historical registry/ledger")
 
-    payload = ChangeSetAuthoringPayloadV1(
+    payload = ChangeSetAuthoringPayload(
         members=tuple(
             sorted(
-                (AttestationAuthoringPayloadV1(attestation=item) for item in records[1:]),
+                (AttestationAuthoringPayload(attestation=item) for item in records[1:]),
                 key=authoring_member_identity,
             )
         )

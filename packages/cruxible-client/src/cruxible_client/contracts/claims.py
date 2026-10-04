@@ -38,7 +38,7 @@ from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CONTRACT_ID,
     FOREIGN_SOURCE_COORDINATE_TYPE,
     AcceptedCaptureContract,
-    CaptureContractV1,
+    CaptureContract,
     CaptureEnvelopeAny,
     CaptureObjectStoreProtocol,
     LedgerMaterialResolverProtocol,
@@ -67,9 +67,9 @@ from cruxible_client.contracts.claim_types import (
     effective_revision_evidence,
 )
 from cruxible_client.contracts.claim_verdicts import (
-    CaptureVerdictEvidenceV1,
+    CaptureVerdictEvidence,
+    ClaimVerdictResult,
     ClaimVerdictResultV1,
-    ClaimVerdictResultV2,
     claim_adjudication_rule,
     claim_adjudication_rule_digest,
     evaluate_claim_verdict,
@@ -83,7 +83,7 @@ from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionTrace,
-    EvidenceAdmissionInputV1,
+    EvidenceAdmissionInput,
     VerifiedAttestationGrade,
     evaluate_claim_evidence_admission_trace,
 )
@@ -92,9 +92,9 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.providers import ProviderV1, provider_digest
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress, SourceMapping
 from cruxible_client.contracts.source_references import (
-    CasSourceReferenceV1,
-    EvidenceCommitmentV1,
-    ExternalSourceReferenceV1,
+    CasSourceReference,
+    EvidenceCommitment,
+    ExternalSourceReference,
 )
 from cruxible_client.contracts.subjects import AcceptedSubject
 
@@ -196,7 +196,7 @@ class ClaimStatement(_StrictClaimModel):
         return self
 
 
-class ClaimStatementCardV1(_StrictClaimModel):
+class ClaimStatementCard(_StrictClaimModel):
     """Flat, typed statement-first projection shared by read and floor surfaces."""
 
     tag: Literal["playbill-claim-statement-card-v1"] = "playbill-claim-statement-card-v1"
@@ -216,10 +216,10 @@ class ClaimStatementCardV1(_StrictClaimModel):
         return value
 
 
-def claim_statement_card(claim: ClaimArtifactAny) -> ClaimStatementCardV1:
+def claim_statement_card(claim: ClaimArtifactAny) -> ClaimStatementCard:
     """Project one already-validated Claim without flattening semantic objects."""
 
-    return ClaimStatementCardV1(
+    return ClaimStatementCard(
         subject=claim.statement.subject,
         predicate=claim.statement.predicate,
         object=claim.statement.object,
@@ -254,7 +254,7 @@ class ClaimReferentContext(_StrictClaimModel):
 def _verified_contract_subject_binding(
     envelope_source: object,
     *,
-    contract: CaptureContractV1,
+    contract: CaptureContract,
     subject: SemanticAddress,
 ) -> bool:
     mapping_pin = next(
@@ -268,7 +268,7 @@ def _verified_contract_subject_binding(
     )
     if mapping_pin is None or mapping_pin.target.name != "playbill.external.record-subject-v1":
         return False
-    if not isinstance(envelope_source, ExternalSourceReferenceV1) or not isinstance(
+    if not isinstance(envelope_source, ExternalSourceReference) or not isinstance(
         envelope_source.selector, dict
     ):
         return False
@@ -276,7 +276,7 @@ def _verified_contract_subject_binding(
     return canonical_bytes(declared) == canonical_bytes(subject.model_dump(mode="json"))
 
 
-class ClaimBacking(_StrictClaimModel):
+class ClaimBackingV1(_StrictClaimModel):
     tag: Literal["playbill-claim-backing-v1"] = "playbill-claim-backing-v1"
     referent_context: ClaimReferentContext
     capture_digests: tuple[str, ...] = ()
@@ -319,7 +319,7 @@ class ClaimBacking(_StrictClaimModel):
         return value
 
     @model_validator(mode="after")
-    def _derivation_shape(self) -> "ClaimBacking":
+    def _derivation_shape(self) -> "ClaimBackingV1":
         if (self.reducer_digest is None) != (not self.input_claim_digests):
             raise ValueError("Claim derivation requires reducer and input Claims together")
         return self
@@ -358,7 +358,7 @@ def claim_citation_id(
     )
 
 
-class ClaimCitationV1(_StrictClaimModel):
+class ClaimCitation(_StrictClaimModel):
     """One explicit, append-only association between a Claim and a Capture."""
 
     tag: Literal["playbill-claim-citation-v1"] = "playbill-claim-citation-v1"
@@ -386,10 +386,10 @@ def build_claim_citation(
     capture_digest: str,
     role: CitationRole,
     origin: CitationOrigin,
-) -> ClaimCitationV1:
+) -> ClaimCitation:
     """Build one server-derived association; identical retries reproduce its ID."""
 
-    return ClaimCitationV1(
+    return ClaimCitation(
         citation_id=claim_citation_id(
             claim_identity,
             capture_digest=capture_digest,
@@ -403,11 +403,11 @@ def build_claim_citation(
 
 
 def merge_claim_citations(
-    *groups: tuple[ClaimCitationV1, ...],
-) -> tuple[ClaimCitationV1, ...]:
+    *groups: tuple[ClaimCitation, ...],
+) -> tuple[ClaimCitation, ...]:
     """Union citation retries by their frozen identity and reject impossible aliases."""
 
-    by_id: dict[str, ClaimCitationV1] = {}
+    by_id: dict[str, ClaimCitation] = {}
     for citation in (item for group in groups for item in group):
         previous = by_id.setdefault(citation.citation_id, citation)
         if previous != citation:
@@ -415,7 +415,7 @@ def merge_claim_citations(
     return tuple(by_id[key] for key in sorted(by_id, key=lambda item: item.encode("ascii")))
 
 
-class LegacyCitationReferenceV1(_StrictClaimModel):
+class LegacyCitationReference(_StrictClaimModel):
     """Derived read-side reference for a v1 Capture without invented origin."""
 
     tag: Literal["playbill-legacy-claim-citation-v1"] = "playbill-legacy-claim-citation-v1"
@@ -437,7 +437,7 @@ class LegacyCitationReferenceV1(_StrictClaimModel):
         return value
 
     @model_validator(mode="after")
-    def _derived_identity(self) -> "LegacyCitationReferenceV1":
+    def _derived_identity(self) -> "LegacyCitationReference":
         if self.claim_identity.kind != "Claim":
             raise ValueError("legacy citation reference requires a Claim identity")
         expected = typed_digest(
@@ -453,14 +453,14 @@ class LegacyCitationReferenceV1(_StrictClaimModel):
         return self
 
 
-ClaimCitationReference: TypeAlias = ClaimCitationV1 | LegacyCitationReferenceV1
+ClaimCitationReference: TypeAlias = ClaimCitation | LegacyCitationReference
 
 
-class ClaimBackingV2(_StrictClaimModel):
+class ClaimBacking(_StrictClaimModel):
     tag: Literal["playbill-claim-backing-v2"] = "playbill-claim-backing-v2"
     referent_context: ClaimReferentContext
     capture_digests: tuple[str, ...] = ()
-    citations: tuple[ClaimCitationV1, ...] = ()
+    citations: tuple[ClaimCitation, ...] = ()
     attestation_digests: tuple[str, ...] = ()
     input_claim_digests: tuple[str, ...] = ()
     reducer_digest: str | None = None
@@ -469,33 +469,33 @@ class ClaimBackingV2(_StrictClaimModel):
     @field_validator("capture_digests", "attestation_digests")
     @classmethod
     def _cas_digests(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        return ClaimBacking._cas_digests(value)
+        return ClaimBackingV1._cas_digests(value)
 
     @field_validator("input_claim_digests")
     @classmethod
     def _claim_digests(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        return ClaimBacking._claim_digests(value)
+        return ClaimBackingV1._claim_digests(value)
 
     @field_validator("reducer_digest")
     @classmethod
     def _reducer_digest(cls, value: str | None) -> str | None:
-        return ClaimBacking._reducer_digest(value)
+        return ClaimBackingV1._reducer_digest(value)
 
     @field_validator("source_mappings")
     @classmethod
     def _source_mappings(cls, value: tuple[SourceMapping, ...]) -> tuple[SourceMapping, ...]:
-        return ClaimBacking._source_mappings(value)
+        return ClaimBackingV1._source_mappings(value)
 
     @field_validator("citations")
     @classmethod
-    def _citations(cls, value: tuple[ClaimCitationV1, ...]) -> tuple[ClaimCitationV1, ...]:
+    def _citations(cls, value: tuple[ClaimCitation, ...]) -> tuple[ClaimCitation, ...]:
         ids = tuple(item.citation_id for item in value)
         if ids != tuple(sorted(set(ids), key=lambda item: item.encode("ascii"))):
             raise ValueError("Claim citations must be sorted and unique by citation_id")
         return value
 
     @model_validator(mode="after")
-    def _backing_shape(self) -> "ClaimBackingV2":
+    def _backing_shape(self) -> "ClaimBacking":
         if (self.reducer_digest is None) != (not self.input_claim_digests):
             raise ValueError("Claim derivation requires reducer and input Claims together")
         if not {item.capture_digest for item in self.citations}.issubset(self.capture_digests):
@@ -540,7 +540,7 @@ class ClaimArtifactV2(_StrictClaimModel):
     artifact_format: Literal["playbill-claim-v2"] = "playbill-claim-v2"
     identity: ArtifactIdentity
     statement: ClaimStatement
-    backing: ClaimBackingV2
+    backing: ClaimBacking
     pins: tuple[ArtifactPin, ...]
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
 
@@ -579,14 +579,14 @@ under does not.
 """
 
 
-class ClaimRetirementAttributionV1(_StrictClaimModel):
+class ClaimRetirementAttribution(_StrictClaimModel):
     tag: Literal["playbill-claim-retirement-attribution-v1"] = (
         "playbill-claim-retirement-attribution-v1"
     )
     reason: ClaimRetirementReason
 
 
-class ClaimRetireDependentV1(_StrictClaimModel):
+class ClaimRetireDependent(_StrictClaimModel):
     tag: Literal["playbill-claim-retire-dependent-v1"] = "playbill-claim-retire-dependent-v1"
     artifact_identity: ArtifactIdentity
     predecessor_digest: str
@@ -616,19 +616,19 @@ class ClaimRetireDependentV1(_StrictClaimModel):
 
 
 ClaimBackingAny: TypeAlias = Annotated[
-    ClaimBacking | ClaimBackingV2,
+    ClaimBackingV1 | ClaimBacking,
     Field(discriminator="tag"),
 ]
 
 
-class ClaimArtifactV3(_StrictClaimModel):
+class ClaimArtifact(_StrictClaimModel):
     artifact_format: Literal["playbill-claim-v3"] = "playbill-claim-v3"
     identity: ArtifactIdentity
     statement: ClaimStatement
     backing: ClaimBackingAny
     pins: tuple[ArtifactPin, ...]
     lifecycle: ArtifactLifecycle
-    retirement: ClaimRetirementAttributionV1
+    retirement: ClaimRetirementAttribution
 
     @field_validator("pins")
     @classmethod
@@ -636,12 +636,12 @@ class ClaimArtifactV3(_StrictClaimModel):
         return _canonical_claim_pins(value)
 
     @model_validator(mode="after")
-    def _identity_shape(self) -> "ClaimArtifactV3":
+    def _identity_shape(self) -> "ClaimArtifact":
         if self.identity.kind != "Claim" or not _CLAIM_ID_RE.fullmatch(self.identity.name):
             raise ValueError("Claim identity must be Claim:CLM- plus 128-bit lowercase hex")
         if self.lifecycle.state != "retired" or self.lifecycle.predecessor_digest is None:
             raise ValueError("Claim v3 is an attributed retired successor")
-        if isinstance(self.backing, ClaimBackingV2):
+        if isinstance(self.backing, ClaimBacking):
             for citation in self.backing.citations:
                 expected = claim_citation_id(
                     self.identity,
@@ -655,7 +655,7 @@ class ClaimArtifactV3(_StrictClaimModel):
 
 
 ClaimArtifactAny: TypeAlias = Annotated[
-    ClaimArtifactV2 | ClaimArtifactV3,
+    ClaimArtifactV2 | ClaimArtifact,
     Field(discriminator="artifact_format"),
 ]
 
@@ -702,11 +702,11 @@ def parse_claim(
     except (UnicodeDecodeError, ValueError) as exc:
         raise ClaimFormatError("Claim is not strict JSON") from exc
     declared = payload.get("artifact_format") if isinstance(payload, dict) else None
-    model: type[ClaimArtifactV2] | type[ClaimArtifactV3]
+    model: type[ClaimArtifactV2] | type[ClaimArtifact]
     if declared == "playbill-claim-v2":
         model = ClaimArtifactV2
     elif declared == "playbill-claim-v3":
-        model = ClaimArtifactV3
+        model = ClaimArtifact
     else:
         raise ClaimUnsupportedFormatError(f"{ClaimUnsupportedFormatError.error_code}: {declared!r}")
     try:
@@ -747,7 +747,7 @@ def claim_artifact_digest(claim: ClaimArtifactAny) -> ArtifactDigest:
         "pins": [item.model_dump(mode="json") for item in claim.pins],
         "lifecycle": claim.lifecycle.model_dump(mode="json"),
     }
-    if isinstance(claim, ClaimArtifactV3):
+    if isinstance(claim, ClaimArtifact):
         payload["retirement"] = claim.retirement.model_dump(mode="json")
     return typed_digest(ArtifactDigest, "playbill-envelope-v1", payload)
 
@@ -777,11 +777,11 @@ def claim_citation_references(claim: ClaimArtifactAny) -> tuple[ClaimCitationRef
 
     explicit_by_capture = (
         {item.capture_digest for item in claim.backing.citations}
-        if isinstance(claim.backing, ClaimBackingV2)
+        if isinstance(claim.backing, ClaimBacking)
         else set()
     )
     legacy = tuple(
-        LegacyCitationReferenceV1(
+        LegacyCitationReference(
             citation_id=typed_digest(
                 Sha256Value,
                 "playbill-legacy-claim-citation-v1",
@@ -796,7 +796,7 @@ def claim_citation_references(claim: ClaimArtifactAny) -> tuple[ClaimCitationRef
         for capture_digest in claim.backing.capture_digests
         if capture_digest not in explicit_by_capture
     )
-    explicit = claim.backing.citations if isinstance(claim.backing, ClaimBackingV2) else ()
+    explicit = claim.backing.citations if isinstance(claim.backing, ClaimBacking) else ()
     return tuple(sorted((*legacy, *explicit), key=lambda item: item.citation_id.encode("ascii")))
 
 
@@ -812,7 +812,7 @@ class ClaimLawEvidenceV1(_StrictClaimModel):
     verdict_result: ClaimVerdictResultV1 | None = None
     verified_attestation_digests: tuple[str, ...] = ()
     verified_attestations: tuple[VerifiedClaimAttestationV1, ...] = ()
-    verdict_captures: tuple[CaptureVerdictEvidenceV1, ...] = ()
+    verdict_captures: tuple[CaptureVerdictEvidence, ...] = ()
 
     @field_validator(
         "law_digest", "adjudication_rule_digest", "statement_digest", "artifact_digest"
@@ -833,7 +833,7 @@ class ClaimLawEvidenceV1(_StrictClaimModel):
     @classmethod
     def _attestation_digests(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         if value != tuple(sorted(set(value), key=lambda item: item.encode("ascii"))):
-            raise ValueError("verified ClaimAttestation digests must be sorted and unique")
+            raise ValueError("verified ClaimAttestationV1 digests must be sorted and unique")
         for item in value:
             CasDigest.from_tagged(item)
         return value
@@ -851,15 +851,15 @@ class ClaimLawEvidenceV1(_StrictClaimModel):
     @field_validator("verdict_captures")
     @classmethod
     def _verdict_captures(
-        cls, value: tuple[CaptureVerdictEvidenceV1, ...]
-    ) -> tuple[CaptureVerdictEvidenceV1, ...]:
+        cls, value: tuple[CaptureVerdictEvidence, ...]
+    ) -> tuple[CaptureVerdictEvidence, ...]:
         digests = tuple(item.capture_digest for item in value)
         if digests != tuple(sorted(set(digests), key=lambda item: item.encode("ascii"))):
             raise ValueError("verdict Captures must be sorted and unique")
         return value
 
 
-class ClaimLawEvidenceV2(_StrictClaimModel):
+class ClaimLawEvidence(_StrictClaimModel):
     tag: Literal["playbill-claim-law-evidence-v2"] = "playbill-claim-law-evidence-v2"
     law_digest: str
     adjudication_rule_digest: str
@@ -875,10 +875,10 @@ class ClaimLawEvidenceV2(_StrictClaimModel):
     ]
     evidence_basis: tuple[Literal["origin_only", "direct", "derivational"], ...]
     evaluation_time: datetime | None = None
-    verdict_result: ClaimVerdictResultV2
+    verdict_result: ClaimVerdictResult
     verified_attestation_digests: tuple[str, ...] = ()
     verified_attestations: tuple[VerifiedClaimAttestationV1, ...] = ()
-    verdict_captures: tuple[CaptureVerdictEvidenceV1, ...] = ()
+    verdict_captures: tuple[CaptureVerdictEvidence, ...] = ()
 
     @field_validator(
         "law_digest", "adjudication_rule_digest", "statement_digest", "artifact_digest"
@@ -899,7 +899,7 @@ class ClaimLawEvidenceV2(_StrictClaimModel):
     @classmethod
     def _attestation_digests(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         if value != tuple(sorted(set(value), key=lambda item: item.encode("ascii"))):
-            raise ValueError("verified ClaimAttestation digests must be sorted and unique")
+            raise ValueError("verified ClaimAttestationV1 digests must be sorted and unique")
         for item in value:
             CasDigest.from_tagged(item)
         return value
@@ -917,20 +917,20 @@ class ClaimLawEvidenceV2(_StrictClaimModel):
     @field_validator("verdict_captures")
     @classmethod
     def _verdict_captures(
-        cls, value: tuple[CaptureVerdictEvidenceV1, ...]
-    ) -> tuple[CaptureVerdictEvidenceV1, ...]:
+        cls, value: tuple[CaptureVerdictEvidence, ...]
+    ) -> tuple[CaptureVerdictEvidence, ...]:
         digests = tuple(item.capture_digest for item in value)
         if digests != tuple(sorted(set(digests), key=lambda item: item.encode("ascii"))):
             raise ValueError("verdict Captures must be sorted and unique")
         return value
 
 
-ClaimLawEvidenceAny = ClaimLawEvidenceV1 | ClaimLawEvidenceV2
+ClaimLawEvidenceAny = ClaimLawEvidenceV1 | ClaimLawEvidence
 
 
 def parse_claim_law_evidence(value: object) -> ClaimLawEvidenceAny:
     if isinstance(value, dict) and value.get("tag") == "playbill-claim-law-evidence-v2":
-        return ClaimLawEvidenceV2.model_validate(value)
+        return ClaimLawEvidence.model_validate(value)
     return ClaimLawEvidenceV1.model_validate(value)
 
 
@@ -1200,7 +1200,7 @@ def resolve_cited_source_window(
 
     source = envelope.source
     commitment = envelope.commitment
-    if isinstance(source, ExternalSourceReferenceV1) and (
+    if isinstance(source, ExternalSourceReference) and (
         source.coordinate_type == FOREIGN_SOURCE_COORDINATE_TYPE
     ):
         coordinate = source.coordinate if isinstance(source.coordinate, Mapping) else {}
@@ -1226,7 +1226,7 @@ def resolve_cited_source_window(
                 source.source_identity, selected, 0, len(selected), whole_source=False
             )
         return None
-    if isinstance(source, CasSourceReferenceV1) and store.verify(source.content_digest):
+    if isinstance(source, CasSourceReference) and store.verify(source.content_digest):
         substrate = store.read(source.content_digest, access=_WINDOW_ACCESS)
         if source.content_digest == commitment.digest or not store.verify(commitment.digest):
             return CitedSourceWindow(None, substrate, 0, len(substrate))
@@ -1245,7 +1245,7 @@ def _citation_ids_by_capture(claim: ClaimArtifactAny) -> dict[str, frozenset[str
     """Every explicit association a Claim holds, grouped by the Capture it names."""
 
     grouped: dict[str, set[str]] = {}
-    if isinstance(claim.backing, ClaimBackingV2):
+    if isinstance(claim.backing, ClaimBacking):
         for citation in claim.backing.citations:
             grouped.setdefault(citation.capture_digest, set()).add(citation.citation_id)
     return {digest: frozenset(ids) for digest, ids in grouped.items()}
@@ -1319,7 +1319,7 @@ def _capture_is_explicitly_eligible(
 ) -> bool:
     """Keep v1/implicit-legacy evidence semantics; gate only explicit v2 associations."""
 
-    if isinstance(claim.backing, ClaimBacking):
+    if isinstance(claim.backing, ClaimBackingV1):
         return True
     associations = tuple(
         item for item in claim.backing.citations if item.capture_digest == capture_digest
@@ -1346,7 +1346,7 @@ def _self_source_capture_admitted_by_rule(
     The rule decides, not the citation's shape.
     """
 
-    if isinstance(claim.backing, ClaimBacking):
+    if isinstance(claim.backing, ClaimBackingV1):
         return False
     if capture_contract.contract != COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT:
         return False
@@ -1410,7 +1410,7 @@ def _copy_capture_admitted_by_rule(
     ruling refused, and it is still skipped here.
     """
 
-    if isinstance(claim.backing, ClaimBacking):
+    if isinstance(claim.backing, ClaimBackingV1):
         return False
     if capture_contract.contract.identity.name in _COMPILER_SELF_ASSERTION_CONTRACT_IDS:
         return False
@@ -1500,7 +1500,7 @@ def evaluate_capture_evidence_admissions(
                 evidence_kind=kind,
                 trace=evaluate_claim_evidence_admission_trace(
                     claim_type.evidence_admission_policy,
-                    EvidenceAdmissionInputV1(
+                    EvidenceAdmissionInput(
                         claim_role=claim.statement.role,
                         capture_contract_digest=capture_contract.artifact_digest,
                         capture_contract_identity=capture_contract.contract.identity.qualified,
@@ -1522,12 +1522,12 @@ def _citation_origin_refusal(
     *,
     capture_digest: str,
     envelope: CaptureEnvelopeAny,
-    contract: CaptureContractV1,
+    contract: CaptureContract,
     store: CaptureObjectStoreProtocol,
 ) -> tuple[str, str] | None:
     """Validate caller-authored origin against mechanically proven Capture shape."""
 
-    if isinstance(claim.backing, ClaimBacking):
+    if isinstance(claim.backing, ClaimBackingV1):
         return None
     associations = tuple(
         item for item in claim.backing.citations if item.capture_digest == capture_digest
@@ -1606,8 +1606,8 @@ def _is_claim_type_rederivation(
         else pin
         for pin in predecessor.pins
     )
-    retirement_matches = not isinstance(claim, ClaimArtifactV3) or (
-        isinstance(predecessor, ClaimArtifactV3) and claim.retirement == predecessor.retirement
+    retirement_matches = not isinstance(claim, ClaimArtifact) or (
+        isinstance(predecessor, ClaimArtifact) and claim.retirement == predecessor.retirement
     )
     return (
         claim.artifact_format == predecessor.artifact_format
@@ -1624,7 +1624,7 @@ def _is_attributed_retirement(
     *,
     predecessor: ClaimArtifactAny,
 ) -> bool:
-    if not isinstance(claim, ClaimArtifactV3) or predecessor.lifecycle.state != "live":
+    if not isinstance(claim, ClaimArtifact) or predecessor.lifecycle.state != "live":
         return False
     expected_statement = predecessor.statement.model_copy(
         update={"effective_until": claim.statement.effective_until}
@@ -1656,7 +1656,7 @@ def _is_claim_type_attributed_retirement(
     claim_type_digest: str,
     claim_type_identity: ArtifactIdentity,
 ) -> bool:
-    if not isinstance(claim, ClaimArtifactV3) or predecessor.lifecycle.state != "live":
+    if not isinstance(claim, ClaimArtifact) or predecessor.lifecycle.state != "live":
         return False
     expected_statement = predecessor.statement.model_copy(
         update={
@@ -1696,7 +1696,7 @@ def claim_retirement_pin_digest_updates(
 ) -> tuple[tuple[ArtifactPin, ArtifactPin], ...]:
     """Return the Claim-target digest deltas admitted only for closure-carried retirement."""
 
-    if not isinstance(claim, ClaimArtifactV3) or len(claim.pins) != len(predecessor.pins):
+    if not isinstance(claim, ClaimArtifact) or len(claim.pins) != len(predecessor.pins):
         return ()
     return tuple(
         (previous, current)
@@ -2030,7 +2030,7 @@ def evaluate_claim_law(
         if instance_id is None or accepted_coordinate is None:
             return _diagnostic(
                 "playbill.claim.attestation_context_missing",
-                "ClaimAttestation verification requires the exact accepted base coordinate.",
+                "ClaimAttestationV1 verification requires the exact accepted base coordinate.",
                 path=path,
             )
         candidate_claim = AcceptedClaim(
@@ -2051,7 +2051,7 @@ def evaluate_claim_law(
                 )
                 if referent_coordinate not in allowed_coordinates:
                     raise PlaybillFormatError(
-                        "ClaimAttestation referent coordinate is not proven accepted"
+                        "ClaimAttestationV1 referent coordinate is not proven accepted"
                     )
                 verified_attestations.append(
                     verify_claim_attestation(
@@ -2083,7 +2083,7 @@ def evaluate_claim_law(
                 )
     digest = claim_artifact_digest(claim).tagged
     if predecessor is None:
-        if isinstance(claim, ClaimArtifactV3):
+        if isinstance(claim, ClaimArtifact):
             return _diagnostic(
                 "playbill.claim.retirement_predecessor_required",
                 "An attributed retirement requires an exact live Claim predecessor.",
@@ -2095,7 +2095,7 @@ def evaluate_claim_law(
                 "A new Claim must begin live without a predecessor.",
                 path=path,
             )
-        if isinstance(claim.backing, ClaimBackingV2) and {
+        if isinstance(claim.backing, ClaimBacking) and {
             item.capture_digest for item in claim.backing.citations
         } != set(claim.backing.capture_digests):
             return _diagnostic(
@@ -2160,7 +2160,7 @@ def evaluate_claim_law(
             claim,
             predecessor=predecessor.claim,
         )
-        if isinstance(claim, ClaimArtifactV3) and not (
+        if isinstance(claim, ClaimArtifact) and not (
             attributed_retirement or claim_type_rederivation or claim_type_attributed_retirement
         ):
             return _diagnostic(
@@ -2186,9 +2186,9 @@ def evaluate_claim_law(
                 "Claim succession cannot silently drop accepted backing.",
                 path=path,
             )
-        if isinstance(claim.backing, ClaimBackingV2):
+        if isinstance(claim.backing, ClaimBacking):
             citation_capture_digests = {item.capture_digest for item in claim.backing.citations}
-            if isinstance(predecessor.claim.backing, ClaimBacking):
+            if isinstance(predecessor.claim.backing, ClaimBackingV1):
                 implicit_legacy = set(predecessor.claim.backing.capture_digests)
                 if replacing and not implicit_legacy & set(claim.backing.capture_digests):
                     # A replacing revision may leave the whole legacy set behind.
@@ -2248,8 +2248,8 @@ def evaluate_claim_law(
             path=path,
         )
     evidence_basis: set[Literal["origin_only", "direct", "derivational"]] = set()
-    verdict_capture_evidence: list[CaptureVerdictEvidenceV1] = []
-    verified_commitments: dict[str, EvidenceCommitmentV1] = {}
+    verdict_capture_evidence: list[CaptureVerdictEvidence] = []
+    verified_commitments: dict[str, EvidenceCommitment] = {}
     capture_contract_pin_digests = {
         pin.artifact_digest for pin in claim.pins if pin.role == "capture-contract"
     }
@@ -2460,7 +2460,7 @@ def evaluate_claim_law(
         )
         upstream = () if producer_provider is None else producer_provider.upstream_provenance
         verdict_capture_evidence.append(
-            CaptureVerdictEvidenceV1(
+            CaptureVerdictEvidence(
                 capture_digest=capture_digest_value,
                 admission=capture_admission,
                 basis_kind=(
@@ -2594,7 +2594,7 @@ def evaluate_claim_law(
         required_tier="governed_write",
         approval_scope=(),
         evidence=(
-            ClaimLawEvidenceV2(
+            ClaimLawEvidence(
                 law_digest=law_digest,
                 adjudication_rule_digest=adjudication_rule_digest,
                 statement_digest=statement_digest,
@@ -2613,7 +2613,7 @@ def evaluate_claim_law(
                     sorted(verdict_capture_evidence, key=lambda item: item.capture_digest)
                 ),
             )
-            if isinstance(verdict_result, ClaimVerdictResultV2)
+            if isinstance(verdict_result, ClaimVerdictResult)
             else ClaimLawEvidenceV1(
                 law_digest=law_digest,
                 adjudication_rule_digest=adjudication_rule_digest,
@@ -2641,28 +2641,28 @@ __all__ = [
     "AcceptedClaim",
     "ClaimArtifactAny",
     "ClaimArtifactV2",
-    "ClaimArtifactV3",
-    "ClaimBacking",
+    "ClaimArtifact",
+    "ClaimBackingV1",
     "ClaimBackingAny",
-    "ClaimBackingV2",
+    "ClaimBacking",
     "ClaimCitationReference",
-    "ClaimCitationV1",
+    "ClaimCitation",
     "ClaimFormatError",
     "ClaimLawEvidenceV1",
-    "ClaimLawEvidenceV2",
+    "ClaimLawEvidence",
     "ClaimLawEvidenceAny",
     "ClaimLawResult",
     "ClaimObject",
     "ClaimReferentContext",
-    "ClaimRetirementAttributionV1",
-    "ClaimRetireDependentV1",
+    "ClaimRetirementAttribution",
+    "ClaimRetireDependent",
     "ClaimRetirementReason",
     "ClaimStatement",
-    "ClaimStatementCardV1",
+    "ClaimStatementCard",
     "ClaimUnsupportedFormatError",
     "ExactContentClaimObject",
     "LiteralClaimObject",
-    "LegacyCitationReferenceV1",
+    "LegacyCitationReference",
     "SubjectClaimObject",
     "claim_artifact_digest",
     "build_claim_citation",

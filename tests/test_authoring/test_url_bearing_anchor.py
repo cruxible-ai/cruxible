@@ -19,15 +19,15 @@ from pydantic import ValidationError
 
 from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayloadV1,
-    WorkingAnchorWindowV1,
-    WorkingDigestCoordinateV1,
-    WorkingSelectionObservationV1,
+    WorkingAnchorWindow,
+    WorkingDigestCoordinate,
+    WorkingSelectionObservation,
 )
 from cruxible_client.contracts.captures import (
     FOREIGN_SOURCE_MAX_BYTES,
     foreign_source_capture_contract,
 )
-from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
+from cruxible_client.contracts.source_references import ExternalSourceReference
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from tests.core_support._support import initialize_local
@@ -46,8 +46,8 @@ ADVISORY = (
 )
 
 
-def _reference(selector: object) -> ExternalSourceReferenceV1:
-    return ExternalSourceReferenceV1(
+def _reference(selector: object) -> ExternalSourceReference:
+    return ExternalSourceReference(
         source_identity=SOURCE_ID,
         producer_binding_digest="sha256:" + "1" * 64,
         coordinate_type="foreign-source-snapshot-v1",
@@ -81,15 +81,15 @@ def _advisory_payload(anchor: bytes, *, content: bytes = ADVISORY) -> ClaimAutho
     return ClaimAuthoringPayloadV1(
         statement=_self_source_payload().statement,
         rationale="The advisory record says so.",
-        source=WorkingSelectionObservationV1(
+        source=WorkingSelectionObservation(
             source_id=SOURCE_ID,
-            coordinate=WorkingDigestCoordinateV1(
+            coordinate=WorkingDigestCoordinate(
                 source_content_digest="sha256:" + hashlib.sha256(content).hexdigest(),
                 source_byte_length=len(content),
             ),
             selected_content_base64=base64.b64encode(content[start:end]).decode("ascii"),
             selected_bytes_digest="sha256:" + hashlib.sha256(content[start:end]).hexdigest(),
-            selector=WorkingAnchorWindowV1(
+            selector=WorkingAnchorWindow(
                 anchor=anchor.decode("utf-8").strip(),
                 start_byte=start,
                 end_byte=end,

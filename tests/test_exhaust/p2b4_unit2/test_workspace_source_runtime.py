@@ -12,24 +12,24 @@ from cruxible_client.contracts.captures import (
     verify_capture,
 )
 from cruxible_client.contracts.procedures.artifacts import (
-    AcceptedProcedureV1,
+    AcceptedProcedure,
     procedure_artifact_digest,
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v4
-from cruxible_client.contracts.procedures.models import SourceNodeV4
+from cruxible_client.contracts.procedures.models import SourceNode
 from cruxible_client.contracts.procedures.results import (
-    ProcedureAcquisitionPlanV2,
+    ProcedureAcquisitionPlan,
     procedure_acquisition_plan_digest,
 )
 from cruxible_client.contracts.provider_execution import (
-    ProviderEgressObservationV1,
-    ProviderExternalOccurrencePlanV1,
-    ProviderSecretResolutionPlanV1,
+    ProviderEgressObservation,
+    ProviderExternalOccurrencePlan,
+    ProviderSecretResolutionPlan,
 )
 from cruxible_client.contracts.workspace_file import (
     WORKSPACE_FILE_INTERFACE_DIGEST,
-    SourceReadReceiptV1,
-    WorkspaceFileSourceRequestV1,
+    SourceReadReceipt,
+    WorkspaceFileSourceRequest,
 )
 from cruxible_core.documents.workspace_file import WorkspaceFileReader, workspace_binding_digest
 from cruxible_core.exhaust import parse_journal_payload
@@ -118,7 +118,7 @@ class _WorkspaceInvoker:
             ),
             stderr="",
             duration_seconds=0.001,
-            egress=ProviderEgressObservationV1(
+            egress=ProviderEgressObservation(
                 observer_backend="test-attribution",
                 observer_grade="attribution",
             ),
@@ -130,7 +130,7 @@ def _workspace_source_fixture(tmp_path: Path, relative_path: str):  # type: igno
     accepted, prepared, fixture, policy, contract = _source_fixture(tmp_path)
     root = tmp_path / "workspace"
     root.mkdir()
-    request = WorkspaceFileSourceRequestV1(
+    request = WorkspaceFileSourceRequest(
         logical_source="commerce.production.orders",
         workspace_binding_digest=workspace_binding_digest(
             instance_id=prepared.admission.instance_id,
@@ -143,7 +143,7 @@ def _workspace_source_fixture(tmp_path: Path, relative_path: str):  # type: igno
         selector={"id": 7, "relation": "orders"},
     )
     old_node = accepted.procedure.definition.nodes[0]
-    assert isinstance(old_node, SourceNodeV4)
+    assert isinstance(old_node, SourceNode)
     source_node = old_node.model_copy(
         update={
             "request": request.model_dump(mode="json"),
@@ -157,7 +157,7 @@ def _workspace_source_fixture(tmp_path: Path, relative_path: str):  # type: igno
             "definition_digest": compute_procedure_definition_digest_v4(definition).tagged,
         }
     )
-    accepted = AcceptedProcedureV1(
+    accepted = AcceptedProcedure(
         path=accepted.path,
         procedure=procedure,
         artifact_digest=procedure_artifact_digest(procedure).tagged,
@@ -171,7 +171,7 @@ def _workspace_source_fixture(tmp_path: Path, relative_path: str):  # type: igno
             "declared_endpoints": (),
         }
     )
-    occurrence = ProviderExternalOccurrencePlanV1.model_validate(
+    occurrence = ProviderExternalOccurrencePlan.model_validate(
         {
             **old_occurrence.model_dump(mode="python"),
             "interface_id": "workspace.file",
@@ -179,12 +179,10 @@ def _workspace_source_fixture(tmp_path: Path, relative_path: str):  # type: igno
             "accepted_bucket_selectors": ("content_kind=text;byte_size=tiny",),
             "effect_class": "none",
             "local_execution": local,
-            "secret_plan": ProviderSecretResolutionPlanV1(
-                references=(), binding_identity_digests=()
-            ),
+            "secret_plan": ProviderSecretResolutionPlan(references=(), binding_identity_digests=()),
         }
     )
-    plan = ProcedureAcquisitionPlanV2.model_validate(
+    plan = ProcedureAcquisitionPlan.model_validate(
         {
             **prepared.acquisition_plan.model_dump(mode="python"),
             "external_occurrences": (occurrence,),
@@ -283,9 +281,7 @@ def test_workspace_source_reads_before_spawn_and_commits_both_receipts(tmp_path:
         < kinds.index("source_read")
         < kinds.index("provider_invocation_started")
     )
-    source_read = SourceReadReceiptV1.model_validate(
-        payloads[kinds.index("source_read")]["receipt"]
-    )
+    source_read = SourceReadReceipt.model_validate(payloads[kinds.index("source_read")]["receipt"])
     completed = payloads[kinds.index("provider_invocation_completed")]["receipt"]
     produced = payloads[kinds.index("produced_capture")]
     assert source_read.provider_input_digest == completed["input_digest"]
@@ -294,7 +290,7 @@ def test_workspace_source_reads_before_spawn_and_commits_both_receipts(tmp_path:
         == payloads[kinds.index("provider_invocation_completed")]["receipt_digest"]
     )
     source_node = accepted.procedure.definition.nodes[0]
-    assert isinstance(source_node, SourceNodeV4)
+    assert isinstance(source_node, SourceNode)
     verified = verify_capture(
         produced["capture_digest"],
         store=fixture.bodies,
@@ -321,7 +317,7 @@ def test_workspace_source_reads_before_spawn_and_commits_both_receipts(tmp_path:
             if digest != source_read_payload_digest:
                 return content
             payload = parse_journal_payload(content)
-            forged = SourceReadReceiptV1.model_validate(payload["receipt"]).model_copy(
+            forged = SourceReadReceipt.model_validate(payload["receipt"]).model_copy(
                 update={"relative_path": "docs/other.txt"}
             )
             from cruxible_client.contracts.workspace_file import source_read_receipt_digest
@@ -403,7 +399,7 @@ def test_receipt_resolution_is_scoped_by_run_id_not_semantic_key(tmp_path: Path)
             produced[stored.record.run_id] = payload
     assert set(produced) == {first.run_id, second_run_id}
     source_node = accepted.procedure.definition.nodes[0]
-    assert isinstance(source_node, SourceNodeV4)
+    assert isinstance(source_node, SourceNode)
     resolver = journal_producer_receipt_resolver(
         journal=fixture.journal,
         instance_id=first.instance_id,

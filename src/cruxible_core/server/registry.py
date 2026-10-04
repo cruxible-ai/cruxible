@@ -19,7 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePath
 
-from cruxible_client.contracts.change_control import PlaybillStateCoordinateV1
+from cruxible_client.contracts.change_control import PlaybillStateCoordinate
 from cruxible_client.contracts.primitives import new_id
 from cruxible_client.contracts.temporal import format_datetime, utc_now
 from cruxible_core.errors import ConfigError, InstanceLocationRefusedError
@@ -362,7 +362,7 @@ class InstanceRegistry:
         self,
         prepared: PreparedInstance,
         *,
-        observe: Callable[[PlaybillStateCoordinateV1], None] | None = None,
+        observe: Callable[[PlaybillStateCoordinate], None] | None = None,
     ) -> RegisteredInstance:
         """Register the governed host `prepare_governed_instance` validated.
 
@@ -378,24 +378,24 @@ class InstanceRegistry:
             observe=observe,
         )
 
-    def host_state(self, instance_id: str) -> PlaybillStateCoordinateV1:
+    def host_state(self, instance_id: str) -> PlaybillStateCoordinate:
         """The state coordinate of one host's registry row (R12); absent rows digest too."""
 
         with self._connect() as conn:
             return self._host_state_conn(conn, instance_id)
 
     @staticmethod
-    def _host_state_conn(conn: sqlite3.Connection, instance_id: str) -> PlaybillStateCoordinateV1:
+    def _host_state_conn(conn: sqlite3.Connection, instance_id: str) -> PlaybillStateCoordinate:
         row = conn.execute(
             "SELECT backend, location, workspace_root, floor_delivery FROM instances "
             "WHERE instance_id = ?",
             (instance_id,),
         ).fetchone()
-        return PlaybillStateCoordinateV1.of(
+        return PlaybillStateCoordinate.of(
             f"host:{instance_id}", None if row is None else [row[0], row[1], row[2], row[3]]
         )
 
-    def workspace_state(self, instance_id: str) -> PlaybillStateCoordinateV1:
+    def workspace_state(self, instance_id: str) -> PlaybillStateCoordinate:
         """The state coordinate of one host's worktree binding (R12)."""
 
         record = self.get(instance_id)
@@ -406,8 +406,8 @@ class InstanceRegistry:
         instance_id: str,
         workspace_root: str | Path,
         *,
-        observe: Callable[[PlaybillStateCoordinateV1], None] | None = None,
-        observe_host: Callable[[PlaybillStateCoordinateV1], None] | None = None,
+        observe: Callable[[PlaybillStateCoordinate], None] | None = None,
+        observe_host: Callable[[PlaybillStateCoordinate], None] | None = None,
     ) -> InstanceRecord:
         """Attach one exact local workspace without replacing an existing attachment.
 
@@ -457,7 +457,7 @@ class InstanceRegistry:
         instance_id: str,
         *,
         expected_workspace_root: str | Path,
-        observe: Callable[[PlaybillStateCoordinateV1], None] | None = None,
+        observe: Callable[[PlaybillStateCoordinate], None] | None = None,
     ) -> InstanceRecord:
         """Release exactly this attachment (the expected worktree, nothing else).
 
@@ -496,7 +496,7 @@ class InstanceRegistry:
         location: str,
         workspace_root: str | None,
         preferred_instance_id: str | None = None,
-        observe: Callable[[PlaybillStateCoordinateV1], None] | None = None,
+        observe: Callable[[PlaybillStateCoordinate], None] | None = None,
     ) -> RegisteredInstance:
         refuse_write_while_previewing("instance registry")
         if Path(location).is_absolute():
@@ -586,8 +586,8 @@ class InstanceRegistry:
         )
 
 
-def _workspace_state(instance_id: str, workspace_root: str | None) -> PlaybillStateCoordinateV1:
-    return PlaybillStateCoordinateV1.of(
+def _workspace_state(instance_id: str, workspace_root: str | None) -> PlaybillStateCoordinate:
+    return PlaybillStateCoordinate.of(
         f"host_workspace:{instance_id}", {"workspace_root": workspace_root}
     )
 

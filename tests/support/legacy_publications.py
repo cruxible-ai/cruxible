@@ -17,7 +17,7 @@ from typing import Any, Literal, Mapping
 
 from cruxible_client.authoring.insertions import PlaybillInsertionApplyError
 from cruxible_client.contracts.authoring.models import (
-    InsertionExpectationV2,
+    InsertionExpectation,
 )
 from cruxible_client.contracts.declared_blocks import (
     ProjectionMarkerError,
@@ -52,7 +52,7 @@ def apply_playbill_publication(
 ) -> PlaybillInsertionApplication:
     """Apply one durable v2 preparation or recognize its exact stamped postimage."""
 
-    typed_expectation = InsertionExpectationV2.model_validate(expectation)
+    typed_expectation = InsertionExpectation.model_validate(expectation)
     preparation = typed_expectation.preparation
     if preparation is None:
         raise PlaybillInsertionApplyError("publication has no durable preparation")
@@ -147,11 +147,11 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity  # noqa: E402
 from cruxible_client.contracts.authoring.models import (  # noqa: E402
     AuthoringIntentV1,
     ClaimAuthoringPayloadV1,
-    InsertionConfirmationObservationV2,
-    InsertionTargetV2,
-    PublicationPreparationV2,
-    PublicationSourceObservationV2,
-    SelfSourceBodyV1,
+    InsertionConfirmationObservation,
+    InsertionTarget,
+    PublicationPreparation,
+    PublicationSourceObservation,
+    SelfSourceBody,
     authoring_create_fingerprint,
     authoring_payload_digest,
     build_insertion_expectation_v2,
@@ -164,7 +164,7 @@ from cruxible_client.contracts.authoring.models import (  # noqa: E402
 from cruxible_client.contracts.declared_blocks import (  # noqa: E402
     ProjectionBlockStampV1,
     ProjectionBootstrapUnstampedError,
-    ProjectionClaimBackingV1,
+    ProjectionClaimBacking,
     parse_projection_blocks,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate  # noqa: E402
@@ -243,7 +243,7 @@ def mint_insertion_expectation_v2(
     payload: ClaimAuthoringPayloadV1 | None = None,
     claim_identity: str | None = None,
     member_identity: str | None = None,
-) -> InsertionExpectationV2:
+) -> InsertionExpectation:
     """Mint one Claim's publication expectation, singular intent or set member.
 
     `payload`, `claim_identity` and `member_identity` name the publishing member
@@ -255,9 +255,9 @@ def mint_insertion_expectation_v2(
     authored = intent.payload if payload is None else payload
     if not isinstance(authored, ClaimAuthoringPayloadV1):
         raise InsertionProtocolError("only a Claim intent can mint an insertion expectation")
-    if not isinstance(authored.insertion_target, InsertionTargetV2):
+    if not isinstance(authored.insertion_target, InsertionTarget):
         raise InsertionProtocolError("publication v2 requires its frozen v2 target")
-    if not isinstance(authored.source, SelfSourceBodyV1):
+    if not isinstance(authored.source, SelfSourceBody):
         raise InsertionProtocolError("publication v2 requires a Flow-B self-source")
     return build_insertion_expectation_v2(
         expectation_id=insertion_expectation_id(
@@ -290,7 +290,7 @@ def _overlapping_offsets(content: bytes, needle: bytes) -> tuple[int, ...]:
 
 @overload
 def build_publication_preparation(
-    expectation: PublicationPreparationV2,
+    expectation: PublicationPreparation,
     *,
     body: bytes,
 ) -> bytes: ...
@@ -298,26 +298,26 @@ def build_publication_preparation(
 
 @overload
 def build_publication_preparation(
-    expectation: InsertionExpectationV2,
+    expectation: InsertionExpectation,
     *,
-    observation: PublicationSourceObservationV2,
+    observation: PublicationSourceObservation,
     body: bytes,
     accepted_coordinate: AcceptedCoordinate,
     accepted_generation: int,
-) -> PublicationPreparationV2: ...
+) -> PublicationPreparation: ...
 
 
 def build_publication_preparation(
-    expectation: InsertionExpectationV2 | PublicationPreparationV2,
+    expectation: InsertionExpectation | PublicationPreparation,
     *,
     body: bytes,
-    observation: PublicationSourceObservationV2 | None = None,
+    observation: PublicationSourceObservation | None = None,
     accepted_coordinate: AcceptedCoordinate | None = None,
     accepted_generation: int | None = None,
-) -> PublicationPreparationV2 | bytes:
+) -> PublicationPreparation | bytes:
     """Build one deterministic full-file postimage from fresh observed bytes."""
 
-    if isinstance(expectation, PublicationPreparationV2):
+    if isinstance(expectation, PublicationPreparation):
         framed = frame_projection_block(stamp=expectation.stamp, body=body)
         if (
             len(framed) != expectation.inserted_block_byte_length
@@ -394,7 +394,7 @@ def build_publication_preparation(
         declared_generation=accepted_generation,
         declared_coordinate=accepted_coordinate,
         backing=(
-            ProjectionClaimBackingV1(
+            ProjectionClaimBacking(
                 identity=ArtifactIdentity(kind="Claim", name=expectation.claim_identity),
                 statement_digest=expectation.claim_statement_digest,
             ),
@@ -460,10 +460,10 @@ def build_publication_preparation(
 
 
 def mark_publication_prepared(
-    expectation: InsertionExpectationV2,
+    expectation: InsertionExpectation,
     *,
-    preparation: PublicationPreparationV2,
-) -> InsertionExpectationV2:
+    preparation: PublicationPreparation,
+) -> InsertionExpectation:
     if preparation.revision > MAX_PUBLICATION_PREPARATION_REVISIONS:
         _raise(
             PublicationRevisionLimitExceeded,
@@ -504,8 +504,8 @@ def mark_publication_prepared(
 
 
 def publication_confirmation_matches(
-    expectation: InsertionExpectationV2,
-    observation: InsertionConfirmationObservationV2,
+    expectation: InsertionExpectation,
+    observation: InsertionConfirmationObservation,
     *,
     intent_id: str,
 ) -> bool:
@@ -527,9 +527,9 @@ def publication_confirmation_matches(
 def publication_confirmation_from_source(
     *,
     intent_id: str,
-    expectation: InsertionExpectationV2,
-    observation: PublicationSourceObservationV2,
-) -> InsertionConfirmationObservationV2 | None:
+    expectation: InsertionExpectation,
+    observation: PublicationSourceObservation,
+) -> InsertionConfirmationObservation | None:
     preparation = expectation.preparation
     if preparation is None or observation.source_id != preparation.source_id:
         return None
@@ -543,7 +543,7 @@ def publication_confirmation_from_source(
     if not matches:
         return None
     (match,) = matches
-    return InsertionConfirmationObservationV2(
+    return InsertionConfirmationObservation(
         intent_id=intent_id,
         expectation_id=expectation.expectation_id,
         preparation_digest=preparation.preparation_digest,
@@ -555,11 +555,11 @@ def publication_confirmation_from_source(
 
 def mark_publication_bound(
     intent: AuthoringIntentV1,
-    expectation: InsertionExpectationV2,
+    expectation: InsertionExpectation,
     *,
-    observation: InsertionConfirmationObservationV2,
+    observation: InsertionConfirmationObservation,
     finalized_at: datetime,
-) -> InsertionExpectationV2:
+) -> InsertionExpectation:
     if expectation.state == "bound":
         return expectation
     if expectation.state != "prepared":
@@ -578,7 +578,7 @@ def register_legacy_publication(
     intent_id: str,
     *,
     actor_id: str,
-    target: InsertionTargetV2,
+    target: InsertionTarget,
     preimage: bytes,
     body: bytes,
     accepted_coordinate: AcceptedCoordinate,
@@ -586,7 +586,7 @@ def register_legacy_publication(
     claim_artifact_digest: str,
     claim_statement_digest: str,
     observed_at: datetime,
-) -> tuple[InsertionExpectationV2, bytes]:
+) -> tuple[InsertionExpectation, bytes]:
     """Write the bound publication record an old instance holds, and return the page.
 
     Runs the whole removed road -- mint, prepare, apply, confirm -- over one
@@ -627,7 +627,7 @@ def register_legacy_publication(
         state="pending",
         accepted_claim_coordinate=accepted_coordinate,
     )
-    observation = PublicationSourceObservationV2(
+    observation = PublicationSourceObservation(
         source_id=target.source_id,
         content_base64=base64.b64encode(preimage).decode("ascii"),
         content_digest="sha256:" + hashlib.sha256(preimage).hexdigest(),
@@ -650,7 +650,7 @@ def register_legacy_publication(
     confirmation = publication_confirmation_from_source(
         intent_id=intent_id,
         expectation=expectation,
-        observation=PublicationSourceObservationV2(
+        observation=PublicationSourceObservation(
             source_id=target.source_id,
             content_base64=base64.b64encode(landed.content).decode("ascii"),
             content_digest="sha256:" + hashlib.sha256(landed.content).hexdigest(),

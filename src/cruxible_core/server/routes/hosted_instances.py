@@ -6,7 +6,7 @@ from fastapi import APIRouter, Request
 from starlette.concurrency import run_in_threadpool
 
 from cruxible_client import contracts
-from cruxible_client.contracts.change_control import ChangeControlRequestV1
+from cruxible_client.contracts.change_control import ChangeControlRequest
 from cruxible_core.runtime import host_api
 from cruxible_core.runtime.admission import FLOOR_ADMISSION
 from cruxible_core.server.config import resolve_server_settings
@@ -27,8 +27,8 @@ from cruxible_core.server.routes import resolve_server_instance_id
 router = APIRouter(prefix="/api/v1", tags=["playbill-hosts"])
 
 
-@router.get(PLAYBILL_HOST_SHOW_PATH, response_model=contracts.PlaybillHostInspectionV1)
-def show_playbill_host(instance_id: str) -> contracts.PlaybillHostInspectionV1:
+@router.get(PLAYBILL_HOST_SHOW_PATH, response_model=contracts.PlaybillHostInspection)
+def show_playbill_host(instance_id: str) -> contracts.PlaybillHostInspection:
     """Inspect one daemon host without acquiring semantic authority."""
 
     return host_api.show_playbill_host(resolve_server_instance_id(instance_id))
@@ -61,13 +61,13 @@ def _local_socket(request: Request) -> bool:
 
 @router.post(
     PLAYBILL_WORKSPACE_ATTACH_PATH,
-    response_model=contracts.PlaybillHostWorkspaceAttachResultV1,
+    response_model=contracts.PlaybillHostWorkspaceAttachResult,
 )
 def playbill_host_workspace_attach(
     instance_id: str,
     req: PlaybillHostWorkspaceAttachRequest,
     request: Request,
-) -> contracts.PlaybillHostWorkspaceAttachResultV1:
+) -> contracts.PlaybillHostWorkspaceAttachResult:
     """Attach a host to a Git worktree, initialized or not; local-socket callers only."""
 
     return host_api.playbill_host_workspace_attach(
@@ -81,18 +81,18 @@ def playbill_host_workspace_attach(
 
 @router.post(
     PLAYBILL_WORKSPACE_DETACH_PATH,
-    response_model=contracts.PlaybillWorkspaceDetachResultV1,
+    response_model=contracts.PlaybillWorkspaceDetachResult,
 )
 async def playbill_host_workspace_detach(
     instance_id: str,
     request: Request,
-    req: ChangeControlRequestV1 | None = None,
-) -> contracts.PlaybillWorkspaceDetachResultV1:
+    req: ChangeControlRequest | None = None,
+) -> contracts.PlaybillWorkspaceDetachResult:
     """Release one host's Git worktree; only local-socket callers may ask."""
 
     resolved = await run_in_threadpool(resolve_server_instance_id, instance_id)
 
-    def detach() -> contracts.PlaybillWorkspaceDetachResultV1:
+    def detach() -> contracts.PlaybillWorkspaceDetachResult:
         return host_api._playbill_host_workspace_detach_admitted(
             resolved,
             workspace_attachment_authorized=_local_socket(request),
@@ -106,12 +106,12 @@ async def playbill_host_workspace_detach(
 
 @router.get(
     "/{instance_id}/playbill/workspace-registration",
-    response_model=contracts.PlaybillHostWorkspaceRegistrationV1,
+    response_model=contracts.PlaybillHostWorkspaceRegistration,
 )
 def playbill_host_workspace_registration(
     instance_id: str,
     request: Request,
-) -> contracts.PlaybillHostWorkspaceRegistrationV1:
+) -> contracts.PlaybillHostWorkspaceRegistration:
     """Report daemon attachment; only local-socket callers receive its path."""
 
     return host_api.playbill_host_workspace_registration(
@@ -124,18 +124,18 @@ def playbill_host_workspace_registration(
 
 
 @router.post(
-    PLAYBILL_FLOOR_DELIVERY_PATH, response_model=contracts.PlaybillHostWorkspaceRegistrationV1
+    PLAYBILL_FLOOR_DELIVERY_PATH, response_model=contracts.PlaybillHostWorkspaceRegistration
 )
 async def set_playbill_floor_delivery(
     instance_id: str,
-    req: contracts.PlaybillFloorDeliveryRequestV1,
+    req: contracts.PlaybillFloorDeliveryRequest,
     request: Request,
-) -> contracts.PlaybillHostWorkspaceRegistrationV1:
+) -> contracts.PlaybillHostWorkspaceRegistration:
     """Set the local workspace's floor writer through attachment authority."""
 
     resolved = await run_in_threadpool(resolve_server_instance_id, instance_id)
 
-    def toggle() -> contracts.PlaybillHostWorkspaceRegistrationV1:
+    def toggle() -> contracts.PlaybillHostWorkspaceRegistration:
         return host_api._set_playbill_floor_delivery_admitted(
             resolved,
             enabled=req.enabled,
@@ -149,17 +149,15 @@ async def set_playbill_floor_delivery(
         return await run_in_threadpool(ticket.run, toggle)
 
 
-@router.post(
-    PLAYBILL_FLOOR_DELIVER_NOW_PATH, response_model=contracts.PlaybillFloorDeliveryResultV1
-)
+@router.post(PLAYBILL_FLOOR_DELIVER_NOW_PATH, response_model=contracts.PlaybillFloorDeliveryResult)
 async def deliver_playbill_floor_now(
-    instance_id: str, request: Request, req: contracts.PlaybillFloorDeliverNowRequestV1
-) -> contracts.PlaybillFloorDeliveryResultV1:
+    instance_id: str, request: Request, req: contracts.PlaybillFloorDeliverNowRequest
+) -> contracts.PlaybillFloorDeliveryResult:
     """Deliver under the floor consumer's admission and return its write receipt."""
 
     resolved = await run_in_threadpool(resolve_server_instance_id, instance_id)
 
-    def deliver() -> contracts.PlaybillFloorDeliveryResultV1:
+    def deliver() -> contracts.PlaybillFloorDeliveryResult:
         return host_api._deliver_playbill_floor_now_admitted(
             resolved,
             include=req.include,

@@ -28,9 +28,9 @@ from cruxible_client.contracts.claim_types import (
     render_claim_type,
 )
 from cruxible_client.contracts.claims import (
+    ClaimArtifact,
     ClaimArtifactAny,
-    ClaimArtifactV3,
-    ClaimRetirementAttributionV1,
+    ClaimRetirementAttribution,
     ClaimRetirementReason,
     ClaimStatement,
     claim_artifact_digest,
@@ -43,7 +43,7 @@ from cruxible_client.contracts.procedures.models import ProcedureDefinitionV3
 from cruxible_client.contracts.semantic_delta import semantic_field_delta
 from cruxible_core.claims.artifact_references import move_references, reference_fields
 from cruxible_core.claims.claim_type_inputs import (
-    ClaimTypeInputV1,
+    ClaimTypeInputRecord,
     ClaimTypeLintWarningV1,
     ClaimTypeProposalLintV1,
     identity_rules_supported,
@@ -88,7 +88,7 @@ class ClaimTypeMigrationRequestV1(_StrictMigrationModel):
     tag: Literal["playbill-claim-type-migration-request-v1"] = (
         "playbill-claim-type-migration-request-v1"
     )
-    successor: ClaimTypeInputV1 | ClaimType
+    successor: ClaimTypeInputRecord | ClaimType
     dependents: tuple[ClaimTypeDependentDispositionV1, ...]
 
     @field_validator("dependents")
@@ -109,7 +109,7 @@ class ClaimTypeDependentDispositionV2(_StrictMigrationModel):
     successor: dict[str, object] | None = None
 
 
-class ClaimTypeDependentDispositionV3(_StrictMigrationModel):
+class ClaimTypeDependentDisposition(_StrictMigrationModel):
     tag: Literal["playbill-claim-type-dependent-disposition-v3"] = (
         "playbill-claim-type-dependent-disposition-v3"
     )
@@ -132,7 +132,7 @@ class ClaimTypeMigrationRequestV2(_StrictMigrationModel):
         "playbill-claim-type-migration-request-v2"
     )
     mode: Literal["preflight", "submit"]
-    successor: ClaimTypeInputV1 | ClaimType
+    successor: ClaimTypeInputRecord | ClaimType
     dependents: tuple[ClaimTypeDependentDispositionV2, ...] = ()
 
     @field_validator("dependents")
@@ -147,28 +147,28 @@ class ClaimTypeMigrationRequestV2(_StrictMigrationModel):
         return value
 
 
-class ClaimTypeMigrationRequestV3(_StrictMigrationModel):
+class ClaimTypeMigrationRequest(_StrictMigrationModel):
     tag: Literal["playbill-claim-type-migration-request-v3"] = (
         "playbill-claim-type-migration-request-v3"
     )
     mode: Literal["preflight", "submit"]
-    successor: ClaimTypeInputV1 | ClaimType
-    dependents: tuple[ClaimTypeDependentDispositionV3, ...] = ()
+    successor: ClaimTypeInputRecord | ClaimType
+    dependents: tuple[ClaimTypeDependentDisposition, ...] = ()
 
     @field_validator("dependents")
     @classmethod
     def _dependents(
         cls,
-        value: tuple[ClaimTypeDependentDispositionV3, ...],
-    ) -> tuple[ClaimTypeDependentDispositionV3, ...]:
+        value: tuple[ClaimTypeDependentDisposition, ...],
+    ) -> tuple[ClaimTypeDependentDisposition, ...]:
         identities = tuple(item.identity.qualified for item in value)
         if identities != tuple(sorted(set(identities), key=lambda item: item.encode("utf-8"))):
             raise ValueError("migration dependents must be UTF-8 byte-sorted and unique")
         return value
 
 
-ClaimTypeMigrationRequest: TypeAlias = (
-    ClaimTypeMigrationRequestV1 | ClaimTypeMigrationRequestV2 | ClaimTypeMigrationRequestV3
+ClaimTypeMigrationRequestAny: TypeAlias = (
+    ClaimTypeMigrationRequestV1 | ClaimTypeMigrationRequestV2 | ClaimTypeMigrationRequest
 )
 
 
@@ -315,7 +315,7 @@ def _invalidation_warnings(
     dependents: tuple[
         ClaimTypeDependentDispositionV1
         | ClaimTypeDependentDispositionV2
-        | ClaimTypeDependentDispositionV3,
+        | ClaimTypeDependentDisposition,
         ...,
     ],
 ) -> tuple[ClaimTypeMigrationWarningV1, ...]:
@@ -437,7 +437,7 @@ def _successor_claim(
 
 def resolve_claim_type_succession(
     tree: Mapping[str, bytes],
-    value: ClaimTypeInputV1 | ClaimType,
+    value: ClaimTypeInputRecord | ClaimType,
     *,
     identity_rules: bool = False,
 ) -> tuple[str, ClaimType, ClaimType]:
@@ -663,7 +663,7 @@ def _canonical_successor_bytes(
                 )
                 for pin in current_claim.pins
             )
-            retired = ClaimArtifactV3(
+            retired = ClaimArtifact(
                 identity=current_claim.identity,
                 statement=statement,
                 backing=current_claim.backing,
@@ -672,7 +672,7 @@ def _canonical_successor_bytes(
                     state="retired",
                     predecessor_digest=current.artifact_digest,
                 ),
-                retirement=ClaimRetirementAttributionV1(reason=claim_retirement_reason),
+                retirement=ClaimRetirementAttribution(reason=claim_retirement_reason),
             )
             return render_claim(retired)
         if claim_retirement_reason is not None or claim_effective_until is not None:
@@ -895,7 +895,7 @@ def build_claim_type_migration_candidate(
     type_path: str,
     successor: ClaimType,
     inventory: tuple[ClaimTypeMigrationInventoryItemV1, ...],
-    dispositions: tuple[ClaimTypeDependentDispositionV3, ...],
+    dispositions: tuple[ClaimTypeDependentDisposition, ...],
     authored_successors: Mapping[str, bytes] | None = None,
 ) -> tuple[
     dict[str, bytes],
@@ -1028,7 +1028,7 @@ def build_dependent_closure_candidate(
     tree: Mapping[str, bytes],
     changed: Mapping[str, bytes],
     inventory: tuple[ClaimTypeMigrationInventoryItemV1, ...],
-    dispositions: tuple[ClaimTypeDependentDispositionV3, ...],
+    dispositions: tuple[ClaimTypeDependentDisposition, ...],
 ) -> tuple[dict[str, bytes], tuple[ClaimTypeMigrationDispositionV3, ...]]:
     """Settle the closure of several changed definitions as one generation.
 
@@ -1343,7 +1343,7 @@ def _service_migrate_claim_type_v2(
 def _service_migrate_claim_type_v3(
     instance: PlaybillInstance,
     *,
-    request: ClaimTypeMigrationRequestV3,
+    request: ClaimTypeMigrationRequest,
     actor: AuthenticatedActor,
 ) -> ClaimTypeMigrationPreflightV1 | ClaimTypeMigrationResultV3:
     current = instance.accepted_coordinate()
@@ -1360,7 +1360,7 @@ def _service_migrate_claim_type_v3(
     dispositions = request.dependents
     if request.mode == "preflight" and not dispositions:
         dispositions = tuple(
-            ClaimTypeDependentDispositionV3(identity=item.identity, disposition="successor")
+            ClaimTypeDependentDisposition(identity=item.identity, disposition="successor")
             for item in inventory
         )
     candidate_tree, normalized, warnings = build_claim_type_migration_candidate(
@@ -1445,12 +1445,12 @@ def _service_migrate_claim_type_v3(
 def service_migrate_claim_type(
     instance: PlaybillInstance,
     *,
-    request: ClaimTypeMigrationRequest,
+    request: ClaimTypeMigrationRequestAny,
     actor: AuthenticatedActor,
 ) -> ClaimTypeMigrationResponse:
     """Preflight or submit one complete ClaimType migration changeset."""
 
-    if isinstance(request, ClaimTypeMigrationRequestV3):
+    if isinstance(request, ClaimTypeMigrationRequest):
         return _service_migrate_claim_type_v3(instance, request=request, actor=actor)
     if isinstance(request, ClaimTypeMigrationRequestV2):
         return _service_migrate_claim_type_v2(instance, request=request, actor=actor)
@@ -1461,7 +1461,7 @@ __all__ = [
     "CLAIM_TYPE_MIGRATION_DOMAIN",
     "ClaimTypeDependentDispositionV1",
     "ClaimTypeDependentDispositionV2",
-    "ClaimTypeDependentDispositionV3",
+    "ClaimTypeDependentDisposition",
     "ClaimTypeMigrationDispositionV1",
     "ClaimTypeMigrationDispositionV2",
     "ClaimTypeMigrationDispositionV3",
@@ -1471,10 +1471,10 @@ __all__ = [
     "ClaimTypeMigrationIncomplete",
     "ClaimTypeMigrationInventoryItemV1",
     "ClaimTypeMigrationPreflightV1",
-    "ClaimTypeMigrationRequest",
+    "ClaimTypeMigrationRequestAny",
     "ClaimTypeMigrationRequestV1",
     "ClaimTypeMigrationRequestV2",
-    "ClaimTypeMigrationRequestV3",
+    "ClaimTypeMigrationRequest",
     "ClaimTypeMigrationResponse",
     "ClaimTypeMigrationResultV1",
     "ClaimTypeMigrationResultV2",

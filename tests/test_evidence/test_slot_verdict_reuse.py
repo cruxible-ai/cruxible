@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.captures import DirectForeignSourceSelectionV1
+from cruxible_client.contracts.captures import DirectForeignSourceSelection
 from cruxible_client.contracts.semantic import ContentSpan
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.discovery import claim_status as playbill_search
@@ -50,7 +50,7 @@ def _add_claim(instance, owner, subject_id: str, value: str, *, name: str) -> No
         instance,
         authoring=authoring(subject_id, value, with_claim_type=False).model_copy(
             update={
-                "source_selection": DirectForeignSourceSelectionV1(
+                "source_selection": DirectForeignSourceSelection(
                     logical_source_identity="fixture.work-items",
                     span=ContentSpan(
                         content_digest=body.digest,
@@ -271,8 +271,8 @@ def test_a_remembered_derivation_is_not_served_over_a_body_rewritten_in_place(
 def test_get_does_not_serve_a_stale_verdict_after_a_ruling_is_rewritten_in_place(
     tmp_path: Path, keep_mtime: bool
 ) -> None:
-    from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
-    from cruxible_client.contracts.write import PlaybillWriteRequestV1
+    from cruxible_client.contracts.get_reads import PlaybillGetRequest
+    from cruxible_client.contracts.write import PlaybillWriteRequest
     from cruxible_core.service.authoring.write_verbs import service_playbill_write
     from cruxible_core.service.discovery.get import service_playbill_get
     from cruxible_core.storage.cas import BodyAccessContext
@@ -281,7 +281,7 @@ def test_get_does_not_serve_a_stale_verdict_after_a_ruling_is_rewritten_in_place
     instance, _owner = seed_write_surface(tmp_path)
     outcome = service_playbill_write(
         instance,
-        request=PlaybillWriteRequestV1.model_validate(
+        request=PlaybillWriteRequest.model_validate(
             {
                 "because": "The ruling as written.",
                 "changes": [
@@ -293,7 +293,7 @@ def test_get_does_not_serve_a_stale_verdict_after_a_ruling_is_rewritten_in_place
     )
     assert outcome.status == "accepted", outcome
     claim_id = outcome.changes[0].claim
-    request = PlaybillGetRequestV1(ref=str(claim_id))
+    request = PlaybillGetRequest(ref=str(claim_id))
     access = BodyAccessContext(principal_id="owner")
 
     def read() -> object:
@@ -313,7 +313,7 @@ def test_get_does_not_serve_a_stale_verdict_after_a_ruling_is_rewritten_in_place
 
 
 def _capture_and_source(instance, capture: str) -> tuple[str, str]:  # type: ignore[no-untyped-def]
-    from cruxible_client.contracts.captures import CasSourceReferenceV1, parse_capture_envelope
+    from cruxible_client.contracts.captures import CasSourceReference, parse_capture_envelope
     from cruxible_core.storage.cas import BodyAccessContext
 
     envelope = parse_capture_envelope(
@@ -322,7 +322,7 @@ def _capture_and_source(instance, capture: str) -> tuple[str, str]:  # type: ign
         )
     )
     # The source bytes replay availability consults after the Capture itself.
-    if isinstance(envelope.source, CasSourceReferenceV1):
+    if isinstance(envelope.source, CasSourceReference):
         return capture, envelope.source.content_digest
     assert envelope.commitment.materialization == "cas"
     return capture, envelope.commitment.digest

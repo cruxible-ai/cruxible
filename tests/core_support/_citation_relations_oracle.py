@@ -14,7 +14,7 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.errors import PlaybillError, ProjectionFormatError
 from cruxible_client.contracts.projection_extensions import ProjectionFact
-from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
+from cruxible_client.contracts.source_references import ExternalSourceReference
 from cruxible_core.evidence.citation_relations import (
     RELATION_RETIRED_CONFLICT_SCHEMA,
     _conflict_group_facts,
@@ -103,7 +103,7 @@ def _use_facts(uses: list[dict[str, object]]) -> list[ProjectionFact]:
         source = use.get("source")
         if isinstance(source, dict) and source.get("kind") == "external":
             try:
-                external = ExternalSourceReferenceV1.model_validate(source)
+                external = ExternalSourceReference.model_validate(source)
             except ValueError as exc:
                 raise ProjectionFormatError(
                     "citation relation external source is malformed"
@@ -140,7 +140,7 @@ def _conflict_facts(
         capture_groups[str(capture["$digest"])].append(use)
         source = use["source"]
         if isinstance(source, dict) and source.get("kind") == "external":
-            parsed = ExternalSourceReferenceV1.model_validate(source)
+            parsed = ExternalSourceReference.model_validate(source)
             external_groups[external_source_relation_subject(parsed)].append(use)
 
     version_groups: dict[str, list[tuple[int, int, dict[str, object]]]] = defaultdict(list)

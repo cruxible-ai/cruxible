@@ -6,14 +6,14 @@ import pytest
 
 from cruxible_client.contracts.claim_type_structure import ClaimTypeStructure
 from cruxible_client.contracts.procedures.source_compiler import SourceCompileError, compile_source
-from cruxible_client.contracts.procedures.source_program import ProcedureSourceV1, SourceClaimType
+from cruxible_client.contracts.procedures.source_program import ProcedureSource, SourceClaimType
 from tests.test_procedures import test_procedure_proposal_delivery as delivery
 from tests.test_procedures.test_procedure_execution import _budget, _hard_caps
 from tests.test_procedures.test_source_compiler import INPUT, OUTPUT
 
 
 def source_program(value="'high'"):
-    return ProcedureSourceV1(
+    return ProcedureSource(
         text=textwrap.dedent(f"""
             def example(request, world):
                 subject = world.security.advisory['osv-2026-0001']

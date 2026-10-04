@@ -20,15 +20,15 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_server_info_provider_lane_is_present_and_required() -> None:
-    from cruxible_client.contracts import ProviderLaneStatusV1, ServerInfoResult
+    from cruxible_client.contracts import ProviderLaneStatus, ServerInfoResult
 
     field = ServerInfoResult.model_fields["provider_lane"]
     assert field.is_required()
-    assert field.annotation is ProviderLaneStatusV1
+    assert field.annotation is ProviderLaneStatus
     with pytest.raises(ValueError):
-        ProviderLaneStatusV1(state="available", code="provider_runtime_recovery_failed", detail="x")
+        ProviderLaneStatus(state="available", code="provider_runtime_recovery_failed", detail="x")
     with pytest.raises(ValueError):
-        ProviderLaneStatusV1(state="unavailable", code=None, detail=None)
+        ProviderLaneStatus(state="unavailable", code=None, detail=None)
 
 
 def test_hand_edit_repair_fabricates_no_command() -> None:

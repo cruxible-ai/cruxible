@@ -16,12 +16,12 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.canonical import ArtifactDigest, normalize_canonical
-from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.procedures.measurements import (
-    ProcedureMeasurementDeclarationV1,
+    ProcedureMeasurementDeclaration,
 )
-from cruxible_client.contracts.procedures.source_program import ProcedureSourceV1
-from cruxible_client.contracts.query.grammar import QueryBudgetsV1
+from cruxible_client.contracts.procedures.source_program import ProcedureSource
+from cruxible_client.contracts.query.grammar import QueryBudgets
 
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 _NODE_ID_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
@@ -39,7 +39,7 @@ def _canonical_identifier(value: str, pattern: re.Pattern[str], *, label: str) -
     return value
 
 
-class ProcedurePinSlotV1(_StrictProcedureModel):
+class ProcedurePinSlot(_StrictProcedureModel):
     """One interface-typed binding point; it never chooses an implementation."""
 
     tag: Literal["playbill-procedure-pin-slot-v1"] = "playbill-procedure-pin-slot-v1"
@@ -74,7 +74,7 @@ class ProcedurePinSlotV1(_StrictProcedureModel):
         return value
 
 
-class ProcedurePinSlotRefV1(_StrictProcedureModel):
+class ProcedurePinSlotRef(_StrictProcedureModel):
     tag: Literal["playbill-procedure-pin-slot-ref-v1"] = "playbill-procedure-pin-slot-ref-v1"
     slot_name: str
 
@@ -84,12 +84,12 @@ class ProcedurePinSlotRefV1(_StrictProcedureModel):
         return _canonical_identifier(value, _NAME_RE, label="Procedure slot reference")
 
 
-ProcedurePinBindingV1 = ArtifactPin | ProcedurePinSlotRefV1
+ProcedurePinBinding = ArtifactPin | ProcedurePinSlotRef
 
 
-class ProcedureBudgetV3(_StrictProcedureModel):
+class ProcedureBudget(_StrictProcedureModel):
     tag: Literal["playbill-procedure-budget-v1"] = "playbill-procedure-budget-v1"
-    wall_clock: CanonicalDurationV1
+    wall_clock: CanonicalDuration
     max_provider_calls: int = Field(ge=0, le=1_000_000)
     max_capture_bytes: int = Field(ge=0, le=2**63 - 1)
     max_result_bytes: int | None = Field(default=None, ge=1, exclude_if=lambda v: v is None)
@@ -101,15 +101,15 @@ class ProcedureBudgetV3(_StrictProcedureModel):
     )
 
     @model_validator(mode="after")
-    def _nonzero_wall_clock(self) -> "ProcedureBudgetV3":
+    def _nonzero_wall_clock(self) -> "ProcedureBudget":
         if self.wall_clock.microseconds == 0:
             raise ValueError("Procedure wall-clock budget must be nonzero")
         return self
 
 
-class ProcedureHardCapsV3(_StrictProcedureModel):
+class ProcedureHardCaps(_StrictProcedureModel):
     tag: Literal["playbill-procedure-hard-caps-v1"] = "playbill-procedure-hard-caps-v1"
-    max_wall_clock: CanonicalDurationV1
+    max_wall_clock: CanonicalDuration
     max_provider_calls: int = Field(ge=0, le=1_000_000)
     max_capture_bytes: int = Field(ge=0, le=2**63 - 1)
     max_result_bytes: int | None = Field(default=None, ge=1, exclude_if=lambda v: v is None)
@@ -117,21 +117,21 @@ class ProcedureHardCapsV3(_StrictProcedureModel):
     max_repeat_attempts: int = Field(ge=1, le=2**31 - 1)
 
     @model_validator(mode="after")
-    def _nonzero_wall_clock(self) -> "ProcedureHardCapsV3":
+    def _nonzero_wall_clock(self) -> "ProcedureHardCaps":
         if self.max_wall_clock.microseconds == 0:
             raise ValueError("Procedure hard-cap wall clock must be nonzero")
         return self
 
 
-PredicateScalarV1 = None | bool | int | str
+PredicateScalar = None | bool | int | str
 
 
-class PredicateOperandV1(_StrictProcedureModel):
+class PredicateOperand(_StrictProcedureModel):
     """One operand in the closed v3 predicate grammar."""
 
     tag: Literal["playbill-predicate-operand-v1"] = "playbill-predicate-operand-v1"
     kind: Literal["literal", "input", "step", "parameter", "count", "exists", "truncated"]
-    value: PredicateScalarV1 = None
+    value: PredicateScalar = None
     input_name: str | None = None
     alias: str | None = None
     path: tuple[str, ...] = ()
@@ -152,7 +152,7 @@ class PredicateOperandV1(_StrictProcedureModel):
         return value
 
     @model_validator(mode="after")
-    def _closed_shape(self) -> "PredicateOperandV1":
+    def _closed_shape(self) -> "PredicateOperand":
         expected = {
             "literal": (self.value is not None, False, False, False),
             "input": (False, self.input_name is not None, False, False),
@@ -181,24 +181,24 @@ class PredicateOperandV1(_StrictProcedureModel):
         return self
 
 
-ComparisonOperatorV1 = Literal[
+ComparisonOperator = Literal[
     "eq", "ne", "gt", "gte", "lt", "lte", "before", "on_or_before", "after", "on_or_after"
 ]
 
 
-class GuardPredicateV1(_StrictProcedureModel):
+class GuardPredicate(_StrictProcedureModel):
     """Closed predicate: exactly one comparison or connective."""
 
     tag: Literal["playbill-guard-predicate-v1"] = "playbill-guard-predicate-v1"
-    left: PredicateOperandV1 | None = None
-    operator: ComparisonOperatorV1 | None = None
-    right: PredicateOperandV1 | None = None
-    all_of: tuple[GuardPredicateV1, ...] | None = None
-    any_of: tuple[GuardPredicateV1, ...] | None = None
-    not_of: GuardPredicateV1 | None = None
+    left: PredicateOperand | None = None
+    operator: ComparisonOperator | None = None
+    right: PredicateOperand | None = None
+    all_of: tuple[GuardPredicate, ...] | None = None
+    any_of: tuple[GuardPredicate, ...] | None = None
+    not_of: GuardPredicate | None = None
 
     @model_validator(mode="after")
-    def _one_production(self) -> "GuardPredicateV1":
+    def _one_production(self) -> "GuardPredicate":
         comparison_parts = (self.left, self.operator, self.right)
         set_count = sum(item is not None for item in comparison_parts)
         if set_count not in {0, 3}:
@@ -243,7 +243,7 @@ class GuardPredicateV1(_StrictProcedureModel):
 class StateTapNodeV3(_StrictProcedureModel):
     kind: Literal["state_tap"] = "state_tap"
     node_id: str
-    query: ProcedurePinBindingV1
+    query: ProcedurePinBinding
     parameters: object = Field(default_factory=dict)
     as_: str = Field(alias="as")
     next: str | None = None
@@ -257,8 +257,8 @@ class StateTapNodeV3(_StrictProcedureModel):
 class SourceNodeV3(_StrictProcedureModel):
     kind: Literal["source"] = "source"
     node_id: str
-    capture_contract: ProcedurePinBindingV1
-    provider: ProcedurePinBindingV1
+    capture_contract: ProcedurePinBinding
+    provider: ProcedurePinBinding
     request: object
     as_: str = Field(alias="as")
     next: str | None = None
@@ -270,7 +270,7 @@ class SourceNodeV3(_StrictProcedureModel):
 
 
 def _validate_explicit_provider_binding(
-    provider: ProcedurePinBindingV1,
+    provider: ProcedurePinBinding,
     implementation_digest: str | None,
 ) -> None:
     if isinstance(provider, ArtifactPin):
@@ -280,11 +280,11 @@ def _validate_explicit_provider_binding(
         raise ValueError("slot Provider bindings prohibit implementation_digest")
 
 
-class SourceNodeV4(_StrictProcedureModel):
+class SourceNode(_StrictProcedureModel):
     kind: Literal["source"] = "source"
     node_id: str
-    capture_contract: ProcedurePinBindingV1
-    provider: ProcedurePinBindingV1
+    capture_contract: ProcedurePinBinding
+    provider: ProcedurePinBinding
     interface: ArtifactPin
     interface_digest: str
     implementation_digest: str | None = None
@@ -302,15 +302,15 @@ class SourceNodeV4(_StrictProcedureModel):
         return normalize_canonical(value)
 
     @model_validator(mode="after")
-    def _provider_binding(self) -> "SourceNodeV4":
+    def _provider_binding(self) -> "SourceNode":
         _validate_explicit_provider_binding(self.provider, self.implementation_digest)
         return self
 
 
-class ExhaustTapNodeV3(_StrictProcedureModel):
+class ExhaustTapNode(_StrictProcedureModel):
     kind: Literal["exhaust_tap"] = "exhaust_tap"
     node_id: str
-    reducer_or_query: ProcedurePinBindingV1
+    reducer_or_query: ProcedurePinBinding
     journal_identity: str
     as_: str = Field(alias="as")
     next: str | None = None
@@ -324,11 +324,11 @@ class ExhaustTapNodeV3(_StrictProcedureModel):
 class ProviderNodeV3(_StrictProcedureModel):
     kind: Literal["provider"] = "provider"
     node_id: str
-    provider: ProcedurePinBindingV1
-    contract_in: ProcedurePinBindingV1
-    contract_out: ProcedurePinBindingV1
-    environment: ProcedurePinBindingV1
-    effect_policy: ProcedurePinBindingV1 | None = None
+    provider: ProcedurePinBinding
+    contract_in: ProcedurePinBinding
+    contract_out: ProcedurePinBinding
+    environment: ProcedurePinBinding
+    effect_policy: ProcedurePinBinding | None = None
     input: object
     as_: str = Field(alias="as")
     next: str | None = None
@@ -339,16 +339,16 @@ class ProviderNodeV3(_StrictProcedureModel):
         return normalize_canonical(value)
 
 
-class ProviderNodeV4(_StrictProcedureModel):
+class ProviderNode(_StrictProcedureModel):
     kind: Literal["provider"] = "provider"
     node_id: str
-    provider: ProcedurePinBindingV1
+    provider: ProcedurePinBinding
     interface: ArtifactPin
     interface_digest: str
     implementation_digest: str | None = None
-    contract_in: ProcedurePinBindingV1
-    contract_out: ProcedurePinBindingV1
-    effect_policy: ProcedurePinBindingV1 | None = None
+    contract_in: ProcedurePinBinding
+    contract_out: ProcedurePinBinding
+    effect_policy: ProcedurePinBinding | None = None
     input: object
     as_: str = Field(alias="as")
     next: str | None = None
@@ -363,18 +363,18 @@ class ProviderNodeV4(_StrictProcedureModel):
         return normalize_canonical(value)
 
     @model_validator(mode="after")
-    def _provider_binding(self) -> "ProviderNodeV4":
+    def _provider_binding(self) -> "ProviderNode":
         _validate_explicit_provider_binding(self.provider, self.implementation_digest)
         return self
 
 
-class CallNodeV5(ProviderNodeV4):
+class CallNode(ProviderNode):
     """A contracted call; Provider names its implementation, not a node category."""
 
     kind: Literal["call"] = "call"  # type: ignore[assignment]
 
 
-TransformKindV1 = Literal[
+TransformKind = Literal[
     "shape_items",
     "join_items",
     "filter_items",
@@ -384,7 +384,7 @@ TransformKindV1 = Literal[
 ]
 
 
-class TransformAdapterSpecV1(_StrictProcedureModel):
+class TransformAdapterSpec(_StrictProcedureModel):
     tag: Literal["playbill-transform-adapter-spec-v1"] = "playbill-transform-adapter-spec-v1"
     value: object
 
@@ -394,7 +394,7 @@ class TransformAdapterSpecV1(_StrictProcedureModel):
         return normalize_canonical(value)
 
 
-class TransformShapeItemsSpecV1(_StrictProcedureModel):
+class TransformShapeItemsSpec(_StrictProcedureModel):
     tag: Literal["playbill-transform-shape-items-spec-v1"] = (
         "playbill-transform-shape-items-spec-v1"
     )
@@ -408,7 +408,7 @@ class TransformShapeItemsSpecV1(_StrictProcedureModel):
         return normalize_canonical(value)
 
 
-class TransformFilterItemsSpecV1(_StrictProcedureModel):
+class TransformFilterItemsSpec(_StrictProcedureModel):
     tag: Literal["playbill-transform-filter-items-spec-v1"] = (
         "playbill-transform-filter-items-spec-v1"
     )
@@ -421,7 +421,7 @@ class TransformFilterItemsSpecV1(_StrictProcedureModel):
         return normalize_canonical(value)
 
 
-class TransformDedupeItemsSpecV1(_StrictProcedureModel):
+class TransformDedupeItemsSpec(_StrictProcedureModel):
     tag: Literal["playbill-transform-dedupe-items-spec-v1"] = (
         "playbill-transform-dedupe-items-spec-v1"
     )
@@ -434,7 +434,7 @@ class TransformDedupeItemsSpecV1(_StrictProcedureModel):
         return normalize_canonical(value)
 
 
-class TransformJoinItemsSpecV1(_StrictProcedureModel):
+class TransformJoinItemsSpec(_StrictProcedureModel):
     tag: Literal["playbill-transform-join-items-spec-v1"] = "playbill-transform-join-items-spec-v1"
     left_items: object
     right_items: object
@@ -448,7 +448,7 @@ class TransformJoinItemsSpecV1(_StrictProcedureModel):
         return normalize_canonical(value)
 
 
-class TransformAggregateItemsSpecV1(_StrictProcedureModel):
+class TransformAggregateItemsSpec(_StrictProcedureModel):
     tag: Literal["playbill-transform-aggregate-items-spec-v1"] = (
         "playbill-transform-aggregate-items-spec-v1"
     )
@@ -460,17 +460,17 @@ class TransformAggregateItemsSpecV1(_StrictProcedureModel):
         return normalize_canonical(value)
 
 
-ProcedureTransformSpecV1 = Annotated[
-    TransformAdapterSpecV1
-    | TransformShapeItemsSpecV1
-    | TransformFilterItemsSpecV1
-    | TransformDedupeItemsSpecV1
-    | TransformJoinItemsSpecV1
-    | TransformAggregateItemsSpecV1,
+ProcedureTransformSpec = Annotated[
+    TransformAdapterSpec
+    | TransformShapeItemsSpec
+    | TransformFilterItemsSpec
+    | TransformDedupeItemsSpec
+    | TransformJoinItemsSpec
+    | TransformAggregateItemsSpec,
     Field(discriminator="tag"),
 ]
 
-_TRANSFORM_SPEC_TAGS: dict[TransformKindV1, str] = {
+_TRANSFORM_SPEC_TAGS: dict[TransformKind, str] = {
     "adapter": "playbill-transform-adapter-spec-v1",
     "shape_items": "playbill-transform-shape-items-spec-v1",
     "filter_items": "playbill-transform-filter-items-spec-v1",
@@ -480,27 +480,27 @@ _TRANSFORM_SPEC_TAGS: dict[TransformKindV1, str] = {
 }
 
 
-class TransformNodeV3(_StrictProcedureModel):
+class TransformNode(_StrictProcedureModel):
     kind: Literal["transform"] = "transform"
     node_id: str
-    transform_kind: TransformKindV1
-    contract_in: ProcedurePinBindingV1
-    contract_out: ProcedurePinBindingV1
-    spec: ProcedureTransformSpecV1
+    transform_kind: TransformKind
+    contract_in: ProcedurePinBinding
+    contract_out: ProcedurePinBinding
+    spec: ProcedureTransformSpec
     as_: str = Field(alias="as")
     next: str | None = None
 
     @model_validator(mode="after")
-    def _spec_matches_kind(self) -> "TransformNodeV3":
+    def _spec_matches_kind(self) -> "TransformNode":
         if self.spec.tag != _TRANSFORM_SPEC_TAGS[self.transform_kind]:
             raise ValueError("transform spec tag does not match transform_kind")
         return self
 
 
-class GuardNodeV3(_StrictProcedureModel):
+class GuardNode(_StrictProcedureModel):
     kind: Literal["guard"] = "guard"
     node_id: str
-    predicate: GuardPredicateV1
+    predicate: GuardPredicate
     on_true: str | None = None
     on_false: str = "$abort"
     refusal_code: str
@@ -512,11 +512,11 @@ class GuardNodeV3(_StrictProcedureModel):
         return _canonical_identifier(value, _NAME_RE, label="guard refusal_code")
 
 
-class ProjectNodeV3(_StrictProcedureModel):
+class ProjectNode(_StrictProcedureModel):
     kind: Literal["project"] = "project"
     node_id: str
     fields: object
-    contract_out: ProcedurePinBindingV1
+    contract_out: ProcedurePinBinding
     as_: str = Field(alias="as")
     next: str | None = None
 
@@ -531,12 +531,12 @@ class RepeatBodyNodeV3(_StrictProcedureModel):
 
     node_id: str
     operation: Literal["provider", "transform"]
-    transform_kind: TransformKindV1 | None = None
-    provider: ProcedurePinBindingV1 | None = None
-    contract_in: ProcedurePinBindingV1
-    contract_out: ProcedurePinBindingV1
-    environment: ProcedurePinBindingV1 | None = None
-    spec: ProcedureTransformSpecV1 | object
+    transform_kind: TransformKind | None = None
+    provider: ProcedurePinBinding | None = None
+    contract_in: ProcedurePinBinding
+    contract_out: ProcedurePinBinding
+    environment: ProcedurePinBinding | None = None
+    spec: ProcedureTransformSpec | object
     as_: str = Field(alias="as")
 
     @field_validator("spec", mode="before")
@@ -564,7 +564,7 @@ class RepeatNodeV3(_StrictProcedureModel):
     node_id: str
     max_attempts: int = Field(ge=1, le=2**31 - 1)
     body: tuple[RepeatBodyNodeV3, ...]
-    until: GuardPredicateV1
+    until: GuardPredicate
     as_: str = Field(alias="as")
     next: str | None = None
 
@@ -583,18 +583,18 @@ class RepeatBodyNodeV4(_StrictProcedureModel):
 
     node_id: str
     operation: Literal["provider", "transform"]
-    transform_kind: TransformKindV1 | None = None
-    provider: ProcedurePinBindingV1 | None = None
+    transform_kind: TransformKind | None = None
+    provider: ProcedurePinBinding | None = None
     interface: ArtifactPin | None = None
     interface_digest: str | None = None
     implementation_digest: str | None = None
-    contract_in: ProcedurePinBindingV1
-    contract_out: ProcedurePinBindingV1
-    effect_policy: ProcedurePinBindingV1 | None = Field(
+    contract_in: ProcedurePinBinding
+    contract_out: ProcedurePinBinding
+    effect_policy: ProcedurePinBinding | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
     )
-    spec: ProcedureTransformSpecV1 | object
+    spec: ProcedureTransformSpec | object
     as_: str = Field(alias="as")
 
     _digests = field_validator("interface_digest", "implementation_digest")(
@@ -640,7 +640,7 @@ class RepeatNodeV4(_StrictProcedureModel):
     node_id: str
     max_attempts: int = Field(ge=1, le=2**31 - 1)
     body: tuple[RepeatBodyNodeV4, ...]
-    until: GuardPredicateV1
+    until: GuardPredicate
     as_: str = Field(alias="as")
     next: str | None = None
 
@@ -654,18 +654,18 @@ class RepeatNodeV4(_StrictProcedureModel):
         return value
 
 
-class RepeatBodyNodeV5(RepeatBodyNodeV4):
+class RepeatBodyNode(RepeatBodyNodeV4):
     operation: Literal["call", "transform"]  # type: ignore[assignment]
 
 
-class RepeatNodeV5(RepeatNodeV4):
-    body: tuple[RepeatBodyNodeV5, ...]
+class RepeatNode(RepeatNodeV4):
+    body: tuple[RepeatBodyNode, ...]
 
 
 class CaptureEgressNodeV3(_StrictProcedureModel):
     kind: Literal["emit_capture"] = "emit_capture"
     node_id: str
-    capture_contract: ProcedurePinBindingV1
+    capture_contract: ProcedurePinBinding
     input: object
 
     @field_validator("input", mode="before")
@@ -674,7 +674,7 @@ class CaptureEgressNodeV3(_StrictProcedureModel):
         return normalize_canonical(value)
 
 
-class InboxEgressNodeV3(_StrictProcedureModel):
+class InboxEgressNode(_StrictProcedureModel):
     kind: Literal["post_inbox"] = "post_inbox"
     node_id: str
     input: object
@@ -701,12 +701,12 @@ class ProposeChangeSetNodeV3(_StrictProcedureModel):
 
 
 class SettleChangeSetNodeV3(ProposeChangeSetNodeV3):
-    """Terminal settle for graph-v4/v5 Procedures; see SettleChangeSetNodeV6."""
+    """Terminal settle for graph-v4/v5 Procedures; see SettleChangeSetNode."""
 
     kind: Literal["settle_change_set"] = "settle_change_set"  # type: ignore[assignment]
 
 
-class HaltNodeV3(_StrictProcedureModel):
+class HaltNode(_StrictProcedureModel):
     """A successful graph leaf that deliberately produces no result."""
 
     kind: Literal["halt"] = "halt"
@@ -717,50 +717,50 @@ class HaltNodeV3(_StrictProcedureModel):
 ProcedureNodeV3 = Annotated[
     StateTapNodeV3
     | SourceNodeV3
-    | ExhaustTapNodeV3
+    | ExhaustTapNode
     | ProviderNodeV3
-    | TransformNodeV3
-    | GuardNodeV3
-    | ProjectNodeV3
+    | TransformNode
+    | GuardNode
+    | ProjectNode
     | RepeatNodeV3
     | CaptureEgressNodeV3
-    | InboxEgressNodeV3
+    | InboxEgressNode
     | ProposeChangeSetNodeV3
-    | HaltNodeV3,
+    | HaltNode,
     Field(discriminator="kind"),
 ]
 
 ProcedureNodeV4 = Annotated[
     StateTapNodeV3
-    | SourceNodeV4
-    | ExhaustTapNodeV3
-    | ProviderNodeV4
-    | TransformNodeV3
-    | GuardNodeV3
-    | ProjectNodeV3
+    | SourceNode
+    | ExhaustTapNode
+    | ProviderNode
+    | TransformNode
+    | GuardNode
+    | ProjectNode
     | RepeatNodeV4
     | CaptureEgressNodeV3
-    | InboxEgressNodeV3
+    | InboxEgressNode
     | ProposeChangeSetNodeV3
     | SettleChangeSetNodeV3
-    | HaltNodeV3,
+    | HaltNode,
     Field(discriminator="kind"),
 ]
 
 ProcedureNodeV5 = Annotated[
     StateTapNodeV3
-    | SourceNodeV4
-    | ExhaustTapNodeV3
-    | CallNodeV5
-    | TransformNodeV3
-    | GuardNodeV3
-    | ProjectNodeV3
-    | RepeatNodeV5
+    | SourceNode
+    | ExhaustTapNode
+    | CallNode
+    | TransformNode
+    | GuardNode
+    | ProjectNode
+    | RepeatNode
     | CaptureEgressNodeV3
-    | InboxEgressNodeV3
+    | InboxEgressNode
     | ProposeChangeSetNodeV3
     | SettleChangeSetNodeV3
-    | HaltNodeV3,
+    | HaltNode,
     Field(discriminator="kind"),
 ]
 
@@ -820,15 +820,15 @@ class ProcedureDefinitionV3(_StrictProcedureModel):
     graph_format: Literal[3] = 3
     name: str
     description: str | None = None
-    contract_in: ProcedurePinBindingV1
-    contract_out: ProcedurePinBindingV1
-    parameter_contract: ProcedurePinBindingV1 | None = None
+    contract_in: ProcedurePinBinding
+    contract_out: ProcedurePinBinding
+    parameter_contract: ProcedurePinBinding | None = None
     nodes: tuple[ProcedureNodeV3, ...]
     returns: str
-    pin_slots: tuple[ProcedurePinSlotV1, ...] = ()
-    measurements: tuple[ProcedureMeasurementDeclarationV1, ...] = ()
-    budget: ProcedureBudgetV3
-    hard_caps: ProcedureHardCapsV3
+    pin_slots: tuple[ProcedurePinSlot, ...] = ()
+    measurements: tuple[ProcedureMeasurementDeclaration, ...] = ()
+    budget: ProcedureBudget
+    hard_caps: ProcedureHardCaps
     terminal_capability: Literal[1, 2, 3]
     annotations: object = Field(default_factory=dict)
 
@@ -844,7 +844,7 @@ class ProcedureDefinitionV3(_StrictProcedureModel):
 
     @field_validator("pin_slots")
     @classmethod
-    def _slots(cls, value: tuple[ProcedurePinSlotV1, ...]) -> tuple[ProcedurePinSlotV1, ...]:
+    def _slots(cls, value: tuple[ProcedurePinSlot, ...]) -> tuple[ProcedurePinSlot, ...]:
         names = tuple(item.slot_name for item in value)
         if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
             raise ValueError("Procedure pin slots must be sorted and unique by slot_name")
@@ -854,8 +854,8 @@ class ProcedureDefinitionV3(_StrictProcedureModel):
     @classmethod
     def _measurements(
         cls,
-        value: tuple[ProcedureMeasurementDeclarationV1, ...],
-    ) -> tuple[ProcedureMeasurementDeclarationV1, ...]:
+        value: tuple[ProcedureMeasurementDeclaration, ...],
+    ) -> tuple[ProcedureMeasurementDeclaration, ...]:
         names = tuple(item.name for item in value)
         if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
             raise ValueError("M3: Procedure measurements must be sorted and unique by name")
@@ -948,15 +948,15 @@ class ProcedureDefinitionV4(_StrictProcedureModel):
     graph_format: Literal[4] = 4
     name: str
     description: str | None = None
-    contract_in: ProcedurePinBindingV1
-    contract_out: ProcedurePinBindingV1
-    parameter_contract: ProcedurePinBindingV1 | None = None
+    contract_in: ProcedurePinBinding
+    contract_out: ProcedurePinBinding
+    parameter_contract: ProcedurePinBinding | None = None
     nodes: tuple[ProcedureNodeV4, ...]
     returns: str
-    pin_slots: tuple[ProcedurePinSlotV1, ...] = ()
-    measurements: tuple[ProcedureMeasurementDeclarationV1, ...] = ()
-    budget: ProcedureBudgetV3
-    hard_caps: ProcedureHardCapsV3
+    pin_slots: tuple[ProcedurePinSlot, ...] = ()
+    measurements: tuple[ProcedureMeasurementDeclaration, ...] = ()
+    budget: ProcedureBudget
+    hard_caps: ProcedureHardCaps
     terminal_capability: Literal[1, 2, 3]
     annotations: object = Field(default_factory=dict)
 
@@ -972,7 +972,7 @@ class ProcedureDefinitionV4(_StrictProcedureModel):
 
     @field_validator("pin_slots")
     @classmethod
-    def _slots(cls, value: tuple[ProcedurePinSlotV1, ...]) -> tuple[ProcedurePinSlotV1, ...]:
+    def _slots(cls, value: tuple[ProcedurePinSlot, ...]) -> tuple[ProcedurePinSlot, ...]:
         names = tuple(item.slot_name for item in value)
         if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
             raise ValueError("Procedure pin slots must be sorted and unique by slot_name")
@@ -982,8 +982,8 @@ class ProcedureDefinitionV4(_StrictProcedureModel):
     @classmethod
     def _measurements(
         cls,
-        value: tuple[ProcedureMeasurementDeclarationV1, ...],
-    ) -> tuple[ProcedureMeasurementDeclarationV1, ...]:
+        value: tuple[ProcedureMeasurementDeclaration, ...],
+    ) -> tuple[ProcedureMeasurementDeclaration, ...]:
         names = tuple(item.name for item in value)
         if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
             raise ValueError("M3: Procedure measurements must be sorted and unique by name")
@@ -1078,13 +1078,13 @@ class ProcedureDefinitionV5(ProcedureDefinitionV4):
     nodes: tuple[ProcedureNodeV5, ...]
 
 
-class SelectNodeV6(_StrictProcedureModel):
+class SelectNode(_StrictProcedureModel):
     """Join mutually exclusive record producers without guessing a winner."""
 
     kind: Literal["select"] = "select"
     node_id: str
     sources: tuple[str, ...]
-    contract_out: ProcedurePinBindingV1
+    contract_out: ProcedurePinBinding
     as_: str = Field(alias="as")
     next: str | None = None
 
@@ -1098,19 +1098,19 @@ class SelectNodeV6(_StrictProcedureModel):
         return value
 
 
-class ReturnNodeV6(ProjectNodeV3):
+class ReturnNode(ProjectNode):
     """A typed successful leaf; each branch may return its own exact value."""
 
     kind: Literal["return"] = "return"  # type: ignore[assignment]
 
 
-class ConstantNodeV6(ProjectNodeV3):
+class ConstantNode(ProjectNode):
     """Exact literal record; dollar-prefixed strings are data, never references."""
 
     kind: Literal["constant"] = "constant"  # type: ignore[assignment]
 
 
-class ClaimTapNodeV6(_StrictProcedureModel):
+class ClaimTapNode(_StrictProcedureModel):
     """A bounded field read using an exact ClaimType and named Subject."""
 
     kind: Literal["state_claim"] = "state_claim"
@@ -1126,33 +1126,33 @@ class ClaimTapNodeV6(_StrictProcedureModel):
     _subject = field_validator("subject_id", mode="before")(normalize_canonical)
 
     @model_validator(mode="after")
-    def _bounded_selection(self) -> ClaimTapNodeV6:
+    def _bounded_selection(self) -> ClaimTapNode:
         if (self.cardinality == "all") != (self.limit is not None):
             raise ValueError("all() requires a positive limit; one() takes no limit")
         return self
 
 
-class StateTapNodeV6(StateTapNodeV3):
+class StateTapNode(StateTapNodeV3):
     """Request-bound query with a typed view over the retained query result."""
 
     view: Literal["typed_query"] = "typed_query"
-    budgets: QueryBudgetsV1 | None = None
+    budgets: QueryBudgets | None = None
 
 
-class CaptureEgressNodeV6(CaptureEgressNodeV3):
+class CaptureEgressNode(CaptureEgressNodeV3):
     result: object
 
     _result = field_validator("result", mode="before")(normalize_canonical)
 
 
-class ProposeChangeSetNodeV6(ProposeChangeSetNodeV3):
+class ProposeChangeSetNode(ProposeChangeSetNodeV3):
     claim_types: tuple[ArtifactPin, ...] = ()
     result: object
 
     _result = field_validator("result", mode="before")(normalize_canonical)
 
 
-class SettleChangeSetNodeV6(ProposeChangeSetNodeV6):
+class SettleChangeSetNode(ProposeChangeSetNode):
     """Terminal settle: the proposal terminal's Claims, settled under delegated authority.
 
     It carries no mandate: Core selects the one accepted settle ProcedureMandate
@@ -1163,7 +1163,7 @@ class SettleChangeSetNodeV6(ProposeChangeSetNodeV6):
     kind: Literal["settle_change_set"] = "settle_change_set"  # type: ignore[assignment]
 
 
-class InvokeNodeV6(_StrictProcedureModel):
+class InvokeNode(_StrictProcedureModel):
     """A call to an exact accepted Procedure under the enclosing run's limits."""
 
     kind: Literal["invoke"] = "invoke"
@@ -1176,35 +1176,35 @@ class InvokeNodeV6(_StrictProcedureModel):
     _input = field_validator("input", mode="before")(normalize_canonical)
 
 
-ProcedureNodeV6 = Annotated[
-    InvokeNodeV6
-    | ClaimTapNodeV6
-    | StateTapNodeV6
-    | SourceNodeV4
-    | ExhaustTapNodeV3
-    | CallNodeV5
-    | TransformNodeV3
-    | GuardNodeV3
-    | ProjectNodeV3
-    | RepeatNodeV5
-    | CaptureEgressNodeV6
-    | InboxEgressNodeV3
-    | ProposeChangeSetNodeV6
-    | SettleChangeSetNodeV6
-    | HaltNodeV3
-    | SelectNodeV6
-    | ReturnNodeV6
-    | ConstantNodeV6,
+ProcedureNode = Annotated[
+    InvokeNode
+    | ClaimTapNode
+    | StateTapNode
+    | SourceNode
+    | ExhaustTapNode
+    | CallNode
+    | TransformNode
+    | GuardNode
+    | ProjectNode
+    | RepeatNode
+    | CaptureEgressNode
+    | InboxEgressNode
+    | ProposeChangeSetNode
+    | SettleChangeSetNode
+    | HaltNode
+    | SelectNode
+    | ReturnNode
+    | ConstantNode,
     Field(discriminator="kind"),
 ]
 
 
-class ProcedureDefinitionV6(ProcedureDefinitionV5):
+class ProcedureDefinition(ProcedureDefinitionV5):
     """Source-language graph with explicit value joins and typed return paths."""
 
     graph_format: Literal[6] = 6  # type: ignore[assignment]
-    nodes: tuple[ProcedureNodeV6, ...]  # type: ignore[assignment]
-    source: ProcedureSourceV1 | None = None
+    nodes: tuple[ProcedureNode, ...]  # type: ignore[assignment]
+    source: ProcedureSource | None = None
     returns: str | None = None  # type: ignore[assignment]
 
     @field_validator("returns")
@@ -1224,22 +1224,22 @@ class ProcedureDefinitionV6(ProcedureDefinitionV5):
                 raise ValueError("Source-v2 uses explicit return paths, not a return alias")
 
 
-ProcedureNodeAny: TypeAlias = ProcedureNodeV3 | ProcedureNodeV4 | ProcedureNodeV5 | ProcedureNodeV6
+ProcedureNodeAny: TypeAlias = ProcedureNodeV3 | ProcedureNodeV4 | ProcedureNodeV5 | ProcedureNode
 
 
 ProcedureDefinitionAny: TypeAlias = Annotated[
-    ProcedureDefinitionV3 | ProcedureDefinitionV4 | ProcedureDefinitionV5 | ProcedureDefinitionV6,
+    ProcedureDefinitionV3 | ProcedureDefinitionV4 | ProcedureDefinitionV5 | ProcedureDefinition,
     Field(discriminator="graph_format"),
 ]
 
 
-def iter_pin_bindings(value: object) -> tuple[ProcedurePinBindingV1, ...]:
+def iter_pin_bindings(value: object) -> tuple[ProcedurePinBinding, ...]:
     """Return every exact pin or slot reference nested in a v3 model."""
 
-    found: list[ProcedurePinBindingV1] = []
+    found: list[ProcedurePinBinding] = []
 
     def visit(item: object) -> None:
-        if isinstance(item, ArtifactPin | ProcedurePinSlotRefV1):
+        if isinstance(item, ArtifactPin | ProcedurePinSlotRef):
             found.append(item)
             return
         if isinstance(item, BaseModel):
@@ -1259,50 +1259,50 @@ def iter_pin_bindings(value: object) -> tuple[ProcedurePinBindingV1, ...]:
 
 
 __all__ = [
-    "CallNodeV5",
+    "CallNode",
     "ProcedureDefinitionV5",
     "ProcedureNodeV5",
-    "RepeatBodyNodeV5",
-    "RepeatNodeV5",
+    "RepeatBodyNode",
+    "RepeatNode",
     "CaptureEgressNodeV3",
-    "ExhaustTapNodeV3",
-    "GuardNodeV3",
-    "GuardPredicateV1",
-    "HaltNodeV3",
-    "InboxEgressNodeV3",
-    "PredicateOperandV1",
-    "ProcedureBudgetV3",
+    "ExhaustTapNode",
+    "GuardNode",
+    "GuardPredicate",
+    "HaltNode",
+    "InboxEgressNode",
+    "PredicateOperand",
+    "ProcedureBudget",
     "ProcedureDefinitionV3",
     "ProcedureDefinitionV4",
     "ProcedureDefinitionAny",
-    "ProcedureHardCapsV3",
-    "ProcedureMeasurementDeclarationV1",
+    "ProcedureHardCaps",
+    "ProcedureMeasurementDeclaration",
     "ProcedureNodeV3",
     "ProcedureNodeV4",
-    "ProcedurePinBindingV1",
-    "ProcedurePinSlotRefV1",
-    "ProcedurePinSlotV1",
-    "ProjectNodeV3",
+    "ProcedurePinBinding",
+    "ProcedurePinSlotRef",
+    "ProcedurePinSlot",
+    "ProjectNode",
     "ProposeChangeSetNodeV3",
     "ProviderNodeV3",
-    "ProviderNodeV4",
+    "ProviderNode",
     "RepeatBodyNodeV3",
     "RepeatBodyNodeV4",
     "RepeatNodeV3",
     "RepeatNodeV4",
     "SourceNodeV3",
-    "SourceNodeV4",
+    "SourceNode",
     "StateTapNodeV3",
     "TERMINAL_NODE_KINDS",
     "TERMINAL_REQUIRED_RUNGS",
-    "TransformNodeV3",
-    "ProcedureTransformSpecV1",
-    "TransformAdapterSpecV1",
-    "TransformAggregateItemsSpecV1",
-    "TransformDedupeItemsSpecV1",
-    "TransformFilterItemsSpecV1",
-    "TransformJoinItemsSpecV1",
-    "TransformKindV1",
-    "TransformShapeItemsSpecV1",
+    "TransformNode",
+    "ProcedureTransformSpec",
+    "TransformAdapterSpec",
+    "TransformAggregateItemsSpec",
+    "TransformDedupeItemsSpec",
+    "TransformFilterItemsSpec",
+    "TransformJoinItemsSpec",
+    "TransformKind",
+    "TransformShapeItemsSpec",
     "iter_pin_bindings",
 ]

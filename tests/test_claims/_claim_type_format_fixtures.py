@@ -14,22 +14,22 @@ from cruxible_client.contracts.captures import (
     foreign_source_capture_contract,
 )
 from cruxible_client.contracts.claim_types import (
-    ClaimAttestationConsequencePolicyV1,
-    ClaimAttestationConsequenceRuleV1,
-    ClaimEvidenceFreshnessV1,
-    ClaimFreshnessDurationV1,
+    ClaimAttestationConsequencePolicy,
+    ClaimAttestationConsequenceRule,
+    ClaimEvidenceFreshness,
+    ClaimFreshnessDuration,
     ClaimType,
 )
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
-    ClaimAdmissionPolicyV1,
+    ClaimAdmissionPolicy,
+    ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionPolicyV2,
-    ClaimEvidenceAdmissionPolicyV3,
+    ClaimEvidenceAdmissionRule,
     ClaimEvidenceAdmissionRuleV1,
     ClaimEvidenceAdmissionRuleV2,
-    ClaimEvidenceAdmissionRuleV3,
-    ClaimResolutionPolicyV1,
+    ClaimResolutionPolicy,
 )
 
 _PREDICATE = "project.work_item.status"
@@ -59,8 +59,8 @@ def _base(**update: object) -> ClaimType:
                 ),
             )
         ),
-        admission_policy=ClaimAdmissionPolicyV1(),
-        resolution_policy=ClaimResolutionPolicyV1(
+        admission_policy=ClaimAdmissionPolicy(),
+        resolution_policy=ClaimResolutionPolicy(
             cardinality="one",
             eligible_verdicts=("supported",),
             selector="only_contender",
@@ -69,12 +69,10 @@ def _base(**update: object) -> ClaimType:
     return ClaimType.model_validate({**base.model_dump(mode="python"), **update})
 
 
-_FRESHNESS = ClaimEvidenceFreshnessV1(
-    stale_after=ClaimFreshnessDurationV1(microseconds=86_400_000_000)
-)
-_CONSEQUENCES = ClaimAttestationConsequencePolicyV1(
+_FRESHNESS = ClaimEvidenceFreshness(stale_after=ClaimFreshnessDuration(microseconds=86_400_000_000))
+_CONSEQUENCES = ClaimAttestationConsequencePolicy(
     rules=(
-        ClaimAttestationConsequenceRuleV1(
+        ClaimAttestationConsequenceRule(
             rule_id="contradict-once",
             stance="contradict",
             minimum_independent_control_components=1,
@@ -89,7 +87,7 @@ _V2_RULE = ClaimEvidenceAdmissionRuleV2(
     admission="direct",
     subject_binding="exact_claim_subject",
 )
-_V3_RULE = ClaimEvidenceAdmissionRuleV3(
+_V3_RULE = ClaimEvidenceAdmissionRule(
     rule_id="source",
     claim_roles=("normative", "observation"),
     capture_contracts=(ArtifactRef(role=CAPTURE_CONTRACT_REF_ROLE, target=_SOURCE.identity),),
@@ -117,12 +115,12 @@ def historical_claim_types() -> dict[str, ClaimType]:
         "v5-hold": _base(
             artifact_format="playbill-claim-type-v5",
             evidence_admission_policy=ClaimEvidenceAdmissionPolicyV2(rules=(_V2_RULE,)),
-            unsure_hold_for=ClaimFreshnessDurationV1(microseconds=3_600_000_000),
+            unsure_hold_for=ClaimFreshnessDuration(microseconds=3_600_000_000),
             attestation_consequence_policy=_CONSEQUENCES,
         ),
         "v6": _base(
             artifact_format="playbill-claim-type-v6",
-            evidence_admission_policy=ClaimEvidenceAdmissionPolicyV3(rules=(_V3_RULE,)),
+            evidence_admission_policy=ClaimEvidenceAdmissionPolicy(rules=(_V3_RULE,)),
             evidence_freshness=_FRESHNESS,
         ),
     }

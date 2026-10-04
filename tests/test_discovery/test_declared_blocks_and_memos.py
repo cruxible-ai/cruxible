@@ -40,10 +40,10 @@ from pydantic import ValidationError
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.declared_blocks import (
-    ProjectionBackingV1,
+    ProjectionBacking,
     ProjectionBlockStampV1,
-    ProjectionClaimBackingV1,
-    ProjectionQueryBackingV1,
+    ProjectionClaimBacking,
+    ProjectionQueryBacking,
     parse_projection_blocks,
     projection_parameter_digest,
     render_projection_closing,
@@ -51,7 +51,7 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.store import AuthoringIntentStore
-from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.errors import ConfigError
 from cruxible_core.evidence.claim_attestation_store import (
     STORE_DIRECTORY as CLAIM_ATTESTATION_STORE_DIRECTORY,
@@ -115,8 +115,8 @@ class WatchedWorld:
     """One instance whose watched query gained a row after the block was stamped."""
 
     instance: PlaybillInstance
-    held: tuple[ProjectionClaimBackingV1, ...]
-    stamped_query: ProjectionQueryBackingV1
+    held: tuple[ProjectionClaimBacking, ...]
+    stamped_query: ProjectionQueryBacking
     entered: str
 
 
@@ -181,14 +181,14 @@ def _cold_memos() -> Iterator[None]:
     reset_bound_publication_registration_memo()
 
 
-def _claim_backings(instance: PlaybillInstance) -> tuple[ProjectionClaimBackingV1, ...]:
+def _claim_backings(instance: PlaybillInstance) -> tuple[ProjectionClaimBacking, ...]:
     """A held-list entry for every accepted Claim, in the stamp's own order."""
 
     facts = build_accepted_query_facts(instance, coordinate=instance.accepted_coordinate())
     return tuple(
         sorted(
             (
-                ProjectionClaimBackingV1(
+                ProjectionClaimBacking(
                     identity=row.accepted.claim.identity,
                     statement_digest=row.accepted.statement_digest,
                 )
@@ -274,7 +274,7 @@ def _depublish(
     )
 
 
-def _synthetic_claim_backings(count: int) -> tuple[ProjectionClaimBackingV1, ...]:
+def _synthetic_claim_backings(count: int) -> tuple[ProjectionClaimBacking, ...]:
     """A held list of the declared size, with no ledger behind it.
 
     The ceiling is a property of the marker, not of accepted state: it decides
@@ -283,7 +283,7 @@ def _synthetic_claim_backings(count: int) -> tuple[ProjectionClaimBackingV1, ...
     """
 
     return tuple(
-        ProjectionClaimBackingV1(
+        ProjectionClaimBacking(
             identity=ArtifactIdentity(kind="Claim", name=f"CLM-{index:028d}"),
             statement_digest="sha256:" + f"{index:064x}",
         )
@@ -291,8 +291,8 @@ def _synthetic_claim_backings(count: int) -> tuple[ProjectionClaimBackingV1, ...
     )
 
 
-def _synthetic_query_backing(name: str) -> ProjectionQueryBackingV1:
-    return ProjectionQueryBackingV1(
+def _synthetic_query_backing(name: str) -> ProjectionQueryBacking:
+    return ProjectionQueryBacking(
         identity=ArtifactIdentity(kind="QueryDefinition", name=name),
         definition_digest="sha256:" + "1" * 64,
         canonical_param_digest=projection_parameter_digest(()),
@@ -324,7 +324,7 @@ def test_a_block_holds_a_list_and_watches_one_query_through_a_render_and_a_read(
     instance = watched_world.instance
     held = _claim_backings(instance)
     assert len(held) == 3
-    backing: tuple[ProjectionBackingV1, ...] = (*held, _query_backing(instance))
+    backing: tuple[ProjectionBacking, ...] = (*held, _query_backing(instance))
 
     request = _request(instance, backing=backing)
     stamp = _stamp_of(request)
@@ -760,7 +760,7 @@ def _next(instance: PlaybillInstance) -> Any:
         request=PlaybillNextRequestV1(
             at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
             evaluation_time=datetime.now(UTC),
-            access_profile=CoverageAccessProfileV1(
+            access_profile=CoverageAccessProfile(
                 profile_id="resolution-memo",
                 permitted_access_classes=("instance", "public"),
             ),

@@ -13,9 +13,9 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
     typed_digest,
 )
-from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.procedures.artifacts import (
-    AcceptedProcedureV1,
+    AcceptedProcedure,
     ProcedureArtifactV1,
     procedure_artifact_digest,
     procedure_path,
@@ -23,17 +23,17 @@ from cruxible_client.contracts.procedures.artifacts import (
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
 from cruxible_client.contracts.procedures.line_specs import (
-    AcceptedLineSpecV1,
-    LineSpecV6,
+    AcceptedLineSpec,
+    LineSpec,
     line_spec_digest,
     line_spec_path,
     render_line_spec,
 )
 from cruxible_client.contracts.procedures.models import (
-    InboxEgressNodeV3,
-    ProcedureBudgetV3,
+    InboxEgressNode,
+    ProcedureBudget,
     ProcedureDefinitionV3,
-    ProcedureHardCapsV3,
+    ProcedureHardCaps,
     StateTapNodeV3,
 )
 from cruxible_client.contracts.projection_extensions import playbill_runtime_extension_registry
@@ -86,7 +86,7 @@ def _pin(role: str, kind: str, name: str, *, digest: str | None = None) -> Artif
     )
 
 
-def _artifacts() -> tuple[AcceptedProcedureV1, AcceptedLineSpecV1]:
+def _artifacts() -> tuple[AcceptedProcedure, AcceptedLineSpec]:
     contract_in = _pin("contract-in", "Contract", "run-input")
     contract_out = _pin("contract-out", "Contract", "run-output")
     query = _pin("query", "QueryDefinition", "open-orders")
@@ -96,17 +96,17 @@ def _artifacts() -> tuple[AcceptedProcedureV1, AcceptedLineSpecV1]:
         contract_out=contract_out,
         nodes=(
             StateTapNodeV3(node_id="read", query=query, parameters={}, as_="rows", next="emit"),
-            InboxEgressNodeV3(node_id="emit", input={"items": "$steps.rows.items"}),
+            InboxEgressNode(node_id="emit", input={"items": "$steps.rows.items"}),
         ),
         returns="rows",
-        budget=ProcedureBudgetV3(
-            wall_clock=CanonicalDurationV1(microseconds=5_000_000),
+        budget=ProcedureBudget(
+            wall_clock=CanonicalDuration(microseconds=5_000_000),
             max_provider_calls=0,
             max_capture_bytes=0,
             max_items=100,
         ),
-        hard_caps=ProcedureHardCapsV3(
-            max_wall_clock=CanonicalDurationV1(microseconds=10_000_000),
+        hard_caps=ProcedureHardCaps(
+            max_wall_clock=CanonicalDuration(microseconds=10_000_000),
             max_provider_calls=0,
             max_capture_bytes=0,
             max_items=200,
@@ -121,7 +121,7 @@ def _artifacts() -> tuple[AcceptedProcedureV1, AcceptedLineSpecV1]:
         pins=tuple(sorted((contract_in, contract_out, query), key=lambda pin: pin.role)),
         activation_policy="drain",
     )
-    accepted_procedure = AcceptedProcedureV1(
+    accepted_procedure = AcceptedProcedure(
         path=procedure_path(definition.name),
         procedure=procedure,
         artifact_digest=procedure_artifact_digest(procedure).tagged,
@@ -129,7 +129,7 @@ def _artifacts() -> tuple[AcceptedProcedureV1, AcceptedLineSpecV1]:
     procedure_pin = _pin(
         "procedure", "Procedure", definition.name, digest=accepted_procedure.artifact_digest
     )
-    line = LineSpecV6(
+    line = LineSpec(
         identity=ArtifactIdentity(kind="Line", name="orders-triage"),
         occurrence_epoch=1,
         procedure=procedure_pin,
@@ -146,7 +146,7 @@ def _artifacts() -> tuple[AcceptedProcedureV1, AcceptedLineSpecV1]:
         epsilon={"$decimal": "0.1"},
         pins=(procedure_pin,),
     )
-    return accepted_procedure, AcceptedLineSpecV1(
+    return accepted_procedure, AcceptedLineSpec(
         path=line_spec_path(line.identity.name),
         line=line,
         artifact_digest=line_spec_digest(line).tagged,
@@ -167,7 +167,7 @@ def _terms() -> list[dict[str, object]]:
 
 
 def _verified_records(
-    *, procedure: AcceptedProcedureV1, line: AcceptedLineSpecV1
+    *, procedure: AcceptedProcedure, line: AcceptedLineSpec
 ) -> tuple[VerifiedExhaustRecordV1, ...]:
     common = {
         "generation_digest": _digest("generation"),

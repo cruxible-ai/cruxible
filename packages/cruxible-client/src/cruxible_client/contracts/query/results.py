@@ -14,7 +14,10 @@ from pydantic import (
 
 from cruxible_client.contracts.canonical import normalize_canonical
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, claim_type_path
-from cruxible_client.contracts.claim_verdicts import EvidenceCurrency, EvidenceRelativeClaimVerdict
+from cruxible_client.contracts.claim_verdicts import (
+    EvidenceCurrency,
+    EvidenceRelativeClaimVerdictV1,
+)
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifactAny,
     procedure_artifact_digest,
@@ -22,14 +25,14 @@ from cruxible_client.contracts.procedures.artifacts import (
 )
 from cruxible_client.contracts.projection import AcceptedProjectionCoordinate
 from cruxible_client.contracts.query.definitions import (
-    QueryDedupeV1,
-    QueryResultCardinalityV1,
-    QueryResultShapeV1,
+    QueryDedupe,
+    QueryResultCardinality,
+    QueryResultShape,
 )
-from cruxible_client.contracts.query.grammar import QueryBudgetsV1, QueryValueTypeV1, byte_sorted
+from cruxible_client.contracts.query.grammar import QueryBudgets, QueryValueType, byte_sorted
 
 
-class QueryArtifactDefinitionV2(BaseModel):
+class QueryArtifactDefinition(BaseModel):
     """The full definition and its exact accepted identity/path/version binding."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -39,7 +42,7 @@ class QueryArtifactDefinitionV2(BaseModel):
     definition: ClaimType | ProcedureArtifactAny
 
     @model_validator(mode="after")
-    def _binding(self) -> "QueryArtifactDefinitionV2":
+    def _binding(self) -> "QueryArtifactDefinition":
         source = self.definition
         if isinstance(source, ClaimType):
             path, digest = claim_type_path(source.predicate), claim_type_digest(source).tagged
@@ -57,20 +60,20 @@ class QueryArtifactDefinitionV2(BaseModel):
         return self
 
 
-QueryClippedBudgetV1 = Literal[
+QueryClippedBudget = Literal[
     "include_max_items",
     "max_paths",
     "max_paths_per_result",
     "max_results",
 ]
-QueryValueStateV1 = Literal["absent", "conflict", "present"]
+QueryValueState = Literal["absent", "conflict", "present"]
 
 
 class _StrictQueryEngineModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class QueryClaimVisibilityV1(_StrictQueryEngineModel):
+class QueryClaimVisibility(_StrictQueryEngineModel):
     """Why one Claim row is present: its verdict and currency at the read time."""
 
     tag: Literal["playbill-query-claim-visibility-v1"] = "playbill-query-claim-visibility-v1"
@@ -79,11 +82,11 @@ class QueryClaimVisibilityV1(_StrictQueryEngineModel):
     artifact_digest: str
     predicate: str
     subject_identity: str
-    verdict: EvidenceRelativeClaimVerdict
+    verdict: EvidenceRelativeClaimVerdictV1
     currency: EvidenceCurrency
 
 
-class QueryConflictV1(_StrictQueryEngineModel):
+class QueryConflict(_StrictQueryEngineModel):
     """Competing accepted Claims surfaced instead of silently resolved."""
 
     tag: Literal["playbill-query-conflict-v1"] = "playbill-query-conflict-v1"
@@ -95,7 +98,7 @@ class QueryConflictV1(_StrictQueryEngineModel):
     subject_identities: tuple[str, ...] = ()
 
     @model_validator(mode="after")
-    def _shape(self) -> "QueryConflictV1":
+    def _shape(self) -> "QueryConflict":
         if self.kind == "claim_object":
             if self.binding is None or self.predicate is None or self.subject_identity is None:
                 raise ValueError("a Claim-object conflict names its binding, predicate, subject")
@@ -111,7 +114,7 @@ class QueryConflictV1(_StrictQueryEngineModel):
         return self
 
 
-class QueryRefusalV1(_StrictQueryEngineModel):
+class QueryRefusal(_StrictQueryEngineModel):
     """One typed, dot-namespaced refusal; a refused query returns no rows."""
 
     tag: Literal["playbill-query-refusal-v1"] = "playbill-query-refusal-v1"
@@ -128,7 +131,7 @@ class QueryRefusalV1(_StrictQueryEngineModel):
         return value
 
 
-class QueryRowBindingV1(_StrictQueryEngineModel):
+class QueryRowBinding(_StrictQueryEngineModel):
     """One declared row binding and the accepted Subject it resolved to."""
 
     tag: Literal["playbill-query-row-binding-v1"] = "playbill-query-row-binding-v1"
@@ -139,19 +142,19 @@ class QueryRowBindingV1(_StrictQueryEngineModel):
     subject_path: str | None = None
 
     @model_validator(mode="after")
-    def _shape(self) -> "QueryRowBindingV1":
+    def _shape(self) -> "QueryRowBinding":
         bound = (self.subject_identity, self.subject_kind, self.subject_id, self.subject_path)
         if any(item is None for item in bound) and any(item is not None for item in bound):
             raise ValueError("a query row binding is either fully bound or fully unbound")
         return self
 
 
-class QueryProjectedFieldV1(_StrictQueryEngineModel):
+class QueryProjectedField(_StrictQueryEngineModel):
     """One projected field; absence and conflict are stated, never rendered null."""
 
     tag: Literal["playbill-query-projected-field-v1"] = "playbill-query-projected-field-v1"
     name: str
-    state: QueryValueStateV1
+    state: QueryValueState
     value: object = None
 
     @field_validator("value", mode="before")
@@ -160,13 +163,13 @@ class QueryProjectedFieldV1(_StrictQueryEngineModel):
         return normalize_canonical(value)
 
     @model_validator(mode="after")
-    def _shape(self) -> "QueryProjectedFieldV1":
+    def _shape(self) -> "QueryProjectedField":
         if self.state != "present" and self.value is not None:
             raise ValueError("an absent or conflicted projected field carries no value")
         return self
 
 
-class QueryProjectedFields(tuple[QueryProjectedFieldV1, ...]):
+class QueryProjectedFields(tuple[QueryProjectedField, ...]):
     """Named access to the existing projected-field envelopes; wire stays an array.
 
     A field still exposes its explicit presence/conflict state. Attribute access
@@ -186,17 +189,17 @@ class QueryProjectedFields(tuple[QueryProjectedFieldV1, ...]):
         from pydantic_core import core_schema
 
         return core_schema.no_info_after_validator_function(
-            cls, handler.generate_schema(tuple[QueryProjectedFieldV1, ...])
+            cls, handler.generate_schema(tuple[QueryProjectedField, ...])
         )
 
 
-class QueryIncludeItemV1(_StrictQueryEngineModel):
+class QueryIncludeItem(_StrictQueryEngineModel):
     """One hydrated side-context Claim attached to a primary row."""
 
     tag: Literal["playbill-query-include-item-v1"] = "playbill-query-include-item-v1"
     claim_object: object
     subject_identity: str | None = None
-    visibility: QueryClaimVisibilityV1
+    visibility: QueryClaimVisibility
 
     @field_validator("claim_object", mode="before")
     @classmethod
@@ -204,18 +207,18 @@ class QueryIncludeItemV1(_StrictQueryEngineModel):
         return normalize_canonical(value)
 
 
-class QueryIncludeResultV1(_StrictQueryEngineModel):
+class QueryIncludeResult(_StrictQueryEngineModel):
     """One include's hydrated items with its own explicit item accounting."""
 
     tag: Literal["playbill-query-include-result-v1"] = "playbill-query-include-result-v1"
     name: str
-    items: tuple[QueryIncludeItemV1, ...] = ()
+    items: tuple[QueryIncludeItem, ...] = ()
     candidate_count: int
     max_items: int
     truncated: bool
 
     @model_validator(mode="after")
-    def _shape(self) -> "QueryIncludeResultV1":
+    def _shape(self) -> "QueryIncludeResult":
         if len(self.items) > self.max_items:
             raise ValueError("a query include cannot retain more items than its declared budget")
         if self.truncated != (self.candidate_count > len(self.items)):
@@ -223,21 +226,21 @@ class QueryIncludeResultV1(_StrictQueryEngineModel):
         return self
 
 
-class QueryResultRowV1(_StrictQueryEngineModel):
+class QueryResultRow(_StrictQueryEngineModel):
     """One result row together with every Claim it was read through."""
 
     tag: Literal["playbill-query-result-row-v1", "playbill-query-result-row-v2"] = (
         "playbill-query-result-row-v1"
     )
-    bindings: tuple[QueryRowBindingV1, ...]
-    artifact: QueryArtifactDefinitionV2 | None = None
+    bindings: tuple[QueryRowBinding, ...]
+    artifact: QueryArtifactDefinition | None = None
     result_subject_identity: str | None = None
-    path: tuple[QueryClaimVisibilityV1, ...] = ()
-    relation_claim: QueryClaimVisibilityV1 | None = None
+    path: tuple[QueryClaimVisibility, ...] = ()
+    relation_claim: QueryClaimVisibility | None = None
     fields: QueryProjectedFields = Field(default_factory=QueryProjectedFields)
-    read_claims: tuple[QueryClaimVisibilityV1, ...] = ()
-    includes: tuple[QueryIncludeResultV1, ...] = ()
-    conflicts: tuple[QueryConflictV1, ...] = ()
+    read_claims: tuple[QueryClaimVisibility, ...] = ()
+    includes: tuple[QueryIncludeResult, ...] = ()
+    conflicts: tuple[QueryConflict, ...] = ()
 
     @model_serializer(mode="wrap")
     def _wire(self, handler: Any) -> dict[str, Any]:
@@ -247,17 +250,17 @@ class QueryResultRowV1(_StrictQueryEngineModel):
         return cast(dict[str, Any], payload)
 
     @model_validator(mode="after")
-    def _artifact_shape(self) -> "QueryResultRowV1":
+    def _artifact_shape(self) -> "QueryResultRow":
         if (self.tag == "playbill-query-result-row-v2") != (self.artifact is not None):
             raise ValueError("only v2 definition rows carry an artifact")
         return self
 
 
-class QueryTruncationV1(_StrictQueryEngineModel):
+class QueryTruncation(_StrictQueryEngineModel):
     """Explicit clipping accounting; a silently narrowed result is unrepresentable."""
 
     tag: Literal["playbill-query-truncation-v1"] = "playbill-query-truncation-v1"
-    clipped_budgets: tuple[QueryClippedBudgetV1, ...] = ()
+    clipped_budgets: tuple[QueryClippedBudget, ...] = ()
     truncated_includes: tuple[str, ...] = ()
     candidate_result_count: int = 0
     returned_result_count: int = 0
@@ -279,7 +282,7 @@ class QueryTruncationV1(_StrictQueryEngineModel):
         return value
 
     @model_validator(mode="after")
-    def _shape(self) -> "QueryTruncationV1":
+    def _shape(self) -> "QueryTruncation":
         if ("include_max_items" in self.clipped_budgets) != bool(self.truncated_includes):
             raise ValueError("include truncation must name the exact includes that clipped")
         if ("max_results" in self.clipped_budgets) != (
@@ -295,15 +298,15 @@ class QueryTruncationV1(_StrictQueryEngineModel):
         return bool(self.clipped_budgets)
 
 
-class QueryVerdictExclusionV1(_StrictQueryEngineModel):
+class QueryVerdictExclusion(_StrictQueryEngineModel):
     """How many Claims one excluded verdict hid from this evaluation."""
 
     tag: Literal["playbill-query-verdict-exclusion-v1"] = "playbill-query-verdict-exclusion-v1"
-    verdict: EvidenceRelativeClaimVerdict
+    verdict: EvidenceRelativeClaimVerdictV1
     excluded_claim_count: int = Field(ge=1)
 
 
-class QueryVerdictVisibilityV1(_StrictQueryEngineModel):
+class QueryVerdictVisibility(_StrictQueryEngineModel):
     """Advisory accounting of the Claims the evaluation policy did not show.
 
     Not part of the digest preimage: this reports what the read declined to look
@@ -313,33 +316,33 @@ class QueryVerdictVisibilityV1(_StrictQueryEngineModel):
 
     tag: Literal["playbill-query-verdict-visibility-v1"] = "playbill-query-verdict-visibility-v1"
     excluded_claim_count: int = Field(ge=1)
-    excluded_by_verdict: tuple[QueryVerdictExclusionV1, ...] = ()
-    visible_verdicts: tuple[EvidenceRelativeClaimVerdict, ...] = ()
+    excluded_by_verdict: tuple[QueryVerdictExclusion, ...] = ()
+    visible_verdicts: tuple[EvidenceRelativeClaimVerdictV1, ...] = ()
 
     @field_validator("excluded_by_verdict")
     @classmethod
     def _exclusions(
-        cls, value: tuple[QueryVerdictExclusionV1, ...]
-    ) -> tuple[QueryVerdictExclusionV1, ...]:
+        cls, value: tuple[QueryVerdictExclusion, ...]
+    ) -> tuple[QueryVerdictExclusion, ...]:
         verdicts = tuple(item.verdict for item in value)
         if verdicts != byte_sorted(verdicts):
             raise ValueError("excluded query verdicts must be sorted and unique")
         return value
 
     @model_validator(mode="after")
-    def _shape(self) -> "QueryVerdictVisibilityV1":
+    def _shape(self) -> "QueryVerdictVisibility":
         counted = sum(item.excluded_claim_count for item in self.excluded_by_verdict)
         if counted != self.excluded_claim_count:
             raise ValueError("excluded claim count must equal its per-verdict accounting")
         return self
 
 
-class QueryParameterBindingV1(_StrictQueryEngineModel):
+class QueryParameterBinding(_StrictQueryEngineModel):
     """One resolved caller parameter exactly as the evaluation bound it."""
 
     tag: Literal["playbill-query-parameter-binding-v1"] = "playbill-query-parameter-binding-v1"
     name: str
-    value_type: QueryValueTypeV1
+    value_type: QueryValueType
     value: object = None
 
     @field_validator("value", mode="before")
@@ -348,7 +351,7 @@ class QueryParameterBindingV1(_StrictQueryEngineModel):
         return normalize_canonical(value)
 
 
-class ClaimQueryResultV1(_StrictQueryEngineModel):
+class ClaimQueryResult(_StrictQueryEngineModel):
     """One replayable canonical read of accepted Claim state."""
 
     tag: Literal["playbill-query-result-v1", "playbill-query-result-v2"] = (
@@ -357,20 +360,20 @@ class ClaimQueryResultV1(_StrictQueryEngineModel):
     verdict: Literal["completed", "refused"]
     definition_path: str
     definition_digest: str
-    parameters: tuple[QueryParameterBindingV1, ...] = ()
+    parameters: tuple[QueryParameterBinding, ...] = ()
     parameter_digest: str
     coordinate: AcceptedProjectionCoordinate
     evaluated_at: datetime
     expires_at: datetime | None = None
-    budgets: QueryBudgetsV1
-    result_shape: QueryResultShapeV1
-    result_cardinality: QueryResultCardinalityV1
+    budgets: QueryBudgets
+    result_shape: QueryResultShape
+    result_cardinality: QueryResultCardinality
     result_binding: str
-    dedupe: QueryDedupeV1
-    rows: tuple[QueryResultRowV1, ...] = ()
-    conflicts: tuple[QueryConflictV1, ...] = ()
-    truncation: QueryTruncationV1
-    refusal: QueryRefusalV1 | None = None
+    dedupe: QueryDedupe
+    rows: tuple[QueryResultRow, ...] = ()
+    conflicts: tuple[QueryConflict, ...] = ()
+    truncation: QueryTruncation
+    refusal: QueryRefusal | None = None
     # Advisory sidecar, deliberately OUTSIDE the digest preimage (see
     # `claim_query_result_digest`). A Claim the evaluation policy hides is
     # indistinguishable from a Claim that does not exist -- a projected field
@@ -380,7 +383,7 @@ class ClaimQueryResultV1(_StrictQueryEngineModel):
     # It reports what was NOT read, so it cannot change what the read committed
     # to: keeping it out of the preimage means no result digest and no receipt
     # re-pins, and a caller who ignores it still replays byte-identically.
-    verdict_visibility: QueryVerdictVisibilityV1 | None = None
+    verdict_visibility: QueryVerdictVisibility | None = None
 
     @field_validator("evaluated_at", "expires_at")
     @classmethod
@@ -390,7 +393,7 @@ class ClaimQueryResultV1(_StrictQueryEngineModel):
         return value
 
     @model_validator(mode="after")
-    def _shape(self) -> "ClaimQueryResultV1":
+    def _shape(self) -> "ClaimQueryResult":
         artifact_query = self.result_shape == "artifact_definition"
         if (self.tag == "playbill-query-result-v2") != artifact_query:
             raise ValueError("artifact results use v2; Claim results retain v1")
@@ -405,7 +408,7 @@ class ClaimQueryResultV1(_StrictQueryEngineModel):
         return self
 
 
-class QueryExecutionReceiptV1(_StrictQueryEngineModel):
+class QueryExecutionReceipt(_StrictQueryEngineModel):
     """The exact replay coordinates of one query execution.
 
     The query-receipt journal wiring lands in the PC-F discovery slice; this
@@ -418,8 +421,8 @@ class QueryExecutionReceiptV1(_StrictQueryEngineModel):
     parameter_digest: str
     coordinate: AcceptedProjectionCoordinate
     evaluation_time: datetime
-    budgets: QueryBudgetsV1
-    truncation: QueryTruncationV1
+    budgets: QueryBudgets
+    truncation: QueryTruncation
     verdict: Literal["completed", "refused"]
     refusal_code: str | None = None
     result_digest: str
@@ -432,7 +435,7 @@ class QueryExecutionReceiptV1(_StrictQueryEngineModel):
         return value
 
     @model_validator(mode="after")
-    def _shape(self) -> "QueryExecutionReceiptV1":
+    def _shape(self) -> "QueryExecutionReceipt":
         if (self.verdict == "refused") != (self.refusal_code is not None):
             raise ValueError("a query receipt names a refusal code exactly when it refused")
         return self

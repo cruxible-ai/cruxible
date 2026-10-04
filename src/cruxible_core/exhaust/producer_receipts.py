@@ -19,13 +19,13 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.provider_execution import (
-    ProcedureDerivedSourceRequestV1,
-    ProviderInvocationCompletedV1,
+    ProcedureDerivedSourceRequest,
+    ProviderInvocationCompleted,
 )
 from cruxible_client.contracts.workspace_file import (
     WORKSPACE_FILE_INTERFACE_DIGESTS,
-    SourceReadReceiptV1,
-    WorkspaceFileSourceRequestV1,
+    SourceReadReceipt,
+    WorkspaceFileSourceRequest,
     source_read_receipt_digest,
 )
 from cruxible_core.exhaust import LocalJournalBackend
@@ -199,8 +199,8 @@ class JournalProducerReceiptResolver:
             raise CaptureFormatError("Capture producer receipt journal is unavailable") from exc
         for partition_id in partition_ids:
             admissions: dict[tuple[str, str], ProcedureAdmissionBoundPayloadV5] = {}
-            derived_requests: dict[tuple[str, str], ProcedureDerivedSourceRequestV1 | None] = {}
-            source_reads: dict[tuple[str, str], SourceReadReceiptV1 | None] = {}
+            derived_requests: dict[tuple[str, str], ProcedureDerivedSourceRequest | None] = {}
+            source_reads: dict[tuple[str, str], SourceReadReceipt | None] = {}
             try:
                 records = self._journal.all_records(stream, partition_id)
             except (OSError, PlaybillError, ValueError) as exc:
@@ -258,7 +258,7 @@ class JournalProducerReceiptResolver:
                     continue
                 if record.event_kind == "source_request_derived":
                     try:
-                        derived = ProcedureDerivedSourceRequestV1.model_validate(payload)
+                        derived = ProcedureDerivedSourceRequest.model_validate(payload)
                         if (
                             record.run_id != derived.run_id
                             or record.admission_binding_digest != derived.admission_binding_digest
@@ -280,7 +280,7 @@ class JournalProducerReceiptResolver:
                     try:
                         if not isinstance(payload, dict):
                             raise ValueError("Source-read payload is not an object")
-                        receipt = SourceReadReceiptV1.model_validate(payload.get("receipt"))
+                        receipt = SourceReadReceipt.model_validate(payload.get("receipt"))
                         digest = payload.get("receipt_digest")
                         if digest != source_read_receipt_digest(receipt):
                             raise ValueError("Source-read receipt digest does not reproduce")
@@ -295,7 +295,7 @@ class JournalProducerReceiptResolver:
                             raise ValueError(
                                 "Source-read receipt has no exact derived Source request"
                             )
-                        request = WorkspaceFileSourceRequestV1.model_validate(
+                        request = WorkspaceFileSourceRequest.model_validate(
                             resolved_derived.request
                         )
                         if (
@@ -325,7 +325,7 @@ class JournalProducerReceiptResolver:
                     try:
                         if candidate_digest is None:
                             raise ValueError("Provider completion omits receipt_digest")
-                        completed = ProviderInvocationCompletedV1.model_validate(payload)
+                        completed = ProviderInvocationCompleted.model_validate(payload)
                         provider_receipt = completed.receipt
                         binding_digest = record.admission_binding_digest
                         admitted = (

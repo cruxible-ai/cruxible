@@ -4,12 +4,12 @@ from datetime import timedelta
 from pathlib import Path
 
 from cruxible_client.contracts.acquisition_policies import (
-    AcquisitionCandidateV1,
-    BoundedWindowCoherenceV1,
-    DeclaredSnapshotGroupCoherenceV1,
-    IndependentCoherenceV1,
-    InputAcquisitionRuleV1,
-    SourceAcquisitionPolicyV1,
+    AcquisitionCandidate,
+    BoundedWindowCoherence,
+    DeclaredSnapshotGroupCoherence,
+    IndependentCoherence,
+    InputAcquisitionRule,
+    SourceAcquisitionPolicy,
     acquisition_policy_path,
     evaluate_acquisition_policy_law,
     select_sources,
@@ -20,7 +20,7 @@ from cruxible_client.contracts.capture_journal import (
     capture_landing_idempotency_key,
 )
 from cruxible_client.contracts.captures import (
-    CanonicalDurationV1,
+    CanonicalDuration,
     build_cas_capture,
     capture_component_pin,
 )
@@ -39,12 +39,12 @@ def _rule(
     *,
     requirement: str = "required",
     unavailable: str = "refuse",
-) -> InputAcquisitionRuleV1:
-    return InputAcquisitionRuleV1(
+) -> InputAcquisitionRule:
+    return InputAcquisitionRule(
         input_name=name,
         requirement=requirement,  # type: ignore[arg-type]
         permitted_replayability=("attested_only", "exact"),
-        max_age=CanonicalDurationV1(microseconds=60_000_000),
+        max_age=CanonicalDuration(microseconds=60_000_000),
         on_unavailable=unavailable,  # type: ignore[arg-type]
         on_stale=unavailable,  # type: ignore[arg-type]
         on_oversized=unavailable,  # type: ignore[arg-type]
@@ -53,15 +53,15 @@ def _rule(
     )
 
 
-def _policy(*rules: InputAcquisitionRuleV1, bounded_seconds: int | None = None):
+def _policy(*rules: InputAcquisitionRule, bounded_seconds: int | None = None):
     coherence = (
-        IndependentCoherenceV1()
+        IndependentCoherence()
         if bounded_seconds is None
-        else BoundedWindowCoherenceV1(
-            max_cross_source_skew=CanonicalDurationV1(microseconds=bounded_seconds * 1_000_000)
+        else BoundedWindowCoherence(
+            max_cross_source_skew=CanonicalDuration(microseconds=bounded_seconds * 1_000_000)
         )
     )
-    return SourceAcquisitionPolicyV1(
+    return SourceAcquisitionPolicy(
         identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="order-release"),
         inputs=tuple(sorted(rules, key=lambda item: item.input_name)),
         coherence=coherence,
@@ -74,7 +74,7 @@ def _candidate(
     name: str,
     observed_offset: int = 0,
     current_replay_available: bool = True,
-) -> AcquisitionCandidateV1:
+) -> AcquisitionCandidate:
     contract = capture_contract(name=f"test.{name}-v1")
     provider_artifact = provider(contract, name=f"provider.{name}")
     result = build_cas_capture(
@@ -98,7 +98,7 @@ def _candidate(
         landed_at=NOW + timedelta(seconds=observed_offset + 1),
         idempotency_key=key,
     )
-    return AcquisitionCandidateV1(
+    return AcquisitionCandidate(
         input_name=name,
         envelope=result.envelope,
         capture_digest=result.capture_digest,
@@ -184,10 +184,10 @@ def test_declared_snapshot_requires_registered_components_and_exact_group(tmp_pa
         "coordinate-grammar", "playbill.database-snapshot-coordinate-v1"
     )
     proof = capture_component_pin("proof-adapter", "playbill.database-snapshot-proof-v1")
-    policy = SourceAcquisitionPolicyV1(
+    policy = SourceAcquisitionPolicy(
         identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="snapshot-release"),
         inputs=(_rule("orders"), _rule("risk")),
-        coherence=DeclaredSnapshotGroupCoherenceV1(
+        coherence=DeclaredSnapshotGroupCoherence(
             coordinate_grammar_digest=grammar.artifact_digest,
             proof_adapter_digest=proof.artifact_digest,
         ),

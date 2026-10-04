@@ -12,8 +12,8 @@ from typing import Any, cast
 
 import pytest
 
-from cruxible_client.contracts.compact_query import PlaybillQueryRequestV1
-from cruxible_client.contracts.query.definitions import QueryDefinitionSpecV1
+from cruxible_client.contracts.compact_query import PlaybillQueryRequest
+from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
 from cruxible_core.service.discovery import compact_query as compact_module
 from cruxible_core.service.discovery.compact_query import service_playbill_query
 from cruxible_core.service.discovery.field_names import short_field_name
@@ -55,7 +55,7 @@ def instance(tmp_path_factory: pytest.TempPathFactory) -> Any:
 
 def _query(instance: Any, **fields: Any) -> Any:
     fields.setdefault("evaluation_time", WHEN)
-    return service_playbill_query(instance, request=PlaybillQueryRequestV1.model_validate(fields))
+    return service_playbill_query(instance, request=PlaybillQueryRequest.model_validate(fields))
 
 
 def _ids(result: Any) -> list[str]:
@@ -245,7 +245,7 @@ def test_named_query_runs_as_run_query_does(instance: Any) -> None:
 
 def test_spec_query_pins_claim_types_at_the_coordinate(instance: Any) -> None:
     declared = work_item_query("project.adhoc")
-    spec = QueryDefinitionSpecV1.model_validate({**declared.model_dump(mode="json"), "pins": []})
+    spec = QueryDefinitionSpec.model_validate({**declared.model_dump(mode="json"), "pins": []})
     result = _query(instance, spec=spec)
 
     assert result.receipt.mode == "spec"
@@ -271,7 +271,7 @@ def test_flags_come_from_the_verdict_machinery(instance: Any, monkeypatch: Any) 
 
 
 def test_a_contested_slot_shows_every_live_value(tmp_path: Path) -> None:
-    from cruxible_client.contracts.captures import DirectForeignSourceSelectionV1
+    from cruxible_client.contracts.captures import DirectForeignSourceSelection
     from cruxible_client.contracts.semantic import ContentSpan
     from tests.core_support._claim_authoring_support import service_propose_playbill_claim
     from tests.core_support._knowledge_loop_support import activate, authoring
@@ -282,7 +282,7 @@ def test_a_contested_slot_shows_every_live_value(tmp_path: Path) -> None:
         seeded,
         authoring=authoring("wi-42", "done", with_claim_type=False).model_copy(
             update={
-                "source_selection": DirectForeignSourceSelectionV1(
+                "source_selection": DirectForeignSourceSelection(
                     logical_source_identity="fixture.work-items",
                     span=ContentSpan(
                         content_digest=body.digest, start_byte=0, end_byte=len(b"status: done")
@@ -321,8 +321,8 @@ def test_evidence_names_resolve_digests_and_read_identity_rules() -> None:
     from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactRef
     from cruxible_client.contracts.claim_types import ClaimType
     from cruxible_client.contracts.policies import (
-        ClaimEvidenceAdmissionPolicyV3,
-        ClaimEvidenceAdmissionRuleV3,
+        ClaimEvidenceAdmissionPolicy,
+        ClaimEvidenceAdmissionRule,
     )
     from cruxible_core.service.discovery.contract_names import CaptureContractNames
     from tests.test_claims.test_claims import _claim_type
@@ -346,7 +346,7 @@ def test_evidence_names_resolve_digests_and_read_identity_rules() -> None:
     assert names.admitted(legacy, qualified=True) == ("CaptureContract:direct",)
     assert names.name("sha256:" + "ab" * 32) == "unresolved:" + "ab" * 6
 
-    identity_rule = ClaimEvidenceAdmissionRuleV3(
+    identity_rule = ClaimEvidenceAdmissionRule(
         rule_id="by-identity",
         claim_roles=("observation",),
         evidence_kinds=("self_asserted",),
@@ -363,7 +363,7 @@ def test_evidence_names_resolve_digests_and_read_identity_rules() -> None:
         {
             **legacy.model_dump(mode="json"),
             "artifact_format": "playbill-claim-type-v6",
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV3(
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
                 rules=(identity_rule,)
             ).model_dump(mode="json"),
         }
@@ -591,7 +591,7 @@ def test_a_column_named_like_row_metadata_keeps_its_values(instance: Any) -> Non
     fields = declared["projection"]["fields"]
     fields[0]["name"], fields[1]["name"] = "subject", "flags"
     declared["projection"]["fields"] = sorted(fields, key=lambda item: item["name"])
-    spec = QueryDefinitionSpecV1.model_validate({**declared, "pins": []})
+    spec = QueryDefinitionSpec.model_validate({**declared, "pins": []})
 
     result = _query(instance, spec=spec)
 
@@ -757,7 +757,7 @@ def _follow_vocabulary() -> QueryVocabulary:
 def _columns(**fields: Any) -> list[tuple[str, str | None]]:
     from cruxible_core.service.discovery.compact_query import _compact_columns, _CompactPlan
 
-    request = PlaybillQueryRequestV1.model_validate({"kind": SUBJECT_KIND, **fields})
+    request = PlaybillQueryRequest.model_validate({"kind": SUBJECT_KIND, **fields})
     _columns_, output, _notes = _compact_columns(
         _CompactPlan(_follow_vocabulary(), request), request
     )
@@ -821,7 +821,7 @@ def test_spec_mode_clips_path_budgets_at_execution_not_in_the_spec(
             "max_paths_per_result": 50,
         },
     )
-    spec = QueryDefinitionSpecV1.model_validate({**declared, "pins": []})
+    spec = QueryDefinitionSpec.model_validate({**declared, "pins": []})
     seen: list[tuple[str, Any]] = []
 
     class Evaluated(Exception):

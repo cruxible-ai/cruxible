@@ -53,7 +53,7 @@ from cruxible_core.proposals.proposals import (
     ProposalAdmissionRecord,
     ProposalAdmissionRequest,
     ProposalEvaluationRecord,
-    ProposalWithdrawalRecordV1,
+    ProposalWithdrawalRecord,
 )
 from cruxible_core.storage.preview_fence import is_previewing
 
@@ -184,7 +184,7 @@ class ProposalEvidenceStore:
         )
         return path
 
-    def write_withdrawal(self, record: ProposalWithdrawalRecordV1) -> Path:
+    def write_withdrawal(self, record: ProposalWithdrawalRecord) -> Path:
         """Persist one terminal withdrawal beside the admission it retires.
 
         Immutable like every other record here: the exclusive write makes a
@@ -202,7 +202,7 @@ class ProposalEvidenceStore:
         )
         return path
 
-    def read_withdrawal(self, proposal_id: str) -> ProposalWithdrawalRecordV1 | None:
+    def read_withdrawal(self, proposal_id: str) -> ProposalWithdrawalRecord | None:
         """Return this proposal's withdrawal, or None when it has not been withdrawn."""
 
         ProposalDigest.from_tagged(proposal_id)
@@ -210,11 +210,11 @@ class ProposalEvidenceStore:
             row = self.index.locate(self, proposal_id)
             if row["withdrawal_path"] is None:
                 return None
-            return self._read_located(row, "withdrawal", ProposalWithdrawalRecordV1)
+            return self._read_located(row, "withdrawal", ProposalWithdrawalRecord)
         path = self.withdrawals / f"{proposal_id.removeprefix('sha256:')}.json"
         if not path.exists():
             return None
-        record = self._read_model(path, ProposalWithdrawalRecordV1, label="proposal withdrawal")
+        record = self._read_model(path, ProposalWithdrawalRecord, label="proposal withdrawal")
         if record.proposal_id != proposal_id:
             raise ProposalIntegrityError("withdrawal evidence names another proposal")
         return record

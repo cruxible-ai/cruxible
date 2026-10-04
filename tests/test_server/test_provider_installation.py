@@ -16,11 +16,11 @@ from cruxible_core.runtime.provider_runtime import PROVIDER_RUNTIME_CONFIG_PATH
 def interface_entry(client: CruxibleClient, instance_id: str, name: str) -> dict[str, Any]:
     """The accepted inventory entry of one live provider interface, as ``get`` proves it."""
 
-    from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
+    from cruxible_client.contracts.get_reads import PlaybillGetRequest
 
     proof = client.playbill_get(
         instance_id,
-        request=PlaybillGetRequestV1(ref=f"ProviderInterface:{name}", detail="proof"),
+        request=PlaybillGetRequest(ref=f"ProviderInterface:{name}", detail="proof"),
     ).proof
     assert proof is not None
     return dict(proof["entry"])
@@ -544,7 +544,7 @@ def test_install_retry_reuses_pending_registration_until_approval(
 
 
 def test_repository_catalog_install_and_retry(installer_http, monkeypatch):
-    from cruxible_client.contracts.provider_installation import PlaybillProviderInstallRequestV1
+    from cruxible_client.contracts.provider_installation import PlaybillProviderInstallRequest
     from cruxible_core.service.procedures import provider_installation as service
 
     http, instance_id, _ = installer_http
@@ -558,7 +558,7 @@ def test_repository_catalog_install_and_retry(installer_http, monkeypatch):
         "cruxible-provider-docs",
         "cruxible-provider-quant",
     }
-    request = PlaybillProviderInstallRequestV1(package="cruxible-provider-workspace")
+    request = PlaybillProviderInstallRequest(package="cruxible-provider-workspace")
     result = client.install_playbill_provider(instance_id, request)
     assert result.status == "ready", result
     monkeypatch.setattr(service, "_source_files", lambda *a: pytest.fail("retry rebuilt package"))
@@ -606,7 +606,7 @@ def index_installer_http(tmp_path, monkeypatch):
 
 
 def test_install_by_name_from_an_index_uses_the_embedded_lock(index_installer_http, monkeypatch):
-    from cruxible_client.contracts.provider_installation import PlaybillProviderInstallRequestV1
+    from cruxible_client.contracts.provider_installation import PlaybillProviderInstallRequest
     from cruxible_client.errors import ConfigError
     from cruxible_core.service.procedures import provider_installation as service
 
@@ -614,7 +614,7 @@ def test_install_by_name_from_an_index_uses_the_embedded_lock(index_installer_ht
     client = CruxibleClient(base_url="http://cruxible")
     client._client = http
     assert "install by name" in (client.list_playbill_provider_packages(instance_id).detail or "")
-    request = PlaybillProviderInstallRequestV1(package="cruxible-provider-workspace")
+    request = PlaybillProviderInstallRequest(package="cruxible-provider-workspace")
     result = client.install_playbill_provider(instance_id, request)
     assert result.status == "ready" and result.registered, result
     deployment = get_playbill_manager().provider_runtime_operator().config.deployments[0]

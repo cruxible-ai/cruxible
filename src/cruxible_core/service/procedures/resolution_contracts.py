@@ -19,26 +19,26 @@ from cruxible_client.contracts.errors import (
     PlaybillFormatError,
     PlaybillJournalIntegrityError,
 )
-from cruxible_client.contracts.procedures.results import ProcedureAdmissionRefusalCodeV1
+from cruxible_client.contracts.procedures.results import ProcedureAdmissionRefusalCode
 from cruxible_client.contracts.procedures.windows import (
-    BoundObservationWindowV1,
-    CaptureEventSelectorV1,
-    CaptureEventWindowV1,
-    FixedWindowV1,
-    LineTriggerBindingV1,
-    ObservationWindowV1,
-    TriggerEventReferenceV1,
+    BoundObservationWindow,
+    CaptureEventSelector,
+    CaptureEventWindow,
+    FixedWindow,
+    LineTriggerBinding,
+    ObservationWindow,
+    TriggerEventReference,
     bind_observation_window,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.resolution_contracts import (
-    ClaimVersionReferenceV1,
-    InvestigationBindingV1,
-    ResolutionContractReferenceV1,
-    ResolutionContractsRequestV1,
-    ResolutionContractsResultV1,
-    ResolutionContractV1,
-    ResolutionContractViewV1,
+    ClaimVersionReference,
+    InvestigationBinding,
+    ResolutionContract,
+    ResolutionContractReference,
+    ResolutionContractsRequest,
+    ResolutionContractsResult,
+    ResolutionContractView,
     parse_resolution_contract,
     resolution_contract_digest,
     resolution_contract_path,
@@ -53,7 +53,7 @@ from cruxible_core.storage.cas import BodyAccessContext
 class TriggerCaptureRefused(PlaybillExecutionError):
     def __init__(
         self,
-        code: ProcedureAdmissionRefusalCodeV1,
+        code: ProcedureAdmissionRefusalCode,
         message: str,
         *,
         retryable: bool = False,
@@ -66,7 +66,7 @@ class TriggerCaptureRefused(PlaybillExecutionError):
 
 
 def read_claim_reference(
-    instance: PlaybillInstance, reference: ClaimVersionReferenceV1
+    instance: PlaybillInstance, reference: ClaimVersionReference
 ) -> ClaimArtifactAny:
     coordinate = instance.resolve_accepted_coordinate(
         **reference.coordinate.model_dump(exclude={"tag"})
@@ -82,10 +82,10 @@ def read_claim_reference(
 
 def resolve_claim_version(
     instance: PlaybillInstance,
-    value: str | ClaimVersionReferenceV1,
+    value: str | ClaimVersionReference,
     *,
     at: AcceptedProjectionCoordinate | None = None,
-) -> ClaimVersionReferenceV1:
+) -> ClaimVersionReference:
     """Turn a Claim ID into the exact reference of its version accepted at ``at``.
 
     The reference names the generation that first accepted that version, not
@@ -93,7 +93,7 @@ def resolve_claim_version(
     reference. An exact reference passes through untouched.
     """
 
-    if isinstance(value, ClaimVersionReferenceV1):
+    if isinstance(value, ClaimVersionReference):
         return value
     claim_id = value.removeprefix("Claim:")
     coordinate = instance.accepted_coordinate() if at is None else at
@@ -113,7 +113,7 @@ def resolve_claim_version(
         if occurrence is None:
             raise PlaybillExecutionError("Claim version has no accepted occurrence")
         generation = history.generation(occurrence.occurrence_sequence)
-    return ClaimVersionReferenceV1(
+    return ClaimVersionReference(
         identity=claim.identity,
         artifact_digest=artifact_digest,
         statement_digest=claim_statement_digest(claim.statement).tagged,
@@ -127,8 +127,8 @@ def resolve_claim_version(
 
 
 def read_resolution_contract(
-    instance: PlaybillInstance, reference: ResolutionContractReferenceV1
-) -> ResolutionContractV1:
+    instance: PlaybillInstance, reference: ResolutionContractReference
+) -> ResolutionContract:
     coordinate = instance.resolve_accepted_coordinate(
         **reference.coordinate.model_dump(exclude={"tag"})
     )
@@ -153,8 +153,8 @@ def read_resolution_contract(
 
 def read_capture_event(
     instance: PlaybillInstance,
-    selector: CaptureEventSelectorV1,
-    reference: TriggerEventReferenceV1,
+    selector: CaptureEventSelector,
+    reference: TriggerEventReference,
     *,
     now: datetime,
 ) -> tuple[ProcedureJournalRecordV1, Mapping[str, object]]:
@@ -215,8 +215,8 @@ def read_capture_event(
 
 def capture_event_time(
     instance: PlaybillInstance,
-    selector: CaptureEventSelectorV1,
-    reference: TriggerEventReferenceV1,
+    selector: CaptureEventSelector,
+    reference: TriggerEventReference,
     *,
     now: datetime,
 ) -> datetime:
@@ -226,12 +226,12 @@ def capture_event_time(
 
 def bind_window(
     instance: PlaybillInstance,
-    policy: ObservationWindowV1,
-    event: TriggerEventReferenceV1 | None,
+    policy: ObservationWindow,
+    event: TriggerEventReference | None,
     *,
     now: datetime,
-) -> BoundObservationWindowV1:
-    if isinstance(policy, CaptureEventWindowV1):
+) -> BoundObservationWindow:
+    if isinstance(policy, CaptureEventWindow):
         if event is None:
             raise PlaybillExecutionError("window is waiting for its retained capture event")
         instant = capture_event_time(instance, policy.event, event, now=now)
@@ -241,12 +241,12 @@ def bind_window(
 
 def bind_investigation(
     instance: PlaybillInstance,
-    reference: ResolutionContractReferenceV1,
+    reference: ResolutionContractReference,
     *,
-    event: TriggerEventReferenceV1 | None,
+    event: TriggerEventReference | None,
     now: datetime,
-    trigger_binding: LineTriggerBindingV1 | None = None,
-) -> InvestigationBindingV1:
+    trigger_binding: LineTriggerBinding | None = None,
+) -> InvestigationBinding:
     contract = read_resolution_contract(instance, reference)
     reference = canonical_contract_reference(instance, reference)
     if now < artifact_accepted_time(instance, reference):
@@ -255,12 +255,12 @@ def bind_investigation(
     # Only ignore it here when that same event is already bound to the trigger.
     window_event = event
     if (
-        isinstance(contract.window, FixedWindowV1)
+        isinstance(contract.window, FixedWindow)
         and trigger_binding is not None
         and trigger_binding.event == event
     ):
         window_event = None
-    return InvestigationBindingV1(
+    return InvestigationBinding(
         contract=reference,
         hypothesis=contract.hypothesis,
         window=bind_window(instance, contract.window, window_event, now=now),
@@ -268,8 +268,8 @@ def bind_investigation(
 
 
 def canonical_contract_reference(
-    instance: PlaybillInstance, reference: ResolutionContractReferenceV1
-) -> ResolutionContractReferenceV1:
+    instance: PlaybillInstance, reference: ResolutionContractReference
+) -> ResolutionContractReference:
     """An unchanged contract keeps its identity across later lookup snapshots."""
     with instance.accepted_history_reader(at=reference.coordinate) as history:
         occurrence = history.artifact(
@@ -291,7 +291,7 @@ def canonical_contract_reference(
 
 
 def artifact_accepted_time(
-    instance: PlaybillInstance, reference: ResolutionContractReferenceV1 | ClaimVersionReferenceV1
+    instance: PlaybillInstance, reference: ResolutionContractReference | ClaimVersionReference
 ) -> datetime:
     """Use the actual occurrence, not an arbitrary later snapshot containing it."""
     with instance.accepted_history_reader(at=reference.coordinate) as history:
@@ -305,7 +305,7 @@ def artifact_accepted_time(
 
 
 def require_current_investigation(
-    instance: PlaybillInstance, binding: InvestigationBindingV1
+    instance: PlaybillInstance, binding: InvestigationBinding
 ) -> None:
     """Admission gate for a new attempt; retained run replay uses its original binding."""
     current = instance.accepted_coordinate()
@@ -322,8 +322,8 @@ def require_current_investigation(
 
 
 def service_resolution_contracts(
-    instance: PlaybillInstance, request: ResolutionContractsRequestV1
-) -> ResolutionContractsResultV1:
+    instance: PlaybillInstance, request: ResolutionContractsRequest
+) -> ResolutionContractsResult:
     """Index lookup by exact hypothesis; only matching contract bodies are loaded."""
     at = (
         instance.accepted_coordinate()
@@ -346,7 +346,7 @@ def service_resolution_contracts(
         views = []
         for identity, digest, path in rows:
             kind, name = identity.split(":", 1)
-            ref = ResolutionContractReferenceV1(
+            ref = ResolutionContractReference(
                 identity=ArtifactIdentity(kind=kind, name=name),
                 artifact_digest=digest,
                 coordinate=coordinate,
@@ -362,8 +362,8 @@ def service_resolution_contracts(
             ):
                 raise PlaybillExecutionError("indexed contract differs from its exact hypothesis")
             views.append(
-                ResolutionContractViewV1(
+                ResolutionContractView(
                     reference=canonical_contract_reference(instance, ref), contract=contract
                 )
             )
-    return ResolutionContractsResultV1(coordinate=coordinate, contracts=tuple(views))
+    return ResolutionContractsResult(coordinate=coordinate, contracts=tuple(views))

@@ -10,12 +10,12 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from cruxible_client.contracts.authoring.models import (
-    PreflightCertificateV1,
+    PreflightCertificate,
     preflight_certificate_digest,
 )
 from cruxible_client.contracts.candidates import (
-    CandidateRecord,
-    SemanticCandidate,
+    CandidateRecordV1,
+    SemanticCandidateV1,
     candidate_digest,
 )
 from cruxible_client.contracts.canonical import canonical_bytes
@@ -518,7 +518,7 @@ def test_current_coordinate_provider_cannot_contradict_verified_base(tmp_path: P
 def test_candidate_preimage_is_exact_oid_free_and_matches_golden() -> None:
     fixture_path = Path(__file__).parents[1] / "goldens" / "playbill" / "candidate-v1.json"
     fixture = json.loads(fixture_path.read_bytes())
-    candidate = SemanticCandidate.model_validate(fixture["candidate"])
+    candidate = SemanticCandidateV1.model_validate(fixture["candidate"])
 
     payload = candidate.model_dump(mode="json")
     payload.pop("tag")
@@ -536,11 +536,11 @@ def test_candidate_preimage_is_exact_oid_free_and_matches_golden() -> None:
     assert candidate_digest(candidate).tagged == fixture["candidate_digest"]
 
     for _qualified_object_format in ("sha1", "sha256"):
-        assert candidate_digest(SemanticCandidate.model_validate(fixture["candidate"])) == (
+        assert candidate_digest(SemanticCandidateV1.model_validate(fixture["candidate"])) == (
             candidate_digest(candidate)
         )
     with pytest.raises(ValidationError, match="base_oid"):
-        SemanticCandidate.model_validate({**fixture["candidate"], "base_oid": "0" * 40})
+        SemanticCandidateV1.model_validate({**fixture["candidate"], "base_oid": "0" * 40})
 
 
 def test_rebase_changes_candidate_identity_and_conflicts_are_typed(tmp_path: Path) -> None:
@@ -614,7 +614,7 @@ def test_rebase_changes_candidate_identity_and_conflicts_are_typed(tmp_path: Pat
 
 
 def test_candidate_record_refuses_digest_or_closure_substitution() -> None:
-    candidate = SemanticCandidate(
+    candidate = SemanticCandidateV1(
         parent_semantic_root="sha256:" + "11" * 32,
         candidate_manifest_root="sha256:" + "22" * 32,
         semantic_diff_digest="sha256:" + "33" * 32,
@@ -643,13 +643,13 @@ def test_candidate_record_refuses_digest_or_closure_substitution() -> None:
         "compiler_digest": "sha256:" + "55" * 32,
     }
     with pytest.raises(ValidationError, match="does not reproduce"):
-        CandidateRecord.model_validate({**values, "candidate_digest": "sha256:" + "99" * 32})
+        CandidateRecordV1.model_validate({**values, "candidate_digest": "sha256:" + "99" * 32})
     with pytest.raises(ValidationError, match="closure"):
-        CandidateRecord.model_validate({**values, "closure_paths": ("documents/other.json",)})
+        CandidateRecordV1.model_validate({**values, "closure_paths": ("documents/other.json",)})
 
 
 def test_candidate_record_refuses_law_mapping_or_member_substitution() -> None:
-    candidate = SemanticCandidate(
+    candidate = SemanticCandidateV1(
         parent_semantic_root="sha256:" + "11" * 32,
         candidate_manifest_root="sha256:" + "22" * 32,
         semantic_diff_digest="sha256:" + "33" * 32,
@@ -676,14 +676,14 @@ def test_candidate_record_refuses_law_mapping_or_member_substitution() -> None:
         "compiler_digest": "sha256:" + "55" * 32,
     }
     with pytest.raises(ValidationError, match="mapping differ"):
-        CandidateRecord.model_validate(
+        CandidateRecordV1.model_validate(
             {
                 **values,
                 "law_digests": {"playbill.other.v1": "sha256:" + "44" * 32},
             }
         )
     with pytest.raises(ValidationError, match="members must enumerate"):
-        CandidateRecord.model_validate({**values, "members": ()})
+        CandidateRecordV1.model_validate({**values, "members": ()})
 
 
 PRE_HOTFIX_RECORDS = (
@@ -708,7 +708,7 @@ def _pre_hotfix_records() -> dict[str, object]:
 def test_a_preflight_certificate_from_before_the_record_ceiling_still_validates() -> None:
     """Advertising a new limit must not invalidate every certificate ever minted.
 
-    `PreflightCertificateV1` embeds the whole `ProposalReceiveLimits` and
+    `PreflightCertificate` embeds the whole `ProposalReceiveLimits` and
     re-derives its own digest on EVERY read, so a preimage over the whole model
     would make a certificate written by a build with five limit keys fail to
     reproduce the moment a sixth was added -- and the certificate nests inside a
@@ -722,7 +722,7 @@ def test_a_preflight_certificate_from_before_the_record_ceiling_still_validates(
     assert isinstance(stored, dict)
     assert set(stored["receive_limits"]) == set(PROPOSAL_RECEIVE_BOUND_KEYS)
 
-    certificate = PreflightCertificateV1.model_validate(stored)
+    certificate = PreflightCertificate.model_validate(stored)
 
     assert certificate.certificate_digest == stored["certificate_digest"]
     assert certificate.certificate_digest == preflight_certificate_digest(certificate)

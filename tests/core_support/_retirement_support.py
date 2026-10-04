@@ -1,6 +1,6 @@
 """Retire accepted Claims through the change-set retirement member, as the write verbs do.
 
-A retirement is one ``ClaimRetirementMemberV1`` naming the Claim it ``retires``
+A retirement is one ``ClaimRetirementMember`` naming the Claim it ``retires``
 and its exact live dependent closure. These helpers build that member, submit it
 through the ordinary authoring coordinator, and approve and activate the
 proposal, so a fixture retires a Claim the only way the product does.
@@ -13,13 +13,13 @@ from datetime import datetime
 from typing import Any
 
 from cruxible_client.contracts.authoring.models import (
-    AuthoringSubmitResultV1,
-    ChangeSetAuthoringPayloadV1,
-    ClaimRetirementMemberV1,
+    AuthoringSubmitResult,
+    ChangeSetAuthoringPayload,
+    ClaimRetirementMember,
 )
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
 from cruxible_client.contracts.claims import (
-    ClaimRetireDependentV1,
+    ClaimRetireDependent,
     ClaimRetirementReason,
     claim_path,
     parse_claim,
@@ -64,15 +64,15 @@ def retirement_member(
     reason: ClaimRetirementReason = "was-rescinded",
     effective_until: datetime | None = None,
     dependent_reasons: Mapping[str, ClaimRetirementReason] | None = None,
-    dependents: tuple[ClaimRetireDependentV1, ...] | None = None,
-) -> ClaimRetirementMemberV1:
+    dependents: tuple[ClaimRetireDependent, ...] | None = None,
+) -> ClaimRetirementMember:
     """One retirement member; its dependents default to the exact closure at the head."""
 
     if dependents is None:
         dependents = tuple(
             sorted(
                 (
-                    ClaimRetireDependentV1(
+                    ClaimRetireDependent(
                         artifact_identity=item.artifact_identity,
                         predecessor_digest=item.predecessor_digest,
                         reason=(dependent_reasons or {}).get(item.artifact_identity.name, reason),
@@ -82,7 +82,7 @@ def retirement_member(
                 key=lambda item: item.artifact_identity.qualified.encode("utf-8"),
             )
         )
-    return ClaimRetirementMemberV1(
+    return ClaimRetirementMember(
         retires=claim_id,
         reason=reason,
         effective_until=effective_until,
@@ -92,24 +92,24 @@ def retirement_member(
 
 def submit_retirement(
     instance: PlaybillInstance,
-    member: ClaimRetirementMemberV1,
+    member: ClaimRetirementMember,
     *,
     actor_id: str = "owner",
     timestamp: str | None = None,
-) -> AuthoringSubmitResultV1:
+) -> AuthoringSubmitResult:
     """Create and submit one change set carrying ``member``; a refusal is not raised."""
 
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     actor = AuthenticatedActor(actor_id=actor_id)
     created = coordinator.create(
         actor=actor,
-        payload=ChangeSetAuthoringPayloadV1(members=(member,)),
+        payload=ChangeSetAuthoringPayload(members=(member,)),
         canonical_timestamp=timestamp or canonical_candidate_timestamp(utc_now()),
     )
     return coordinator.submit(created.intent.intent_id, actor=actor)
 
 
-def refusal_codes(submitted: AuthoringSubmitResultV1) -> set[str]:
+def refusal_codes(submitted: AuthoringSubmitResult) -> set[str]:
     """The preflight diagnostic codes of a submit that did not propose."""
 
     preflight = submitted.intent.last_preflight
@@ -117,13 +117,13 @@ def refusal_codes(submitted: AuthoringSubmitResultV1) -> set[str]:
     return {item.code for item in preflight.frontier.diagnostics}
 
 
-def refusal_messages(submitted: AuthoringSubmitResultV1) -> str:
+def refusal_messages(submitted: AuthoringSubmitResult) -> str:
     preflight = submitted.intent.last_preflight
     assert preflight is not None
     return " ".join(item.message for item in preflight.frontier.diagnostics)
 
 
-def candidate_tree(instance: PlaybillInstance, submitted: AuthoringSubmitResultV1) -> Any:
+def candidate_tree(instance: PlaybillInstance, submitted: AuthoringSubmitResult) -> Any:
     """The evaluated candidate tree of a submitted retirement."""
 
     proposal_id = submitted.status.proposal_id
@@ -134,7 +134,7 @@ def candidate_tree(instance: PlaybillInstance, submitted: AuthoringSubmitResultV
 
 
 def activate_submitted(
-    instance: PlaybillInstance, owner: Any, submitted: AuthoringSubmitResultV1
+    instance: PlaybillInstance, owner: Any, submitted: AuthoringSubmitResult
 ) -> None:
     """Approve (when the policy requires it) and activate one submitted change set."""
 
@@ -167,7 +167,7 @@ def retire_claim(
     *,
     reason: ClaimRetirementReason = "was-rescinded",
     effective_until: datetime | None = None,
-) -> AuthoringSubmitResultV1:
+) -> AuthoringSubmitResult:
     """Retire one accepted Claim, with its closure, and accept the change set."""
 
     submitted = submit_retirement(

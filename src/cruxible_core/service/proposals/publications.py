@@ -19,11 +19,11 @@ from typing import TYPE_CHECKING
 
 from cruxible_client.contracts import (
     PlaybillAcceptedCoordinate,
-    PlaybillBlockDeclareResultV1,
-    PlaybillBlockDepublishResultV1,
+    PlaybillBlockDeclareResult,
+    PlaybillBlockDepublishResult,
 )
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.declared_blocks import ProjectionBlockStamp
+from cruxible_client.contracts.declared_blocks import ProjectionBlockStampAny
 from cruxible_client.contracts.errors import PlaybillError, PlaybillFormatError
 from cruxible_core.authoring.registrations import (
     BoundPublicationRegistration,
@@ -51,9 +51,9 @@ def service_declare_playbill_block(
     instance: PlaybillInstance,
     *,
     actor_id: str,
-    stamp: ProjectionBlockStamp,
+    stamp: ProjectionBlockStampAny,
     declared_at: str,
-) -> PlaybillBlockDeclareResultV1:
+) -> PlaybillBlockDeclareResult:
     """Register one projection block the workspace just stamped.
 
     `next` asks of every marker it observes whether this instance stands behind
@@ -92,7 +92,7 @@ def service_declare_playbill_block(
         declared_at=declared_at,
         stamp_digest=projection_block_stamp_digest(stamp),
     )
-    return PlaybillBlockDeclareResultV1(
+    return PlaybillBlockDeclareResult(
         source_id=stamp.source_id,
         block_id=stamp.block_id,
         outcome="redeclared" if known else "declared",
@@ -101,7 +101,7 @@ def service_declare_playbill_block(
     )
 
 
-def projection_block_stamp_digest(stamp: ProjectionBlockStamp) -> str:
+def projection_block_stamp_digest(stamp: ProjectionBlockStampAny) -> str:
     """The declaration's fingerprint of the marker it was taken from."""
 
     return "sha256:" + hashlib.sha256(canonical_bytes(stamp.model_dump(mode="json"))).hexdigest()
@@ -116,7 +116,7 @@ def service_depublish_playbill_block(
     block_id: str,
     dry_run: bool | None = None,
     at: str | None = None,
-) -> PlaybillBlockDepublishResultV1:
+) -> PlaybillBlockDepublishResult:
     """Release the bound publication registration that demands one page block.
 
     A registration is folded from a `bound` insertion expectation and nothing
@@ -162,7 +162,7 @@ def _depublish(
     actor: "AuthenticatedActor",
     source_id: str,
     block_id: str,
-) -> PlaybillBlockDepublishResultV1:
+) -> PlaybillBlockDepublishResult:
     coordinate = PlaybillAcceptedCoordinate.model_validate(
         AcceptedCoordinate.from_internal(instance.accepted_coordinate()).model_dump(mode="json")
     )
@@ -192,7 +192,7 @@ def _depublish(
                     source_id=source_id,
                     block_id=block_id,
                 )
-        return PlaybillBlockDepublishResultV1(
+        return PlaybillBlockDepublishResult(
             source_id=source_id,
             block_id=block_id,
             origin="declaration",
@@ -203,7 +203,7 @@ def _depublish(
         # Releasing a registration is idempotent by contract, and a declaration
         # this instance once held and has already released must say so rather
         # than refuse by naming a publication that never existed.
-        return PlaybillBlockDepublishResultV1(
+        return PlaybillBlockDepublishResult(
             source_id=source_id,
             block_id=block_id,
             origin="declaration",
@@ -224,7 +224,7 @@ def _depublish(
                 "the registered blocks with `cruxible playbill next` before releasing one"
             )
         intent_id, expectation_id, claim_identity = released
-        return PlaybillBlockDepublishResultV1(
+        return PlaybillBlockDepublishResult(
             source_id=source_id,
             block_id=block_id,
             intent_id=intent_id,
@@ -246,7 +246,7 @@ def _depublish(
             actor=actor,
             expectation_id=registration.preparation.expectation_id,
         )
-        return PlaybillBlockDepublishResultV1(
+        return PlaybillBlockDepublishResult(
             source_id=source_id,
             block_id=block_id,
             intent_id=registration.intent_id,
@@ -261,7 +261,7 @@ def _depublish(
             actor=actor,
             expectation_id=registration.preparation.expectation_id,
         )
-    return PlaybillBlockDepublishResultV1(
+    return PlaybillBlockDepublishResult(
         source_id=source_id,
         block_id=block_id,
         intent_id=registration.intent_id,

@@ -8,19 +8,19 @@ from collections.abc import Mapping
 from datetime import datetime
 
 from cruxible_client.contracts.acquisition_policies import (
-    IndependentCoherenceV1,
-    SourceAcquisitionPolicyV1,
+    IndependentCoherence,
+    SourceAcquisitionPolicy,
 )
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.capture_reads import CaptureReadRequestV1
-from cruxible_client.contracts.captures import CaptureContractV1
-from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
+from cruxible_client.contracts.capture_reads import CaptureReadRequest
+from cruxible_client.contracts.captures import CaptureContract
+from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.line_specs import (
-    LineSpecV6,
+    LineSpec,
     trigger_capture_selector,
     trigger_capture_source,
 )
-from cruxible_client.contracts.procedures.windows import LineTriggerBindingV1
+from cruxible_client.contracts.procedures.windows import LineTriggerBinding
 from cruxible_core.procedures.acquisition import (
     ACQUISITION_STALE,
     ProcedureCaptureMaterialV1,
@@ -41,11 +41,11 @@ from cruxible_core.storage.cas import BodyAccessContext
 def bind_trigger_capture(
     instance: PlaybillInstance,
     *,
-    line: LineSpecV6,
-    procedure: AcceptedProcedureV1,
-    binding: LineTriggerBindingV1 | None,
-    contracts: Mapping[str, CaptureContractV1],
-    policy: SourceAcquisitionPolicyV1,
+    line: LineSpec,
+    procedure: AcceptedProcedure,
+    binding: LineTriggerBinding | None,
+    contracts: Mapping[str, CaptureContract],
+    policy: SourceAcquisitionPolicy,
     evaluation_time: datetime,
     max_bytes: int,
 ) -> LandedCaptureRunMaterialV1:
@@ -57,7 +57,7 @@ def bind_trigger_capture(
             "trigger_capture_invalid", "trigger_capture_input: an exact retained event is required"
         )
     rule = next((r for r in policy.inputs if r.input_name == node.as_), None)
-    if rule is None or not isinstance(policy.coherence, IndependentCoherenceV1):
+    if rule is None or not isinstance(policy.coherence, IndependentCoherence):
         raise TriggerCaptureRefused(
             "trigger_capture_invalid",
             "trigger_capture_input: named independent acquisition rule required",
@@ -81,7 +81,7 @@ def bind_trigger_capture(
         )
     read = service_read_playbill_capture(
         instance,
-        request=CaptureReadRequestV1(
+        request=CaptureReadRequest(
             capture_digest=digest,
             at=record.accepted_coordinate,
             max_bytes=max_bytes,

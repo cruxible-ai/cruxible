@@ -37,26 +37,26 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.governance import PermissionTier
-from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
+from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.closure import (
-    LineSlotBindingV1,
+    LineSlotBinding,
     ProcedurePinClosureError,
-    ProviderExtrasEnvironmentPinMapV1,
-    ProviderImplementationClosureV1,
+    ProviderExtrasEnvironmentPinMap,
+    ProviderImplementationClosure,
     close_procedure_pin_slots,
 )
 from cruxible_client.contracts.procedures.models import (
     AUTHORITY_RUNG,
     RUNG_AUTHORITY,
     AuthorityVerb,
-    ExhaustTapNodeV3,
+    ExhaustTapNode,
     ProcedureDefinitionV4,
-    ProcedurePinSlotRefV1,
-    ProviderNodeV4,
+    ProcedurePinSlotRef,
+    ProviderNode,
     RepeatBodyNodeV4,
     RepeatNodeV4,
+    SourceNode,
     SourceNodeV3,
-    SourceNodeV4,
 )
 from cruxible_client.contracts.procedures.pin_expectations import (
     TRIGGER_CADENCE_POLICY,
@@ -67,16 +67,16 @@ from cruxible_client.contracts.procedures.pin_expectations import (
     validate_exact_pin_expectation,
 )
 from cruxible_client.contracts.procedures.windows import (
-    CaptureEventSelectorV1,
-    CaptureEventWindowV1,
-    ObservationWindowV1,
+    CaptureEventSelector,
+    CaptureEventWindow,
+    ObservationWindow,
 )
 from cruxible_client.contracts.provider_interfaces import (
-    AcceptedProviderInterfaceRegistrationV1,
+    AcceptedProviderInterfaceRegistration,
 )
 from cruxible_client.contracts.providers import (
-    AcceptedProviderV1,
-    ProviderLocalMaterializationReferenceV1,
+    AcceptedProvider,
+    ProviderLocalMaterializationReference,
     ProviderV2,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -97,7 +97,7 @@ def _artifact_digest(value: str) -> str:
     return value
 
 
-class CadenceTriggerPolicyV1(_StrictLineModel):
+class CadenceTriggerPolicy(_StrictLineModel):
     """A cadence trigger whose period is part of the accepted Line artifact.
 
     ``cadence_policy_digest`` still pins the governing Policy exactly, but the
@@ -143,37 +143,37 @@ class WindowCloseTriggerPolicyV1(_StrictLineModel):
     _digest = field_validator("window_policy_digest")(_artifact_digest)
 
 
-class CaptureLandingTriggerPolicyV2(_StrictLineModel):
+class CaptureLandingTriggerPolicy(_StrictLineModel):
     tag: Literal["playbill-capture-landing-trigger-v2"] = "playbill-capture-landing-trigger-v2"
     kind: Literal["capture_landing"] = "capture_landing"
-    event: CaptureEventSelectorV1
+    event: CaptureEventSelector
 
 
-class WindowCloseTriggerPolicyV2(_StrictLineModel):
+class WindowCloseTriggerPolicy(_StrictLineModel):
     tag: Literal["playbill-window-close-trigger-v2"] = "playbill-window-close-trigger-v2"
     kind: Literal["window_close"] = "window_close"
-    window: ObservationWindowV1
+    window: ObservationWindow
 
 
-class ManualTriggerPolicyV1(_StrictLineModel):
+class ManualTriggerPolicy(_StrictLineModel):
     tag: Literal["playbill-manual-trigger-v1"] = "playbill-manual-trigger-v1"
     kind: Literal["manual"] = "manual"
 
 
 TriggerPolicyV1 = Annotated[
-    CadenceTriggerPolicyV1
+    CadenceTriggerPolicy
     | CaptureLandingTriggerPolicyV1
     | WindowCloseTriggerPolicyV1
-    | ManualTriggerPolicyV1,
+    | ManualTriggerPolicy,
     Field(discriminator="kind"),
 ]
 
 
-TriggerPolicyV2: TypeAlias = Annotated[
-    CadenceTriggerPolicyV1
-    | CaptureLandingTriggerPolicyV2
-    | WindowCloseTriggerPolicyV2
-    | ManualTriggerPolicyV1,
+TriggerPolicy: TypeAlias = Annotated[
+    CadenceTriggerPolicy
+    | CaptureLandingTriggerPolicy
+    | WindowCloseTriggerPolicy
+    | ManualTriggerPolicy,
     Field(discriminator="kind"),
 ]
 
@@ -215,7 +215,7 @@ def _canonical_object(value: object) -> object:
     return normalized
 
 
-def _sorted_bindings(value: tuple[LineSlotBindingV1, ...]) -> tuple[LineSlotBindingV1, ...]:
+def _sorted_bindings(value: tuple[LineSlotBinding, ...]) -> tuple[LineSlotBinding, ...]:
     names = tuple(item.slot_name for item in value)
     if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
         raise ValueError("LineSpec slot bindings must be sorted and unique")
@@ -232,9 +232,9 @@ def _sorted_pins(value: tuple[ArtifactPin, ...]) -> tuple[ArtifactPin, ...]:
 
 
 def _sorted_closures(
-    value: tuple[ProviderImplementationClosureV1, ...],
-) -> tuple[ProviderImplementationClosureV1, ...]:
-    def closure_key(item: ProviderImplementationClosureV1) -> tuple[bytes, bytes]:
+    value: tuple[ProviderImplementationClosure, ...],
+) -> tuple[ProviderImplementationClosure, ...]:
+    def closure_key(item: ProviderImplementationClosure) -> tuple[bytes, bytes]:
         return item.node_id.encode("utf-8"), item.slot_name.encode("utf-8")
 
     if value != tuple(sorted(value, key=closure_key)):
@@ -251,7 +251,7 @@ class LineSpecV1(_StrictLineModel):
     occurrence_epoch: int = Field(ge=1, le=2**63 - 1)
     procedure: ArtifactPin
     parameters: object
-    slot_bindings: tuple[LineSlotBindingV1, ...]
+    slot_bindings: tuple[LineSlotBinding, ...]
     trigger_policy: TriggerPolicyV1
     acquisition_policy: ArtifactPin | None = None
     requested_terminal_rung: Literal[1, 2, 3]
@@ -303,7 +303,7 @@ class LineSpecV2(LineSpecV1):
     """Line successor freezing every graph-v4 Provider occurrence closure."""
 
     artifact_format: Literal["playbill-line-v2"] = "playbill-line-v2"  # type: ignore[assignment]
-    provider_implementation_closures: tuple[ProviderImplementationClosureV1, ...]
+    provider_implementation_closures: tuple[ProviderImplementationClosure, ...]
 
     _provider_closures = field_validator("provider_implementation_closures")(_sorted_closures)
 
@@ -312,7 +312,7 @@ class LineSpecV3(LineSpecV2):
     """Line with verifiable event triggers and fixed observation windows."""
 
     artifact_format: Literal["playbill-line-v3"] = "playbill-line-v3"  # type: ignore[assignment]
-    trigger_policy: TriggerPolicyV2  # type: ignore[assignment]
+    trigger_policy: TriggerPolicy  # type: ignore[assignment]
 
 
 LineAuthority = AuthorityVerb
@@ -362,7 +362,7 @@ class LineSpecV5(LineSpecV3):
         return data
 
 
-class LineSpecV6(_StrictLineModel):
+class LineSpec(_StrictLineModel):
     """A Line with no embedded trigger: Trigger artifacts aim at it by identity.
 
     When it runs is no longer the Line's to say; every Trigger aimed at it is its
@@ -379,15 +379,15 @@ class LineSpecV6(_StrictLineModel):
     occurrence_epoch: int = Field(ge=1, le=2**63 - 1)
     procedure: ArtifactPin
     parameters: object
-    slot_bindings: tuple[LineSlotBindingV1, ...]
+    slot_bindings: tuple[LineSlotBinding, ...]
     acquisition_policy: ArtifactPin | None = None
     max_authority: LineAuthority
     trigger_input: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
-    trigger_event: CaptureEventSelectorV1 | None = None
+    trigger_event: CaptureEventSelector | None = None
     budgets: object
     epsilon: object
     pins: tuple[ArtifactPin, ...]
-    provider_implementation_closures: tuple[ProviderImplementationClosureV1, ...]
+    provider_implementation_closures: tuple[ProviderImplementationClosure, ...]
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
 
     _canonical_objects = field_validator("parameters", "budgets", mode="before")(_canonical_object)
@@ -397,7 +397,7 @@ class LineSpecV6(_StrictLineModel):
     _provider_closures = field_validator("provider_implementation_closures")(_sorted_closures)
 
     @model_validator(mode="after")
-    def _shape(self) -> "LineSpecV6":
+    def _shape(self) -> "LineSpec":
         if self.identity.kind != "Line" or not _LINE_NAME_RE.fullmatch(self.identity.name):
             raise ValueError("Line identity must be path-addressable and kind Line")
         if self.procedure.role != "procedure" or self.procedure.target.kind != "Procedure":
@@ -436,32 +436,32 @@ class LineSpecV6(_StrictLineModel):
         return self
 
 
-def line_requested_rung(line: "LineSpecV1 | LineSpecV6") -> Literal[1, 2, 3]:
+def line_requested_rung(line: "LineSpecV1 | LineSpec") -> Literal[1, 2, 3]:
     """The internal ordering value of what a Line asks to do, for either generation."""
 
-    if isinstance(line, LineSpecV5 | LineSpecV6):
+    if isinstance(line, LineSpecV5 | LineSpec):
         return AUTHORITY_RUNG[line.max_authority]
     rung = line.requested_terminal_rung
     assert rung is not None
     return rung
 
 
-def trigger_capture_selector(line: "LineSpecV3 | LineSpecV6") -> CaptureEventSelectorV1 | None:
-    if isinstance(line, LineSpecV6):
+def trigger_capture_selector(line: "LineSpecV3 | LineSpec") -> CaptureEventSelector | None:
+    if isinstance(line, LineSpec):
         return line.trigger_event
     trigger = line.trigger_policy
-    if isinstance(trigger, CaptureLandingTriggerPolicyV2):
+    if isinstance(trigger, CaptureLandingTriggerPolicy):
         return trigger.event
-    if isinstance(trigger, WindowCloseTriggerPolicyV2) and isinstance(
-        trigger.window, CaptureEventWindowV1
+    if isinstance(trigger, WindowCloseTriggerPolicy) and isinstance(
+        trigger.window, CaptureEventWindow
     ):
         return trigger.window.event
     return None
 
 
 def trigger_capture_source(
-    line: "LineSpecV4 | LineSpecV5 | LineSpecV6", procedure: AcceptedProcedureV1
-) -> SourceNodeV4:
+    line: "LineSpecV4 | LineSpecV5 | LineSpec", procedure: AcceptedProcedure
+) -> SourceNode:
     """Resolve the single input and verify its closed CaptureContract pin."""
     if line.trigger_input is None:
         raise ValueError("this Line binds no trigger input")
@@ -470,13 +470,13 @@ def trigger_capture_source(
         for n in procedure.procedure.definition.nodes
         if getattr(n, "as_", None) == line.trigger_input
     ]
-    if len(nodes) != 1 or not isinstance(nodes[0], SourceNodeV4):
+    if len(nodes) != 1 or not isinstance(nodes[0], SourceNode):
         raise ValueError("trigger_input must name exactly one graph-v4 Source input")
     node = nodes[0]
     binding = node.capture_contract
     pin: ArtifactPin | None = (
         next((b.artifact_pin for b in line.slot_bindings if b.slot_name == binding.slot_name), None)
-        if isinstance(binding, ProcedurePinSlotRefV1)
+        if isinstance(binding, ProcedurePinSlotRef)
         else binding
     )
     selector = trigger_capture_selector(line)
@@ -493,7 +493,7 @@ def trigger_capture_source(
 
 
 LineSpecAny: TypeAlias = Annotated[
-    LineSpecV1 | LineSpecV2 | LineSpecV3 | LineSpecV4 | LineSpecV5 | LineSpecV6,
+    LineSpecV1 | LineSpecV2 | LineSpecV3 | LineSpecV4 | LineSpecV5 | LineSpec,
     Field(discriminator="artifact_format"),
 ]
 #: The Line formats that embed their own trigger, retained only to read history.
@@ -511,7 +511,7 @@ EMBEDDED_TRIGGER_LINE_FORMATS = frozenset(
 def line_has_provider_closures(line: LineSpecAny) -> bool:
     """Whether a Line freezes every graph-v4 Provider occurrence closure (v2 onward)."""
 
-    return isinstance(line, LineSpecV2 | LineSpecV6)
+    return isinstance(line, LineSpecV2 | LineSpec)
 
 
 def _line_acceptance(line: LineSpecAny) -> object:
@@ -520,7 +520,7 @@ def _line_acceptance(line: LineSpecAny) -> object:
     An embedded-trigger Line's trigger policy; a v6 Line's accepted event binding.
     """
 
-    if isinstance(line, LineSpecV6):
+    if isinstance(line, LineSpec):
         return ("accepts", line.trigger_input, line.trigger_event)
     return line.trigger_policy
 
@@ -529,15 +529,13 @@ _LINE_SPEC_ADAPTER: TypeAdapter[LineSpecAny] = TypeAdapter(LineSpecAny)
 
 
 def _trigger_pin_requirements(
-    trigger: TriggerPolicyV1 | TriggerPolicyV2,
+    trigger: TriggerPolicyV1 | TriggerPolicy,
 ) -> tuple[tuple[str, str, PinExpectation], ...]:
-    if isinstance(trigger, (CaptureLandingTriggerPolicyV2, WindowCloseTriggerPolicyV2)):
+    if isinstance(trigger, (CaptureLandingTriggerPolicy, WindowCloseTriggerPolicy)):
         selector = (
             trigger.event
-            if isinstance(trigger, CaptureLandingTriggerPolicyV2)
-            else (
-                trigger.window.event if isinstance(trigger.window, CaptureEventWindowV1) else None
-            )
+            if isinstance(trigger, CaptureLandingTriggerPolicy)
+            else (trigger.window.event if isinstance(trigger.window, CaptureEventWindow) else None)
         )
         return (
             ()
@@ -550,7 +548,7 @@ def _trigger_pin_requirements(
                 ),
             )
         )
-    if isinstance(trigger, CadenceTriggerPolicyV1):
+    if isinstance(trigger, CadenceTriggerPolicy):
         return (
             (
                 "trigger-cadence-policy",
@@ -632,13 +630,13 @@ def line_identity_digest(identity: ArtifactIdentity) -> str:
     ).tagged
 
 
-class AcceptedLineSpecV1(_StrictLineModel):
+class AcceptedLineSpec(_StrictLineModel):
     path: str
     line: LineSpecAny
     artifact_digest: str
 
     @model_validator(mode="after")
-    def _binding(self) -> "AcceptedLineSpecV1":
+    def _binding(self) -> "AcceptedLineSpec":
         if self.path != line_spec_path(self.line.identity.name):
             raise ValueError("accepted LineSpec path does not reproduce")
         if self.artifact_digest != line_spec_digest(self.line).tagged:
@@ -646,7 +644,7 @@ class AcceptedLineSpecV1(_StrictLineModel):
         return self
 
 
-class LineSpecLawResultV1(_StrictLineModel):
+class LineSpecLawResult(_StrictLineModel):
     verdict: Literal["accepted", "refused"]
     artifact_digest: str | None = None
     required_tier: PermissionTier | None = None
@@ -654,8 +652,8 @@ class LineSpecLawResultV1(_StrictLineModel):
     diagnostics: tuple[CompilerDiagnostic, ...] = ()
 
 
-def _refusal(code: str, message: str, *, path: str) -> LineSpecLawResultV1:
-    return LineSpecLawResultV1(
+def _refusal(code: str, message: str, *, path: str) -> LineSpecLawResult:
+    return LineSpecLawResult(
         verdict="refused",
         diagnostics=(
             CompilerDiagnostic(
@@ -679,16 +677,16 @@ def evaluate_line_spec_law(
     line: LineSpecAny,
     *,
     path: str,
-    procedure: AcceptedProcedureV1,
+    procedure: AcceptedProcedure,
     interface_digests: dict[str, str],
-    predecessor: AcceptedLineSpecV1 | None,
-    providers: Mapping[str, AcceptedProviderV1] | None = None,
+    predecessor: AcceptedLineSpec | None,
+    providers: Mapping[str, AcceptedProvider] | None = None,
     provider_interfaces: Mapping[
         str,
-        AcceptedProviderInterfaceRegistrationV1,
+        AcceptedProviderInterfaceRegistration,
     ]
     | None = None,
-) -> LineSpecLawResultV1:
+) -> LineSpecLawResult:
     if path != line_spec_path(line.identity.name):
         return _refusal(
             "playbill.line.path_mismatch", "Line identity/path disagreement.", path=path
@@ -708,7 +706,7 @@ def evaluate_line_spec_law(
     except ProcedurePinClosureError as exc:
         return _refusal("playbill.line.slot_closure_failed", str(exc), path=path)
     definition = procedure.procedure.definition
-    if isinstance(line, LineSpecV4 | LineSpecV5 | LineSpecV6) and line.trigger_input is not None:
+    if isinstance(line, LineSpecV4 | LineSpecV5 | LineSpec) and line.trigger_input is not None:
         try:
             trigger_capture_source(line, procedure)
         except ValueError as exc:
@@ -720,7 +718,7 @@ def evaluate_line_spec_law(
                 "A graph-v4 Procedure requires a playbill-line-v2 closure.",
                 path=path,
             )
-        assert isinstance(line, LineSpecV2 | LineSpecV6)
+        assert isinstance(line, LineSpecV2 | LineSpec)
         provider_result = _verify_provider_implementation_closures(
             line,
             definition=definition,
@@ -731,7 +729,7 @@ def evaluate_line_spec_law(
             code, message = provider_result
             return _refusal(code, message, path=path)
     elif isinstance(line, LineSpecV2) or (
-        isinstance(line, LineSpecV6) and line.provider_implementation_closures
+        isinstance(line, LineSpec) and line.provider_implementation_closures
     ):
         # A v6 Line serves every Procedure a Line could: an earlier graph has
         # no Provider occurrence to close, so it carries no closures.
@@ -764,8 +762,7 @@ def evaluate_line_spec_law(
                 path=path,
             )
     needs_acquisition = any(
-        isinstance(node, SourceNodeV3 | SourceNodeV4 | ExhaustTapNodeV3)
-        for node in definition.nodes
+        isinstance(node, SourceNodeV3 | SourceNode | ExhaustTapNode) for node in definition.nodes
     )
     if needs_acquisition and line.acquisition_policy is None:
         return _refusal(
@@ -789,7 +786,7 @@ def evaluate_line_spec_law(
             )
         if (
             line_has_provider_closures(predecessor.line) and not line_has_provider_closures(line)
-        ) or (isinstance(predecessor.line, LineSpecV6) and not isinstance(line, LineSpecV6)):
+        ) or (isinstance(predecessor.line, LineSpec) and not isinstance(line, LineSpec)):
             return _refusal(
                 "playbill.line.wire_downgrade",
                 "A Line lineage cannot be succeeded by an earlier Line wire.",
@@ -809,7 +806,7 @@ def evaluate_line_spec_law(
                 "Line occurrence epoch must advance exactly when trigger semantics change.",
                 path=path,
             )
-    return LineSpecLawResultV1(
+    return LineSpecLawResult(
         verdict="accepted",
         artifact_digest=line_spec_digest(line).tagged,
         required_tier="governed_write",
@@ -817,15 +814,15 @@ def evaluate_line_spec_law(
     )
 
 
-ProviderOccurrenceV4: TypeAlias = SourceNodeV4 | ProviderNodeV4 | RepeatBodyNodeV4
+ProviderOccurrence: TypeAlias = SourceNode | ProviderNode | RepeatBodyNodeV4
 
 
 def _provider_occurrences(
     definition: ProcedureDefinitionV4,
-) -> tuple[tuple[str, ProviderOccurrenceV4], ...]:
-    occurrences: list[tuple[str, ProviderOccurrenceV4]] = []
+) -> tuple[tuple[str, ProviderOccurrence], ...]:
+    occurrences: list[tuple[str, ProviderOccurrence]] = []
     for node in definition.nodes:
-        if isinstance(node, SourceNodeV4 | ProviderNodeV4):
+        if isinstance(node, SourceNode | ProviderNode):
             occurrences.append((node.node_id, node))
         elif isinstance(node, RepeatNodeV4):
             occurrences.extend(
@@ -838,27 +835,27 @@ def _provider_occurrences(
 
 def _slot_provider_occurrences(
     definition: ProcedureDefinitionV4,
-) -> tuple[tuple[str, ProviderOccurrenceV4], ...]:
-    result: list[tuple[str, ProviderOccurrenceV4]] = []
+) -> tuple[tuple[str, ProviderOccurrence], ...]:
+    result: list[tuple[str, ProviderOccurrence]] = []
     for node_id, node in _provider_occurrences(definition):
-        if isinstance(node.provider, ProcedurePinSlotRefV1):
+        if isinstance(node.provider, ProcedurePinSlotRef):
             result.append((node_id, node))
     return tuple(result)
 
 
 def _verify_provider_implementation_closures(
-    line: LineSpecV2 | LineSpecV6,
+    line: LineSpecV2 | LineSpec,
     *,
     definition: ProcedureDefinitionV4,
-    providers: Mapping[str, AcceptedProviderV1],
-    provider_interfaces: Mapping[str, AcceptedProviderInterfaceRegistrationV1],
+    providers: Mapping[str, AcceptedProvider],
+    provider_interfaces: Mapping[str, AcceptedProviderInterfaceRegistration],
 ) -> tuple[str, str] | None:
     occurrences = _provider_occurrences(definition)
     slot_occurrences = _slot_provider_occurrences(definition)
     occurrence_coordinates: list[tuple[str, str]] = []
     for node_id, node in slot_occurrences:
         provider = node.provider
-        if not isinstance(provider, ProcedurePinSlotRefV1):  # pragma: no cover - filtered above
+        if not isinstance(provider, ProcedurePinSlotRef):  # pragma: no cover - filtered above
             raise AssertionError("slot occurrence lost its slot binding")
         occurrence_coordinates.append((node_id, provider.slot_name))
     closure_coordinates = tuple(
@@ -883,7 +880,7 @@ def _verify_provider_implementation_closures(
             provider_pin = provider_binding
             implementation_digest = node_implementation_digest
         else:
-            if not isinstance(provider_binding, ProcedurePinSlotRefV1):
+            if not isinstance(provider_binding, ProcedurePinSlotRef):
                 return (
                     "playbill.line.provider_interface_pin_mismatch",
                     f"Provider occurrence {node_id!r} has an unsupported binding.",
@@ -948,14 +945,14 @@ def _verify_provider_implementation_closures(
                 f"Provider occurrence {node_id!r} manifest row is not singular.",
             )
         manifest = manifest_matches[0]
-        expected_environment_map = ProviderExtrasEnvironmentPinMapV1(
+        expected_environment_map = ProviderExtrasEnvironmentPinMap(
             required_extras=tuple(
                 sorted(manifest.requires_extras, key=lambda item: item.encode("utf-8"))
             ),
             eligible_environment_pin_keys=tuple(
                 reference.environment_pin_key
                 for reference in record.materialization_references
-                if isinstance(reference, ProviderLocalMaterializationReferenceV1)
+                if isinstance(reference, ProviderLocalMaterializationReference)
             ),
         )
         if closure is not None:
@@ -976,18 +973,18 @@ def _verify_provider_implementation_closures(
 
 
 __all__ = [
-    "AcceptedLineSpecV1",
-    "CadenceTriggerPolicyV1",
+    "AcceptedLineSpec",
+    "CadenceTriggerPolicy",
     "CaptureLandingTriggerPolicyV1",
     "LineSpecFormatError",
-    "LineSpecLawResultV1",
+    "LineSpecLawResult",
     "LineSpecAny",
     "LineSpecV1",
     "LineSpecV2",
     "LineSpecV3",
     "LineSpecV4",
     "LineSpecV5",
-    "LineSpecV6",
+    "LineSpec",
     "EMBEDDED_TRIGGER_LINE_FORMATS",
     "line_has_provider_closures",
     "AUTHORITY_RUNG",
@@ -996,11 +993,11 @@ __all__ = [
     "line_requested_rung",
     "trigger_capture_selector",
     "trigger_capture_source",
-    "TriggerPolicyV2",
-    "CaptureLandingTriggerPolicyV2",
-    "WindowCloseTriggerPolicyV2",
+    "TriggerPolicy",
+    "CaptureLandingTriggerPolicy",
+    "WindowCloseTriggerPolicy",
     "LINE_IDENTITY_DIGEST_DOMAIN",
-    "ManualTriggerPolicyV1",
+    "ManualTriggerPolicy",
     "TriggerPolicyV1",
     "WindowCloseTriggerPolicyV1",
     "evaluate_line_spec_law",

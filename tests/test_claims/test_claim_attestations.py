@@ -10,10 +10,10 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cruxible_client.authoring.attestations import LocalEd25519ClaimAttestationSigner
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.claim_attestations import (
-    ClaimAttestation,
     ClaimAttestationError,
     ClaimAttestationStatement,
-    ClaimAttestationStatementV2,
+    ClaimAttestationStatementV1,
+    ClaimAttestationV1,
     claim_attestation_statement_bytes,
     claim_attestation_v2_envelope_digest,
     claim_attestation_v2_statement_bytes,
@@ -31,7 +31,7 @@ from cruxible_client.contracts.claims import (
     claim_statement_digest,
 )
 from cruxible_client.contracts.principals import PrincipalRegistrySnapshot
-from cruxible_client.contracts.providers import ProviderSigningKeyV1
+from cruxible_client.contracts.providers import ProviderSigningKey
 from cruxible_client.contracts.subjects import subject_digest
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from tests.core_support._pc_c_support import NOW, capture_contract, provider
@@ -68,10 +68,10 @@ def _accepted_claim(instance, claim_id: str = "CLM-0123456789abcdef0123456789abc
     return coordinate, capture, accepted
 
 
-def _sign_v1(private_key_path: Path, statement: ClaimAttestationStatement) -> ClaimAttestation:
+def _sign_v1(private_key_path: Path, statement: ClaimAttestationStatementV1) -> ClaimAttestationV1:
     private_key = serialization.load_ssh_private_key(private_key_path.read_bytes(), password=None)
     assert isinstance(private_key, Ed25519PrivateKey)
-    return ClaimAttestation(
+    return ClaimAttestationV1(
         **statement.model_dump(mode="json"),
         signature=private_key.sign(claim_attestation_statement_bytes(statement)).hex(),
     )
@@ -87,7 +87,7 @@ def _principals(instance, coordinate: AcceptedCoordinate) -> PrincipalRegistrySn
 def test_client_held_principal_signs_exact_claim_and_cas_round_trips(tmp_path: Path) -> None:
     instance, owner = initialize_local(tmp_path)
     coordinate, capture, claim = _accepted_claim(instance)
-    statement = ClaimAttestationStatement(
+    statement = ClaimAttestationStatementV1(
         instance_id=instance.descriptor.instance_id,
         referent_coordinate=coordinate,
         subject=claim.claim.statement.subject,
@@ -139,7 +139,7 @@ def test_client_held_principal_signs_exact_claim_and_cas_round_trips(tmp_path: P
 def test_parallel_v2_signer_commits_complete_exact_claim_context(tmp_path: Path) -> None:
     instance, owner = initialize_local(tmp_path)
     coordinate, capture, claim = _accepted_claim(instance)
-    statement = ClaimAttestationStatementV2(
+    statement = ClaimAttestationStatement(
         instance_id=instance.descriptor.instance_id,
         referent_coordinate=coordinate,
         claim_identity=claim.claim.identity,
@@ -197,7 +197,7 @@ def test_parallel_v2_signer_commits_complete_exact_claim_context(tmp_path: Path)
 def test_wrong_instance_tamper_and_missing_capture_fail_closed(tmp_path: Path) -> None:
     instance, owner = initialize_local(tmp_path)
     coordinate, capture, claim = _accepted_claim(instance)
-    statement = ClaimAttestationStatement(
+    statement = ClaimAttestationStatementV1(
         instance_id=instance.descriptor.instance_id,
         referent_coordinate=coordinate,
         subject=claim.claim.statement.subject,
@@ -243,7 +243,7 @@ def test_provider_key_rotation_and_shell_drift_are_evidence_not_authority(
         contract,
         public_key=private_key.public_key().public_bytes_raw().hex(),
     )
-    statement = ClaimAttestationStatement(
+    statement = ClaimAttestationStatementV1(
         instance_id=instance.descriptor.instance_id,
         referent_coordinate=coordinate,
         subject=claim.claim.statement.subject,
@@ -255,7 +255,7 @@ def test_provider_key_rotation_and_shell_drift_are_evidence_not_authority(
         capture_digests=(capture.capture_digest,),
         observed_at=NOW,
     )
-    attestation = ClaimAttestation(
+    attestation = ClaimAttestationV1(
         **statement.model_dump(mode="json"),
         signature=private_key.sign(claim_attestation_statement_bytes(statement)).hex(),
     )
@@ -274,7 +274,7 @@ def test_provider_key_rotation_and_shell_drift_are_evidence_not_authority(
     )
     assert verified.attestation_grade == "verified_provider"
     assert verified.coverage == "shell_stale"
-    revoked_key = ProviderSigningKeyV1.model_validate(
+    revoked_key = ProviderSigningKey.model_validate(
         {
             **provider_artifact.signing_keys[0].model_dump(mode="json"),
             "status": "revoked",

@@ -1,4 +1,4 @@
-"""Client-held ClaimAttestation submission and explicit-time verdict reads."""
+"""Client-held ClaimAttestationV1 submission and explicit-time verdict reads."""
 
 from __future__ import annotations
 
@@ -15,10 +15,10 @@ from typing import Any, Literal, Protocol, cast
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from cruxible_client.contracts.accepted_attestations import (
-    AcceptedClaimAttestationEvidenceV1,
+    AcceptedClaimAttestationEvidence,
     ClaimAttestationEvidence,
 )
-from cruxible_client.contracts.candidates import MemberLawEvaluationV2
+from cruxible_client.contracts.candidates import MemberLawEvaluation
 from cruxible_client.contracts.captures import (
     capture_contract_digest,
     parse_capture_contract,
@@ -26,7 +26,7 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.cas_contracts import BodyProjectionProtocol
 from cruxible_client.contracts.claim_attestations import (
-    ClaimAttestationV2,
+    ClaimAttestation,
     VerifiedClaimAttestationV1,
 )
 from cruxible_client.contracts.claim_types import (
@@ -37,10 +37,10 @@ from cruxible_client.contracts.claim_types import (
     parse_claim_type,
 )
 from cruxible_client.contracts.claim_verdicts import (
-    CaptureVerdictEvidenceV1,
+    CaptureVerdictEvidence,
     ClaimAdjudicationRuleAny,
+    ClaimVerdictResult,
     ClaimVerdictResultV1,
-    ClaimVerdictResultV2,
     claim_adjudication_rule,
     claim_adjudication_rule_digest,
     evaluate_claim_verdict,
@@ -58,12 +58,12 @@ from cruxible_client.contracts.claims import (
     parse_claim_law_evidence,
 )
 from cruxible_client.contracts.errors import ClaimNotFoundError, ProposalIntegrityError
-from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRuleV3
+from cruxible_client.contracts.policies import ClaimEvidenceAdmissionRule
 from cruxible_client.contracts.providers import ProviderV1, parse_provider
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import (
-    CasSourceReferenceV1,
-    LedgerSourceReferenceV1,
+    CasSourceReference,
+    LedgerSourceReference,
 )
 from cruxible_client.contracts.subjects import parse_subject, subject_digest
 from cruxible_core.derived.memo import memo_get, memo_put
@@ -122,7 +122,7 @@ class PlaybillClaimVerdictQueryV2(_StrictEvidenceServiceModel):
     coordinate: PlaybillAcceptedCoordinate
     claim_identity: str
     evaluation_time: datetime
-    verdict: ClaimVerdictResultV2
+    verdict: ClaimVerdictResult
 
     @field_validator("evaluation_time")
     @classmethod
@@ -270,7 +270,7 @@ class ClaimVerdictReadContext:
     _source_bytes: dict[str, bytes] = dataclass_field(default_factory=dict, init=False)
     _tree: Mapping[str, bytes] = dataclass_field(init=False)
     _history: "ClaimReadHistoryIndex | None" = dataclass_field(default=None, init=False)
-    _attestations: dict[tuple[str, str], list[ClaimAttestationV2]] | None = dataclass_field(
+    _attestations: dict[tuple[str, str], list[ClaimAttestation]] | None = dataclass_field(
         default=None, init=False
     )
     _claim_types: dict[str, ClaimType] = dataclass_field(default_factory=dict, init=False)
@@ -368,7 +368,7 @@ class ClaimVerdictReadContext:
         if isinstance(law_evidence, _IndexedClaimLawEvidence):
             law_evidence.prefetch(paths)
 
-    def attestation_envelopes(self, claim: ClaimArtifactAny) -> tuple[ClaimAttestationV2, ...]:
+    def attestation_envelopes(self, claim: ClaimArtifactAny) -> tuple[ClaimAttestation, ...]:
         """This exact Claim version's accepted attestations.
 
         The first request reads attestations for every Claim version this batch
@@ -617,7 +617,7 @@ def accepted_claim_attestations(
     tree: Mapping[str, bytes],
     claim: ClaimArtifactAny,
     historical: tuple[VerifiedClaimAttestationV1, ...] = (),
-    envelopes: tuple[ClaimAttestationV2, ...] | None = None,
+    envelopes: tuple[ClaimAttestation, ...] | None = None,
 ) -> tuple[ClaimAttestationEvidence, ...]:
     """Read applicable immutable statements without inferring supersession.
 
@@ -635,7 +635,7 @@ def accepted_claim_attestations(
             )
     subject_digest, object_digest = _referent_digests(tree, claim)
     return tuple(
-        AcceptedClaimAttestationEvidenceV1(
+        AcceptedClaimAttestationEvidence(
             envelope=envelope,
             coverage="exact_subject"
             if (
@@ -806,10 +806,10 @@ def _replay_available(
             access=BodyAccessContext(principal_id="playbill-verdict", can_read_body=True),
         )
     )
-    if isinstance(envelope.source, CasSourceReferenceV1):
+    if isinstance(envelope.source, CasSourceReference):
         noted.append(envelope.source.content_digest)
         return bool(store.verify(envelope.source.content_digest))
-    if isinstance(envelope.source, LedgerSourceReferenceV1):
+    if isinstance(envelope.source, LedgerSourceReference):
         try:
             material = (
                 instance.blob_at(
@@ -889,7 +889,7 @@ class _IndexedClaimLawEvidence(Mapping[str, ClaimLawEvidenceAny]):
         self.instance = instance
         self.at = AcceptedCoordinate.from_internal(coordinate)
         self._records = records if records is not None else instance.retained_record_reader()
-        self._evidence_by_sequence: dict[int, dict[str, MemberLawEvaluationV2]] = {}
+        self._evidence_by_sequence: dict[int, dict[str, MemberLawEvaluation]] = {}
         # Prefetched answers: parsed evidence, or None for a path with no law record.
         self._prefetched: dict[str, ClaimLawEvidenceAny | None] = {}
 
@@ -1097,7 +1097,7 @@ def _reproduced_claim_adjudication_rule(
                 },
                 "contracts": sorted(
                     {item.target.qualified for item in rule.capture_contracts}
-                    if isinstance(rule, ClaimEvidenceAdmissionRuleV3)
+                    if isinstance(rule, ClaimEvidenceAdmissionRule)
                     else {
                         history.capture_contract_identity(digest) or digest
                         for digest in rule.capture_contract_digests
@@ -1148,7 +1148,7 @@ def _record_verdict_time_boundaries(
     *,
     rule: ClaimAdjudicationRuleAny,
     claim: ClaimArtifactAny,
-    captures: tuple[CaptureVerdictEvidenceV1, ...],
+    captures: tuple[CaptureVerdictEvidence, ...],
     attestations: tuple[ClaimAttestationEvidence, ...],
 ) -> None:
     """Record every instant at which this verdict's answer could change.
@@ -1302,7 +1302,7 @@ def service_evaluate_playbill_claim_verdict(
         # resolver. Acceptance-time verdict output is never carried forward.
         resolved_authority_basis=(),
     )
-    if isinstance(verdict, ClaimVerdictResultV2):
+    if isinstance(verdict, ClaimVerdictResult):
         return PlaybillClaimVerdictQueryV2(
             coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
             claim_identity=accepted.claim.identity.qualified,

@@ -1,6 +1,6 @@
 """Immutable governed placement of the existing signed V2 attestation envelope.
 
-Identity is ClaimAttestation:<envelope sha256>. The file contains exactly the
+Identity is ClaimAttestationV1:<envelope sha256>. The file contains exactly the
 canonical V2 envelope, without a lifecycle wrapper. Artifact and file digests
 have distinct domains; neither is the envelope identity. Corrections are new
 identities, never revisions of these signed bytes.
@@ -24,8 +24,8 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.claim_attestations import (
+    ClaimAttestation,
     ClaimAttestationCoverage,
-    ClaimAttestationV2,
     ClaimStance,
     VerifiedClaimAttestationV1,
     claim_attestation_v2_envelope_digest,
@@ -35,9 +35,9 @@ from cruxible_client.contracts.errors import PlaybillFormatError
 ATTESTATION_ARTIFACT_DOMAIN = "cruxible-accepted-claim-attestation-artifact-v1"
 
 
-def attestation_identity(attestation: ClaimAttestationV2) -> ArtifactIdentity:
+def attestation_identity(attestation: ClaimAttestation) -> ArtifactIdentity:
     return ArtifactIdentity(
-        kind="ClaimAttestation", name=claim_attestation_v2_envelope_digest(attestation)
+        kind="ClaimAttestationV1", name=claim_attestation_v2_envelope_digest(attestation)
     )
 
 
@@ -47,7 +47,7 @@ def attestation_path(envelope_digest: str) -> str:
     return f"attestations/{digest[:2]}/{digest}.json"
 
 
-def attestation_artifact_digest(attestation: ClaimAttestationV2) -> ArtifactDigest:
+def attestation_artifact_digest(attestation: ClaimAttestation) -> ArtifactDigest:
     return typed_digest(
         ArtifactDigest,
         ATTESTATION_ARTIFACT_DOMAIN,
@@ -55,17 +55,17 @@ def attestation_artifact_digest(attestation: ClaimAttestationV2) -> ArtifactDige
     )
 
 
-def render_accepted_attestation(attestation: ClaimAttestationV2) -> bytes:
+def render_accepted_attestation(attestation: ClaimAttestation) -> bytes:
     return pretty_canonical_bytes(attestation.model_dump(mode="json"))
 
 
 def parse_accepted_attestation(
     content: bytes, *, path: str, codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC
-) -> ClaimAttestationV2:
+) -> ClaimAttestation:
     if codec != ArtifactCodec.CURRENT_PRETTY_JSON:
         raise PlaybillFormatError("accepted attestations require the JSON artifact codec")
     try:
-        value = ClaimAttestationV2.model_validate_json(content)
+        value = ClaimAttestation.model_validate_json(content)
     except ValueError as exc:
         raise PlaybillFormatError("accepted attestation envelope is malformed") from exc
     if path != attestation_path(claim_attestation_v2_envelope_digest(value)):
@@ -80,7 +80,7 @@ def parse_accepted_attestation(
 # vocabulary to the common verdict reducer, which also verifies frozen V1 inputs.
 @dataclass(frozen=True)
 class AcceptedAttestationVerdictStatement:
-    envelope: ClaimAttestationV2
+    envelope: ClaimAttestation
 
     @property
     def observed_at(self) -> datetime:
@@ -109,12 +109,12 @@ class AcceptedAttestationVerdictStatement:
         return self.envelope.statement.claim_statement_digest
 
 
-class AcceptedClaimAttestationEvidenceV1(BaseModel):
+class AcceptedClaimAttestationEvidence(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     tag: Literal["cruxible-accepted-claim-attestation-evidence-v1"] = (
         "cruxible-accepted-claim-attestation-evidence-v1"
     )
-    envelope: ClaimAttestationV2
+    envelope: ClaimAttestation
     coverage: ClaimAttestationCoverage
     current: bool
 
@@ -139,6 +139,4 @@ class AcceptedClaimAttestationEvidenceV1(BaseModel):
         return "verified_principal"
 
 
-ClaimAttestationEvidence: TypeAlias = (
-    VerifiedClaimAttestationV1 | AcceptedClaimAttestationEvidenceV1
-)
+ClaimAttestationEvidence: TypeAlias = VerifiedClaimAttestationV1 | AcceptedClaimAttestationEvidence

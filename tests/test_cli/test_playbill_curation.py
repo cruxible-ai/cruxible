@@ -15,7 +15,7 @@ from cruxible_client.authoring.blocks import render_projection_opening
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV1,
-    ProjectionClaimBackingV1,
+    ProjectionClaimBacking,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.cli.main import cli
@@ -128,7 +128,7 @@ def test_cli_curation_list_enriches_a_real_catalog_and_declared_block_for_text_a
         declared_generation=1,
         declared_coordinate=AcceptedCoordinate.model_validate(COORDINATE.model_dump(mode="json")),
         backing=(
-            ProjectionClaimBackingV1(
+            ProjectionClaimBacking(
                 identity=ArtifactIdentity(kind="Claim", name="CLM-existing"),
                 statement_digest="sha256:" + "7" * 64,
             ),

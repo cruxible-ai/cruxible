@@ -29,10 +29,10 @@ from pydantic import BaseModel
 from cruxible_client.authoring.sdk_types import LiteralValue, PlaybillSdkError, SubjectRef
 from cruxible_client.contracts.compact_query import (
     QUERY_FILTER_OPERATORS,
-    PlaybillQueryColumnV1,
-    PlaybillQueryRequestV1,
+    PlaybillQueryColumn,
+    PlaybillQueryRequest,
     PlaybillQueryResult,
-    QueryFilterV1,
+    QueryFilter,
     query_filter,
 )
 from cruxible_client.contracts.get_display import exact_content_marker_text
@@ -81,7 +81,7 @@ class QueryResult:
         return [dict(row) for row in self.page.rows]
 
     @property
-    def columns(self) -> tuple[PlaybillQueryColumnV1, ...]:
+    def columns(self) -> tuple[PlaybillQueryColumn, ...]:
         """What each column holds: field, predicate and value shape. Next: ``result.rows``."""
 
         return self.page.columns
@@ -219,7 +219,7 @@ _SYMBOLS = {"=": "eq", "!=": "ne", "<": "lt", "<=": "lte", ">": "gt", ">=": "gte
 WHERE_SYNTAX = "'f=v', 'f!=v', 'f<v', 'f<=v', 'f>v', 'f>=v', 'f in a,b', 'f exists', 'f~text'"
 
 
-def parse_where(expression: str) -> QueryFilterV1:
+def parse_where(expression: str) -> QueryFilter:
     """Read one CLI filter expression; values stay strings for the daemon to type."""
 
     match = _IN_RE.fullmatch(expression)
@@ -300,7 +300,7 @@ class CompactQuery:
         world: World,
         kind: str,
         *,
-        where: tuple[QueryFilterV1, ...] = (),
+        where: tuple[QueryFilter, ...] = (),
         select: tuple[str, ...] = (),
         order_by: tuple[str, ...] = (),
         limit: int | None = None,
@@ -393,7 +393,7 @@ class CompactQuery:
         Next: ``.select(...)``, then ``.run()`` or iterate it.
         """
 
-        added: list[QueryFilterV1] = []
+        added: list[QueryFilter] = []
         for key, value in filters.items():
             name, operator = keyword_field(key)
             head, _, suffix = key.rpartition("__")
@@ -443,7 +443,7 @@ class CompactQuery:
 
         return self._with(limit=count)
 
-    def request(self) -> PlaybillQueryRequestV1:
+    def request(self) -> PlaybillQueryRequest:
         """The ``pb.query`` request this builds, checked against the World.
 
         Next: ``.run()``, or pass it to ``pb.query(...)`` yourself.
@@ -457,7 +457,7 @@ class CompactQuery:
         }
         if self._limit is not None:
             fields["limit"] = self._limit
-        return PlaybillQueryRequestV1(**fields)
+        return PlaybillQueryRequest(**fields)
 
     def run(self) -> QueryResult:
         """Answer one page at the World's coordinate.
@@ -476,7 +476,7 @@ class CompactQuery:
         return f"<CompactQuery {self._kind} where={len(self._where)} select={self._select}>"
 
 
-def filters_from_mappings(where: Sequence[QueryFilterV1 | Mapping[str, Any]]) -> tuple[Any, ...]:
+def filters_from_mappings(where: Sequence[QueryFilter | Mapping[str, Any]]) -> tuple[Any, ...]:
     """Normalize SDK ``where`` items (typed filters or plain mappings) for a request."""
 
     return tuple(

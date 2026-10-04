@@ -12,7 +12,7 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
 from cruxible_client.contracts.claims import LiteralClaimObject, parse_claim, render_claim
-from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.curation.curation_detectors import _attempt_subject_from_path
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
@@ -20,7 +20,7 @@ from cruxible_core.service.discovery.curation import (
     PlaybillCurationListRequestV1,
     service_list_playbill_curation,
 )
-from cruxible_core.service.discovery.next import PlaybillNextWorkspaceObservationV1
+from cruxible_core.service.discovery.next import PlaybillNextWorkspaceObservation
 from tests.core_support._claim_authoring_support import service_propose_playbill_claim
 from tests.core_support._knowledge_loop_support import TIMESTAMP, authoring, seed_claims
 
@@ -121,7 +121,7 @@ def test_two_distinct_refused_proposals_cluster_by_claim_type_and_code(
         instance,
         request=PlaybillCurationListRequestV1(
             evaluation_time=NOW,
-            access_profile=CoverageAccessProfileV1(profile_id="test-curation"),
+            access_profile=CoverageAccessProfile(profile_id="test-curation"),
         ),
         actor_context=GovernedActorContext(
             actor_type="human_user",
@@ -183,7 +183,7 @@ def test_claim_type_refusals_are_labeled_schema_side(tmp_path: Path) -> None:
         instance,
         request=PlaybillCurationListRequestV1(
             evaluation_time=NOW,
-            access_profile=CoverageAccessProfileV1(profile_id="test-curation"),
+            access_profile=CoverageAccessProfile(profile_id="test-curation"),
         ),
         actor_context=GovernedActorContext(
             actor_type="human_user",
@@ -220,12 +220,12 @@ def test_restricted_curation_profile_short_circuits_without_count_leakage(
         instance,
         request=PlaybillCurationListRequestV1(
             evaluation_time=NOW,
-            access_profile=CoverageAccessProfileV1(
+            access_profile=CoverageAccessProfile(
                 profile_id="public-only",
                 permitted_access_classes=("public",),
                 disclose_restricted_existence=False,
             ),
-            workspace_observation=PlaybillNextWorkspaceObservationV1(source_observations=()),
+            workspace_observation=PlaybillNextWorkspaceObservation(source_observations=()),
         ),
         actor_context=GovernedActorContext(
             actor_type="human_user",

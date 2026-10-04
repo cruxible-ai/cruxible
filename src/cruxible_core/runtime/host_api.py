@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TypedDict
 
 from cruxible_client import contracts
-from cruxible_client.contracts.change_control import PlaybillStateCoordinateV1
+from cruxible_client.contracts.change_control import PlaybillStateCoordinate
 from cruxible_client.contracts.errors import (
     PlaybillObjectFormatConflict,
     PlaybillReseedRequired,
@@ -53,17 +53,17 @@ class _HostCommon(TypedDict):
 
 
 def _reseed_reason(
-    code: contracts.PlaybillHostCompatibilityReasonCodeV1,
+    code: contracts.PlaybillHostCompatibilityReasonCode,
     detail: str,
-) -> contracts.PlaybillHostCompatibilityReasonV1:
-    return contracts.PlaybillHostCompatibilityReasonV1(
+) -> contracts.PlaybillHostCompatibilityReason:
+    return contracts.PlaybillHostCompatibilityReason(
         code=code,
         detail=detail,
         repair_commands=("cruxible playbill host create",),
     )
 
 
-def _inspect_registered_host(instance_id: str) -> contracts.PlaybillHostInspectionV1:
+def _inspect_registered_host(instance_id: str) -> contracts.PlaybillHostInspection:
     record = get_registry().get(instance_id)
     if record is None or record.backend != GOVERNED_DAEMON_BACKEND:
         raise ConfigError(
@@ -73,13 +73,13 @@ def _inspect_registered_host(instance_id: str) -> contracts.PlaybillHostInspecti
     try:
         managed_root = get_registry().instance_root(record)
     except InstanceLocationRefusedError as exc:
-        return contracts.PlaybillHostInspectionV1(
+        return contracts.PlaybillHostInspection(
             instance_id=instance_id,
             managed_root=record.location,
             workspace_root=record.workspace_root,
             compatibility="refused",
             writable=False,
-            reason=contracts.PlaybillHostCompatibilityReasonV1(
+            reason=contracts.PlaybillHostCompatibilityReason(
                 code="location_outside_state_root",
                 detail=str(exc),
                 repair_commands=("cruxible server start --state-root <the root that holds it>",),
@@ -94,7 +94,7 @@ def _inspect_registered_host(instance_id: str) -> contracts.PlaybillHostInspecti
         "floor_delivery": record.floor_delivery,
     }
     if not managed_root.exists() and not trust_root.exists():
-        return contracts.PlaybillHostInspectionV1(
+        return contracts.PlaybillHostInspection(
             **common,
             compatibility="uninitialized",
             writable=False,
@@ -102,7 +102,7 @@ def _inspect_registered_host(instance_id: str) -> contracts.PlaybillHostInspecti
     if (legacy_root / "playbill-v1").exists() or (
         legacy_root / "playbill-trust-root-v1.json"
     ).exists():
-        return contracts.PlaybillHostInspectionV1(
+        return contracts.PlaybillHostInspection(
             **common,
             compatibility="reseed_required",
             writable=False,
@@ -112,7 +112,7 @@ def _inspect_registered_host(instance_id: str) -> contracts.PlaybillHostInspecti
             ),
         )
     if managed_root.exists() != trust_root.exists():
-        return contracts.PlaybillHostInspectionV1(
+        return contracts.PlaybillHostInspection(
             **common,
             compatibility="reseed_required",
             writable=False,
@@ -126,7 +126,7 @@ def _inspect_registered_host(instance_id: str) -> contracts.PlaybillHostInspecti
         compiler = instance.inspect().compiler
         terminal = instance.descriptor.decommissioned
     except PlaybillReseedRequired:
-        return contracts.PlaybillHostInspectionV1(
+        return contracts.PlaybillHostInspection(
             **common,
             compatibility="reseed_required",
             writable=False,
@@ -136,7 +136,7 @@ def _inspect_registered_host(instance_id: str) -> contracts.PlaybillHostInspecti
             ),
         )
     except Exception as exc:
-        return contracts.PlaybillHostInspectionV1(
+        return contracts.PlaybillHostInspection(
             **common,
             compatibility="reseed_required",
             writable=False,
@@ -149,13 +149,13 @@ def _inspect_registered_host(instance_id: str) -> contracts.PlaybillHostInspecti
     if terminal is not None:
         # Decommissioning is terminal: the host keeps serving reads but no
         # governed write is ever accepted again, whatever its compiler lineage.
-        return contracts.PlaybillHostInspectionV1(
+        return contracts.PlaybillHostInspection(
             **common,
             compiler_coordinate=compiler.rule_digest,
             compiler_revision=revision,
             compatibility="decommissioned",
             writable=False,
-            reason=contracts.PlaybillHostCompatibilityReasonV1(
+            reason=contracts.PlaybillHostCompatibilityReason(
                 code="instance_decommissioned",
                 detail=(
                     f"Decommissioned at {terminal.decommissioned_at}: {terminal.reason}. "
@@ -165,7 +165,7 @@ def _inspect_registered_host(instance_id: str) -> contracts.PlaybillHostInspecti
             ),
         )
     writable = compiler in PC_HR_ARTIFACT_CODEC_COMPILERS
-    return contracts.PlaybillHostInspectionV1(
+    return contracts.PlaybillHostInspection(
         **common,
         compiler_coordinate=compiler.rule_digest,
         compiler_revision=revision,
@@ -182,7 +182,7 @@ def _inspect_registered_host(instance_id: str) -> contracts.PlaybillHostInspecti
     )
 
 
-def show_playbill_host(instance_id: str) -> contracts.PlaybillHostInspectionV1:
+def show_playbill_host(instance_id: str) -> contracts.PlaybillHostInspection:
     """Inspect one governed host without creating or changing any state."""
 
     check_permission("cruxible_playbill_host_show", instance_id=instance_id)
@@ -284,7 +284,7 @@ def playbill_host_workspace_registration(
     instance_id: str,
     *,
     expose_workspace_path: bool = False,
-) -> contracts.PlaybillHostWorkspaceRegistrationV1:
+) -> contracts.PlaybillHostWorkspaceRegistration:
     """Report daemon registration separately from client workspace configuration."""
 
     check_permission(
@@ -294,7 +294,7 @@ def playbill_host_workspace_registration(
     record = get_registry().get(instance_id)
     if record is None or record.backend != GOVERNED_DAEMON_BACKEND:
         raise ConfigError(f"Instance '{instance_id}' is not a governed daemon host")
-    return contracts.PlaybillHostWorkspaceRegistrationV1(
+    return contracts.PlaybillHostWorkspaceRegistration(
         instance_id=instance_id,
         status="registered" if record.workspace_root is not None else "not_registered",
         floor_delivery=record.floor_delivery,
@@ -310,8 +310,8 @@ def attach_workspace(
     instance_id: str,
     workspace_root: str,
     *,
-    observe: Callable[[PlaybillStateCoordinateV1], None] | None = None,
-    observe_host: Callable[[PlaybillStateCoordinateV1], None] | None = None,
+    observe: Callable[[PlaybillStateCoordinate], None] | None = None,
+    observe_host: Callable[[PlaybillStateCoordinate], None] | None = None,
 ) -> bool:
     """Attach one host to a Git worktree, before or after its init; True when newly.
 
@@ -387,7 +387,7 @@ def playbill_host_workspace_attach(
     workspace_attachment_authorized: bool = False,
     dry_run: bool | None = None,
     at: str | None = None,
-) -> contracts.PlaybillHostWorkspaceAttachResultV1:
+) -> contracts.PlaybillHostWorkspaceAttachResult:
     """Attach a host to a Git worktree, including a host already initialized (Q16).
 
     Local-socket callers only, as for detaching: the daemon must be able to see
@@ -411,7 +411,7 @@ def playbill_host_workspace_attach(
         # Opened behind the preview's guards: a cold open may not repair on disk.
         instance = get_playbill_manager().initialized(instance_id)
         attached = attach_workspace(instance_id, workspace_root, observe=change.observe)
-    return contracts.PlaybillHostWorkspaceAttachResultV1(
+    return contracts.PlaybillHostWorkspaceAttachResult(
         instance_id=instance_id,
         status=(
             "already_attached"
@@ -431,7 +431,7 @@ def set_playbill_floor_delivery(
     *,
     enabled: bool,
     workspace_attachment_authorized: bool = False,
-) -> contracts.PlaybillHostWorkspaceRegistrationV1:
+) -> contracts.PlaybillHostWorkspaceRegistration:
     """Opt a local workspace into its daemon's sole floor writer."""
 
     with FLOOR_ADMISSION.hold(instance_id):
@@ -447,7 +447,7 @@ def _set_playbill_floor_delivery_admitted(
     *,
     enabled: bool,
     workspace_attachment_authorized: bool = False,
-) -> contracts.PlaybillHostWorkspaceRegistrationV1:
+) -> contracts.PlaybillHostWorkspaceRegistration:
     """Set delivery with floor admission already held by the caller."""
 
     check_permission("cruxible_playbill_workspace_floor_delivery", instance_id=instance_id)
@@ -463,7 +463,7 @@ def deliver_playbill_floor_now(
     include: tuple[contracts.PlaybillFloorExportPart, ...] = (),
     at: contracts.PlaybillAcceptedCoordinate | None = None,
     workspace_attachment_authorized: bool = False,
-) -> contracts.PlaybillFloorDeliveryResultV1:
+) -> contracts.PlaybillFloorDeliveryResult:
     """Synchronously run the same floor delivery that follows Trigger fires."""
 
     with FLOOR_ADMISSION.hold(instance_id):
@@ -481,7 +481,7 @@ def _deliver_playbill_floor_now_admitted(
     include: tuple[contracts.PlaybillFloorExportPart, ...] = (),
     at: contracts.PlaybillAcceptedCoordinate | None = None,
     workspace_attachment_authorized: bool = False,
-) -> contracts.PlaybillFloorDeliveryResultV1:
+) -> contracts.PlaybillFloorDeliveryResult:
     """Deliver with floor admission already held by the caller."""
 
     check_permission("cruxible_playbill_floor_deliver_now", instance_id=instance_id)
@@ -506,7 +506,7 @@ def playbill_host_workspace_detach(
     workspace_attachment_authorized: bool = False,
     dry_run: bool | None = None,
     at: str | None = None,
-) -> contracts.PlaybillWorkspaceDetachResultV1:
+) -> contracts.PlaybillWorkspaceDetachResult:
     """Release a workspace under floor admission from a thread caller."""
 
     with FLOOR_ADMISSION.hold(instance_id):
@@ -524,7 +524,7 @@ def _playbill_host_workspace_detach_admitted(
     workspace_attachment_authorized: bool = False,
     dry_run: bool | None = None,
     at: str | None = None,
-) -> contracts.PlaybillWorkspaceDetachResultV1:
+) -> contracts.PlaybillWorkspaceDetachResult:
     """Release one governed host from the Git worktree it is attached to.
 
     The exclusivity is a UNIQUE index on `(backend, workspace_root)` in the
@@ -569,14 +569,14 @@ def _playbill_host_workspace_detach_admitted(
         if record is None or record.backend != GOVERNED_DAEMON_BACKEND:
             raise ConfigError(f"Instance '{instance_id}' is not a governed daemon host")
         if record.workspace_root is None:
-            return contracts.PlaybillWorkspaceDetachResultV1(
+            return contracts.PlaybillWorkspaceDetachResult(
                 instance_id=instance_id,
                 status="not_registered",
             )
         _refuse_detach_with_registered_blocks(instance_id)
         if change.previewing:
             change.observe(registry.workspace_state(instance_id))
-            return contracts.PlaybillWorkspaceDetachResultV1(
+            return contracts.PlaybillWorkspaceDetachResult(
                 instance_id=instance_id,
                 status="would_detach",
                 workspace_root=record.workspace_root,
@@ -588,7 +588,7 @@ def _playbill_host_workspace_detach_admitted(
             observe=change.observe,
         )
     assert detached.workspace_root is None
-    return contracts.PlaybillWorkspaceDetachResultV1(
+    return contracts.PlaybillWorkspaceDetachResult(
         instance_id=instance_id,
         status="detached",
         workspace_root=record.workspace_root,
@@ -678,7 +678,7 @@ def server_info() -> contracts.ServerInfoResult:
         instance_count=len(hosts),
         auth_enabled=is_server_auth_enabled(),
         auth_required=store.is_auth_required(),
-        provider_lane=contracts.ProviderLaneStatusV1(
+        provider_lane=contracts.ProviderLaneStatus(
             state=lane_state,
             code=lane_code,
             detail=lane_detail,

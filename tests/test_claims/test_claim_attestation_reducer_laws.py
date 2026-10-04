@@ -12,13 +12,13 @@ import pytest
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
 from cruxible_client.contracts.captures import build_coordinator_self_source_capture
 from cruxible_client.contracts.claims import (
-    ClaimArtifactV3,
-    ClaimRetirementAttributionV1,
+    ClaimArtifact,
+    ClaimRetirementAttribution,
     claim_artifact_digest,
     claim_path,
     parse_claim,
 )
-from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.indexes.history.history_index import ArtifactVersionLocation
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.service.claims.claims import (
@@ -27,7 +27,7 @@ from cruxible_core.service.claims.claims import (
 )
 from cruxible_core.service.discovery.next import (
     MAX_DEPENDENCY_LINEAGE_NODES,
-    PlaybillNextRequestV2,
+    PlaybillNextRequest,
     _attestation_claim_lineage,
     _AttestationLineageArtifact,
 )
@@ -37,8 +37,8 @@ from tests.test_claims.test_claim_attestation_service import RECORDED_AT, _reque
 from tests.test_claims.test_claim_type_migrations import _accepted_claim_world
 
 
-def _access() -> CoverageAccessProfileV1:
-    return CoverageAccessProfileV1(
+def _access() -> CoverageAccessProfile:
+    return CoverageAccessProfile(
         profile_id="attestation-reducer-laws",
         permitted_access_classes=("instance", "public"),
     )
@@ -95,7 +95,7 @@ def _door_rows(instance):  # type: ignore[no-untyped-def]
         item
         for item in unfolded_next(
             instance,
-            request=PlaybillNextRequestV2(
+            request=PlaybillNextRequest(
                 evaluation_time=RECORDED_AT,
                 access_profile=_access(),
             ),
@@ -310,13 +310,13 @@ def test_terminal_retirement_resolves_and_incomplete_lineage_retains_typed_statu
     assert len(incomplete) == 1
     assert incomplete[0].detail["lineage_status"] == "incomplete"
 
-    retired = ClaimArtifactV3(
+    retired = ClaimArtifact(
         identity=claim.identity,
         statement=claim.statement,
         backing=claim.backing,
         pins=claim.pins,
         lifecycle=ArtifactLifecycle(state="retired", predecessor_digest=digest),
-        retirement=ClaimRetirementAttributionV1(reason="was-rescinded"),
+        retirement=ClaimRetirementAttribution(reason="was-rescinded"),
     )
     retired_artifact = _AttestationLineageArtifact(
         claim=retired,

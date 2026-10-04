@@ -31,7 +31,7 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.captures import parse_capture_contract
 from cruxible_client.contracts.claim_attestations import (
-    ClaimAttestationV2,
+    ClaimAttestation,
     claim_attestation_v2_envelope_digest,
     claim_attestation_v2_statement_digest,
 )
@@ -117,7 +117,7 @@ OWNER_CODECS = (
     ),
     OwnerCodec(
         "attestation",
-        "ClaimAttestation",
+        "ClaimAttestationV1",
         "attestations",
         parse_accepted_attestation,
         (
@@ -609,8 +609,8 @@ def vocabulary_terms(source: Any, *, path: str) -> tuple[tuple[str, str, str, st
     """
     from cruxible_client.contracts.claim_type_structure import claim_type_structural_signature
     from cruxible_client.contracts.claims import (
+        ClaimArtifact,
         ClaimArtifactV2,
-        ClaimArtifactV3,
         LiteralClaimObject,
         SubjectClaimObject,
     )
@@ -639,7 +639,7 @@ def vocabulary_terms(source: Any, *, path: str) -> tuple[tuple[str, str, str, st
         rows.add((identity, path, "identity", identity, identity))
         rows.add((identity, path, "structural_signature", "subject:" + signature, signature))
         rows.add((identity, path, "canonical_token", normal(source.subject_id), source.subject_id))
-    elif isinstance(source, (ClaimArtifactV2, ClaimArtifactV3)):
+    elif isinstance(source, (ClaimArtifactV2, ClaimArtifact)):
         statement = source.statement
         if source.lifecycle.state != "live" or statement.predicate not in (
             VOCABULARY_DESCRIPTOR_PREDICATES
@@ -1043,7 +1043,7 @@ class TypedStateReader:
         current_claims_only: bool = False,
         claim_predicates: tuple[str, ...] | None = None,
         claim_versions: tuple[tuple[str, str], ...] | None = None,
-    ) -> tuple[ClaimAttestationV2, ...]:
+    ) -> tuple[ClaimAttestation, ...]:
         """Accepted attestations; ``claim_versions`` selects exact (identity, digest) pairs."""
         from cruxible_client.contracts.accepted_attestations import (
             attestation_artifact_digest,

@@ -20,10 +20,10 @@ from cruxible_client.contracts.artifacts import (
 )
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_types import (
-    ClaimAttestationConsequencePolicyV1,
-    ClaimAttestationConsequenceRuleV1,
-    ClaimEvidenceFreshnessV1,
-    ClaimFreshnessDurationV1,
+    ClaimAttestationConsequencePolicy,
+    ClaimAttestationConsequenceRule,
+    ClaimEvidenceFreshness,
+    ClaimFreshnessDuration,
     ClaimType,
     claim_type_digest,
     claim_type_path,
@@ -35,7 +35,7 @@ from cruxible_client.contracts.claim_verdicts import (
     claim_adjudication_rule_digest,
 )
 from cruxible_client.contracts.claims import (
-    ClaimArtifactV3,
+    ClaimArtifact,
     claim_artifact_digest,
     claim_path,
     parse_claim,
@@ -55,26 +55,26 @@ from cruxible_client.contracts.query.definitions import (
 )
 from cruxible_client.contracts.subjects import render_subject, subject_path
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
-from cruxible_core.claims.claim_type_inputs import ClaimTypeInputV1, lower_claim_type_input
+from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord, lower_claim_type_input
 from cruxible_core.claims.claim_type_migrations import (
+    ClaimTypeDependentDisposition,
     ClaimTypeDependentDispositionV1,
     ClaimTypeDependentDispositionV2,
-    ClaimTypeDependentDispositionV3,
     ClaimTypeMigrationDependentInvalid,
     ClaimTypeMigrationDependentSetMismatch,
     ClaimTypeMigrationError,
     ClaimTypeMigrationIncomplete,
     ClaimTypeMigrationPreflightV1,
+    ClaimTypeMigrationRequest,
     ClaimTypeMigrationRequestV1,
     ClaimTypeMigrationRequestV2,
-    ClaimTypeMigrationRequestV3,
     ClaimTypeMigrationResultV2,
     ClaimTypeMigrationResultV3,
     _canonical_successor_bytes,
     service_migrate_claim_type,
 )
 from cruxible_core.claims.closure import parse_dependency_artifact
-from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.proposals.proposals import (
     AuthenticatedActor,
     claim_type_expansions_from_candidate,
@@ -211,7 +211,7 @@ def _accepted_affects_package_world(tmp_path: Path):  # type: ignore[no-untyped-
     return instance, intent.semantic_identity, owner
 
 
-def _decision_only_input(current: ClaimType) -> ClaimTypeInputV1:
+def _decision_only_input(current: ClaimType) -> ClaimTypeInputRecord:
     """Explicitly author the successor under current, producer-independent policy."""
 
     values = current.model_dump(mode="json")
@@ -230,7 +230,7 @@ def _decision_only_input(current: ClaimType) -> ClaimTypeInputV1:
             for rule in current.evidence_admission_policy.rules
         ]
     }
-    return ClaimTypeInputV1.model_validate(values)
+    return ClaimTypeInputRecord.model_validate(values)
 
 
 def _subject_valued_affects_package_successor(instance):  # type: ignore[no-untyped-def]
@@ -248,7 +248,7 @@ def _subject_valued_affects_package_successor(instance):  # type: ignore[no-unty
             "allowed_object_subject_kinds": ("package",),
         }
     )
-    return ClaimTypeInputV1.model_validate(values)
+    return ClaimTypeInputRecord.model_validate(values)
 
 
 def _successor(instance):  # type: ignore[no-untyped-def]
@@ -438,11 +438,11 @@ def test_v3_invalidation_normalizes_to_attributed_retirement_with_warning(
     instance, claim_id, _owner = _accepted_claim_world(tmp_path)
     result = service_migrate_claim_type(
         instance,
-        request=ClaimTypeMigrationRequestV3(
+        request=ClaimTypeMigrationRequest(
             mode="submit",
             successor=_successor(instance),
             dependents=(
-                ClaimTypeDependentDispositionV3(
+                ClaimTypeDependentDisposition(
                     identity=ArtifactIdentity(kind="Claim", name=claim_id),
                     disposition="invalidation",
                     claim_retirement_reason="was-wrong",
@@ -465,7 +465,7 @@ def test_v3_invalidation_normalizes_to_attributed_retirement_with_warning(
         path=claim_path(claim_id),
     )
     assert claim.lifecycle.state == "retired"
-    assert isinstance(claim, ClaimArtifactV3)
+    assert isinstance(claim, ClaimArtifact)
     assert claim.retirement.reason == "was-wrong"
 
 
@@ -477,14 +477,14 @@ def test_shape_changing_affects_package_migration_accepts_exact_retirement_tombs
     instance, claim_id, owner = _accepted_affects_package_world(tmp_path)
     successor = _subject_valued_affects_package_successor(instance)
     actor = AuthenticatedActor(actor_id="owner")
-    dependent = ClaimTypeDependentDispositionV3(
+    dependent = ClaimTypeDependentDisposition(
         identity=ArtifactIdentity(kind="Claim", name=claim_id),
         disposition=disposition,  # type: ignore[arg-type]
         claim_retirement_reason="was-rescinded",
     )
     preflight = service_migrate_claim_type(
         instance,
-        request=ClaimTypeMigrationRequestV3(
+        request=ClaimTypeMigrationRequest(
             mode="preflight",
             successor=successor,
             dependents=(dependent,),
@@ -498,7 +498,7 @@ def test_shape_changing_affects_package_migration_accepts_exact_retirement_tombs
 
     result = service_migrate_claim_type(
         instance,
-        request=ClaimTypeMigrationRequestV3(
+        request=ClaimTypeMigrationRequest(
             mode="submit",
             successor=successor,
             dependents=(dependent,),
@@ -521,7 +521,7 @@ def test_shape_changing_affects_package_migration_accepts_exact_retirement_tombs
         candidate_tree[claim_path(claim_id)],
         path=claim_path(claim_id),
     )
-    assert isinstance(migrated_claim, ClaimArtifactV3)
+    assert isinstance(migrated_claim, ClaimArtifact)
     assert migrated_claim.lifecycle.state == "retired"
     assert migrated_claim.statement.object.kind == "literal"
     assert migrated_claim.statement.claim_type_digest == claim_type_digest(migrated_type).tagged
@@ -565,7 +565,7 @@ def test_shape_changing_migration_does_not_exempt_a_live_successor(tmp_path: Pat
     ):
         service_migrate_claim_type(
             instance,
-            request=ClaimTypeMigrationRequestV3(
+            request=ClaimTypeMigrationRequest(
                 mode="preflight",
                 successor=_subject_valued_affects_package_successor(instance),
             ),
@@ -579,11 +579,11 @@ def test_revision_7_claim_candidate_settles_and_reopens_under_its_recorded_law(
     instance, claim_id, _owner = _accepted_claim_world(tmp_path)
     result = service_migrate_claim_type(
         instance,
-        request=ClaimTypeMigrationRequestV3(
+        request=ClaimTypeMigrationRequest(
             mode="submit",
             successor=_successor(instance),
             dependents=(
-                ClaimTypeDependentDispositionV3(
+                ClaimTypeDependentDisposition(
                     identity=ArtifactIdentity(kind="Claim", name=claim_id),
                     disposition="retire",
                     claim_retirement_reason="was-rescinded",
@@ -771,7 +771,7 @@ def _decision_only_successor(instance, *, enum: list[str]):  # type: ignore[no-u
 
 def _activate_migration(instance, owner, successor, dependents):  # type: ignore[no-untyped-def]
     v3_dependents = tuple(
-        ClaimTypeDependentDispositionV3(
+        ClaimTypeDependentDisposition(
             identity=item.identity,
             disposition=item.disposition,
             successor=item.successor,
@@ -785,7 +785,7 @@ def _activate_migration(instance, owner, successor, dependents):  # type: ignore
     )
     result = service_migrate_claim_type(
         instance,
-        request=ClaimTypeMigrationRequestV3(
+        request=ClaimTypeMigrationRequest(
             mode="submit",
             successor=successor,
             dependents=v3_dependents,
@@ -820,7 +820,7 @@ def _activate_migration(instance, owner, successor, dependents):  # type: ignore
 def _accept_claim_type_only(
     instance,
     owner,
-    successor: ClaimTypeInputV1,
+    successor: ClaimTypeInputRecord,
     *,
     proposal_name: str,
 ):  # type: ignore[no-untyped-def]
@@ -847,7 +847,7 @@ def _next(instance):  # type: ignore[no-untyped-def]
         instance,
         request=PlaybillNextRequestV1(
             evaluation_time=datetime(2026, 8, 26, 12, tzinfo=UTC),
-            access_profile=CoverageAccessProfileV1(
+            access_profile=CoverageAccessProfile(
                 profile_id="migration-test",
                 permitted_access_classes=("instance", "public"),
             ),
@@ -855,10 +855,10 @@ def _next(instance):  # type: ignore[no-untyped-def]
     )
 
 
-def _policy(threshold: int) -> ClaimAttestationConsequencePolicyV1:
-    return ClaimAttestationConsequencePolicyV1(
+def _policy(threshold: int) -> ClaimAttestationConsequencePolicy:
+    return ClaimAttestationConsequencePolicy(
         rules=(
-            ClaimAttestationConsequenceRuleV1(
+            ClaimAttestationConsequenceRule(
                 rule_id="independent-unsure",
                 stance="unsure",
                 minimum_independent_control_components=threshold,
@@ -1037,8 +1037,8 @@ def test_decision_only_successor_migrates_freshness_and_its_live_claim(
     tmp_path: Path,
 ) -> None:
     instance, claim_id, _owner = _accepted_claim_world(tmp_path)
-    freshness = ClaimEvidenceFreshnessV1(
-        stale_after=ClaimFreshnessDurationV1(microseconds=2_592_000_000_000)
+    freshness = ClaimEvidenceFreshness(
+        stale_after=ClaimFreshnessDuration(microseconds=2_592_000_000_000)
     )
     successor = _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
         update={"evidence_freshness": freshness}
@@ -1088,8 +1088,8 @@ def test_current_successions_preserve_freshness_and_accept_policy(
 
     freshness_input = _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
         update={
-            "evidence_freshness": ClaimEvidenceFreshnessV1(
-                stale_after=ClaimFreshnessDurationV1(microseconds=2_592_000_000_000)
+            "evidence_freshness": ClaimEvidenceFreshness(
+                stale_after=ClaimFreshnessDuration(microseconds=2_592_000_000_000)
             )
         }
     )
@@ -1125,9 +1125,9 @@ def test_current_successions_preserve_freshness_and_accept_policy(
     )
     assert accepted_freshness.artifact_format == "playbill-claim-type-v7"
 
-    policy = ClaimAttestationConsequencePolicyV1(
+    policy = ClaimAttestationConsequencePolicy(
         rules=(
-            ClaimAttestationConsequenceRuleV1(
+            ClaimAttestationConsequenceRule(
                 rule_id="two-independent-unsure",
                 stance="unsure",
                 minimum_independent_control_components=2,
@@ -1181,8 +1181,8 @@ def test_retired_dependent_is_rederived_byte_exactly_and_next_remains_live(
     instance, claim_id, owner = _accepted_claim_world(tmp_path)
     identity = ArtifactIdentity(kind="Claim", name=claim_id)
     retire = ClaimTypeDependentDispositionV2(identity=identity, disposition="retire")
-    freshness = ClaimEvidenceFreshnessV1(
-        stale_after=ClaimFreshnessDurationV1(microseconds=2_592_000_000_000)
+    freshness = ClaimEvidenceFreshness(
+        stale_after=ClaimFreshnessDuration(microseconds=2_592_000_000_000)
     )
     _activate_migration(
         instance,
@@ -1194,7 +1194,7 @@ def test_retired_dependent_is_rederived_byte_exactly_and_next_remains_live(
     )
     before_tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     before = parse_claim(before_tree[claim_path(claim_id)], path=claim_path(claim_id))
-    assert isinstance(before, ClaimArtifactV3)
+    assert isinstance(before, ClaimArtifact)
     assert before.lifecycle.state == "retired"
     successor = _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
         update={"attestation_consequence_policy": _policy(2)}
@@ -1295,8 +1295,8 @@ def test_retired_claim_rederives_on_freshness_migration(tmp_path: Path) -> None:
         _decision_only_successor(instance, enum=["blocked", "ready"]),
         (ClaimTypeDependentDispositionV2(identity=identity, disposition="retire"),),
     )
-    freshness = ClaimEvidenceFreshnessV1(
-        stale_after=ClaimFreshnessDurationV1(microseconds=2_592_000_000_000)
+    freshness = ClaimEvidenceFreshness(
+        stale_after=ClaimFreshnessDuration(microseconds=2_592_000_000_000)
     )
     _activate_migration(
         instance,

@@ -14,11 +14,11 @@ from cruxible_client.contracts.captures import (
     foreign_source_capture_contract,
 )
 from cruxible_client.contracts.get_reads import (
-    PlaybillByteRangeV1,
-    PlaybillGetClaimCardV1,
-    PlaybillGetRequestV1,
-    PlaybillGetResultV1,
-    PlaybillGetSubjectCardV1,
+    PlaybillByteRange,
+    PlaybillGetClaimCard,
+    PlaybillGetRequest,
+    PlaybillGetResult,
+    PlaybillGetSubjectCard,
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -89,10 +89,10 @@ def world(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
     }
 
 
-def _get(instance: PlaybillInstance, ref: str, **fields: Any) -> PlaybillGetResultV1:
+def _get(instance: PlaybillInstance, ref: str, **fields: Any) -> PlaybillGetResult:
     return service_playbill_get(
         instance,
-        request=PlaybillGetRequestV1(ref=ref, **{"evaluation_time": _WHEN, **fields}),
+        request=PlaybillGetRequest(ref=ref, **{"evaluation_time": _WHEN, **fields}),
         access=_ACCESS,
     )
 
@@ -114,7 +114,7 @@ def test_every_claim_reference_form_reads_the_same_values_first_card(world: dict
     cards = [_get(instance, form).card for form in forms]
 
     card = cards[0]
-    assert isinstance(card, PlaybillGetClaimCardV1)
+    assert isinstance(card, PlaybillGetClaimCard)
     assert all(item == card for item in cards)
     assert card.claim == claim
     assert card.subject == _SUBJECT
@@ -140,7 +140,7 @@ def test_a_subject_card_carries_its_claims_as_values(world: dict[str, Any]) -> N
     for form in (_SUBJECT, f"Subject:{_SUBJECT}", f"subjects/{_SUBJECT}.json"):
         result = _get(instance, form)
         card = result.card
-        assert isinstance(card, PlaybillGetSubjectCardV1)
+        assert isinstance(card, PlaybillGetSubjectCard)
         assert result.ref == _SUBJECT and result.kind == "subject"
         assert card.kind == "project.work_item" and card.lifecycle == "live"
         assert [(row.predicate, row.value, row.flags) for row in card.claims] == [
@@ -231,7 +231,7 @@ def test_a_document_reads_as_metadata_then_body_by_range(world: dict[str, Any]) 
 
     whole = _get(instance, "Document:design", detail="body").body
     part = _get(
-        instance, "Document:design", detail="body", range=PlaybillByteRangeV1(start=2, end=8)
+        instance, "Document:design", detail="body", range=PlaybillByteRange(start=2, end=8)
     ).body
     assert whole is not None and whole.text == _BODY.decode()
     assert part is not None and part.text == _BODY[2:8].decode()
@@ -282,7 +282,7 @@ def test_a_body_over_the_cap_refuses_with_the_range_repair(
     }
     assert "range=" in str(refused)
     beyond = _refusal(
-        instance, "Document:design", detail="body", range=PlaybillByteRangeV1(start=999, end=1000)
+        instance, "Document:design", detail="body", range=PlaybillByteRange(start=999, end=1000)
     )
     assert beyond.error_code == "playbill.get.range_out_of_bounds"
 
@@ -443,13 +443,13 @@ def test_an_unsure_attestation_with_nothing_to_hold_shows_no_hold(tmp_path: Path
 
     card = service_playbill_get(
         instance,
-        request=PlaybillGetRequestV1(ref=claim.identity.name, evaluation_time=LATER),
+        request=PlaybillGetRequest(ref=claim.identity.name, evaluation_time=LATER),
         access=_ACCESS,
     ).card
 
     # next parks no row for a supported Claim, so there is no hold to show.
     assert _next(instance).status.held == 0
-    assert isinstance(card, PlaybillGetClaimCardV1) and card.flags == ()
+    assert isinstance(card, PlaybillGetClaimCard) and card.flags == ()
 
 
 def test_a_contested_slot_shows_every_live_value_with_the_contested_flag(
@@ -489,16 +489,16 @@ def test_a_contested_slot_shows_every_live_value_with_the_contested_flag(
 
     # Before the contender's evidence is observed, resolution still selects one.
     resolved = _get(instance, _SUBJECT).card
-    assert isinstance(resolved, PlaybillGetSubjectCardV1)
+    assert isinstance(resolved, PlaybillGetSubjectCard)
     assert [(row.value, row.flags) for row in resolved.claims] == [("ready", ())]
     subject = _get(instance, _SUBJECT, evaluation_time=LATER).card
     claim = _get(instance, first.identity.name, evaluation_time=LATER).card
 
-    assert isinstance(subject, PlaybillGetSubjectCardV1)
+    assert isinstance(subject, PlaybillGetSubjectCard)
     (row,) = subject.claims
     assert sorted(row.value) == ["blocked", "ready"]
     assert "contested" in row.flags
-    assert isinstance(claim, PlaybillGetClaimCardV1)
+    assert isinstance(claim, PlaybillGetClaimCard)
     assert "contested" in claim.flags
     assert [item.value for item in claim.contenders] == ["blocked"]
 
@@ -512,8 +512,8 @@ def test_a_contested_slot_shows_every_live_value_with_the_contested_flag(
     )
     subject = _get(instance, _SUBJECT, evaluation_time=LATER).card
     claim = _get(instance, first.identity.name, evaluation_time=LATER).card
-    assert isinstance(subject, PlaybillGetSubjectCardV1)
-    assert isinstance(claim, PlaybillGetClaimCardV1)
+    assert isinstance(subject, PlaybillGetSubjectCard)
+    assert isinstance(claim, PlaybillGetClaimCard)
     contender = claim.contenders[0].claim
     expected = f'cruxible_playbill_get(ref="{contender}", detail="evidence")'
     assert subject.next[0] == expected
@@ -570,7 +570,7 @@ def test_a_new_contender_ends_the_unsure_hold_exactly_as_next_decides(tmp_path: 
 
     def flags() -> tuple[str, ...]:
         card = _get(instance, first.identity.name, evaluation_time=LATER).card
-        assert isinstance(card, PlaybillGetClaimCardV1)
+        assert isinstance(card, PlaybillGetClaimCard)
         return card.flags
 
     assert not _rows(_next(instance), "claim_conflicted")
@@ -598,7 +598,7 @@ def test_a_held_stale_dependency_shows_the_unsure_hold_next_parks(
 
     def flags() -> tuple[str, ...]:
         card = _get(instance, dependent.identity.name, evaluation_time=LATER).card
-        assert isinstance(card, PlaybillGetClaimCardV1)
+        assert isinstance(card, PlaybillGetClaimCard)
         return card.flags
 
     # The dependent records an earlier version of the source as its backing
@@ -668,14 +668,14 @@ def test_a_held_stale_dependency_shows_the_unsure_hold_next_parks(
     assert "unsure_hold" in flags()
     # The hold is the dependent's; its upstream input is not held by it.
     card = _get(instance, source.identity.name, evaluation_time=LATER).card
-    assert isinstance(card, PlaybillGetClaimCardV1) and "unsure_hold" not in card.flags
+    assert isinstance(card, PlaybillGetClaimCard) and "unsure_hold" not in card.flags
 
 
 @pytest.mark.parametrize("missing", ("admission", "evaluation", "candidate"))
 def test_a_partial_proposal_reads_as_incomplete_not_an_integrity_error(
     tmp_path: Path, missing: str
 ) -> None:
-    from cruxible_client.contracts.proposal_models import ProposalWithdrawalRecordV1
+    from cruxible_client.contracts.proposal_models import ProposalWithdrawalRecord
     from tests.core_support._support import initialize_local
     from tests.test_proposals.test_grouped_proposal_notes import _submit
 
@@ -685,7 +685,7 @@ def test_a_partial_proposal_reads_as_incomplete_not_an_integrity_error(
     evidence = instance.proposal_evidence()
     if missing == "admission":
         evidence.write_withdrawal(
-            ProposalWithdrawalRecordV1(
+            ProposalWithdrawalRecord(
                 proposal_id=proposal_id,
                 actor_id="owner",
                 reason="retain this row",
@@ -736,10 +736,10 @@ def test_an_empty_document_reads_as_an_empty_body(tmp_path: Path) -> None:
 
     whole = _get(instance, "Document:empty", detail="body").body
     ranged = _get(
-        instance, "Document:empty", detail="body", range=PlaybillByteRangeV1(start=0, end=10)
+        instance, "Document:empty", detail="body", range=PlaybillByteRange(start=0, end=10)
     ).body
     beyond = _refusal(
-        instance, "Document:empty", detail="body", range=PlaybillByteRangeV1(start=5, end=10)
+        instance, "Document:empty", detail="body", range=PlaybillByteRange(start=5, end=10)
     )
 
     for read in (whole, ranged):
@@ -774,7 +774,7 @@ def test_a_summary_card_cuts_a_long_value_and_evidence_reads_it_whole(
 ) -> None:
     from cruxible_client.contracts.get_reads import (
         GET_SUMMARY_TEXT_MAX_CHARS,
-        PlaybillGetTruncatedTextV1,
+        PlaybillGetTruncatedText,
     )
 
     instance, _owner = seed_claims(tmp_path)
@@ -782,12 +782,12 @@ def test_a_summary_card_cuts_a_long_value_and_evidence_reads_it_whole(
     # The fixture ClaimType is an enum, so stand a long note in for its value.
     monkeypatch.setattr(get_module, "_artifact_value", lambda _claim: long_value)
     monkeypatch.setattr(get_module, "_claim_value", lambda _row: long_value)
-    cut = PlaybillGetTruncatedTextV1(
+    cut = PlaybillGetTruncatedText(
         value=long_value[:GET_SUMMARY_TEXT_MAX_CHARS], length=len(long_value)
     )
 
     subject = _get(instance, _SUBJECT).card
-    assert isinstance(subject, PlaybillGetSubjectCardV1)
+    assert isinstance(subject, PlaybillGetSubjectCard)
     (row,) = subject.claims
     assert row.value == cut
     assert row.model_dump(mode="json")["value"] == {
@@ -798,7 +798,7 @@ def test_a_summary_card_cuts_a_long_value_and_evidence_reads_it_whole(
     assert isinstance(row.claim, str)
     assert subject.next[0] == f'cruxible_playbill_get(ref="{row.claim}", detail="evidence")'
     claim = _get(instance, row.claim).card
-    assert isinstance(claim, PlaybillGetClaimCardV1) and claim.value == cut
+    assert isinstance(claim, PlaybillGetClaimCard) and claim.value == cut
 
     assert claim.next[0] == subject.next[0]
     history = _get(instance, row.claim, detail="history").history
@@ -812,7 +812,7 @@ def test_a_summary_card_cuts_a_long_value_and_evidence_reads_it_whole(
 def test_summary_value_cuts_only_long_strings() -> None:
     from cruxible_client.contracts.get_reads import (
         GET_SUMMARY_TEXT_MAX_CHARS,
-        PlaybillGetTruncatedTextV1,
+        PlaybillGetTruncatedText,
         summary_value,
     )
 
@@ -820,14 +820,14 @@ def test_summary_value_cuts_only_long_strings() -> None:
     assert summary_value(edge) == edge
     assert summary_value(["ready", 3, {"k": edge + "y"}]) == ["ready", 3, {"k": edge + "y"}]
     assert summary_value([edge + "y"]) == [
-        PlaybillGetTruncatedTextV1(value=edge, length=GET_SUMMARY_TEXT_MAX_CHARS + 1)
+        PlaybillGetTruncatedText(value=edge, length=GET_SUMMARY_TEXT_MAX_CHARS + 1)
     ]
 
 
 def test_subject_rows_name_the_claim_behind_each_value(world: dict[str, Any]) -> None:
     card = _get(world["instance"], _SUBJECT).card
 
-    assert isinstance(card, PlaybillGetSubjectCardV1)
+    assert isinstance(card, PlaybillGetSubjectCard)
     assert [(row.claim, row.value) for row in card.claims] == [(world["claim"], "ready")]
 
 
@@ -869,7 +869,7 @@ def test_history_pages_newest_first_with_a_bound_cursor(tmp_path: Path) -> None:
     with pytest.raises(PlaybillListCursorMismatch):
         _get(instance, "project.work_item/wi-42", detail="history", cursor=first_page.next_cursor)
     with pytest.raises(ValueError, match="page detail=.history. only"):
-        PlaybillGetRequestV1(ref=first, limit=5)
+        PlaybillGetRequest(ref=first, limit=5)
 
 
 def test_a_summary_names_its_coordinate_compactly_and_proof_in_full(
@@ -942,7 +942,7 @@ def test_cli_width_cuts_offer_evidence_without_changing_other_surfaces(
     for surface in ("cli", "mcp", "sdk"):
         subject = _get(instance, _SUBJECT, surface=surface).card
         history = _get(instance, claim_id, detail="history", surface=surface).history
-        assert isinstance(subject, PlaybillGetSubjectCardV1)
+        assert isinstance(subject, PlaybillGetSubjectCard)
         assert history is not None
         if surface == "cli":
             assert subject.next[0] == f"cruxible playbill get {claim_id} --detail evidence"

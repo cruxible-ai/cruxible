@@ -10,7 +10,7 @@ import pytest
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.curation.curation import (
     CURATION_DETECTOR_LAW_DIGEST_DOMAIN,
     CURATION_PATTERN_ID_DOMAIN,
@@ -635,7 +635,7 @@ def _serve_detection(
         instance,
         request=PlaybillCurationListRequestV1(
             evaluation_time=NOW,
-            access_profile=CoverageAccessProfileV1(profile_id="test-curation"),
+            access_profile=CoverageAccessProfile(profile_id="test-curation"),
         ),
         actor_context=_actor(),
     )

@@ -16,9 +16,9 @@ from pathlib import Path
 from typing import get_args
 
 from cruxible_client.contracts.procedures.results import (
-    ProcedureAdmissionRefusalCodeV1,
-    ProcedureInternalFailureCodeV1,
-    ProcedureOperationalFailureCodeV1,
+    ProcedureAdmissionRefusalCode,
+    ProcedureInternalFailureCode,
+    ProcedureOperationalFailureCode,
 )
 
 _SOURCE_ROOT = Path(__file__).resolve().parents[2] / "src" / "cruxible_core"
@@ -99,7 +99,7 @@ def test_every_admission_refusal_member_is_produced_in_production_source() -> No
 
     produced = _produced_strings()
     missing = sorted(
-        code for code in get_args(ProcedureAdmissionRefusalCodeV1) if code not in produced
+        code for code in get_args(ProcedureAdmissionRefusalCode) if code not in produced
     )
     assert missing == []
 
@@ -144,7 +144,7 @@ def test_internal_failure_producer_debt_is_pinned_and_can_only_shrink() -> None:
 
     produced = _produced_strings()
     missing = frozenset(
-        code for code in get_args(ProcedureInternalFailureCodeV1) if code not in produced
+        code for code in get_args(ProcedureInternalFailureCode) if code not in produced
     )
     assert missing == INTERNAL_FAILURE_WITHOUT_PRODUCTION_PRODUCER
     assert "cache_integrity" not in INTERNAL_FAILURE_WITHOUT_PRODUCTION_PRODUCER
@@ -153,6 +153,6 @@ def test_internal_failure_producer_debt_is_pinned_and_can_only_shrink() -> None:
 def test_operational_failure_producer_debt_is_pinned_and_can_only_shrink() -> None:
     produced = _produced_strings()
     missing = frozenset(
-        code for code in get_args(ProcedureOperationalFailureCodeV1) if code not in produced
+        code for code in get_args(ProcedureOperationalFailureCode) if code not in produced
     )
     assert missing == OPERATIONAL_FAILURE_WITHOUT_PRODUCTION_PRODUCER

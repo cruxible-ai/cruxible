@@ -11,7 +11,7 @@ from typing import Any
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.captures import (
-    DirectForeignSourceSelectionV1,
+    DirectForeignSourceSelection,
     capture_contract_digest,
     foreign_source_capture_contract,
 )
@@ -21,14 +21,14 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionRuleV1,
 )
-from cruxible_client.contracts.query.definitions import QueryDefinitionV1, QueryEvaluationPolicyV1
+from cruxible_client.contracts.query.definitions import QueryDefinition, QueryEvaluationPolicy
 from cruxible_client.contracts.query.grammar import (
-    QueryBudgetsV1,
-    QueryClaimValueRefV1,
-    QueryEntryV1,
-    QueryProjectionFieldV1,
-    QueryProjectionV1,
-    QuerySubjectFieldRefV1,
+    QueryBudgets,
+    QueryClaimValueRef,
+    QueryEntry,
+    QueryProjection,
+    QueryProjectionField,
+    QuerySubjectFieldRef,
 )
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell
@@ -186,7 +186,7 @@ def seed_claims_into(
         instance,
         authoring=authoring("wi-42", "ready", with_claim_type=False).model_copy(
             update={
-                "source_selection": DirectForeignSourceSelectionV1(
+                "source_selection": DirectForeignSourceSelection(
                     logical_source_identity=source_id,
                     span=ContentSpan(
                         content_digest=first_body.digest,
@@ -206,7 +206,7 @@ def seed_claims_into(
         instance,
         authoring=authoring("wi-43", "blocked", with_claim_type=False).model_copy(
             update={
-                "source_selection": DirectForeignSourceSelectionV1(
+                "source_selection": DirectForeignSourceSelection(
                     logical_source_identity=source_id,
                     span=ContentSpan(
                         content_digest=second_body.digest,
@@ -227,7 +227,7 @@ def work_item_query(
     name: str = QUERY_NAME,
     *,
     claim_type: ClaimType | None = None,
-) -> QueryDefinitionV1:
+) -> QueryDefinition:
     """Return one many-cardinality Subject read over every accepted work item."""
 
     if claim_type is None:
@@ -248,32 +248,32 @@ def work_item_query(
                 )
             }
         )
-    return QueryDefinitionV1(
+    return QueryDefinition(
         identity=ArtifactIdentity(kind="QueryDefinition", name=name),
-        entry=QueryEntryV1(binding="item", subject_kinds=(SUBJECT_KIND,)),
+        entry=QueryEntry(binding="item", subject_kinds=(SUBJECT_KIND,)),
         result_binding="item",
         result_shape="subject",
         result_cardinality="many",
         dedupe="subject",
-        projection=QueryProjectionV1(
+        projection=QueryProjection(
             fields=(
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="item_id",
-                    value=QuerySubjectFieldRefV1(binding="item", field="subject_id"),
+                    value=QuerySubjectFieldRef(binding="item", field="subject_id"),
                 ),
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="status",
-                    value=QueryClaimValueRefV1(binding="item", predicate=PREDICATE),
+                    value=QueryClaimValueRef(binding="item", predicate=PREDICATE),
                 ),
             )
         ),
-        evaluation_policy=QueryEvaluationPolicyV1(
+        evaluation_policy=QueryEvaluationPolicy(
             visible_verdicts=("supported",),
             visible_currency=("current",),
             conflict_behavior="surface_conflicts",
         ),
-        default_budgets=QueryBudgetsV1(max_results=10, max_traversal_depth=0),
-        maximum_budgets=QueryBudgetsV1(max_results=50, max_traversal_depth=0),
+        default_budgets=QueryBudgets(max_results=10, max_traversal_depth=0),
+        maximum_budgets=QueryBudgets(max_results=50, max_traversal_depth=0),
         pins=(
             ArtifactPin(
                 role="claim-type",

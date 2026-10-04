@@ -21,12 +21,12 @@ from cruxible_client.authoring.inputs import (
 )
 from cruxible_client.authoring.sdk import ChangeSetDraft, carry, re_author, rescind, retire
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
-from cruxible_client.contracts.authoring.models import ClaimTypeSuccessionDependentV1
+from cruxible_client.contracts.authoring.models import ClaimTypeSuccessionDependent
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest
 from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicyV1,
+    ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV1,
-    ClaimResolutionPolicyV1,
+    ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.transport.http import CruxibleClient
@@ -54,8 +54,8 @@ def _claim_type() -> ClaimType:
         cardinality="one",
         permitted_roles=("normative", "observation"),
         evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(),
-        admission_policy=ClaimAdmissionPolicyV1(),
-        resolution_policy=ClaimResolutionPolicyV1(
+        admission_policy=ClaimAdmissionPolicy(),
+        resolution_policy=ClaimResolutionPolicy(
             cardinality="one",
             eligible_verdicts=("supported",),
             selector="only_contender",
@@ -398,7 +398,7 @@ def test_one_claim_type_succession_has_one_identity_across_sdk_cli_and_mcp(
                 kind="claim_type_succession",
                 successor=successor,
                 dependents=(
-                    ClaimTypeSuccessionDependentV1(
+                    ClaimTypeSuccessionDependent(
                         identity=ArtifactIdentity(kind="Claim", name=claim_id),
                         disposition="retire",
                         claim_retirement_reason="was-rescinded",

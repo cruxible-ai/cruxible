@@ -13,7 +13,7 @@ from cruxible_client.contracts.canonical import ArtifactDigest
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.procedures.artifacts import ProcedureArtifactAny
 from cruxible_client.contracts.procedures.models import (
-    ProcedurePinSlotRefV1,
+    ProcedurePinSlotRef,
     iter_pin_bindings,
 )
 
@@ -26,13 +26,13 @@ class _StrictClosureModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class LineSlotBindingV1(_StrictClosureModel):
+class LineSlotBinding(_StrictClosureModel):
     tag: Literal["playbill-line-slot-binding-v1"] = "playbill-line-slot-binding-v1"
     slot_name: str
     artifact_pin: ArtifactPin
 
 
-class ProviderExtrasEnvironmentPinMapV1(_StrictClosureModel):
+class ProviderExtrasEnvironmentPinMap(_StrictClosureModel):
     """Reviewable extras-set to eligible local environment-key closure."""
 
     tag: Literal["playbill-provider-extras-environment-pin-map-v1"] = (
@@ -49,7 +49,7 @@ class ProviderExtrasEnvironmentPinMapV1(_StrictClosureModel):
         return value
 
 
-class ProviderImplementationClosureV1(_StrictClosureModel):
+class ProviderImplementationClosure(_StrictClosureModel):
     """One slot-filled Line occurrence's exact Provider implementation closure."""
 
     tag: Literal["playbill-provider-implementation-closure-v1"] = (
@@ -61,7 +61,7 @@ class ProviderImplementationClosureV1(_StrictClosureModel):
     interface_artifact_digest: str
     interface_digest: str
     implementation_digest: str
-    environment_pin_map: ProviderExtrasEnvironmentPinMapV1
+    environment_pin_map: ProviderExtrasEnvironmentPinMap
 
     @field_validator(
         "provider_artifact_digest",
@@ -75,7 +75,7 @@ class ProviderImplementationClosureV1(_StrictClosureModel):
         return value
 
 
-class ProcedureSlotInterfaceV1(_StrictClosureModel):
+class ProcedureSlotInterface(_StrictClosureModel):
     """Frozen nominal interface preimage shared by Procedure and implementation."""
 
     tag: Literal["playbill-procedure-slot-interface-v1"] = "playbill-procedure-slot-interface-v1"
@@ -92,14 +92,14 @@ class ProcedureSlotInterfaceV1(_StrictClosureModel):
         return value
 
     @model_validator(mode="after")
-    def _nonempty(self) -> "ProcedureSlotInterfaceV1":
+    def _nonempty(self) -> "ProcedureSlotInterface":
         if self.contract_in_digest is None and self.contract_out_digest is None:
             raise ValueError("slot interface must commit at least one contract digest")
         return self
 
 
 @dataclass(frozen=True)
-class ClosedProcedurePinsV1:
+class ClosedProcedurePins:
     exact_pins: tuple[ArtifactPin, ...]
     bound_slot_names: tuple[str, ...]
 
@@ -115,9 +115,9 @@ def _pin_key(pin: ArtifactPin) -> tuple[bytes, bytes, bytes]:
 def close_procedure_pin_slots(
     procedure: ProcedureArtifactAny,
     *,
-    bindings: tuple[LineSlotBindingV1, ...],
+    bindings: tuple[LineSlotBinding, ...],
     interface_digests: Mapping[str, str],
-) -> ClosedProcedurePinsV1:
+) -> ClosedProcedurePins:
     """Close every declared slot with one exact, role/kind/interface-matched pin.
 
     ``interface_digests`` is keyed by the bound artifact digest.  It is produced
@@ -132,7 +132,7 @@ def close_procedure_pin_slots(
     referenced = {
         binding.slot_name
         for binding in iter_pin_bindings(procedure.definition)
-        if isinstance(binding, ProcedurePinSlotRefV1)
+        if isinstance(binding, ProcedurePinSlotRef)
     }
     supplied = set(binding_names)
     missing = referenced - supplied
@@ -165,15 +165,15 @@ def close_procedure_pin_slots(
             )
         closed.append(pin)
     exact = tuple(sorted(set(closed), key=_pin_key))
-    return ClosedProcedurePinsV1(exact_pins=exact, bound_slot_names=binding_names)
+    return ClosedProcedurePins(exact_pins=exact, bound_slot_names=binding_names)
 
 
 __all__ = [
-    "ClosedProcedurePinsV1",
-    "LineSlotBindingV1",
-    "ProviderExtrasEnvironmentPinMapV1",
-    "ProviderImplementationClosureV1",
+    "ClosedProcedurePins",
+    "LineSlotBinding",
+    "ProviderExtrasEnvironmentPinMap",
+    "ProviderImplementationClosure",
     "ProcedurePinClosureError",
-    "ProcedureSlotInterfaceV1",
+    "ProcedureSlotInterface",
     "close_procedure_pin_slots",
 ]

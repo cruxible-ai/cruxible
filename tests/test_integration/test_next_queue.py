@@ -28,8 +28,8 @@ from cruxible_client.contracts.documents import (
     DocumentShell,
     render_document,
 )
-from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
-from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+from cruxible_client.contracts.source_references import ExternalSourceReference
+from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.claims.claims import (
@@ -40,11 +40,11 @@ from cruxible_core.service.claims.claims import (
 from cruxible_core.service.discovery.next import (
     NextReason,
     PlaybillNextAccessProfileInvalid,
-    PlaybillNextDriftObservationV1,
+    PlaybillNextDriftObservation,
     PlaybillNextRequestV1,
     PlaybillNextSourceObservationV3,
+    PlaybillNextWorkspaceObservation,
     PlaybillNextWorkspaceObservationInvalid,
-    PlaybillNextWorkspaceObservationV1,
     _citation_commitments,
     _qualifier_discriminator,
     service_playbill_next,
@@ -73,8 +73,8 @@ from tests.test_integration.test_next_status import _attention
 EVALUATION_TIME = datetime(2026, 8, 24, 18, tzinfo=UTC)
 
 
-def _access() -> CoverageAccessProfileV1:
-    return CoverageAccessProfileV1(
+def _access() -> CoverageAccessProfile:
+    return CoverageAccessProfile(
         profile_id="next-test",
         permitted_access_classes=("instance", "public"),
     )
@@ -116,7 +116,7 @@ def test_provider_lane_degradation_is_typed_status_with_hand_edit_repair(
             evaluation_time=EVALUATION_TIME,
             access_profile=_access(),
         ),
-        provider_lane=contracts.ProviderLaneStatusV1(
+        provider_lane=contracts.ProviderLaneStatus(
             state="unavailable",
             code="provider_process_lease_invalid",
             detail="control socket path is too long",
@@ -158,10 +158,10 @@ def test_workspace_drift_is_verified_against_the_accepted_citation(
         at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         evaluation_time=EVALUATION_TIME,
         access_profile=_access(),
-        workspace_observation=PlaybillNextWorkspaceObservationV1(
+        workspace_observation=PlaybillNextWorkspaceObservation(
             floor_status="missing",
             drift_observations=(
-                PlaybillNextDriftObservationV1(
+                PlaybillNextDriftObservation(
                     citation_id=citation.citation_id,
                     expected_commitment_digest=envelope.commitment.digest,
                     observed_commitment_digest=observed,
@@ -288,13 +288,13 @@ def test_unresolved_citation_predecessor_degrades_to_a_row_with_a_typed_note(
         instance,
         request=PlaybillNextRequestV1(
             evaluation_time=EVALUATION_TIME,
-            access_profile=CoverageAccessProfileV1(
+            access_profile=CoverageAccessProfile(
                 profile_id="public-next-test",
                 permitted_access_classes=("instance", "public"),
             ),
-            workspace_observation=PlaybillNextWorkspaceObservationV1(
+            workspace_observation=PlaybillNextWorkspaceObservation(
                 drift_observations=(
-                    PlaybillNextDriftObservationV1(
+                    PlaybillNextDriftObservation(
                         citation_id=old_citation.citation_id,
                         expected_commitment_digest=envelope.commitment.digest,
                         observed_commitment_digest=observed,
@@ -345,9 +345,9 @@ def test_backing_only_successor_keeps_edited_predecessor_span_in_drift_queue(
         request=PlaybillNextRequestV1(
             evaluation_time=EVALUATION_TIME,
             access_profile=_access(),
-            workspace_observation=PlaybillNextWorkspaceObservationV1(
+            workspace_observation=PlaybillNextWorkspaceObservation(
                 drift_observations=(
-                    PlaybillNextDriftObservationV1(
+                    PlaybillNextDriftObservation(
                         citation_id=old_citation.citation_id,
                         expected_commitment_digest=envelope.commitment.digest,
                         observed_commitment_digest=observed,
@@ -405,14 +405,14 @@ def test_document_modified_names_a_reproposal_that_clears_the_row(tmp_path: Path
 
     def queued(  # type: ignore[no-untyped-def]
         observed_digest: str,
-        access_profile: CoverageAccessProfileV1 = _access(),
+        access_profile: CoverageAccessProfile = _access(),
     ):
         return service_playbill_next(
             current,
             request=PlaybillNextRequestV1(
                 evaluation_time=EVALUATION_TIME,
                 access_profile=access_profile,
-                workspace_observation=PlaybillNextWorkspaceObservationV1(
+                workspace_observation=PlaybillNextWorkspaceObservation(
                     source_observations=(
                         PlaybillNextSourceObservationV3(
                             tag="playbill-next-source-observation-v3",
@@ -437,7 +437,7 @@ def test_document_modified_names_a_reproposal_that_clears_the_row(tmp_path: Path
     assert row.repair.operation == "playbill.document.propose"
     assert row.repair.required_change == "repropose_modified_document"
     assert all(item.reason != "document_modified" for item in queued(body.digest).items)
-    public_only = CoverageAccessProfileV1(
+    public_only = CoverageAccessProfile(
         profile_id="public-only",
         permitted_access_classes=("public",),
     )
@@ -466,7 +466,7 @@ def test_malformed_capture_snapshot_never_hides_another_citations_repair(
         nonlocal calls
         envelope = parse_capture_envelope(content)
         calls += 1
-        source = ExternalSourceReferenceV1(
+        source = ExternalSourceReference(
             source_identity="corpus.malformed" if calls == 1 else "corpus.healthy",
             producer_binding_digest=envelope.commitment.digest,
             coordinate_type=FOREIGN_SOURCE_COORDINATE_TYPE,
@@ -495,7 +495,7 @@ def test_malformed_capture_snapshot_never_hides_another_citations_repair(
         request=PlaybillNextRequestV1(
             evaluation_time=EVALUATION_TIME,
             access_profile=_access(),
-            workspace_observation=PlaybillNextWorkspaceObservationV1(
+            workspace_observation=PlaybillNextWorkspaceObservation(
                 source_observations=(
                     PlaybillNextSourceObservationV3(
                         tag="playbill-next-source-observation-v3",
@@ -655,7 +655,7 @@ def test_a_caller_without_instance_access_is_told_nothing_about_claims(tmp_path:
         "claim_new_evidence_unreviewed",
     }
 
-    def reasons(profile: CoverageAccessProfileV1) -> set[str]:
+    def reasons(profile: CoverageAccessProfile) -> set[str]:
         result = service_playbill_next(
             instance,
             request=PlaybillNextRequestV1(evaluation_time=EVALUATION_TIME, access_profile=profile),
@@ -663,7 +663,7 @@ def test_a_caller_without_instance_access_is_told_nothing_about_claims(tmp_path:
         return {item.reason for item in result.items} & claim_reasons
 
     assert "claim_conflicted" in reasons(_access())
-    public = CoverageAccessProfileV1(profile_id="public-only", permitted_access_classes=("public",))
+    public = CoverageAccessProfile(profile_id="public-only", permitted_access_classes=("public",))
     assert reasons(public) == set()
 
 

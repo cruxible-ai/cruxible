@@ -43,14 +43,14 @@ _KEY_ID_RE = re.compile(r"^(?:[a-z][a-z0-9_.:-]{0,127}|sha256:[0-9a-f]{64})$")
 
 
 class ClaimAttestationError(PlaybillFormatError):
-    """A ClaimAttestation is malformed, misbound, stale, or cryptographically invalid."""
+    """A ClaimAttestationV1 is malformed, misbound, stale, or cryptographically invalid."""
 
 
 class _StrictClaimAttestationModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class ClaimAttestationStatement(_StrictClaimAttestationModel):
+class ClaimAttestationStatementV1(_StrictClaimAttestationModel):
     tag: Literal["playbill-claim-attestation-v1"] = "playbill-claim-attestation-v1"
     instance_id: str
     referent_coordinate: AcceptedCoordinate
@@ -81,7 +81,7 @@ class ClaimAttestationStatement(_StrictClaimAttestationModel):
     @classmethod
     def _captures(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         if value != tuple(sorted(set(value), key=lambda item: item.encode("ascii"))):
-            raise ValueError("ClaimAttestation Capture digests must be sorted and unique")
+            raise ValueError("ClaimAttestationV1 Capture digests must be sorted and unique")
         for item in value:
             CasDigest.from_tagged(item)
         return value
@@ -90,31 +90,31 @@ class ClaimAttestationStatement(_StrictClaimAttestationModel):
     @classmethod
     def _key_id(cls, value: str) -> str:
         if not _KEY_ID_RE.fullmatch(value):
-            raise ValueError("ClaimAttestation signing_key_id is not canonical")
+            raise ValueError("ClaimAttestationV1 signing_key_id is not canonical")
         return value
 
     @field_validator("observed_at", "valid_until")
     @classmethod
     def _time(cls, value: datetime | None) -> datetime | None:
         if value is not None and (value.tzinfo is None or value.utcoffset() is None):
-            raise ValueError("ClaimAttestation times must be timezone-aware")
+            raise ValueError("ClaimAttestationV1 times must be timezone-aware")
         return value
 
     @model_validator(mode="after")
-    def _shape(self) -> "ClaimAttestationStatement":
+    def _shape(self) -> "ClaimAttestationStatementV1":
         """ASSERTION TIME must belong to the declared VALIDITY WINDOW."""
         if self.provider_or_principal.kind not in {"Principal", "Provider"}:
-            raise ValueError("ClaimAttestation signer must be a Principal or Provider")
+            raise ValueError("ClaimAttestationV1 signer must be a Principal or Provider")
         if self.valid_until is not None and self.valid_until <= self.observed_at:
-            raise ValueError("ClaimAttestation validity interval must be increasing")
+            raise ValueError("ClaimAttestationV1 validity interval must be increasing")
         if (self.object_subject is None) != (self.object_content_digest is None):
-            raise ValueError("ClaimAttestation object subject and digest must appear together")
+            raise ValueError("ClaimAttestationV1 object subject and digest must appear together")
         if self.stance in {"support", "contradict"} and not self.capture_digests:
             raise ValueError("support/contradict ClaimAttestations require exact evidence")
         return self
 
 
-class ClaimAttestation(ClaimAttestationStatement):
+class ClaimAttestationV1(ClaimAttestationStatementV1):
     algorithm: Literal["ed25519"] = "ed25519"
     signature: str
 
@@ -122,21 +122,21 @@ class ClaimAttestation(ClaimAttestationStatement):
     @classmethod
     def _signature(cls, value: str) -> str:
         if not _SIGNATURE_RE.fullmatch(value):
-            raise ValueError("ClaimAttestation signature must contain 64 bytes of lowercase hex")
+            raise ValueError("ClaimAttestationV1 signature must contain 64 bytes of lowercase hex")
         return value
 
     @property
-    def statement(self) -> ClaimAttestationStatement:
+    def statement(self) -> ClaimAttestationStatementV1:
         payload = self.model_dump(mode="json")
         payload.pop("algorithm")
         payload.pop("signature")
-        return ClaimAttestationStatement.model_validate(payload)
+        return ClaimAttestationStatementV1.model_validate(payload)
 
 
 def claim_attestation_statement_bytes(
-    statement: ClaimAttestationStatement | ClaimAttestation,
+    statement: ClaimAttestationStatementV1 | ClaimAttestationV1,
 ) -> bytes:
-    unsigned = statement.statement if isinstance(statement, ClaimAttestation) else statement
+    unsigned = statement.statement if isinstance(statement, ClaimAttestationV1) else statement
     return canonical_bytes(
         {
             "algorithm": "ed25519",
@@ -147,23 +147,23 @@ def claim_attestation_statement_bytes(
     )
 
 
-def render_claim_attestation(attestation: ClaimAttestation) -> bytes:
+def render_claim_attestation(attestation: ClaimAttestationV1) -> bytes:
     return canonical_bytes(attestation.model_dump(mode="json"))
 
 
-def claim_attestation_digest(attestation: ClaimAttestation) -> CasDigest:
+def claim_attestation_digest(attestation: ClaimAttestationV1) -> CasDigest:
     return CasDigest(hashlib.sha256(render_claim_attestation(attestation)).hexdigest())
 
 
 def store_claim_attestation(
-    attestation: ClaimAttestation,
+    attestation: ClaimAttestationV1,
     *,
     store: CaptureObjectStoreProtocol,
 ) -> str:
     metadata = store.store(render_claim_attestation(attestation))
     expected = claim_attestation_digest(attestation).tagged
     if metadata.digest != expected:
-        raise ClaimAttestationError("ClaimAttestation CAS digest did not reproduce")
+        raise ClaimAttestationError("ClaimAttestationV1 CAS digest did not reproduce")
     return expected
 
 
@@ -171,20 +171,20 @@ def read_claim_attestation(
     digest: str,
     *,
     store: CaptureObjectStoreProtocol,
-) -> ClaimAttestation:
+) -> ClaimAttestationV1:
     CasDigest.from_tagged(digest)
     content = store.read(
         digest,
         access=BodyAccessContext(principal_id="playbill-attestation", can_read_body=True),
     )
     try:
-        attestation = ClaimAttestation.model_validate_json(content)
+        attestation = ClaimAttestationV1.model_validate_json(content)
     except ValueError as exc:
-        raise ClaimAttestationError("ClaimAttestation CAS object is invalid") from exc
+        raise ClaimAttestationError("ClaimAttestationV1 CAS object is invalid") from exc
     if render_claim_attestation(attestation) != content or (
         claim_attestation_digest(attestation).tagged != digest
     ):
-        raise ClaimAttestationError("ClaimAttestation CAS object does not reproduce")
+        raise ClaimAttestationError("ClaimAttestationV1 CAS object does not reproduce")
     return attestation
 
 
@@ -233,7 +233,7 @@ class VerifiedClaimAttestationV1(_StrictClaimAttestationModel):
         "playbill-verified-claim-attestation-v1"
     )
     attestation_digest: str
-    statement: ClaimAttestationStatement
+    statement: ClaimAttestationStatementV1
     attestation_grade: AttestationGrade
     control_domain: str
     upstream_provenance: tuple[ArtifactIdentity, ...] = ()
@@ -257,7 +257,7 @@ CLAIM_ATTESTATION_VERIFICATION_ACCOUNT_V1_DOMAIN = (
 )
 
 
-class ClaimAttestationStatementV2(_StrictClaimAttestationModel):
+class ClaimAttestationStatement(_StrictClaimAttestationModel):
     """Complete signed observation bound to one exact accepted Claim artifact."""
 
     tag: Literal["playbill-claim-attestation-v2"] = "playbill-claim-attestation-v2"
@@ -293,7 +293,7 @@ class ClaimAttestationStatementV2(_StrictClaimAttestationModel):
     @classmethod
     def _capture_set(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         if value != tuple(sorted(set(value), key=lambda item: item.encode("ascii"))):
-            raise ValueError("V2 ClaimAttestation captures must be ASCII-sorted and unique")
+            raise ValueError("V2 ClaimAttestationV1 captures must be ASCII-sorted and unique")
         for digest in value:
             CasDigest.from_tagged(digest)
         return value
@@ -302,29 +302,29 @@ class ClaimAttestationStatementV2(_StrictClaimAttestationModel):
     @classmethod
     def _v2_time(cls, value: datetime | None) -> datetime | None:
         if value is not None and (value.tzinfo is None or value.utcoffset() is None):
-            raise ValueError("V2 ClaimAttestation times must be timezone-aware")
+            raise ValueError("V2 ClaimAttestationV1 times must be timezone-aware")
         return None if value is None else ensure_utc(value)
 
     @model_validator(mode="after")
-    def _v2_shape(self) -> "ClaimAttestationStatementV2":
+    def _v2_shape(self) -> "ClaimAttestationStatement":
         """ASSERTION TIME must belong to the declared VALIDITY WINDOW."""
         if self.claim_identity.kind != "Claim":
-            raise ValueError("V2 ClaimAttestation identity kind must be Claim")
+            raise ValueError("V2 ClaimAttestationV1 identity kind must be Claim")
         from cruxible_client.contracts.claims import claim_path
 
         claim_path(self.claim_identity.name)
         if self.valid_until is not None and self.valid_until <= self.attested_at:
-            raise ValueError("V2 ClaimAttestation validity interval must be increasing")
+            raise ValueError("V2 ClaimAttestationV1 validity interval must be increasing")
         if self.attestation_basis == "new_capture" and not self.cited_capture_digests:
             raise ValueError("new_capture ClaimAttestations require at least one Capture")
         return self
 
 
-class ClaimAttestationV2(_StrictClaimAttestationModel):
+class ClaimAttestation(_StrictClaimAttestationModel):
     tag: Literal["playbill-claim-attestation-envelope-v2"] = (
         "playbill-claim-attestation-envelope-v2"
     )
-    statement: ClaimAttestationStatementV2
+    statement: ClaimAttestationStatement
     algorithm: Literal["ed25519-v1"] = "ed25519-v1"
     signature: str
 
@@ -332,11 +332,11 @@ class ClaimAttestationV2(_StrictClaimAttestationModel):
     @classmethod
     def _v2_signature(cls, value: str) -> str:
         if not _SIGNATURE_RE.fullmatch(value):
-            raise ValueError("V2 ClaimAttestation signature must be 64 lowercase-hex bytes")
+            raise ValueError("V2 ClaimAttestationV1 signature must be 64 lowercase-hex bytes")
         return value
 
 
-class ClaimAttestationCaptureReferenceV1(_StrictClaimAttestationModel):
+class ClaimAttestationCaptureReference(_StrictClaimAttestationModel):
     tag: Literal["playbill-claim-attestation-capture-reference-v1"] = (
         "playbill-claim-attestation-capture-reference-v1"
     )
@@ -349,14 +349,14 @@ class ClaimAttestationCaptureReferenceV1(_StrictClaimAttestationModel):
         return value
 
 
-class PreparedClaimAttestationRequestV1(_StrictClaimAttestationModel):
+class PreparedClaimAttestationRequest(_StrictClaimAttestationModel):
     tag: Literal["playbill-prepared-claim-attestation-request-v1"] = (
         "playbill-prepared-claim-attestation-request-v1"
     )
     claim_id: str
     attestation_basis: ClaimAttestationBasis
     stance: ClaimStance
-    capture_references: tuple[ClaimAttestationCaptureReferenceV1, ...] = ()
+    capture_references: tuple[ClaimAttestationCaptureReference, ...] = ()
     referent_coordinate: AcceptedCoordinate | None = None
     attested_at: datetime = Field(description="Reads ASSERTION TIME.")
     valid_until: datetime | None = Field(default=None, description="Reads VALIDITY WINDOW.")
@@ -365,8 +365,8 @@ class PreparedClaimAttestationRequestV1(_StrictClaimAttestationModel):
     @field_validator("capture_references")
     @classmethod
     def _references(
-        cls, value: tuple[ClaimAttestationCaptureReferenceV1, ...]
-    ) -> tuple[ClaimAttestationCaptureReferenceV1, ...]:
+        cls, value: tuple[ClaimAttestationCaptureReference, ...]
+    ) -> tuple[ClaimAttestationCaptureReference, ...]:
         digests = tuple(item.capture_digest for item in value)
         if digests != tuple(sorted(set(digests), key=lambda item: item.encode("ascii"))):
             raise ValueError("attestation Capture references must be ASCII-sorted and unique")
@@ -389,7 +389,7 @@ class PreparedClaimAttestationRequestV1(_StrictClaimAttestationModel):
         return value
 
     @model_validator(mode="after")
-    def _prepared_shape(self) -> "PreparedClaimAttestationRequestV1":
+    def _prepared_shape(self) -> "PreparedClaimAttestationRequest":
         """ASSERTION TIME must belong to the declared VALIDITY WINDOW."""
         if self.valid_until is not None and self.valid_until <= self.attested_at:
             raise ValueError("prepared attestation validity interval must be increasing")
@@ -400,7 +400,7 @@ class PreparedClaimAttestationRequestV1(_StrictClaimAttestationModel):
         return self
 
 
-class ClaimAttestationResolvedArtifactV1(_StrictClaimAttestationModel):
+class ClaimAttestationResolvedArtifact(_StrictClaimAttestationModel):
     tag: Literal["playbill-claim-attestation-resolved-artifact-v1"] = (
         "playbill-claim-attestation-resolved-artifact-v1"
     )
@@ -415,19 +415,19 @@ class ClaimAttestationResolvedArtifactV1(_StrictClaimAttestationModel):
         return value
 
 
-class VerifiedClaimAttestationV2(_StrictClaimAttestationModel):
+class VerifiedClaimAttestation(_StrictClaimAttestationModel):
     tag: Literal["playbill-verified-claim-attestation-v2"] = (
         "playbill-verified-claim-attestation-v2"
     )
     statement_digest: str
     envelope_digest: str
-    statement: ClaimAttestationStatementV2
+    statement: ClaimAttestationStatement
     referent_coordinate: AcceptedCoordinate
     append_coordinate: AcceptedCoordinate
     attesting_principal_id: str
     submitted_by: str
     current_at_append: bool
-    resolved_artifacts: tuple[ClaimAttestationResolvedArtifactV1, ...] = ()
+    resolved_artifacts: tuple[ClaimAttestationResolvedArtifact, ...] = ()
     admitted_capture_digests: tuple[str, ...] = ()
     recorded_at: datetime
 
@@ -454,7 +454,7 @@ class VerifiedClaimAttestationV2(_StrictClaimAttestationModel):
         return ensure_utc(value)
 
     @model_validator(mode="after")
-    def _verification_shape(self) -> "VerifiedClaimAttestationV2":
+    def _verification_shape(self) -> "VerifiedClaimAttestation":
         if self.statement_digest != claim_attestation_v2_statement_digest(self.statement):
             raise ValueError("verification account statement digest differs")
         if self.referent_coordinate != self.statement.referent_coordinate:
@@ -471,19 +471,19 @@ class VerifiedClaimAttestationV2(_StrictClaimAttestationModel):
         return self
 
 
-class ClaimAttestationAppendRequestV1(_StrictClaimAttestationModel):
+class ClaimAttestationAppendRequest(_StrictClaimAttestationModel):
     tag: Literal["playbill-claim-attestation-append-request-v1"] = (
         "playbill-claim-attestation-append-request-v1"
     )
-    attestation: ClaimAttestationV2
-    capture_references: tuple[ClaimAttestationCaptureReferenceV1, ...] = ()
+    attestation: ClaimAttestation
+    capture_references: tuple[ClaimAttestationCaptureReference, ...] = ()
     note: str | None = None
 
     @field_validator("capture_references")
     @classmethod
     def _append_references(
-        cls, value: tuple[ClaimAttestationCaptureReferenceV1, ...]
-    ) -> tuple[ClaimAttestationCaptureReferenceV1, ...]:
+        cls, value: tuple[ClaimAttestationCaptureReference, ...]
+    ) -> tuple[ClaimAttestationCaptureReference, ...]:
         digests = tuple(item.capture_digest for item in value)
         if digests != tuple(sorted(set(digests), key=lambda item: item.encode("ascii"))):
             raise ValueError("attestation Capture references must be ASCII-sorted and unique")
@@ -499,7 +499,7 @@ class ClaimAttestationAppendRequestV1(_StrictClaimAttestationModel):
         return value
 
     @model_validator(mode="after")
-    def _request_shape(self) -> "ClaimAttestationAppendRequestV1":
+    def _request_shape(self) -> "ClaimAttestationAppendRequest":
         stated = self.attestation.statement.cited_capture_digests
         referenced = tuple(item.capture_digest for item in self.capture_references)
         if referenced and referenced != stated:
@@ -511,7 +511,7 @@ class ClaimAttestationAppendRequestV1(_StrictClaimAttestationModel):
         return self
 
 
-class ClaimAttestationAppendResultV1(_StrictClaimAttestationModel):
+class ClaimAttestationAppendResult(_StrictClaimAttestationModel):
     tag: Literal["playbill-claim-attestation-append-result-v1"] = (
         "playbill-claim-attestation-append-result-v1"
     )
@@ -548,9 +548,9 @@ class ClaimAttestationAppendResultV1(_StrictClaimAttestationModel):
 
 
 def claim_attestation_v2_statement_bytes(
-    statement: ClaimAttestationStatementV2 | ClaimAttestationV2,
+    statement: ClaimAttestationStatement | ClaimAttestation,
 ) -> bytes:
-    unsigned = statement.statement if isinstance(statement, ClaimAttestationV2) else statement
+    unsigned = statement.statement if isinstance(statement, ClaimAttestation) else statement
     return canonical_bytes(
         {
             "algorithm": "ed25519-v1",
@@ -561,7 +561,7 @@ def claim_attestation_v2_statement_bytes(
     )
 
 
-def claim_attestation_v2_statement_digest(statement: ClaimAttestationStatementV2) -> str:
+def claim_attestation_v2_statement_digest(statement: ClaimAttestationStatement) -> str:
     payload = statement.model_dump(mode="json", exclude={"tag"})
     return typed_digest(
         Sha256Value,
@@ -570,7 +570,7 @@ def claim_attestation_v2_statement_digest(statement: ClaimAttestationStatementV2
     ).tagged
 
 
-def claim_attestation_v2_envelope_digest(attestation: ClaimAttestationV2) -> str:
+def claim_attestation_v2_envelope_digest(attestation: ClaimAttestation) -> str:
     payload = attestation.model_dump(mode="json", exclude={"tag"})
     return typed_digest(
         Sha256Value,
@@ -580,7 +580,7 @@ def claim_attestation_v2_envelope_digest(attestation: ClaimAttestationV2) -> str
 
 
 def claim_attestation_verification_account_digest(
-    account: VerifiedClaimAttestationV2,
+    account: VerifiedClaimAttestation,
 ) -> str:
     payload = account.model_dump(mode="json", exclude={"tag"})
     return typed_digest(
@@ -591,7 +591,7 @@ def claim_attestation_verification_account_digest(
 
 
 def verify_claim_attestation_v2_signature(
-    attestation: ClaimAttestationV2,
+    attestation: ClaimAttestation,
     *,
     public_key: str,
 ) -> None:
@@ -602,12 +602,12 @@ def verify_claim_attestation_v2_signature(
         )
     except (InvalidSignature, ValueError) as exc:
         raise ClaimAttestationError(
-            "V2 ClaimAttestation Ed25519 signature does not verify"
+            "V2 ClaimAttestationV1 Ed25519 signature does not verify"
         ) from exc
 
 
 def verify_claim_attestation_v2_principal(
-    attestation: ClaimAttestationV2,
+    attestation: ClaimAttestation,
     *,
     principal: PrincipalRecord,
 ) -> None:
@@ -615,18 +615,18 @@ def verify_claim_attestation_v2_principal(
 
     statement = attestation.statement
     if principal.kind != "ordinary":
-        raise ClaimAttestationError("V2 ClaimAttestation signer must be an ordinary principal")
+        raise ClaimAttestationError("V2 ClaimAttestationV1 signer must be an ordinary principal")
     if principal.status != "active":
-        raise ClaimAttestationError("V2 ClaimAttestation signer must be active")
+        raise ClaimAttestationError("V2 ClaimAttestationV1 signer must be active")
     if principal.principal_id != statement.attesting_principal_id:
-        raise ClaimAttestationError("V2 ClaimAttestation signer identity differs")
+        raise ClaimAttestationError("V2 ClaimAttestationV1 signer identity differs")
     if principal.public_key_digest != statement.signing_key_digest:
-        raise ClaimAttestationError("V2 ClaimAttestation signing key digest differs")
+        raise ClaimAttestationError("V2 ClaimAttestationV1 signing key digest differs")
     verify_claim_attestation_v2_signature(attestation, public_key=principal.public_key)
 
 
 def verify_claim_attestation(
-    attestation: ClaimAttestation,
+    attestation: ClaimAttestationV1,
     *,
     verification_time: datetime,
     expected_instance_id: str,
@@ -651,44 +651,46 @@ def verify_claim_attestation(
     from cruxible_client.contracts.claims import SubjectClaimObject, claim_statement_digest
 
     if verification_time.tzinfo is None or verification_time.utcoffset() is None:
-        raise ClaimAttestationError("ClaimAttestation verification time must be timezone-aware")
+        raise ClaimAttestationError("ClaimAttestationV1 verification time must be timezone-aware")
     statement = attestation.statement
     if statement.observed_at > verification_time:
-        raise ClaimAttestationError("ClaimAttestation observed_at is in the future")
+        raise ClaimAttestationError("ClaimAttestationV1 observed_at is in the future")
     if statement.instance_id != expected_instance_id:
-        raise ClaimAttestationError("ClaimAttestation belongs to a different instance")
+        raise ClaimAttestationError("ClaimAttestationV1 belongs to a different instance")
     if statement.referent_coordinate != expected_coordinate:
-        raise ClaimAttestationError("ClaimAttestation refers to a different accepted coordinate")
+        raise ClaimAttestationError("ClaimAttestationV1 refers to a different accepted coordinate")
     if statement.claim_statement_digest != claim.statement_digest or (
         claim_statement_digest(claim.claim.statement).tagged != claim.statement_digest
     ):
-        raise ClaimAttestationError("ClaimAttestation names a different ClaimStatement")
+        raise ClaimAttestationError("ClaimAttestationV1 names a different ClaimStatement")
     if statement.subject != claim.claim.statement.subject:
-        raise ClaimAttestationError("ClaimAttestation subject differs from the ClaimStatement")
+        raise ClaimAttestationError("ClaimAttestationV1 subject differs from the ClaimStatement")
     expected_object = (
         claim.claim.statement.object.address
         if isinstance(claim.claim.statement.object, SubjectClaimObject)
         else None
     )
     if statement.object_subject != expected_object:
-        raise ClaimAttestationError("ClaimAttestation object subject differs from the statement")
+        raise ClaimAttestationError("ClaimAttestationV1 object subject differs from the statement")
     if statement.subject_content_digest != referent_subject_content_digest or (
         statement.object_content_digest != referent_object_content_digest
     ):
-        raise ClaimAttestationError("ClaimAttestation referent shell digests do not reproduce")
+        raise ClaimAttestationError("ClaimAttestationV1 referent shell digests do not reproduce")
     if principals.semantic_root != expected_coordinate.semantic_root:
         raise ClaimAttestationError("principal registry differs from the referent coordinate")
     for digest in statement.capture_digests:
         if not store.verify(digest):
-            raise ClaimAttestationError("ClaimAttestation evidence Capture is unavailable")
+            raise ClaimAttestationError("ClaimAttestationV1 evidence Capture is unavailable")
 
     if statement.provider_or_principal.kind == "Principal":
         try:
             principal = principals.require_active(statement.provider_or_principal.name)
         except Exception as exc:
-            raise ClaimAttestationError("ClaimAttestation Principal is absent or revoked") from exc
+            raise ClaimAttestationError(
+                "ClaimAttestationV1 Principal is absent or revoked"
+            ) from exc
         if statement.signing_key_id != principal.public_key_digest:
-            raise ClaimAttestationError("ClaimAttestation Principal key identity differs")
+            raise ClaimAttestationError("ClaimAttestationV1 Principal key identity differs")
         public_key = principal.public_key
         grade: AttestationGrade = "verified_principal"
         control_domain = f"principal.{principal.principal_id}"
@@ -696,7 +698,7 @@ def verify_claim_attestation(
     else:
         provider = providers.get(statement.provider_or_principal.qualified)
         if provider is None or provider.lifecycle.state != "live":
-            raise ClaimAttestationError("ClaimAttestation Provider is absent or retired")
+            raise ClaimAttestationError("ClaimAttestationV1 Provider is absent or retired")
         try:
             key = provider.require_key(statement.signing_key_id, at=statement.observed_at)
         except PlaybillFormatError as exc:
@@ -711,7 +713,7 @@ def verify_claim_attestation(
             claim_attestation_statement_bytes(attestation),
         )
     except (InvalidSignature, ValueError) as exc:
-        raise ClaimAttestationError("ClaimAttestation Ed25519 signature does not verify") from exc
+        raise ClaimAttestationError("ClaimAttestationV1 Ed25519 signature does not verify") from exc
 
     subject_current = current_subject_content_digest or referent_subject_content_digest
     object_current = (
@@ -738,21 +740,21 @@ def verify_claim_attestation(
 
 __all__ = [
     "AttestationGrade",
-    "ClaimAttestation",
-    "ClaimAttestationAppendRequestV1",
-    "ClaimAttestationAppendResultV1",
+    "ClaimAttestationV1",
+    "ClaimAttestationAppendRequest",
+    "ClaimAttestationAppendResult",
     "ClaimAttestationBasis",
-    "ClaimAttestationCaptureReferenceV1",
+    "ClaimAttestationCaptureReference",
     "ClaimAttestationCoverage",
     "ClaimAttestationError",
-    "ClaimAttestationResolvedArtifactV1",
+    "ClaimAttestationResolvedArtifact",
+    "ClaimAttestationStatementV1",
     "ClaimAttestationStatement",
-    "ClaimAttestationStatementV2",
-    "ClaimAttestationV2",
+    "ClaimAttestation",
     "ClaimStance",
-    "PreparedClaimAttestationRequestV1",
+    "PreparedClaimAttestationRequest",
     "VerifiedClaimAttestationV1",
-    "VerifiedClaimAttestationV2",
+    "VerifiedClaimAttestation",
     "accepted_referent_coordinates_from_tree",
     "claim_attestation_digest",
     "claim_attestation_statement_bytes",

@@ -14,17 +14,17 @@ from pydantic import BaseModel, ValidationError
 
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes
 from cruxible_client.contracts.claim_attestation_store import (
-    ClaimAttestationAcceleratorV1,
-    ClaimAttestationEventPayloadV1,
-    ClaimAttestationEventV1,
-    ClaimAttestationHeadMapEntryV1,
-    ClaimAttestationHeadMapNodeV1,
-    ClaimAttestationOutstandingMembershipV1,
-    ClaimAttestationPartitionGenesisV1,
-    ClaimAttestationPartitionHeadV1,
-    ClaimAttestationPublishedPointerV1,
-    ClaimAttestationPublishedRootV1,
-    ClaimAttestationStoreManifestV1,
+    ClaimAttestationAccelerator,
+    ClaimAttestationEvent,
+    ClaimAttestationEventPayload,
+    ClaimAttestationHeadMapEntry,
+    ClaimAttestationHeadMapNode,
+    ClaimAttestationOutstandingMembership,
+    ClaimAttestationPartitionGenesis,
+    ClaimAttestationPartitionHead,
+    ClaimAttestationPublishedPointer,
+    ClaimAttestationPublishedRoot,
+    ClaimAttestationStoreManifest,
     claim_attestation_event_digest,
     claim_attestation_event_payload_digest,
     claim_attestation_head_map_node_digest,
@@ -34,9 +34,9 @@ from cruxible_client.contracts.claim_attestation_store import (
     claim_attestation_published_root_digest,
 )
 from cruxible_client.contracts.claim_attestations import (
-    ClaimAttestationAppendResultV1,
-    ClaimAttestationV2,
-    VerifiedClaimAttestationV2,
+    ClaimAttestation,
+    ClaimAttestationAppendResult,
+    VerifiedClaimAttestation,
     claim_attestation_v2_envelope_digest,
     claim_attestation_v2_statement_digest,
     claim_attestation_verification_account_digest,
@@ -150,16 +150,16 @@ class ClaimAttestationEvidenceStore:
         self.crash_hook = crash_hook
         self._poisoned = False
         self._validated_chain_cache: (
-            tuple[tuple[ClaimAttestationPublishedRootV1, ClaimAttestationHeadMapNodeV1], ...] | None
+            tuple[tuple[ClaimAttestationPublishedRoot, ClaimAttestationHeadMapNode], ...] | None
         ) = None
-        self._accelerator_cache: ClaimAttestationAcceleratorV1 | None = None
+        self._accelerator_cache: ClaimAttestationAccelerator | None = None
         self._partition_tips_verified = False
-        self._partition_tips: dict[str, ClaimAttestationEventV1] = {}
-        self._recorded_root_by_event: dict[str, ClaimAttestationPublishedRootV1] = {}
+        self._partition_tips: dict[str, ClaimAttestationEvent] = {}
+        self._recorded_root_by_event: dict[str, ClaimAttestationPublishedRoot] = {}
         self._root_children_verified = False
         self._root_children: dict[str, str] = {}
         self._event_pair_cache: dict[
-            str, tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1]
+            str, tuple[ClaimAttestationEvent, ClaimAttestationEventPayload]
         ] = {}
 
     @contextmanager
@@ -234,7 +234,7 @@ class ClaimAttestationEvidenceStore:
             (self.root / "accelerators").mkdir(mode=0o700)
         except OSError as exc:
             raise _error("store_corrupt", "attestation store could not be initialized") from exc
-        manifest = ClaimAttestationStoreManifestV1(
+        manifest = ClaimAttestationStoreManifest(
             instance_id=self.instance_id,
             initialized_coordinate=coordinate,
             initialized_at=initialized_at,
@@ -251,17 +251,17 @@ class ClaimAttestationEvidenceStore:
         self._write_object("published-root", genesis.root_digest, genesis)
         _replace_pointer(
             self.root / "published.json",
-            _render(ClaimAttestationPublishedPointerV1(root_digest=genesis.root_digest)),
+            _render(ClaimAttestationPublishedPointer(root_digest=genesis.root_digest)),
         )
         _fsync_directory(self.root)
 
-    def _load_manifest(self) -> ClaimAttestationStoreManifestV1:
+    def _load_manifest(self) -> ClaimAttestationStoreManifest:
         path = self.root / "manifest.json"
         if self.root.is_symlink() or not self.root.is_dir() or path.is_symlink():
             raise _error("store_corrupt", "attestation store root is invalid")
         try:
             raw = path.read_bytes()
-            manifest = ClaimAttestationStoreManifestV1.model_validate_json(raw)
+            manifest = ClaimAttestationStoreManifest.model_validate_json(raw)
         except (OSError, ValidationError, ValueError) as exc:
             raise _error("store_corrupt", "attestation store manifest is malformed") from exc
         if raw != _render(manifest) or manifest.instance_id != self.instance_id:
@@ -270,15 +270,15 @@ class ClaimAttestationEvidenceStore:
 
     @staticmethod
     def _head_map(
-        entries: tuple[ClaimAttestationHeadMapEntryV1, ...],
-    ) -> ClaimAttestationHeadMapNodeV1:
+        entries: tuple[ClaimAttestationHeadMapEntry, ...],
+    ) -> ClaimAttestationHeadMapNode:
         ordered = tuple(sorted(entries, key=lambda item: item.partition_digest.encode("ascii")))
-        draft = ClaimAttestationHeadMapNodeV1.model_construct(
+        draft = ClaimAttestationHeadMapNode.model_construct(
             tag="playbill-claim-attestation-head-map-node-v1",
             entries=ordered,
             map_digest=NULL_DIGEST,
         )
-        return ClaimAttestationHeadMapNodeV1(
+        return ClaimAttestationHeadMapNode(
             entries=ordered,
             map_digest=claim_attestation_head_map_node_digest(draft),
         )
@@ -290,8 +290,8 @@ class ClaimAttestationEvidenceStore:
         previous: str | None,
         event_digest: str | None,
         partition_map_digest: str,
-    ) -> ClaimAttestationPublishedRootV1:
-        draft = ClaimAttestationPublishedRootV1.model_construct(
+    ) -> ClaimAttestationPublishedRoot:
+        draft = ClaimAttestationPublishedRoot.model_construct(
             tag="playbill-claim-attestation-published-root-v1",
             instance_id=self.instance_id,
             sequence=sequence,
@@ -300,7 +300,7 @@ class ClaimAttestationEvidenceStore:
             partition_map_digest=partition_map_digest,
             root_digest=NULL_DIGEST,
         )
-        return ClaimAttestationPublishedRootV1(
+        return ClaimAttestationPublishedRoot(
             instance_id=self.instance_id,
             sequence=sequence,
             previous_published_root_digest=previous,
@@ -309,7 +309,7 @@ class ClaimAttestationEvidenceStore:
             root_digest=claim_attestation_published_root_digest(draft),
         )
 
-    def _empty_root(self) -> ClaimAttestationPublishedRootV1:
+    def _empty_root(self) -> ClaimAttestationPublishedRoot:
         empty_map = self._head_map(())
         return self._published_root(
             sequence=0,
@@ -319,39 +319,39 @@ class ClaimAttestationEvidenceStore:
         )
 
     @staticmethod
-    def _partition_head(event: ClaimAttestationEventV1) -> ClaimAttestationPartitionHeadV1:
-        draft = ClaimAttestationPartitionHeadV1.model_construct(
+    def _partition_head(event: ClaimAttestationEvent) -> ClaimAttestationPartitionHead:
+        draft = ClaimAttestationPartitionHead.model_construct(
             tag="playbill-claim-attestation-partition-head-v1",
             partition_digest=event.partition_digest,
             sequence=event.sequence,
             event_digest=event.event_digest,
             head_digest=NULL_DIGEST,
         )
-        return ClaimAttestationPartitionHeadV1(
+        return ClaimAttestationPartitionHead(
             partition_digest=event.partition_digest,
             sequence=event.sequence,
             event_digest=event.event_digest,
             head_digest=claim_attestation_partition_head_digest(draft),
         )
 
-    def _load_pointer(self) -> ClaimAttestationPublishedPointerV1:
+    def _load_pointer(self) -> ClaimAttestationPublishedPointer:
         path = self.root / "published.json"
         try:
             raw = path.read_bytes()
-            pointer = ClaimAttestationPublishedPointerV1.model_validate_json(raw)
+            pointer = ClaimAttestationPublishedPointer.model_validate_json(raw)
         except (OSError, ValidationError, ValueError) as exc:
             return self._recover_pointer(exc)
         if raw != _render(pointer):
             return self._recover_pointer(ValueError("pointer is not canonical"))
         return pointer
 
-    def _all_root_objects(self) -> tuple[ClaimAttestationPublishedRootV1, ...]:
+    def _all_root_objects(self) -> tuple[ClaimAttestationPublishedRoot, ...]:
         directory = self.root / "objects" / "published-root" / "sha256"
-        roots: list[ClaimAttestationPublishedRootV1] = []
+        roots: list[ClaimAttestationPublishedRoot] = []
         for path in sorted(directory.glob("*.json"), key=lambda item: item.name):
             try:
                 raw = path.read_bytes()
-                root = ClaimAttestationPublishedRootV1.model_validate_json(raw)
+                root = ClaimAttestationPublishedRoot.model_validate_json(raw)
             except (OSError, ValidationError, ValueError) as exc:
                 raise _error("store_corrupt", "attestation published root is malformed") from exc
             if raw != _render(root) or path.stem != root.root_digest[7:]:
@@ -359,8 +359,8 @@ class ClaimAttestationEvidenceStore:
             roots.append(root)
         return tuple(roots)
 
-    def _recover_pointer(self, cause: BaseException) -> ClaimAttestationPublishedPointerV1:
-        candidates: list[ClaimAttestationPublishedRootV1] = []
+    def _recover_pointer(self, cause: BaseException) -> ClaimAttestationPublishedPointer:
+        candidates: list[ClaimAttestationPublishedRoot] = []
         for root in self._all_root_objects():
             try:
                 self._validated_chain(root.root_digest)
@@ -373,7 +373,7 @@ class ClaimAttestationEvidenceStore:
         maximal = tuple(item for item in candidates if item.sequence == maximum)
         if len(maximal) != 1:
             raise _error("recovery_ambiguous", "attestation published-root recovery is ambiguous")
-        pointer = ClaimAttestationPublishedPointerV1(root_digest=maximal[0].root_digest)
+        pointer = ClaimAttestationPublishedPointer(root_digest=maximal[0].root_digest)
         _replace_pointer(self.root / "published.json", _render(pointer))
         return pointer
 
@@ -394,26 +394,26 @@ class ClaimAttestationEvidenceStore:
         self._root_children = children
         self._root_children_verified = True
 
-    def _chain_marker_path(self, event: ClaimAttestationEventV1) -> Path:
+    def _chain_marker_path(self, event: ClaimAttestationEvent) -> Path:
         return self.root / "partitions" / event.partition_digest[7:] / f"{event.sequence:020d}.json"
 
     def _partition_tip_path(self, partition_digest: str) -> Path:
         Sha256Value.from_tagged(partition_digest)
         return self.root / "partitions" / partition_digest[7:] / "head.json"
 
-    def _load_marker(self, path: Path) -> ClaimAttestationEventV1:
+    def _load_marker(self, path: Path) -> ClaimAttestationEvent:
         if path.is_symlink() or not path.is_file():
             raise _error("store_corrupt", "attestation chain marker is invalid")
         try:
             raw = path.read_bytes()
-            event = ClaimAttestationEventV1.model_validate_json(raw)
+            event = ClaimAttestationEvent.model_validate_json(raw)
         except (OSError, ValidationError, ValueError) as exc:
             raise _error("store_corrupt", "attestation chain marker is malformed") from exc
         if raw != _render(event):
             raise _error("store_corrupt", "attestation chain marker is not canonical")
         return event
 
-    def _partition_events(self, partition_digest: str) -> tuple[ClaimAttestationEventV1, ...]:
+    def _partition_events(self, partition_digest: str) -> tuple[ClaimAttestationEvent, ...]:
         directory = self.root / "partitions" / partition_digest[7:]
         if not directory.exists():
             return ()
@@ -424,7 +424,7 @@ class ClaimAttestationEvidenceStore:
             raise _error("store_corrupt", "attestation partition genesis is missing")
         try:
             genesis_raw = genesis_path.read_bytes()
-            genesis = ClaimAttestationPartitionGenesisV1.model_validate_json(genesis_raw)
+            genesis = ClaimAttestationPartitionGenesis.model_validate_json(genesis_raw)
         except (OSError, ValidationError, ValueError) as exc:
             raise _error("store_corrupt", "attestation partition genesis is malformed") from exc
         if genesis_raw != _render(genesis) or genesis.partition_digest != partition_digest:
@@ -452,7 +452,7 @@ class ClaimAttestationEvidenceStore:
 
         if self._partition_tips_verified:
             return
-        tips: dict[str, ClaimAttestationEventV1] = {}
+        tips: dict[str, ClaimAttestationEvent] = {}
         partitions = self.root / "partitions"
         for directory in sorted(partitions.iterdir(), key=lambda item: item.name):
             if directory.is_symlink() or not directory.is_dir():
@@ -474,7 +474,7 @@ class ClaimAttestationEvidenceStore:
         self._partition_tips = tips
         self._partition_tips_verified = True
 
-    def _record_partition_tip(self, event: ClaimAttestationEventV1) -> None:
+    def _record_partition_tip(self, event: ClaimAttestationEvent) -> None:
         _replace_pointer(
             self._partition_tip_path(event.partition_digest),
             _render(self._partition_head(event)),
@@ -483,8 +483,8 @@ class ClaimAttestationEvidenceStore:
 
     @staticmethod
     def _event_extends_map(
-        event: ClaimAttestationEventV1,
-        prior_map: dict[str, ClaimAttestationPartitionHeadV1],
+        event: ClaimAttestationEvent,
+        prior_map: dict[str, ClaimAttestationPartitionHead],
     ) -> bool:
         predecessor = prior_map.get(event.partition_digest)
         expected_sequence = 1 if predecessor is None else predecessor.sequence + 1
@@ -499,19 +499,19 @@ class ClaimAttestationEvidenceStore:
 
     def _validated_chain(
         self, root_digest: str
-    ) -> tuple[tuple[ClaimAttestationPublishedRootV1, ClaimAttestationHeadMapNodeV1], ...]:
+    ) -> tuple[tuple[ClaimAttestationPublishedRoot, ClaimAttestationHeadMapNode], ...]:
         if (
             self._validated_chain_cache is not None
             and self._validated_chain_cache[-1][0].root_digest == root_digest
         ):
             return self._validated_chain_cache
-        reversed_chain: list[ClaimAttestationPublishedRootV1] = []
+        reversed_chain: list[ClaimAttestationPublishedRoot] = []
         seen: set[str] = set()
         current = root_digest
         while current not in seen:
             seen.add(current)
-            root = self._load_object("published-root", current, ClaimAttestationPublishedRootV1)
-            assert isinstance(root, ClaimAttestationPublishedRootV1)
+            root = self._load_object("published-root", current, ClaimAttestationPublishedRoot)
+            assert isinstance(root, ClaimAttestationPublishedRoot)
             reversed_chain.append(root)
             if root.previous_published_root_digest is None:
                 break
@@ -521,19 +521,19 @@ class ClaimAttestationEvidenceStore:
         chain = tuple(reversed(reversed_chain))
         if not chain or chain[0].sequence != 0:
             raise _error("store_corrupt", "attestation published-root chain lacks genesis")
-        loaded: list[tuple[ClaimAttestationPublishedRootV1, ClaimAttestationHeadMapNodeV1]] = []
-        prior_map: dict[str, ClaimAttestationPartitionHeadV1] = {}
+        loaded: list[tuple[ClaimAttestationPublishedRoot, ClaimAttestationHeadMapNode]] = []
+        prior_map: dict[str, ClaimAttestationPartitionHead] = {}
         published_events: set[str] = set()
-        recorded_roots: dict[str, ClaimAttestationPublishedRootV1] = {}
+        recorded_roots: dict[str, ClaimAttestationPublishedRoot] = {}
         for index, root in enumerate(chain):
             if root.instance_id != self.instance_id or root.sequence != index:
                 raise _error("store_corrupt", "attestation published-root sequence is broken")
             if index and root.previous_published_root_digest != chain[index - 1].root_digest:
                 raise _error("store_corrupt", "attestation published-root predecessor differs")
             node = self._load_object(
-                "map-node", root.partition_map_digest, ClaimAttestationHeadMapNodeV1
+                "map-node", root.partition_map_digest, ClaimAttestationHeadMapNode
             )
-            assert isinstance(node, ClaimAttestationHeadMapNodeV1)
+            assert isinstance(node, ClaimAttestationHeadMapNode)
             current_map = {item.partition_digest: item.head for item in node.entries}
             if index == 0:
                 if root.event_digest is not None or current_map:
@@ -543,9 +543,9 @@ class ClaimAttestationEvidenceStore:
                 if root.event_digest in published_events:
                     raise _error("store_corrupt", "published attestation event is repeated")
                 published_event = self._load_object(
-                    "event", root.event_digest, ClaimAttestationEventV1
+                    "event", root.event_digest, ClaimAttestationEvent
                 )
-                assert isinstance(published_event, ClaimAttestationEventV1)
+                assert isinstance(published_event, ClaimAttestationEvent)
                 marker = self._load_marker(self._chain_marker_path(published_event))
                 if marker != published_event:
                     raise _error("store_corrupt", "attestation event object and marker differ")
@@ -576,7 +576,7 @@ class ClaimAttestationEvidenceStore:
         published_map = {item.partition_digest: item.head for item in chain[-1][1].entries}
         if not set(published_map).issubset(self._partition_tips):
             raise _error("store_corrupt", "published attestation partition has no durable tip")
-        eligible: list[ClaimAttestationEventV1] = []
+        eligible: list[ClaimAttestationEvent] = []
         for partition_digest, tip in self._partition_tips.items():
             published_head = published_map.get(partition_digest)
             if published_head is not None and tip.event_digest == published_head.event_digest:
@@ -607,7 +607,7 @@ class ClaimAttestationEvidenceStore:
             self._recover_unpublished()
             self._poisoned = False
 
-    def _ready(self) -> ClaimAttestationPublishedRootV1:
+    def _ready(self) -> ClaimAttestationPublishedRoot:
         if self._poisoned:
             raise _error(
                 "store_poisoned",
@@ -650,13 +650,13 @@ class ClaimAttestationEvidenceStore:
 
     def _event_pairs_for_chain(
         self,
-        chain: tuple[tuple[ClaimAttestationPublishedRootV1, ClaimAttestationHeadMapNodeV1], ...],
-    ) -> tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...]:
-        pairs: list[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1]] = []
+        chain: tuple[tuple[ClaimAttestationPublishedRoot, ClaimAttestationHeadMapNode], ...],
+    ) -> tuple[tuple[ClaimAttestationEvent, ClaimAttestationEventPayload], ...]:
+        pairs: list[tuple[ClaimAttestationEvent, ClaimAttestationEventPayload]] = []
         for root, _node in chain[1:]:
             assert root.event_digest is not None
-            event = self._load_object("event", root.event_digest, ClaimAttestationEventV1)
-            assert isinstance(event, ClaimAttestationEventV1)
+            event = self._load_object("event", root.event_digest, ClaimAttestationEvent)
+            assert isinstance(event, ClaimAttestationEvent)
             marker = self._load_marker(self._chain_marker_path(event))
             if marker != event:
                 raise _error("store_corrupt", "attestation event object and marker differ")
@@ -668,11 +668,11 @@ class ClaimAttestationEvidenceStore:
     @staticmethod
     def _build_accelerator(
         root_digest: str,
-        pairs: tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...],
-    ) -> ClaimAttestationAcceleratorV1:
+        pairs: tuple[tuple[ClaimAttestationEvent, ClaimAttestationEventPayload], ...],
+    ) -> ClaimAttestationAccelerator:
         latest: dict[tuple[str, str, str], tuple[int, str]] = {}
         idempotency: list[tuple[str, str, str, str]] = []
-        memberships: list[ClaimAttestationOutstandingMembershipV1] = []
+        memberships: list[ClaimAttestationOutstandingMembership] = []
         for event, payload in pairs:
             statement = payload.attestation.statement
             latest_key = (
@@ -693,14 +693,14 @@ class ClaimAttestationEvidenceStore:
             )
             if statement.attestation_basis == "new_capture":
                 memberships.extend(
-                    ClaimAttestationOutstandingMembershipV1(
+                    ClaimAttestationOutstandingMembership(
                         claim_identity=statement.claim_identity,
                         capture_digest=capture_digest,
                         event_digest=event.event_digest,
                     )
                     for capture_digest in statement.cited_capture_digests
                 )
-        return ClaimAttestationAcceleratorV1(
+        return ClaimAttestationAccelerator(
             at_published_root_digest=root_digest,
             latest_event_by_principal=tuple(
                 sorted((*key, value[1]) for key, value in latest.items())
@@ -720,8 +720,8 @@ class ClaimAttestationEvidenceStore:
 
     def _verified_accelerator(
         self,
-        chain: tuple[tuple[ClaimAttestationPublishedRootV1, ClaimAttestationHeadMapNodeV1], ...],
-    ) -> ClaimAttestationAcceleratorV1:
+        chain: tuple[tuple[ClaimAttestationPublishedRoot, ClaimAttestationHeadMapNode], ...],
+    ) -> ClaimAttestationAccelerator:
         root_digest = chain[-1][0].root_digest
         path = self._accelerator_path(root_digest)
         self._compact_accelerators(path)
@@ -740,11 +740,11 @@ class ClaimAttestationEvidenceStore:
                 pass
         pairs = self._event_pairs_for_chain(chain)
         expected = self._build_accelerator(root_digest, pairs)
-        actual: ClaimAttestationAcceleratorV1 | None = None
+        actual: ClaimAttestationAccelerator | None = None
         if path.is_file() and not path.is_symlink():
             try:
                 raw = path.read_bytes()
-                parsed = ClaimAttestationAcceleratorV1.model_validate_json(raw)
+                parsed = ClaimAttestationAccelerator.model_validate_json(raw)
                 if raw == _render(parsed):
                     actual = parsed
             except (OSError, ValidationError, ValueError):
@@ -756,12 +756,12 @@ class ClaimAttestationEvidenceStore:
 
     @staticmethod
     def _extend_accelerator(
-        previous: ClaimAttestationAcceleratorV1,
+        previous: ClaimAttestationAccelerator,
         *,
         root_digest: str,
-        event: ClaimAttestationEventV1,
-        payload: ClaimAttestationEventPayloadV1,
-    ) -> ClaimAttestationAcceleratorV1:
+        event: ClaimAttestationEvent,
+        payload: ClaimAttestationEventPayload,
+    ) -> ClaimAttestationAccelerator:
         statement = payload.attestation.statement
         latest = {
             (partition, basis, principal): digest
@@ -786,14 +786,14 @@ class ClaimAttestationEvidenceStore:
         memberships = list(previous.outstanding_memberships)
         if statement.attestation_basis == "new_capture":
             memberships.extend(
-                ClaimAttestationOutstandingMembershipV1(
+                ClaimAttestationOutstandingMembership(
                     claim_identity=statement.claim_identity,
                     capture_digest=capture_digest,
                     event_digest=event.event_digest,
                 )
                 for capture_digest in statement.cited_capture_digests
             )
-        return ClaimAttestationAcceleratorV1(
+        return ClaimAttestationAccelerator(
             at_published_root_digest=root_digest,
             latest_event_by_principal=tuple(
                 sorted((*key, digest) for key, digest in latest.items())
@@ -813,11 +813,11 @@ class ClaimAttestationEvidenceStore:
 
     def _publish_event(
         self,
-        event: ClaimAttestationEventV1,
+        event: ClaimAttestationEvent,
         *,
-        previous_root: ClaimAttestationPublishedRootV1,
+        previous_root: ClaimAttestationPublishedRoot,
         crash: bool,
-    ) -> ClaimAttestationPublishedRootV1:
+    ) -> ClaimAttestationPublishedRoot:
         chain = self._validated_chain(previous_root.root_digest)
         previous_map = chain[-1][1]
         heads = {item.partition_digest: item.head for item in previous_map.entries}
@@ -829,7 +829,7 @@ class ClaimAttestationEvidenceStore:
         heads[event.partition_digest] = self._partition_head(event)
         node = self._head_map(
             tuple(
-                ClaimAttestationHeadMapEntryV1(partition_digest=key, head=value)
+                ClaimAttestationHeadMapEntry(partition_digest=key, head=value)
                 for key, value in heads.items()
             )
         )
@@ -849,7 +849,7 @@ class ClaimAttestationEvidenceStore:
             self._crash("after_step3")
         _replace_pointer(
             self.root / "published.json",
-            _render(ClaimAttestationPublishedPointerV1(root_digest=root.root_digest)),
+            _render(ClaimAttestationPublishedPointer(root_digest=root.root_digest)),
         )
         new_chain = (*chain, (root, node))
         self._validated_chain_cache = new_chain
@@ -876,10 +876,10 @@ class ClaimAttestationEvidenceStore:
     def append(
         self,
         *,
-        attestation: ClaimAttestationV2,
-        verification_account: VerifiedClaimAttestationV2,
+        attestation: ClaimAttestation,
+        verification_account: VerifiedClaimAttestation,
         note: str | None,
-    ) -> ClaimAttestationAppendResultV1:
+    ) -> ClaimAttestationAppendResult:
         statement = attestation.statement
         statement_digest = claim_attestation_v2_statement_digest(statement)
         envelope_digest = claim_attestation_v2_envelope_digest(attestation)
@@ -909,8 +909,8 @@ class ClaimAttestationEvidenceStore:
                 None,
             )
             if duplicate_digest is not None:
-                event = self._load_object("event", duplicate_digest, ClaimAttestationEventV1)
-                assert isinstance(event, ClaimAttestationEventV1)
+                event = self._load_object("event", duplicate_digest, ClaimAttestationEvent)
+                assert isinstance(event, ClaimAttestationEvent)
                 payload = self._payload_for_event(event)
                 if payload.envelope_digest != envelope_digest or payload.attestation != attestation:
                     raise _error(
@@ -934,7 +934,7 @@ class ClaimAttestationEvidenceStore:
                 if partition_head is None
                 else partition_head.event_digest
             )
-            payload_draft = ClaimAttestationEventPayloadV1.model_construct(
+            payload_draft = ClaimAttestationEventPayload.model_construct(
                 tag="playbill-claim-attestation-event-payload-v1",
                 statement_digest=statement_digest,
                 envelope_digest=envelope_digest,
@@ -949,13 +949,13 @@ class ClaimAttestationEvidenceStore:
                 recorded_at=verification_account.recorded_at,
                 payload_digest=NULL_DIGEST,
             )
-            payload = ClaimAttestationEventPayloadV1(
+            payload = ClaimAttestationEventPayload(
                 **{
                     **payload_draft.model_dump(mode="json"),
                     "payload_digest": claim_attestation_event_payload_digest(payload_draft),
                 }
             )
-            event_draft = ClaimAttestationEventV1.model_construct(
+            event_draft = ClaimAttestationEvent.model_construct(
                 tag="playbill-claim-attestation-event-v1",
                 instance_id=self.instance_id,
                 partition_digest=partition_digest,
@@ -964,7 +964,7 @@ class ClaimAttestationEvidenceStore:
                 payload_digest=payload.payload_digest,
                 event_digest=NULL_DIGEST,
             )
-            event = ClaimAttestationEventV1(
+            event = ClaimAttestationEvent(
                 **{
                     **event_draft.model_dump(mode="json"),
                     "event_digest": claim_attestation_event_digest(event_draft),
@@ -980,7 +980,7 @@ class ClaimAttestationEvidenceStore:
                 raise _error("store_corrupt", "attestation partition path is invalid")
             genesis_path = directory / "genesis.json"
             if not genesis_path.exists():
-                genesis = ClaimAttestationPartitionGenesisV1(
+                genesis = ClaimAttestationPartitionGenesis(
                     partition_digest=partition_digest,
                     genesis_digest=claim_attestation_partition_genesis_digest(partition_digest),
                 )
@@ -1000,8 +1000,8 @@ class ClaimAttestationEvidenceStore:
     def duplicate(
         self,
         *,
-        attestation: ClaimAttestationV2,
-    ) -> ClaimAttestationAppendResultV1 | None:
+        attestation: ClaimAttestation,
+    ) -> ClaimAttestationAppendResult | None:
         """Return an authenticated duplicate as a read, before append eligibility."""
 
         statement = attestation.statement
@@ -1031,8 +1031,8 @@ class ClaimAttestationEvidenceStore:
                 None,
             )
             if event_digest is not None:
-                event = self._load_object("event", event_digest, ClaimAttestationEventV1)
-                assert isinstance(event, ClaimAttestationEventV1)
+                event = self._load_object("event", event_digest, ClaimAttestationEvent)
+                assert isinstance(event, ClaimAttestationEvent)
                 payload = self._payload_for_event(event)
                 if payload.envelope_digest != envelope_digest or payload.attestation != attestation:
                     raise _error(
@@ -1043,19 +1043,19 @@ class ClaimAttestationEvidenceStore:
                 return self._result(event, payload, recorded, current_root)
             return None
 
-    def _payload_for_event(self, event: ClaimAttestationEventV1) -> ClaimAttestationEventPayloadV1:
-        value = self._load_object("payload", event.payload_digest, ClaimAttestationEventPayloadV1)
-        assert isinstance(value, ClaimAttestationEventPayloadV1)
+    def _payload_for_event(self, event: ClaimAttestationEvent) -> ClaimAttestationEventPayload:
+        value = self._load_object("payload", event.payload_digest, ClaimAttestationEventPayload)
+        assert isinstance(value, ClaimAttestationEventPayload)
         account = self._load_object(
             "verification-account",
             value.verification_account_digest,
-            VerifiedClaimAttestationV2,
+            VerifiedClaimAttestation,
         )
         if account != value.verification_account:
             raise _error("store_corrupt", "attestation verification account object differs")
         return value
 
-    def _root_for_event(self, event_digest: str) -> ClaimAttestationPublishedRootV1:
+    def _root_for_event(self, event_digest: str) -> ClaimAttestationPublishedRoot:
         self._validated_chain(self._load_pointer().root_digest)
         match = self._recorded_root_by_event.get(event_digest)
         if match is None:
@@ -1064,12 +1064,12 @@ class ClaimAttestationEvidenceStore:
 
     @staticmethod
     def _result(
-        event: ClaimAttestationEventV1,
-        payload: ClaimAttestationEventPayloadV1,
-        recorded: ClaimAttestationPublishedRootV1,
-        current: ClaimAttestationPublishedRootV1,
-    ) -> ClaimAttestationAppendResultV1:
-        return ClaimAttestationAppendResultV1(
+        event: ClaimAttestationEvent,
+        payload: ClaimAttestationEventPayload,
+        recorded: ClaimAttestationPublishedRoot,
+        current: ClaimAttestationPublishedRoot,
+    ) -> ClaimAttestationAppendResult:
+        return ClaimAttestationAppendResult(
             event_digest=event.event_digest,
             partition_digest=event.partition_digest,
             statement_digest=payload.statement_digest,
@@ -1091,7 +1091,7 @@ class ClaimAttestationEvidenceStore:
 
     def events(
         self, *, at_head: str | None = None
-    ) -> tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...]:
+    ) -> tuple[tuple[ClaimAttestationEvent, ClaimAttestationEventPayload], ...]:
         with self._locked():
             if not self.root.exists():
                 if at_head is not None and at_head != self._empty_root().root_digest:
@@ -1110,11 +1110,11 @@ class ClaimAttestationEvidenceStore:
                     "attestation head is not a replay-valid ancestor",
                 )
             roots = chain[1 : target_indexes[0] + 1]
-            loaded: list[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1]] = []
+            loaded: list[tuple[ClaimAttestationEvent, ClaimAttestationEventPayload]] = []
             for root, _node in roots:
                 assert root.event_digest is not None
-                event = self._load_object("event", root.event_digest, ClaimAttestationEventV1)
-                assert isinstance(event, ClaimAttestationEventV1)
+                event = self._load_object("event", root.event_digest, ClaimAttestationEvent)
+                assert isinstance(event, ClaimAttestationEvent)
                 marker = self._load_marker(self._chain_marker_path(event))
                 if marker != event:
                     raise _error("store_corrupt", "attestation event object and marker differ")
@@ -1123,7 +1123,7 @@ class ClaimAttestationEvidenceStore:
 
     def fold_events(
         self, *, at_head: str | None = None
-    ) -> tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...]:
+    ) -> tuple[tuple[ClaimAttestationEvent, ClaimAttestationEventPayload], ...]:
         """Return only events needed by the threshold and outstanding reducers."""
 
         with self._locked():
@@ -1150,15 +1150,15 @@ class ClaimAttestationEvidenceStore:
             selected = {entry[3] for entry in accelerator.latest_event_by_principal} | {
                 entry.event_digest for entry in accelerator.outstanding_memberships
             }
-            ordered: list[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1]] = []
+            ordered: list[tuple[ClaimAttestationEvent, ClaimAttestationEventPayload]] = []
             for root, _node in target_chain[1:]:
                 assert root.event_digest is not None
                 if root.event_digest not in selected:
                     continue
                 pair = self._event_pair_cache.get(root.event_digest)
                 if pair is None:
-                    event = self._load_object("event", root.event_digest, ClaimAttestationEventV1)
-                    assert isinstance(event, ClaimAttestationEventV1)
+                    event = self._load_object("event", root.event_digest, ClaimAttestationEvent)
+                    assert isinstance(event, ClaimAttestationEvent)
                     pair = (event, self._payload_for_event(event))
                     self._event_pair_cache[root.event_digest] = pair
                 ordered.append(pair)

@@ -449,12 +449,12 @@ from pathlib import Path
 from cruxible_core.indexes.history.history_index import AcceptedHistoryIndex
 from cruxible_core.ledger.git import GitLedger
 from cruxible_core.proposals.proposal_evidence import ProposalEvidenceStore
-from cruxible_client.contracts.proposal_models import ProposalWithdrawalRecordV1
+from cruxible_client.contracts.proposal_models import ProposalWithdrawalRecord
 owner = AcceptedHistoryIndex(Path(sys.argv[1]))
 ledger = GitLedger(Path(sys.argv[3]), signing_key_path=Path('unused'),
                    allowed_signers_path=Path('unused'))
 evidence = ProposalEvidenceStore(Path(sys.argv[2]), index=owner.proposals, transport=ledger)
-evidence.write_withdrawal(ProposalWithdrawalRecordV1(
+evidence.write_withdrawal(ProposalWithdrawalRecord(
     proposal_id=sys.argv[4], actor_id='owner', reason='other writer',
     withdrawn_at='2026-08-11T12:40:00.000000Z'))
 """

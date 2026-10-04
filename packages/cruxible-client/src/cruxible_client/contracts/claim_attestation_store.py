@@ -10,8 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.claim_attestations import (
-    ClaimAttestationV2,
-    VerifiedClaimAttestationV2,
+    ClaimAttestation,
+    VerifiedClaimAttestation,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import ensure_utc
@@ -34,7 +34,7 @@ def _digest(value: str) -> str:
     return value
 
 
-class ClaimAttestationStoreManifestV1(_StrictStoreModel):
+class ClaimAttestationStoreManifest(_StrictStoreModel):
     tag: Literal["playbill-claim-attestation-store-manifest-v1"] = (
         "playbill-claim-attestation-store-manifest-v1"
     )
@@ -50,15 +50,15 @@ class ClaimAttestationStoreManifestV1(_StrictStoreModel):
         return ensure_utc(value)
 
 
-class ClaimAttestationEventPayloadV1(_StrictStoreModel):
+class ClaimAttestationEventPayload(_StrictStoreModel):
     tag: Literal["playbill-claim-attestation-event-payload-v1"] = (
         "playbill-claim-attestation-event-payload-v1"
     )
     statement_digest: str
     envelope_digest: str
     verification_account_digest: str
-    attestation: ClaimAttestationV2
-    verification_account: VerifiedClaimAttestationV2
+    attestation: ClaimAttestation
+    verification_account: VerifiedClaimAttestation
     note: str | None = None
     recorded_coordinate: AcceptedCoordinate
     current_at_append: bool
@@ -79,7 +79,7 @@ class ClaimAttestationEventPayloadV1(_StrictStoreModel):
         return ensure_utc(value)
 
     @model_validator(mode="after")
-    def _reproduces(self) -> "ClaimAttestationEventPayloadV1":
+    def _reproduces(self) -> "ClaimAttestationEventPayload":
         from cruxible_client.contracts.claim_attestations import (
             claim_attestation_v2_envelope_digest,
             claim_attestation_v2_statement_digest,
@@ -112,7 +112,7 @@ class ClaimAttestationEventPayloadV1(_StrictStoreModel):
         return self
 
 
-class ClaimAttestationEventV1(_StrictStoreModel):
+class ClaimAttestationEvent(_StrictStoreModel):
     tag: Literal["playbill-claim-attestation-event-v1"] = "playbill-claim-attestation-event-v1"
     instance_id: str
     partition_digest: str
@@ -126,13 +126,13 @@ class ClaimAttestationEventV1(_StrictStoreModel):
     )(_digest)
 
     @model_validator(mode="after")
-    def _reproduces(self) -> "ClaimAttestationEventV1":
+    def _reproduces(self) -> "ClaimAttestationEvent":
         if self.event_digest != claim_attestation_event_digest(self):
             raise ValueError("attestation event digest does not reproduce")
         return self
 
 
-class ClaimAttestationPartitionGenesisV1(_StrictStoreModel):
+class ClaimAttestationPartitionGenesis(_StrictStoreModel):
     tag: Literal["playbill-claim-attestation-partition-genesis-v1"] = (
         "playbill-claim-attestation-partition-genesis-v1"
     )
@@ -144,13 +144,13 @@ class ClaimAttestationPartitionGenesisV1(_StrictStoreModel):
     _digests = field_validator("partition_digest", "genesis_digest")(_digest)
 
     @model_validator(mode="after")
-    def _reproduces(self) -> "ClaimAttestationPartitionGenesisV1":
+    def _reproduces(self) -> "ClaimAttestationPartitionGenesis":
         if self.genesis_digest != claim_attestation_partition_genesis_digest(self.partition_digest):
             raise ValueError("attestation partition genesis does not reproduce")
         return self
 
 
-class ClaimAttestationPartitionHeadV1(_StrictStoreModel):
+class ClaimAttestationPartitionHead(_StrictStoreModel):
     tag: Literal["playbill-claim-attestation-partition-head-v1"] = (
         "playbill-claim-attestation-partition-head-v1"
     )
@@ -162,36 +162,36 @@ class ClaimAttestationPartitionHeadV1(_StrictStoreModel):
     _digests = field_validator("partition_digest", "event_digest", "head_digest")(_digest)
 
     @model_validator(mode="after")
-    def _reproduces(self) -> "ClaimAttestationPartitionHeadV1":
+    def _reproduces(self) -> "ClaimAttestationPartitionHead":
         if self.head_digest != claim_attestation_partition_head_digest(self):
             raise ValueError("attestation partition head does not reproduce")
         return self
 
 
-class ClaimAttestationHeadMapEntryV1(_StrictStoreModel):
+class ClaimAttestationHeadMapEntry(_StrictStoreModel):
     partition_digest: str
-    head: ClaimAttestationPartitionHeadV1
+    head: ClaimAttestationPartitionHead
 
     _partition = field_validator("partition_digest")(_digest)
 
     @model_validator(mode="after")
-    def _matches(self) -> "ClaimAttestationHeadMapEntryV1":
+    def _matches(self) -> "ClaimAttestationHeadMapEntry":
         if self.partition_digest != self.head.partition_digest:
             raise ValueError("attestation head-map entry names a different partition")
         return self
 
 
-class ClaimAttestationHeadMapNodeV1(_StrictStoreModel):
+class ClaimAttestationHeadMapNode(_StrictStoreModel):
     tag: Literal["playbill-claim-attestation-head-map-node-v1"] = (
         "playbill-claim-attestation-head-map-node-v1"
     )
-    entries: tuple[ClaimAttestationHeadMapEntryV1, ...]
+    entries: tuple[ClaimAttestationHeadMapEntry, ...]
     map_digest: str
 
     _map_digest = field_validator("map_digest")(_digest)
 
     @model_validator(mode="after")
-    def _shape(self) -> "ClaimAttestationHeadMapNodeV1":
+    def _shape(self) -> "ClaimAttestationHeadMapNode":
         expected = tuple(
             sorted(self.entries, key=lambda item: item.partition_digest.encode("ascii"))
         )
@@ -204,7 +204,7 @@ class ClaimAttestationHeadMapNodeV1(_StrictStoreModel):
         return self
 
 
-class ClaimAttestationPublishedRootV1(_StrictStoreModel):
+class ClaimAttestationPublishedRoot(_StrictStoreModel):
     tag: Literal["playbill-claim-attestation-published-root-v1"] = (
         "playbill-claim-attestation-published-root-v1"
     )
@@ -225,7 +225,7 @@ class ClaimAttestationPublishedRootV1(_StrictStoreModel):
         return value
 
     @model_validator(mode="after")
-    def _shape(self) -> "ClaimAttestationPublishedRootV1":
+    def _shape(self) -> "ClaimAttestationPublishedRoot":
         genesis = self.sequence == 0
         if genesis != (self.previous_published_root_digest is None and self.event_digest is None):
             raise ValueError("attestation published-root genesis sentinels disagree")
@@ -238,7 +238,7 @@ class ClaimAttestationPublishedRootV1(_StrictStoreModel):
         return self
 
 
-class ClaimAttestationPublishedPointerV1(_StrictStoreModel):
+class ClaimAttestationPublishedPointer(_StrictStoreModel):
     tag: Literal["playbill-claim-attestation-published-pointer-v1"] = (
         "playbill-claim-attestation-published-pointer-v1"
     )
@@ -248,7 +248,7 @@ class ClaimAttestationPublishedPointerV1(_StrictStoreModel):
     _root_digest = field_validator("root_digest")(_digest)
 
 
-class ClaimAttestationOutstandingMembershipV1(_StrictStoreModel):
+class ClaimAttestationOutstandingMembership(_StrictStoreModel):
     tag: Literal["playbill-claim-attestation-outstanding-membership-v1"] = (
         "playbill-claim-attestation-outstanding-membership-v1"
     )
@@ -259,7 +259,7 @@ class ClaimAttestationOutstandingMembershipV1(_StrictStoreModel):
     _digests = field_validator("capture_digest", "event_digest")(_digest)
 
 
-class ClaimAttestationAcceleratorV1(_StrictStoreModel):
+class ClaimAttestationAccelerator(_StrictStoreModel):
     tag: Literal["playbill-claim-attestation-accelerator-v1"] = (
         "playbill-claim-attestation-accelerator-v1"
     )
@@ -268,12 +268,12 @@ class ClaimAttestationAcceleratorV1(_StrictStoreModel):
     latest_event_by_principal: tuple[tuple[str, str, str, str], ...] = ()
     # (partition_digest, principal_id, statement_digest, event_digest)
     idempotency_entries: tuple[tuple[str, str, str, str], ...] = ()
-    outstanding_memberships: tuple[ClaimAttestationOutstandingMembershipV1, ...] = ()
+    outstanding_memberships: tuple[ClaimAttestationOutstandingMembership, ...] = ()
 
     _root_digest = field_validator("at_published_root_digest")(_digest)
 
     @model_validator(mode="after")
-    def _canonical(self) -> "ClaimAttestationAcceleratorV1":
+    def _canonical(self) -> "ClaimAttestationAccelerator":
         latest = tuple(sorted(set(self.latest_event_by_principal)))
         idempotency = tuple(sorted(set(self.idempotency_entries)))
         memberships = tuple(
@@ -324,35 +324,35 @@ def claim_attestation_partition_genesis_digest(partition_digest: str) -> str:
     ).tagged
 
 
-def claim_attestation_event_payload_digest(payload: ClaimAttestationEventPayloadV1) -> str:
+def claim_attestation_event_payload_digest(payload: ClaimAttestationEventPayload) -> str:
     value = payload.model_dump(mode="json")
     value.pop("tag")
     value.pop("payload_digest")
     return typed_digest(Sha256Value, CLAIM_ATTESTATION_EVENT_PAYLOAD_V1_DOMAIN, value).tagged
 
 
-def claim_attestation_event_digest(event: ClaimAttestationEventV1) -> str:
+def claim_attestation_event_digest(event: ClaimAttestationEvent) -> str:
     value = event.model_dump(mode="json")
     value.pop("tag")
     value.pop("event_digest")
     return typed_digest(Sha256Value, CLAIM_ATTESTATION_EVENT_V1_DOMAIN, value).tagged
 
 
-def claim_attestation_partition_head_digest(head: ClaimAttestationPartitionHeadV1) -> str:
+def claim_attestation_partition_head_digest(head: ClaimAttestationPartitionHead) -> str:
     value = head.model_dump(mode="json")
     value.pop("tag")
     value.pop("head_digest")
     return typed_digest(Sha256Value, CLAIM_ATTESTATION_PARTITION_HEAD_V1_DOMAIN, value).tagged
 
 
-def claim_attestation_head_map_node_digest(node: ClaimAttestationHeadMapNodeV1) -> str:
+def claim_attestation_head_map_node_digest(node: ClaimAttestationHeadMapNode) -> str:
     value = node.model_dump(mode="json")
     value.pop("tag")
     value.pop("map_digest")
     return typed_digest(Sha256Value, CLAIM_ATTESTATION_HEAD_MAP_NODE_V1_DOMAIN, value).tagged
 
 
-def claim_attestation_published_root_digest(root: ClaimAttestationPublishedRootV1) -> str:
+def claim_attestation_published_root_digest(root: ClaimAttestationPublishedRoot) -> str:
     value = root.model_dump(mode="json")
     value.pop("tag")
     value.pop("root_digest")
@@ -362,5 +362,5 @@ def claim_attestation_published_root_digest(root: ClaimAttestationPublishedRootV
 __all__ = [
     name
     for name in globals()
-    if name.startswith("ClaimAttestation") or name.startswith("claim_attestation_")
+    if name.startswith("ClaimAttestationV1") or name.startswith("claim_attestation_")
 ]

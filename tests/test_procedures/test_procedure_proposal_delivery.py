@@ -22,10 +22,10 @@ from cruxible_client.contracts.captures import capture_contract_digest, parse_ca
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_path, render_claim_type
 from cruxible_client.contracts.claims import parse_claim
 from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicyV1,
+    ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionRuleV1,
-    ClaimResolutionPolicyV1,
+    ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.procedure_mandates import (
     ProcedureMandateV1,
@@ -33,27 +33,27 @@ from cruxible_client.contracts.procedure_mandates import (
     render_procedure_mandate,
 )
 from cruxible_client.contracts.procedures.artifacts import (
-    ProcedureArtifactV2,
+    ProcedureArtifact,
     procedure_path,
     render_procedure,
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v4
 from cruxible_client.contracts.procedures.line_specs import (
     RUNG_AUTHORITY,
-    LineSpecV6,
+    LineSpec,
     line_identity_digest,
     line_spec_path,
     render_line_spec,
 )
 from cruxible_client.contracts.procedures.models import ProposeChangeSetNodeV3
-from cruxible_client.contracts.procedures.results import ProcedureNodeRefusalV1
+from cruxible_client.contracts.procedures.results import ProcedureNodeRefusal
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_path
 from cruxible_core.procedures.terminal_services import proposal_terminal_ref
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import service_inspect_playbill_proposal
 from cruxible_core.service.procedures.procedure_runs import (
-    LineRunRequestV1,
+    LineRunRequest,
     service_get_playbill_procedure_run,
     service_run_playbill_line,
 )
@@ -89,8 +89,8 @@ def _claim_type(contract_digest: str, *, roles: tuple[str, ...] = ("observation"
                 ),
             )
         ),
-        admission_policy=ClaimAdmissionPolicyV1(),
-        resolution_policy=ClaimResolutionPolicyV1(
+        admission_policy=ClaimAdmissionPolicy(),
+        resolution_policy=ClaimResolutionPolicy(
             cardinality="one",
             eligible_verdicts=("supported",),
             selector="only_contender",
@@ -131,10 +131,10 @@ def item_template(**overrides: Any) -> dict[str, object]:
 
 
 def terminal_procedure(
-    procedure: ProcedureArtifactV2,
+    procedure: ProcedureArtifact,
     *,
     templates: tuple[object, ...] | None = None,
-) -> ProcedureArtifactV2:
+) -> ProcedureArtifact:
     """The Source Procedure with its shaped row flowing into a rung-2 terminal."""
 
     source, shape = procedure.definition.nodes
@@ -158,7 +158,7 @@ def terminal_procedure(
     )
 
 
-def _line(procedure: ProcedureArtifactV2, policy: Any) -> LineSpecV6:
+def _line(procedure: ProcedureArtifact, policy: Any) -> LineSpec:
     return fixtures._served_line(procedure, policy).model_copy(
         update={"max_authority": RUNG_AUTHORITY[2]}
     )
@@ -208,7 +208,7 @@ def run_line(instance, root, line, *, at: datetime = NOW, invoker=None):  # type
     return service_run_playbill_line(
         instance,
         path_identity_digest=identity_digest,
-        request=LineRunRequestV1(
+        request=LineRunRequest(
             line_identity_digest=identity_digest,
             occurrence_id=None,
             evaluation_time=None,
@@ -315,9 +315,9 @@ def test_a_line_terminal_produces_a_proposal_the_manager_accepts_and_reads_back(
 # --- authority, evidence, and shape refusals: no unauthorized proposal mutation
 
 
-def _refusal(state) -> ProcedureNodeRefusalV1:  # type: ignore[no-untyped-def]
+def _refusal(state) -> ProcedureNodeRefusal:  # type: ignore[no-untyped-def]
     assert state.status == "node_refused", state.terminal
-    assert isinstance(state.terminal, ProcedureNodeRefusalV1), state.terminal
+    assert isinstance(state.terminal, ProcedureNodeRefusal), state.terminal
     return state.terminal
 
 

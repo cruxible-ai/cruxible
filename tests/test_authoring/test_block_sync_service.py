@@ -18,9 +18,9 @@ from cruxible_client.authoring.workspace import (
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
-    AuthoringExistingClaimDispositionV1,
-    PlaybillBlockSyncReadRequestV1,
-    SelfSourceBodyV1,
+    AuthoringExistingClaimDisposition,
+    PlaybillBlockSyncReadRequest,
+    SelfSourceBody,
 )
 from cruxible_client.contracts.claims import (
     LiteralClaimObject,
@@ -30,16 +30,16 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV1,
-    ProjectionClaimBackingV1,
+    ProjectionClaimBacking,
     frame_projection_block,
     parse_projection_blocks,
 )
 from cruxible_client.contracts.errors import ProposalIntegrityError
-from cruxible_client.contracts.repairs import RepairOperationV1, served_repair_for_refusal
+from cruxible_client.contracts.repairs import RepairOperation, served_repair_for_refusal
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
-from cruxible_core.coverage.adapter import WorkingSourceObservationV1
-from cruxible_core.coverage.contracts import CoverageAccessProfileV1, CoverageCardBudgetV1
-from cruxible_core.coverage.indexes import CoverageScanBudgetV1
+from cruxible_core.coverage.adapter import WorkingSourceObservation
+from cruxible_core.coverage.contracts import CoverageAccessProfile, CoverageCardBudget
+from cruxible_core.coverage.indexes import CoverageScanBudget
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -55,7 +55,7 @@ from cruxible_core.service.authoring.projection_sync import (
 from cruxible_core.service.discovery.coverage import service_resolve_playbill_coverage
 from cruxible_core.service.discovery.next import (
     PlaybillNextRequestV1,
-    PlaybillNextWorkspaceObservationV1,
+    PlaybillNextWorkspaceObservation,
     service_playbill_next,
 )
 from cruxible_core.service.proposals.publications import service_declare_playbill_block
@@ -75,7 +75,7 @@ def _durable_intents(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CRUXIBLE_AUTHORING_INTENTS", "durable")
 
 
-ACCESS_PROFILE = CoverageAccessProfileV1(
+ACCESS_PROFILE = CoverageAccessProfile(
     profile_id="block-sync-service-test",
     permitted_access_classes=("instance", "public"),
 )
@@ -118,7 +118,7 @@ class _ServiceClient:
             self.instance,
             instance_id=instance_id,
             observations=tuple(
-                WorkingSourceObservationV1.model_validate(item) for item in observations
+                WorkingSourceObservation.model_validate(item) for item in observations
             ),
             at=(
                 None
@@ -127,9 +127,9 @@ class _ServiceClient:
                     at.model_dump(mode="json") if hasattr(at, "model_dump") else at
                 )
             ),
-            budget=None if budget is None else CoverageCardBudgetV1.model_validate(budget),
+            budget=None if budget is None else CoverageCardBudget.model_validate(budget),
             scan_budget=(
-                None if scan_budget is None else CoverageScanBudgetV1.model_validate(scan_budget)
+                None if scan_budget is None else CoverageScanBudget.model_validate(scan_budget)
             ),
         )
         return contracts.PlaybillCoverageResult(
@@ -195,7 +195,7 @@ def _next(instance: PlaybillInstance, observation: object):  # type: ignore[no-u
             at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
             evaluation_time=EVALUATION_TIME,
             access_profile=ACCESS_PROFILE,
-            workspace_observation=PlaybillNextWorkspaceObservationV1.model_validate(observation),
+            workspace_observation=PlaybillNextWorkspaceObservation.model_validate(observation),
         ),
     )
 
@@ -216,9 +216,7 @@ def _accept_successor(
     successor = coordinator.create(
         actor=actor,
         payload=_successor_payload(claim_id, value=value).model_copy(
-            update={
-                "source": SelfSourceBodyV1(content_base64=base64.b64encode(body).decode("ascii"))
-            }
+            update={"source": SelfSourceBody(content_base64=base64.b64encode(body).decode("ascii"))}
         ),
         canonical_timestamp=timestamp,
     ).intent
@@ -264,11 +262,11 @@ def _accept_sibling_claim(
                     update={"object": LiteralClaimObject(value=value)}
                 ),
                 "rationale": f"The writer observed the work item {value}.",
-                "source": SelfSourceBodyV1(
+                "source": SelfSourceBody(
                     content_base64=base64.b64encode(f"status: {value}\n".encode()).decode("ascii")
                 ),
                 "existing_claim_dispositions": tuple(
-                    AuthoringExistingClaimDispositionV1(claim_id=name, disposition="not_tested")
+                    AuthoringExistingClaimDisposition(claim_id=name, disposition="not_tested")
                     for name in sorted(set(dispositioned), key=lambda item: item.encode("ascii"))
                 ),
             }
@@ -287,13 +285,13 @@ def _accept_sibling_claim(
     return coordinator.store.get(intent.intent_id, actor_id=actor.actor_id).semantic_identity
 
 
-def _claim_backing(instance: PlaybillInstance, name: str) -> ProjectionClaimBackingV1:
+def _claim_backing(instance: PlaybillInstance, name: str) -> ProjectionClaimBacking:
     """The backing entry a stamp would carry for the live Claim ``name``."""
 
     path = claim_path(name)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     claim = parse_claim(tree[path], path=path)
-    return ProjectionClaimBackingV1(
+    return ProjectionClaimBacking(
         identity=ArtifactIdentity(kind="Claim", name=name),
         statement_digest=claim_statement_digest(claim.statement).tagged,
     )
@@ -335,7 +333,7 @@ def test_body_only_successor_is_current_in_both_sync_and_next(
 
     settled = service_read_playbill_block_sync_backing(
         instance,
-        request=PlaybillBlockSyncReadRequestV1(stamp=stamp),
+        request=PlaybillBlockSyncReadRequest(stamp=stamp),
     )
     assert settled.status == "current"
     assert settled.moved_backings == ()
@@ -357,7 +355,7 @@ def test_body_only_successor_is_current_in_both_sync_and_next(
 
     moved = service_read_playbill_block_sync_backing(
         instance,
-        request=PlaybillBlockSyncReadRequestV1(stamp=stamp),
+        request=PlaybillBlockSyncReadRequest(stamp=stamp),
     )
     assert moved.status == "current"
     assert moved.moved_backings == ()
@@ -432,7 +430,7 @@ def test_a_moved_statement_reaches_next_and_sync_without_either_rewriting_the_pa
 
     current = service_read_playbill_block_sync_backing(
         instance,
-        request=PlaybillBlockSyncReadRequestV1(stamp=original_stamp),
+        request=PlaybillBlockSyncReadRequest(stamp=original_stamp),
     )
     assert current.status == "current"
 
@@ -547,7 +545,7 @@ def test_a_moved_statement_reaches_next_and_sync_without_either_rewriting_the_pa
     )
     ambiguous_read = service_read_playbill_block_sync_backing(
         instance,
-        request=PlaybillBlockSyncReadRequestV1(stamp=original_stamp),
+        request=PlaybillBlockSyncReadRequest(stamp=original_stamp),
     )
     assert ambiguous_read.status == "unchecked"
     assert ambiguous_read.reason == "block_successor_ambiguous"
@@ -567,7 +565,7 @@ def test_a_moved_statement_reaches_next_and_sync_without_either_rewriting_the_pa
     )
     assert ambiguous_sync.items[0].outcome == "unchecked"
     assert ambiguous_sync.items[0].reason == "block_successor_ambiguous"
-    assert ambiguous_sync.items[0].repair == RepairOperationV1(
+    assert ambiguous_sync.items[0].repair == RepairOperation(
         operation="playbill.block.repin",
         arguments={
             "source_id": "repo.work-items",
@@ -653,7 +651,7 @@ def test_a_block_holding_three_claims_reports_one_ordinary_outcome(
 
     read = service_read_playbill_block_sync_backing(
         instance,
-        request=PlaybillBlockSyncReadRequestV1(stamp=stamp),
+        request=PlaybillBlockSyncReadRequest(stamp=stamp),
     )
     assert read.status == "current"
     assert read.moved_backings == ()
@@ -679,7 +677,7 @@ def test_a_block_holding_three_claims_reports_one_ordinary_outcome(
     assert source.read_bytes() == page_before
 
     # The check reads every Claim backing in one batch, never one path at a time.
-    from cruxible_client.contracts.authoring.models import PlaybillProjectionCheckRequestV1
+    from cruxible_client.contracts.authoring.models import PlaybillProjectionCheckRequest
     from cruxible_core.service.authoring.projection_sync import service_check_projection_blocks
 
     single_reads: list[str] = []
@@ -694,7 +692,7 @@ def test_a_block_holding_three_claims_reports_one_ordinary_outcome(
         patch.setattr(instance, "blob_at", counted_blob)
         checked = service_check_projection_blocks(
             instance,
-            request=PlaybillProjectionCheckRequestV1(
+            request=PlaybillProjectionCheckRequest(
                 stamps=(stamp,), evaluation_time=EVALUATION_TIME
             ),
         )
@@ -702,8 +700,8 @@ def test_a_block_holding_three_claims_reports_one_ordinary_outcome(
     assert single_reads == []
 
     from cruxible_client.contracts.authoring.models import (
-        PlaybillBlockSyncReadResultV1,
-        PlaybillBlockSyncSuccessorCandidateV1,
+        PlaybillBlockSyncReadResult,
+        PlaybillBlockSyncSuccessorCandidate,
     )
     from cruxible_core.indexes.typed_state import TypedStateReader
 
@@ -718,7 +716,7 @@ def test_a_block_holding_three_claims_reports_one_ordinary_outcome(
             ),
         )
         absent = service_read_playbill_block_sync_backing(
-            instance, request=PlaybillBlockSyncReadRequestV1(stamp=stamp)
+            instance, request=PlaybillBlockSyncReadRequest(stamp=stamp)
         )
         assert absent.reason == "block_backing_missing"
         assert absent.issues[0].identity.qualified == missing
@@ -727,13 +725,13 @@ def test_a_block_holding_three_claims_reports_one_ordinary_outcome(
     failures = {}
     for index, backing in enumerate(stamp.backing):
         origin = "sha256:" + str(index + 1) * 64
-        failures[backing.identity.qualified] = PlaybillBlockSyncReadResultV1(
+        failures[backing.identity.qualified] = PlaybillBlockSyncReadResult(
             status="unchecked",
             reason="block_successor_ambiguous",
             detail="ambiguous " + backing.identity.qualified,
             original_artifact_digest=origin,
             successor_candidates=tuple(
-                PlaybillBlockSyncSuccessorCandidateV1(
+                PlaybillBlockSyncSuccessorCandidate(
                     identity=backing.identity,
                     artifact_digest="sha256:" + digit * 64,
                     coordinate=stamp.declared_coordinate,
@@ -748,7 +746,7 @@ def test_a_block_holding_three_claims_reports_one_ordinary_outcome(
         lambda instance, *, backing, **kwargs: failures[backing.identity.qualified],
     )
     ambiguous = service_read_playbill_block_sync_backing(
-        instance, request=PlaybillBlockSyncReadRequestV1(stamp=stamp)
+        instance, request=PlaybillBlockSyncReadRequest(stamp=stamp)
     )
     selected = failures[ambiguous.issues[0].identity.qualified]
     assert ambiguous.detail == selected.detail
@@ -800,7 +798,7 @@ def test_a_hand_edited_body_is_reported_without_mutating_it(tmp_path: Path) -> N
     (dirty_item,) = dirty.items
     assert dirty_item.outcome == "dirty"
     assert dirty_item.reason == "block_locally_modified"
-    assert dirty_item.repair == RepairOperationV1(
+    assert dirty_item.repair == RepairOperation(
         operation="playbill.block.repin",
         arguments={"source_id": "repo.work-items", "block_id": stamp.block_id},
     )

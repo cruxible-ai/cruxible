@@ -26,10 +26,10 @@ RUNTIME_CREDENTIAL_MINT_TAG = "cruxible-runtime-credential-mint-v1"
 #: captured, never-submitted statement stays usable.
 RUNTIME_CREDENTIAL_PROOF_MAX_SKEW_SECONDS = 300
 
-RuntimeCredentialPermissionModeV1 = Literal["read_only", "governed_write", "graph_write", "admin"]
+RuntimeCredentialPermissionMode = Literal["read_only", "governed_write", "graph_write", "admin"]
 
 
-class RuntimeCredentialMintStatementV1(BaseModel):
+class RuntimeCredentialMintStatement(BaseModel):
     """Exactly the bytes a principal signs to consent to one credential."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -37,7 +37,7 @@ class RuntimeCredentialMintStatementV1(BaseModel):
     tag: Literal["cruxible-runtime-credential-mint-v1"] = "cruxible-runtime-credential-mint-v1"
     instance_id: str = Field(min_length=1, max_length=256)
     principal_id: str
-    permission_mode: RuntimeCredentialPermissionModeV1
+    permission_mode: RuntimeCredentialPermissionMode
     label: str = Field(min_length=1, max_length=256)
     # The exact string signed, never re-rendered: `format_datetime` UTC form.
     issued_at: str = Field(min_length=1, max_length=64)
@@ -59,23 +59,23 @@ class RuntimeCredentialMintStatementV1(BaseModel):
         return value
 
 
-class RuntimeCredentialPrincipalProofV1(BaseModel):
+class RuntimeCredentialPrincipalProof(BaseModel):
     """A mint statement and the principal's Ed25519 signature over it."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    statement: RuntimeCredentialMintStatementV1
+    statement: RuntimeCredentialMintStatement
     signature: str = Field(pattern=r"^[0-9a-f]{128}$")
 
 
-def runtime_credential_mint_statement_bytes(statement: RuntimeCredentialMintStatementV1) -> bytes:
+def runtime_credential_mint_statement_bytes(statement: RuntimeCredentialMintStatement) -> bytes:
     """The canonical preimage; the tag inside it separates this signing domain."""
 
     return canonical_bytes(statement.model_dump(mode="json"))
 
 
 def verify_runtime_credential_proof(
-    proof: RuntimeCredentialPrincipalProofV1, *, public_key: str
+    proof: RuntimeCredentialPrincipalProof, *, public_key: str
 ) -> bool:
     """Whether ``public_key`` (raw Ed25519 hex) signed exactly this statement."""
 
@@ -92,9 +92,9 @@ def verify_runtime_credential_proof(
 __all__ = [
     "RUNTIME_CREDENTIAL_MINT_TAG",
     "RUNTIME_CREDENTIAL_PROOF_MAX_SKEW_SECONDS",
-    "RuntimeCredentialMintStatementV1",
-    "RuntimeCredentialPermissionModeV1",
-    "RuntimeCredentialPrincipalProofV1",
+    "RuntimeCredentialMintStatement",
+    "RuntimeCredentialPermissionMode",
+    "RuntimeCredentialPrincipalProof",
     "runtime_credential_mint_statement_bytes",
     "verify_runtime_credential_proof",
 ]

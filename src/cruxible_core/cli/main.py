@@ -16,7 +16,7 @@ from cruxible_client.authoring.context import (
     PlaybillContextResolutionError,
     resolve_playbill_context,
 )
-from cruxible_client.contracts.repairs import RepairOperationV1, render_served_repair
+from cruxible_client.contracts.repairs import RepairOperation, render_served_repair
 from cruxible_core.cli.context import load_cli_context
 from cruxible_core.errors import ConfigError
 from cruxible_core.server.config import resolve_server_settings
@@ -200,7 +200,7 @@ def handle_errors(f: Any) -> Any:
                 for repair in repairs:
                     click.secho(f"Repair: {repair}", fg="red", err=True)
                 served = getattr(exc, "repair", None)
-                if not repairs and isinstance(served, RepairOperationV1):
+                if not repairs and isinstance(served, RepairOperation):
                     click.secho(f"Repair: {render_served_repair(served)}", fg="red", err=True)
                 sys.exit(1)
 

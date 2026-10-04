@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_client.contracts import PlaybillClaimViewV2 as ClientClaimViewV2
+from cruxible_client.contracts import ClaimViewRecord as ClientClaimViewV2
 from cruxible_client.contracts.accepted_attestations import ClaimAttestationEvidence
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.candidates import CandidateMemberEvidence
@@ -25,19 +25,19 @@ from cruxible_client.contracts.claim_types import (
     parse_claim_type,
 )
 from cruxible_client.contracts.claim_verdicts import (
+    ClaimVerdictResult,
     ClaimVerdictResultAny,
     ClaimVerdictResultV1,
-    ClaimVerdictResultV2,
 )
 from cruxible_client.contracts.claims import (
+    ClaimArtifact,
     ClaimArtifactAny,
     ClaimArtifactV2,
-    ClaimArtifactV3,
-    ClaimCitationV1,
+    ClaimCitation,
     ClaimFormatError,
     ClaimLawEvidenceAny,
     ClaimLawEvidenceV1,
-    ClaimStatementCardV1,
+    ClaimStatementCard,
     ClaimUnsupportedFormatError,
     claim_artifact_digest,
     claim_citation_references,
@@ -56,16 +56,16 @@ from cruxible_client.contracts.errors import (
 )
 from cruxible_client.contracts.policies import (
     ClaimVerdict,
-    ResolutionContenderV1,
+    ResolutionContender,
     resolve_claim_contenders,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import (
-    CoverageDescriptorV1,
-    ExternalSourceReferenceV1,
-    OpenSourceRequestV1,
-    SourceDereferenceResultV1,
-    SourceHandleV1,
+    CoverageDescriptor,
+    ExternalSourceReference,
+    OpenSourceRequest,
+    SourceDereferenceResult,
+    SourceHandle,
 )
 from cruxible_client.contracts.subjects import (
     parse_subject,
@@ -127,7 +127,7 @@ class CaptureAdmissionAccountV1(_StrictClaimServiceModel):
     decisions: tuple[CaptureEvidenceKindAdmissionV1, ...] = ()
 
 
-class PlaybillClaimViewV2(_StrictClaimServiceModel):
+class ClaimViewRecord(_StrictClaimServiceModel):
     tag: Literal["playbill-claim-read-v2"] = "playbill-claim-read-v2"
     coordinate_kind: Literal["canonical"] = "canonical"
     coordinate: PlaybillAcceptedCoordinate
@@ -135,7 +135,7 @@ class PlaybillClaimViewV2(_StrictClaimServiceModel):
     facts: tuple[dict[str, object], ...]
     admission_evaluation_time: datetime
     admission_accounts: tuple[CaptureAdmissionAccountV1, ...]
-    statement: ClaimStatementCardV1
+    statement: ClaimStatementCard
 
     @field_validator("admission_evaluation_time")
     @classmethod
@@ -145,7 +145,7 @@ class PlaybillClaimViewV2(_StrictClaimServiceModel):
         return value
 
     @model_validator(mode="after")
-    def _ordered_accounts(self) -> "PlaybillClaimViewV2":
+    def _ordered_accounts(self) -> "ClaimViewRecord":
         ids = tuple(item.citation_id for item in self.admission_accounts)
         if ids != tuple(sorted(set(ids), key=lambda item: item.encode("ascii"))):
             raise ValueError("admission accounts must be sorted and unique")
@@ -199,8 +199,8 @@ class PlaybillClaimExplanationV2(_StrictClaimServiceModel):
     verdict: ClaimVerdictResultV1
     exact_attestations: tuple[ClaimAttestationEvidence, ...]
     approval_coverage: Literal["containing_change_set"] = "containing_change_set"
-    source_handles: tuple[SourceHandleV1, ...]
-    coverage: CoverageDescriptorV1
+    source_handles: tuple[SourceHandle, ...]
+    coverage: CoverageDescriptor
     admission_evaluation_time: datetime
     admission_accounts: tuple[CaptureAdmissionAccountV1, ...]
     # Review context, not work: what this Claim shares with retired Claims.
@@ -240,11 +240,11 @@ class PlaybillClaimExplanationV3(_StrictClaimServiceModel):
     evaluation_time: datetime
     claim: PlaybillClaimView
     law_evidence: ClaimLawEvidenceAny
-    verdict: ClaimVerdictResultV2
+    verdict: ClaimVerdictResult
     exact_attestations: tuple[ClaimAttestationEvidence, ...]
     approval_coverage: Literal["containing_change_set"] = "containing_change_set"
-    source_handles: tuple[SourceHandleV1, ...]
-    coverage: CoverageDescriptorV1
+    source_handles: tuple[SourceHandle, ...]
+    coverage: CoverageDescriptor
     admission_evaluation_time: datetime
     admission_accounts: tuple[CaptureAdmissionAccountV1, ...]
     freshness: tuple[ClaimEvidenceFreshnessLineV1, ...]
@@ -280,7 +280,7 @@ def _public_claim(view: ClaimProjectionView) -> PlaybillClaimView:
 
 
 def _claim_from_view(
-    view: PlaybillClaimView | PlaybillClaimViewV2 | ClientClaimViewV2,
+    view: PlaybillClaimView | ClaimViewRecord | ClientClaimViewV2,
 ) -> ClaimArtifactAny:
     path = view.envelope.get("path")
     if not isinstance(path, str):
@@ -319,9 +319,9 @@ def _claim_from_view(
         raise ProposalIntegrityError("Claim projection lacks its complete canonical artifact")
     artifact_format = view.envelope.get("format_tag")
     if artifact_format == "playbill-claim-v2":
-        model: type[ClaimArtifactV2] | type[ClaimArtifactV3] = ClaimArtifactV2
+        model: type[ClaimArtifactV2] | type[ClaimArtifact] = ClaimArtifactV2
     elif artifact_format == "playbill-claim-v3":
-        model = ClaimArtifactV3
+        model = ClaimArtifact
     else:
         raise ClaimUnsupportedFormatError(
             f"{ClaimUnsupportedFormatError.error_code}: {artifact_format!r}"
@@ -401,7 +401,7 @@ def service_get_playbill_claim(
     identity: str,
     at: PlaybillAcceptedCoordinate | None = None,
     evaluation_time: datetime | None = None,
-) -> PlaybillClaimViewV2:
+) -> ClaimViewRecord:
     expected = "Claim:CLM-<32 lowercase hex> or CLM-<32 lowercase hex>"
     coordinate = _resolve_coordinate(instance, at)
     bare = _resolved_claim_id(instance, identity, coordinate=coordinate)
@@ -447,12 +447,12 @@ def materialize_playbill_claim_view(
     law: ClaimLawEvidenceAny | None,
     admission_tree: dict[str, bytes] | None = None,
     bodies: ContentAddressedBodyStore | None = None,
-) -> PlaybillClaimViewV2:
+) -> ClaimViewRecord:
     """Shared single/batch admission semantics; binding and selection happen upstream."""
     if law is None:
         raise ProposalIntegrityError("accepted Claim has no reproducible Claim law evidence")
     parsed = _claim_from_view(public)
-    return PlaybillClaimViewV2(
+    return ClaimViewRecord(
         coordinate=public.coordinate,
         envelope=public.envelope,
         facts=public.facts,
@@ -621,7 +621,7 @@ def _claim_admission_accounts(
         )
         if contract is None:
             raise ProposalIntegrityError("accepted Claim CaptureContract no longer resolves")
-        if isinstance(citation, ClaimCitationV1) and citation.role == "copy":
+        if isinstance(citation, ClaimCitation) and citation.role == "copy":
             accounts.append(
                 CaptureAdmissionAccountV1(
                     citation_id=citation.citation_id,
@@ -657,11 +657,9 @@ def _claim_admission_accounts(
             CaptureAdmissionAccountV1(
                 citation_id=citation.citation_id,
                 capture_digest=citation.capture_digest,
-                citation_role=(
-                    citation.role if isinstance(citation, ClaimCitationV1) else "legacy"
-                ),
+                citation_role=(citation.role if isinstance(citation, ClaimCitation) else "legacy"),
                 citation_origin=(
-                    citation.origin if isinstance(citation, ClaimCitationV1) else "legacy"
+                    citation.origin if isinstance(citation, ClaimCitation) else "legacy"
                 ),
                 capture_contract_identity=contract.contract.identity.qualified,
                 capture_contract_digest=contract.artifact_digest,
@@ -719,7 +717,7 @@ def resolve_playbill_claim_group(
             claim_type = read_context.claim_type(type_path)
         except ClaimNotFoundError as exc:
             raise ClaimNotFoundError(f"ClaimType:{predicate}") from exc
-    contenders: list[ResolutionContenderV1] = []
+    contenders: list[ResolutionContender] = []
     verdicts: list[ClaimVerdictResultAny] = []
     public_coordinate = PlaybillAcceptedCoordinate.from_internal(coordinate)
     for claim in claims:
@@ -750,7 +748,7 @@ def resolve_playbill_claim_group(
             "stale" if evaluated_verdict.verdict == "stale_evidence" else evaluated_verdict.verdict
         )
         contenders.append(
-            ResolutionContenderV1(
+            ResolutionContender(
                 claim_identity=claim.identity.name,
                 object_value=value,
                 verdict=contender_verdict,
@@ -868,7 +866,7 @@ def service_explain_playbill_claim(
         evaluation_time=evaluated_at,
         at=PlaybillAcceptedCoordinate.from_internal(coordinate),
     )
-    handles: list[SourceHandleV1] = []
+    handles: list[SourceHandle] = []
     capture_context: dict[str, tuple[tuple[str, ...], str, str]] = {}
     citations_by_capture: dict[str, list[str]] = {}
     for citation in claim_citation_references(claim):
@@ -892,7 +890,7 @@ def service_explain_playbill_claim(
             if span.content_digest == envelope.commitment.digest
         )
         handles.append(
-            SourceHandleV1(
+            SourceHandle(
                 subject=claim_statement_address(claim_path(claim.identity.name)),
                 at=PlaybillAcceptedCoordinate.from_internal(coordinate),
                 source=envelope.source,
@@ -928,11 +926,11 @@ def service_explain_playbill_claim(
         coordinate=coordinate,
         claim_identity=claim.identity.qualified,
     )
-    coverage = CoverageDescriptorV1(
+    coverage = CoverageDescriptor(
         requested_facets=("governance", "provenance", "sources"),
         available_facets=("governance", "provenance", "sources"),
     )
-    if isinstance(verdict.verdict, ClaimVerdictResultV2):
+    if isinstance(verdict.verdict, ClaimVerdictResult):
         freshness: list[ClaimEvidenceFreshnessLineV1] = []
         for expiration in verdict.verdict.freshness_expirations:
             context = capture_context.get(expiration.capture_digest)
@@ -1037,7 +1035,7 @@ class _InstanceSourceMaterialResolver:
             return None
         return self._instance.body_store().read(content_digest, access=access)
 
-    def read_external(self, source: ExternalSourceReferenceV1) -> object | None:
+    def read_external(self, source: ExternalSourceReference) -> object | None:
         if self._external_reader is None:
             return None
         return self._external_reader.read_external_selection(source)
@@ -1046,11 +1044,11 @@ class _InstanceSourceMaterialResolver:
 def service_open_playbill_source(
     instance: PlaybillInstance,
     *,
-    request: OpenSourceRequestV1,
+    request: OpenSourceRequest,
     access: BodyAccessContext,
     at: PlaybillAcceptedCoordinate | None = None,
     external_reader: ExternalSelectionReaderProtocol | None = None,
-) -> SourceDereferenceResultV1:
+) -> SourceDereferenceResult:
     """Dereference only the coordinate-bound handle; never mutate or refresh a source.
 
     Ledger, CAS, and external selections all resolve through one engine, so the
@@ -1080,7 +1078,7 @@ __all__ = [
     "PlaybillClaimHistoryEntry",
     "PlaybillClaimList",
     "PlaybillClaimView",
-    "PlaybillClaimViewV2",
+    "ClaimViewRecord",
     "resolve_playbill_claim_group",
     "service_explain_playbill_claim",
     "service_get_playbill_claim",

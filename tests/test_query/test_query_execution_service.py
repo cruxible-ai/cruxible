@@ -10,7 +10,7 @@ import pytest
 
 from cruxible_client.contracts.errors import ClaimNotFoundError
 from cruxible_client.contracts.query.definitions import query_definition_path
-from cruxible_client.contracts.query.grammar import QueryBudgetsV1
+from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_core.errors import DataValidationError
 from cruxible_core.exhaust.backends import LocalJournalBackend
 from cruxible_core.exhaust.records import (
@@ -164,7 +164,7 @@ def test_budget_refusal_is_surfaced_in_the_result_and_its_receipt(tmp_path: Path
         instance,
         name=QUERY_NAME,
         evaluation_time=READ_TIME,
-        budgets=QueryBudgetsV1(max_results=500, max_traversal_depth=0),
+        budgets=QueryBudgets(max_results=500, max_traversal_depth=0),
     )
 
     assert run.result.verdict == "refused"

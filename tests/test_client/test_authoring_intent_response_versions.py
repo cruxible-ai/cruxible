@@ -7,15 +7,15 @@ import pytest
 from pydantic import ValidationError
 
 from cruxible_client.contracts.authoring.models import (
-    AuthoringIntentListV1,
+    AuthoringIntent,
+    AuthoringIntentList,
     AuthoringIntentV1,
-    AuthoringIntentV2,
-    AuthoringIntentViewV1,
-    AuthoringSubmitResultV1,
-    InsertionAbandonResultV1,
-    InsertionConfirmResultV2,
-    InsertionExpectationV2,
-    InsertionPrepareResultV2,
+    AuthoringIntentView,
+    AuthoringSubmitResult,
+    InsertionAbandonResult,
+    InsertionConfirmResult,
+    InsertionExpectation,
+    InsertionPrepareResult,
     insertion_expectation_v2_digest,
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
@@ -38,7 +38,7 @@ def test_all_response_wrappers_round_trip_the_selected_intent_version(
         reference_expectations=references,
     ).intent
     # A valid retained publication expectation exercises the legacy wrappers too.
-    draft = InsertionExpectationV2.model_construct(
+    draft = InsertionExpectation.model_construct(
         expectation_id="sha256:" + "1" * 64,
         state="awaiting_claim_acceptance",
         claim_identity=intent.semantic_identity,
@@ -48,29 +48,27 @@ def test_all_response_wrappers_round_trip_the_selected_intent_version(
         expires_at=datetime(2026, 9, 1, tzinfo=UTC),
         expectation_digest="sha256:" + "0" * 64,
     )
-    expectation = InsertionExpectationV2.model_validate(
+    expectation = InsertionExpectation.model_validate(
         draft.model_dump(mode="json")
         | {"expectation_digest": insertion_expectation_v2_digest(draft)}
     )
     wrappers = (
-        AuthoringIntentViewV1(intent=intent),
-        AuthoringIntentListV1(intents=(intent,)),
-        AuthoringSubmitResultV1(intent=intent, status=intent.candidate_status),
-        InsertionPrepareResultV2(intent=intent, expectation=expectation, outcome="expired"),
-        InsertionConfirmResultV2(intent=intent, expectation=expectation, outcome="expired"),
-        InsertionAbandonResultV1(intent=intent, expectation=expectation),
+        AuthoringIntentView(intent=intent),
+        AuthoringIntentList(intents=(intent,)),
+        AuthoringSubmitResult(intent=intent, status=intent.candidate_status),
+        InsertionPrepareResult(intent=intent, expectation=expectation, outcome="expired"),
+        InsertionConfirmResult(intent=intent, expectation=expectation, outcome="expired"),
+        InsertionAbandonResult(intent=intent, expectation=expectation),
     )
     for response in wrappers:
         wire = response.model_dump(mode="json")
-        nested = (
-            wire["intents"][0] if isinstance(response, AuthoringIntentListV1) else wire["intent"]
-        )
+        nested = wire["intents"][0] if isinstance(response, AuthoringIntentList) else wire["intent"]
         assert nested == intent.model_dump(mode="json")
         restored = type(response).model_validate_json(response.model_dump_json())
         restored_intent = (
-            restored.intents[0] if isinstance(restored, AuthoringIntentListV1) else restored.intent
+            restored.intents[0] if isinstance(restored, AuthoringIntentList) else restored.intent
         )
-        assert type(restored_intent) is (AuthoringIntentV2 if version == 2 else AuthoringIntentV1)
+        assert type(restored_intent) is (AuthoringIntent if version == 2 else AuthoringIntentV1)
         assert restored_intent == intent
         if version == 2:
             assert nested["reference_expectations"] == [

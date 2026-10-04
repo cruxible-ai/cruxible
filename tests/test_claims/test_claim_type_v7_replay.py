@@ -28,7 +28,7 @@ import textwrap
 from pathlib import Path
 
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
-from cruxible_client.contracts.claim_type_upgrade import ClaimTypeUpgradeRequestV1
+from cruxible_client.contracts.claim_type_upgrade import ClaimTypeUpgradeRequest
 from cruxible_client.contracts.claim_types import (
     claim_type_digest,
     claim_type_path,
@@ -85,7 +85,7 @@ BUILD = textwrap.dedent(
     )
     from cruxible_client.contracts.claim_types import claim_type_digest, claim_type_path
     from cruxible_client.contracts.claim_types import render_claim_type
-    from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeRequestV1
+    from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeRequest
     from cruxible_core.service.claims.evidence_rule_upgrade import service_upgrade_evidence_rules
     from tests.test_claims.test_claim_type_v7_revisions import _selection, _V7World
     from tests.test_claims.test_identity_evidence_rules import (
@@ -114,18 +114,18 @@ BUILD = textwrap.dedent(
     # Evidence no rule admits: it enters the verdict as origin-only.
     import base64, hashlib
     from cruxible_client.contracts.authoring.models import (
-        WorkingAnchorWindowV1, WorkingDigestCoordinateV1, WorkingSelectionObservationV1,
+        WorkingAnchorWindow, WorkingDigestCoordinate, WorkingSelectionObservation,
     )
     text = b"status: blocked"
     digest = "sha256:" + hashlib.sha256(text).hexdigest()
-    elsewhere = WorkingSelectionObservationV1(
+    elsewhere = WorkingSelectionObservation(
         source_id="repo.other",
-        coordinate=WorkingDigestCoordinateV1(
+        coordinate=WorkingDigestCoordinate(
             source_content_digest=digest, source_byte_length=len(text)
         ),
         selected_content_base64=base64.b64encode(text).decode("ascii"),
         selected_bytes_digest=digest,
-        selector=WorkingAnchorWindowV1(
+        selector=WorkingAnchorWindow(
             anchor=text.decode("ascii"),
             start_byte=0,
             end_byte=len(text),
@@ -142,7 +142,7 @@ BUILD = textwrap.dedent(
     }))
     upgraded = service_upgrade_evidence_rules(
         world.instance,
-        request=EvidenceRuleUpgradeRequestV1(dry_run=False),
+        request=EvidenceRuleUpgradeRequest(dry_run=False),
         actor_id="owner",
         timestamp=world.timestamp(),
     )
@@ -279,7 +279,7 @@ def test_pre_v7_history_replays_settles_and_extends_under_the_new_laws(tmp_path:
 
     upgraded = service_upgrade_claim_types(
         instance,
-        request=ClaimTypeUpgradeRequestV1(claim_types=(PREDICATE,), dry_run=False),
+        request=ClaimTypeUpgradeRequest(claim_types=(PREDICATE,), dry_run=False),
         actor_id="owner",
         timestamp=world.timestamp(),
     )

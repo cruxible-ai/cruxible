@@ -207,14 +207,14 @@ def test_a_line_and_the_triggers_aimed_at_it_are_separate_authoring_decisions(pb
 
     from cruxible_client.contracts.artifacts import ArtifactIdentity
     from cruxible_client.contracts.authoring.models import (
-        LineAuthoringPayloadV1,
-        TriggerAuthoringPayloadV1,
+        LineAuthoringPayload,
+        TriggerAuthoringPayload,
     )
-    from cruxible_client.contracts.procedures.windows import CaptureEventSelectorV1
-    from cruxible_client.contracts.triggers import CadenceScheduleV1, CaptureLandingScheduleV1
+    from cruxible_client.contracts.procedures.windows import CaptureEventSelector
+    from cruxible_client.contracts.triggers import CadenceSchedule, CaptureLandingSchedule
 
-    landing = CaptureLandingScheduleV1(
-        event=CaptureEventSelectorV1(
+    landing = CaptureLandingSchedule(
+        event=CaptureEventSelector(
             capture_contract_identity=ArtifactIdentity(kind="CaptureContract", name="feed"),
             capture_contract_digest="sha256:" + "a" * 64,
         )
@@ -230,13 +230,13 @@ def test_a_line_and_the_triggers_aimed_at_it_are_separate_authoring_decisions(pb
     draft.trigger(name="on-feed", schedule=landing, line="consume-feed")
     draft.trigger(
         name="sweep-often",
-        schedule=CadenceScheduleV1(interval_seconds=600),
+        schedule=CadenceSchedule(interval_seconds=600),
         action="evidence.sweep",
     )
     members = draft._compiled().payload.members
-    line = next(m for m in members if isinstance(m, LineAuthoringPayloadV1))
+    line = next(m for m in members if isinstance(m, LineAuthoringPayload))
     assert line.trigger_input == "feed" and "trigger_policy" not in line.model_dump()
-    triggers = {m.name: m for m in members if isinstance(m, TriggerAuthoringPayloadV1)}
+    triggers = {m.name: m for m in members if isinstance(m, TriggerAuthoringPayload)}
     assert (triggers["on-feed"].line_name, triggers["on-feed"].schedule) == (
         "consume-feed",
         landing,
@@ -246,6 +246,6 @@ def test_a_line_and_the_triggers_aimed_at_it_are_separate_authoring_decisions(pb
         None,
     )
     with pytest.raises(ValidationError, match="exactly one target"):
-        TriggerAuthoringPayloadV1(
+        TriggerAuthoringPayload(
             name="both", schedule=landing, line_name="consume-feed", action="evidence.sweep"
         )

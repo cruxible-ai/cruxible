@@ -12,7 +12,7 @@ from cruxible_client.contracts.captures import (
     FOREIGN_SOURCE_SELECTOR_TYPE,
 )
 from cruxible_client.contracts.projection_extensions import ProjectionFact
-from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
+from cruxible_client.contracts.source_references import ExternalSourceReference
 
 RELATION_RETIRED_CONFLICT_SCHEMA = "playbill.citation_relation.retired_conflict"
 
@@ -25,7 +25,7 @@ def _digest_identity(prefix: str, value: object) -> str:
     return f"{prefix}-{digest}"
 
 
-def external_source_relation_subject(source: ExternalSourceReferenceV1) -> str:
+def external_source_relation_subject(source: ExternalSourceReference) -> str:
     return _digest_identity(
         "external-source",
         {

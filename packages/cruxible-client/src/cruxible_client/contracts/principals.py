@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from cruxible_client.contracts.canonical import SemanticRoot
 from cruxible_client.contracts.errors import PrincipalIntegrityError
 from cruxible_client.contracts.principal_rendering import render_principal
-from cruxible_client.contracts.repairs import ServedRepairV1
+from cruxible_client.contracts.repairs import ServedRepair
 from cruxible_client.contracts.types import PrincipalRecord
 
 _PRINCIPAL_PATH_RE = re.compile(r"^principals/([a-z][a-z0-9_.-]{0,127})\.json$")
@@ -33,7 +33,7 @@ def is_canonical_principal_id(value: str) -> bool:
 
 #: Why an actor cannot author on an instance. The same codes a refused write
 #: carries, so `whoami` predicts exactly the refusal authoring would return.
-AuthoringRefusalCodeV1 = Literal[
+AuthoringRefusalCode = Literal[
     "playbill.identity.credential_unbound",
     "playbill.identity.principal_unconfigured",
     "playbill.identity.principal_absent",
@@ -43,14 +43,14 @@ AuthoringRefusalCodeV1 = Literal[
 ]
 
 
-class PlaybillAuthoringRefusalV1(BaseModel):
+class PlaybillAuthoringRefusal(BaseModel):
     """Why this actor cannot author, and the runnable repair."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    code: AuthoringRefusalCodeV1
+    code: AuthoringRefusalCode
     detail: str
-    repair: ServedRepairV1
+    repair: ServedRepair
 
 
 class PrincipalRegistrySnapshot(BaseModel):

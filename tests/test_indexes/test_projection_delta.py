@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.authoring.models import ClaimRetirementMemberV1
+from cruxible_client.contracts.authoring.models import ClaimRetirementMember
 from cruxible_client.contracts.errors import ProjectionIntegrityError, SettlementIntegrityError
 from cruxible_core.compiler import projection_delta as delta_module
 from cruxible_core.compiler.assembler import ProjectionAssembler
@@ -142,7 +142,7 @@ def test_successor_matches_every_cold_row_across_create_revise_and_retire(tmp_pa
     historical = Path(seen[0].manifest_path).parent / seen[0].manifest.pieces[0].name
     old_bytes = hashlib.sha256(historical.read_bytes()).digest()
     accept(_change_set(_claim(qualifier="a", revises=ids[0], value="done")))
-    accept(_change_set(ClaimRetirementMemberV1(retires=ids[1], reason="was-rescinded")))
+    accept(_change_set(ClaimRetirementMember(retires=ids[1], reason="was-rescinded")))
     assert len(seen) == 3
     assert hashlib.sha256(historical.read_bytes()).digest() == old_bytes
 

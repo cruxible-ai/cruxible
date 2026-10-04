@@ -18,9 +18,9 @@ class _OrientClient(_Client):
         super().__init__()
         self.orient_calls: list[dict[str, Any]] = []
 
-    def orient_playbill(self, _instance_id: str, **values: Any) -> api.PlaybillOrientResultV1:
+    def orient_playbill(self, _instance_id: str, **values: Any) -> api.PlaybillOrientResult:
         self.orient_calls.append(values)
-        return api.PlaybillOrientResultV1(
+        return api.PlaybillOrientResult(
             instance="inst_test",
             coordinate=AcceptedCoordinate.model_validate(_COORDINATE.model_dump(mode="json")),
             generation=4,
@@ -54,7 +54,7 @@ def test_sdk_orient_reads_the_map_for_the_sdk_surface(tmp_path: Path) -> None:
     (floor / "provenance").mkdir(parents=True)
     oid = _COORDINATE.git_oid
     (floor / "manifest.json").write_text(json.dumps({"coordinate": {"git_oid": oid}}))
-    assert pb.orient().floor == api.PlaybillOrientFloorV1(at=oid, generations_behind=0)
+    assert pb.orient().floor == api.PlaybillOrientFloor(at=oid, generations_behind=0)
 
     pinned = pb.at(pb.coordinate)
     pinned.orient(section="queries", limit=5)

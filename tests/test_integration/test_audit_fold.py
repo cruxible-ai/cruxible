@@ -11,12 +11,12 @@ import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
-from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.claim_attestations import (
-    ClaimAttestationStatement,
+    ClaimAttestationStatementV1,
     VerifiedClaimAttestationV1,
 )
-from cruxible_client.contracts.claim_verdicts import CaptureVerdictEvidenceV1
+from cruxible_client.contracts.claim_verdicts import CaptureVerdictEvidence
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
     ClaimLawEvidenceV1,
@@ -27,8 +27,8 @@ from cruxible_client.contracts.claims import (
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.coverage.contracts import (
-    CoverageAccessProfileV1,
-    LogicalSourceIdentityV1,
+    CoverageAccessProfile,
+    LogicalSourceIdentity,
 )
 from cruxible_core.curation.audit import (
     AuditBudgetV1,
@@ -89,7 +89,7 @@ def _actor() -> GovernedActorContext:
 def _request(*, permitted: bool = True) -> PlaybillAuditRequestV1:
     return PlaybillAuditRequestV1(
         evaluation_time=NOW,
-        access_profile=CoverageAccessProfileV1(
+        access_profile=CoverageAccessProfile(
             profile_id="test-audit",
             permitted_access_classes=("instance", "public") if permitted else ("public",),
         ),
@@ -182,7 +182,7 @@ def test_pagination_commits_actual_coverage_and_cursor_rejects_operational_drift
     )
     first_request = PlaybillAuditRequestV1(
         evaluation_time=NOW,
-        access_profile=CoverageAccessProfileV1(profile_id="test-audit-pages"),
+        access_profile=CoverageAccessProfile(profile_id="test-audit-pages"),
         budget=AuditBudgetV1(max_rows=2, max_bytes=65_536),
     )
     first = service_playbill_audit(instance, request=first_request, actor_context=_actor())
@@ -477,7 +477,7 @@ def test_byte_budget_records_exact_omission_without_skipping_the_row(
         instance,
         request=PlaybillAuditRequestV1(
             evaluation_time=NOW,
-            access_profile=CoverageAccessProfileV1(profile_id="test-audit-bytes"),
+            access_profile=CoverageAccessProfile(profile_id="test-audit-bytes"),
             budget=AuditBudgetV1(max_rows=10, max_bytes=1_024),
         ),
         actor_context=_actor(),
@@ -538,8 +538,8 @@ def _capture(
     observed_at: datetime = NOW - timedelta(hours=1),
     control_domain: str = "shared-owner",
     provenance_grade: str = "self-asserted",
-) -> CaptureVerdictEvidenceV1:
-    return CaptureVerdictEvidenceV1(
+) -> CaptureVerdictEvidence:
+    return CaptureVerdictEvidence(
         capture_digest=typed_digest(
             Sha256Value,
             "playbill-audit-test-capture-v1",
@@ -633,10 +633,8 @@ def test_logical_source_factor_uses_accepted_identity_and_does_not_invent_one_fo
     ledger = _capture("ledger")
     cas = _capture("cas")
     sources = {
-        external.capture_digest: LogicalSourceIdentityV1(
-            plane="external", identity="db.work_items"
-        ),
-        ledger.capture_digest: LogicalSourceIdentityV1(
+        external.capture_digest: LogicalSourceIdentity(plane="external", identity="db.work_items"),
+        ledger.capture_digest: LogicalSourceIdentity(
             plane="ledger", identity="documents/runbook.md"
         ),
         cas.capture_digest: None,
@@ -669,7 +667,7 @@ def test_near_horizon_is_one_quarter_of_the_exact_v2_expiration(
         update={
             "captures": (capture,),
             "rule": base.rule.model_copy(
-                update={"max_evidence_age": CanonicalDurationV1(microseconds=400)}
+                update={"max_evidence_age": CanonicalDuration(microseconds=400)}
             ),
         }
     )
@@ -693,12 +691,12 @@ def test_near_horizon_is_one_quarter_of_the_exact_v2_expiration(
     assert result.factors.near_freshness_horizon
 
 
-def _support_attestation(row, capture: CaptureVerdictEvidenceV1):  # type: ignore[no-untyped-def]
+def _support_attestation(row, capture: CaptureVerdictEvidence):  # type: ignore[no-untyped-def]
     return VerifiedClaimAttestationV1(
         attestation_digest=typed_digest(
             Sha256Value, "playbill-audit-test-attestation-v1", {"value": "reviewer"}
         ).tagged,
-        statement=ClaimAttestationStatement(
+        statement=ClaimAttestationStatementV1(
             instance_id="inst-audit",
             referent_coordinate=AcceptedCoordinate(
                 git_oid="1" * 64,

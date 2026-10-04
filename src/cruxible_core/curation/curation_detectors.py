@@ -12,8 +12,8 @@ from cruxible_client.contracts.accepted_attestations import ClaimAttestationEvid
 from cruxible_client.contracts.artifacts import ArtifactIdentity, parse_artifact_identity
 from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayloadV1,
+    ProcedureAuthoringPayload,
     ProcedureAuthoringPayloadV1,
-    ProcedureAuthoringPayloadV2,
 )
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.captures import (
@@ -24,10 +24,10 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claim_types import parse_claim_type
 from cruxible_client.contracts.claim_verdicts import (
-    CaptureVerdictEvidenceV1,
+    CaptureVerdictEvidence,
     ClaimVerdictResultAny,
     EvidenceCurrency,
-    EvidenceRelativeClaimVerdict,
+    EvidenceRelativeClaimVerdictV1,
     evaluate_claim_verdict,
     evidence_control_components,
 )
@@ -41,8 +41,8 @@ from cruxible_client.contracts.claims import (
 from cruxible_client.contracts.errors import PlaybillError, ProjectionIntegrityError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.providers import ProviderV1
-from cruxible_client.contracts.query.definitions import QueryEvaluationPolicyV1
-from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
+from cruxible_client.contracts.query.definitions import QueryEvaluationPolicy
+from cruxible_client.contracts.source_references import ExternalSourceReference
 from cruxible_client.contracts.subjects import AcceptedSubject, SubjectShell, parse_subject
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.claims.claim_slots import classify_claim_slot
@@ -83,7 +83,7 @@ from cruxible_core.query.backends import ClaimFactRowV1, claim_row_visibility
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.query import build_accepted_query_facts
 
-_ALL_VERDICTS: tuple[EvidenceRelativeClaimVerdict, ...] = (
+_ALL_VERDICTS: tuple[EvidenceRelativeClaimVerdictV1, ...] = (
     "contradicted",
     "stale",
     "supported",
@@ -91,7 +91,7 @@ _ALL_VERDICTS: tuple[EvidenceRelativeClaimVerdict, ...] = (
     "unresolved",
 )
 _ALL_CURRENCY: tuple[EvidenceCurrency, ...] = ("current", "not_applicable", "stale")
-_CURATION_VISIBILITY_POLICY = QueryEvaluationPolicyV1(
+_CURATION_VISIBILITY_POLICY = QueryEvaluationPolicy(
     visible_verdicts=_ALL_VERDICTS,
     visible_currency=_ALL_CURRENCY,
     conflict_behavior="surface_conflicts",
@@ -833,7 +833,7 @@ def _admission_failures(
         if isinstance(payload, ClaimAuthoringPayloadV1):
             authoring_subject = ArtifactIdentity(kind="ClaimType", name=payload.statement.predicate)
             authoring_direction = "payload_side"
-        elif isinstance(payload, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2):
+        elif isinstance(payload, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayload):
             name = payload.definition.get("name")
             authoring_subject = (
                 ArtifactIdentity(kind="Procedure", name=name) if isinstance(name, str) else None
@@ -937,7 +937,7 @@ def _freshness_calibration(
         except (OSError, PlaybillError, ValueError):
             coverage.omit("drift_series_unavailable")
             continue
-        if not isinstance(envelope.source, ExternalSourceReferenceV1):
+        if not isinstance(envelope.source, ExternalSourceReference):
             coverage.omit("drift_series_unavailable")
             continue
         contract_identity = contracts.get(envelope.capture_contract_digest)
@@ -1119,7 +1119,7 @@ def _provenance_concentration(
     for predicate, members in sorted(supported.items()):
         if len(members) < PROVENANCE_MINIMUM_LIVE_SUPPORTED_CLAIMS:
             continue
-        captures: dict[str, CaptureVerdictEvidenceV1] = {}
+        captures: dict[str, CaptureVerdictEvidence] = {}
         attestations: dict[str, ClaimAttestationEvidence] = {}
         refs: list[CurationEvidenceRefV1] = []
         for row, verdict in members:

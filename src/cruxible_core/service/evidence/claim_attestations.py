@@ -5,9 +5,9 @@ from __future__ import annotations
 from datetime import datetime
 
 from cruxible_client.contracts.claim_attestations import (
-    ClaimAttestationAppendRequestV1,
-    ClaimAttestationAppendResultV1,
-    VerifiedClaimAttestationV2,
+    ClaimAttestationAppendRequest,
+    ClaimAttestationAppendResult,
+    VerifiedClaimAttestation,
     claim_attestation_v2_envelope_digest,
     claim_attestation_v2_statement_digest,
 )
@@ -33,10 +33,10 @@ from cruxible_core.service.claims.claims import _claim_law_evidence
 def service_append_claim_attestation(
     instance: PlaybillInstance,
     *,
-    request: ClaimAttestationAppendRequestV1,
+    request: ClaimAttestationAppendRequest,
     actor_id: str,
     recorded_at: datetime | None = None,
-) -> ClaimAttestationAppendResultV1:
+) -> ClaimAttestationAppendResult:
     """Verify one signed V2 observation and publish exactly one evidence event."""
 
     instance.require_writable()
@@ -100,7 +100,7 @@ def service_append_claim_attestation(
         ),
     )
     current = _accepted_claim(append_tree, statement.claim_identity.name)
-    account = VerifiedClaimAttestationV2(
+    account = VerifiedClaimAttestation(
         statement_digest=claim_attestation_v2_statement_digest(statement),
         envelope_digest=claim_attestation_v2_envelope_digest(request.attestation),
         statement=statement,

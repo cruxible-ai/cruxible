@@ -9,14 +9,14 @@ from typing import TYPE_CHECKING
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.procedure_mandates import ProcedureMandateAny
-from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
+from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.models import (
     TERMINAL_REQUIRED_RUNGS,
-    InvokeNodeV6,
-    ProcedureBudgetV3,
+    InvokeNode,
+    ProcedureBudget,
+    ProcedureDefinition,
     ProcedureDefinitionV5,
-    ProcedureDefinitionV6,
-    ProcedureHardCapsV3,
+    ProcedureHardCaps,
 )
 from cruxible_core.documents.workspace_file import WorkspaceFileReader
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
@@ -106,15 +106,15 @@ def retained_delegation(
         (
             node
             for node in accepted.procedure.definition.nodes
-            if isinstance(node, InvokeNodeV6) and node.node_id == binding.node_id
+            if isinstance(node, InvokeNode) and node.node_id == binding.node_id
         ),
         None,
     )
-    if not isinstance(node, InvokeNodeV6) or calls[0].get("procedure") != node.procedure.model_dump(
+    if not isinstance(node, InvokeNode) or calls[0].get("procedure") != node.procedure.model_dump(
         mode="json"
     ):
         raise ProcedureRunRecoveryRequired("Nested recovery has no matching accepted Invoke node")
-    remaining = ProcedureBudgetV3.model_validate(calls[0].get("remaining_budget"))
+    remaining = ProcedureBudget.model_validate(calls[0].get("remaining_budget"))
     if constrained_budget(parent.budget, remaining, parent.hard_caps) != remaining:
         raise ProcedureRunRecoveryRequired("Nested recovery exceeds the parent budget")
     delegation = ProcedureDelegation(
@@ -141,7 +141,7 @@ class ServedNestedProcedureRunner:
     clock: ProcedureClockProtocol
     mandates: Mapping[str, ProcedureMandateAny] = field(default_factory=dict)
 
-    def _accepted(self, pin: ArtifactPin) -> AcceptedProcedureV1:
+    def _accepted(self, pin: ArtifactPin) -> AcceptedProcedure:
         from cruxible_core.service.procedures.procedure_runs import _accepted_procedure
 
         accepted = _accepted_procedure(
@@ -164,7 +164,7 @@ class ServedNestedProcedureRunner:
             )
         return accepted
 
-    def preflight(self, accepted: AcceptedProcedureV1, admission: ProcedureRunAdmissionV1) -> None:
+    def preflight(self, accepted: AcceptedProcedure, admission: ProcedureRunAdmissionV1) -> None:
         from cruxible_core.service.procedures.procedure_runs import (
             ProcedureRunStateV2,
             _plan_direct_external_run,
@@ -178,16 +178,16 @@ class ServedNestedProcedureRunner:
         )
 
         def visit(
-            parent: AcceptedProcedureV1,
-            budget: ProcedureBudgetV3,
-            caps: ProcedureHardCapsV3,
+            parent: AcceptedProcedure,
+            budget: ProcedureBudget,
+            caps: ProcedureHardCaps,
             lineage: tuple[ArtifactIdentity, ...],
         ) -> None:
             graph = parent.procedure.definition
-            if not isinstance(graph, ProcedureDefinitionV6):
+            if not isinstance(graph, ProcedureDefinition):
                 return
             for node in graph.nodes:
-                if not isinstance(node, InvokeNodeV6):
+                if not isinstance(node, InvokeNode):
                     continue
                 if node.procedure.target in lineage:
                     raise ProcedureBoundaryRefused(

@@ -14,13 +14,13 @@ from typing import Any
 
 import pytest
 
-from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
-from cruxible_client.contracts.line_dispatch import LineArmPrincipalV1
-from cruxible_client.contracts.operational_reads import PlaybillGetProcedureRunCardV1
+from cruxible_client.contracts.get_reads import PlaybillGetRequest
+from cruxible_client.contracts.line_dispatch import LineArmPrincipal
+from cruxible_client.contracts.operational_reads import PlaybillGetProcedureRunCard
 from cruxible_client.contracts.procedures.results import (
-    ProcedureRunAttributionV1,
-    ProcedureRunAttributionWithheldV1,
-    ProcedureRunReceiptWithheldV1,
+    ProcedureRunAttribution,
+    ProcedureRunAttributionWithheld,
+    ProcedureRunReceiptWithheld,
 )
 from cruxible_core.service.discovery.get import service_playbill_get
 from cruxible_core.service.discovery.operational_viewer import OperationalViewer
@@ -28,7 +28,7 @@ from cruxible_core.service.discovery.runs import procedure_run_status
 from cruxible_core.storage.cas import BodyAccessContext
 
 _ACCESS = BodyAccessContext(principal_id="reader", can_read_body=False)
-_ARMED_BY = LineArmPrincipalV1(
+_ARMED_BY = LineArmPrincipal(
     kind="runtime_credential", credential_id="cred-arm", label="line-operator"
 )
 
@@ -165,17 +165,17 @@ def _reads(instance: Any, run_id: str, viewer: OperationalViewer | None):  # typ
     state = procedure_run_status(instance, run_id, viewer=viewer)
     card = service_playbill_get(
         instance,
-        request=PlaybillGetRequestV1(ref=f"ProcedureRun:{run_id}"),
+        request=PlaybillGetRequest(ref=f"ProcedureRun:{run_id}"),
         access=_ACCESS,
         viewer=viewer,
     ).card
     proof = service_playbill_get(
         instance,
-        request=PlaybillGetRequestV1(ref=f"ProcedureRun:{run_id}", detail="proof"),
+        request=PlaybillGetRequest(ref=f"ProcedureRun:{run_id}", detail="proof"),
         access=_ACCESS,
         viewer=viewer,
     ).proof
-    assert isinstance(card, PlaybillGetProcedureRunCardV1) and proof is not None
+    assert isinstance(card, PlaybillGetProcedureRunCard) and proof is not None
     return state, card, proof
 
 
@@ -188,8 +188,8 @@ def test_every_run_of_an_armed_tree_withholds_the_arming_actor(
 
     for run_id in (root, *children):
         state, card, proof = _reads(instance, run_id, viewer)
-        assert isinstance(state.attribution, ProcedureRunAttributionWithheldV1), run_id
-        assert isinstance(state.receipt, ProcedureRunReceiptWithheldV1), run_id
+        assert isinstance(state.attribution, ProcedureRunAttributionWithheld), run_id
+        assert isinstance(state.receipt, ProcedureRunReceiptWithheld), run_id
         assert card.actor is None and card.triggered_by is not None
         assert card.triggered_by.armed_by_withheld and card.triggered_by.armed_by is None
         assert proof["attribution"]["tag"] == "playbill-procedure-run-attribution-withheld-v1"
@@ -207,7 +207,7 @@ def test_whoever_may_see_the_arm_sees_every_run_of_the_tree(
 
     for run_id in (root, *children):
         state, card, proof = _reads(instance, run_id, viewer)
-        assert isinstance(state.attribution, ProcedureRunAttributionV1), run_id
+        assert isinstance(state.attribution, ProcedureRunAttribution), run_id
         assert card.triggered_by is not None
         assert card.triggered_by.armed_by == "line-operator"
         assert card.actor == state.attribution.actor_id
@@ -232,8 +232,8 @@ def test_a_child_whose_parent_chain_does_not_verify_names_no_one_but_to_an_admin
     arming = OperationalViewer(credential_id="cred-arm", admin=False)
     for run_id in children:
         state = procedure_run_status(instance, run_id, viewer=arming)
-        assert isinstance(state.attribution, ProcedureRunAttributionWithheldV1)
+        assert isinstance(state.attribution, ProcedureRunAttributionWithheld)
         shown = procedure_run_status(
             instance, run_id, viewer=OperationalViewer(credential_id=None, admin=True)
         )
-        assert isinstance(shown.attribution, ProcedureRunAttributionV1)
+        assert isinstance(shown.attribution, ProcedureRunAttribution)

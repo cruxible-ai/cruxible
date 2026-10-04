@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.candidates import DependencyProofReferenceV1
+from cruxible_client.contracts.candidates import DependencyProofReference
 from cruxible_client.contracts.canonical import (
     DependencyEdgeRoot,
     SemanticManifestRoot,
@@ -58,8 +58,8 @@ def _edge(
     role: str = "subject",
     source: str = "aa",
     target: str = "bb",
-) -> DependencyProofReferenceV1:
-    return DependencyProofReferenceV1(
+) -> DependencyProofReference:
+    return DependencyProofReference(
         source_path=source_path,
         source_artifact_digest="sha256:" + source * 32,
         target_path=target_path,
@@ -68,7 +68,7 @@ def _edge(
     )
 
 
-EDGES: tuple[DependencyProofReferenceV1, ...] = (
+EDGES: tuple[DependencyProofReference, ...] = (
     _edge("claims/alpha.json", "subjects/alpha.json"),
     _edge("claims/alpha.json", "claim-types/measure.json", role="claim-type", target="cc"),
     _edge("claims/nested/deep/beta.json", "subjects/alpha.json", source="dd"),
@@ -298,9 +298,9 @@ def _random_digest(rng: random.Random) -> str:
     return "sha256:" + f"{rng.randrange(1 << 64):016x}" * 4
 
 
-def _random_edges(rng: random.Random, source: str) -> tuple[DependencyProofReferenceV1, ...]:
+def _random_edges(rng: random.Random, source: str) -> tuple[DependencyProofReference, ...]:
     return tuple(
-        DependencyProofReferenceV1(
+        DependencyProofReference(
             source_path=source,
             source_artifact_digest=_random_digest(rng),
             target_path=rng.choice(_TARGETS),
@@ -312,18 +312,18 @@ def _random_edges(rng: random.Random, source: str) -> tuple[DependencyProofRefer
 
 
 def _flatten(
-    by_source: Mapping[str, Sequence[DependencyProofReferenceV1]],
-) -> tuple[DependencyProofReferenceV1, ...]:
+    by_source: Mapping[str, Sequence[DependencyProofReference]],
+) -> tuple[DependencyProofReference, ...]:
     return tuple(edge for source in sorted(by_source) for edge in by_source[source])
 
 
 def test_incremental_updates_match_from_scratch_builds_over_a_seeded_walk() -> None:
     rng = random.Random(PROPERTY_SEED)
-    by_source: dict[str, tuple[DependencyProofReferenceV1, ...]] = {}
+    by_source: dict[str, tuple[DependencyProofReference, ...]] = {}
     tree = build_dependency_edge_tree(())
     saw_prune = False
     for _ in range(300):
-        updates: dict[str, tuple[DependencyProofReferenceV1, ...]] = {}
+        updates: dict[str, tuple[DependencyProofReference, ...]] = {}
         removals: list[str] = []
         for _ in range(rng.randrange(1, 4)):
             source = rng.choice(_SOURCES)
@@ -375,10 +375,10 @@ def test_dependency_edge_tree_has_a_frozen_end_to_end_golden() -> None:
     expected = golden["expected"]
 
     parent_edges = tuple(
-        DependencyProofReferenceV1.model_validate(item) for item in golden["input"]["parent_edges"]
+        DependencyProofReference.model_validate(item) for item in golden["input"]["parent_edges"]
     )
     final_edges = tuple(
-        DependencyProofReferenceV1.model_validate(item) for item in golden["input"]["edges"]
+        DependencyProofReference.model_validate(item) for item in golden["input"]["edges"]
     )
     rebuilt = build_dependency_edge_tree(final_edges)
 
@@ -410,7 +410,7 @@ def test_dependency_edge_tree_has_a_frozen_end_to_end_golden() -> None:
     incremental = update_dependency_edge_tree(
         build_dependency_edge_tree(parent_edges),
         updated={
-            path: tuple(DependencyProofReferenceV1.model_validate(item) for item in items)
+            path: tuple(DependencyProofReference.model_validate(item) for item in items)
             for path, items in change_set["updated"].items()
         },
         removed=change_set["removed"],

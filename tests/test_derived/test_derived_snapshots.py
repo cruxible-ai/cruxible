@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.authoring.models import SubjectAuthoringPayloadV1
+from cruxible_client.contracts.authoring.models import SubjectAuthoringPayload
 from cruxible_client.contracts.claims import claim_path, render_claim
 from cruxible_client.contracts.persistent import PersistentMap
 from cruxible_client.contracts.subjects import render_subject
@@ -144,7 +144,7 @@ def test_accepted_advancement_reads_only_changed_blobs_and_retains_old_snapshot(
     actor = AuthenticatedActor(actor_id="owner")
     intent = coordinator.create(
         actor=actor,
-        payload=SubjectAuthoringPayloadV1(subject=_subject("delta")),
+        payload=SubjectAuthoringPayload(subject=_subject("delta")),
         canonical_timestamp=TIMESTAMP,
     ).intent
     _accept(instance, owner, coordinator, intent.intent_id, actor)

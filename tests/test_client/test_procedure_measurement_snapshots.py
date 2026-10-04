@@ -39,7 +39,7 @@ class MeasurementClient(_LiveClient):
 
     def measure_playbill_procedure(self, instance, name, *, request):
         self.requests.append(request)
-        return api.PlaybillProcedureMeasureResultV1(
+        return api.PlaybillProcedureMeasureResult(
             **self._account(request), run_id=request.run_id, rows=()
         )
 
@@ -48,7 +48,7 @@ class MeasurementClient(_LiveClient):
         if request.cursor:
             assert request.cursor == "first-page-cursor"
             return self.first_page.model_copy(update={"truncated": False, "cursor": None})
-        self.first_page = api.PlaybillProcedureReadingsResultV1(
+        self.first_page = api.PlaybillProcedureReadingsResult(
             **self._account(request),
             contracts=(),
             readings=(),

@@ -11,7 +11,7 @@ import pytest
 from click.testing import CliRunner
 
 from cruxible_client import contracts
-from cruxible_client.contracts.compact_query import PlaybillQueryRequestV1
+from cruxible_client.contracts.compact_query import PlaybillQueryRequest
 from cruxible_core.cli.main import cli
 
 PREFIX = ["--server-url", "http://server", "--instance-id", "inst_query"]
@@ -30,18 +30,18 @@ def _isolated_context(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 
 class _StubClient:
     def __init__(self) -> None:
-        self.requests: list[PlaybillQueryRequestV1] = []
+        self.requests: list[PlaybillQueryRequest] = []
 
     def query_playbill(
-        self, instance_id: str, *, request: PlaybillQueryRequestV1
+        self, instance_id: str, *, request: PlaybillQueryRequest
     ) -> contracts.PlaybillQueryResult:
         assert instance_id == "inst_query"
         self.requests.append(request)
         return contracts.PlaybillQueryResult(
             kind=request.kind,
             columns=(
-                contracts.PlaybillQueryColumnV1(name="task_title", type="string"),
-                contracts.PlaybillQueryColumnV1(
+                contracts.PlaybillQueryColumn(name="task_title", type="string"),
+                contracts.PlaybillQueryColumn(
                     name="refines", type="subject:dev.roadmap_item", cardinality="many"
                 ),
             ),
@@ -57,7 +57,7 @@ class _StubClient:
             truncated=True,
             next_cursor="CURSOR",
             notes=("showing 12 of 13 predicates; left out: x",),
-            receipt=contracts.PlaybillQueryReceiptV1(
+            receipt=contracts.PlaybillQueryReceipt(
                 mode="inline",
                 spec_digest="sha256:" + "5" * 64,
                 coordinate=COORDINATE,  # type: ignore[arg-type]
@@ -213,32 +213,32 @@ def test_follow_order_falls_back_when_the_raw_arguments_disagree() -> None:
 def test_table_cells_show_exact_content_text_cut_values_and_markers() -> None:
     from cruxible_client.authoring.compact_query import render_query_table
     from cruxible_client.contracts.get_reads import (
-        PlaybillExactContentRefV1,
-        PlaybillGetTruncatedTextV1,
+        PlaybillExactContentRef,
+        PlaybillGetTruncatedText,
     )
 
     digest = "sha256:" + "cd" * 32
     page = contracts.PlaybillQueryResult(
         kind="legal.case",
-        columns=(contracts.PlaybillQueryColumnV1(name="ruling", type="exact_content"),),
+        columns=(contracts.PlaybillQueryColumn(name="ruling", type="exact_content"),),
         rows=(
             {"subject": "legal.case/a", "subject_id": "a", "ruling": "Affirmed.", "flags": []},
             {
                 "subject": "legal.case/b",
                 "subject_id": "b",
-                "ruling": PlaybillGetTruncatedTextV1(value="Reversed " * 60, length=900),
+                "ruling": PlaybillGetTruncatedText(value="Reversed " * 60, length=900),
                 "flags": [],
             },
             {
                 "subject": "legal.case/c",
                 "subject_id": "c",
-                "ruling": PlaybillExactContentRefV1(
+                "ruling": PlaybillExactContentRef(
                     exact_content="unavailable", content_digest=digest, length=40
                 ),
                 "flags": [],
             },
         ),
-        receipt=contracts.PlaybillQueryReceiptV1(
+        receipt=contracts.PlaybillQueryReceipt(
             mode="inline",
             spec_digest="sha256:" + "0" * 64,
             coordinate=COORDINATE,  # type: ignore[arg-type]

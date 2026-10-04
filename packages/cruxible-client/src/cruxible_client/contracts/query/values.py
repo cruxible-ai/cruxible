@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import NamedTuple
 
-from cruxible_client.contracts.query.grammar import QueryValueTypeV1
+from cruxible_client.contracts.query.grammar import QueryValueType
 
 
 class QueryTypedValue(NamedTuple):
@@ -25,7 +25,7 @@ def _timestamp(value: object) -> QueryTypedValue:
     return QueryTypedValue(True, parsed)
 
 
-def coerce_query_value(value: object, value_type: QueryValueTypeV1) -> QueryTypedValue:
+def coerce_query_value(value: object, value_type: QueryValueType) -> QueryTypedValue:
     """Return the declared type's comparable form, or a typed mismatch."""
 
     if value_type == "boolean":

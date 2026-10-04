@@ -57,13 +57,13 @@ def consumer_statuses(manager: Any) -> tuple[Any, ...]:
     from cruxible_client import contracts
 
     now = datetime.now(UTC)
-    statuses: list[contracts.ConsumerStatusV1] = []
+    statuses: list[contracts.ConsumerStatus] = []
     for instance_id, instance in manager.open_instances():
         for kind in consumer_kinds():
             if not kind.active(instance):
                 if kind.effect_class == "findings":
                     statuses.append(
-                        contracts.ConsumerStatusV1(
+                        contracts.ConsumerStatus(
                             instance_id=instance_id,
                             kind=kind.name,
                             consumer_id=f"consumer:{kind.name}",
@@ -77,7 +77,7 @@ def consumer_statuses(manager: Any) -> tuple[Any, ...]:
                 _log.exception("consumer_health_unavailable", instance_id=instance_id)
                 continue
             statuses.extend(
-                contracts.ConsumerStatusV1(
+                contracts.ConsumerStatus(
                     instance_id=instance_id,
                     kind=health.kind,
                     consumer_id=health.consumer_id,

@@ -12,10 +12,10 @@ from cruxible_client.contracts.acquisition_policies import (
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.authoring.models import (
-    ChangeSetAuthoringPayloadV1,
-    ClaimAuthoringPayloadV3,
-    ClaimDependencyDraftsV1,
-    ClaimDerivationBindingV1,
+    ChangeSetAuthoringPayload,
+    ClaimAuthoringPayload,
+    ClaimDependencyDrafts,
+    ClaimDerivationBinding,
 )
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
@@ -131,7 +131,7 @@ def world(tmp_path):
     reducer = parse_procedure(tree[path], path=path)
     basis = parse_claim(tree[claim_path(claim_id)], path=claim_path(claim_id))
     template = _self_source_payload()
-    payload = ClaimAuthoringPayloadV3(
+    payload = ClaimAuthoringPayload(
         statement=template.statement.model_copy(
             update={
                 "predicate": definition.predicate,
@@ -141,8 +141,8 @@ def world(tmp_path):
         ),
         rationale="Attempt to attribute a computation to a Procedure that never ran.",
         source=template.source,
-        dependency_drafts=ClaimDependencyDraftsV1(),
-        derivation=ClaimDerivationBindingV1(
+        dependency_drafts=ClaimDependencyDrafts(),
+        derivation=ClaimDerivationBinding(
             procedure=ArtifactPin(
                 role="reducer",
                 target=reducer.identity,
@@ -175,7 +175,7 @@ def test_generic_authoring_refuses_derivation_before_lowering(world, change_set,
     if not carry_binding:
         payload = payload.model_copy(update={"derivation": None})
     if change_set:
-        payload = ChangeSetAuthoringPayloadV1(members=(payload,), rationale="Raw derivation.")
+        payload = ChangeSetAuthoringPayload(members=(payload,), rationale="Raw derivation.")
     before = world.instance.accepted_coordinate()
     admissions = world.instance.proposal_evidence().list_admissions()
     result = world.coordinator.compile(

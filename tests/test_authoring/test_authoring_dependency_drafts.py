@@ -6,7 +6,7 @@ from pathlib import Path
 
 from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayloadV2,
-    ClaimDependencyDraftsV1,
+    ClaimDependencyDrafts,
     authoring_payload_digest,
 )
 from cruxible_client.contracts.captures import (
@@ -55,7 +55,7 @@ def _payload(*, subject: bool = True, claim_type: bool = True) -> ClaimAuthoring
         {
             **base.model_dump(mode="json"),
             "tag": "playbill-claim-authoring-payload-v2",
-            "dependency_drafts": ClaimDependencyDraftsV1(
+            "dependency_drafts": ClaimDependencyDrafts(
                 subject=_subject() if subject else None,
                 claim_type=_dependency_claim_type() if claim_type else None,
             ).model_dump(mode="json"),
@@ -96,7 +96,7 @@ def test_empty_v2_dependency_closure_is_identity_distinct_from_v1() -> None:
         {
             **v1.model_dump(mode="json"),
             "tag": "playbill-claim-authoring-payload-v2",
-            "dependency_drafts": ClaimDependencyDraftsV1().model_dump(mode="json"),
+            "dependency_drafts": ClaimDependencyDrafts().model_dump(mode="json"),
         }
     )
 

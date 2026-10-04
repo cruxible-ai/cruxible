@@ -32,8 +32,8 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.errors import PlaybillCasError, ProjectionFormatError
 from cruxible_client.contracts.source_references import (
-    EvidenceCommitmentV1,
-    ExternalSourceReferenceV1,
+    EvidenceCommitment,
+    ExternalSourceReference,
 )
 from cruxible_core.coverage.indexes import (
     evidence_citation_index_digest,
@@ -87,7 +87,7 @@ class World:
         contract = capture_contract()
         envelope = CaptureEnvelopeV1(
             capture_contract_digest=capture_contract_digest(contract).tagged,
-            source=ExternalSourceReferenceV1(
+            source=ExternalSourceReference(
                 source_identity=f"source-{source}",
                 producer_binding_digest=binding,
                 coordinate_type=FOREIGN_SOURCE_COORDINATE_TYPE,
@@ -96,7 +96,7 @@ class World:
                 selector={"start_byte": start, "end_byte": end},
                 replayability="exact",
             ),
-            commitment=EvidenceCommitmentV1(
+            commitment=EvidenceCommitment(
                 digest_kind="exact_bytes",
                 digest=DIGEST,
                 byte_length=byte_length,

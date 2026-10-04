@@ -10,9 +10,9 @@ from fastapi.testclient import TestClient
 
 import cruxible_core.service.procedures.procedure_runs as procedure_run_service
 from cruxible_client.contracts.acquisition_policies import (
-    IndependentCoherenceV1,
-    InputAcquisitionRuleV1,
-    SourceAcquisitionPolicyV1,
+    IndependentCoherence,
+    InputAcquisitionRule,
+    SourceAcquisitionPolicy,
     acquisition_policy_digest,
     acquisition_policy_path,
     render_acquisition_policy,
@@ -25,16 +25,16 @@ from cruxible_client.contracts.procedure_mandates import (
     procedure_mandate_path,
     render_procedure_mandate,
 )
-from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1, render_procedure
+from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure, render_procedure
 from cruxible_client.contracts.procedures.line_specs import (
-    LineSpecV6,
+    LineSpec,
     line_identity_digest,
     line_spec_digest,
     line_spec_path,
     render_line_spec,
 )
 from cruxible_client.contracts.procedures.results import (
-    ProcedureSelectionDecisionV1,
+    ProcedureSelectionDecision,
     procedure_selection_decision_digest,
 )
 from cruxible_client.contracts.repairs import (
@@ -56,11 +56,11 @@ from tests.test_ledger.test_activation import _sign
 from tests.test_procedures.test_procedure_run_surface import _slotless_procedure
 
 
-def _acquisition_policy(name: str) -> SourceAcquisitionPolicyV1:
-    return SourceAcquisitionPolicyV1(
+def _acquisition_policy(name: str) -> SourceAcquisitionPolicy:
+    return SourceAcquisitionPolicy(
         identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name=name),
         inputs=(
-            InputAcquisitionRuleV1(
+            InputAcquisitionRule(
                 input_name="status",
                 requirement="optional",
                 permitted_replayability=("exact",),
@@ -70,16 +70,16 @@ def _acquisition_policy(name: str) -> SourceAcquisitionPolicyV1:
                 on_conflict="refuse",
             ),
         ),
-        coherence=IndependentCoherenceV1(),
+        coherence=IndependentCoherence(),
     )
 
 
 def _served_line(
     name: str,
     *,
-    accepted: AcceptedProcedureV1,
-    policy: SourceAcquisitionPolicyV1,
-) -> LineSpecV6:
+    accepted: AcceptedProcedure,
+    policy: SourceAcquisitionPolicy,
+) -> LineSpec:
     procedure_pin = ArtifactPin(
         role="procedure",
         target=accepted.procedure.identity,
@@ -90,7 +90,7 @@ def _served_line(
         target=policy.identity,
         artifact_digest=acquisition_policy_digest(policy).tagged,
     )
-    return LineSpecV6(
+    return LineSpec(
         identity=ArtifactIdentity(kind="Line", name=name),
         occurrence_epoch=1,
         procedure=procedure_pin,
@@ -115,7 +115,7 @@ def _served_line(
     )
 
 
-def _line_mandate(accepted: AcceptedProcedureV1) -> ProcedureMandateV1:
+def _line_mandate(accepted: AcceptedProcedure) -> ProcedureMandateV1:
     return ProcedureMandateV1(
         identity=ArtifactIdentity(kind="ProcedureMandate", name="served-line-mandate"),
         procedure=ArtifactPin(
@@ -432,13 +432,13 @@ def test_a_real_accepted_line_runs_through_the_live_route_with_no_patch(
     assert admissions[0].line_spec_digest == line_spec_digest(line).tagged
 
 
-def _strict_acquisition_policy(name: str) -> SourceAcquisitionPolicyV1:
+def _strict_acquisition_policy(name: str) -> SourceAcquisitionPolicy:
     """The served-Line policy again, this time declaring the input REQUIRED."""
 
-    return SourceAcquisitionPolicyV1(
+    return SourceAcquisitionPolicy(
         identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name=name),
         inputs=(
-            InputAcquisitionRuleV1(
+            InputAcquisitionRule(
                 input_name="status",
                 requirement="required",
                 permitted_replayability=("exact",),
@@ -448,7 +448,7 @@ def _strict_acquisition_policy(name: str) -> SourceAcquisitionPolicyV1:
                 on_conflict="refuse",
             ),
         ),
-        coherence=IndependentCoherenceV1(),
+        coherence=IndependentCoherence(),
     )
 
 
@@ -513,7 +513,7 @@ def test_a_source_free_line_under_a_required_rule_still_runs(
     # Byte-identical to the blanket decision the lane recorded before the shared
     # planner landed, so this occurrence's plan digest, replay key and run id are
     # the ones it had -- there is no run-id break for a Source-free Line.
-    pre_batch = ProcedureSelectionDecisionV1(
+    pre_batch = ProcedureSelectionDecision(
         policy_digest=acquisition_policy_digest(policy).tagged,
         verdict="selected",
         decisions=(),

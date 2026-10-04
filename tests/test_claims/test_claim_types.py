@@ -16,18 +16,18 @@ from cruxible_client.contracts.artifacts import (
 from cruxible_client.contracts.authoring_profiles import (
     CLAIM_TYPE_AUTHORING_PROFILES,
     AuthoringProfileError,
-    ClaimTypeExpansionEvidenceV1,
-    ClaimTypeProfileInputV1,
+    ClaimTypeExpansionEvidence,
+    ClaimTypeProfileInput,
     expand_claim_type_profile,
     verify_claim_type_expansion_evidence,
 )
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_types import (
     AcceptedClaimType,
-    ClaimAttestationConsequencePolicyV1,
-    ClaimAttestationConsequenceRuleV1,
-    ClaimEvidenceFreshnessV1,
-    ClaimFreshnessDurationV1,
+    ClaimAttestationConsequencePolicy,
+    ClaimAttestationConsequenceRule,
+    ClaimEvidenceFreshness,
+    ClaimFreshnessDuration,
     ClaimType,
     ClaimTypeFormatError,
     ClaimTypeFreshnessHorizonInvalid,
@@ -38,10 +38,10 @@ from cruxible_client.contracts.claim_types import (
     render_claim_type,
 )
 from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicyV1,
+    ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionRuleV1,
-    ClaimResolutionPolicyV1,
+    ClaimResolutionPolicy,
 )
 from cruxible_core.compiler.compiler import current_compiler_coordinate
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
@@ -64,8 +64,8 @@ def literal_claim_type() -> ClaimType:
         cardinality="one",
         permitted_roles=("normative", "observation"),
         evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(),
-        admission_policy=ClaimAdmissionPolicyV1(),
-        resolution_policy=ClaimResolutionPolicyV1(
+        admission_policy=ClaimAdmissionPolicy(),
+        resolution_policy=ClaimResolutionPolicy(
             cardinality="one",
             eligible_verdicts=("supported",),
             selector="only_contender",
@@ -193,8 +193,8 @@ def test_claim_type_v3_adds_only_a_positive_freshness_horizon() -> None:
         {
             **original.model_dump(mode="json"),
             "artifact_format": "playbill-claim-type-v3",
-            "evidence_freshness": ClaimEvidenceFreshnessV1(
-                stale_after=ClaimFreshnessDurationV1(microseconds=30_000_000)
+            "evidence_freshness": ClaimEvidenceFreshness(
+                stale_after=ClaimFreshnessDuration(microseconds=30_000_000)
             ).model_dump(mode="json"),
             "lifecycle": ArtifactLifecycle(
                 predecessor_digest=claim_type_digest(original).tagged
@@ -215,8 +215,8 @@ def test_claim_type_v1_and_v3_pin_the_exact_c1_wire_and_digest() -> None:
         {
             **original.model_dump(mode="json"),
             "artifact_format": "playbill-claim-type-v3",
-            "evidence_freshness": ClaimEvidenceFreshnessV1(
-                stale_after=ClaimFreshnessDurationV1(microseconds=30_000_000)
+            "evidence_freshness": ClaimEvidenceFreshness(
+                stale_after=ClaimFreshnessDuration(microseconds=30_000_000)
             ).model_dump(mode="json"),
         }
     )
@@ -243,9 +243,9 @@ def test_claim_type_v1_and_v3_pin_the_exact_c1_wire_and_digest() -> None:
 
 def test_claim_type_v4_commits_a_canonical_attestation_consequence_policy() -> None:
     original = literal_claim_type()
-    policy = ClaimAttestationConsequencePolicyV1(
+    policy = ClaimAttestationConsequencePolicy(
         rules=(
-            ClaimAttestationConsequenceRuleV1(
+            ClaimAttestationConsequenceRule(
                 rule_id="two-independent-unsure",
                 stance="unsure",
                 minimum_independent_control_components=2,
@@ -271,15 +271,15 @@ def test_claim_type_v4_commits_a_canonical_attestation_consequence_policy() -> N
 
 
 def test_claim_type_v4_policy_rules_are_nonempty_sorted_unique_and_nonnegative() -> None:
-    rule = ClaimAttestationConsequenceRuleV1(
+    rule = ClaimAttestationConsequenceRule(
         rule_id="z-rule",
         stance="contradict",
         minimum_independent_control_components=2,
     )
     with pytest.raises(ValidationError, match="at least 1"):
-        ClaimAttestationConsequencePolicyV1(rules=())
+        ClaimAttestationConsequencePolicy(rules=())
     assert (
-        ClaimAttestationConsequenceRuleV1(
+        ClaimAttestationConsequenceRule(
             rule_id="zero-threshold",
             stance="unsure",
             minimum_independent_control_components=0,
@@ -287,16 +287,16 @@ def test_claim_type_v4_policy_rules_are_nonempty_sorted_unique_and_nonnegative()
         == 0
     )
     with pytest.raises(ValidationError, match="greater than or equal to 0"):
-        ClaimAttestationConsequenceRuleV1(
+        ClaimAttestationConsequenceRule(
             rule_id="minimum",
             stance="unsure",
             minimum_independent_control_components=-1,
         )
     with pytest.raises(ValidationError, match="sorted and unique"):
-        ClaimAttestationConsequencePolicyV1(
+        ClaimAttestationConsequencePolicy(
             rules=(
                 rule,
-                ClaimAttestationConsequenceRuleV1(
+                ClaimAttestationConsequenceRule(
                     rule_id="a-rule",
                     stance="unsure",
                     minimum_independent_control_components=2,
@@ -381,7 +381,7 @@ def test_compact_ordinary_profile_and_expert_input_expand_to_identical_bytes() -
         if item.profile_id == "ordinary-project-fact-v1"
     )
     expanded = expand_claim_type_profile(
-        ClaimTypeProfileInputV1(
+        ClaimTypeProfileInput(
             profile_id=profile.profile_id,
             profile_digest=profile.profile_digest,
             authoring_source_digest="sha256:" + "61" * 32,
@@ -413,13 +413,13 @@ def test_profile_expansion_refuses_unknown_retired_authority_and_open_overrides(
     }
     with pytest.raises(AuthoringProfileError, match="unknown"):
         expand_claim_type_profile(
-            ClaimTypeProfileInputV1(**{**values, "profile_id": "invented-profile-v1"})
+            ClaimTypeProfileInput(**{**values, "profile_id": "invented-profile-v1"})
         )
     with pytest.raises(ValidationError, match="authority_parameters"):
-        ClaimTypeProfileInputV1(**{**values, "authority_parameters": None})
+        ClaimTypeProfileInput(**{**values, "authority_parameters": None})
     with pytest.raises(AuthoringProfileError, match="override"):
         expand_claim_type_profile(
-            ClaimTypeProfileInputV1(
+            ClaimTypeProfileInput(
                 **values,
                 overrides={"selector": "authority_rule"},
             )
@@ -434,7 +434,7 @@ def test_profile_evidence_refuses_forged_expansion_or_override_digest() -> None:
         if item.profile_id == "ordinary-project-fact-v1"
     )
     expansion = expand_claim_type_profile(
-        ClaimTypeProfileInputV1(
+        ClaimTypeProfileInput(
             profile_id=profile.profile_id,
             profile_digest=profile.profile_digest,
             authoring_source_digest="sha256:" + "65" * 32,
@@ -477,7 +477,7 @@ def test_derivation_profile_removes_producer_input_but_verifies_frozen_expansion
         for item in CLAIM_TYPE_AUTHORING_PROFILES
         if item.profile_id == "replay-verifiable-derivation-v2"
     )
-    request = ClaimTypeProfileInputV1(
+    request = ClaimTypeProfileInput(
         profile_id=profile.profile_id,
         profile_digest=profile.profile_digest,
         authoring_source_digest="sha256:" + "65" * 32,
@@ -517,7 +517,7 @@ def test_derivation_profile_removes_producer_input_but_verifies_frozen_expansion
         }
     )
     # These coordinates were produced by the pre-change profile expander.
-    evidence = ClaimTypeExpansionEvidenceV1(
+    evidence = ClaimTypeExpansionEvidence(
         profile_id="replay-verifiable-derivation-v1",
         profile_digest="sha256:7e99d7021ea8d8ad3f202ae83770b68b513e20bcfc79d1010466b222ebffa021",
         authoring_source_digest=request.authoring_source_digest,
@@ -550,7 +550,7 @@ def test_profile_evidence_and_complete_expansion_are_visible_in_atomic_review(
         if item.profile_id == "ordinary-project-fact-v1"
     )
     expansion = expand_claim_type_profile(
-        ClaimTypeProfileInputV1(
+        ClaimTypeProfileInput(
             profile_id=profile.profile_id,
             profile_digest=profile.profile_digest,
             authoring_source_digest="sha256:" + "71" * 32,

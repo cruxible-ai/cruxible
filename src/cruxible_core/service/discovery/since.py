@@ -9,11 +9,11 @@ from pydantic import ValidationError
 from cruxible_client import contracts
 from cruxible_client.contracts.candidates import (
     CandidateMemberEvidence,
-    CandidateMemberLawEvidenceV2,
+    CandidateMemberLawEvidence,
 )
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.errors import PlaybillError, PlaybillSinceRequestInvalid
-from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.proposals.settlement import (
     ChangeSetRecord,
     ChangeSetRecordV2,
@@ -117,7 +117,7 @@ def _normalized_rows(
     *,
     lower_generation: int,
     head_generation: int,
-    access_profile: CoverageAccessProfileV1,
+    access_profile: CoverageAccessProfile,
 ) -> tuple[contracts.PlaybillSinceRow, ...]:
     # Accepted artifacts are instance-scoped. Filtering happens before either
     # budget is applied, so this branch discloses no member metadata or count.
@@ -149,7 +149,7 @@ def _normalized_member_row(
     generation: int,
     changeset_digest: str,
     candidate_digest: str,
-    member: CandidateMemberEvidence | CandidateMemberLawEvidenceV2,
+    member: CandidateMemberEvidence | CandidateMemberLawEvidence,
 ) -> contracts.PlaybillSinceRow:
     artifact_digest: str | None
     predecessor_artifact_digest: str | None
@@ -178,7 +178,7 @@ def service_playbill_since(
 ) -> contracts.PlaybillSinceResult:
     """Read signed ChangeSet members in ``(generation, pinned head]``."""
 
-    profile = CoverageAccessProfileV1.model_validate(request.access_profile)
+    profile = CoverageAccessProfile.model_validate(request.access_profile)
     cursor = request.cursor
     head: contracts.PlaybillAcceptedCoordinate
     if cursor is not None:

@@ -13,17 +13,17 @@ from dataclasses import dataclass
 from typing import Callable
 
 from cruxible_client.contracts.authoring.models import (
-    ApprovalPolicyAuthoringPayloadV1,
-    AuthoringExactContentObjectV1,
+    ApprovalPolicyAuthoringPayload,
+    AuthoringExactContentObject,
     AuthoringIntentV1,
-    AuthoringPayloadV1,
-    ChangeSetAuthoringPayloadV1,
+    AuthoringPayload,
+    ChangeSetAuthoringPayload,
     ClaimAuthoringPayloadV1,
-    ClaimTypeAuthoringPayloadV1,
-    ProcedureRuntimePolicyAuthoringPayloadV1,
-    QueryDefinitionAuthoringPayloadV1,
-    SelfSourceBodyV1,
-    SubjectAuthoringPayloadV1,
+    ClaimTypeAuthoringPayload,
+    ProcedureRuntimePolicyAuthoringPayload,
+    QueryDefinitionAuthoringPayload,
+    SelfSourceBody,
+    SubjectAuthoringPayload,
 )
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.proposal_models import (
@@ -55,34 +55,34 @@ def _cache(instance: PlaybillInstance) -> BoundedCache[_Entry]:
 
 
 def _eligible(payload: object) -> bool:
-    if isinstance(payload, ChangeSetAuthoringPayloadV1):
+    if isinstance(payload, ChangeSetAuthoringPayload):
         return all(_eligible(member) for member in payload.members)
     if isinstance(payload, ClaimAuthoringPayloadV1):
         # Working selections consult projection registrations; existing captures
         # consult producer receipts and other mutable provenance. Neither belongs
         # in a cache keyed only by immutable authoring and accepted state.
-        return isinstance(payload.source, SelfSourceBodyV1)
+        return isinstance(payload.source, SelfSourceBody)
     return isinstance(
         payload,
-        SubjectAuthoringPayloadV1
-        | ClaimTypeAuthoringPayloadV1
-        | QueryDefinitionAuthoringPayloadV1
-        | ApprovalPolicyAuthoringPayloadV1
-        | ProcedureRuntimePolicyAuthoringPayloadV1,
+        SubjectAuthoringPayload
+        | ClaimTypeAuthoringPayload
+        | QueryDefinitionAuthoringPayload
+        | ApprovalPolicyAuthoringPayload
+        | ProcedureRuntimePolicyAuthoringPayload,
     )
 
 
-def _generated_bodies(payload: AuthoringPayloadV1, lowered: LoweredAuthoring) -> tuple[str, ...]:
+def _generated_bodies(payload: AuthoringPayload, lowered: LoweredAuthoring) -> tuple[str, ...]:
     """The bodies written by eligible lowering, including each new envelope."""
 
-    members = payload.members if isinstance(payload, ChangeSetAuthoringPayloadV1) else (payload,)
+    members = payload.members if isinstance(payload, ChangeSetAuthoringPayload) else (payload,)
     digests: set[str] = set()
     for member in members:
         if not isinstance(member, ClaimAuthoringPayloadV1):
             continue
-        assert isinstance(member.source, SelfSourceBodyV1)
+        assert isinstance(member.source, SelfSourceBody)
         digests.add("sha256:" + hashlib.sha256(member.source.content).hexdigest())
-        if isinstance(member.statement.object, AuthoringExactContentObjectV1):
+        if isinstance(member.statement.object, AuthoringExactContentObject):
             digests.add("sha256:" + hashlib.sha256(member.statement.object.content).hexdigest())
     resolved = lowered.resolved_authoring
     rows = resolved.get("members", [resolved])

@@ -12,7 +12,7 @@ from cruxible_client.authoring.workspace import (
     materialize_playbill_floor,
     refresh_workspace_floor,
 )
-from cruxible_client.contracts.floor import PlaybillFloorDeltaV1
+from cruxible_client.contracts.floor import PlaybillFloorDelta
 from cruxible_client.contracts.projection import AcceptedCoordinate
 
 from .test_playbill_workspace import _coordinate, _delta, _export, _workspace
@@ -42,7 +42,7 @@ class _Client:
         at: contracts.PlaybillAcceptedCoordinate | None = None,
         base_generation: int | None = None,
         base_renderer: str | None = None,
-    ) -> PlaybillFloorDeltaV1:
+    ) -> PlaybillFloorDelta:
         self.events.append(("floor", instance_id, at))
         return _delta()
 

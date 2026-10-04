@@ -13,7 +13,7 @@ from pydantic import TypeAdapter, ValidationError
 
 import cruxible_client
 from cruxible_client import AccessProfile, ClaimRef, CruxibleClient, Playbill
-from cruxible_client.authoring.inputs import AuthoringInputError, AuthoringInputV1
+from cruxible_client.authoring.inputs import AuthoringInput, AuthoringInputError
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 
@@ -341,7 +341,7 @@ def test_removed_brief_has_no_sdk_export_builder_or_authoring_union_arm() -> Non
         assert name not in cruxible_client.__all__
     assert not hasattr(Playbill, "brief")
     with pytest.raises(ValidationError):
-        TypeAdapter(AuthoringInputV1).validate_python({"kind": "brief"})
+        TypeAdapter(AuthoringInput).validate_python({"kind": "brief"})
 
 
 RETIRED_CLAIM_ID = "CLM-" + "a" * 32

@@ -15,7 +15,7 @@ from cruxible_client.contracts.captures import (
     capture_contract_path,
     render_capture_contract,
 )
-from cruxible_client.contracts.line_dispatch import LineTriggerCheckRequestV1
+from cruxible_client.contracts.line_dispatch import LineTriggerCheckRequest
 from cruxible_client.contracts.procedure_mandates import (
     procedure_mandate_path,
     render_procedure_mandate,
@@ -23,11 +23,11 @@ from cruxible_client.contracts.procedure_mandates import (
 from cruxible_client.contracts.procedures.artifacts import render_procedure
 from cruxible_client.contracts.procedures.line_specs import line_spec_path, render_line_spec
 from cruxible_client.contracts.procedures.windows import (
-    CaptureEventSelectorV1,
-    CaptureEventWindowV1,
+    CaptureEventSelector,
+    CaptureEventWindow,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.triggers import CaptureLandingScheduleV1, WindowCloseScheduleV1
+from cruxible_client.contracts.triggers import CaptureLandingSchedule, WindowCloseSchedule
 from cruxible_core.exhaust import ProcedureExhaustWriter
 from cruxible_core.service.procedures.line_triggers import service_check_line_trigger
 from cruxible_core.service.procedures.procedure_runs import (
@@ -46,7 +46,7 @@ from tests.test_server.test_playbill_line_run_refusals import (
     _served_line,
 )
 
-SELECTOR = CaptureEventSelectorV1(
+SELECTOR = CaptureEventSelector(
     capture_contract_identity=DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity,
     capture_contract_digest=capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged,
 )
@@ -125,10 +125,10 @@ def capture(
 
 
 def test_indexed_capture_check_is_read_only_scoped_and_paginated(tmp_path: Path, monkeypatch):
-    instance, line, procedure = line_world(tmp_path, CaptureLandingScheduleV1(event=SELECTOR))
+    instance, line, procedure = line_world(tmp_path, CaptureLandingSchedule(event=SELECTOR))
     assert (
         service_check_line_trigger(
-            instance, line.identity.name, LineTriggerCheckRequestV1(), now=READ_TIME
+            instance, line.identity.name, LineTriggerCheckRequest(), now=READ_TIME
         ).status
         == "not_met"
     )
@@ -138,7 +138,7 @@ def test_indexed_capture_check_is_read_only_scoped_and_paginated(tmp_path: Path,
     journal, _ = _journal(instance)
     before = journal.read_head(_stream(instance), first.record.partition_id)
     until = READ_TIME + timedelta(seconds=2)
-    request = LineTriggerCheckRequestV1(until=until, limit=1)
+    request = LineTriggerCheckRequest(until=until, limit=1)
     result = service_check_line_trigger(instance, line.identity.name, request, now=until)
     assert result.status == "incomplete" and result.cursor
     assert result.occurrences[0].binding.event.record_digest == second.record_digest
@@ -158,20 +158,20 @@ def test_indexed_capture_check_is_read_only_scoped_and_paginated(tmp_path: Path,
     monkeypatch.setattr(type(journal), "partition_ids", lambda *a: pytest.fail("partition walk"))
     assert (
         service_check_line_trigger(
-            instance, line.identity.name, LineTriggerCheckRequestV1(until=until), now=until
+            instance, line.identity.name, LineTriggerCheckRequest(until=until), now=until
         ).status
         == "met"
     )
 
 
 def test_window_eligibility_uses_fixed_event_boundary_and_missing_evidence_is_incomplete(tmp_path):
-    policy = WindowCloseScheduleV1(window=CaptureEventWindowV1(event=SELECTOR, duration_seconds=60))
+    policy = WindowCloseSchedule(window=CaptureEventWindow(event=SELECTOR, duration_seconds=60))
     instance, line, procedure = line_world(tmp_path, policy)
     stored = capture(instance, procedure)
     before = service_check_line_trigger(
         instance,
         line.identity.name,
-        LineTriggerCheckRequestV1(),
+        LineTriggerCheckRequest(),
         now=READ_TIME + timedelta(seconds=59),
     )
     assert before.status == "not_met"
@@ -179,7 +179,7 @@ def test_window_eligibility_uses_fixed_event_boundary_and_missing_evidence_is_in
     after = service_check_line_trigger(
         instance,
         line.identity.name,
-        LineTriggerCheckRequestV1(since=end, until=end + timedelta(seconds=1)),
+        LineTriggerCheckRequest(since=end, until=end + timedelta(seconds=1)),
         now=end + timedelta(days=1),
     )
     assert after.status == "met"
@@ -189,7 +189,7 @@ def test_window_eligibility_uses_fixed_event_boundary_and_missing_evidence_is_in
     path.unlink()
     assert (
         service_check_line_trigger(
-            instance, line.identity.name, LineTriggerCheckRequestV1(), now=end
+            instance, line.identity.name, LineTriggerCheckRequest(), now=end
         ).status
         == "incomplete"
     )

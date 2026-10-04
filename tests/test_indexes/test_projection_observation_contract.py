@@ -11,9 +11,9 @@ from pydantic import ValidationError
 from cruxible_core.service.discovery.next import (
     NextReason,
     NextRepairOperation,
+    PlaybillNextSourceObservation,
     PlaybillNextSourceObservationV3,
-    PlaybillNextSourceObservationV4,
-    PlaybillNextWorkspaceObservationV1,
+    PlaybillNextWorkspaceObservation,
 )
 from tests.test_client.test_playbill_projection_observation import _CoverageClient, _observe
 from tests.test_client.test_playbill_projection_repin import _repin, _RepinClient, _workspace
@@ -54,14 +54,14 @@ def test_nested_union_refuses_v1_v2_and_accepts_strict_tagged_v3_v4(
     assert (
         PlaybillNextSourceObservationV3.model_validate(prior_v3).model_dump(mode="json") == prior_v3
     )
-    result = PlaybillNextWorkspaceObservationV1.model_validate({"source_observations": [richer]})
-    assert isinstance(result.source_observations[0], PlaybillNextSourceObservationV4)  # type: ignore[index]
+    result = PlaybillNextWorkspaceObservation.model_validate({"source_observations": [richer]})
+    assert isinstance(result.source_observations[0], PlaybillNextSourceObservation)  # type: ignore[index]
     assert result.source_observations[0].model_dump(mode="json") == richer  # type: ignore[index]
 
     with pytest.raises(ValidationError):
-        PlaybillNextWorkspaceObservationV1.model_validate({"source_observations": [previous]})
+        PlaybillNextWorkspaceObservation.model_validate({"source_observations": [previous]})
     with pytest.raises(ValidationError):
-        PlaybillNextWorkspaceObservationV1.model_validate({"source_observations": [prior_v2]})
+        PlaybillNextWorkspaceObservation.model_validate({"source_observations": [prior_v2]})
 
 
 @pytest.mark.parametrize(
@@ -86,7 +86,7 @@ def test_nested_v4_refuses_unknown_fields_and_unproved_or_mismatched_occurrences
     mutation(candidate)  # type: ignore[operator]
 
     with pytest.raises(ValidationError):
-        PlaybillNextSourceObservationV4.model_validate(candidate)
+        PlaybillNextSourceObservation.model_validate(candidate)
 
 
 def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants() -> None:

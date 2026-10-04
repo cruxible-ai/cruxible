@@ -7,7 +7,7 @@ from typing import Annotated, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_client.contracts.acquisition_policies import AcquisitionInputDecisionV1
+from cruxible_client.contracts.acquisition_policies import AcquisitionInputDecision
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import (
     ProposalDigest,
@@ -18,21 +18,21 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.procedures.models import (
     AuthorityVerb,
     EffectiveAuthority,
-    ProcedureBudgetV3,
-    ProcedureHardCapsV3,
+    ProcedureBudget,
+    ProcedureHardCaps,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.provider_execution import (
-    ProviderExternalOccurrencePlanV1,
+    ProviderExternalOccurrencePlan,
 )
-from cruxible_client.contracts.repairs import ServedRepairV1, served_repair_for_refusal
+from cruxible_client.contracts.repairs import ServedRepair, served_repair_for_refusal
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_client.contracts.workspace_file import (
-    SourceReadReceiptV1,
+    SourceReadReceipt,
     source_read_receipt_digest,
 )
 
-ProcedureAdmissionRefusalCodeV1: TypeAlias = Literal[
+ProcedureAdmissionRefusalCode: TypeAlias = Literal[
     "binding_required",
     "unsupported_node",
     "not_current",
@@ -88,7 +88,7 @@ def current_refusal_code(code: str) -> str:
     return HISTORICAL_NODE_REFUSAL_CODES.get(code, code)
 
 
-ProcedureNodeRefusalCodeV1: TypeAlias = Literal[
+ProcedureNodeRefusalCode: TypeAlias = Literal[
     "guard_refused",
     "repeat_exhausted",
     "budget_exhausted",
@@ -174,7 +174,7 @@ ProcedureNodeRefusalCodeV1: TypeAlias = Literal[
     "redirect_limit",
     "provider_protocol_violation",
 ]
-ProcedureOperationalFailureCodeV1: TypeAlias = Literal[
+ProcedureOperationalFailureCode: TypeAlias = Literal[
     "wall_clock_exhausted",
     "cas_unavailable_at_replay",
     "replay_material_mismatch",
@@ -199,7 +199,7 @@ ProcedureOperationalFailureCodeV1: TypeAlias = Literal[
     "provider_execution_error",
     "provider_completion_not_durable",
 ]
-ProcedureInternalFailureCodeV1: TypeAlias = Literal[
+ProcedureInternalFailureCode: TypeAlias = Literal[
     "unexpected_exception",
     "journal_integrity_error",
     "run_record_invalid",
@@ -260,7 +260,7 @@ def _with_default_repair(value: object) -> object:
     return {**value, "repair": served_repair_for_refusal(code).model_dump(mode="python")}
 
 
-class ProcedureJournalCoordinateV1(_StrictResultModel):
+class ProcedureJournalCoordinate(_StrictResultModel):
     tag: Literal["playbill-procedure-journal-coordinate-v1"] = (
         "playbill-procedure-journal-coordinate-v1"
     )
@@ -274,7 +274,7 @@ class ProcedureJournalCoordinateV1(_StrictResultModel):
     _record_digest = field_validator("record_digest")(_digest)
 
 
-class ProcedureBudgetRefusalDetailV1(_StrictResultModel):
+class ProcedureBudgetRefusalDetail(_StrictResultModel):
     tag: Literal["playbill-procedure-budget-refusal-detail-v1"] = (
         "playbill-procedure-budget-refusal-detail-v1"
     )
@@ -289,16 +289,16 @@ class ProcedureBudgetRefusalDetailV1(_StrictResultModel):
     observed: int = Field(ge=1)
 
 
-class ProcedureAdmissionRefusalV1(_StrictResultModel):
+class ProcedureAdmissionRefusal(_StrictResultModel):
     tag: Literal["playbill-procedure-admission-refusal-v1"] = (
         "playbill-procedure-admission-refusal-v1"
     )
     classification: Literal["admission_refusal"] = "admission_refusal"
-    code: ProcedureAdmissionRefusalCodeV1
+    code: ProcedureAdmissionRefusalCode
     message: str
     details: object = Field(default_factory=dict)
     retryable: bool = False
-    repair: ServedRepairV1
+    repair: ServedRepair
 
     _repair = model_validator(mode="before")(_with_default_repair)
 
@@ -308,18 +308,18 @@ class ProcedureAdmissionRefusalV1(_StrictResultModel):
         return normalize_canonical(value)
 
 
-class ProcedureNodeRefusalV1(_StrictResultModel):
+class ProcedureNodeRefusal(_StrictResultModel):
     tag: Literal["playbill-procedure-node-refusal-v1"] = "playbill-procedure-node-refusal-v1"
     classification: Literal["node_refusal"] = "node_refusal"
-    code: ProcedureNodeRefusalCodeV1
+    code: ProcedureNodeRefusalCode
     message: str
     node_id: str
-    journal_coordinate: ProcedureJournalCoordinateV1 | None = None
+    journal_coordinate: ProcedureJournalCoordinate | None = None
     detail_code: str | None = None
     details: object = Field(default_factory=dict)
-    budget: ProcedureBudgetRefusalDetailV1 | None = None
+    budget: ProcedureBudgetRefusalDetail | None = None
     retryable: bool = False
-    repair: ServedRepairV1
+    repair: ServedRepair
 
     _repair = model_validator(mode="before")(_with_default_repair)
 
@@ -349,7 +349,7 @@ class ProcedureNodeRefusalV1(_StrictResultModel):
         return normalize_canonical(value)
 
     @model_validator(mode="after")
-    def _typed_detail(self) -> "ProcedureNodeRefusalV1":
+    def _typed_detail(self) -> "ProcedureNodeRefusal":
         if self.code == "guard_refused" and self.detail_code is None:
             raise ValueError("guard refusal requires the Procedure-authored detail code")
         if self.code == "budget_exhausted" and self.budget is None:
@@ -361,18 +361,18 @@ class ProcedureNodeRefusalV1(_StrictResultModel):
         return self
 
 
-class ProcedureOperationalFailureV1(_StrictResultModel):
+class ProcedureOperationalFailure(_StrictResultModel):
     tag: Literal["playbill-procedure-operational-failure-v1"] = (
         "playbill-procedure-operational-failure-v1"
     )
     classification: Literal["operational_failure"] = "operational_failure"
-    code: ProcedureOperationalFailureCodeV1
+    code: ProcedureOperationalFailureCode
     message: str
     last_node_id: str | None = None
-    journal_coordinate: ProcedureJournalCoordinateV1 | None = None
+    journal_coordinate: ProcedureJournalCoordinate | None = None
     details: object = Field(default_factory=dict)
     retryable: bool = True
-    repair: ServedRepairV1
+    repair: ServedRepair
 
     _repair = model_validator(mode="before")(_with_default_repair)
 
@@ -382,21 +382,21 @@ class ProcedureOperationalFailureV1(_StrictResultModel):
         return normalize_canonical(value)
 
 
-class ProcedureInternalFailureV1(_StrictResultModel):
+class ProcedureInternalFailure(_StrictResultModel):
     tag: Literal["playbill-procedure-internal-failure-v1"] = (
         "playbill-procedure-internal-failure-v1"
     )
     classification: Literal["internal_failure"] = "internal_failure"
-    code: ProcedureInternalFailureCodeV1
+    code: ProcedureInternalFailureCode
     message: str
     correlation_id: str
-    journal_coordinate: ProcedureJournalCoordinateV1 | None = None
-    repair: ServedRepairV1
+    journal_coordinate: ProcedureJournalCoordinate | None = None
+    repair: ServedRepair
 
     _repair = model_validator(mode="before")(_with_default_repair)
 
 
-class ProcedureRunAttributionV1(_StrictResultModel):
+class ProcedureRunAttribution(_StrictResultModel):
     tag: Literal["playbill-procedure-run-attribution-v1"] = "playbill-procedure-run-attribution-v1"
     actor_type: str
     actor_id: str
@@ -411,7 +411,7 @@ class ProcedureRunAttributionV1(_StrictResultModel):
         return ensure_utc(value)
 
 
-class ProcedureRunAttributionWithheldV1(_StrictResultModel):
+class ProcedureRunAttributionWithheld(_StrictResultModel):
     """A run's attribution with its actor withheld from this reader.
 
     An armed run acts as its arming credential's principal. A reader who may
@@ -436,7 +436,7 @@ class ProcedureRunAttributionWithheldV1(_StrictResultModel):
         return ensure_utc(value)
 
     @classmethod
-    def of(cls, attribution: ProcedureRunAttributionV1) -> ProcedureRunAttributionWithheldV1:
+    def of(cls, attribution: ProcedureRunAttribution) -> ProcedureRunAttributionWithheld:
         return cls(
             actor_type=attribution.actor_type,
             org_id=attribution.org_id,
@@ -446,7 +446,7 @@ class ProcedureRunAttributionWithheldV1(_StrictResultModel):
         )
 
 
-class ProcedureRunReceiptWithheldV1(_StrictResultModel):
+class ProcedureRunReceiptWithheld(_StrictResultModel):
     """A run receipt withheld from this reader: it carries the arming credential's actor.
 
     ``receipt_digest`` beside it still names the exact receipt.
@@ -458,7 +458,7 @@ class ProcedureRunReceiptWithheldV1(_StrictResultModel):
     withheld: Literal["names_the_arming_credential"] = "names_the_arming_credential"
 
 
-class ProcedurePendingSuccessorV1(_StrictResultModel):
+class ProcedurePendingSuccessor(_StrictResultModel):
     tag: Literal["playbill-procedure-pending-successor-v1"] = (
         "playbill-procedure-pending-successor-v1"
     )
@@ -466,7 +466,7 @@ class ProcedurePendingSuccessorV1(_StrictResultModel):
     pending_successor_digest: str
 
 
-class ProcedureChildInvocationV1(_StrictResultModel):
+class ProcedureChildInvocation(_StrictResultModel):
     """A completed child occurrence, navigable by run ID without copying digests."""
 
     node_id: str
@@ -487,7 +487,7 @@ class ProcedureRunReceiptV2(_StrictResultModel):
     evaluation_time: datetime
     validated_pins: tuple[ArtifactPin, ...]
     admitted_inputs: tuple[dict[str, object], ...]
-    attribution: ProcedureRunAttributionV1
+    attribution: ProcedureRunAttribution
     stream_instance_id: str
     journal_family: str
     stream_id: str
@@ -517,7 +517,7 @@ class ProcedureRunReceiptV2(_StrictResultModel):
         return ensure_utc(value)
 
 
-class ProcedureBudgetExceededDetailV1(_StrictResultModel):
+class ProcedureBudgetExceededDetail(_StrictResultModel):
     tag: Literal["playbill-procedure-budget-exceeded-detail-v1"] = (
         "playbill-procedure-budget-exceeded-detail-v1"
     )
@@ -528,7 +528,7 @@ class ProcedureBudgetExceededDetailV1(_StrictResultModel):
     field_path: str | None = None
 
 
-class ProcedureBudgetExhaustedV1(_StrictResultModel):
+class ProcedureBudgetExhausted(_StrictResultModel):
     tag: Literal["playbill-procedure-budget-exhausted-v1"] = (
         "playbill-procedure-budget-exhausted-v1"
     )
@@ -538,31 +538,31 @@ class ProcedureBudgetExhaustedV1(_StrictResultModel):
         "A Procedure collection exceeded its declared item bound."
     )
     node_id: str
-    journal_coordinate: ProcedureJournalCoordinateV1 | None = None
-    details: ProcedureBudgetExceededDetailV1
+    journal_coordinate: ProcedureJournalCoordinate | None = None
+    details: ProcedureBudgetExceededDetail
     retryable: Literal[False] = False
 
 
-class ProcedureHaltTerminalV1(_StrictResultModel):
+class ProcedureHaltTerminal(_StrictResultModel):
     tag: Literal["playbill-procedure-halt-terminal-v1"] = "playbill-procedure-halt-terminal-v1"
     classification: Literal["halted"] = "halted"
     node_id: str
     reason: str | None = None
-    journal_coordinate: ProcedureJournalCoordinateV1 | None = None
+    journal_coordinate: ProcedureJournalCoordinate | None = None
 
 
-ProcedureTerminalV1: TypeAlias = Annotated[
-    ProcedureAdmissionRefusalV1
-    | ProcedureNodeRefusalV1
-    | ProcedureOperationalFailureV1
-    | ProcedureInternalFailureV1
-    | ProcedureBudgetExhaustedV1
-    | ProcedureHaltTerminalV1,
+ProcedureTerminal: TypeAlias = Annotated[
+    ProcedureAdmissionRefusal
+    | ProcedureNodeRefusal
+    | ProcedureOperationalFailure
+    | ProcedureInternalFailure
+    | ProcedureBudgetExhausted
+    | ProcedureHaltTerminal,
     Field(discriminator="tag"),
 ]
 
 
-class ProcedureBudgetBoundaryObservationV1(_StrictResultModel):
+class ProcedureBudgetBoundaryObservation(_StrictResultModel):
     tag: Literal["playbill-procedure-budget-boundary-observation-v1"] = (
         "playbill-procedure-budget-boundary-observation-v1"
     )
@@ -571,7 +571,7 @@ class ProcedureBudgetBoundaryObservationV1(_StrictResultModel):
     field_path: str | None = None
 
     @model_validator(mode="after")
-    def _zero_location(self) -> "ProcedureBudgetBoundaryObservationV1":
+    def _zero_location(self) -> "ProcedureBudgetBoundaryObservation":
         if self.high_water == 0 and (self.boundary is not None or self.field_path is not None):
             raise ValueError("a zero boundary observation has no location")
         if self.high_water > 0 and (self.boundary is None or self.field_path is None):
@@ -583,17 +583,17 @@ class ProcedureRunBudgetDeclaredV1(_StrictResultModel):
     tag: Literal["playbill-procedure-run-budget-declared-v1"] = (
         "playbill-procedure-run-budget-declared-v1"
     )
-    budget: ProcedureBudgetV3
-    hard_caps: ProcedureHardCapsV3
+    budget: ProcedureBudget
+    hard_caps: ProcedureHardCaps
     result_bytes_cap: int = Field(default=1_048_576, ge=1)
 
 
-class ProcedureRunBudgetObservedV1(_StrictResultModel):
+class ProcedureRunBudgetObserved(_StrictResultModel):
     tag: Literal["playbill-procedure-run-budget-observed-v1"] = (
         "playbill-procedure-run-budget-observed-v1"
     )
-    max_items: ProcedureBudgetBoundaryObservationV1
-    result_bytes: ProcedureBudgetBoundaryObservationV1
+    max_items: ProcedureBudgetBoundaryObservation
+    result_bytes: ProcedureBudgetBoundaryObservation
     provider_calls: int = Field(ge=0)
     capture_bytes: int = Field(ge=0)
     wall_clock_microseconds: int = Field(ge=0)
@@ -602,7 +602,7 @@ class ProcedureRunBudgetObservedV1(_StrictResultModel):
 class ProcedureRunBudgetV1(_StrictResultModel):
     tag: Literal["playbill-procedure-run-budget-v1"] = "playbill-procedure-run-budget-v1"
     declared: ProcedureRunBudgetDeclaredV1
-    observed: ProcedureRunBudgetObservedV1
+    observed: ProcedureRunBudgetObserved
 
 
 class ProcedureRunReceiptV3(ProcedureRunReceiptV2):
@@ -614,11 +614,11 @@ class ProcedureRunReceiptV3(ProcedureRunReceiptV2):
         "internal_failed",
         "halted",
     ]
-    terminal: ProcedureTerminalV1 | None
+    terminal: ProcedureTerminal | None
     budget: ProcedureRunBudgetV1
 
 
-class ProcedureRunNodePinSetV1(_StrictResultModel):
+class ProcedureRunNodePinSet(_StrictResultModel):
     tag: Literal["playbill-procedure-run-node-pin-set-v1"] = (
         "playbill-procedure-run-node-pin-set-v1"
     )
@@ -642,7 +642,7 @@ class ProcedureRunNodePinSetV1(_StrictResultModel):
         return value
 
 
-class ProcedureReplayInputProjectionV1(_StrictResultModel):
+class ProcedureReplayInputProjection(_StrictResultModel):
     tag: Literal["playbill-procedure-replay-input-projection-v1"] = (
         "playbill-procedure-replay-input-projection-v1"
     )
@@ -655,7 +655,7 @@ class ProcedureReplayInputProjectionV1(_StrictResultModel):
     _digests = field_validator("value_or_body_digest", "provenance_digest")(_digest)
 
     @model_validator(mode="after")
-    def _plane_kind(self) -> "ProcedureReplayInputProjectionV1":
+    def _plane_kind(self) -> "ProcedureReplayInputProjection":
         expected = {
             "accepted_state": "query_result",
             "landed_capture": "capture",
@@ -704,7 +704,7 @@ class ProcedureProviderBindingV1(_StrictResultModel):
         return value
 
 
-class ProviderBucketClassificationPlanV1(_StrictResultModel):
+class ProviderBucketClassificationPlan(_StrictResultModel):
     """Accepted, measured-bucket-free classifier plan for one occurrence."""
 
     tag: Literal["playbill-provider-bucket-classification-plan-v1"] = (
@@ -732,7 +732,7 @@ class ProviderBucketClassificationPlanV1(_StrictResultModel):
         return value
 
 
-class ProcedureProviderBindingV2(_StrictResultModel):
+class ProcedureProviderBinding(_StrictResultModel):
     """Successor binding carrying the full classification and RAT-9 authority."""
 
     tag: Literal["playbill-procedure-provider-binding-v2"] = (
@@ -740,7 +740,7 @@ class ProcedureProviderBindingV2(_StrictResultModel):
     )
     node_id: str
     provider_artifact_digest: str
-    classification_plan: ProviderBucketClassificationPlanV1
+    classification_plan: ProviderBucketClassificationPlan
     implementation_digest: str
     effect_class: Literal["none", "external_read", "external_mutation"]
     secret_binding_identity_digests: tuple[str, ...]
@@ -760,19 +760,19 @@ class ProcedureProviderBindingV2(_StrictResultModel):
         return value
 
     @model_validator(mode="after")
-    def _node_correspondence(self) -> "ProcedureProviderBindingV2":
+    def _node_correspondence(self) -> "ProcedureProviderBinding":
         if self.classification_plan.node_id != self.node_id:
             raise ValueError("Provider binding and classification plan node ids disagree")
         return self
 
 
-class ProcedureSelectionDecisionV1(_StrictResultModel):
+class ProcedureSelectionDecision(_StrictResultModel):
     tag: Literal["playbill-procedure-selection-decision-v1"] = (
         "playbill-procedure-selection-decision-v1"
     )
     policy_digest: str
     verdict: Literal["selected", "refused"]
-    decisions: tuple[AcquisitionInputDecisionV1, ...]
+    decisions: tuple[AcquisitionInputDecision, ...]
     coherence_proof_digest: str | None = None
 
     _decision_digests = field_validator("policy_digest", "coherence_proof_digest")(_digest)
@@ -781,15 +781,15 @@ class ProcedureSelectionDecisionV1(_StrictResultModel):
     @classmethod
     def _decisions(
         cls,
-        value: tuple[AcquisitionInputDecisionV1, ...],
-    ) -> tuple[AcquisitionInputDecisionV1, ...]:
+        value: tuple[AcquisitionInputDecision, ...],
+    ) -> tuple[AcquisitionInputDecision, ...]:
         names = tuple(item.input_name for item in value)
         if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
             raise ValueError("selection decisions must be sorted and input-name unique")
         return value
 
     @model_validator(mode="after")
-    def _verdict(self) -> "ProcedureSelectionDecisionV1":
+    def _verdict(self) -> "ProcedureSelectionDecision":
         expected = (
             "refused"
             if any(item.disposition == "refused" for item in self.decisions)
@@ -800,7 +800,7 @@ class ProcedureSelectionDecisionV1(_StrictResultModel):
         return self
 
 
-class ProcedureAdmissionMaterialMemberV1(_StrictResultModel):
+class ProcedureAdmissionMaterialMember(_StrictResultModel):
     """One admission-material retention decision.
 
     ``retain_until`` reads VALIDITY WINDOW.
@@ -831,7 +831,7 @@ class ProcedureAdmissionMaterialMemberV1(_StrictResultModel):
         return None if value is None else ensure_utc(value)
 
     @model_validator(mode="after")
-    def _retention_shape(self) -> "ProcedureAdmissionMaterialMemberV1":
+    def _retention_shape(self) -> "ProcedureAdmissionMaterialMember":
         if (self.retain_until is not None) != (self.body_retention == "required_for_duration"):
             raise ValueError("retain_until is present exactly for required_for_duration material")
         if self.body_retention == "never_materialize" and self.body_digest is not None:
@@ -839,18 +839,18 @@ class ProcedureAdmissionMaterialMemberV1(_StrictResultModel):
         return self
 
 
-class ProcedureAdmissionMaterialManifestV1(_StrictResultModel):
+class ProcedureAdmissionMaterialManifest(_StrictResultModel):
     tag: Literal["playbill-procedure-admission-material-v1"] = (
         "playbill-procedure-admission-material-v1"
     )
-    members: tuple[ProcedureAdmissionMaterialMemberV1, ...]
+    members: tuple[ProcedureAdmissionMaterialMember, ...]
 
     @field_validator("members")
     @classmethod
     def _members(
         cls,
-        value: tuple[ProcedureAdmissionMaterialMemberV1, ...],
-    ) -> tuple[ProcedureAdmissionMaterialMemberV1, ...]:
+        value: tuple[ProcedureAdmissionMaterialMember, ...],
+    ) -> tuple[ProcedureAdmissionMaterialMember, ...]:
         names = tuple(member.input_name for member in value)
         if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
             raise ValueError("admission material members must be sorted and input-name unique")
@@ -862,7 +862,7 @@ PROCEDURE_SELECTION_DECISION_DOMAIN = "playbill-procedure-selection-decision-v1"
 
 
 def procedure_admission_material_digest(
-    manifest: ProcedureAdmissionMaterialManifestV1,
+    manifest: ProcedureAdmissionMaterialManifest,
 ) -> str:
     payload = manifest.model_dump(mode="json")
     payload.pop("tag")
@@ -873,7 +873,7 @@ def procedure_admission_material_digest(
     ).tagged
 
 
-def procedure_selection_decision_digest(decision: ProcedureSelectionDecisionV1) -> str:
+def procedure_selection_decision_digest(decision: ProcedureSelectionDecision) -> str:
     payload = decision.model_dump(mode="json")
     payload.pop("tag")
     return typed_digest(
@@ -883,7 +883,7 @@ def procedure_selection_decision_digest(decision: ProcedureSelectionDecisionV1) 
     ).tagged
 
 
-class ProcedureAcquisitionPlanV2(_StrictResultModel):
+class ProcedureAcquisitionPlan(_StrictResultModel):
     """Digest-composed, result-free external acquisition plan for one Line run.
 
     ``accepted_coordinate.generation`` reads SETTLEMENT ORDER.
@@ -906,11 +906,11 @@ class ProcedureAcquisitionPlanV2(_StrictResultModel):
     acquisition_policy_format: str
     acquisition_policy_digest: str
     selection_receipt_digest: str | None = None
-    selection_decision: ProcedureSelectionDecisionV1
+    selection_decision: ProcedureSelectionDecision
     selection_decision_digest: str
     has_exhaust_occurrences: bool = False
     exhaust_access_binding_digest: str | None = None
-    external_occurrences: tuple[ProviderExternalOccurrencePlanV1, ...] = ()
+    external_occurrences: tuple[ProviderExternalOccurrencePlan, ...] = ()
 
     _digests = field_validator(
         "line_spec_digest",
@@ -929,15 +929,15 @@ class ProcedureAcquisitionPlanV2(_StrictResultModel):
     @classmethod
     def _occurrences(
         cls,
-        value: tuple[ProviderExternalOccurrencePlanV1, ...],
-    ) -> tuple[ProviderExternalOccurrencePlanV1, ...]:
+        value: tuple[ProviderExternalOccurrencePlan, ...],
+    ) -> tuple[ProviderExternalOccurrencePlan, ...]:
         paths = tuple(item.occurrence_path for item in value)
         if paths != tuple(sorted(set(paths), key=lambda item: item.encode("utf-8"))):
             raise ValueError("external occurrence plans must be path-sorted and unique")
         return value
 
     @model_validator(mode="after")
-    def _correspondence(self) -> ProcedureAcquisitionPlanV2:
+    def _correspondence(self) -> ProcedureAcquisitionPlan:
         line_coordinates = (self.line_identity, self.line_spec_digest, self.occurrence_id)
         if any(item is None for item in line_coordinates) and any(
             item is not None for item in line_coordinates
@@ -963,13 +963,13 @@ class ProcedureAcquisitionPlanV2(_StrictResultModel):
 PROCEDURE_ACQUISITION_PLAN_V2_DOMAIN = "playbill-procedure-acquisition-plan-v2"
 
 
-def procedure_acquisition_plan_digest(plan: ProcedureAcquisitionPlanV2) -> str:
+def procedure_acquisition_plan_digest(plan: ProcedureAcquisitionPlan) -> str:
     payload = plan.model_dump(mode="json")
     payload.pop("tag")
     return typed_digest(Sha256Value, PROCEDURE_ACQUISITION_PLAN_V2_DOMAIN, payload).tagged
 
 
-class ProcedureSourceObservationV1(_StrictResultModel):
+class ProcedureSourceObservation(_StrictResultModel):
     """What one admitted Source occurrence really observed, per run.
 
     Additive and optional: a run with no Source occurrence carries none. The
@@ -984,7 +984,7 @@ class ProcedureSourceObservationV1(_StrictResultModel):
     occurrence_path: str
     node_id: str | None = None
     input_name: str | None = None
-    source_read_receipt: SourceReadReceiptV1 | None = None
+    source_read_receipt: SourceReadReceipt | None = None
     source_read_receipt_digest: str | None = None
     invocation_receipt_digest: str | None = None
     capture_digest: str | None = None
@@ -996,7 +996,7 @@ class ProcedureSourceObservationV1(_StrictResultModel):
     )(_digest)
 
     @model_validator(mode="after")
-    def _receipt_pairing(self) -> "ProcedureSourceObservationV1":
+    def _receipt_pairing(self) -> "ProcedureSourceObservation":
         if (self.source_read_receipt is None) != (self.source_read_receipt_digest is None):
             raise ValueError("a Source read receipt and its digest are present together")
         if (
@@ -1008,7 +1008,7 @@ class ProcedureSourceObservationV1(_StrictResultModel):
         return self
 
 
-class ProcedureSourceCaptureAssociationV1(_StrictResultModel):
+class ProcedureSourceCaptureAssociation(_StrictResultModel):
     """Reserved B4 association between one Provider occurrence and one Capture."""
 
     tag: Literal["playbill-procedure-source-capture-association-v1"] = (
@@ -1029,7 +1029,7 @@ class ProcedureSourceCaptureAssociationV1(_StrictResultModel):
 
 
 #: The independent ceilings a served result can name as what capped a run.
-ServedAuthorityTermV1: TypeAlias = Literal[
+ServedAuthorityTerm: TypeAlias = Literal[
     "procedure_terminal_capability",
     "line_max_authority",
     "propagated_sensitivity",
@@ -1038,7 +1038,7 @@ ServedAuthorityTermV1: TypeAlias = Literal[
 ]
 
 
-TerminalEgressVerdictV1: TypeAlias = Literal[
+TerminalEgressVerdict: TypeAlias = Literal[
     "dependencies_bound_egress_pending",
     "refused_effective_authority",
     "prepared",
@@ -1048,7 +1048,7 @@ TerminalEgressVerdictV1: TypeAlias = Literal[
 ]
 
 
-class ProcedureTerminalEgressChildV1(_StrictResultModel):
+class ProcedureTerminalEgressChild(_StrictResultModel):
     """One fanout child of a terminal, and the handle its sink produced for it."""
 
     tag: Literal["playbill-procedure-terminal-egress-child-v1"] = (
@@ -1068,7 +1068,7 @@ class ProcedureTerminalEgressChildV1(_StrictResultModel):
         return None if value is None else _digest(value)
 
 
-class ProcedureTerminalEgressV1(_StrictResultModel):
+class ProcedureTerminalEgress(_StrictResultModel):
     """What one terminal node of a run did, reconstructed from its journal.
 
     Additive and optional: a run with no terminal carries none. A delivered
@@ -1087,18 +1087,18 @@ class ProcedureTerminalEgressV1(_StrictResultModel):
         "propose_change_set",
         "settle_change_set",
     ]
-    verdict: TerminalEgressVerdictV1
+    verdict: TerminalEgressVerdict
     required_authority: AuthorityVerb
     effective_authority: EffectiveAuthority | None = None
-    limiting_term: ServedAuthorityTermV1 | None = None
+    limiting_term: ServedAuthorityTerm | None = None
     operation_key: str | None = None
     procedure_mandate_digest: str | None = None
     target_paths: tuple[str, ...] = ()
     proposal_id: str | None = None
     candidate_digest: str | None = None
     refusal_code: str | None = None
-    children: tuple[ProcedureTerminalEgressChildV1, ...] = ()
-    journal_coordinate: ProcedureJournalCoordinateV1 | None = None
+    children: tuple[ProcedureTerminalEgressChild, ...] = ()
+    journal_coordinate: ProcedureJournalCoordinate | None = None
     # A delivered settle terminal: settled into accepted_git_oid, or fell back to
     # the ordinary proposal it names, for fallback_reason.
     settle_outcome: Literal["settled", "proposed"] | None = None
@@ -1125,7 +1125,7 @@ class ProcedureTerminalEgressV1(_StrictResultModel):
         return value
 
     @model_validator(mode="after")
-    def _delivered_shape(self) -> "ProcedureTerminalEgressV1":
+    def _delivered_shape(self) -> "ProcedureTerminalEgress":
         delivered_settle = self.verdict == "delivered" and self.kind == "settle_change_set"
         if self.verdict == "delivered" and self.kind in {"propose_change_set", "settle_change_set"}:
             if self.proposal_id is None or self.candidate_digest is None:
@@ -1143,20 +1143,20 @@ class ProcedureTerminalEgressV1(_StrictResultModel):
         return self
 
 
-class ProcedureRunBudgetDeclaredV2(_StrictResultModel):
+class ProcedureRunBudgetDeclared(_StrictResultModel):
     tag: Literal["playbill-procedure-run-budget-declared-v2"] = (
         "playbill-procedure-run-budget-declared-v2"
     )
-    budget: ProcedureBudgetV3
-    hard_caps: ProcedureHardCapsV3
+    budget: ProcedureBudget
+    hard_caps: ProcedureHardCaps
     result_bytes_cap: int = Field(ge=1)
     provider_output_bytes_cap: int = Field(ge=1)
 
 
-class ProcedureRunBudgetV2(_StrictResultModel):
+class ProcedureRunBudget(_StrictResultModel):
     tag: Literal["playbill-procedure-run-budget-v2"] = "playbill-procedure-run-budget-v2"
-    declared: ProcedureRunBudgetDeclaredV2
-    observed: ProcedureRunBudgetObservedV1
+    declared: ProcedureRunBudgetDeclared
+    observed: ProcedureRunBudgetObserved
 
 
 class ProcedureRunReceiptV4(ProcedureRunReceiptV3):
@@ -1166,13 +1166,13 @@ class ProcedureRunReceiptV4(ProcedureRunReceiptV3):
     line_spec_digest: str
     occurrence_id: str
     occurrence_evaluation_time: datetime
-    node_pin_sets: tuple[ProcedureRunNodePinSetV1, ...]
+    node_pin_sets: tuple[ProcedureRunNodePinSet, ...]
     pin_set_digest: str
-    replay_input_vector: tuple[ProcedureReplayInputProjectionV1, ...]
+    replay_input_vector: tuple[ProcedureReplayInputProjection, ...]
     deployment_snapshot_digest: str
     acquisition_policy_digest: str
     selection_receipt_digest: str | None
-    selection_decision: ProcedureSelectionDecisionV1
+    selection_decision: ProcedureSelectionDecision
     selection_decision_digest: str
     resolved_provider_bindings: tuple[ProcedureProviderBindingV1, ...]
     sensitivity_policy_digest: str
@@ -1180,9 +1180,9 @@ class ProcedureRunReceiptV4(ProcedureRunReceiptV3):
     calibration_coordinate_digest: str
     taint_labels: tuple[str, ...]
     epsilon_member: bool
-    admission_material_manifest: ProcedureAdmissionMaterialManifestV1
+    admission_material_manifest: ProcedureAdmissionMaterialManifest
     admission_material_manifest_digest: str
-    budget: ProcedureRunBudgetV2  # type: ignore[assignment]
+    budget: ProcedureRunBudget  # type: ignore[assignment]
 
     _line_digests = field_validator(
         "line_spec_digest",
@@ -1206,8 +1206,8 @@ class ProcedureRunReceiptV4(ProcedureRunReceiptV3):
     @classmethod
     def _node_pin_sets(
         cls,
-        value: tuple[ProcedureRunNodePinSetV1, ...],
-    ) -> tuple[ProcedureRunNodePinSetV1, ...]:
+        value: tuple[ProcedureRunNodePinSet, ...],
+    ) -> tuple[ProcedureRunNodePinSet, ...]:
         node_ids = tuple(item.node_id for item in value)
         if node_ids != tuple(sorted(set(node_ids), key=lambda item: item.encode("utf-8"))):
             raise ValueError("receipt node pin sets must be sorted and unique")
@@ -1217,8 +1217,8 @@ class ProcedureRunReceiptV4(ProcedureRunReceiptV3):
     @classmethod
     def _replay_inputs(
         cls,
-        value: tuple[ProcedureReplayInputProjectionV1, ...],
-    ) -> tuple[ProcedureReplayInputProjectionV1, ...]:
+        value: tuple[ProcedureReplayInputProjection, ...],
+    ) -> tuple[ProcedureReplayInputProjection, ...]:
         names = tuple(item.input_name for item in value)
         if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
             raise ValueError("receipt replay inputs must be sorted and unique")
@@ -1283,21 +1283,21 @@ class ProcedureRunReceiptV5(ProcedureRunReceiptV4):
     """Receipt successor embedding Provider binding v2 without rewriting v4."""
 
     tag: Literal["playbill-procedure-run-receipt-v5"] = "playbill-procedure-run-receipt-v5"  # type: ignore[assignment]
-    resolved_provider_bindings: tuple[ProcedureProviderBindingV2, ...]  # type: ignore[assignment]
+    resolved_provider_bindings: tuple[ProcedureProviderBinding, ...]  # type: ignore[assignment]
 
     @field_validator("resolved_provider_bindings")
     @classmethod
     def _v2_bindings(
         cls,
-        value: tuple[ProcedureProviderBindingV2, ...],
-    ) -> tuple[ProcedureProviderBindingV2, ...]:
+        value: tuple[ProcedureProviderBinding, ...],
+    ) -> tuple[ProcedureProviderBinding, ...]:
         node_ids = tuple(item.node_id for item in value)
         if node_ids != tuple(sorted(set(node_ids), key=lambda item: item.encode("utf-8"))):
             raise ValueError("receipt Provider v2 bindings must be sorted and unique")
         return value
 
 
-class ProcedureRunReceiptV6(ProcedureRunReceiptV5):
+class ProcedureRunReceipt(ProcedureRunReceiptV5):
     """Receipt successor exposing the complete B2 plan and durable call evidence.
 
     The inherited ``bound_coordinate.generation`` and
@@ -1313,7 +1313,7 @@ class ProcedureRunReceiptV6(ProcedureRunReceiptV5):
     acquisition_plan_digest: str
     exhaust_access_binding_digest: str | None = None
     invocation_receipt_digests: tuple[str, ...] = ()
-    source_capture_associations: tuple[ProcedureSourceCaptureAssociationV1, ...] = ()
+    source_capture_associations: tuple[ProcedureSourceCaptureAssociation, ...] = ()
 
     _v6_digests = field_validator("acquisition_plan_digest", "exhaust_access_binding_digest")(
         _digest
@@ -1332,8 +1332,8 @@ class ProcedureRunReceiptV6(ProcedureRunReceiptV5):
     @classmethod
     def _source_associations(
         cls,
-        value: tuple[ProcedureSourceCaptureAssociationV1, ...],
-    ) -> tuple[ProcedureSourceCaptureAssociationV1, ...]:
+        value: tuple[ProcedureSourceCaptureAssociation, ...],
+    ) -> tuple[ProcedureSourceCaptureAssociation, ...]:
         paths = tuple(item.occurrence_path for item in value)
         if paths != tuple(sorted(set(paths), key=lambda item: item.encode("utf-8"))):
             raise ValueError("Source Capture associations must be path-sorted and unique")
@@ -1344,52 +1344,52 @@ __all__ = [
     "PROCEDURE_ADMISSION_MATERIAL_DOMAIN",
     "PROCEDURE_ACQUISITION_PLAN_V2_DOMAIN",
     "PROCEDURE_SELECTION_DECISION_DOMAIN",
-    "ProcedureAdmissionMaterialManifestV1",
-    "ProcedureSourceObservationV1",
-    "ProcedureAdmissionMaterialMemberV1",
-    "ProcedureAdmissionRefusalCodeV1",
-    "ProcedureAdmissionRefusalV1",
-    "ProcedureAcquisitionPlanV2",
-    "ProcedureBudgetBoundaryObservationV1",
-    "ProcedureBudgetExceededDetailV1",
-    "ProcedureBudgetExhaustedV1",
-    "ProcedureBudgetRefusalDetailV1",
-    "ProcedureHaltTerminalV1",
-    "ProcedureInternalFailureCodeV1",
-    "ProcedureInternalFailureV1",
-    "ProcedureJournalCoordinateV1",
+    "ProcedureAdmissionMaterialManifest",
+    "ProcedureSourceObservation",
+    "ProcedureAdmissionMaterialMember",
+    "ProcedureAdmissionRefusalCode",
+    "ProcedureAdmissionRefusal",
+    "ProcedureAcquisitionPlan",
+    "ProcedureBudgetBoundaryObservation",
+    "ProcedureBudgetExceededDetail",
+    "ProcedureBudgetExhausted",
+    "ProcedureBudgetRefusalDetail",
+    "ProcedureHaltTerminal",
+    "ProcedureInternalFailureCode",
+    "ProcedureInternalFailure",
+    "ProcedureJournalCoordinate",
     "HISTORICAL_NODE_REFUSAL_CODES",
-    "ProcedureNodeRefusalCodeV1",
+    "ProcedureNodeRefusalCode",
     "current_refusal_code",
-    "ProcedureNodeRefusalV1",
-    "ProcedureOperationalFailureCodeV1",
-    "ProcedureOperationalFailureV1",
-    "ProcedurePendingSuccessorV1",
-    "ProviderBucketClassificationPlanV1",
+    "ProcedureNodeRefusal",
+    "ProcedureOperationalFailureCode",
+    "ProcedureOperationalFailure",
+    "ProcedurePendingSuccessor",
+    "ProviderBucketClassificationPlan",
     "ProcedureProviderBindingV1",
-    "ProcedureProviderBindingV2",
-    "ProcedureReplayInputProjectionV1",
-    "ProcedureRunAttributionV1",
-    "ProcedureRunAttributionWithheldV1",
+    "ProcedureProviderBinding",
+    "ProcedureReplayInputProjection",
+    "ProcedureRunAttribution",
+    "ProcedureRunAttributionWithheld",
     "ProcedureRunBudgetDeclaredV1",
-    "ProcedureRunBudgetDeclaredV2",
-    "ProcedureRunBudgetObservedV1",
+    "ProcedureRunBudgetDeclared",
+    "ProcedureRunBudgetObserved",
     "ProcedureRunBudgetV1",
-    "ProcedureRunBudgetV2",
-    "ProcedureRunNodePinSetV1",
+    "ProcedureRunBudget",
+    "ProcedureRunNodePinSet",
     "ProcedureRunReceiptV2",
     "ProcedureRunReceiptV3",
     "ProcedureRunReceiptV4",
     "ProcedureRunReceiptV5",
-    "ProcedureRunReceiptV6",
-    "ProcedureRunReceiptWithheldV1",
-    "ProcedureSourceCaptureAssociationV1",
-    "ProcedureSelectionDecisionV1",
-    "ProcedureTerminalEgressChildV1",
-    "ProcedureTerminalEgressV1",
-    "ProcedureTerminalV1",
-    "ServedAuthorityTermV1",
-    "TerminalEgressVerdictV1",
+    "ProcedureRunReceipt",
+    "ProcedureRunReceiptWithheld",
+    "ProcedureSourceCaptureAssociation",
+    "ProcedureSelectionDecision",
+    "ProcedureTerminalEgressChild",
+    "ProcedureTerminalEgress",
+    "ProcedureTerminal",
+    "ServedAuthorityTerm",
+    "TerminalEgressVerdict",
     "procedure_admission_material_digest",
     "procedure_acquisition_plan_digest",
     "procedure_selection_decision_digest",

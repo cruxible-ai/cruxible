@@ -21,10 +21,10 @@ from pydantic import (
 )
 
 from cruxible_client.contracts.accepted_attestations import attestation_identity
-from cruxible_client.contracts.acquisition_policies import SourceAcquisitionPolicyV1
+from cruxible_client.contracts.acquisition_policies import SourceAcquisitionPolicy
 from cruxible_client.contracts.approval_policy import (
     APPROVAL_POLICY_IDENTITY,
-    ApprovalPolicyV1,
+    ApprovalPolicy,
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.candidates import validate_candidate_timestamp
@@ -35,30 +35,30 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
     typed_digest,
 )
-from cruxible_client.contracts.captures import CaptureContractV1
-from cruxible_client.contracts.change_control import PlaybillStateCoordinateV1
-from cruxible_client.contracts.claim_attestations import ClaimAttestationV2
+from cruxible_client.contracts.captures import CaptureContract
+from cruxible_client.contracts.change_control import PlaybillStateCoordinate
+from cruxible_client.contracts.claim_attestations import ClaimAttestation
 from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.claims import (
-    ClaimRetireDependentV1,
+    ClaimRetireDependent,
     ClaimRetirementReason,
     LiteralClaimObject,
     SubjectClaimObject,
     claim_path,
 )
 from cruxible_client.contracts.declared_blocks import (
-    ProjectionBackingV1,
-    ProjectionBlockStamp,
-    ProjectionMarkerSummaryV1,
+    ProjectionBacking,
+    ProjectionBlockStampAny,
+    ProjectionMarkerSummary,
 )
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.procedure_runtime_policy import (
     PROCEDURE_RUNTIME_POLICY_IDENTITY,
-    ProcedureRuntimePolicyV1,
+    ProcedureRuntimePolicy,
 )
-from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContractV1
-from cruxible_client.contracts.procedures.models import ProcedureHardCapsV3
+from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContract
+from cruxible_client.contracts.procedures.models import ProcedureHardCaps
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.proposal_models import (
     CHANGE_SET_RATIONALE_MAX_LENGTH,
@@ -66,13 +66,13 @@ from cruxible_client.contracts.proposal_models import (
     ProposalReceiveLimits,
     validate_change_set_rationale,
 )
-from cruxible_client.contracts.query.definitions import QueryDefinitionSpecV1, QueryDefinitionV1
-from cruxible_client.contracts.repairs import ServedRepairV1, served_repair_for_refusal
-from cruxible_client.contracts.resolution_contracts import ResolutionContractV1
+from cruxible_client.contracts.query.definitions import QueryDefinition, QueryDefinitionSpec
+from cruxible_client.contracts.repairs import ServedRepair, served_repair_for_refusal
+from cruxible_client.contracts.resolution_contracts import ResolutionContract
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
-from cruxible_client.contracts.triggers import InternalActionName, TriggerScheduleV1
+from cruxible_client.contracts.triggers import InternalActionName, TriggerSchedule
 from cruxible_client.contracts.types import CompilerCoordinate
 from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
@@ -152,7 +152,7 @@ class _StrictAuthoringModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class AuthoringReferenceExpectationV1(_StrictAuthoringModel):
+class AuthoringReferenceExpectation(_StrictAuthoringModel):
     """One coordinate assertion emitted by an SDK ``TypedRef``."""
 
     tag: Literal["playbill-authoring-reference-expectation-v1"] = (
@@ -178,7 +178,7 @@ class AuthoringReferenceExpectationV1(_StrictAuthoringModel):
         return value
 
 
-class AuthoringSlotExpectationV1(_StrictAuthoringModel):
+class AuthoringSlotExpectation(_StrictAuthoringModel):
     """The exact live membership of one slot a change set depends on.
 
     A typed write chooses what to revise, retire and disposition from the live
@@ -222,13 +222,13 @@ class AuthoringSlotExpectationV1(_StrictAuthoringModel):
         return f"{self.subject_path}#{self.predicate}{qualifier}"
 
 
-AuthoringExpectationV1: TypeAlias = Annotated[
-    AuthoringReferenceExpectationV1 | AuthoringSlotExpectationV1,
+AuthoringExpectation: TypeAlias = Annotated[
+    AuthoringReferenceExpectation | AuthoringSlotExpectation,
     Field(discriminator="tag"),
 ]
 
 
-class AuthoringReferenceSuccessorV1(_StrictAuthoringModel):
+class AuthoringReferenceSuccessor(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-reference-successor-v1"] = (
         "playbill-authoring-reference-successor-v1"
     )
@@ -238,7 +238,7 @@ class AuthoringReferenceSuccessorV1(_StrictAuthoringModel):
     coordinate: AcceptedCoordinate
 
 
-class AuthoringProgramOperationV1(_StrictAuthoringModel):
+class AuthoringProgramOperation(_StrictAuthoringModel):
     operation: str
     decisions: dict[str, object]
 
@@ -258,7 +258,7 @@ class AuthoringProgramOperationV1(_StrictAuthoringModel):
         return cast(dict[str, object], normalized)
 
 
-class AuthoringProgramStampV1(_StrictAuthoringModel):
+class AuthoringProgramStamp(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-program-stamp-v1"] = "playbill-authoring-program-stamp-v1"
     program_digest: str
     sdk_version: str
@@ -280,7 +280,7 @@ class AuthoringProgramStampV1(_StrictAuthoringModel):
 def authoring_program_digest(
     *,
     sdk_contract_snapshot_digest: str,
-    operations: tuple[AuthoringProgramOperationV1, ...],
+    operations: tuple[AuthoringProgramOperation, ...],
 ) -> str:
     _sha256(sdk_contract_snapshot_digest, label="SDK contract-snapshot digest")
     return typed_digest(
@@ -297,7 +297,7 @@ def authoring_program_stamp_operation_key(
     *,
     intent_id: str,
     intent_revision: int,
-    program_stamp: AuthoringProgramStampV1,
+    program_stamp: AuthoringProgramStamp,
 ) -> str:
     return typed_digest(
         Sha256Value,
@@ -311,8 +311,8 @@ def authoring_program_stamp_operation_key(
 
 
 def canonical_reference_expectations(
-    values: tuple[AuthoringExpectationV1, ...],
-) -> tuple[AuthoringExpectationV1, ...]:
+    values: tuple[AuthoringExpectation, ...],
+) -> tuple[AuthoringExpectation, ...]:
     keys = tuple(
         (
             item.payload_path.encode("utf-8"),
@@ -330,7 +330,7 @@ def canonical_reference_expectations(
 
 
 def reference_expectations_digest(
-    values: tuple[AuthoringExpectationV1, ...],
+    values: tuple[AuthoringExpectation, ...],
 ) -> str:
     canonical_reference_expectations(values)
     return typed_digest(
@@ -358,7 +358,7 @@ def _sha256(value: str, *, label: str) -> str:
     return value
 
 
-class AuthoringExactContentObjectV1(_StrictAuthoringModel):
+class AuthoringExactContentObject(_StrictAuthoringModel):
     kind: Literal["exact_content_body"] = "exact_content_body"
     content_base64: str
 
@@ -373,18 +373,18 @@ class AuthoringExactContentObjectV1(_StrictAuthoringModel):
         return _canonical_base64(self.content_base64, label="exact-content body")
 
 
-AuthoringClaimObjectV1 = Annotated[
-    LiteralClaimObject | SubjectClaimObject | AuthoringExactContentObjectV1,
+AuthoringClaimObject = Annotated[
+    LiteralClaimObject | SubjectClaimObject | AuthoringExactContentObject,
     Field(discriminator="kind"),
 ]
 
 
-class AuthoringClaimStatementV1(_StrictAuthoringModel):
+class AuthoringClaimStatement(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-claim-statement-v1"] = "playbill-authoring-claim-statement-v1"
     subject: SemanticAddress
     predicate: str
     qualifier: str | None = None
-    object: AuthoringClaimObjectV1
+    object: AuthoringClaimObject
     role: ClaimRole
     effective_from: datetime | None = None
     effective_until: datetime | None = None
@@ -406,7 +406,7 @@ class AuthoringClaimStatementV1(_StrictAuthoringModel):
         return None if value is None else format_datetime(value)
 
     @model_validator(mode="after")
-    def _interval(self) -> "AuthoringClaimStatementV1":
+    def _interval(self) -> "AuthoringClaimStatement":
         if (
             self.effective_from is not None
             and self.effective_until is not None
@@ -416,7 +416,7 @@ class AuthoringClaimStatementV1(_StrictAuthoringModel):
         return self
 
 
-class AuthoringExistingClaimDispositionV1(_StrictAuthoringModel):
+class AuthoringExistingClaimDisposition(_StrictAuthoringModel):
     claim_id: str
     disposition: Literal["not_tested", "support", "contradict", "unsure"]
 
@@ -427,7 +427,7 @@ class AuthoringExistingClaimDispositionV1(_StrictAuthoringModel):
         return value
 
 
-class WorkingGitBlobCoordinateV1(_StrictAuthoringModel):
+class WorkingGitBlobCoordinate(_StrictAuthoringModel):
     kind: Literal["git_blob"] = "git_blob"
     repository_id: str
     commit_oid: str
@@ -449,7 +449,7 @@ class WorkingGitBlobCoordinateV1(_StrictAuthoringModel):
         return value
 
 
-class WorkingDigestCoordinateV1(_StrictAuthoringModel):
+class WorkingDigestCoordinate(_StrictAuthoringModel):
     kind: Literal["observed_digest"] = "observed_digest"
     source_content_digest: str
     source_byte_length: int = Field(ge=0)
@@ -460,13 +460,13 @@ class WorkingDigestCoordinateV1(_StrictAuthoringModel):
         return _sha256(value, label="working source content digest")
 
 
-WorkingSelectionCoordinateV1 = Annotated[
-    WorkingGitBlobCoordinateV1 | WorkingDigestCoordinateV1,
+WorkingSelectionCoordinate = Annotated[
+    WorkingGitBlobCoordinate | WorkingDigestCoordinate,
     Field(discriminator="kind"),
 ]
 
 
-class WorkingAnchorWindowV1(_StrictAuthoringModel):
+class WorkingAnchorWindow(_StrictAuthoringModel):
     tag: Literal["playbill-working-anchor-window-v1"] = "playbill-working-anchor-window-v1"
     anchor: str
     start_byte: int = Field(ge=0)
@@ -482,7 +482,7 @@ class WorkingAnchorWindowV1(_StrictAuthoringModel):
         return value
 
     @model_validator(mode="after")
-    def _window(self) -> "WorkingAnchorWindowV1":
+    def _window(self) -> "WorkingAnchorWindow":
         if self.end_byte <= self.start_byte:
             raise ValueError("working selection window must cover at least one byte")
         if (
@@ -493,15 +493,15 @@ class WorkingAnchorWindowV1(_StrictAuthoringModel):
         return self
 
 
-class WorkingSelectionObservationV1(_StrictAuthoringModel):
+class WorkingSelectionObservation(_StrictAuthoringModel):
     tag: Literal["playbill-working-selection-observation-v1"] = (
         "playbill-working-selection-observation-v1"
     )
     source_id: str
-    coordinate: WorkingSelectionCoordinateV1
+    coordinate: WorkingSelectionCoordinate
     selected_content_base64: str
     selected_bytes_digest: str
-    selector: WorkingAnchorWindowV1
+    selector: WorkingAnchorWindow
     # The whole observed source, present when it declares a projection block.
     # A citation into such a page has to be proved outside every block window
     # by the daemon, which holds only the selected bytes; the page is the
@@ -555,7 +555,7 @@ class WorkingSelectionObservationV1(_StrictAuthoringModel):
         return _sha256(value, label="working selected-bytes digest")
 
     @model_validator(mode="after")
-    def _internal_correspondence(self) -> "WorkingSelectionObservationV1":
+    def _internal_correspondence(self) -> "WorkingSelectionObservation":
         selected = self.selected_content
         if self.selector.end_byte > self.coordinate.source_byte_length:
             raise ValueError("working selection exceeds the observed whole-source length")
@@ -568,7 +568,7 @@ class WorkingSelectionObservationV1(_StrictAuthoringModel):
         if whole is not None:
             if len(whole) != self.coordinate.source_byte_length:
                 raise ValueError("working source content length differs from its coordinate")
-            if isinstance(self.coordinate, WorkingDigestCoordinateV1) and (
+            if isinstance(self.coordinate, WorkingDigestCoordinate) and (
                 "sha256:" + hashlib.sha256(whole).hexdigest()
                 != self.coordinate.source_content_digest
             ):
@@ -585,7 +585,7 @@ class WorkingSelectionObservationV1(_StrictAuthoringModel):
         )
 
 
-class InsertionAnchorWindowV1(_StrictAuthoringModel):
+class InsertionAnchorWindow(_StrictAuthoringModel):
     tag: Literal["playbill-insertion-anchor-window-v1"] = "playbill-insertion-anchor-window-v1"
     anchor_content_base64: str
     anchor_bytes_digest: str
@@ -608,7 +608,7 @@ class InsertionAnchorWindowV1(_StrictAuthoringModel):
         return _sha256(value, label="insertion anchor digest")
 
     @model_validator(mode="after")
-    def _correspondence(self) -> "InsertionAnchorWindowV1":
+    def _correspondence(self) -> "InsertionAnchorWindow":
         content = _canonical_base64(
             self.anchor_content_base64,
             label="insertion anchor content",
@@ -644,13 +644,13 @@ def _insertion_source_id(value: str) -> str:
     return value
 
 
-class InsertionTargetV2(_StrictAuthoringModel):
+class InsertionTarget(_StrictAuthoringModel):
     tag: Literal["playbill-insertion-target-v2"] = "playbill-insertion-target-v2"
     source_id: str
-    coordinate: WorkingSelectionCoordinateV1
+    coordinate: WorkingSelectionCoordinate
     initial_preimage_digest: str
     initial_preimage_byte_length: int = Field(ge=0)
-    selector: InsertionAnchorWindowV1
+    selector: InsertionAnchorWindow
     operation: InsertionOperation
 
     @field_validator("source_id")
@@ -664,10 +664,10 @@ class InsertionTargetV2(_StrictAuthoringModel):
         return _sha256(value, label="insertion initial whole-source digest")
 
     @model_validator(mode="after")
-    def _target_shape(self) -> "InsertionTargetV2":
+    def _target_shape(self) -> "InsertionTarget":
         if self.coordinate.source_byte_length != self.initial_preimage_byte_length:
             raise ValueError("insertion initial preimage length differs from its coordinate")
-        if isinstance(self.coordinate, WorkingDigestCoordinateV1) and (
+        if isinstance(self.coordinate, WorkingDigestCoordinate) and (
             self.coordinate.source_content_digest != self.initial_preimage_digest
         ):
             raise ValueError("insertion initial preimage differs from its coordinate")
@@ -689,13 +689,13 @@ class InsertionTargetV2(_StrictAuthoringModel):
         return self
 
 
-def insertion_target_v2_digest(target: InsertionTargetV2) -> str:
+def insertion_target_v2_digest(target: InsertionTarget) -> str:
     payload = target.model_dump(mode="json")
     payload.pop("tag")
     return typed_digest(Sha256Value, INSERTION_TARGET_V2_DIGEST_DOMAIN, payload).tagged
 
 
-class PublicationSourceObservationV2(_StrictAuthoringModel):
+class PublicationSourceObservation(_StrictAuthoringModel):
     tag: Literal["playbill-publication-source-observation-v2"] = (
         "playbill-publication-source-observation-v2"
     )
@@ -721,7 +721,7 @@ class PublicationSourceObservationV2(_StrictAuthoringModel):
         return _sha256(value, label="publication source digest")
 
     @model_validator(mode="after")
-    def _correspondence(self) -> "PublicationSourceObservationV2":
+    def _correspondence(self) -> "PublicationSourceObservation":
         content = self.content
         if len(content) != self.byte_length:
             raise ValueError("publication source length does not reproduce")
@@ -734,7 +734,7 @@ class PublicationSourceObservationV2(_StrictAuthoringModel):
         return _canonical_base64(self.content_base64, label="publication source content")
 
 
-def publication_source_observation_v2_digest(value: PublicationSourceObservationV2) -> str:
+def publication_source_observation_v2_digest(value: PublicationSourceObservation) -> str:
     payload = value.model_dump(mode="json")
     payload.pop("tag")
     return typed_digest(
@@ -773,7 +773,7 @@ def insertion_expectation_id(
     ).tagged
 
 
-class SelfSourceBodyV1(_StrictAuthoringModel):
+class SelfSourceBody(_StrictAuthoringModel):
     tag: Literal["playbill-self-source-body-v1"] = "playbill-self-source-body-v1"
     content_base64: str
 
@@ -788,7 +788,7 @@ class SelfSourceBodyV1(_StrictAuthoringModel):
         return _canonical_base64(self.content_base64, label="self-source body")
 
 
-class ExistingCaptureCitationSourceV1(_StrictAuthoringModel):
+class ExistingCaptureCitationSource(_StrictAuthoringModel):
     """Reference one already-materialized Capture without re-authoring its bytes."""
 
     tag: Literal["playbill-existing-capture-citation-source-v1"] = (
@@ -803,25 +803,25 @@ class ExistingCaptureCitationSourceV1(_StrictAuthoringModel):
 
 
 ClaimAuthoringSourceV1 = Annotated[
-    WorkingSelectionObservationV1 | SelfSourceBodyV1,
+    WorkingSelectionObservation | SelfSourceBody,
     Field(discriminator="tag"),
 ]
 
-ClaimAuthoringSourceV3 = Annotated[
-    WorkingSelectionObservationV1 | SelfSourceBodyV1 | ExistingCaptureCitationSourceV1,
+ClaimAuthoringSource = Annotated[
+    WorkingSelectionObservation | SelfSourceBody | ExistingCaptureCitationSource,
     Field(discriminator="tag"),
 ]
 
 
 class ClaimAuthoringPayloadV1(_StrictAuthoringModel):
     tag: Literal["playbill-claim-authoring-payload-v1"] = "playbill-claim-authoring-payload-v1"
-    statement: AuthoringClaimStatementV1
+    statement: AuthoringClaimStatement
     rationale: str
     source: ClaimAuthoringSourceV1
     citation_role: Literal["evidence", "copy"] | None = None
     revises: str | None = None
-    existing_claim_dispositions: tuple[AuthoringExistingClaimDispositionV1, ...] = ()
-    insertion_target: InsertionTargetV2 | None = None
+    existing_claim_dispositions: tuple[AuthoringExistingClaimDisposition, ...] = ()
+    insertion_target: InsertionTarget | None = None
 
     @field_validator("rationale")
     @classmethod
@@ -841,8 +841,8 @@ class ClaimAuthoringPayloadV1(_StrictAuthoringModel):
     @classmethod
     def _dispositions(
         cls,
-        value: tuple[AuthoringExistingClaimDispositionV1, ...],
-    ) -> tuple[AuthoringExistingClaimDispositionV1, ...]:
+        value: tuple[AuthoringExistingClaimDisposition, ...],
+    ) -> tuple[AuthoringExistingClaimDisposition, ...]:
         ids = tuple(item.claim_id for item in value)
         if ids != tuple(sorted(set(ids), key=lambda item: item.encode("ascii"))):
             raise ValueError("existing Claim dispositions must be sorted and unique")
@@ -852,7 +852,7 @@ class ClaimAuthoringPayloadV1(_StrictAuthoringModel):
     def _source_role(self) -> "ClaimAuthoringPayloadV1":
         if isinstance(
             self.source,
-            WorkingSelectionObservationV1 | ExistingCaptureCitationSourceV1,
+            WorkingSelectionObservation | ExistingCaptureCitationSource,
         ):
             if self.citation_role is None:
                 raise ValueError("Flow A and existing Captures require an explicit citation_role")
@@ -861,7 +861,7 @@ class ClaimAuthoringPayloadV1(_StrictAuthoringModel):
         return self
 
 
-class ClaimDependencyDraftsV1(_StrictAuthoringModel):
+class ClaimDependencyDrafts(_StrictAuthoringModel):
     tag: Literal["playbill-claim-dependency-drafts-v1"] = "playbill-claim-dependency-drafts-v1"
     subject: SubjectShell | None = None
     claim_type: ClaimType | None = None
@@ -869,17 +869,17 @@ class ClaimDependencyDraftsV1(_StrictAuthoringModel):
 
 class ClaimAuthoringPayloadV2(ClaimAuthoringPayloadV1):
     tag: Literal["playbill-claim-authoring-payload-v2"] = "playbill-claim-authoring-payload-v2"  # type: ignore[assignment]
-    dependency_drafts: ClaimDependencyDraftsV1
+    dependency_drafts: ClaimDependencyDrafts
 
 
-class ClaimDerivationBindingV1(_StrictAuthoringModel):
+class ClaimDerivationBinding(_StrictAuthoringModel):
     """Backend-bound reducer and exact admitted inputs, never author-supplied hashes."""
 
     procedure: ArtifactPin
     inputs: tuple[ArtifactPin, ...]
 
     @model_validator(mode="after")
-    def _kinds(self) -> "ClaimDerivationBindingV1":
+    def _kinds(self) -> "ClaimDerivationBinding":
         if self.procedure.target.kind != "Procedure" or not self.inputs:
             raise ValueError("a derivation needs its Procedure and nonempty Claim inputs")
         if any(pin.target.kind != "Claim" for pin in self.inputs):
@@ -889,16 +889,16 @@ class ClaimDerivationBindingV1(_StrictAuthoringModel):
         return self
 
 
-class ClaimAuthoringPayloadV3(ClaimAuthoringPayloadV1):
+class ClaimAuthoringPayload(ClaimAuthoringPayloadV1):
     tag: Literal["playbill-claim-authoring-payload-v3"] = "playbill-claim-authoring-payload-v3"  # type: ignore[assignment]
-    source: ClaimAuthoringSourceV3  # type: ignore[assignment]
-    dependency_drafts: ClaimDependencyDraftsV1
-    derivation: ClaimDerivationBindingV1 | None = Field(
+    source: ClaimAuthoringSource  # type: ignore[assignment]
+    dependency_drafts: ClaimDependencyDrafts
+    derivation: ClaimDerivationBinding | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
 
 
-class AuthoringArtifactReferenceV1(_StrictAuthoringModel):
+class AuthoringArtifactReference(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-artifact-reference-v1"] = (
         "playbill-authoring-artifact-reference-v1"
     )
@@ -914,7 +914,7 @@ class AuthoringArtifactReferenceV1(_StrictAuthoringModel):
         return value
 
 
-class AuthoringCandidateReferenceV1(_StrictAuthoringModel):
+class AuthoringCandidateReference(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-candidate-reference-v1"] = (
         "playbill-authoring-candidate-reference-v1"
     )
@@ -923,49 +923,49 @@ class AuthoringCandidateReferenceV1(_StrictAuthoringModel):
     resolution: Literal["candidate_in_change_set"] = "candidate_in_change_set"
 
 
-class ResolutionContractAuthoringPayloadV1(_StrictAuthoringModel):
+class ResolutionContractAuthoringPayload(_StrictAuthoringModel):
     tag: Literal["playbill-resolution-contract-authoring-payload-v1"] = (
         "playbill-resolution-contract-authoring-payload-v1"
     )
-    resolution_contract: ResolutionContractV1
+    resolution_contract: ResolutionContract
 
 
-class AttestationAuthoringPayloadV1(_StrictAuthoringModel):
+class AttestationAuthoringPayload(_StrictAuthoringModel):
     """One immutable signed statement proposed through ordinary acceptance."""
 
     tag: Literal["cruxible-attestation-authoring-payload-v1"] = (
         "cruxible-attestation-authoring-payload-v1"
     )
-    attestation: ClaimAttestationV2
+    attestation: ClaimAttestation
 
 
-class SubjectAuthoringPayloadV1(_StrictAuthoringModel):
+class SubjectAuthoringPayload(_StrictAuthoringModel):
     tag: Literal["playbill-subject-authoring-payload-v1"] = "playbill-subject-authoring-payload-v1"
     subject: SubjectShell
 
 
-class QueryDefinitionAuthoringPayloadV1(_StrictAuthoringModel):
+class QueryDefinitionAuthoringPayload(_StrictAuthoringModel):
     tag: Literal["playbill-query-definition-authoring-payload-v1"] = (
         "playbill-query-definition-authoring-payload-v1"
     )
-    query_definition: QueryDefinitionSpecV1 | QueryDefinitionV1
+    query_definition: QueryDefinitionSpec | QueryDefinition
 
 
-class ApprovalPolicyAuthoringPayloadV1(_StrictAuthoringModel):
+class ApprovalPolicyAuthoringPayload(_StrictAuthoringModel):
     tag: Literal["playbill-approval-policy-authoring-payload-v1"] = (
         "playbill-approval-policy-authoring-payload-v1"
     )
-    approval_policy: ApprovalPolicyV1
+    approval_policy: ApprovalPolicy
 
 
-class ProcedureRuntimePolicyAuthoringPayloadV1(_StrictAuthoringModel):
+class ProcedureRuntimePolicyAuthoringPayload(_StrictAuthoringModel):
     tag: Literal["playbill-procedure-runtime-policy-authoring-payload-v1"] = (
         "playbill-procedure-runtime-policy-authoring-payload-v1"
     )
-    procedure_runtime_policy: ProcedureRuntimePolicyV1
+    procedure_runtime_policy: ProcedureRuntimePolicy
 
 
-class MandateScopeAuthoringV1(_StrictAuthoringModel):
+class MandateScopeAuthoring(_StrictAuthoringModel):
     """One ClaimType a settle grant covers, named by predicate; lowering pins its digest."""
 
     tag: Literal["playbill-mandate-scope-authoring-v1"] = "playbill-mandate-scope-authoring-v1"
@@ -974,7 +974,7 @@ class MandateScopeAuthoringV1(_StrictAuthoringModel):
     binding_subject_role: Literal["subject", "object"] = "subject"
 
 
-class MandateConditionAuthoringV1(_StrictAuthoringModel):
+class MandateConditionAuthoring(_StrictAuthoringModel):
     """The settle predicate, named by query; lowering pins the exact accepted query."""
 
     tag: Literal["playbill-mandate-condition-authoring-v1"] = (
@@ -987,7 +987,7 @@ class MandateConditionAuthoringV1(_StrictAuthoringModel):
     fallback: Literal["refuse", "propose"]
 
 
-class ProcedureMandateAuthoringPayloadV1(_StrictAuthoringModel):
+class ProcedureMandateAuthoringPayload(_StrictAuthoringModel):
     """Decision-only grant input; lowering owns every exact digest it pins."""
 
     tag: Literal["playbill-procedure-mandate-authoring-payload-v1"] = (
@@ -996,36 +996,36 @@ class ProcedureMandateAuthoringPayloadV1(_StrictAuthoringModel):
     name: str
     procedure_name: str
     grants: Literal["propose", "settle"]
-    resource_ceiling: ProcedureHardCapsV3
+    resource_ceiling: ProcedureHardCaps
     namespace: tuple[str, ...]
     valid_from: datetime
     expires_at: datetime
-    scope: tuple[MandateScopeAuthoringV1, ...] = ()
+    scope: tuple[MandateScopeAuthoring, ...] = ()
     subject_scope: tuple[SemanticAddress, ...] | None = None
-    condition: MandateConditionAuthoringV1 | None = None
+    condition: MandateConditionAuthoring | None = None
     suspended: bool = False
     retire: bool = False
 
 
-class CaptureContractAuthoringPayloadV1(_StrictAuthoringModel):
+class CaptureContractAuthoringPayload(_StrictAuthoringModel):
     """One whole CaptureContract authored as a change-set definition member."""
 
     tag: Literal["playbill-capture-contract-authoring-payload-v1"] = (
         "playbill-capture-contract-authoring-payload-v1"
     )
-    capture_contract: CaptureContractV1
+    capture_contract: CaptureContract
 
 
-class SourceAcquisitionPolicyAuthoringPayloadV1(_StrictAuthoringModel):
+class SourceAcquisitionPolicyAuthoringPayload(_StrictAuthoringModel):
     """One whole SourceAcquisitionPolicy authored as a change-set definition member."""
 
     tag: Literal["playbill-source-acquisition-policy-authoring-payload-v1"] = (
         "playbill-source-acquisition-policy-authoring-payload-v1"
     )
-    acquisition_policy: SourceAcquisitionPolicyV1
+    acquisition_policy: SourceAcquisitionPolicy
 
 
-class LineAuthoringPayloadV1(_StrictAuthoringModel):
+class LineAuthoringPayload(_StrictAuthoringModel):
     """Decision-only Line input; lowering owns the exact Procedure and policy pins.
 
     An author names the accepted or same-set Procedure and acquisition policy
@@ -1066,7 +1066,7 @@ class LineAuthoringPayloadV1(_StrictAuthoringModel):
         return normalize_canonical(value)
 
 
-class TriggerAuthoringPayloadV1(_StrictAuthoringModel):
+class TriggerAuthoringPayload(_StrictAuthoringModel):
     """Decision-only Trigger input: a schedule and exactly one target.
 
     ``line_name`` names an accepted or same-set Line, which lowering refers to by
@@ -1075,7 +1075,7 @@ class TriggerAuthoringPayloadV1(_StrictAuthoringModel):
 
     tag: Literal["playbill-trigger-authoring-payload-v1"] = "playbill-trigger-authoring-payload-v1"
     name: str
-    schedule: TriggerScheduleV1
+    schedule: TriggerSchedule
     line_name: str | None = None
     action: InternalActionName | None = None
     retire: bool = False
@@ -1088,7 +1088,7 @@ class TriggerAuthoringPayloadV1(_StrictAuthoringModel):
         return value
 
     @model_validator(mode="after")
-    def _one_target(self) -> "TriggerAuthoringPayloadV1":
+    def _one_target(self) -> "TriggerAuthoringPayload":
         if (self.line_name is None) == (self.action is None):
             raise ValueError("a Trigger names exactly one target: line_name or action")
         return self
@@ -1113,7 +1113,7 @@ class ProcedureAuthoringPayloadV1(_StrictAuthoringModel):
         return cast(dict[str, object], normalized)
 
 
-class ProcedureAuthoringPayloadV2(_StrictAuthoringModel):
+class ProcedureAuthoringPayload(_StrictAuthoringModel):
     """A Procedure envelope input, plus the acquisition policy that envelope pins.
 
     `acquisition_policy` is the SEMANTIC NAME of an accepted (or same-change-set
@@ -1131,7 +1131,7 @@ class ProcedureAuthoringPayloadV2(_StrictAuthoringModel):
     )
     definition: dict[str, object]
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"]
-    owned_contracts: tuple[ProcedureOwnedContractV1, ...]
+    owned_contracts: tuple[ProcedureOwnedContract, ...]
     acquisition_policy: str | None = None
     retire: bool = False
 
@@ -1153,11 +1153,11 @@ class ProcedureAuthoringPayloadV2(_StrictAuthoringModel):
         return value
 
 
-class ClaimTypeAuthoringPayloadV1(_StrictAuthoringModel):
+class ClaimTypeAuthoringPayload(_StrictAuthoringModel):
     """One whole ClaimType definition authored inside an ordinary change set.
 
     A succession -- a ClaimType that names a predecessor, and the migration its
-    whole reverse-pin closure then owes -- is `ClaimTypeSuccessionMemberV1`, a
+    whole reverse-pin closure then owes -- is `ClaimTypeSuccessionMember`, a
     member of its own, because the closure is the decision. This member defines
     a ClaimType nothing yet depends on.
     """
@@ -1186,7 +1186,7 @@ ClaimTypeSuccessionDisposition: TypeAlias = Literal[
 ]
 
 
-class ClaimTypeSuccessionDependentV1(_StrictAuthoringModel):
+class ClaimTypeSuccessionDependent(_StrictAuthoringModel):
     """What one member of a succession's closure becomes in the same generation.
 
     The vocabulary is the standalone migration route's own, so an author who
@@ -1236,7 +1236,7 @@ class ClaimTypeSuccessionDependentV1(_StrictAuthoringModel):
     @classmethod
     def _time(cls, value: datetime | None) -> datetime | None:
         # Refused, not reinterpreted: this instant is handed straight to
-        # `ClaimTypeDependentDispositionV3`, which refuses a naive value, and a
+        # `ClaimTypeDependentDisposition`, which refuses a naive value, and a
         # member that silently called it UTC would retire a Claim at an instant
         # the author never wrote. The sibling retirement member's `ensure_utc`
         # is the older idiom; this field mirrors the migration vocabulary it
@@ -1250,7 +1250,7 @@ class ClaimTypeSuccessionDependentV1(_StrictAuthoringModel):
         return None if value is None else format_datetime(value)
 
     @model_validator(mode="after")
-    def _disposition_shape(self) -> "ClaimTypeSuccessionDependentV1":
+    def _disposition_shape(self) -> "ClaimTypeSuccessionDependent":
         if self.disposition == "re_author":
             if self.successor_claim_id is None:
                 raise ValueError(
@@ -1266,7 +1266,7 @@ class ClaimTypeSuccessionDependentV1(_StrictAuthoringModel):
         return self
 
 
-class ClaimTypeSuccessionMemberV1(_StrictAuthoringModel):
+class ClaimTypeSuccessionMember(_StrictAuthoringModel):
     """One ClaimType succession, its whole closure disposed, as one member.
 
     Evolving a committed vocabulary is one epistemic move -- "I need this
@@ -1276,7 +1276,7 @@ class ClaimTypeSuccessionMemberV1(_StrictAuthoringModel):
 
     `successor` is a whole ClaimType that names its predecessor by identity and
     pins its exact digest, which is what makes it a succession rather than the
-    definition `ClaimTypeAuthoringPayloadV1` carries. `dependents` is the exact
+    definition `ClaimTypeAuthoringPayload` carries. `dependents` is the exact
     reverse-pin closure of the predecessor over the staged tree -- the accepted
     tree as this set's definition members left it -- and a closure that is not
     exact refuses. Sibling Claims are not in it: members lower in dependency
@@ -1288,7 +1288,7 @@ class ClaimTypeSuccessionMemberV1(_StrictAuthoringModel):
         "playbill-claim-type-succession-authoring-payload-v1"
     )
     successor: ClaimType
-    dependents: tuple[ClaimTypeSuccessionDependentV1, ...] = ()
+    dependents: tuple[ClaimTypeSuccessionDependent, ...] = ()
     #: Carry every closure member `dependents` does not name to the successor,
     #: computed by the daemon from the staged tree (retired Claims included).
     #: `dependents` then names only the exceptions: a `retire` or `re_author`.
@@ -1315,7 +1315,7 @@ class ClaimTypeSuccessionMemberV1(_StrictAuthoringModel):
         return value
 
     @model_validator(mode="after")
-    def _ordered_dependents(self) -> "ClaimTypeSuccessionMemberV1":
+    def _ordered_dependents(self) -> "ClaimTypeSuccessionMember":
         identities = tuple(item.identity.qualified for item in self.dependents)
         if identities != tuple(sorted(set(identities), key=lambda item: item.encode("utf-8"))):
             raise ValueError("succession dependents must be UTF-8 byte-sorted and unique")
@@ -1326,7 +1326,7 @@ class ClaimTypeSuccessionMemberV1(_StrictAuthoringModel):
         return self.successor.predicate
 
 
-class ClaimRetirementMemberV1(_StrictAuthoringModel):
+class ClaimRetirementMember(_StrictAuthoringModel):
     """One attributed Claim retirement, closure and all, as a change-set member.
 
     `mode` is `submit` alone: a change-set member is authored inside an intent
@@ -1348,7 +1348,7 @@ class ClaimRetirementMemberV1(_StrictAuthoringModel):
     retires: str
     reason: ClaimRetirementReason
     effective_until: datetime | None = None
-    dependents: tuple[ClaimRetireDependentV1, ...] = ()
+    dependents: tuple[ClaimRetireDependent, ...] = ()
 
     @field_validator("retires")
     @classmethod
@@ -1366,7 +1366,7 @@ class ClaimRetirementMemberV1(_StrictAuthoringModel):
         return None if value is None else format_datetime(value)
 
     @model_validator(mode="after")
-    def _ordered_dependents(self) -> "ClaimRetirementMemberV1":
+    def _ordered_dependents(self) -> "ClaimRetirementMember":
         identities = tuple(item.artifact_identity.qualified for item in self.dependents)
         if identities != tuple(sorted(set(identities), key=lambda item: item.encode("utf-8"))):
             raise ValueError("retirement dependents must be UTF-8 byte-sorted and unique")
@@ -1377,26 +1377,26 @@ class ClaimRetirementMemberV1(_StrictAuthoringModel):
         return self.retires
 
 
-AuthoringChangeSetMemberV1: TypeAlias = Annotated[
+AuthoringChangeSetMember: TypeAlias = Annotated[
     ClaimAuthoringPayloadV1
     | ClaimAuthoringPayloadV2
-    | ClaimAuthoringPayloadV3
-    | ClaimTypeAuthoringPayloadV1
-    | ClaimTypeSuccessionMemberV1
-    | ClaimRetirementMemberV1
-    | ResolutionContractAuthoringPayloadV1
-    | AttestationAuthoringPayloadV1
-    | SubjectAuthoringPayloadV1
-    | QueryDefinitionAuthoringPayloadV1
-    | ApprovalPolicyAuthoringPayloadV1
-    | ProcedureRuntimePolicyAuthoringPayloadV1
-    | ProcedureMandateAuthoringPayloadV1
-    | CaptureContractAuthoringPayloadV1
-    | SourceAcquisitionPolicyAuthoringPayloadV1
-    | LineAuthoringPayloadV1
-    | TriggerAuthoringPayloadV1
+    | ClaimAuthoringPayload
+    | ClaimTypeAuthoringPayload
+    | ClaimTypeSuccessionMember
+    | ClaimRetirementMember
+    | ResolutionContractAuthoringPayload
+    | AttestationAuthoringPayload
+    | SubjectAuthoringPayload
+    | QueryDefinitionAuthoringPayload
+    | ApprovalPolicyAuthoringPayload
+    | ProcedureRuntimePolicyAuthoringPayload
+    | ProcedureMandateAuthoringPayload
+    | CaptureContractAuthoringPayload
+    | SourceAcquisitionPolicyAuthoringPayload
+    | LineAuthoringPayload
+    | TriggerAuthoringPayload
     | ProcedureAuthoringPayloadV1
-    | ProcedureAuthoringPayloadV2,
+    | ProcedureAuthoringPayload,
     Field(discriminator="tag"),
 ]
 
@@ -1423,42 +1423,42 @@ def authoring_claim_member_identity(payload: ClaimAuthoringPayloadV1) -> str:
     return f"Claim:@{digest}"
 
 
-def authoring_member_identity(payload: AuthoringChangeSetMemberV1) -> str:
-    if isinstance(payload, ResolutionContractAuthoringPayloadV1):
+def authoring_member_identity(payload: AuthoringChangeSetMember) -> str:
+    if isinstance(payload, ResolutionContractAuthoringPayload):
         return payload.resolution_contract.identity.qualified
-    if isinstance(payload, AttestationAuthoringPayloadV1):
+    if isinstance(payload, AttestationAuthoringPayload):
         return attestation_identity(payload.attestation).qualified
     if isinstance(payload, ClaimAuthoringPayloadV1):
         return authoring_claim_member_identity(payload)
-    if isinstance(payload, ClaimTypeAuthoringPayloadV1):
+    if isinstance(payload, ClaimTypeAuthoringPayload):
         return f"ClaimType:{payload.claim_type.predicate}"
-    if isinstance(payload, ClaimTypeSuccessionMemberV1):
+    if isinstance(payload, ClaimTypeSuccessionMember):
         return f"ClaimTypeSuccession:{payload.predicate}"
-    if isinstance(payload, ClaimRetirementMemberV1):
+    if isinstance(payload, ClaimRetirementMember):
         return f"ClaimRetirement:{payload.claim_id}"
-    if isinstance(payload, SubjectAuthoringPayloadV1):
+    if isinstance(payload, SubjectAuthoringPayload):
         return f"Subject:{payload.subject.subject_kind}/{payload.subject.subject_id}"
-    if isinstance(payload, QueryDefinitionAuthoringPayloadV1):
+    if isinstance(payload, QueryDefinitionAuthoringPayload):
         return payload.query_definition.identity.qualified
-    if isinstance(payload, ApprovalPolicyAuthoringPayloadV1):
+    if isinstance(payload, ApprovalPolicyAuthoringPayload):
         return APPROVAL_POLICY_IDENTITY
-    if isinstance(payload, ProcedureRuntimePolicyAuthoringPayloadV1):
+    if isinstance(payload, ProcedureRuntimePolicyAuthoringPayload):
         return PROCEDURE_RUNTIME_POLICY_IDENTITY
-    if isinstance(payload, ProcedureMandateAuthoringPayloadV1):
+    if isinstance(payload, ProcedureMandateAuthoringPayload):
         return f"ProcedureMandate:{payload.name}"
-    if isinstance(payload, CaptureContractAuthoringPayloadV1):
+    if isinstance(payload, CaptureContractAuthoringPayload):
         return f"CaptureContract:{payload.capture_contract.identity.name}"
-    if isinstance(payload, SourceAcquisitionPolicyAuthoringPayloadV1):
+    if isinstance(payload, SourceAcquisitionPolicyAuthoringPayload):
         return f"SourceAcquisitionPolicy:{payload.acquisition_policy.identity.name}"
-    if isinstance(payload, LineAuthoringPayloadV1):
+    if isinstance(payload, LineAuthoringPayload):
         return f"Line:{payload.name}"
-    if isinstance(payload, TriggerAuthoringPayloadV1):
+    if isinstance(payload, TriggerAuthoringPayload):
         return f"Trigger:{payload.name}"
     return f"Procedure:{payload.definition['name']}"
 
 
 def authoring_change_set_membership(
-    members: tuple[AuthoringChangeSetMemberV1, ...],
+    members: tuple[AuthoringChangeSetMember, ...],
 ) -> tuple[tuple[str, str], ...]:
     identities = tuple(authoring_member_identity(member) for member in members)
     return tuple((identity.partition(":")[0], identity) for identity in identities)
@@ -1476,13 +1476,13 @@ class _AuthoringIntentDecodeContext:
         self.reset()
 
     def reset(self) -> None:
-        self.members: tuple[AuthoringChangeSetMemberV1, ...] | None = None
+        self.members: tuple[AuthoringChangeSetMember, ...] | None = None
         self.member_identities: tuple[str, ...] = ()
-        self.payload: AuthoringPayloadV1 | None = None
+        self.payload: AuthoringPayload | None = None
         self.normalized_payload: dict[str, CanonicalValue] | None = None
 
 
-class ChangeSetAuthoringPayloadV1(_StrictAuthoringModel):
+class ChangeSetAuthoringPayload(_StrictAuthoringModel):
     tag: Literal["playbill-change-set-authoring-payload-v1"] = (
         "playbill-change-set-authoring-payload-v1"
     )
@@ -1490,7 +1490,7 @@ class ChangeSetAuthoringPayloadV1(_StrictAuthoringModel):
     # members must also carry one: a two-member floor made the SDK's uniform
     # `pb.changes(...)` path refuse exactly the smallest set an author writes
     # first, and pushed them back onto a second, singular surface to say it.
-    members: tuple[AuthoringChangeSetMemberV1, ...] = Field(min_length=1)
+    members: tuple[AuthoringChangeSetMember, ...] = Field(min_length=1)
     # Why this set exists, in the author's own words. It was already an argument
     # to `pb.changes(rationale=...)` and it was already hashed into the program
     # digest -- which meant the daemon could prove the author wrote SOMETHING and
@@ -1512,9 +1512,9 @@ class ChangeSetAuthoringPayloadV1(_StrictAuthoringModel):
     @classmethod
     def _members(
         cls,
-        value: tuple[AuthoringChangeSetMemberV1, ...],
+        value: tuple[AuthoringChangeSetMember, ...],
         info: ValidationInfo,
-    ) -> tuple[AuthoringChangeSetMemberV1, ...]:
+    ) -> tuple[AuthoringChangeSetMember, ...]:
         identities = tuple(authoring_member_identity(member) for member in value)
         if len(set(identities)) != len(identities):
             raise ValueError("change-set member identities must be unique")
@@ -1526,29 +1526,29 @@ class ChangeSetAuthoringPayloadV1(_StrictAuthoringModel):
         return value
 
 
-AuthoringPayloadV1 = Annotated[
+AuthoringPayload = Annotated[
     ClaimAuthoringPayloadV1
     | ClaimAuthoringPayloadV2
-    | ClaimAuthoringPayloadV3
+    | ClaimAuthoringPayload
     | ProcedureAuthoringPayloadV1
-    | ProcedureAuthoringPayloadV2
-    | ResolutionContractAuthoringPayloadV1
-    | AttestationAuthoringPayloadV1
-    | SubjectAuthoringPayloadV1
-    | QueryDefinitionAuthoringPayloadV1
-    | ApprovalPolicyAuthoringPayloadV1
-    | ProcedureRuntimePolicyAuthoringPayloadV1
-    | ProcedureMandateAuthoringPayloadV1
-    | CaptureContractAuthoringPayloadV1
-    | SourceAcquisitionPolicyAuthoringPayloadV1
-    | LineAuthoringPayloadV1
-    | TriggerAuthoringPayloadV1
-    | ChangeSetAuthoringPayloadV1,
+    | ProcedureAuthoringPayload
+    | ResolutionContractAuthoringPayload
+    | AttestationAuthoringPayload
+    | SubjectAuthoringPayload
+    | QueryDefinitionAuthoringPayload
+    | ApprovalPolicyAuthoringPayload
+    | ProcedureRuntimePolicyAuthoringPayload
+    | ProcedureMandateAuthoringPayload
+    | CaptureContractAuthoringPayload
+    | SourceAcquisitionPolicyAuthoringPayload
+    | LineAuthoringPayload
+    | TriggerAuthoringPayload
+    | ChangeSetAuthoringPayload,
     Field(discriminator="tag"),
 ]
 
 
-def authoring_payload_digest(payload: AuthoringPayloadV1) -> str:
+def authoring_payload_digest(payload: AuthoringPayload) -> str:
     """Digest what the payload IS, which is never how its author described it.
 
     A CHANGE SET's rationale is dropped beside `tag`. A set's identity is a
@@ -1567,7 +1567,7 @@ def authoring_payload_digest(payload: AuthoringPayloadV1) -> str:
 
     preimage = payload.model_dump(mode="json")
     preimage.pop("tag")
-    if isinstance(payload, ChangeSetAuthoringPayloadV1):
+    if isinstance(payload, ChangeSetAuthoringPayload):
         preimage.pop("rationale", None)
     return typed_digest(
         Sha256Value,
@@ -1580,7 +1580,7 @@ def authoring_create_fingerprint(
     *,
     instance_id: str,
     actor_id: str,
-    payload: AuthoringPayloadV1,
+    payload: AuthoringPayload,
 ) -> str:
     return typed_digest(
         Sha256Value,
@@ -1609,7 +1609,7 @@ def _normalized_authoring_digest(domain: str, preimage: dict[str, CanonicalValue
     )
 
 
-class RepairAlternativeV1(_StrictAuthoringModel):
+class RepairAlternative(_StrictAuthoringModel):
     kind: str
     description: str
     replacement: object | None = None
@@ -1620,27 +1620,27 @@ class RepairAlternativeV1(_StrictAuthoringModel):
         return None if value is None else normalize_canonical(value)
 
     @model_validator(mode="after")
-    def _bounded(self) -> "RepairAlternativeV1":
+    def _bounded(self) -> "RepairAlternative":
         if len(canonical_bytes(self.model_dump(mode="json"))) > MAX_REPAIR_BYTES:
             raise ValueError("authoring repair exceeds the frozen repair-byte limit")
         return self
 
 
-class AuthoringDiagnosticV1(_StrictAuthoringModel):
+class AuthoringDiagnostic(_StrictAuthoringModel):
     code: str
     stage: str
     offending_element: str
     message: str
     owner: DiagnosticOwner
     disposition: DiagnosticDisposition
-    repairs: tuple[RepairAlternativeV1, ...] = ()
+    repairs: tuple[RepairAlternative, ...] = ()
 
     @field_validator("repairs")
     @classmethod
     def _repairs(
         cls,
-        value: tuple[RepairAlternativeV1, ...],
-    ) -> tuple[RepairAlternativeV1, ...]:
+        value: tuple[RepairAlternative, ...],
+    ) -> tuple[RepairAlternative, ...]:
         if len(value) > MAX_REPAIR_ALTERNATIVES:
             raise ValueError("authoring diagnostic exceeds the repair-alternative limit")
         encoded = tuple(canonical_bytes(item.model_dump(mode="json")) for item in value)
@@ -1649,13 +1649,13 @@ class AuthoringDiagnosticV1(_StrictAuthoringModel):
         return value
 
     @model_validator(mode="after")
-    def _writer_has_repair(self) -> "AuthoringDiagnosticV1":
+    def _writer_has_repair(self) -> "AuthoringDiagnostic":
         if self.owner == "writer" and self.disposition == "edit_and_retry" and not self.repairs:
             raise ValueError("writer-repairable diagnostic must carry its repair")
         return self
 
 
-class BlockedCheckV1(_StrictAuthoringModel):
+class BlockedCheck(_StrictAuthoringModel):
     check: str
     blocked_by: tuple[str, ...]
     reason: str
@@ -1668,7 +1668,7 @@ class BlockedCheckV1(_StrictAuthoringModel):
         return value
 
 
-class DiagnosticFrontierLimitsV1(_StrictAuthoringModel):
+class DiagnosticFrontierLimits(_StrictAuthoringModel):
     max_diagnostics: Literal[128] = 128
     max_blocked_checks: Literal[128] = 128
     max_repair_alternatives: Literal[4] = 4
@@ -1676,16 +1676,16 @@ class DiagnosticFrontierLimitsV1(_StrictAuthoringModel):
     max_frontier_bytes: Literal[1048576] = 1048576
 
 
-class DiagnosticFrontierV1(_StrictAuthoringModel):
+class DiagnosticFrontier(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-diagnostic-frontier-v1"] = (
         "playbill-authoring-diagnostic-frontier-v1"
     )
-    diagnostics: tuple[AuthoringDiagnosticV1, ...] = ()
-    blocked_checks: tuple[BlockedCheckV1, ...] = ()
+    diagnostics: tuple[AuthoringDiagnostic, ...] = ()
+    blocked_checks: tuple[BlockedCheck, ...] = ()
     frontier_complete: bool = True
 
     @model_validator(mode="after")
-    def _bounded(self) -> "DiagnosticFrontierV1":
+    def _bounded(self) -> "DiagnosticFrontier":
         if len(self.diagnostics) > MAX_DIAGNOSTICS:
             raise ValueError("authoring frontier exceeds the diagnostic limit")
         if len(self.blocked_checks) > MAX_BLOCKED_CHECKS:
@@ -1714,20 +1714,20 @@ class DiagnosticFrontierV1(_StrictAuthoringModel):
         ).tagged
 
 
-class AcceptanceConditionV1(_StrictAuthoringModel):
+class AcceptanceCondition(_StrictAuthoringModel):
     condition: str
     owner: DiagnosticOwner
     action: str
     satisfied: bool
 
 
-class CandidateStatusV1(_StrictAuthoringModel):
+class CandidateStatus(_StrictAuthoringModel):
     tag: Literal["playbill-candidate-status-v1"] = "playbill-candidate-status-v1"
     state: CandidateStatusState
     proposal_id: str | None = None
     candidate_digest: str | None = None
     current_accepted_coordinate: AcceptedCoordinate
-    path_to_acceptance: tuple[AcceptanceConditionV1, ...] = ()
+    path_to_acceptance: tuple[AcceptanceCondition, ...] = ()
     accepted_generation: AcceptedCoordinate | None = None
 
     @field_validator("proposal_id", "candidate_digest")
@@ -1736,7 +1736,7 @@ class CandidateStatusV1(_StrictAuthoringModel):
         return None if value is None else _sha256(value, label="CandidateStatus digest")
 
     @model_validator(mode="after")
-    def _accepted_shape(self) -> "CandidateStatusV1":
+    def _accepted_shape(self) -> "CandidateStatus":
         if (self.state == "accepted") != (self.accepted_generation is not None):
             raise ValueError("accepted CandidateStatus alone carries an accepted generation")
         return self
@@ -1761,7 +1761,7 @@ def insertion_result_key(
     ).tagged
 
 
-InsertionExpectationStateV2: TypeAlias = Literal[
+InsertionExpectationState: TypeAlias = Literal[
     "awaiting_claim_acceptance",
     "pending",
     "prepared",
@@ -1782,19 +1782,19 @@ def publication_block_id(expectation_id: str) -> str:
     return "pub-" + digest[:32]
 
 
-class PublicationPreparationV2(_StrictAuthoringModel):
+class PublicationPreparation(_StrictAuthoringModel):
     tag: Literal["playbill-publication-preparation-v2"] = "playbill-publication-preparation-v2"
     expectation_id: str
     revision: int = Field(ge=1)
     accepted_coordinate: AcceptedCoordinate
     accepted_generation: int = Field(ge=0)
     source_id: str
-    rebased_selector: InsertionAnchorWindowV1
+    rebased_selector: InsertionAnchorWindow
     operation: InsertionOperation
     body_digest: str
     body_byte_length: int = Field(ge=0)
     block_id: str
-    stamp: ProjectionBlockStamp
+    stamp: ProjectionBlockStampAny
     inserted_block_digest: str
     inserted_block_byte_length: int = Field(ge=0)
     block_start_byte: int = Field(ge=0)
@@ -1833,7 +1833,7 @@ class PublicationPreparationV2(_StrictAuthoringModel):
         return rendered
 
     @model_validator(mode="after")
-    def _shape(self) -> "PublicationPreparationV2":
+    def _shape(self) -> "PublicationPreparation":
         if self.block_id != publication_block_id(self.expectation_id):
             raise ValueError("publication block ID does not reproduce")
         if self.stamp.source_id != self.source_id or self.stamp.block_id != self.block_id:
@@ -1854,19 +1854,19 @@ class PublicationPreparationV2(_StrictAuthoringModel):
         return self
 
 
-def publication_preparation_v2_digest(value: PublicationPreparationV2) -> str:
+def publication_preparation_v2_digest(value: PublicationPreparation) -> str:
     payload = value.model_dump(mode="json")
     payload.pop("tag")
     payload.pop("preparation_digest")
     return typed_digest(Sha256Value, INSERTION_PREPARATION_V2_DIGEST_DOMAIN, payload).tagged
 
 
-def build_publication_preparation_v2(**values: object) -> PublicationPreparationV2:
-    provisional = PublicationPreparationV2.model_construct(
+def build_publication_preparation_v2(**values: object) -> PublicationPreparation:
+    provisional = PublicationPreparation.model_construct(
         **cast(dict[str, Any], values),
         preparation_digest="sha256:" + "0" * 64,
     )
-    return PublicationPreparationV2.model_validate(
+    return PublicationPreparation.model_validate(
         {
             **values,
             "preparation_digest": publication_preparation_v2_digest(provisional),
@@ -1874,7 +1874,7 @@ def build_publication_preparation_v2(**values: object) -> PublicationPreparation
     )
 
 
-class InsertionConfirmationObservationV2(_StrictAuthoringModel):
+class InsertionConfirmationObservation(_StrictAuthoringModel):
     tag: Literal["playbill-insertion-confirmation-observation-v2"] = (
         "playbill-insertion-confirmation-observation-v2"
     )
@@ -1882,7 +1882,7 @@ class InsertionConfirmationObservationV2(_StrictAuthoringModel):
     expectation_id: str
     preparation_digest: str
     source_id: str
-    marker_summary: ProjectionMarkerSummaryV1
+    marker_summary: ProjectionMarkerSummary
     observed_occurrence_count: int = Field(ge=0)
 
     @field_validator("expectation_id", "preparation_digest")
@@ -1897,7 +1897,7 @@ class InsertionConfirmationObservationV2(_StrictAuthoringModel):
 
 
 def insertion_confirmation_observation_v2_digest(
-    value: InsertionConfirmationObservationV2,
+    value: InsertionConfirmationObservation,
 ) -> str:
     payload = value.model_dump(mode="json")
     payload.pop("tag")
@@ -1908,7 +1908,7 @@ def insertion_confirmation_observation_v2_digest(
     ).tagged
 
 
-class InsertionTerminalTombstoneV2(_StrictAuthoringModel):
+class InsertionTerminalTombstone(_StrictAuthoringModel):
     tag: Literal["playbill-insertion-terminal-tombstone-v2"] = (
         "playbill-insertion-terminal-tombstone-v2"
     )
@@ -1951,7 +1951,7 @@ class InsertionTerminalTombstoneV2(_StrictAuthoringModel):
         return rendered
 
     @model_validator(mode="after")
-    def _shape(self) -> "InsertionTerminalTombstoneV2":
+    def _shape(self) -> "InsertionTerminalTombstone":
         if self.retain_until < self.finalized_at:
             raise ValueError("publication tombstone retention precedes finalization")
         commitments = (
@@ -1970,7 +1970,7 @@ class InsertionTerminalTombstoneV2(_StrictAuthoringModel):
         return self
 
 
-def insertion_terminal_tombstone_v2_digest(value: InsertionTerminalTombstoneV2) -> str:
+def insertion_terminal_tombstone_v2_digest(value: InsertionTerminalTombstone) -> str:
     payload = value.model_dump(mode="json")
     payload.pop("tag")
     payload.pop("tombstone_digest")
@@ -1981,12 +1981,12 @@ def insertion_terminal_tombstone_v2_digest(value: InsertionTerminalTombstoneV2) 
     ).tagged
 
 
-def build_insertion_terminal_tombstone_v2(**values: object) -> InsertionTerminalTombstoneV2:
-    provisional = InsertionTerminalTombstoneV2.model_construct(
+def build_insertion_terminal_tombstone_v2(**values: object) -> InsertionTerminalTombstone:
+    provisional = InsertionTerminalTombstone.model_construct(
         **cast(dict[str, Any], values),
         tombstone_digest="sha256:" + "0" * 64,
     )
-    return InsertionTerminalTombstoneV2.model_validate(
+    return InsertionTerminalTombstone.model_validate(
         {
             **values,
             "tombstone_digest": insertion_terminal_tombstone_v2_digest(provisional),
@@ -1994,18 +1994,18 @@ def build_insertion_terminal_tombstone_v2(**values: object) -> InsertionTerminal
     )
 
 
-class InsertionExpectationV2(_StrictAuthoringModel):
+class InsertionExpectation(_StrictAuthoringModel):
     tag: Literal["playbill-insertion-expectation-v2"] = "playbill-insertion-expectation-v2"
     expectation_id: str
-    state: InsertionExpectationStateV2
+    state: InsertionExpectationState
     claim_identity: str
     original_claim_artifact_digest: str
     claim_statement_digest: str
     accepted_claim_coordinate: AcceptedCoordinate | None = None
-    target: InsertionTargetV2
-    preparation: PublicationPreparationV2 | None = None
+    target: InsertionTarget
+    preparation: PublicationPreparation | None = None
     expires_at: datetime
-    terminal_tombstone: InsertionTerminalTombstoneV2 | None = None
+    terminal_tombstone: InsertionTerminalTombstone | None = None
     expectation_digest: str
 
     @field_validator(
@@ -2030,7 +2030,7 @@ class InsertionExpectationV2(_StrictAuthoringModel):
         return rendered
 
     @model_validator(mode="after")
-    def _shape(self) -> "InsertionExpectationV2":
+    def _shape(self) -> "InsertionExpectation":
         if self.state == "awaiting_claim_acceptance" and self.accepted_claim_coordinate is not None:
             raise ValueError("awaiting publication cannot claim an accepted Claim coordinate")
         if self.state in {"pending", "prepared", "bound"} and (
@@ -2066,27 +2066,27 @@ class InsertionExpectationV2(_StrictAuthoringModel):
         return self
 
 
-def insertion_expectation_v2_digest(value: InsertionExpectationV2) -> str:
+def insertion_expectation_v2_digest(value: InsertionExpectation) -> str:
     payload = value.model_dump(mode="json")
     payload.pop("tag")
     payload.pop("expectation_digest")
     return typed_digest(Sha256Value, INSERTION_EXPECTATION_V2_DIGEST_DOMAIN, payload).tagged
 
 
-def build_insertion_expectation_v2(**values: object) -> InsertionExpectationV2:
-    provisional = InsertionExpectationV2.model_construct(
+def build_insertion_expectation_v2(**values: object) -> InsertionExpectation:
+    provisional = InsertionExpectation.model_construct(
         **cast(dict[str, Any], values),
         expectation_digest="sha256:" + "0" * 64,
     )
-    return InsertionExpectationV2.model_validate(
+    return InsertionExpectation.model_validate(
         {**values, "expectation_digest": insertion_expectation_v2_digest(provisional)}
     )
 
 
 def update_insertion_expectation_v2(
-    expectation: InsertionExpectationV2,
+    expectation: InsertionExpectation,
     **changes: object,
-) -> InsertionExpectationV2:
+) -> InsertionExpectation:
     values = {
         name: getattr(expectation, name)
         for name in type(expectation).model_fields
@@ -2098,7 +2098,7 @@ def update_insertion_expectation_v2(
 
 def insertion_prepare_terminal_operation_v2_key(
     expectation_id: str,
-    observation: PublicationSourceObservationV2,
+    observation: PublicationSourceObservation,
 ) -> str:
     """Key one terminal prepare attempt independently of the state it terminalizes."""
 
@@ -2112,7 +2112,7 @@ def insertion_prepare_terminal_operation_v2_key(
     ).tagged
 
 
-class PreflightCertificateV1(_StrictAuthoringModel):
+class PreflightCertificate(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-preflight-certificate-v1"] = (
         "playbill-authoring-preflight-certificate-v1"
     )
@@ -2131,7 +2131,7 @@ class PreflightCertificateV1(_StrictAuthoringModel):
     proposal_ref_oid: str | None
     candidate_tree_digest: str
     frontier_digest: str
-    frontier_limits: DiagnosticFrontierLimitsV1 = DiagnosticFrontierLimitsV1()
+    frontier_limits: DiagnosticFrontierLimits = DiagnosticFrontierLimits()
     certificate_digest: str
 
     @field_validator(
@@ -2182,13 +2182,13 @@ class PreflightCertificateV1(_StrictAuthoringModel):
         return value.receive_bound_payload()
 
     @model_validator(mode="after")
-    def _reproduces(self) -> "PreflightCertificateV1":
+    def _reproduces(self) -> "PreflightCertificate":
         if self.certificate_digest != preflight_certificate_digest(self):
             raise ValueError("preflight certificate digest does not reproduce")
         return self
 
 
-def preflight_certificate_digest(certificate: PreflightCertificateV1) -> str:
+def preflight_certificate_digest(certificate: PreflightCertificate) -> str:
     payload = certificate.model_dump(mode="json")
     payload.pop("tag")
     payload.pop("certificate_digest")
@@ -2199,15 +2199,15 @@ def preflight_certificate_digest(certificate: PreflightCertificateV1) -> str:
     ).tagged
 
 
-def build_preflight_certificate(**values: object) -> PreflightCertificateV1:
+def build_preflight_certificate(**values: object) -> PreflightCertificate:
     """Build the self-digesting frozen certificate without weakening validation."""
 
     typed_values = cast(dict[str, Any], values)
-    provisional = PreflightCertificateV1.model_construct(
+    provisional = PreflightCertificate.model_construct(
         **typed_values,
         certificate_digest="sha256:" + "0" * 64,
     )
-    return PreflightCertificateV1.model_validate(
+    return PreflightCertificate.model_validate(
         {
             **values,
             "certificate_digest": preflight_certificate_digest(provisional),
@@ -2215,16 +2215,16 @@ def build_preflight_certificate(**values: object) -> PreflightCertificateV1:
     )
 
 
-class PreflightResultV1(_StrictAuthoringModel):
+class PreflightResult(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-preflight-result-v1"] = (
         "playbill-authoring-preflight-result-v1"
     )
     verdict: Literal["passed", "refused"]
-    certificate: PreflightCertificateV1
-    frontier: DiagnosticFrontierV1
+    certificate: PreflightCertificate
+    frontier: DiagnosticFrontier
 
     @model_validator(mode="after")
-    def _verdict(self) -> "PreflightResultV1":
+    def _verdict(self) -> "PreflightResult":
         passed = (
             self.frontier.frontier_complete
             and not self.frontier.diagnostics
@@ -2237,7 +2237,7 @@ class PreflightResultV1(_StrictAuthoringModel):
         return self
 
 
-class ChangeSetClaimIdentityV1(_StrictAuthoringModel):
+class ChangeSetClaimIdentity(_StrictAuthoringModel):
     """One change-set Claim member's minted Claim ID, frozen at create."""
 
     tag: Literal["playbill-change-set-claim-identity-v1"] = "playbill-change-set-claim-identity-v1"
@@ -2259,18 +2259,18 @@ class AuthoringIntentV1(_StrictAuthoringModel):
     canonical_timestamp: str
     base_coordinate: AcceptedCoordinate
     semantic_identity: str
-    payload: AuthoringPayloadV1
+    payload: AuthoringPayload
     payload_digest: str
     create_fingerprint: str
     intent_revision: int = Field(default=0, ge=0)
-    last_preflight: PreflightResultV1 | None = None
-    candidate_status: CandidateStatusV1
+    last_preflight: PreflightResult | None = None
+    candidate_status: CandidateStatus
     # A singular Claim intent carries its one expectation in both fields; a
     # change set carries one per publishing Claim member in the plural field and
     # nothing in the singular one, because no single expectation is "the" one.
-    insertion_expectation: InsertionExpectationV2 | None = None
-    insertion_expectations: tuple[InsertionExpectationV2, ...] = ()
-    change_set_claim_identities: tuple[ChangeSetClaimIdentityV1, ...] = ()
+    insertion_expectation: InsertionExpectation | None = None
+    insertion_expectations: tuple[InsertionExpectation, ...] = ()
+    change_set_claim_identities: tuple[ChangeSetClaimIdentity, ...] = ()
 
     @field_validator("intent_id")
     @classmethod
@@ -2314,7 +2314,7 @@ class AuthoringIntentV1(_StrictAuthoringModel):
         # Claim's rationale stays in both; the law is at
         # `authoring_payload_digest`.
         withheld: dict[str, CanonicalValue] = {}
-        if isinstance(self.payload, ChangeSetAuthoringPayloadV1):
+        if isinstance(self.payload, ChangeSetAuthoringPayload):
             if "rationale" in normalized_payload:
                 withheld["rationale"] = normalized_payload.pop("rationale")
         if self.payload_digest != _normalized_authoring_digest(
@@ -2359,7 +2359,7 @@ class AuthoringIntentV1(_StrictAuthoringModel):
             if self.insertion_expectations != expected_plural:
                 raise ValueError("a singular Claim intent carries its one expectation in both")
         else:
-            if isinstance(self.payload, ChangeSetAuthoringPayloadV1):
+            if isinstance(self.payload, ChangeSetAuthoringPayload):
                 if (
                     isinstance(context, _AuthoringIntentDecodeContext)
                     and context.members is self.payload.members
@@ -2385,7 +2385,7 @@ class AuthoringIntentV1(_StrictAuthoringModel):
                 raise ValueError("AuthoringIntent identity differs from its payload")
             if self.insertion_expectation is not None:
                 raise ValueError("non-Claim AuthoringIntent cannot own an insertion expectation")
-            if not isinstance(self.payload, ChangeSetAuthoringPayloadV1):
+            if not isinstance(self.payload, ChangeSetAuthoringPayload):
                 if self.insertion_expectations:
                     raise ValueError("only a Claim member can own a publication expectation")
                 if self.change_set_claim_identities:
@@ -2402,7 +2402,7 @@ class AuthoringIntentV1(_StrictAuthoringModel):
 
     def _bind_change_set_members(
         self,
-        payload: "ChangeSetAuthoringPayloadV1",
+        payload: "ChangeSetAuthoringPayload",
         *,
         member_identities: tuple[str, ...],
     ) -> None:
@@ -2446,33 +2446,33 @@ class AuthoringIntentV1(_StrictAuthoringModel):
                 raise ValueError("publication expectation changes its frozen target")
 
 
-class AuthoringIntentV2(AuthoringIntentV1):
+class AuthoringIntent(AuthoringIntentV1):
     """V1 intent state plus coordinate assertions that never enter authoring identity."""
 
     tag: Literal["playbill-authoring-intent-v2"] = "playbill-authoring-intent-v2"  # type: ignore[assignment]
-    reference_expectations: tuple[AuthoringExpectationV1, ...]
+    reference_expectations: tuple[AuthoringExpectation, ...]
 
     @field_validator("reference_expectations")
     @classmethod
     def _reference_expectations(
         cls,
-        value: tuple[AuthoringExpectationV1, ...],
-    ) -> tuple[AuthoringExpectationV1, ...]:
+        value: tuple[AuthoringExpectation, ...],
+    ) -> tuple[AuthoringExpectation, ...]:
         return canonical_reference_expectations(value)
 
 
 # Response wrappers must retain the fields selected by the nested intent tag.
 _AuthoringIntentResponse: TypeAlias = Annotated[
-    AuthoringIntentV1 | AuthoringIntentV2, Field(discriminator="tag")
+    AuthoringIntentV1 | AuthoringIntent, Field(discriminator="tag")
 ]
 
 
-class AuthoringIntentViewV1(_StrictAuthoringModel):
+class AuthoringIntentView(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-intent-view-v1"] = "playbill-authoring-intent-view-v1"
     intent: _AuthoringIntentResponse
 
 
-class AuthoringIntentListV1(_StrictAuthoringModel):
+class AuthoringIntentList(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-intent-list-v1"] = "playbill-authoring-intent-list-v1"
     intents: tuple[_AuthoringIntentResponse, ...]
 
@@ -2481,14 +2481,14 @@ class AuthoringIntentCreateRequestV1(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-intent-create-request-v1"] = (
         "playbill-authoring-intent-create-request-v1"
     )
-    payload: AuthoringPayloadV1
+    payload: AuthoringPayload
 
 
 class AuthoringIntentCompileRequestV1(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-intent-compile-request-v1"] = (
         "playbill-authoring-intent-compile-request-v1"
     )
-    payload: AuthoringPayloadV1
+    payload: AuthoringPayload
     intent_id: str | None = None
 
 
@@ -2496,15 +2496,15 @@ class AuthoringIntentCreateRequestV2(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-intent-create-request-v2"] = (
         "playbill-authoring-intent-create-request-v2"
     )
-    payload: AuthoringPayloadV1
-    reference_expectations: tuple[AuthoringExpectationV1, ...]
+    payload: AuthoringPayload
+    reference_expectations: tuple[AuthoringExpectation, ...]
 
     @field_validator("reference_expectations")
     @classmethod
     def _reference_expectations(
         cls,
-        value: tuple[AuthoringExpectationV1, ...],
-    ) -> tuple[AuthoringExpectationV1, ...]:
+        value: tuple[AuthoringExpectation, ...],
+    ) -> tuple[AuthoringExpectation, ...]:
         return canonical_reference_expectations(value)
 
 
@@ -2512,67 +2512,67 @@ class AuthoringIntentCompileRequestV2(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-intent-compile-request-v2"] = (
         "playbill-authoring-intent-compile-request-v2"
     )
-    payload: AuthoringPayloadV1
-    reference_expectations: tuple[AuthoringExpectationV1, ...]
+    payload: AuthoringPayload
+    reference_expectations: tuple[AuthoringExpectation, ...]
     intent_id: str | None = None
 
     @field_validator("reference_expectations")
     @classmethod
     def _reference_expectations(
         cls,
-        value: tuple[AuthoringExpectationV1, ...],
-    ) -> tuple[AuthoringExpectationV1, ...]:
+        value: tuple[AuthoringExpectation, ...],
+    ) -> tuple[AuthoringExpectation, ...]:
         return canonical_reference_expectations(value)
 
 
-class AuthoringIntentCreateRequestV3(_StrictAuthoringModel):
+class AuthoringIntentCreateRequest(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-intent-create-request-v3"] = (
         "playbill-authoring-intent-create-request-v3"
     )
-    payload: AuthoringPayloadV1
-    reference_expectations: tuple[AuthoringExpectationV1, ...]
-    program_stamp: AuthoringProgramStampV1
+    payload: AuthoringPayload
+    reference_expectations: tuple[AuthoringExpectation, ...]
+    program_stamp: AuthoringProgramStamp
 
     @field_validator("reference_expectations")
     @classmethod
     def _reference_expectations(
         cls,
-        value: tuple[AuthoringExpectationV1, ...],
-    ) -> tuple[AuthoringExpectationV1, ...]:
+        value: tuple[AuthoringExpectation, ...],
+    ) -> tuple[AuthoringExpectation, ...]:
         return canonical_reference_expectations(value)
 
 
-class AuthoringIntentCompileRequestV3(_StrictAuthoringModel):
+class AuthoringIntentCompileRequest(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-intent-compile-request-v3"] = (
         "playbill-authoring-intent-compile-request-v3"
     )
-    payload: AuthoringPayloadV1
-    reference_expectations: tuple[AuthoringExpectationV1, ...]
-    program_stamp: AuthoringProgramStampV1
+    payload: AuthoringPayload
+    reference_expectations: tuple[AuthoringExpectation, ...]
+    program_stamp: AuthoringProgramStamp
     intent_id: str | None = None
 
     @field_validator("reference_expectations")
     @classmethod
     def _reference_expectations(
         cls,
-        value: tuple[AuthoringExpectationV1, ...],
-    ) -> tuple[AuthoringExpectationV1, ...]:
+        value: tuple[AuthoringExpectation, ...],
+    ) -> tuple[AuthoringExpectation, ...]:
         return canonical_reference_expectations(value)
 
 
-class AuthoringIntentPreflightRequestV1(_StrictAuthoringModel):
+class AuthoringIntentPreflightRequest(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-intent-preflight-request-v1"] = (
         "playbill-authoring-intent-preflight-request-v1"
     )
 
 
-class AuthoringIntentSubmitRequestV1(_StrictAuthoringModel):
+class AuthoringIntentSubmitRequest(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-intent-submit-request-v1"] = (
         "playbill-authoring-intent-submit-request-v1"
     )
 
 
-class AuthoringSubmitMemberV1(_StrictAuthoringModel):
+class AuthoringSubmitMember(_StrictAuthoringModel):
     """What one submitted member became, so a set says it once per member."""
 
     tag: Literal["playbill-authoring-submit-member-v1"] = "playbill-authoring-submit-member-v1"
@@ -2583,10 +2583,10 @@ class AuthoringSubmitMemberV1(_StrictAuthoringModel):
     claim_revision: int | None = None
 
 
-class AuthoringSubmitResultV1(_StrictAuthoringModel):
+class AuthoringSubmitResult(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-submit-result-v1"] = "playbill-authoring-submit-result-v1"
     intent: _AuthoringIntentResponse
-    status: CandidateStatusV1
+    status: CandidateStatus
     workspace_advertisement: PlaybillWorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
     # A `revises` submit amends one Claim identity in place rather than adding a
     # second Claim, and nothing in the result said so: the caller saw an ordinary
@@ -2596,29 +2596,29 @@ class AuthoringSubmitResultV1(_StrictAuthoringModel):
     claim_revision: int | None = None
     # One intent is one changeset, so the same two facts are reported per member.
     # The singular pair above stays the singular Claim intent's answer.
-    members: tuple[AuthoringSubmitMemberV1, ...] = ()
+    members: tuple[AuthoringSubmitMember, ...] = ()
 
     @field_validator("members")
     @classmethod
     def _members(
         cls,
-        value: tuple[AuthoringSubmitMemberV1, ...],
-    ) -> tuple[AuthoringSubmitMemberV1, ...]:
+        value: tuple[AuthoringSubmitMember, ...],
+    ) -> tuple[AuthoringSubmitMember, ...]:
         identities = tuple(item.identity for item in value)
         if identities != tuple(sorted(set(identities), key=lambda item: item.encode("utf-8"))):
             raise ValueError("submit result members must be identity-sorted and unique")
         return value
 
 
-class InsertionPrepareRequestV2(_StrictAuthoringModel):
+class InsertionPrepareRequest(_StrictAuthoringModel):
     tag: Literal["playbill-insertion-prepare-request-v2"] = "playbill-insertion-prepare-request-v2"
-    observation: PublicationSourceObservationV2
+    observation: PublicationSourceObservation
     # Omitted, the intent's sole expectation is meant; a change set that
     # publishes several Claims has no sole expectation and must name one.
     expectation_id: str | None = None
 
 
-class PublicationPrepareWarningV1(_StrictAuthoringModel):
+class PublicationPrepareWarning(_StrictAuthoringModel):
     tag: Literal["playbill-publication-prepare-warning-v1"] = (
         "playbill-publication-prepare-warning-v1"
     )
@@ -2643,7 +2643,7 @@ class PublicationPrepareWarningV1(_StrictAuthoringModel):
         return value
 
 
-class InsertionPrepareResultV2(_StrictAuthoringModel):
+class InsertionPrepareResult(_StrictAuthoringModel):
     tag: Literal["playbill-insertion-prepare-result-v2"] = "playbill-insertion-prepare-result-v2"
     outcome: Literal[
         "prepared",
@@ -2653,16 +2653,16 @@ class InsertionPrepareResultV2(_StrictAuthoringModel):
         "claim_currency_changed",
     ]
     intent: _AuthoringIntentResponse
-    expectation: InsertionExpectationV2
-    preparation: PublicationPreparationV2 | None = None
+    expectation: InsertionExpectation
+    preparation: PublicationPreparation | None = None
     inserted_block_base64: str | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
     )
-    warnings: tuple[PublicationPrepareWarningV1, ...] = ()
+    warnings: tuple[PublicationPrepareWarning, ...] = ()
 
     @model_validator(mode="after")
-    def _preparation_shape(self) -> "InsertionPrepareResultV2":
+    def _preparation_shape(self) -> "InsertionPrepareResult":
         if self.outcome in {"prepared", "already_prepared", "bound"} and (self.preparation is None):
             raise ValueError("successful publication preparation requires exact preparation")
         if self.preparation is None:
@@ -2686,8 +2686,8 @@ class InsertionPrepareResultV2(_StrictAuthoringModel):
     @field_validator("warnings")
     @classmethod
     def _warnings(
-        cls, value: tuple[PublicationPrepareWarningV1, ...]
-    ) -> tuple[PublicationPrepareWarningV1, ...]:
+        cls, value: tuple[PublicationPrepareWarning, ...]
+    ) -> tuple[PublicationPrepareWarning, ...]:
         if value != tuple(
             sorted(
                 set(value),
@@ -2702,27 +2702,27 @@ class InsertionPrepareResultV2(_StrictAuthoringModel):
         return value
 
 
-class InsertionConfirmRequestV2(_StrictAuthoringModel):
+class InsertionConfirmRequest(_StrictAuthoringModel):
     tag: Literal["playbill-insertion-confirm-request-v2"] = "playbill-insertion-confirm-request-v2"
-    observation: InsertionConfirmationObservationV2
+    observation: InsertionConfirmationObservation
     expectation_id: str | None = None
 
 
-class InsertionConfirmResultV2(_StrictAuthoringModel):
+class InsertionConfirmResult(_StrictAuthoringModel):
     tag: Literal["playbill-insertion-confirm-result-v2"] = "playbill-insertion-confirm-result-v2"
     outcome: Literal["bound", "already_bound", "expired", "claim_currency_changed"]
     intent: _AuthoringIntentResponse
-    expectation: InsertionExpectationV2
+    expectation: InsertionExpectation
 
 
-class InsertionAbandonRequestV1(_StrictAuthoringModel):
+class InsertionAbandonRequest(_StrictAuthoringModel):
     tag: Literal["playbill-insertion-abandon-request-v1"] = "playbill-insertion-abandon-request-v1"
 
 
-class InsertionAbandonResultV1(_StrictAuthoringModel):
+class InsertionAbandonResult(_StrictAuthoringModel):
     tag: Literal["playbill-insertion-abandon-result-v1"] = "playbill-insertion-abandon-result-v1"
     intent: _AuthoringIntentResponse
-    expectation: InsertionExpectationV2
+    expectation: InsertionExpectation
 
 
 PlaybillBlockSyncReadStatus: TypeAlias = Literal[
@@ -2743,7 +2743,7 @@ PlaybillBlockSyncReadReason: TypeAlias = Literal[
 ]
 
 
-class PlaybillBlockSyncSuccessorCandidateV1(_StrictAuthoringModel):
+class PlaybillBlockSyncSuccessorCandidate(_StrictAuthoringModel):
     tag: Literal["playbill-block-sync-successor-candidate-v1"] = (
         "playbill-block-sync-successor-candidate-v1"
     )
@@ -2763,9 +2763,9 @@ def _projection_evaluation_time(value: datetime | None) -> datetime | None:
     return None if value is None else ensure_utc(value)
 
 
-class PlaybillBlockSyncReadRequestV1(_StrictAuthoringModel):
+class PlaybillBlockSyncReadRequest(_StrictAuthoringModel):
     tag: Literal["playbill-block-sync-read-request-v1"] = "playbill-block-sync-read-request-v1"
-    stamp: ProjectionBlockStamp
+    stamp: ProjectionBlockStampAny
     at: AcceptedCoordinate | None = None
     evaluation_time: datetime | None = None
     preferred_successor_digest: str | None = None
@@ -2783,14 +2783,14 @@ class PlaybillBlockSyncReadRequestV1(_StrictAuthoringModel):
         return value
 
 
-class ProjectionDependencyIssueV1(_StrictAuthoringModel):
+class ProjectionDependencyIssue(_StrictAuthoringModel):
     identity: ArtifactIdentity
     status: Literal["stale", "unchecked", "invalid"]
     reason: PlaybillBlockSyncReadReason
     detail: str
 
 
-class PlaybillBlockSyncReadResultV1(_StrictAuthoringModel):
+class PlaybillBlockSyncReadResult(_StrictAuthoringModel):
     """A currency assessment; body rendering is owned by the author."""
 
     tag: Literal["playbill-block-sync-read-result-v1"] = "playbill-block-sync-read-result-v1"
@@ -2799,13 +2799,13 @@ class PlaybillBlockSyncReadResultV1(_StrictAuthoringModel):
     artifact_digest: str | None = None
     coordinate: AcceptedCoordinate | None = None
     generation: int | None = Field(default=None, ge=0)
-    backing: ProjectionBackingV1 | None = None
+    backing: ProjectionBacking | None = None
     # The current spelling of every held backing that moved under the stamp.
     # A block holds a LIST, so naming one is not enough to repair it.
-    moved_backings: tuple[ProjectionBackingV1, ...] = ()
-    issues: tuple[ProjectionDependencyIssueV1, ...] = ()
-    current_backings: tuple[ProjectionBackingV1, ...] = ()
-    successor_candidates: tuple[PlaybillBlockSyncSuccessorCandidateV1, ...] = ()
+    moved_backings: tuple[ProjectionBacking, ...] = ()
+    issues: tuple[ProjectionDependencyIssue, ...] = ()
+    current_backings: tuple[ProjectionBacking, ...] = ()
+    successor_candidates: tuple[PlaybillBlockSyncSuccessorCandidate, ...] = ()
     reason: PlaybillBlockSyncReadReason | None = None
     detail: str | None = None
 
@@ -2817,7 +2817,7 @@ class PlaybillBlockSyncReadResultV1(_StrictAuthoringModel):
         return value
 
     @model_validator(mode="after")
-    def _result_shape(self) -> "PlaybillBlockSyncReadResultV1":
+    def _result_shape(self) -> "PlaybillBlockSyncReadResult":
         success = self.status in {"current", "successor"}
         if success != (self.coordinate is not None and self.generation is not None):
             raise ValueError("a block currency verdict names the coordinate it was read at")
@@ -2842,9 +2842,9 @@ class PlaybillBlockSyncReadResultV1(_StrictAuthoringModel):
         return self
 
 
-class PlaybillProjectionCheckRequestV1(_StrictAuthoringModel):
+class PlaybillProjectionCheckRequest(_StrictAuthoringModel):
     tag: Literal["playbill-projection-check-request-v1"] = "playbill-projection-check-request-v1"
-    stamps: tuple[ProjectionBlockStamp, ...] = Field(max_length=4096)
+    stamps: tuple[ProjectionBlockStampAny, ...] = Field(max_length=4096)
     at: AcceptedCoordinate | None = None
     evaluation_time: datetime | None = None
 
@@ -2854,11 +2854,11 @@ class PlaybillProjectionCheckRequestV1(_StrictAuthoringModel):
         return _projection_evaluation_time(value)
 
 
-class PlaybillProjectionCheckResultV1(_StrictAuthoringModel):
+class PlaybillProjectionCheckResult(_StrictAuthoringModel):
     tag: Literal["playbill-projection-check-result-v1"] = "playbill-projection-check-result-v1"
     coordinate: AcceptedCoordinate
     evaluation_time: datetime
-    results: tuple[PlaybillBlockSyncReadResultV1, ...]
+    results: tuple[PlaybillBlockSyncReadResult, ...]
 
 
 PlaybillBlockSyncOutcome: TypeAlias = Literal[
@@ -2894,7 +2894,7 @@ PlaybillBlockSyncReason: TypeAlias = Literal[
 ]
 
 
-class PlaybillBlockSyncItemV1(_StrictAuthoringModel):
+class PlaybillBlockSyncItem(_StrictAuthoringModel):
     tag: Literal["playbill-block-sync-item-v1"] = "playbill-block-sync-item-v1"
     path: str
     source_id: str | None = None
@@ -2906,7 +2906,7 @@ class PlaybillBlockSyncItemV1(_StrictAuthoringModel):
     # to parse; the structured carrier names the served operation and its
     # arguments, and a producer that carries none projects the declared repair
     # its typed reason resolves to.
-    repair: ServedRepairV1 | None = None
+    repair: ServedRepair | None = None
     detail: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="before")
@@ -2920,7 +2920,7 @@ class PlaybillBlockSyncItemV1(_StrictAuthoringModel):
         return {**value, "repair": served_repair_for_refusal(reason).model_dump(mode="python")}
 
     @model_validator(mode="after")
-    def _item_shape(self) -> "PlaybillBlockSyncItemV1":
+    def _item_shape(self) -> "PlaybillBlockSyncItem":
         # `stale` and `dirty` are findings, not refusals, but they are just as
         # reasoned: a block whose held list moved names which reason moved it,
         # and a block whose prose moved names that. Every one of them carries a
@@ -2940,15 +2940,15 @@ class PlaybillBlockSyncItemV1(_StrictAuthoringModel):
         )
 
 
-class PlaybillBlockSyncResultV1(_StrictAuthoringModel):
+class PlaybillBlockSyncResult(_StrictAuthoringModel):
     tag: Literal["playbill-block-sync-result-v1"] = "playbill-block-sync-result-v1"
-    items: tuple[PlaybillBlockSyncItemV1, ...]
+    items: tuple[PlaybillBlockSyncItem, ...]
     changed_file_count: int = Field(ge=0)
     would_change: bool
     has_refusals: bool
 
     @model_validator(mode="after")
-    def _summary_shape(self) -> "PlaybillBlockSyncResultV1":
+    def _summary_shape(self) -> "PlaybillBlockSyncResult":
         changed = {item.path for item in self.items if item.outcome == "detached"}
         prospective = any(item.outcome in {"detached", "would_detach"} for item in self.items)
         # Currency policy gates drift; integrity refusals always fail the check.
@@ -2960,7 +2960,7 @@ class PlaybillBlockSyncResultV1(_StrictAuthoringModel):
         return self
 
 
-class PlaybillBlockDetachResultV1(_StrictAuthoringModel):
+class PlaybillBlockDetachResult(_StrictAuthoringModel):
     """Retired blocks' markers removed from pages, bodies kept; or (preview) which would be.
 
     ``coordinate`` digests the named pages' bytes as this call read them; a
@@ -2970,12 +2970,12 @@ class PlaybillBlockDetachResultV1(_StrictAuthoringModel):
 
     tag: Literal["playbill-block-detach-result-v1"] = "playbill-block-detach-result-v1"
     status: Literal["detached", "would_detach"]
-    sync: PlaybillBlockSyncResultV1
-    coordinate: PlaybillStateCoordinateV1
+    sync: PlaybillBlockSyncResult
+    coordinate: PlaybillStateCoordinate
 
 
 __all__ = [
-    "PlaybillBlockDetachResultV1",
+    "PlaybillBlockDetachResult",
     "AUTHORING_CANDIDATE_TREE_DIGEST_DOMAIN",
     "AUTHORING_CREATE_FINGERPRINT_DOMAIN",
     "AUTHORING_FRONTIER_DIGEST_DOMAIN",
@@ -3000,101 +3000,101 @@ __all__ = [
     "INSERTION_TARGET_V2_DIGEST_DOMAIN",
     "INSERTION_TERMINAL_TOMBSTONE_V2_DIGEST_DOMAIN",
     "PUBLICATION_BLOCK_ID_DOMAIN",
-    "AcceptanceConditionV1",
-    "AuthoringArtifactReferenceV1",
-    "AuthoringCandidateReferenceV1",
-    "AuthoringChangeSetMemberV1",
-    "AuthoringClaimStatementV1",
-    "AuthoringDiagnosticV1",
-    "AuthoringExactContentObjectV1",
+    "AcceptanceCondition",
+    "AuthoringArtifactReference",
+    "AuthoringCandidateReference",
+    "AuthoringChangeSetMember",
+    "AuthoringClaimStatement",
+    "AuthoringDiagnostic",
+    "AuthoringExactContentObject",
     "AuthoringIntentCompileRequestV2",
-    "AuthoringIntentCompileRequestV3",
+    "AuthoringIntentCompileRequest",
     "AuthoringIntentCompileRequestV1",
     "AuthoringIntentCreateRequestV2",
-    "AuthoringIntentCreateRequestV3",
+    "AuthoringIntentCreateRequest",
     "AuthoringIntentCreateRequestV1",
-    "AuthoringIntentListV1",
-    "AuthoringIntentPreflightRequestV1",
-    "AuthoringIntentSubmitRequestV1",
+    "AuthoringIntentList",
+    "AuthoringIntentPreflightRequest",
+    "AuthoringIntentSubmitRequest",
     "AuthoringIntentV1",
-    "AuthoringIntentV2",
-    "AuthoringIntentViewV1",
-    "AuthoringPayloadV1",
-    "AuthoringProgramOperationV1",
-    "AuthoringProgramStampV1",
-    "AuthoringExpectationV1",
-    "AuthoringReferenceExpectationV1",
+    "AuthoringIntent",
+    "AuthoringIntentView",
+    "AuthoringPayload",
+    "AuthoringProgramOperation",
+    "AuthoringProgramStamp",
+    "AuthoringExpectation",
+    "AuthoringReferenceExpectation",
     "AuthoringReferenceKind",
-    "AuthoringSlotExpectationV1",
-    "AuthoringReferenceSuccessorV1",
-    "AuthoringSubmitMemberV1",
-    "AuthoringSubmitResultV1",
-    "BlockedCheckV1",
+    "AuthoringSlotExpectation",
+    "AuthoringReferenceSuccessor",
+    "AuthoringSubmitMember",
+    "AuthoringSubmitResult",
+    "BlockedCheck",
     "CandidateStatusState",
-    "CandidateStatusV1",
+    "CandidateStatus",
     "ClaimAuthoringPayloadV1",
     "ClaimAuthoringPayloadV2",
-    "ClaimAuthoringPayloadV3",
-    "ChangeSetAuthoringPayloadV1",
-    "ChangeSetClaimIdentityV1",
-    "ClaimRetirementMemberV1",
-    "ClaimTypeAuthoringPayloadV1",
-    "ClaimTypeSuccessionDependentV1",
+    "ClaimAuthoringPayload",
+    "ChangeSetAuthoringPayload",
+    "ChangeSetClaimIdentity",
+    "ClaimRetirementMember",
+    "ClaimTypeAuthoringPayload",
+    "ClaimTypeSuccessionDependent",
     "ClaimTypeSuccessionDisposition",
-    "ClaimTypeSuccessionMemberV1",
-    "ClaimAuthoringSourceV3",
-    "ClaimDependencyDraftsV1",
-    "DiagnosticFrontierLimitsV1",
-    "DiagnosticFrontierV1",
-    "InsertionAbandonRequestV1",
-    "InsertionAbandonResultV1",
-    "InsertionAnchorWindowV1",
-    "InsertionConfirmationObservationV2",
-    "InsertionConfirmRequestV2",
-    "InsertionConfirmResultV2",
-    "InsertionExpectationStateV2",
-    "InsertionExpectationV2",
+    "ClaimTypeSuccessionMember",
+    "ClaimAuthoringSource",
+    "ClaimDependencyDrafts",
+    "DiagnosticFrontierLimits",
+    "DiagnosticFrontier",
+    "InsertionAbandonRequest",
+    "InsertionAbandonResult",
+    "InsertionAnchorWindow",
+    "InsertionConfirmationObservation",
+    "InsertionConfirmRequest",
+    "InsertionConfirmResult",
+    "InsertionExpectationState",
+    "InsertionExpectation",
     "InsertionOperation",
-    "InsertionTargetV2",
-    "InsertionTerminalTombstoneV2",
-    "InsertionPrepareRequestV2",
-    "InsertionPrepareResultV2",
-    "PublicationPreparationV2",
-    "PublicationPrepareWarningV1",
-    "PublicationSourceObservationV2",
-    "PlaybillBlockSyncItemV1",
+    "InsertionTarget",
+    "InsertionTerminalTombstone",
+    "InsertionPrepareRequest",
+    "InsertionPrepareResult",
+    "PublicationPreparation",
+    "PublicationPrepareWarning",
+    "PublicationSourceObservation",
+    "PlaybillBlockSyncItem",
     "PlaybillBlockSyncOutcome",
     "PlaybillBlockSyncReadReason",
-    "PlaybillBlockSyncReadRequestV1",
-    "PlaybillProjectionCheckRequestV1",
-    "PlaybillProjectionCheckResultV1",
-    "ProjectionDependencyIssueV1",
-    "PlaybillBlockSyncReadResultV1",
+    "PlaybillBlockSyncReadRequest",
+    "PlaybillProjectionCheckRequest",
+    "PlaybillProjectionCheckResult",
+    "ProjectionDependencyIssue",
+    "PlaybillBlockSyncReadResult",
     "PlaybillBlockSyncReadStatus",
     "PlaybillBlockSyncReason",
-    "PlaybillBlockSyncResultV1",
-    "PlaybillBlockSyncSuccessorCandidateV1",
-    "PreflightCertificateV1",
-    "PreflightResultV1",
+    "PlaybillBlockSyncResult",
+    "PlaybillBlockSyncSuccessorCandidate",
+    "PreflightCertificate",
+    "PreflightResult",
     "ProcedureAuthoringPayloadV1",
-    "ProcedureAuthoringPayloadV2",
-    "ApprovalPolicyAuthoringPayloadV1",
-    "ProcedureRuntimePolicyAuthoringPayloadV1",
-    "MandateConditionAuthoringV1",
-    "MandateScopeAuthoringV1",
-    "ProcedureMandateAuthoringPayloadV1",
-    "TriggerAuthoringPayloadV1",
-    "QueryDefinitionAuthoringPayloadV1",
-    "AttestationAuthoringPayloadV1",
-    "ResolutionContractAuthoringPayloadV1",
-    "SubjectAuthoringPayloadV1",
-    "RepairAlternativeV1",
-    "ExistingCaptureCitationSourceV1",
-    "SelfSourceBodyV1",
-    "WorkingAnchorWindowV1",
-    "WorkingDigestCoordinateV1",
-    "WorkingGitBlobCoordinateV1",
-    "WorkingSelectionObservationV1",
+    "ProcedureAuthoringPayload",
+    "ApprovalPolicyAuthoringPayload",
+    "ProcedureRuntimePolicyAuthoringPayload",
+    "MandateConditionAuthoring",
+    "MandateScopeAuthoring",
+    "ProcedureMandateAuthoringPayload",
+    "TriggerAuthoringPayload",
+    "QueryDefinitionAuthoringPayload",
+    "AttestationAuthoringPayload",
+    "ResolutionContractAuthoringPayload",
+    "SubjectAuthoringPayload",
+    "RepairAlternative",
+    "ExistingCaptureCitationSource",
+    "SelfSourceBody",
+    "WorkingAnchorWindow",
+    "WorkingDigestCoordinate",
+    "WorkingGitBlobCoordinate",
+    "WorkingSelectionObservation",
     "authoring_create_fingerprint",
     "authoring_change_set_membership",
     "authoring_claim_member_identity",

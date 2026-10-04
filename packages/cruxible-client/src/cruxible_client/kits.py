@@ -37,9 +37,9 @@ from cruxible_client.contracts.canonical import pretty_canonical_bytes
 from cruxible_client.contracts.kits import (
     KIT_ARTIFACT_DIRECTORY,
     KIT_MANIFEST_FILE,
-    KitArtifactBytesV1,
-    KitBundleV1,
-    KitManifestV1,
+    KitArtifactBytes,
+    KitBundle,
+    KitManifest,
 )
 from cruxible_client.contracts.validation_messages import validation_summary
 from cruxible_client.errors import ConfigError
@@ -68,10 +68,10 @@ def kit_reference(source: str) -> Reference:
         raise KitSourceError(f"{source!r} is not a registry reference ({exc})") from exc
 
 
-def read_kit_directory(root: Path) -> KitBundleV1:
+def read_kit_directory(root: Path) -> KitBundle:
     """Read one kit directory; every file under ``artifacts/`` must be in the manifest."""
 
-    manifest = KitManifestV1.model_validate_json((root / KIT_MANIFEST_FILE).read_bytes())
+    manifest = KitManifest.model_validate_json((root / KIT_MANIFEST_FILE).read_bytes())
     artifact_root = root / KIT_ARTIFACT_DIRECTORY
     present = sorted(
         path.relative_to(artifact_root).as_posix()
@@ -91,11 +91,11 @@ def read_kit_directory(root: Path) -> KitBundleV1:
         path = artifact_root / name
         if path.is_symlink():
             raise ValueError(f"kit artifact {name} is a symbolic link")
-        artifacts.append(KitArtifactBytesV1.of(name, path.read_bytes()))
-    return KitBundleV1(manifest=manifest, artifacts=tuple(artifacts))
+        artifacts.append(KitArtifactBytes.of(name, path.read_bytes()))
+    return KitBundle(manifest=manifest, artifacts=tuple(artifacts))
 
 
-def write_kit_directory(bundle: KitBundleV1, root: Path) -> None:
+def write_kit_directory(bundle: KitBundle, root: Path) -> None:
     """Write a bundle as a new kit directory; an existing directory is refused."""
 
     root.mkdir(parents=True, exist_ok=False)
@@ -113,23 +113,23 @@ def write_kit_directory(bundle: KitBundleV1, root: Path) -> None:
         target.write_bytes(item.content)
 
 
-def _pack_kit(bundle: KitBundleV1) -> tuple[bytes, tuple[bytes, ...]]:
+def _pack_kit(bundle: KitBundle) -> tuple[bytes, tuple[bytes, ...]]:
     config = pretty_canonical_bytes(bundle.manifest.model_dump(mode="json"))
     return config, (pack_files(bundle.contents()),)
 
 
-def _unpack_kit(config: bytes, layers: tuple[bytes, ...]) -> KitBundleV1:
+def _unpack_kit(config: bytes, layers: tuple[bytes, ...]) -> KitBundle:
     if len(layers) != 1:
         raise ValueError("a kit artifact has exactly one layer")
-    manifest = KitManifestV1.model_validate_json(config)
+    manifest = KitManifest.model_validate_json(config)
     files = unpack_files(layers[0])
-    return KitBundleV1(
+    return KitBundle(
         manifest=manifest,
-        artifacts=tuple(KitArtifactBytesV1.of(path, files[path]) for path in sorted(files)),
+        artifacts=tuple(KitArtifactBytes.of(path, files[path]) for path in sorted(files)),
     )
 
 
-KIT_ARTIFACT: ArtifactKind[KitBundleV1] = ArtifactKind(
+KIT_ARTIFACT: ArtifactKind[KitBundle] = ArtifactKind(
     name="kit",
     artifact_type="application/vnd.cruxible.kit.v1",
     config_media_type="application/vnd.cruxible.kit.manifest.v1+json",
@@ -155,7 +155,7 @@ def fetch_kit_image(
     return image, str(ref.pinned(image.digest))
 
 
-def resolve_kit(source: str, *, registry: RegistryClient | None = None) -> tuple[KitBundleV1, str]:
+def resolve_kit(source: str, *, registry: RegistryClient | None = None) -> tuple[KitBundle, str]:
     """A bundle from a kit directory, an OCI layout, or a registry reference.
 
     Returns the bundle and where it came from; a registry source is reported
@@ -183,7 +183,7 @@ def resolve_kit(source: str, *, registry: RegistryClient | None = None) -> tuple
     return unpack_artifact(KIT_ARTIFACT, image), origin
 
 
-def push_kit(bundle: KitBundleV1, ref: Reference, *, registry: RegistryClient) -> str:
+def push_kit(bundle: KitBundle, ref: Reference, *, registry: RegistryClient) -> str:
     """Publish ``bundle`` at ``ref``; returns the manifest digest consumers pin."""
 
     return registry.push(pack_artifact(KIT_ARTIFACT, bundle), ref)

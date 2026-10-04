@@ -15,8 +15,8 @@ from cruxible_client.contracts.documents import (
     document_path,
     render_document,
 )
-from cruxible_client.contracts.get_reads import PlaybillExactContentRefV1
-from cruxible_client.contracts.write import PlaybillWriteRequestV1, WriteOutcome
+from cruxible_client.contracts.get_reads import PlaybillExactContentRef
+from cruxible_client.contracts.write import PlaybillWriteRequest, WriteOutcome
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
@@ -41,7 +41,7 @@ BODY_READER = BodyAccessContext(principal_id="owner", can_read_body=True)
 
 
 def _write(instance: PlaybillInstance, *changes: dict[str, Any], **options: Any) -> WriteOutcome:
-    request = PlaybillWriteRequestV1.model_validate(
+    request = PlaybillWriteRequest.model_validate(
         {"because": "The writer checked it.", "changes": list(changes), **options}
     )
     outcome = service_playbill_write(instance, request=request, caller=caller())
@@ -254,7 +254,7 @@ def test_bytes_that_are_not_text_show_a_typed_marker_with_their_size(
     monkeypatch.setattr(
         renderer._content,
         "of",
-        lambda _obj: PlaybillExactContentRefV1(
+        lambda _obj: PlaybillExactContentRef(
             exact_content="binary", content_digest="sha256:" + "0" * 64, length=12
         ),
     )
@@ -538,7 +538,7 @@ def test_the_refresh_profile_records_opt_in_parts_and_rewrites_old_formats(
 def test_every_handle_the_floor_prints_resolves_through_get(world: dict[str, Any]) -> None:
     import re
 
-    from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
+    from cruxible_client.contracts.get_reads import PlaybillGetRequest
     from cruxible_core.service.discovery.get import service_playbill_get
 
     instance: PlaybillInstance = world["instance"]
@@ -553,7 +553,7 @@ def test_every_handle_the_floor_prints_resolves_through_get(world: dict[str, Any
     for ref in (*claims, *refs):
         result = service_playbill_get(
             instance,
-            request=PlaybillGetRequestV1(ref=ref),
+            request=PlaybillGetRequest(ref=ref),
             access=BodyAccessContext(principal_id="owner"),
         )
         assert result.card is not None, ref

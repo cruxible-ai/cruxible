@@ -440,7 +440,7 @@ def _claim_static_facts(
     statement_digest: str,
 ) -> tuple[ProjectionFact, ...]:
     """Compile only byte-dependent Claim facts; acceptance proofs stay per-build."""
-    from cruxible_client.contracts.claims import ClaimArtifactV3, claim_statement_address
+    from cruxible_client.contracts.claims import ClaimArtifact, claim_statement_address
 
     identity = claim.identity.qualified
     facts: list[ProjectionFact] = []
@@ -483,7 +483,7 @@ def _claim_static_facts(
                     "pins": [pin.model_dump(mode="json") for pin in claim.pins],
                     **(
                         {"retirement": claim.retirement.model_dump(mode="json")}
-                        if isinstance(claim, ClaimArtifactV3)
+                        if isinstance(claim, ClaimArtifact)
                         else {}
                     ),
                 },
@@ -1136,15 +1136,15 @@ def parse_projection_tree(
                 continue
             if kind == "provider":
                 from cruxible_client.contracts.providers import (
+                    Provider,
                     ProviderV2,
-                    ProviderV3,
                     parse_provider,
                     provider_digest,
                     provider_runtime_artifact_digest,
                 )
 
                 provider = parse_provider(content, path=path, codec=artifact_codec)
-                if isinstance(provider, ProviderV3) and artifact_kinds not in (
+                if isinstance(provider, Provider) and artifact_kinds not in (
                     PROVIDER_PACKAGE_ARTIFACT_KINDS,
                     RESOURCE_BUDGET_ARTIFACT_KINDS,
                     SDK_SOURCE_ARTIFACT_KINDS,
@@ -1269,7 +1269,7 @@ def parse_projection_tree(
                 continue
             if kind == "provider-interface":
                 from cruxible_client.contracts.provider_interfaces import (
-                    ProviderInterfaceRegistrationV2,
+                    ProviderInterfaceRegistration,
                     parse_provider_interface,
                     provider_interface_digest,
                 )
@@ -1280,7 +1280,7 @@ def parse_projection_tree(
                     codec=artifact_codec,
                 )
                 if isinstance(
-                    registration, ProviderInterfaceRegistrationV2
+                    registration, ProviderInterfaceRegistration
                 ) and artifact_kinds not in (
                     PROVIDER_PACKAGE_ARTIFACT_KINDS,
                     RESOURCE_BUDGET_ARTIFACT_KINDS,
@@ -1424,7 +1424,7 @@ def parse_projection_tree(
                 continue
             if kind == "procedure-mandate":
                 from cruxible_client.contracts.procedure_mandates import (
-                    ProcedureMandateV2,
+                    ProcedureMandate,
                     parse_procedure_mandate_any,
                     procedure_mandate_digest,
                 )
@@ -1433,13 +1433,13 @@ def parse_projection_tree(
                     content, path=path, codec=artifact_codec
                 )
                 if (
-                    isinstance(procedure_mandate, ProcedureMandateV2)
+                    isinstance(procedure_mandate, ProcedureMandate)
                     and artifact_kinds not in _REVISION_31_AND_LATER
                 ):
                     raise ProjectionFormatError("ProcedureMandate v2 requires compiler revision 31")
                 resources = (
                     procedure_mandate.resource_ceiling
-                    if isinstance(procedure_mandate, ProcedureMandateV2)
+                    if isinstance(procedure_mandate, ProcedureMandate)
                     else procedure_mandate.authority_ceiling
                 )
                 if artifact_kinds not in (
@@ -1557,12 +1557,12 @@ def parse_projection_tree(
                         GOVERNED_TRIGGERS_ARTIFACT_KINDS,
                     ):
                         raise ProjectionFormatError("graph-v6 requires compiler revision 27")
-                    from cruxible_client.contracts.procedures.models import ProcedureDefinitionV6
+                    from cruxible_client.contracts.procedures.models import ProcedureDefinition
                     from cruxible_client.contracts.procedures.source_compiler import (
                         verify_source_graph,
                     )
 
-                    assert isinstance(procedure.definition, ProcedureDefinitionV6)
+                    assert isinstance(procedure.definition, ProcedureDefinition)
                     if (
                         procedure.definition.source is not None
                         and procedure.definition.source.rules == "cruxible.procedure-source.v2"
@@ -1728,7 +1728,7 @@ def parse_projection_tree(
                     classification="semantic",
                 ):
                     from cruxible_client.contracts.procedures.artifacts import (
-                        AcceptedProcedureV1,
+                        AcceptedProcedure,
                     )
                     from cruxible_core.procedures.resolution import (
                         derive_resolution_activations,
@@ -1747,7 +1747,7 @@ def parse_projection_tree(
                     )
                     if activated_at is not None and accepting_coordinate is not None:
                         activations = derive_resolution_activations(
-                            AcceptedProcedureV1(
+                            AcceptedProcedure(
                                 path=path,
                                 procedure=procedure,
                                 artifact_digest=artifact_digest,
@@ -1791,10 +1791,10 @@ def parse_projection_tree(
             if kind == "line":
                 from cruxible_client.contracts.procedures.line_specs import (
                     EMBEDDED_TRIGGER_LINE_FORMATS,
+                    LineSpec,
                     LineSpecV3,
                     LineSpecV4,
                     LineSpecV5,
-                    LineSpecV6,
                     line_spec_digest,
                     parse_line_spec,
                 )
@@ -1810,7 +1810,7 @@ def parse_projection_tree(
                             "compiler revision 32 admits a Line that embeds its trigger only "
                             "as retired history; a live Line is v6 and Triggers aim at it"
                         )
-                elif isinstance(line, LineSpecV6):
+                elif isinstance(line, LineSpec):
                     raise ProjectionFormatError("Line v6 requires compiler revision 32")
                 if isinstance(line, LineSpecV4) and artifact_kinds not in (
                     TRIGGER_CAPTURE_ARTIFACT_KINDS,

@@ -11,12 +11,12 @@ from cruxible_client.contracts.artifacts import (
     ArtifactPin,
 )
 from cruxible_client.contracts.canonical import ArtifactDigest, canonical_bytes, typed_digest
-from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.procedures.artifacts import (
-    AcceptedProcedureV1,
+    AcceptedProcedure,
+    ProcedureArtifact,
     ProcedureArtifactV1,
-    ProcedureArtifactV2,
-    ProcedureOwnedContractV1,
+    ProcedureOwnedContract,
     evaluate_procedure_law,
     parse_procedure,
     procedure_artifact_digest,
@@ -31,16 +31,16 @@ from cruxible_client.contracts.procedures.graph import (
     compute_procedure_node_digests_v3,
 )
 from cruxible_client.contracts.procedures.models import (
-    GuardNodeV3,
-    GuardPredicateV1,
-    HaltNodeV3,
-    PredicateOperandV1,
-    ProcedureBudgetV3,
+    GuardNode,
+    GuardPredicate,
+    HaltNode,
+    PredicateOperand,
+    ProcedureBudget,
     ProcedureDefinitionV3,
-    ProcedureHardCapsV3,
-    ProcedurePinSlotRefV1,
-    ProcedurePinSlotV1,
-    ProjectNodeV3,
+    ProcedureHardCaps,
+    ProcedurePinSlot,
+    ProcedurePinSlotRef,
+    ProjectNode,
     ProposeChangeSetNodeV3,
     StateTapNodeV3,
 )
@@ -60,7 +60,7 @@ def _pin(role: str, kind: str, name: str) -> ArtifactPin:
 
 def _definition(
     *,
-    query: ArtifactPin | ProcedurePinSlotRefV1 | None = None,
+    query: ArtifactPin | ProcedurePinSlotRef | None = None,
     nodes: tuple[object, ...] | None = None,
     terminal_capability: int = 1,
 ) -> ProcedureDefinitionV3:
@@ -69,7 +69,7 @@ def _definition(
     query = query or _pin("query", "QueryDefinition", "claims-by-status")
     default_nodes = (
         StateTapNodeV3(node_id="read", query=query, parameters={}, as_="rows"),
-        ProjectNodeV3(
+        ProjectNode(
             node_id="shape",
             fields={"rows": "$steps.rows"},
             contract_out=contract_out,
@@ -85,24 +85,24 @@ def _definition(
         returns="result",
         pin_slots=(
             (
-                ProcedurePinSlotV1(
+                ProcedurePinSlot(
                     slot_name="query",
                     pin_role="query",
                     artifact_kind="QueryDefinition",
                     interface_digest=_digest("query-interface"),
                 ),
             )
-            if isinstance(query, ProcedurePinSlotRefV1)
+            if isinstance(query, ProcedurePinSlotRef)
             else ()
         ),
-        budget=ProcedureBudgetV3(
-            wall_clock=CanonicalDurationV1(microseconds=1_000_000),
+        budget=ProcedureBudget(
+            wall_clock=CanonicalDuration(microseconds=1_000_000),
             max_provider_calls=0,
             max_capture_bytes=0,
             max_items=100,
         ),
-        hard_caps=ProcedureHardCapsV3(
-            max_wall_clock=CanonicalDurationV1(microseconds=2_000_000),
+        hard_caps=ProcedureHardCaps(
+            max_wall_clock=CanonicalDuration(microseconds=2_000_000),
             max_provider_calls=0,
             max_capture_bytes=0,
             max_items=200,
@@ -149,25 +149,25 @@ def _layout_definition(*, halt_before_return: bool) -> ProcedureDefinitionV3:
         as_="rows",
         next="gate",
     )
-    gate = GuardNodeV3(
+    gate = GuardNode(
         node_id="gate",
-        predicate=GuardPredicateV1(
-            left=PredicateOperandV1(kind="count", alias="rows"),
+        predicate=GuardPredicate(
+            left=PredicateOperand(kind="count", alias="rows"),
             operator="gt",
-            right=PredicateOperandV1(kind="literal", value=0),
+            right=PredicateOperand(kind="literal", value=0),
         ),
         on_true="result",
         on_false="stop",
         refusal_code="rows.empty",
         message="No rows are available.",
     )
-    result = ProjectNodeV3(
+    result = ProjectNode(
         node_id="result",
         fields={"rows": "$steps.rows"},
         contract_out=contract_out,
         as_="result",
     )
-    stop = HaltNodeV3(node_id="stop", reason="No rows are available.")
+    stop = HaltNode(node_id="stop", reason="No rows are available.")
     tail = (stop, result) if halt_before_return else (result, stop)
     return _definition(nodes=(read, gate, *tail))
 
@@ -192,7 +192,7 @@ def test_procedure_v3_round_trip_digest_and_node_golden() -> None:
 
 
 def test_open_slot_procedure_is_acceptable_but_not_directly_runnable() -> None:
-    definition = _definition(query=ProcedurePinSlotRefV1(slot_name="query"))
+    definition = _definition(query=ProcedurePinSlotRef(slot_name="query"))
     procedure = _artifact(definition)
 
     assert procedure.directly_runnable is False
@@ -206,7 +206,7 @@ def test_open_slot_procedure_is_acceptable_but_not_directly_runnable() -> None:
 
 def test_layout_only_successor_changes_no_registered_semantic_member() -> None:
     predecessor_procedure = _artifact(_layout_definition(halt_before_return=False))
-    predecessor = AcceptedProcedureV1(
+    predecessor = AcceptedProcedure(
         path=procedure_path("triage"),
         procedure=predecessor_procedure,
         artifact_digest=procedure_artifact_digest(predecessor_procedure).tagged,
@@ -232,7 +232,7 @@ def test_layout_only_successor_changes_no_registered_semantic_member() -> None:
 
 def test_envelope_pin_only_successor_is_a_semantic_change() -> None:
     predecessor_procedure = _artifact(_definition())
-    predecessor = AcceptedProcedureV1(
+    predecessor = AcceptedProcedure(
         path=procedure_path("triage"),
         procedure=predecessor_procedure,
         artifact_digest=procedure_artifact_digest(predecessor_procedure).tagged,
@@ -266,7 +266,7 @@ def test_envelope_pin_only_successor_is_a_semantic_change() -> None:
 @pytest.mark.parametrize("change", ("activation", "retirement", "definition"))
 def test_procedure_semantic_successors_remain_accepted(change: str) -> None:
     predecessor_procedure = _artifact(_definition())
-    predecessor = AcceptedProcedureV1(
+    predecessor = AcceptedProcedure(
         path=procedure_path("triage"),
         procedure=predecessor_procedure,
         artifact_digest=procedure_artifact_digest(predecessor_procedure).tagged,
@@ -299,7 +299,7 @@ def test_procedure_semantic_successors_remain_accepted(change: str) -> None:
 
 def test_procedure_v2_closes_owned_contracts_but_keeps_query_slot_open() -> None:
     contracts = tuple(
-        ProcedureOwnedContractV1(
+        ProcedureOwnedContract(
             identity=ArtifactIdentity(kind="Contract", name=name),
             schema=ContractSchema(fields={}),
         )
@@ -316,7 +316,7 @@ def test_procedure_v2_closes_owned_contracts_but_keeps_query_slot_open() -> None
         target=by_name["claim-rows"].identity,
         artifact_digest=procedure_owned_contract_digest(by_name["claim-rows"]).tagged,
     )
-    query_slot = ProcedurePinSlotRefV1(slot_name="query")
+    query_slot = ProcedurePinSlotRef(slot_name="query")
     definition = _definition(query=query_slot).model_copy(
         update={
             "contract_in": contract_in,
@@ -328,7 +328,7 @@ def test_procedure_v2_closes_owned_contracts_but_keeps_query_slot_open() -> None
                     parameters={},
                     as_="rows",
                 ),
-                ProjectNodeV3(
+                ProjectNode(
                     node_id="shape",
                     fields={},
                     contract_out=contract_out,
@@ -337,7 +337,7 @@ def test_procedure_v2_closes_owned_contracts_but_keeps_query_slot_open() -> None
             ),
         }
     )
-    procedure = ProcedureArtifactV2(
+    procedure = ProcedureArtifact(
         identity=ArtifactIdentity(kind="Procedure", name="triage"),
         definition=definition,
         definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
@@ -368,7 +368,7 @@ def test_procedure_v2_closes_owned_contracts_but_keeps_query_slot_open() -> None
             "contract_out": wrong,
             "nodes": (
                 definition.nodes[0],
-                ProjectNodeV3(
+                ProjectNode(
                     node_id="shape",
                     fields={},
                     contract_out=wrong,
@@ -378,7 +378,7 @@ def test_procedure_v2_closes_owned_contracts_but_keeps_query_slot_open() -> None
         }
     )
     with pytest.raises(ValidationError, match="does not resolve"):
-        ProcedureArtifactV2(
+        ProcedureArtifact(
             **{
                 **procedure.model_dump(mode="python", exclude={"artifact_format"}),
                 "definition": wrong_definition,
@@ -407,13 +407,13 @@ def test_v3_graph_refuses_backward_edge() -> None:
     with pytest.raises(ProcedureGraphFormatError, match="R2"):
         _definition(
             nodes=(
-                ProjectNodeV3(
+                ProjectNode(
                     node_id="first",
                     fields={},
                     contract_out=contract_out,
                     as_="intermediate",
                 ),
-                ProjectNodeV3(
+                ProjectNode(
                     node_id="second",
                     fields={},
                     contract_out=contract_out,
@@ -432,7 +432,7 @@ def test_proposal_terminal_has_no_activation_or_direct_write_capability() -> Non
     )
     definition = _definition(
         nodes=(
-            ProjectNodeV3(
+            ProjectNode(
                 node_id="shape",
                 fields={"status": "ready"},
                 contract_out=contract_out,

@@ -10,8 +10,8 @@ from pydantic import ValidationError
 
 from cruxible_client.contracts.authoring import models as authoring_models
 from cruxible_client.contracts.authoring.models import (
-    DiagnosticFrontierV1,
-    PreflightResultV1,
+    DiagnosticFrontier,
+    PreflightResult,
     build_preflight_certificate,
 )
 from cruxible_client.contracts.canonical import canonical_bytes
@@ -128,7 +128,7 @@ def test_existing_model_revalidation_cannot_reuse_consumed_payload(version: int)
     raw = _wire_event("content", version)
     member = raw["intent"]["payload"]["members"][0]
     member["statement"]["object"]["value"] = {"state": "ready"}
-    payload = authoring_models.ChangeSetAuthoringPayloadV1.model_validate(raw["intent"]["payload"])
+    payload = authoring_models.ChangeSetAuthoringPayload.model_validate(raw["intent"]["payload"])
     identity = authoring_models.authoring_member_identity(payload.members[0])
     raw["intent"]["change_set_claim_identities"][0]["member_identity"] = identity
     from tests.test_authoring.test_authoring_binding_reuse import _change_set_identity
@@ -221,7 +221,7 @@ def test_store_still_refuses_noncanonical_bytes_after_successful_decode(
 def test_nested_preflight_uses_frozen_receive_subset_and_verifies_its_digest(version: int) -> None:
     raw = _wire_event("missing", version)
     event = store_module._parse_authoring_intent_event(canonical_bytes(raw))
-    frontier = DiagnosticFrontierV1()
+    frontier = DiagnosticFrontier()
     limits = ProposalReceiveLimits()
     certificate = build_preflight_certificate(
         instance_id=event.intent.instance_id,
@@ -240,7 +240,7 @@ def test_nested_preflight_uses_frozen_receive_subset_and_verifies_its_digest(ver
         candidate_tree_digest="sha256:" + "9" * 64,
         frontier_digest=frontier.digest,
     )
-    raw["intent"]["last_preflight"] = PreflightResultV1(
+    raw["intent"]["last_preflight"] = PreflightResult(
         verdict="passed", certificate=certificate, frontier=frontier
     ).model_dump(mode="json")
     _commit_raw_event(raw)

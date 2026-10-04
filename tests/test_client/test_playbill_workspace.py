@@ -21,8 +21,8 @@ from cruxible_client.authoring.workspace import (
     write_playbill_workspace_config,
 )
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
-from cruxible_client.contracts.floor import PlaybillFloorDeltaV1
-from cruxible_client.contracts.repairs import RepairOperationV1
+from cruxible_client.contracts.floor import PlaybillFloorDelta
+from cruxible_client.contracts.repairs import RepairOperation
 from tests.support.floor_exports import delta_from_export, floor_v5_export
 
 
@@ -35,7 +35,7 @@ def _coordinate(seed: str = "1") -> contracts.PlaybillAcceptedCoordinate:
     )
 
 
-def _delta(*, content: bytes = b'{"fresh":true}\n') -> PlaybillFloorDeltaV1:
+def _delta(*, content: bytes = b'{"fresh":true}\n') -> PlaybillFloorDelta:
     """The full floor delta the daemon serves the default floor refresh."""
 
     return delta_from_export(
@@ -366,7 +366,7 @@ def test_activate_reports_accepted_and_refresh_failure(tmp_path: Path) -> None:
             at=None,  # type: ignore[no-untyped-def]
             base_generation: int | None = None,
             base_renderer: str | None = None,
-        ) -> PlaybillFloorDeltaV1:
+        ) -> PlaybillFloorDelta:
             return delta_from_export(
                 floor_v5_export({"cards/fresh.json": b"fresh"}, coordinate=_coordinate()),
                 corrupt="cards/fresh.json",
@@ -411,13 +411,13 @@ def test_accepted_activation_runs_workspace_sync_last(
             at=None,  # type: ignore[no-untyped-def]
             base_generation: int | None = None,
             base_renderer: str | None = None,
-        ) -> PlaybillFloorDeltaV1:
+        ) -> PlaybillFloorDelta:
             events.append("floor")
             return _delta()
 
     def sync(*_args, **_kwargs):  # type: ignore[no-untyped-def]
         events.append("sync")
-        return contracts.PlaybillBlockSyncResultV1(
+        return contracts.PlaybillBlockSyncResult(
             items=(), changed_file_count=0, would_change=False, has_refusals=False
         )
 
@@ -467,7 +467,7 @@ def test_accepted_activation_skips_sync_for_an_unattached_workspace(tmp_path: Pa
     (item,) = result.block_sync.items
     assert item.outcome == "skipped"
     assert item.reason == "workspace_not_attached"
-    assert item.repair == RepairOperationV1(
+    assert item.repair == RepairOperation(
         operation="playbill.host.create", arguments={"workspace": "."}
     )
 

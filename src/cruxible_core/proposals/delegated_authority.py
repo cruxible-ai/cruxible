@@ -17,13 +17,13 @@ from cruxible_client.contracts.claims import ClaimFormatError, SubjectClaimObjec
 from cruxible_client.contracts.procedure_mandates import (
     MANDATE_CHANGE_KIND_ORDER,
     MandateChangeKind,
+    ProcedureMandate,
     ProcedureMandateError,
-    ProcedureMandateV2,
     parse_procedure_mandate_any,
     procedure_mandate_digest,
 )
 from cruxible_client.contracts.query.definitions import (
-    AcceptedQueryDefinitionV1,
+    AcceptedQueryDefinition,
     parse_query_definition,
     query_definition_digest,
     query_definition_path,
@@ -53,7 +53,7 @@ def _issue(code: str, message: str) -> tuple[str, str]:
     return f"playbill.settle.{code}", message
 
 
-def _mandate_by_digest(tree: Mapping[str, bytes], digest: str) -> ProcedureMandateV2 | None:
+def _mandate_by_digest(tree: Mapping[str, bytes], digest: str) -> ProcedureMandate | None:
     for path in sorted(tree):
         if not path.startswith(MANDATE_PREFIX):
             continue
@@ -62,7 +62,7 @@ def _mandate_by_digest(tree: Mapping[str, bytes], digest: str) -> ProcedureManda
         except ProcedureMandateError:
             continue
         if procedure_mandate_digest(mandate).tagged == digest:
-            return mandate if isinstance(mandate, ProcedureMandateV2) else None
+            return mandate if isinstance(mandate, ProcedureMandate) else None
     return None
 
 
@@ -180,7 +180,7 @@ def delegated_authority_issues(
 
 
 def mandate_coverage(
-    mandate: ProcedureMandateV2,
+    mandate: ProcedureMandate,
     *,
     scope: tuple[str, ...],
     current_tree: Mapping[str, bytes],
@@ -234,7 +234,7 @@ def mandate_coverage(
 
 
 def condition_issues(
-    mandate: ProcedureMandateV2,
+    mandate: ProcedureMandate,
     *,
     targets: tuple[SettleTarget, ...],
     current_tree: Mapping[str, bytes],
@@ -268,7 +268,7 @@ def condition_issues(
                 "Accepted query facts for the parent are unavailable.",
             ),
         )
-    accepted = AcceptedQueryDefinitionV1(
+    accepted = AcceptedQueryDefinition(
         path=query_path, query=definition, artifact_digest=condition.query.artifact_digest
     )
     for target in targets:

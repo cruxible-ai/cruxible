@@ -7,7 +7,7 @@ from typing import cast
 from fastapi import APIRouter
 
 from cruxible_client import contracts
-from cruxible_client.contracts.change_control import ChangeControlRequestV1
+from cruxible_client.contracts.change_control import ChangeControlRequest
 from cruxible_core.runtime.permissions import PermissionMode, check_permission
 from cruxible_core.server.auth import get_current_auth_context
 from cruxible_core.server.credential_minting import (
@@ -110,7 +110,7 @@ def list_runtime_credentials(
 def revoke_runtime_credential_route(
     instance_id: str,
     credential_id: str,
-    req: ChangeControlRequestV1 | None = None,
+    req: ChangeControlRequest | None = None,
 ) -> contracts.RuntimeCredentialResult:
     """Revoke one credential. It cannot be undone: previews unless committed with ``at``.
 
@@ -119,7 +119,7 @@ def revoke_runtime_credential_route(
     """
 
     resolved_instance_id = _authorize_runtime_credentials(instance_id)
-    control = req or ChangeControlRequestV1()
+    control = req or ChangeControlRequest()
     with state_change_scope(
         dry_run=control.dry_run,
         at=control.at,

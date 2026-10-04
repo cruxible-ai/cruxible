@@ -21,9 +21,9 @@ from cruxible_core.cli.commands.playbill import (
     run_procedure,
 )
 from cruxible_core.service.procedures.procedure_runs import (
-    LineRunRequestV1,
+    LineRunRequest,
     ProcedureReadinessRequestV1,
-    ProcedureRunRequestV2,
+    ProcedureRunRequest,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -140,8 +140,8 @@ def test_a_required_served_instant_is_never_optional_on_its_cli_leaf() -> None:
     looser: list[str] = []
     for command, model, field_name in (
         (procedure_readiness, ProcedureReadinessRequestV1, "evaluation_time"),
-        (run_procedure, ProcedureRunRequestV2, "evaluation_time"),
-        (run_line, LineRunRequestV1, "evaluation_time"),
+        (run_procedure, ProcedureRunRequest, "evaluation_time"),
+        (run_line, LineRunRequest, "evaluation_time"),
     ):
         option = next(item for item in command.params if item.name == field_name)
         if model.model_fields[field_name].is_required() and not option.required:
@@ -165,12 +165,12 @@ def test_discovery_predicate_rejects_lookalike_names_and_holds_the_word_boundary
     assert not is_time_bearing_field("consequence", "Literal['next_claim_attestation_threshold']")
     assert is_time_bearing_field("sequence", "int")
     assert is_time_bearing_field("partition_sequence", "int")
-    assert is_time_bearing_field("stale_after", "CanonicalDurationV1")
+    assert is_time_bearing_field("stale_after", "CanonicalDuration")
     assert len(CLOCK_DOMAINS) == 4
 
 
 def test_one_field_name_may_read_two_clocks_in_two_owners() -> None:
     """The capture observes at an evaluation instant; the attestor asserts."""
 
-    assert declared_clock("CaptureEnvelopeV2", "observed_at") == "EVALUATION INSTANT"
-    assert declared_clock("ClaimAttestationStatement", "observed_at") == "ASSERTION TIME"
+    assert declared_clock("CaptureEnvelope", "observed_at") == "EVALUATION INSTANT"
+    assert declared_clock("ClaimAttestationStatementV1", "observed_at") == "ASSERTION TIME"

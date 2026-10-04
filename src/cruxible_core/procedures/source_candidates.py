@@ -11,11 +11,11 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.authoring.models import (
-    AuthoringClaimStatementV1,
-    AuthoringExistingClaimDispositionV1,
-    ClaimDerivationBindingV1,
-    ExistingCaptureCitationSourceV1,
-    SelfSourceBodyV1,
+    AuthoringClaimStatement,
+    AuthoringExistingClaimDisposition,
+    ClaimDerivationBinding,
+    ExistingCaptureCitationSource,
+    SelfSourceBody,
 )
 from cruxible_client.contracts.canonical import (
     CanonicalValue,
@@ -23,7 +23,7 @@ from cruxible_client.contracts.canonical import (
     pretty_canonical_bytes,
 )
 from cruxible_client.contracts.claims import claim_artifact_digest, parse_claim
-from cruxible_client.contracts.procedures.proposal_items import ProcedureClaimProposalItemV2
+from cruxible_client.contracts.procedures.proposal_items import ProcedureClaimProposalItem
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import subject_path
 from cruxible_core.procedures.terminal_dependencies import AliasProvenanceV1, DependencyToken
@@ -71,7 +71,7 @@ def bind_source_candidate(
     if candidate.source_kind == "self_source":
         if not isinstance(candidate.source_value, str) or candidate.source_alias is not None:
             raise ValueError("self_source must carry text without an evidence alias")
-        source: ExistingCaptureCitationSourceV1 | SelfSourceBodyV1 = SelfSourceBodyV1(
+        source: ExistingCaptureCitationSource | SelfSourceBody = SelfSourceBody(
             content_base64=base64.b64encode(candidate.source_value.encode("utf-8")).decode("ascii")
         )
         citation_role = None
@@ -91,7 +91,7 @@ def bind_source_candidate(
             captures = captures & {selected_capture} if isinstance(selected_capture, str) else set()
         if len(captures) != 1:
             raise ValueError("selected evidence must identify one verified produced Capture")
-        source = ExistingCaptureCitationSourceV1(capture_digest=captures.pop())
+        source = ExistingCaptureCitationSource(capture_digest=captures.pop())
         citation_role = "evidence" if candidate.source_kind == "supported_by" else "copy"
 
     def selected_claim(supplied: dict[str, Any]) -> ArtifactPin:
@@ -118,7 +118,7 @@ def bind_source_candidate(
     derivation = (
         None
         if not bindings
-        else ClaimDerivationBindingV1(
+        else ClaimDerivationBinding(
             procedure=ArtifactPin(
                 role="reducer", target=procedure_identity, artifact_digest=procedure_digest
             ),
@@ -139,7 +139,7 @@ def bind_source_candidate(
         else:
             raise ValueError("invalid selected Claim disposition")
         dispositions.append(
-            AuthoringExistingClaimDispositionV1(
+            AuthoringExistingClaimDisposition(
                 claim_id=claim_id,
                 disposition=item["disposition"],
             )
@@ -165,8 +165,8 @@ def bind_source_candidate(
         )
     else:
         obj = dict(kind="literal", value=candidate.value)
-    result = ProcedureClaimProposalItemV2(
-        statement=AuthoringClaimStatementV1.model_validate(
+    result = ProcedureClaimProposalItem(
+        statement=AuthoringClaimStatement.model_validate(
             dict(
                 subject=SemanticAddress.whole_artifact(
                     subject_path(candidate.subject_kind, candidate.subject_id)

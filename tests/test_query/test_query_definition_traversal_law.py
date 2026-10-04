@@ -11,8 +11,8 @@ def test_a_traversal_over_a_literal_predicate_is_refused_naming_the_claim_type()
         claim_type_path,
     )
     from cruxible_client.contracts.query.grammar import (
-        QueryEntryV1,
-        QueryTraversalStepV1,
+        QueryEntry,
+        QueryTraversalStep,
     )
     from cruxible_core.proposals.proposals import _literal_object_traversal
     from tests.test_claims.test_claims import _claim_type
@@ -26,14 +26,14 @@ def test_a_traversal_over_a_literal_predicate_is_refused_naming_the_claim_type()
 
     class _Definition:
         traversal = (
-            QueryTraversalStepV1(
+            QueryTraversalStep(
                 binding="st",
                 from_binding="svc",
                 predicate=claim_type.predicate,
                 direction="reverse",
             ),
         )
-        entry = QueryEntryV1(binding="svc", subject_kinds=("project.work_item",))
+        entry = QueryEntry(binding="svc", subject_kinds=("project.work_item",))
 
     diagnostic = _literal_object_traversal(
         _Definition(),  # type: ignore[arg-type]
@@ -55,7 +55,7 @@ def test_a_subject_object_predicate_traversal_is_accepted() -> None:
         claim_type_digest,
         claim_type_path,
     )
-    from cruxible_client.contracts.query.grammar import QueryEntryV1, QueryTraversalStepV1
+    from cruxible_client.contracts.query.grammar import QueryEntry, QueryTraversalStep
     from cruxible_core.proposals.proposals import _literal_object_traversal
     from tests.test_claims.test_claims import _claim_type
 
@@ -75,14 +75,14 @@ def test_a_subject_object_predicate_traversal_is_accepted() -> None:
 
     class _Definition:
         traversal = (
-            QueryTraversalStepV1(
+            QueryTraversalStep(
                 binding="st",
                 from_binding="svc",
                 predicate=subject_typed.predicate,
                 direction="reverse",
             ),
         )
-        entry = QueryEntryV1(binding="svc", subject_kinds=("project.work_item",))
+        entry = QueryEntry(binding="svc", subject_kinds=("project.work_item",))
 
     assert (
         _literal_object_traversal(
@@ -100,7 +100,7 @@ def test_the_refusal_reaches_the_proposal_as_a_member_diagnostic() -> None:
         claim_type_digest,
         claim_type_path,
     )
-    from cruxible_client.contracts.query.grammar import QueryEntryV1, QueryTraversalStepV1
+    from cruxible_client.contracts.query.grammar import QueryEntry, QueryTraversalStep
     from cruxible_core.proposals.proposals import _literal_object_traversal
     from tests.test_claims.test_claims import _claim_type
 
@@ -113,14 +113,14 @@ def test_the_refusal_reaches_the_proposal_as_a_member_diagnostic() -> None:
 
     class _Definition:
         traversal = (
-            QueryTraversalStepV1(
+            QueryTraversalStep(
                 binding="st",
                 from_binding="svc",
                 predicate=claim_type.predicate,
                 direction="forward",
             ),
         )
-        entry = QueryEntryV1(binding="svc", subject_kinds=("project.work_item",))
+        entry = QueryEntry(binding="svc", subject_kinds=("project.work_item",))
 
     diagnostic = _literal_object_traversal(
         _Definition(),  # type: ignore[arg-type]

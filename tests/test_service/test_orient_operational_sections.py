@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
+from cruxible_client.contracts.get_reads import PlaybillGetRequest
 from cruxible_core.service.discovery.get import service_playbill_get
 from cruxible_core.service.discovery.orient import service_playbill_orient
 from cruxible_core.service.list_pages import PlaybillListCursorMismatch
@@ -26,7 +26,7 @@ def _suggested_get(instance: Any, call: str) -> None:
 
     assert call.startswith('cruxible_playbill_get(ref="'), call
     ref = call.split('ref="', 1)[1].split('"', 1)[0]
-    service_playbill_get(instance, request=PlaybillGetRequestV1(ref=ref), access=_ACCESS)
+    service_playbill_get(instance, request=PlaybillGetRequest(ref=ref), access=_ACCESS)
 
 
 def test_the_lines_and_mandates_sections_carry_arm_state_and_validity(line_world) -> None:  # type: ignore[no-untyped-def]  # noqa: F811

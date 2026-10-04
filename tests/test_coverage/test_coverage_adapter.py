@@ -16,7 +16,7 @@ from pydantic import ValidationError
 from cruxible_core.coverage.adapter import (
     WorkingPathBindingsV1,
     WorkingPathBindingV1,
-    WorkingSourceObservationV1,
+    WorkingSourceObservation,
     build_overlay,
     coverage_span_requests,
     observations_for_grep_hits,
@@ -31,7 +31,7 @@ from cruxible_core.coverage.adapter import (
 )
 from cruxible_core.coverage.contracts import (
     CoverageError,
-    LogicalSourceIdentityV1,
+    LogicalSourceIdentity,
     occurrence_identity_digest,
 )
 from tests.core_support._coverage_support import (
@@ -133,7 +133,7 @@ def test_a_declared_digest_that_does_not_reproduce_is_refused() -> None:
     honest = observe_working_source(HANDBOOK, HANDBOOK_BODY)
 
     with pytest.raises(ValidationError):
-        WorkingSourceObservationV1(
+        WorkingSourceObservation(
             source=HANDBOOK,
             content_base64=honest.content_base64,
             content_digest=sha256(b"different bytes entirely"),
@@ -145,7 +145,7 @@ def test_a_declared_byte_length_that_does_not_match_is_refused() -> None:
     honest = observe_working_source(HANDBOOK, HANDBOOK_BODY)
 
     with pytest.raises(ValidationError):
-        WorkingSourceObservationV1(
+        WorkingSourceObservation(
             source=HANDBOOK,
             content_base64=honest.content_base64,
             content_digest=honest.content_digest,
@@ -249,7 +249,7 @@ def test_the_overlay_finds_cited_content_that_moved_and_keeps_its_identity() -> 
 
 
 def test_an_observation_of_an_unknown_source_still_reports_its_whole_commitment() -> None:
-    unknown = LogicalSourceIdentityV1(plane="external", identity="workspace.unknown")
+    unknown = LogicalSourceIdentity(plane="external", identity="workspace.unknown")
 
     overlay = build_overlay((observe_working_source(unknown, b"nothing governed\n"),))
 

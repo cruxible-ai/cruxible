@@ -39,13 +39,13 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.claim_verdicts import evaluate_claim_verdict
 from cruxible_client.contracts.errors import PlaybillError
-from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
-from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpecV1
+from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
+from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpec
 from cruxible_client.contracts.providers import ProviderV1
-from cruxible_client.contracts.query.definitions import AcceptedQueryDefinitionV1
+from cruxible_client.contracts.query.definitions import AcceptedQueryDefinition
 from cruxible_client.contracts.query.grammar import byte_sorted
 from cruxible_client.contracts.semantic import SemanticAddress
-from cruxible_client.contracts.source_references import CoverageDescriptorV1
+from cruxible_client.contracts.source_references import CoverageDescriptor
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.query.backends import ClaimFactRowV1, ClaimQueryFactsV1
 
@@ -200,7 +200,7 @@ class DependencyImpactV1(_StrictImpactModel):
     sources: tuple[DependencyImpactSourceV1, ...]
     dependents: tuple[DependentImpactV1, ...] = ()
     candidate_dependent_count: int = Field(ge=0)
-    coverage: CoverageDescriptorV1
+    coverage: CoverageDescriptor
     receipt_digest: str
 
     @field_validator("receipt_digest")
@@ -428,9 +428,9 @@ def _claim_dependents(
 def _pinned_dependents(
     source: DependencyImpactSourceV1,
     *,
-    definitions: Iterable[AcceptedQueryDefinitionV1],
-    procedures: Iterable[AcceptedProcedureV1],
-    line_specs: Iterable[AcceptedLineSpecV1],
+    definitions: Iterable[AcceptedQueryDefinition],
+    procedures: Iterable[AcceptedProcedure],
+    line_specs: Iterable[AcceptedLineSpec],
 ) -> list[DependentImpactV1]:
     identity = _claim_identity(source)
     dependents: list[DependentImpactV1] = []
@@ -500,9 +500,9 @@ def build_dependency_impact(
     request: DependencyImpactRequestV1,
     *,
     facts: ClaimQueryFactsV1,
-    definitions: Iterable[AcceptedQueryDefinitionV1] = (),
-    procedures: Iterable[AcceptedProcedureV1] = (),
-    line_specs: Iterable[AcceptedLineSpecV1] = (),
+    definitions: Iterable[AcceptedQueryDefinition] = (),
+    procedures: Iterable[AcceptedProcedure] = (),
+    line_specs: Iterable[AcceptedLineSpec] = (),
     source_lineages: Mapping[str, Sequence[str]] | None = None,
     include_retired_sources: bool = False,
 ) -> DependencyImpactV1:
@@ -561,7 +561,7 @@ def build_dependency_impact(
         kept = kept[:-1]
         reasons.add("byte_budget_exceeded")
 
-    coverage = CoverageDescriptorV1(
+    coverage = CoverageDescriptor(
         requested_facets=byte_sorted(DEPENDENT_KINDS),
         available_facets=byte_sorted(tuple({item.kind for item in kept})),
         truncated_facets=byte_sorted(tuple(truncated)),

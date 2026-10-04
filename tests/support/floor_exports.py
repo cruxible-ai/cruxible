@@ -7,7 +7,7 @@ from collections.abc import Mapping
 
 from cruxible_client import contracts
 from cruxible_client.contracts.floor import (
-    PlaybillFloorDeltaV1,
+    PlaybillFloorDelta,
     build_floor_manifest,
     content_digest,
     floor_manifest_digest,
@@ -66,7 +66,7 @@ def floor_v5_delta(
     renderer: str = TEST_RENDERER,
     notes_digest: str = TEST_NOTES,
     base_notes_digest: str | None = None,
-) -> PlaybillFloorDeltaV1:
+) -> PlaybillFloorDelta:
     """The delta the daemon would serve from ``base`` (or a full floor) to ``head``.
 
     Each map is ``path -> (bytes, changed_at)``.
@@ -134,7 +134,7 @@ def floor_v5_delta(
 
 def delta_from_export(
     export: contracts.PlaybillFloorExport, *, corrupt: str | None = None
-) -> PlaybillFloorDeltaV1:
+) -> PlaybillFloorDelta:
     """The full delta carrying exactly a v5 export's floor.
 
     ``corrupt`` names one file whose bytes are then swapped after sealing, as a

@@ -22,7 +22,7 @@ from pydantic import ValidationError
 
 from cruxible_client.contracts.approval_policy import (
     APPROVAL_POLICY_PATH,
-    ApprovalPolicyV1,
+    ApprovalPolicy,
     parse_approval_policy,
 )
 from cruxible_client.contracts.attestations import ApprovalSubmission
@@ -59,7 +59,7 @@ from cruxible_client.contracts.types import (
     GenesisCoordinate,
     GitObjectFormat,
     OperatingProfile,
-    PlaybillDecommissionV1,
+    PlaybillDecommission,
     PlaybillDescriptor,
     PlaybillInspection,
     PlaybillTrustRoot,
@@ -456,7 +456,7 @@ class PlaybillInstance:
             verified = prepare_genesis(
                 ledger,
                 trust_root=trust_root,
-                approval_policy=ApprovalPolicyV1(
+                approval_policy=ApprovalPolicy(
                     mode=(
                         "independent_approval_required"
                         if require_independent_approval
@@ -886,7 +886,7 @@ class PlaybillInstance:
         self.descriptor = updated
         return updated
 
-    def _persisted_decommission(self) -> PlaybillDecommissionV1 | None:
+    def _persisted_decommission(self) -> PlaybillDecommission | None:
         """Read the terminal record from disk rather than from this handle."""
 
         return self._persisted_descriptor().decommissioned
@@ -897,7 +897,7 @@ class PlaybillInstance:
         reason: str,
         decommissioned_by: str,
         confirm_head: Callable[[str], None] | None = None,
-    ) -> PlaybillDecommissionV1:
+    ) -> PlaybillDecommission:
         """Stamp the terminal lifecycle state on the descriptor, deleting nothing.
 
         The record lands in the descriptor, which every reopen replays and
@@ -919,7 +919,7 @@ class PlaybillInstance:
         if persisted is not None:
             self.descriptor = self.descriptor.model_copy(update={"decommissioned": persisted})
             self.require_writable()
-        record = PlaybillDecommissionV1(
+        record = PlaybillDecommission(
             reason=reason,
             decommissioned_at=format_datetime(utc_now()) or "",
             decommissioned_by=decommissioned_by,

@@ -10,8 +10,8 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.candidates import (
+    SemanticCandidate,
     SemanticCandidateLike,
-    SemanticCandidateV2,
     candidate_digest,
 )
 from cruxible_client.contracts.canonical import (
@@ -226,7 +226,7 @@ def verify_provisional_tree(
     projected = semantic_projection(tree)
     actual = (
         merkle_manifest_root(projected).tagged
-        if isinstance(coordinate.candidate, SemanticCandidateV2)
+        if isinstance(coordinate.candidate, SemanticCandidate)
         else manifest_root(projected).tagged
     )
     if actual != coordinate.candidate.candidate_manifest_root:

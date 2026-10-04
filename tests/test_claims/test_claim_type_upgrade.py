@@ -27,12 +27,12 @@ def world(tmp_path: Path) -> _V7World:
 
 
 def _upgrade(world: _V7World, **request: object) -> object:
-    from cruxible_client.contracts.claim_type_upgrade import ClaimTypeUpgradeRequestV1
+    from cruxible_client.contracts.claim_type_upgrade import ClaimTypeUpgradeRequest
     from cruxible_core.service.claims.claim_type_upgrade import service_upgrade_claim_types
 
     return service_upgrade_claim_types(
         world.instance,
-        request=ClaimTypeUpgradeRequestV1.model_validate(request),
+        request=ClaimTypeUpgradeRequest.model_validate(request),
         actor_id="owner",
         timestamp=world.timestamp(),
     )

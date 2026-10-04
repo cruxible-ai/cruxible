@@ -32,7 +32,7 @@ _CLASSIFIER_ID_RE = re.compile(r"^[a-z][a-z0-9_.:-]{0,255}$")
 _SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _HEX_RE = re.compile(r"^(?:[0-9a-f]{2})+$")
 
-ProviderEffectClassV1: TypeAlias = Literal["none", "external_read", "external_mutation"]
+ProviderEffectClass: TypeAlias = Literal["none", "external_read", "external_mutation"]
 
 
 class ProviderInterfaceFormatError(PlaybillFormatError):
@@ -62,7 +62,7 @@ def _content_bytes(content_hex: str, *, label: str) -> bytes:
     return content
 
 
-class ProviderBucketClassV1(_StrictInterfaceModel):
+class ProviderBucketClass(_StrictInterfaceModel):
     id: str
     description: str
 
@@ -74,10 +74,10 @@ class ProviderBucketClassV1(_StrictInterfaceModel):
         return value
 
 
-class ProviderBucketDimensionV1(_StrictInterfaceModel):
+class ProviderBucketDimension(_StrictInterfaceModel):
     name: str
     description: str
-    classes: tuple[ProviderBucketClassV1, ...]
+    classes: tuple[ProviderBucketClass, ...]
 
     @field_validator("name")
     @classmethod
@@ -90,20 +90,20 @@ class ProviderBucketDimensionV1(_StrictInterfaceModel):
     @classmethod
     def _classes(
         cls,
-        value: tuple[ProviderBucketClassV1, ...],
-    ) -> tuple[ProviderBucketClassV1, ...]:
+        value: tuple[ProviderBucketClass, ...],
+    ) -> tuple[ProviderBucketClass, ...]:
         ids = tuple(item.id for item in value)
         if not value or len(ids) != len(set(ids)):
             raise ValueError("Provider bucket classes must be nonempty and unique")
         return value
 
 
-class ProviderBucketVocabularyV1(_StrictInterfaceModel):
+class ProviderBucketVocabulary(_StrictInterfaceModel):
     interface_id: str
     version: int = 1
     status: Literal["draft", "accepted"] = "draft"
     description: str = ""
-    dimensions: tuple[ProviderBucketDimensionV1, ...]
+    dimensions: tuple[ProviderBucketDimension, ...]
 
     @field_validator("interface_id")
     @classmethod
@@ -116,8 +116,8 @@ class ProviderBucketVocabularyV1(_StrictInterfaceModel):
     @classmethod
     def _dimensions(
         cls,
-        value: tuple[ProviderBucketDimensionV1, ...],
-    ) -> tuple[ProviderBucketDimensionV1, ...]:
+        value: tuple[ProviderBucketDimension, ...],
+    ) -> tuple[ProviderBucketDimension, ...]:
         names = tuple(item.name for item in value)
         if not value or len(names) != len(set(names)):
             raise ValueError("Provider bucket dimensions must be nonempty and unique")
@@ -167,7 +167,7 @@ def _parse_pairs(value: str) -> dict[str, str]:
     return result
 
 
-class ProviderBucketConformanceFixtureV1(_StrictInterfaceModel):
+class ProviderBucketConformanceFixture(_StrictInterfaceModel):
     tag: Literal["playbill-provider-bucket-conformance-fixture-v1"] = (
         "playbill-provider-bucket-conformance-fixture-v1"
     )
@@ -191,13 +191,13 @@ class ProviderBucketConformanceFixtureV1(_StrictInterfaceModel):
         return normalized
 
 
-def provider_bucket_fixture_digest(fixture: ProviderBucketConformanceFixtureV1) -> str:
+def provider_bucket_fixture_digest(fixture: ProviderBucketConformanceFixture) -> str:
     """Hash compiler-shipped fixture bytes without minting another authority domain."""
 
     return f"sha256:{hashlib.sha256(canonical_bytes(fixture.model_dump(mode='json'))).hexdigest()}"
 
 
-class ProviderBucketConformanceFixtureProofV1(_StrictInterfaceModel):
+class ProviderBucketConformanceFixtureProof(_StrictInterfaceModel):
     tag: Literal["playbill-provider-bucket-conformance-fixture-proof-v1"] = (
         "playbill-provider-bucket-conformance-fixture-proof-v1"
     )
@@ -209,7 +209,7 @@ class ProviderBucketConformanceFixtureProofV1(_StrictInterfaceModel):
     _fixture_digest = field_validator("fixture_digest")(_digest)
 
 
-def _proof_key(proof: ProviderBucketConformanceFixtureProofV1) -> tuple[bytes, bytes]:
+def _proof_key(proof: ProviderBucketConformanceFixtureProof) -> tuple[bytes, bytes]:
     return proof.selector.encode("utf-8"), proof.fixture_id.encode("utf-8")
 
 
@@ -245,7 +245,7 @@ def provider_bucket_vocabulary_digest(content_hex: str) -> str:
 
 
 def provider_bucket_fixture_set_digest(
-    proofs: tuple[ProviderBucketConformanceFixtureProofV1, ...],
+    proofs: tuple[ProviderBucketConformanceFixtureProof, ...],
 ) -> str:
     return typed_digest(
         ArtifactDigest,
@@ -298,8 +298,8 @@ class ProviderInterfaceRegistrationV1(_StrictInterfaceModel):
     classifier_version: int
     classifier_digest: str
     conformance_fixture_set_digest: str
-    conformance_proofs: tuple[ProviderBucketConformanceFixtureProofV1, ...]
-    effect_class: ProviderEffectClassV1
+    conformance_proofs: tuple[ProviderBucketConformanceFixtureProof, ...]
+    effect_class: ProviderEffectClass
     pins: tuple[ArtifactPin, ...] = ()
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
 
@@ -347,8 +347,8 @@ class ProviderInterfaceRegistrationV1(_StrictInterfaceModel):
     @classmethod
     def _proofs(
         cls,
-        value: tuple[ProviderBucketConformanceFixtureProofV1, ...],
-    ) -> tuple[ProviderBucketConformanceFixtureProofV1, ...]:
+        value: tuple[ProviderBucketConformanceFixtureProof, ...],
+    ) -> tuple[ProviderBucketConformanceFixtureProof, ...]:
         if not value or value != tuple(sorted(value, key=_proof_key)):
             raise ValueError("Provider conformance proofs must be nonempty and sorted")
         selectors = tuple(item.selector for item in value)
@@ -407,13 +407,13 @@ class ProviderInterfaceRegistrationV1(_StrictInterfaceModel):
         )
 
     @property
-    def vocabulary(self) -> ProviderBucketVocabularyV1:
-        return ProviderBucketVocabularyV1.model_validate(
+    def vocabulary(self) -> ProviderBucketVocabulary:
+        return ProviderBucketVocabulary.model_validate(
             json.loads(bytes.fromhex(self.vocabulary_bytes_hex))
         )
 
 
-class ProviderClassifierCodeV1(_StrictInterfaceModel):
+class ProviderClassifierCode(_StrictInterfaceModel):
     """Package-owned classifier entry point, verified inside the pinned environment."""
 
     entrypoint: str
@@ -439,7 +439,7 @@ def provider_package_classifier_digest(
     classifier_identity: str,
     classifier_version: int,
     conformance_fixture_set_digest: str,
-    code: ProviderClassifierCodeV1,
+    code: ProviderClassifierCode,
 ) -> str:
     return typed_digest(
         ArtifactDigest,
@@ -453,10 +453,10 @@ def provider_package_classifier_digest(
     ).tagged
 
 
-class ProviderInterfaceRegistrationV2(ProviderInterfaceRegistrationV1):
+class ProviderInterfaceRegistration(ProviderInterfaceRegistrationV1):
     artifact_format: Literal["playbill-provider-interface-v2"] = "playbill-provider-interface-v2"  # type: ignore[assignment]
-    classifier_code: ProviderClassifierCodeV1
-    conformance_fixtures: tuple[ProviderBucketConformanceFixtureV1, ...]
+    classifier_code: ProviderClassifierCode
+    conformance_fixtures: tuple[ProviderBucketConformanceFixture, ...]
 
     @property
     def expected_classifier_digest(self) -> str:
@@ -468,7 +468,7 @@ class ProviderInterfaceRegistrationV2(ProviderInterfaceRegistrationV1):
         )
 
     @model_validator(mode="after")
-    def _fixture_bytes(self) -> "ProviderInterfaceRegistrationV2":
+    def _fixture_bytes(self) -> "ProviderInterfaceRegistration":
         ids = tuple(item.fixture_id for item in self.conformance_fixtures)
         if ids != tuple(sorted(set(ids), key=str.encode)):
             raise ValueError("package fixtures must be sorted and unique")
@@ -484,12 +484,12 @@ class ProviderInterfaceRegistrationV2(ProviderInterfaceRegistrationV1):
         return self
 
 
-ProviderInterfaceRegistration: TypeAlias = Annotated[
-    ProviderInterfaceRegistrationV1 | ProviderInterfaceRegistrationV2,
+ProviderInterfaceRegistrationAny: TypeAlias = Annotated[
+    ProviderInterfaceRegistrationV1 | ProviderInterfaceRegistration,
     Field(discriminator="artifact_format"),
 ]
-_INTERFACE_ADAPTER: TypeAdapter[ProviderInterfaceRegistration] = TypeAdapter(
-    ProviderInterfaceRegistration
+_INTERFACE_ADAPTER: TypeAdapter[ProviderInterfaceRegistrationAny] = TypeAdapter(
+    ProviderInterfaceRegistrationAny
 )
 
 
@@ -508,7 +508,7 @@ def parse_provider_interface(
     *,
     path: str,
     codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
-) -> ProviderInterfaceRegistration:
+) -> ProviderInterfaceRegistrationAny:
     try:
         registration = _INTERFACE_ADAPTER.validate_python(json.loads(content))
     except (UnicodeDecodeError, ValueError) as exc:
@@ -539,13 +539,13 @@ def provider_interface_digest(registration: ProviderInterfaceRegistrationV1) -> 
     )
 
 
-class AcceptedProviderInterfaceRegistrationV1(_StrictInterfaceModel):
+class AcceptedProviderInterfaceRegistration(_StrictInterfaceModel):
     path: str
-    registration: ProviderInterfaceRegistration
+    registration: ProviderInterfaceRegistrationAny
     artifact_digest: str
 
     @model_validator(mode="after")
-    def _binding(self) -> "AcceptedProviderInterfaceRegistrationV1":
+    def _binding(self) -> "AcceptedProviderInterfaceRegistration":
         if self.path != provider_interface_path(self.registration.interface_id):
             raise ValueError("accepted Provider interface path does not reproduce")
         if self.artifact_digest != provider_interface_digest(self.registration).tagged:
@@ -553,7 +553,7 @@ class AcceptedProviderInterfaceRegistrationV1(_StrictInterfaceModel):
         return self
 
 
-class ProviderInterfaceLawResultV1(_StrictInterfaceModel):
+class ProviderInterfaceLawResult(_StrictInterfaceModel):
     verdict: Literal["accepted", "refused"]
     artifact_digest: str | None = None
     required_tier: PermissionTier | None = None
@@ -561,8 +561,8 @@ class ProviderInterfaceLawResultV1(_StrictInterfaceModel):
     diagnostics: tuple[CompilerDiagnostic, ...] = ()
 
 
-def _refusal(code: str, message: str, *, path: str) -> ProviderInterfaceLawResultV1:
-    return ProviderInterfaceLawResultV1(
+def _refusal(code: str, message: str, *, path: str) -> ProviderInterfaceLawResult:
+    return ProviderInterfaceLawResult(
         verdict="refused",
         diagnostics=(
             CompilerDiagnostic(
@@ -579,9 +579,9 @@ def evaluate_provider_interface_law(
     registration: ProviderInterfaceRegistrationV1,
     *,
     path: str,
-    predecessor: AcceptedProviderInterfaceRegistrationV1 | None,
-    conformance_fixtures: Mapping[str, ProviderBucketConformanceFixtureV1],
-) -> ProviderInterfaceLawResultV1:
+    predecessor: AcceptedProviderInterfaceRegistration | None,
+    conformance_fixtures: Mapping[str, ProviderBucketConformanceFixture],
+) -> ProviderInterfaceLawResult:
     if path != provider_interface_path(registration.interface_id):
         return _refusal(
             "playbill.provider_interface.path_mismatch",
@@ -608,7 +608,7 @@ def evaluate_provider_interface_law(
                 "Provider interface successor does not pin its exact predecessor.",
                 path=path,
             )
-    if isinstance(registration, ProviderInterfaceRegistrationV2):
+    if isinstance(registration, ProviderInterfaceRegistration):
         conformance_fixtures = {item.fixture_id: item for item in registration.conformance_fixtures}
     for proof in registration.conformance_proofs:
         fixture = conformance_fixtures.get(proof.fixture_id)
@@ -627,14 +627,14 @@ def evaluate_provider_interface_law(
                 f"Conformance proof {proof.fixture_id!r} diverges from compiler bytes.",
                 path=path,
             )
-    return ProviderInterfaceLawResultV1(
+    return ProviderInterfaceLawResult(
         verdict="accepted",
         artifact_digest=provider_interface_digest(registration).tagged,
         required_tier="governed_write",
     )
 
 
-class ProviderBucketClassifierInstallationResultV1(_StrictInterfaceModel):
+class ProviderBucketClassifierInstallationResult(_StrictInterfaceModel):
     fixture_id: str
     fixture_digest: str
     measured_bucket_id: str
@@ -642,7 +642,7 @@ class ProviderBucketClassifierInstallationResultV1(_StrictInterfaceModel):
     _fixture_digest = field_validator("fixture_digest")(_digest)
 
 
-class ProviderBucketClassifierInstallationV1(_StrictInterfaceModel):
+class ProviderBucketClassifierInstallation(_StrictInterfaceModel):
     tag: Literal["playbill-provider-bucket-classifier-installation-v1"] = (
         "playbill-provider-bucket-classifier-installation-v1"
     )
@@ -650,7 +650,7 @@ class ProviderBucketClassifierInstallationV1(_StrictInterfaceModel):
     classifier_version: int
     classifier_digest: str
     conformance_fixture_set_digest: str
-    results: tuple[ProviderBucketClassifierInstallationResultV1, ...]
+    results: tuple[ProviderBucketClassifierInstallationResult, ...]
 
     _digests = field_validator(
         "classifier_digest",
@@ -661,8 +661,8 @@ class ProviderBucketClassifierInstallationV1(_StrictInterfaceModel):
     @classmethod
     def _results(
         cls,
-        value: tuple[ProviderBucketClassifierInstallationResultV1, ...],
-    ) -> tuple[ProviderBucketClassifierInstallationResultV1, ...]:
+        value: tuple[ProviderBucketClassifierInstallationResult, ...],
+    ) -> tuple[ProviderBucketClassifierInstallationResult, ...]:
         ids = tuple(item.fixture_id for item in value)
         if ids != tuple(sorted(set(ids), key=lambda item: item.encode("utf-8"))):
             raise ValueError("Classifier installation results must be sorted and unique")
@@ -670,21 +670,21 @@ class ProviderBucketClassifierInstallationV1(_StrictInterfaceModel):
 
 
 __all__ = [
-    "AcceptedProviderInterfaceRegistrationV1",
-    "ProviderBucketClassV1",
-    "ProviderBucketClassifierInstallationResultV1",
-    "ProviderBucketClassifierInstallationV1",
-    "ProviderBucketConformanceFixtureProofV1",
-    "ProviderBucketConformanceFixtureV1",
-    "ProviderBucketDimensionV1",
-    "ProviderBucketVocabularyV1",
-    "ProviderEffectClassV1",
+    "AcceptedProviderInterfaceRegistration",
+    "ProviderBucketClass",
+    "ProviderBucketClassifierInstallationResult",
+    "ProviderBucketClassifierInstallation",
+    "ProviderBucketConformanceFixtureProof",
+    "ProviderBucketConformanceFixture",
+    "ProviderBucketDimension",
+    "ProviderBucketVocabulary",
+    "ProviderEffectClass",
     "ProviderInterfaceFormatError",
-    "ProviderInterfaceLawResultV1",
+    "ProviderInterfaceLawResult",
     "ProviderInterfaceRegistrationV1",
-    "ProviderInterfaceRegistrationV2",
     "ProviderInterfaceRegistration",
-    "ProviderClassifierCodeV1",
+    "ProviderInterfaceRegistrationAny",
+    "ProviderClassifierCode",
     "provider_package_classifier_digest",
     "evaluate_provider_interface_law",
     "parse_provider_interface",

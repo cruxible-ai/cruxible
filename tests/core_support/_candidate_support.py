@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from cruxible_client.contracts.query.definitions import (
-    QueryDefinitionV1,
+    QueryDefinition,
     query_definition_path,
     render_query_definition,
 )
@@ -135,7 +135,7 @@ def submit_subject_candidate(
 def submit_query_definition_candidate(
     instance: PlaybillInstance,
     *,
-    query: QueryDefinitionV1,
+    query: QueryDefinition,
     actor_id: str,
     proposal_name: str,
     timestamp: str,

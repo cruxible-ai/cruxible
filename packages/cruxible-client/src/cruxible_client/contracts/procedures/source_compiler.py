@@ -20,14 +20,14 @@ from cruxible_client.contracts.procedures.contract_schema import (
     PropertyType,
 )
 from cruxible_client.contracts.procedures.models import (
-    PredicateOperandV1,
-    ProcedureBudgetV3,
-    ProcedureDefinitionV6,
-    ProcedureHardCapsV3,
+    PredicateOperand,
+    ProcedureBudget,
+    ProcedureDefinition,
+    ProcedureHardCaps,
     derived_terminal_capability,
 )
 from cruxible_client.contracts.procedures.source_program import (
-    ProcedureSourceV1,
+    ProcedureSource,
     SourceClaimType,
     SourceContract,
     SourceDiagnostic,
@@ -128,7 +128,7 @@ class SourceCompileError(ValueError):
 
 @dataclass(frozen=True)
 class CompiledSource:
-    definition: ProcedureDefinitionV6
+    definition: ProcedureDefinition
     contracts: tuple[SourceContract, ...]
     source_map: tuple[SourceMapEntry, ...]
 
@@ -228,7 +228,7 @@ def _assignable(actual: ValueType, expected: ValueType) -> bool:
 
 
 class _Compiler:
-    def __init__(self, program: ProcedureSourceV1, input: SourceContract, output: SourceContract):
+    def __init__(self, program: ProcedureSource, input: SourceContract, output: SourceContract):
         self.program = program
         self.input, self.output = input, output
         self.nodes: list[dict[str, Any]] = []
@@ -271,7 +271,7 @@ class _Compiler:
 
     def contract(self, source: SourceContract) -> dict[str, Any]:
         from cruxible_client.contracts.procedures.artifacts import (
-            ProcedureOwnedContractV1,
+            ProcedureOwnedContract,
             procedure_owned_contract_digest,
         )
 
@@ -280,7 +280,7 @@ class _Compiler:
         if previous is not None and previous != source:
             raise ValueError(f"conflicting carried Contract {source.name!r}")
         self.contracts[source.name] = source
-        owned = ProcedureOwnedContractV1(
+        owned = ProcedureOwnedContract(
             identity=ArtifactIdentity(kind="Contract", name=source.name), schema=source.schema_
         )
         return ArtifactPin(
@@ -754,18 +754,18 @@ class _Compiler:
             if "budgets" in kwargs and not (
                 isinstance(kwargs["budgets"], ast.Constant) and kwargs["budgets"].value is None
             ):
-                from cruxible_client.contracts.query.grammar import QueryBudgetsV1
+                from cruxible_client.contracts.query.grammar import QueryBudgets
 
                 supplied = kwargs["budgets"]
                 if not (
                     isinstance(supplied, ast.Call)
                     and isinstance(supplied.func, ast.Name)
-                    and supplied.func.id == "QueryBudgetsV1"
+                    and supplied.func.id == "QueryBudgets"
                     and not supplied.args
                 ):
-                    self.fail(supplied, "Use QueryBudgetsV1 with literal bounded values")
+                    self.fail(supplied, "Use QueryBudgets with literal bounded values")
                 try:
-                    budgets = QueryBudgetsV1.model_validate(
+                    budgets = QueryBudgets.model_validate(
                         {k.arg: ast.literal_eval(k.value) for k in supplied.keywords}
                     )
                 except (ValueError, TypeError) as exc:
@@ -1237,15 +1237,15 @@ class _Compiler:
 
     def operand(self, value: Value, at: ast.AST) -> dict[str, Any]:
         if value.literal:
-            return PredicateOperandV1(kind="literal", value=value.wire).model_dump(mode="json")
+            return PredicateOperand(kind="literal", value=value.wire).model_dump(mode="json")
         if isinstance(value.wire, str) and value.wire.startswith("$input."):
             first, *path = value.wire[7:].split(".")
-            return PredicateOperandV1(kind="input", input_name=first, path=tuple(path)).model_dump(
+            return PredicateOperand(kind="input", input_name=first, path=tuple(path)).model_dump(
                 mode="json"
             )
         if isinstance(value.wire, str) and value.wire.startswith("$steps."):
             alias, *path = value.wire[7:].split(".")
-            return PredicateOperandV1(kind="step", alias=alias, path=tuple(path)).model_dump(
+            return PredicateOperand(kind="step", alias=alias, path=tuple(path)).model_dump(
                 mode="json"
             )
         self.fail(at, "This value cannot be used as a guard operand", "guard_operand")
@@ -1588,13 +1588,13 @@ class _Compiler:
 
 
 def _compile_source(
-    program: ProcedureSourceV1,
+    program: ProcedureSource,
     *,
     name: str,
     input: SourceContract,
     output: SourceContract,
-    budget: ProcedureBudgetV3,
-    hard_caps: ProcedureHardCapsV3,
+    budget: ProcedureBudget,
+    hard_caps: ProcedureHardCaps,
     terminal_capability: Literal[1, 2, 3] | None = None,
     description: str | None = None,
 ) -> CompiledSource:
@@ -1661,7 +1661,7 @@ def _compile_source(
         )
     root_in = compiler.contract(input)
     root_in["role"] = "contract-in"
-    definition = ProcedureDefinitionV6.model_validate(
+    definition = ProcedureDefinition.model_validate(
         dict(
             name=name,
             description=description,
@@ -1700,13 +1700,13 @@ def _compile_source(
 
 
 def compile_source(
-    program: ProcedureSourceV1,
+    program: ProcedureSource,
     *,
     name: str,
     input: SourceContract,
     output: SourceContract,
-    budget: ProcedureBudgetV3,
-    hard_caps: ProcedureHardCapsV3,
+    budget: ProcedureBudget,
+    hard_caps: ProcedureHardCaps,
     terminal_capability: Literal[1, 2, 3] | None = None,
     description: str | None = None,
 ) -> CompiledSource:
@@ -1745,14 +1745,14 @@ def verify_source_graph(procedure: Any) -> None:
     """Prove retained source/graph association without running authored Python."""
     from cruxible_client.contracts.errors import ProjectionFormatError
     from cruxible_client.contracts.procedures.artifacts import (
-        ProcedureArtifactV2,
+        ProcedureArtifact,
         procedure_owned_contract_digest,
     )
 
     definition = procedure.definition
-    if not isinstance(definition, ProcedureDefinitionV6) or definition.source is None:
+    if not isinstance(definition, ProcedureDefinition) or definition.source is None:
         return
-    if not isinstance(procedure, ProcedureArtifactV2):
+    if not isinstance(procedure, ProcedureArtifact):
         raise ProjectionFormatError("Source Procedures must carry their declared Contracts")
 
     def root(pin: Any) -> SourceContract:

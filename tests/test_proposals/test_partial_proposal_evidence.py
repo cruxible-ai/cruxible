@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from cruxible_client.contracts import PlaybillProposalList
-from cruxible_client.contracts.proposal_models import ProposalWithdrawalRecordV1
+from cruxible_client.contracts.proposal_models import ProposalWithdrawalRecord
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.proposals.proposals import service_list_playbill_proposals
 from tests.core_support._support import initialize_local
@@ -15,7 +15,7 @@ from tests.test_proposals.test_grouped_proposal_notes import _submit
 def test_withdrawal_without_other_records_has_an_indexed_source_locator(tmp_path):
     instance, _ = initialize_local(tmp_path)
     evidence = instance.proposal_evidence()
-    withdrawal = ProposalWithdrawalRecordV1(
+    withdrawal = ProposalWithdrawalRecord(
         proposal_id="sha256:" + "7" * 64,
         actor_id="owner",
         reason="retained partial evidence",
@@ -34,7 +34,7 @@ def test_orphan_withdrawal_survives_rebuild_restart_and_later_admission(tmp_path
     instance, _ = initialize_local(tmp_path)
     proposal = _submit(instance, "withdrawn")
     evidence = instance.proposal_evidence()
-    withdrawal = ProposalWithdrawalRecordV1(
+    withdrawal = ProposalWithdrawalRecord(
         proposal_id=proposal.admission.proposal_id,
         actor_id="owner",
         reason="retain this withdrawal",
@@ -105,7 +105,7 @@ def test_one_proposal_status_reports_missing_evidence_as_incomplete(tmp_path, mi
     if missing == "admission":
         # A retained withdrawal keeps the row listed once its admission is gone.
         evidence.write_withdrawal(
-            ProposalWithdrawalRecordV1(
+            ProposalWithdrawalRecord(
                 proposal_id=proposal_id,
                 actor_id="owner",
                 reason="retain this row",

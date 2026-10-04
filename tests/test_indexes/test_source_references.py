@@ -10,12 +10,12 @@ from pydantic import TypeAdapter, ValidationError
 
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress
 from cruxible_client.contracts.source_references import (
-    CasSourceReferenceV1,
-    EvidenceCommitmentV1,
-    ExternalSourceReferenceV1,
-    LedgerSourceReferenceV1,
-    SemanticReadCoordinateV1,
-    SourceHandleV1,
+    CasSourceReference,
+    EvidenceCommitment,
+    ExternalSourceReference,
+    LedgerSourceReference,
+    SemanticReadCoordinate,
+    SourceHandle,
     SourceSchemaRegistry,
     source_handle_digest,
     validate_local_read_coordinate,
@@ -40,8 +40,8 @@ def external_reference(
     *,
     replayability: str = "exact",
     selector: object | None = None,
-) -> ExternalSourceReferenceV1:
-    return ExternalSourceReferenceV1.model_validate(
+) -> ExternalSourceReference:
+    return ExternalSourceReference.model_validate(
         {
             "source_identity": "commerce.production.orders",
             "producer_binding_digest": DIGEST_B,
@@ -61,10 +61,10 @@ def external_reference(
 def test_ledger_cas_external_references_and_handle_match_frozen_golden() -> None:
     fixture_path = Path(__file__).parents[1] / "goldens" / "playbill" / "source-reference-v1.json"
     fixture = json.loads(fixture_path.read_bytes())
-    ledger = LedgerSourceReferenceV1.model_validate(fixture["ledger_reference"])
-    cas = CasSourceReferenceV1.model_validate(fixture["cas_reference"])
-    external = ExternalSourceReferenceV1.model_validate(fixture["external_reference"])
-    handle = SourceHandleV1.model_validate(fixture["source_handle"])
+    ledger = LedgerSourceReference.model_validate(fixture["ledger_reference"])
+    cas = CasSourceReference.model_validate(fixture["cas_reference"])
+    external = ExternalSourceReference.model_validate(fixture["external_reference"])
+    handle = SourceHandle.model_validate(fixture["source_handle"])
 
     assert ledger.coordinate == accepted_coordinate()
     assert cas.content_digest == DIGEST_A
@@ -73,14 +73,14 @@ def test_ledger_cas_external_references_and_handle_match_frozen_golden() -> None
 
 
 def test_source_handle_spans_require_exact_bytes_and_stay_within_commitment() -> None:
-    source = CasSourceReferenceV1(content_digest=DIGEST_A)
-    exact = EvidenceCommitmentV1(
+    source = CasSourceReference(content_digest=DIGEST_A)
+    exact = EvidenceCommitment(
         digest_kind="exact_bytes",
         digest=DIGEST_A,
         byte_length=10,
         materialization="cas",
     )
-    handle = SourceHandleV1(
+    handle = SourceHandle(
         subject=SemanticAddress.whole_artifact("documents/design.json"),
         at=accepted_coordinate(),
         source=source,
@@ -91,14 +91,14 @@ def test_source_handle_spans_require_exact_bytes_and_stay_within_commitment() ->
     assert handle.exact_spans[0].end_byte == 5
 
     with pytest.raises(ValidationError, match="exceeds"):
-        SourceHandleV1(
+        SourceHandle(
             **handle.model_dump(exclude={"exact_spans"}),
             exact_spans=(ContentSpan(content_digest=DIGEST_A, start_byte=1, end_byte=11),),
         )
     with pytest.raises(ValidationError, match="exact_bytes"):
-        SourceHandleV1(
+        SourceHandle(
             **handle.model_dump(exclude={"commitment", "exact_spans"}),
-            commitment=EvidenceCommitmentV1(
+            commitment=EvidenceCommitment(
                 digest_kind="canonical_value",
                 digest=DIGEST_A,
                 materialization="cas",
@@ -111,7 +111,7 @@ def test_materialization_and_replayability_correspondence_refuses_fail_closed() 
     exact_external = external_reference()
     validate_source_commitment(
         exact_external,
-        EvidenceCommitmentV1(
+        EvidenceCommitment(
             digest_kind="canonical_value",
             digest=DIGEST_A,
             materialization="external",
@@ -120,7 +120,7 @@ def test_materialization_and_replayability_correspondence_refuses_fail_closed() 
     with pytest.raises(ValueError, match="exact replayability"):
         validate_source_commitment(
             external_reference(replayability="attested_only"),
-            EvidenceCommitmentV1(
+            EvidenceCommitment(
                 digest_kind="canonical_value",
                 digest=DIGEST_A,
                 materialization="external",
@@ -129,14 +129,14 @@ def test_materialization_and_replayability_correspondence_refuses_fail_closed() 
     with pytest.raises(ValueError, match="attested-only"):
         validate_source_commitment(
             exact_external,
-            EvidenceCommitmentV1(
+            EvidenceCommitment(
                 digest_kind="provider_statement",
                 digest=DIGEST_A,
                 materialization="none",
             ),
         )
     with pytest.raises(ValidationError, match="byte_length"):
-        EvidenceCommitmentV1(
+        EvidenceCommitment(
             digest_kind="canonical_value",
             digest=DIGEST_A,
             byte_length=4,
@@ -161,7 +161,7 @@ def test_external_source_ref_refuses_secret_locators_and_unregistered_schemas() 
 
 
 def test_semantic_read_coordinate_union_is_discriminator_led_and_remote_refuses() -> None:
-    adapter = TypeAdapter(SemanticReadCoordinateV1)
+    adapter = TypeAdapter(SemanticReadCoordinate)
     assert adapter.validate_python(accepted_coordinate().model_dump(mode="json")) == (
         accepted_coordinate()
     )

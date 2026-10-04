@@ -20,24 +20,24 @@ from cruxible_client.authoring.procedures import (
     Transform,
 )
 from cruxible_client.authoring.sdk import Playbill
-from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_client.contracts.procedures.models import (
-    GuardPredicateV1,
-    PredicateOperandV1,
-    ProcedureBudgetV3,
-    ProcedureHardCapsV3,
-    TransformAdapterSpecV1,
+    GuardPredicate,
+    PredicateOperand,
+    ProcedureBudget,
+    ProcedureHardCaps,
+    TransformAdapterSpec,
 )
 
 EMPTY = CarriedContractInput(name="empty", fields={})
 NUMBER = CarriedContractInput(name="number", fields={"count": PropertySchema(type="int")})
-BUDGET = ProcedureBudgetV3(
-    wall_clock=CanonicalDurationV1(microseconds=1_000_000),
+BUDGET = ProcedureBudget(
+    wall_clock=CanonicalDuration(microseconds=1_000_000),
     max_provider_calls=1,
     max_capture_bytes=1024,
 )
-CAPS = ProcedureHardCapsV3(
+CAPS = ProcedureHardCaps(
     max_wall_clock=BUDGET.wall_clock,
     max_provider_calls=1,
     max_capture_bytes=1024,
@@ -162,17 +162,17 @@ def test_transform_adapter_uses_value_contract_not_spec_envelope():
             transform_kind="adapter",
             contract_in=NUMBER,
             contract_out=NUMBER,
-            spec=TransformAdapterSpecV1(value={"count": 2}),
+            spec=TransformAdapterSpec(value={"count": 2}),
         )
     )
     assert plan.preview().ready_for_prepare, plan.preview().errors
 
 
 def test_existing_guard_branches_are_inspected_not_reimplemented():
-    predicate = GuardPredicateV1(
-        left=PredicateOperandV1(kind="step", alias="seed", path=("count",)),
+    predicate = GuardPredicate(
+        left=PredicateOperand(kind="step", alias="seed", path=("count",)),
         operator="gt",
-        right=PredicateOperandV1(kind="literal", value=0),
+        right=PredicateOperand(kind="literal", value=0),
     )
     plan = sequence(
         Project("seed", fields={"count": 1}, contract_out=NUMBER),
@@ -189,10 +189,10 @@ def test_existing_guard_branches_are_inspected_not_reimplemented():
 
 
 def test_guard_merge_rejects_branch_only_alias():
-    predicate = GuardPredicateV1(
-        left=PredicateOperandV1(kind="literal", value=True),
+    predicate = GuardPredicate(
+        left=PredicateOperand(kind="literal", value=True),
         operator="eq",
-        right=PredicateOperandV1(kind="literal", value=True),
+        right=PredicateOperand(kind="literal", value=True),
     )
     plan = sequence(
         Project("seed", fields={"count": 1}, contract_out=NUMBER),
@@ -281,11 +281,11 @@ def test_discovery_requires_explicit_choice_when_multiple_providers_exist():
     assert binding.provider == "Provider:second"
     assert binding.effect_class == "external_read"
     from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
-    from cruxible_client.contracts.provider_contracts import ProviderOperationContractV1
+    from cruxible_client.contracts.provider_contracts import ProviderOperationContract
 
     typed_entry = entry.model_copy(
         update={
-            "operation_contract": ProviderOperationContractV1(
+            "operation_contract": ProviderOperationContract(
                 input=ContractSchema(fields={"url": PropertySchema(type="string")}),
                 output="playbill-provider-result-to-external-capture-v1",
             )
@@ -302,7 +302,7 @@ def test_discovery_requires_explicit_choice_when_multiple_providers_exist():
 def test_sdk_changeset_carries_procedure_line_and_mandate_together():
     from datetime import UTC, datetime
 
-    from cruxible_client.authoring.inputs import ProcedureMandateInputV1
+    from cruxible_client.authoring.inputs import ProcedureMandateInput
     from cruxible_client.authoring.sdk import ChangeSetDraft
     from cruxible_client.contracts.authoring.models import authoring_member_identity
 
@@ -314,7 +314,7 @@ def test_sdk_changeset_carries_procedure_line_and_mandate_together():
         .line(name="demo", procedure="demo", acquisition_policy="demo", max_authority="observe")
     )
     changes.procedure_mandate(
-        ProcedureMandateInputV1(
+        ProcedureMandateInput(
             kind="procedure_mandate",
             name="demo",
             procedure_name="demo",
@@ -344,7 +344,7 @@ def test_sequence_through_sdk_authoring_acceptance_and_existing_executor(tmp_pat
         service_submit_playbill_approval,
     )
     from cruxible_core.service.procedures.procedure_runs import (
-        ProcedureRunRequestV2,
+        ProcedureRunRequest,
         service_run_playbill_procedure,
     )
     from tests.core_support._support import initialize_local
@@ -376,7 +376,7 @@ def test_sequence_through_sdk_authoring_acceptance_and_existing_executor(tmp_pat
     result = service_run_playbill_procedure(
         instance,
         name="demo",
-        request=ProcedureRunRequestV2(evaluation_time=now, input={}),
+        request=ProcedureRunRequest(evaluation_time=now, input={}),
         actor_context=GovernedActorContext(
             actor_type="human_user",
             actor_id="owner",

@@ -24,13 +24,13 @@ from cruxible_client.contracts.artifacts import (
 )
 from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayloadV1,
-    WorkingAnchorWindowV1,
-    WorkingDigestCoordinateV1,
-    WorkingSelectionObservationV1,
+    WorkingAnchorWindow,
+    WorkingDigestCoordinate,
+    WorkingSelectionObservation,
 )
 from cruxible_client.contracts.captures import (
     AcceptedCaptureContract,
-    CaptureContractV1,
+    CaptureContract,
     capture_contract_digest,
     capture_contract_path,
     capture_contract_successor_break,
@@ -46,14 +46,14 @@ from cruxible_client.contracts.claim_types import (
     render_claim_type,
 )
 from cruxible_client.contracts.claims import claim_artifact_digest, claim_path, parse_claim
-from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeRequestV1
+from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeRequest
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
+    ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV2,
-    ClaimEvidenceAdmissionPolicyV3,
+    ClaimEvidenceAdmissionRule,
     ClaimEvidenceAdmissionRuleV2,
-    ClaimEvidenceAdmissionRuleV3,
-    EvidenceAdmissionInputV1,
+    EvidenceAdmissionInput,
     evaluate_claim_evidence_admission,
 )
 from cruxible_client.contracts.proposal_models import ProposalResult
@@ -82,11 +82,11 @@ CONTRACT_PATH = capture_contract_path(IDENTITY.name)
 PREDICATE = _claim_type().predicate
 
 
-def _digest(contract: CaptureContractV1) -> str:
+def _digest(contract: CaptureContract) -> str:
     return capture_contract_digest(contract).tagged
 
 
-def _successor(previous: CaptureContractV1, **changes: object) -> CaptureContractV1:
+def _successor(previous: CaptureContract, **changes: object) -> CaptureContract:
     update = {
         "selection_budget": previous.selection_budget.model_copy(
             update={"max_bytes": previous.selection_budget.max_bytes + 1024}
@@ -97,8 +97,8 @@ def _successor(previous: CaptureContractV1, **changes: object) -> CaptureContrac
     return previous.model_copy(update=update)
 
 
-def _identity_rule(*identities: ArtifactIdentity) -> ClaimEvidenceAdmissionRuleV3:
-    return ClaimEvidenceAdmissionRuleV3(
+def _identity_rule(*identities: ArtifactIdentity) -> ClaimEvidenceAdmissionRule:
+    return ClaimEvidenceAdmissionRule(
         rule_id="source",
         claim_roles=("normative", "observation"),
         capture_contracts=tuple(
@@ -125,7 +125,7 @@ def _v6_type() -> ClaimType:
     return _claim_type().model_copy(
         update={
             "artifact_format": "playbill-claim-type-v6",
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV3(
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
                 rules=(_identity_rule(IDENTITY),)
             ),
         }
@@ -145,14 +145,14 @@ def _v5_type(*rules: ClaimEvidenceAdmissionRuleV2) -> ClaimType:
 
 
 def test_an_identity_rule_admits_every_version_and_an_exact_rule_one() -> None:
-    evidence = EvidenceAdmissionInputV1(
+    evidence = EvidenceAdmissionInput(
         claim_role="observation",
         capture_contract_digest=_digest(_successor(ORIGINAL)),
         capture_contract_identity=IDENTITY.qualified,
         evidence_kind="self_asserted",
         source_subject_bound=True,
     )
-    identity_policy = ClaimEvidenceAdmissionPolicyV3(rules=(_identity_rule(IDENTITY),))
+    identity_policy = ClaimEvidenceAdmissionPolicy(rules=(_identity_rule(IDENTITY),))
     exact_policy = ClaimEvidenceAdmissionPolicyV2(rules=(_digest_rule(_digest(ORIGINAL)),))
 
     assert evaluate_claim_evidence_admission(identity_policy, evidence).verdict == "eligible"
@@ -183,7 +183,7 @@ def test_the_revision_4_law_refuses_breaking_successors_and_revival_but_not_reti
         path=CONTRACT_PATH, contract=ORIGINAL, artifact_digest=_digest(ORIGINAL)
     )
 
-    def law(contract: CaptureContractV1, previous: AcceptedCaptureContract) -> str | None:
+    def law(contract: CaptureContract, previous: AcceptedCaptureContract) -> str | None:
         result = evaluate_capture_contract_law(
             contract, path=CONTRACT_PATH, predecessor=previous, compatible_succession=True
         )
@@ -352,14 +352,14 @@ class _World:
         payload = ClaimAuthoringPayloadV1(
             statement=_self_source_payload().statement,
             rationale="The repository snapshot says the work is ready.",
-            source=WorkingSelectionObservationV1(
+            source=WorkingSelectionObservation(
                 source_id=SOURCE,
-                coordinate=WorkingDigestCoordinateV1(
+                coordinate=WorkingDigestCoordinate(
                     source_content_digest=digest, source_byte_length=len(text)
                 ),
                 selected_content_base64=base64.b64encode(text).decode("ascii"),
                 selected_bytes_digest=digest,
-                selector=WorkingAnchorWindowV1(
+                selector=WorkingAnchorWindow(
                     anchor=text.decode("ascii"),
                     start_byte=0,
                     end_byte=len(text),
@@ -459,7 +459,7 @@ def test_the_upgrade_converts_exact_rules_and_carries_the_claims(world: _World) 
 
     result = service_upgrade_evidence_rules(
         world.instance,
-        request=EvidenceRuleUpgradeRequestV1(dry_run=False),
+        request=EvidenceRuleUpgradeRequest(dry_run=False),
         actor_id="owner",
         timestamp=world.timestamp(),
     )
@@ -509,7 +509,7 @@ def test_the_upgrade_refuses_rules_that_would_start_matching_the_same_evidence(
 
     result = service_upgrade_evidence_rules(
         world.instance,
-        request=EvidenceRuleUpgradeRequestV1(dry_run=False),
+        request=EvidenceRuleUpgradeRequest(dry_run=False),
         actor_id="owner",
         timestamp=world.timestamp(),
     )
@@ -665,16 +665,16 @@ def test_a_rule_for_other_roles_does_not_cover_a_stranded_exact_rule() -> None:
 
 def test_only_live_resolution_contracts_hold_a_contract_in_place() -> None:
     from cruxible_client.contracts.procedures.windows import (
-        CaptureEventSelectorV1,
-        CaptureEventWindowV1,
+        CaptureEventSelector,
+        CaptureEventWindow,
     )
-    from cruxible_client.contracts.resolution_contracts import ResolutionContractV1
+    from cruxible_client.contracts.resolution_contracts import ResolutionContract
 
-    def window(state: str) -> ResolutionContractV1:
-        return ResolutionContractV1.model_construct(
+    def window(state: str) -> ResolutionContract:
+        return ResolutionContract.model_construct(
             identity=ArtifactIdentity(kind="ResolutionContract", name=state),
-            window=CaptureEventWindowV1(
-                event=CaptureEventSelectorV1(
+            window=CaptureEventWindow(
+                event=CaptureEventSelector(
                     capture_contract_identity=IDENTITY,
                     capture_contract_digest=_digest(ORIGINAL),
                 ),
@@ -756,7 +756,7 @@ def test_the_upgrade_moves_original_v1_claim_types_and_their_verdicts_still_read
 
     result = service_upgrade_evidence_rules(
         world.instance,
-        request=EvidenceRuleUpgradeRequestV1(dry_run=False),
+        request=EvidenceRuleUpgradeRequest(dry_run=False),
         actor_id="owner",
         timestamp=world.timestamp(),
     )
@@ -802,7 +802,7 @@ def test_the_upgrade_leaves_producer_reducer_allowlists_for_a_decision() -> None
 
 
 def test_a_kit_carries_the_contracts_its_identity_rules_name() -> None:
-    from cruxible_client.contracts.kits import PlaybillKitBuildRequestV1
+    from cruxible_client.contracts.kits import PlaybillKitBuildRequest
     from cruxible_core.service.kits import build_kit
 
     identity_type = _v6_type().model_copy(
@@ -817,7 +817,7 @@ def test_a_kit_carries_the_contracts_its_identity_rules_name() -> None:
         CONTRACT_PATH: render_capture_contract(ORIGINAL),
     }
     bundle = build_kit(
-        tree, PlaybillKitBuildRequestV1(kit_id="acme", version="1.0.0", owns=("acme.",))
+        tree, PlaybillKitBuildRequest(kit_id="acme", version="1.0.0", owns=("acme.",))
     )
     assert {item.path for item in bundle.manifest.artifacts} == {
         claim_type_path(identity_type.predicate),
@@ -826,7 +826,7 @@ def test_a_kit_carries_the_contracts_its_identity_rules_name() -> None:
 
 
 def test_an_identity_reference_never_makes_a_kit_cycle() -> None:
-    from cruxible_client.contracts.kits import PlaybillKitBuildRequestV1
+    from cruxible_client.contracts.kits import PlaybillKitBuildRequest
     from cruxible_core.service.kits import build_kit
 
     identity_type = _v6_type().model_copy(
@@ -860,7 +860,7 @@ def test_an_identity_reference_never_makes_a_kit_cycle() -> None:
         CONTRACT_PATH: render_capture_contract(pinning),
     }
     bundle = build_kit(
-        tree, PlaybillKitBuildRequestV1(kit_id="acme", version="1.0.0", owns=("acme.",))
+        tree, PlaybillKitBuildRequest(kit_id="acme", version="1.0.0", owns=("acme.",))
     )
     assert {item.path for item in bundle.manifest.artifacts} == set(tree)
 
@@ -924,7 +924,7 @@ def test_the_upgrade_previews_by_default_and_commits_only_at_its_coordinate(
         [world.instance.root.parent],
         lambda: service_upgrade_evidence_rules(
             world.instance,
-            request=EvidenceRuleUpgradeRequestV1(),
+            request=EvidenceRuleUpgradeRequest(),
             actor_id="owner",
             timestamp=world.timestamp(),
         ),
@@ -938,7 +938,7 @@ def test_the_upgrade_previews_by_default_and_commits_only_at_its_coordinate(
     assert not service_list_playbill_proposals(world.instance, status="open").entries
     committed = service_upgrade_evidence_rules(
         world.instance,
-        request=EvidenceRuleUpgradeRequestV1(dry_run=False, at=preview.coordinate.git_oid),
+        request=EvidenceRuleUpgradeRequest(dry_run=False, at=preview.coordinate.git_oid),
         actor_id="owner",
         timestamp=world.timestamp(),
     )
@@ -948,7 +948,7 @@ def test_the_upgrade_previews_by_default_and_commits_only_at_its_coordinate(
     with pytest.raises(ChangeRefusedError) as moved:
         service_upgrade_evidence_rules(
             world.instance,
-            request=EvidenceRuleUpgradeRequestV1(dry_run=False, at=preview.coordinate.git_oid),
+            request=EvidenceRuleUpgradeRequest(dry_run=False, at=preview.coordinate.git_oid),
             actor_id="owner",
             timestamp=world.timestamp(),
         )

@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from cruxible_core.coverage.contracts import (
-    CoverageAccessProfileV1,
+    CoverageAccessProfile,
 )
 from cruxible_core.evidence.citation_relations import (
     RELATION_RETIRED_CONFLICT_SCHEMA,
@@ -33,8 +33,8 @@ from tests.test_proposals.test_retirement_citing_advisory import (
 EVALUATION_TIME = datetime(2026, 8, 24, 18, tzinfo=UTC)
 
 
-def _access() -> CoverageAccessProfileV1:
-    return CoverageAccessProfileV1(
+def _access() -> CoverageAccessProfile:
+    return CoverageAccessProfile(
         profile_id="citation-retirement-test",
         permitted_access_classes=("instance", "public"),
     )

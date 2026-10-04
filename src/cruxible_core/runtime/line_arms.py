@@ -12,9 +12,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 from cruxible_client.contracts.line_dispatch import (
-    LineArmPrincipalV1,
-    LineDispatchRequestV1,
-    LineDispatchResultV1,
+    LineArmPrincipal,
+    LineDispatchRequest,
+    LineDispatchResult,
     is_current_arm_principal_record,
 )
 from cruxible_client.contracts.primitives import new_id
@@ -51,7 +51,7 @@ ARM_PERMISSION = TOOL_PERMISSIONS["cruxible_playbill_line_arm"]
 AUTOMATIC_DISPATCH_LIMIT = 10
 
 
-def current_arm_principal() -> LineArmPrincipalV1:
+def current_arm_principal() -> LineArmPrincipal:
     """The credential this request would arm under; only its identifier is kept."""
 
     auth = get_current_auth_context()
@@ -61,7 +61,7 @@ def current_arm_principal() -> LineArmPrincipalV1:
             raise credential_unbound_refusal(
                 credential_id=auth.credential_id, credential_label=auth.credential_label
             )
-        return LineArmPrincipalV1(
+        return LineArmPrincipal(
             kind="runtime_credential",
             credential_id=auth.credential_id,
             label=auth.credential_label,
@@ -71,9 +71,9 @@ def current_arm_principal() -> LineArmPrincipalV1:
         # principal arms as that claim, rechecked before every admission; one
         # that claims none arms as the implicit local operator.
         if auth is None:
-            return LineArmPrincipalV1(kind="local_operator", label=LOCAL_OPERATOR_ACTOR_ID)
+            return LineArmPrincipal(kind="local_operator", label=LOCAL_OPERATOR_ACTOR_ID)
         assert auth.principal_id is not None
-        return LineArmPrincipalV1(kind="principal_claim", label=auth.principal_id)
+        return LineArmPrincipal(kind="principal_claim", label=auth.principal_id)
     raise AuthenticationError(
         "Arming a Line requires a runtime credential the daemon can recheck before each run"
     )
@@ -97,7 +97,7 @@ def _require_active_principal(instance: Any, principal_id: str) -> None:
 
 
 def arm_authority(
-    instance: Any, principal: LineArmPrincipalV1, *, now: datetime
+    instance: Any, principal: LineArmPrincipal, *, now: datetime
 ) -> tuple[GovernedActorContext, int]:
     """The actor and caller rung the arm dispatches under, or why it no longer may.
 
@@ -179,7 +179,7 @@ def dispatch_armed_line(
     *,
     now: datetime | None = None,
     limit: int = AUTOMATIC_DISPATCH_LIMIT,
-) -> LineDispatchResultV1 | None:
+) -> LineDispatchResult | None:
     """Admit the due work one armed segment matched, under its rechecked authority.
 
     Returns None when the arm stopped because its authority no longer holds.
@@ -206,7 +206,7 @@ def dispatch_armed_line(
             now=now,
         )
         return None
-    principal = LineArmPrincipalV1.model_validate(arm["armed_by"])
+    principal = LineArmPrincipal.model_validate(arm["armed_by"])
     daemon = GovernedActorContext(
         actor_type="system",
         actor_id="line-listener",
@@ -229,7 +229,7 @@ def dispatch_armed_line(
         return service_dispatch_line(
             instance,
             arm["line_id"],
-            LineDispatchRequestV1(limit=limit),
+            LineDispatchRequest(limit=limit),
             actor=actor,
             now=now,
             caller_rung=caller_rung,

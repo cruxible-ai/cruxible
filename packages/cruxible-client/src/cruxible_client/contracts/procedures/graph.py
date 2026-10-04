@@ -13,31 +13,31 @@ from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.procedures.models import (
     TERMINAL_NODE_KINDS,
     TERMINAL_REQUIRED_RUNGS,
+    CaptureEgressNode,
     CaptureEgressNodeV3,
-    CaptureEgressNodeV6,
-    ClaimTapNodeV6,
-    ConstantNodeV6,
-    GuardNodeV3,
-    InboxEgressNodeV3,
-    InvokeNodeV6,
+    ClaimTapNode,
+    ConstantNode,
+    GuardNode,
+    InboxEgressNode,
+    InvokeNode,
     ProcedureDefinitionAny,
     ProcedureDefinitionV3,
     ProcedureDefinitionV4,
     ProcedureNodeAny,
-    ProcedurePinSlotRefV1,
-    ProjectNodeV3,
+    ProcedurePinSlotRef,
+    ProjectNode,
+    ProposeChangeSetNode,
     ProposeChangeSetNodeV3,
-    ProposeChangeSetNodeV6,
+    ProviderNode,
     ProviderNodeV3,
-    ProviderNodeV4,
     RepeatNodeV3,
     RepeatNodeV4,
-    SelectNodeV6,
+    SelectNode,
+    SourceNode,
     SourceNodeV3,
-    SourceNodeV4,
+    StateTapNode,
     StateTapNodeV3,
-    StateTapNodeV6,
-    TransformNodeV3,
+    TransformNode,
     iter_pin_bindings,
 )
 
@@ -70,12 +70,12 @@ class ProcedureNodeDigestsV3:
     subtree_digest: str
 
 
-ProcedureGraphV4 = ProcedureGraphV3
-ProcedureNodeDigestsV4 = ProcedureNodeDigestsV3
+ProcedureGraph = ProcedureGraphV3
+ProcedureNodeDigests = ProcedureNodeDigestsV3
 
 
 def _declared_edges(node: ProcedureNodeAny) -> dict[str, str]:
-    if isinstance(node, GuardNodeV3):
+    if isinstance(node, GuardNode):
         edges: dict[str, str] = {"on_false": node.on_false}
         if node.on_true is not None:
             edges["on_true"] = node.on_true
@@ -102,25 +102,25 @@ def _reference_templates(
 ) -> Iterator[tuple[str, object]]:
     """Yield only fields whose values the v3 runtime resolves as references."""
 
-    if isinstance(node, ConstantNodeV6):
+    if isinstance(node, ConstantNode):
         return
-    if isinstance(node, CaptureEgressNodeV6 | ProposeChangeSetNodeV6):
+    if isinstance(node, CaptureEgressNode | ProposeChangeSetNode):
         yield "result", node.result
-    if isinstance(node, ClaimTapNodeV6):
+    if isinstance(node, ClaimTapNode):
         yield "subject_id", node.subject_id
     elif isinstance(node, StateTapNodeV3):
         yield "parameters", node.parameters
-    elif isinstance(node, SourceNodeV3 | SourceNodeV4):
+    elif isinstance(node, SourceNodeV3 | SourceNode):
         yield "request", node.request
-    elif isinstance(node, ProviderNodeV3 | ProviderNodeV4 | InvokeNodeV6):
+    elif isinstance(node, ProviderNodeV3 | ProviderNode | InvokeNode):
         yield "input", node.input
-    elif isinstance(node, TransformNodeV3):
+    elif isinstance(node, TransformNode):
         yield "spec", node.spec
-    elif isinstance(node, ProjectNodeV3):
+    elif isinstance(node, ProjectNode):
         yield "fields", node.fields
     elif isinstance(node, RepeatNodeV3 | RepeatNodeV4):
         return
-    elif isinstance(node, CaptureEgressNodeV3 | InboxEgressNodeV3):
+    elif isinstance(node, CaptureEgressNodeV3 | InboxEgressNode):
         yield "input", node.input
     elif isinstance(node, ProposeChangeSetNodeV3):
         yield "candidate_templates", node.candidate_templates
@@ -198,7 +198,7 @@ def _validate_node_references(
     *,
     available: frozenset[str],
 ) -> None:
-    if isinstance(node, GuardNodeV3):
+    if isinstance(node, GuardNode):
         missing = set(node.predicate.step_aliases()) - available
         if missing:
             raise ProcedureGraphFormatError(
@@ -246,7 +246,7 @@ def _analyze_procedure(definition: ProcedureDefinitionAny) -> ProcedureGraphV3:
     guard_halt_targets = frozenset(
         target
         for node in definition.nodes
-        if isinstance(node, GuardNodeV3)
+        if isinstance(node, GuardNode)
         for target in (node.on_true, node.on_false)
         if target is not None and target != "$abort" and kinds.get(target) == "halt"
     )
@@ -254,7 +254,7 @@ def _analyze_procedure(definition: ProcedureDefinitionAny) -> ProcedureGraphV3:
     for index, node in enumerate(definition.nodes):
         declared = _declared_edges(node)
         fallthrough = node_ids[index + 1] if index + 1 < len(node_ids) else None
-        if isinstance(node, GuardNodeV3) and "on_true" not in declared:
+        if isinstance(node, GuardNode) and "on_true" not in declared:
             if fallthrough is None:
                 raise ProcedureGraphFormatError(
                     f"Procedure guard {node.node_id!r} with omitted on_true must name a "
@@ -263,7 +263,7 @@ def _analyze_procedure(definition: ProcedureDefinitionAny) -> ProcedureGraphV3:
             declared["on_true"] = fallthrough
         elif (
             node.kind not in TERMINAL_NODE_KINDS
-            and not isinstance(node, GuardNodeV3)
+            and not isinstance(node, GuardNode)
             and "next" not in declared
             and fallthrough
             and fallthrough not in guard_halt_targets
@@ -292,10 +292,7 @@ def _analyze_procedure(definition: ProcedureDefinitionAny) -> ProcedureGraphV3:
                     f"R2: node {node.node_id!r} {label} must target a later node"
                 )
         for binding in iter_pin_bindings(node):
-            if (
-                isinstance(binding, ProcedurePinSlotRefV1)
-                and binding.slot_name not in declared_slots
-            ):
+            if isinstance(binding, ProcedurePinSlotRef) and binding.slot_name not in declared_slots:
                 raise ProcedureGraphFormatError(
                     f"Procedure node {node.node_id!r} references undeclared pin slot "
                     f"{binding.slot_name!r}"
@@ -330,7 +327,7 @@ def _analyze_procedure(definition: ProcedureDefinitionAny) -> ProcedureGraphV3:
     # exactly one of them. Min/max counts over the DAG prove this in O(V + E)
     # per join, without enumerating exponentially many paths.
     for node in definition.nodes:
-        if not isinstance(node, SelectNodeV6):
+        if not isinstance(node, SelectNode):
             continue
         if not set(node.sources).issubset(reachable_aliases[node.node_id]):
             raise ProcedureGraphFormatError("select names a producer outside its incoming paths")
@@ -360,11 +357,11 @@ def _analyze_procedure(definition: ProcedureDefinitionAny) -> ProcedureGraphV3:
     alias_nodes = {_node_alias(node): node for node in definition.nodes if _node_alias(node)}
     for node in definition.nodes:
         _validate_node_references(node, available=available[node.node_id])
-        if isinstance(node, StateTapNodeV6 | ClaimTapNodeV6):
+        if isinstance(node, StateTapNode | ClaimTapNode):
             for location, template in _reference_templates(node):
                 for alias in _step_alias_references(template, location=location):
                     if not isinstance(
-                        alias_nodes[alias], StateTapNodeV6 | ClaimTapNodeV6 | ConstantNodeV6
+                        alias_nodes[alias], StateTapNode | ClaimTapNode | ConstantNode
                     ):
                         raise ProcedureGraphFormatError(
                             "admission selectors cannot depend on runtime output"
@@ -398,7 +395,7 @@ def analyze_procedure_v3(definition: ProcedureDefinitionV3) -> ProcedureGraphV3:
     return _analyze_procedure(definition)
 
 
-def analyze_procedure_v4(definition: ProcedureDefinitionV4) -> ProcedureGraphV4:
+def analyze_procedure_v4(definition: ProcedureDefinitionV4) -> ProcedureGraph:
     """Enforce v4's static graph law without consulting an implementation registry."""
 
     return _analyze_procedure(definition)
@@ -463,10 +460,10 @@ def compute_procedure_definition_digest_v3(definition: ProcedureDefinitionV3) ->
 
 def compute_procedure_node_digests_v4(
     definition: ProcedureDefinitionV4,
-) -> dict[str, ProcedureNodeDigestsV4]:
+) -> dict[str, ProcedureNodeDigests]:
     graph = analyze_procedure_v4(definition)
     nodes = {node.node_id: node for node in definition.nodes}
-    result: dict[str, ProcedureNodeDigestsV4] = {}
+    result: dict[str, ProcedureNodeDigests] = {}
     for node_id in reversed(graph.node_ids):
         node = nodes[node_id]
         local = typed_digest(
@@ -483,7 +480,7 @@ def compute_procedure_node_digests_v4(
             f"playbill-procedure-node-subtree-v{definition.graph_format}",
             {"local_digest": local, "successors": successor_digests},
         ).tagged
-        result[node_id] = ProcedureNodeDigestsV4(
+        result[node_id] = ProcedureNodeDigests(
             node_id=node_id,
             kind=node.kind,
             local_digest=local,
@@ -516,9 +513,9 @@ def compute_procedure_definition_digest(definition: ProcedureDefinitionAny) -> A
 __all__ = [
     "ProcedureGraphFormatError",
     "ProcedureGraphV3",
-    "ProcedureGraphV4",
+    "ProcedureGraph",
     "ProcedureNodeDigestsV3",
-    "ProcedureNodeDigestsV4",
+    "ProcedureNodeDigests",
     "analyze_procedure_v3",
     "analyze_procedure_v4",
     "compute_procedure_definition_digest",

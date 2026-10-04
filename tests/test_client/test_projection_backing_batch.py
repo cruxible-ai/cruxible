@@ -6,8 +6,8 @@ import pytest
 
 from cruxible_client.authoring.blocks import ProjectionRepinError, _claim_backings
 from cruxible_client.contracts.artifacts import ArtifactIdentity
-from cruxible_client.contracts.claim_reads import ClaimBackingsResultV1
-from cruxible_client.contracts.declared_blocks import ProjectionClaimBackingV1
+from cruxible_client.contracts.claim_reads import ClaimBackingsResult
+from cruxible_client.contracts.declared_blocks import ProjectionClaimBacking
 from tests.test_client.test_playbill_block_sync import NEW_COORDINATE, OLD_COORDINATE
 
 
@@ -19,10 +19,10 @@ def test_metadata_batch_is_bounded_and_does_not_read_claim_verdicts():
             assert instance_id == "instance"
             assert at == OLD_COORDINATE.model_dump(mode="json")
             calls.append(claim_ids)
-            return ClaimBackingsResultV1(
+            return ClaimBackingsResult(
                 coordinate=OLD_COORDINATE.model_dump(mode="json"),
                 backings=tuple(
-                    ProjectionClaimBackingV1(
+                    ProjectionClaimBacking(
                         identity=ArtifactIdentity(kind="Claim", name=name),
                         statement_digest="sha256:" + "a" * 64,
                     )

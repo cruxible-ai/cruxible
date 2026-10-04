@@ -4,7 +4,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from cruxible_client.contracts.capture_journal import (
-    CaptureCursorV1,
+    CaptureCursor,
     InMemoryCaptureLandingJournal,
     capture_landing_idempotency_key,
 )
@@ -59,7 +59,7 @@ def test_landing_retry_returns_same_event_and_cursor() -> None:
             idempotency_key=key,
         )
         assert retry == first
-        assert CaptureCursorV1.parse(first.cursor).render() == first.cursor
+        assert CaptureCursor.parse(first.cursor).render() == first.cursor
         journal.verify()
 
 

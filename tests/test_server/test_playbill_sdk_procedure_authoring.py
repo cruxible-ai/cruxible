@@ -9,10 +9,10 @@ from cruxible_client import Playbill
 from cruxible_client.authoring.examples import procedure_example
 from cruxible_client.authoring.inputs import AuthoringInputError, QueryDefinitionInput
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
-from cruxible_client.contracts.authoring.models import ProcedureAuthoringPayloadV2
+from cruxible_client.contracts.authoring.models import ProcedureAuthoringPayload
 from cruxible_client.contracts.procedures.artifacts import procedure_owned_contract_digest
-from cruxible_client.contracts.query.definitions import QueryDefinitionV1, QueryEvaluationPolicyV1
-from cruxible_client.contracts.query.grammar import QueryBudgetsV1, QueryEntryV1
+from cruxible_client.contracts.query.definitions import QueryDefinition, QueryEvaluationPolicy
+from cruxible_client.contracts.query.grammar import QueryBudgets, QueryEntry
 from cruxible_client.transport.http import CruxibleClient
 from tests.core_support._pc_c_support import capture_contract
 from tests.test_server.test_playbill_sdk_demo_world import _approve_and_activate
@@ -53,20 +53,20 @@ def test_sdk_concrete_procedure_prepares_submits_and_runs(
             item.code == "playbill.authoring.artifact_reference_unresolved"
             for item in missing.diagnostics
         )
-        query = QueryDefinitionV1(
+        query = QueryDefinition(
             identity=ArtifactIdentity(kind="QueryDefinition", name="inventory"),
-            entry=QueryEntryV1(binding="asset", subject_kinds=("asset",)),
+            entry=QueryEntry(binding="asset", subject_kinds=("asset",)),
             result_binding="asset",
             result_shape="subject",
             result_cardinality="many",
             dedupe="subject",
-            evaluation_policy=QueryEvaluationPolicyV1(
+            evaluation_policy=QueryEvaluationPolicy(
                 visible_verdicts=("supported",),
                 visible_currency=("current",),
                 conflict_behavior="surface_conflicts",
             ),
-            default_budgets=QueryBudgetsV1(max_results=10, max_traversal_depth=0),
-            maximum_budgets=QueryBudgetsV1(max_results=10, max_traversal_depth=0),
+            default_budgets=QueryBudgets(max_results=10, max_traversal_depth=0),
+            maximum_budgets=QueryBudgets(max_results=10, max_traversal_depth=0),
         )
         compiled = transport.compile_playbill_authoring_input(
             instance_id,
@@ -144,7 +144,7 @@ def test_sdk_never_reinterprets_exact_pins_as_authoring_references(
     pb = Playbill._from_client(transport, instance_id=instance_id, workspace=tmp_path)
     definition = procedure_example()
     draft = pb.procedure(definition=definition)
-    assert isinstance(draft.payload, ProcedureAuthoringPayloadV2)
+    assert isinstance(draft.payload, ProcedureAuthoringPayload)
     contract = next(
         item for item in draft.payload.owned_contracts if item.identity.name == "empty-input"
     )

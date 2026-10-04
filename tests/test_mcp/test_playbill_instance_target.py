@@ -40,8 +40,8 @@ def _whoami() -> contracts.PlaybillWhoAmI:
     )
 
 
-def _host(instance_id: str) -> contracts.PlaybillHostInspectionV1:
-    return contracts.PlaybillHostInspectionV1(
+def _host(instance_id: str) -> contracts.PlaybillHostInspection:
+    return contracts.PlaybillHostInspection(
         instance_id=instance_id,
         managed_root=None,
         workspace_root=None,
@@ -62,7 +62,7 @@ class _ScopedClient:
     def version(self) -> str:
         return "9.9.9"
 
-    def show_playbill_host(self, instance_id: str) -> contracts.PlaybillHostInspectionV1:
+    def show_playbill_host(self, instance_id: str) -> contracts.PlaybillHostInspection:
         return _host(instance_id)
 
     def playbill_whoami(self, instance_id: str) -> contracts.PlaybillWhoAmI:

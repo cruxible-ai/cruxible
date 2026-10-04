@@ -23,7 +23,7 @@ from cruxible_client.contracts.claim_verdicts import (
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
     ClaimArtifactV2,
-    ClaimBackingV2,
+    ClaimBacking,
     ClaimReferentContext,
     ClaimStatement,
     LiteralClaimObject,
@@ -33,19 +33,19 @@ from cruxible_client.contracts.claims import (
     claim_statement_digest,
 )
 from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicyV1,
+    ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV1,
-    ClaimResolutionPolicyV1,
+    ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.query.definitions import (
-    AcceptedQueryDefinitionV1,
-    QueryDefinitionV1,
+    AcceptedQueryDefinition,
+    QueryDefinition,
     query_definition_digest,
     query_definition_path,
 )
 from cruxible_client.contracts.query.grammar import byte_sorted
 from cruxible_client.contracts.query.results import (
-    ClaimQueryResultV1,
+    ClaimQueryResult,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import (
@@ -110,8 +110,8 @@ def claim_type(
         cardinality=cardinality,
         permitted_roles=("normative",),
         evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(),
-        admission_policy=ClaimAdmissionPolicyV1(),
-        resolution_policy=ClaimResolutionPolicyV1(
+        admission_policy=ClaimAdmissionPolicy(),
+        resolution_policy=ClaimResolutionPolicy(
             cardinality=cardinality,
             eligible_verdicts=("supported",),
             selector="all" if relation else "only_contender",
@@ -185,7 +185,7 @@ def claim_fact(
             effective_from=effective_from,
             effective_until=effective_until,
         ),
-        backing=ClaimBackingV2(
+        backing=ClaimBacking(
             referent_context=ClaimReferentContext(
                 subject_content_digest=subject_row.artifact_digest,
                 observed_at=OBSERVED_AT,
@@ -233,17 +233,17 @@ def facts(
     )
 
 
-def accepted(query: QueryDefinitionV1) -> AcceptedQueryDefinitionV1:
+def accepted(query: QueryDefinition) -> AcceptedQueryDefinition:
     """Return the accepted, digest-reproducing form of a QueryDefinition."""
 
-    return AcceptedQueryDefinitionV1(
+    return AcceptedQueryDefinition(
         path=query_definition_path(query.identity.name),
         query=query,
         artifact_digest=query_definition_digest(query).tagged,
     )
 
 
-def projected_rows(result: ClaimQueryResultV1) -> list[dict[str, object]]:
+def projected_rows(result: ClaimQueryResult) -> list[dict[str, object]]:
     """Return one comparable row list from a completed Claim-query result.
 
     Absent and conflicted projected values are reported as their typed state

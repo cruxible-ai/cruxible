@@ -11,8 +11,8 @@ import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactRef
 from cruxible_client.contracts.policies import (
-    ClaimEvidenceAdmissionPolicyV3,
-    ClaimEvidenceAdmissionRuleV3,
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
 )
 from cruxible_core.runtime.permissions import PermissionMode
 from cruxible_core.service.discovery import orient as orient_module
@@ -304,9 +304,9 @@ def test_identity_rules_name_their_contracts_and_unknown_digests_stay_short(
 ) -> None:
     identity_named = _claim_type().model_copy(
         update={
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV3(
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
                 rules=(
-                    ClaimEvidenceAdmissionRuleV3(
+                    ClaimEvidenceAdmissionRule(
                         rule_id="by-identity",
                         claim_roles=("observation",),
                         capture_contracts=(
@@ -483,7 +483,7 @@ def _accept_interfaces(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type
     import cruxible_core.proposals.proposals as proposal_module
     from cruxible_client.contracts.canonical import canonical_bytes
     from cruxible_client.contracts.provider_interfaces import (
-        ProviderBucketVocabularyV1,
+        ProviderBucketVocabulary,
         provider_bucket_vocabulary_digest,
         provider_interface_definition_digest,
         provider_interface_path,
@@ -526,7 +526,7 @@ def _accept_interfaces(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type
     ).hex()
     base = interface_registration()
     vocabulary = canonical_bytes(
-        ProviderBucketVocabularyV1.model_validate_json(bytes.fromhex(base.vocabulary_bytes_hex))
+        ProviderBucketVocabulary.model_validate_json(bytes.fromhex(base.vocabulary_bytes_hex))
         .model_copy(
             update={
                 "interface_id": "demo.fetch",
@@ -633,7 +633,7 @@ def test_orient_without_interfaces_counts_none_and_suggests_no_section(
 def test_modal_evidence_hoists_in_both_views_and_round_trips_empty_exceptions(
     seeded,  # type: ignore[no-untyped-def]
 ) -> None:
-    from cruxible_client.contracts.orient import PlaybillOrientKindV1
+    from cruxible_client.contracts.orient import PlaybillOrientKind
 
     evidence = (("feed-a", "feed-b"), ("feed-a", "feed-b"), (), ("other",))
     types = tuple(
@@ -673,7 +673,7 @@ def test_modal_evidence_hoists_in_both_views_and_round_trips_empty_exceptions(
         )
         # Inheritance has the same typed meaning in the compact model.
         assert (
-            PlaybillOrientKindV1.model_validate(
+            PlaybillOrientKind.model_validate(
                 {key: value for key, value in wire.items() if key != "sample_subject_ids"}
             )
             .predicates[0]
@@ -683,10 +683,10 @@ def test_modal_evidence_hoists_in_both_views_and_round_trips_empty_exceptions(
 
 
 def test_modal_evidence_ties_are_independent_of_predicate_order() -> None:
-    from cruxible_client.contracts.orient import PlaybillOrientPredicateV1
+    from cruxible_client.contracts.orient import PlaybillOrientPredicate
 
     rows = tuple(
-        PlaybillOrientPredicateV1(
+        PlaybillOrientPredicate(
             name=str(i), predicate=str(i), cardinality="one", type="string", evidence=value
         )
         for i, value in enumerate((("z",), ("a",)))
@@ -745,7 +745,7 @@ def test_attention_summary_preserves_complete_orient_bytes(
 def test_get_reads_one_provider_interface_card_and_its_inventory_entry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
+    from cruxible_client.contracts.get_reads import PlaybillGetRequest
     from cruxible_core.service.discovery.discovery import accepted_provider_interfaces
     from cruxible_core.service.discovery.get import service_playbill_get
     from cruxible_core.storage.cas import BodyAccessContext
@@ -755,7 +755,7 @@ def test_get_reads_one_provider_interface_card_and_its_inventory_entry(
 
     card = service_playbill_get(
         instance,
-        request=PlaybillGetRequestV1(ref="ProviderInterface:demo.interface"),
+        request=PlaybillGetRequest(ref="ProviderInterface:demo.interface"),
         access=access,
     )
     assert card.kind == "provider_interface" and card.card is not None
@@ -763,7 +763,7 @@ def test_get_reads_one_provider_interface_card_and_its_inventory_entry(
     assert [item["provider"] for item in shown["providers"]] == ["demo-provider"]
     proof = service_playbill_get(
         instance,
-        request=PlaybillGetRequestV1(ref="ProviderInterface:demo.interface", detail="proof"),
+        request=PlaybillGetRequest(ref="ProviderInterface:demo.interface", detail="proof"),
         access=access,
     )
     (entry,) = (

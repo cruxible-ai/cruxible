@@ -9,58 +9,58 @@ from fastapi import APIRouter, Query, Request, Response
 from starlette.concurrency import run_in_threadpool
 
 from cruxible_client import contracts
-from cruxible_client.contracts.capture_reads import CaptureReadRequestV1, CaptureReadV1
-from cruxible_client.contracts.change_control import ChangeControlRequestV1
+from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
+from cruxible_client.contracts.change_control import ChangeControlRequest
 from cruxible_client.contracts.claim_attestations import (
-    ClaimAttestationAppendRequestV1,
-    ClaimAttestationAppendResultV1,
+    ClaimAttestationAppendRequest,
+    ClaimAttestationAppendResult,
 )
 from cruxible_client.contracts.claim_reads import (
-    ClaimBackingsRequestV1,
-    ClaimBackingsResultV1,
-    ClaimReadBatchRequestV1,
-    ClaimReadBatchResultV1,
+    ClaimBackingsRequest,
+    ClaimBackingsResult,
+    ClaimReadBatchRequest,
+    ClaimReadBatchResult,
 )
 from cruxible_client.contracts.claim_type_upgrade import (
-    ClaimTypeUpgradeRequestV1,
-    ClaimTypeUpgradeResultV1,
+    ClaimTypeUpgradeRequest,
+    ClaimTypeUpgradeResult,
 )
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.evidence_rule_upgrade import (
-    EvidenceRuleUpgradeRequestV1,
-    EvidenceRuleUpgradeResultV1,
+    EvidenceRuleUpgradeRequest,
+    EvidenceRuleUpgradeResult,
 )
-from cruxible_client.contracts.floor import PlaybillFloorDeltaV1
+from cruxible_client.contracts.floor import PlaybillFloorDelta
 from cruxible_client.contracts.get_reads import (
-    PlaybillGetBatchRequestV1,
-    PlaybillGetBatchResultV1,
-    PlaybillGetRequestV1,
-    PlaybillGetResultV1,
+    PlaybillGetBatchRequest,
+    PlaybillGetBatchResult,
+    PlaybillGetRequest,
+    PlaybillGetResult,
 )
 from cruxible_client.contracts.kits import (
-    PlaybillKitAddRequestV1,
-    PlaybillKitBuildRequestV1,
-    PlaybillKitBuildResultV1,
-    PlaybillKitChangeResultV1,
-    PlaybillKitRemoveRequestV1,
-    PlaybillKitStatusV1,
+    PlaybillKitAddRequest,
+    PlaybillKitBuildRequest,
+    PlaybillKitBuildResult,
+    PlaybillKitChangeResult,
+    PlaybillKitRemoveRequest,
+    PlaybillKitStatus,
 )
 from cruxible_client.contracts.procedures.source_requests import (
-    ProcedureSourcePreviewRequestV1,
-    ProcedureSourcePreviewV1,
+    ProcedureSourcePreview,
+    ProcedureSourcePreviewRequest,
 )
 from cruxible_client.contracts.provider_installation import (
-    PlaybillProviderCatalogV1,
-    PlaybillProviderInstallRequestV1,
-    PlaybillProviderInstallResultV1,
+    PlaybillProviderCatalog,
+    PlaybillProviderInstallRequest,
+    PlaybillProviderInstallResult,
 )
 from cruxible_client.contracts.write import (
-    PlaybillRetireRequestV1,
-    PlaybillSetRequestV1,
-    PlaybillWriteRequestV1,
+    PlaybillRetireRequest,
+    PlaybillSetRequest,
+    PlaybillWriteRequest,
     WriteOutcome,
 )
-from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequest
+from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequestAny
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.runtime import playbill_api
 from cruxible_core.runtime.admission import FLOOR_ADMISSION
@@ -95,7 +95,7 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillLedgerMirrorRequest,
     PlaybillLedgerPublishRequest,
     PlaybillNextRequest,
-    PlaybillNextRequestV2,
+    PlaybillNextRequestV1,
     PlaybillProposalReadmitRequest,
     PlaybillProposalWithdrawRequest,
     PlaybillProposeClaimTypeInputRequest,
@@ -110,10 +110,10 @@ from cruxible_core.server.playbill_request_models import (
 )
 from cruxible_core.server.routes import resolve_server_instance_id
 from cruxible_core.service.procedures.procedure_runs import (
-    LineRunRequestV1,
-    ProcedureBindRequestV1,
+    LineRunRequest,
+    ProcedureBindRequest,
     ProcedureReadinessRequestV1,
-    ProcedureRunRequestV2,
+    ProcedureRunRequest,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["playbill"])
@@ -169,12 +169,12 @@ def playbill_init(
 
 @router.post(
     "/{instance_id}/playbill/instance/decommission",
-    response_model=contracts.PlaybillInstanceDecommissionResultV1,
+    response_model=contracts.PlaybillInstanceDecommissionResult,
 )
 def instance_decommission(
     instance_id: str,
     req: PlaybillInstanceDecommissionRequest,
-) -> contracts.PlaybillInstanceDecommissionResultV1:
+) -> contracts.PlaybillInstanceDecommissionResult:
     return playbill_api.playbill_instance_decommission(
         resolve_server_instance_id(instance_id),
         reason=req.reason,
@@ -185,12 +185,12 @@ def instance_decommission(
 
 @router.post(
     "/{instance_id}/playbill/ledger/mirror",
-    response_model=contracts.PlaybillLedgerMirrorV1,
+    response_model=contracts.PlaybillLedgerMirror,
 )
 def set_ledger_mirror(
     instance_id: str,
     req: PlaybillLedgerMirrorRequest,
-) -> contracts.PlaybillLedgerMirrorV1:
+) -> contracts.PlaybillLedgerMirror:
     return playbill_api.playbill_ledger_set_mirror(
         resolve_server_instance_id(instance_id),
         url=req.url,
@@ -201,12 +201,12 @@ def set_ledger_mirror(
 
 @router.post(
     "/{instance_id}/playbill/ledger/publish",
-    response_model=contracts.PlaybillLedgerMirrorV1,
+    response_model=contracts.PlaybillLedgerMirror,
 )
 def publish_ledger(
     instance_id: str,
     req: PlaybillLedgerPublishRequest,
-) -> contracts.PlaybillLedgerMirrorV1:
+) -> contracts.PlaybillLedgerMirror:
     return playbill_api.playbill_ledger_publish(
         resolve_server_instance_id(instance_id),
         timeout=req.timeout,
@@ -217,48 +217,48 @@ def publish_ledger(
 
 @router.get(
     "/{instance_id}/playbill/ledger/mirror",
-    response_model=contracts.PlaybillLedgerMirrorV1,
+    response_model=contracts.PlaybillLedgerMirror,
 )
-def ledger_clone_url(instance_id: str) -> contracts.PlaybillLedgerMirrorV1:
+def ledger_clone_url(instance_id: str) -> contracts.PlaybillLedgerMirror:
     return playbill_api.playbill_ledger_clone_url(resolve_server_instance_id(instance_id))
 
 
-@router.get("/{instance_id}/playbill/providers", response_model=PlaybillProviderCatalogV1)
-def provider_catalog(instance_id: str) -> PlaybillProviderCatalogV1:
+@router.get("/{instance_id}/playbill/providers", response_model=PlaybillProviderCatalog)
+def provider_catalog(instance_id: str) -> PlaybillProviderCatalog:
     return playbill_api.playbill_provider_catalog(resolve_server_instance_id(instance_id))
 
 
 @router.post(
-    "/{instance_id}/playbill/providers/install", response_model=PlaybillProviderInstallResultV1
+    "/{instance_id}/playbill/providers/install", response_model=PlaybillProviderInstallResult
 )
 def provider_install(
-    instance_id: str, request: PlaybillProviderInstallRequestV1
-) -> PlaybillProviderInstallResultV1:
+    instance_id: str, request: PlaybillProviderInstallRequest
+) -> PlaybillProviderInstallResult:
     return playbill_api.playbill_provider_install(resolve_server_instance_id(instance_id), request)
 
 
-@router.post("/{instance_id}/playbill/kits/build", response_model=PlaybillKitBuildResultV1)
-def kit_build(instance_id: str, request: PlaybillKitBuildRequestV1) -> PlaybillKitBuildResultV1:
+@router.post("/{instance_id}/playbill/kits/build", response_model=PlaybillKitBuildResult)
+def kit_build(instance_id: str, request: PlaybillKitBuildRequest) -> PlaybillKitBuildResult:
     return playbill_api.playbill_kit_build(resolve_server_instance_id(instance_id), request)
 
 
-@router.get("/{instance_id}/playbill/kits", response_model=PlaybillKitStatusV1)
-def kit_status(instance_id: str) -> PlaybillKitStatusV1:
+@router.get("/{instance_id}/playbill/kits", response_model=PlaybillKitStatus)
+def kit_status(instance_id: str) -> PlaybillKitStatus:
     return playbill_api.playbill_kit_status(resolve_server_instance_id(instance_id))
 
 
-@router.post("/{instance_id}/playbill/kits", response_model=PlaybillKitChangeResultV1)
-def kit_add(instance_id: str, request: PlaybillKitAddRequestV1) -> PlaybillKitChangeResultV1:
+@router.post("/{instance_id}/playbill/kits", response_model=PlaybillKitChangeResult)
+def kit_add(instance_id: str, request: PlaybillKitAddRequest) -> PlaybillKitChangeResult:
     return playbill_api.playbill_kit_add(resolve_server_instance_id(instance_id), request)
 
 
 @router.post(
     "/{instance_id}/playbill/claim-types/evidence-rules/upgrade",
-    response_model=EvidenceRuleUpgradeResultV1,
+    response_model=EvidenceRuleUpgradeResult,
 )
 def evidence_rules_upgrade(
-    instance_id: str, request: EvidenceRuleUpgradeRequestV1
-) -> EvidenceRuleUpgradeResultV1:
+    instance_id: str, request: EvidenceRuleUpgradeRequest
+) -> EvidenceRuleUpgradeResult:
     return playbill_api.playbill_evidence_rules_upgrade(
         resolve_server_instance_id(instance_id), request
     )
@@ -266,18 +266,18 @@ def evidence_rules_upgrade(
 
 @router.post(
     "/{instance_id}/playbill/claim-types/upgrade",
-    response_model=ClaimTypeUpgradeResultV1,
+    response_model=ClaimTypeUpgradeResult,
 )
 def claim_type_upgrade(
-    instance_id: str, request: ClaimTypeUpgradeRequestV1
-) -> ClaimTypeUpgradeResultV1:
+    instance_id: str, request: ClaimTypeUpgradeRequest
+) -> ClaimTypeUpgradeResult:
     return playbill_api.playbill_claim_type_upgrade(
         resolve_server_instance_id(instance_id), request
     )
 
 
-@router.post("/{instance_id}/playbill/kits/remove", response_model=PlaybillKitChangeResultV1)
-def kit_remove(instance_id: str, request: PlaybillKitRemoveRequestV1) -> PlaybillKitChangeResultV1:
+@router.post("/{instance_id}/playbill/kits/remove", response_model=PlaybillKitChangeResult)
+def kit_remove(instance_id: str, request: PlaybillKitRemoveRequest) -> PlaybillKitChangeResult:
     return playbill_api.playbill_kit_remove(resolve_server_instance_id(instance_id), request)
 
 
@@ -357,7 +357,7 @@ def whoami(instance_id: str) -> contracts.PlaybillWhoAmI:
     return playbill_api.playbill_whoami(resolve_server_instance_id(instance_id))
 
 
-@router.get("/{instance_id}/playbill/head", response_model=contracts.PlaybillHeadV1)
+@router.get("/{instance_id}/playbill/head", response_model=contracts.PlaybillHead)
 def head(
     instance_id: str,
     at: str | None = Query(
@@ -369,7 +369,7 @@ def head(
     semantic_root: str | None = None,
     generation_root: str | None = None,
     compiler_digest: str | None = None,
-) -> contracts.PlaybillHeadV1:
+) -> contracts.PlaybillHead:
     coordinate = _coordinate(git_oid, semantic_root, generation_root, compiler_digest)
     if at is not None and coordinate is not None:
         raise PlaybillFormatError("head takes at or the four coordinate fields, not both")
@@ -380,7 +380,7 @@ def head(
 
 @router.get(
     "/{instance_id}/playbill/orient",
-    response_model=contracts.PlaybillOrientResultV1,
+    response_model=contracts.PlaybillOrientResult,
 )
 def orient(
     instance_id: str,
@@ -412,7 +412,7 @@ def orient(
             "Advertised MCP repair tools; repeat for each tool, or send an empty value for none."
         ),
     ),
-) -> contracts.PlaybillOrientResultV1:
+) -> contracts.PlaybillOrientResult:
     coordinate = _coordinate(git_oid, semantic_root, generation_root, compiler_digest)
     if at is not None and coordinate is not None:
         raise PlaybillFormatError("orient takes at or the four coordinate fields, not both")
@@ -453,12 +453,12 @@ def list_proposals(
 
 @router.get(
     "/{instance_id}/playbill/proposal-selector",
-    response_model=contracts.PlaybillProposalSelectorResultV1,
+    response_model=contracts.PlaybillProposalSelectorResult,
 )
 def resolve_proposal_selector(
     instance_id: str,
     selector: str,
-) -> contracts.PlaybillProposalSelectorResultV1:
+) -> contracts.PlaybillProposalSelectorResult:
     return playbill_api.playbill_resolve_proposal_selector(
         resolve_server_instance_id(instance_id),
         selector,
@@ -610,8 +610,8 @@ def activate_proposal(
     return playbill_api.playbill_activate(resolve_server_instance_id(instance_id), proposal_id)
 
 
-@router.post("/{instance_id}/playbill/captures/read", response_model=CaptureReadV1)
-def read_capture(instance_id: str, request: CaptureReadRequestV1) -> CaptureReadV1:
+@router.post("/{instance_id}/playbill/captures/read", response_model=CaptureRead)
+def read_capture(instance_id: str, request: CaptureReadRequest) -> CaptureRead:
     return playbill_api.playbill_read_capture(resolve_server_instance_id(instance_id), request)
 
 
@@ -688,7 +688,7 @@ def propose_claim_type(
 )
 def migrate_claim_type(
     instance_id: str,
-    req: ClaimTypeMigrationRequest,
+    req: ClaimTypeMigrationRequestAny,
 ) -> contracts.PlaybillClaimTypeMigrationResponse:
     return playbill_api.playbill_migrate_claim_type(
         resolve_server_instance_id(instance_id),
@@ -698,12 +698,12 @@ def migrate_claim_type(
 
 @router.post(
     "/{instance_id}/playbill/claim-attestations",
-    response_model=ClaimAttestationAppendResultV1,
+    response_model=ClaimAttestationAppendResult,
 )
 def append_claim_attestation(
     instance_id: str,
-    req: ClaimAttestationAppendRequestV1,
-) -> ClaimAttestationAppendResultV1:
+    req: ClaimAttestationAppendRequest,
+) -> ClaimAttestationAppendResult:
     return playbill_api.playbill_append_claim_attestation(
         resolve_server_instance_id(instance_id),
         request=req,
@@ -724,11 +724,11 @@ def recover_claim_attestations(instance_id: str) -> Response:
 
 @router.post(
     "/{instance_id}/playbill/resolution-contracts/query",
-    response_model=contracts.ResolutionContractsResultV1,
+    response_model=contracts.ResolutionContractsResult,
 )
 def resolution_contracts(
-    instance_id: str, req: contracts.ResolutionContractsRequestV1
-) -> contracts.ResolutionContractsResultV1:
+    instance_id: str, req: contracts.ResolutionContractsRequest
+) -> contracts.ResolutionContractsResult:
     return playbill_api.playbill_resolution_contracts(
         resolve_server_instance_id(instance_id), request=req
     )
@@ -736,12 +736,12 @@ def resolution_contracts(
 
 @router.post(
     "/{instance_id}/playbill/predictions",
-    response_model=contracts.PlaybillPredictResultV2,
+    response_model=contracts.PlaybillPredictResult,
 )
 def predict(
     instance_id: str,
-    req: contracts.PlaybillPredictRequestV2,
-) -> contracts.PlaybillPredictResultV2:
+    req: contracts.PlaybillPredictRequest,
+) -> contracts.PlaybillPredictResult:
     return playbill_api.playbill_predict(
         resolve_server_instance_id(instance_id),
         request=req,
@@ -750,13 +750,13 @@ def predict(
 
 @router.post(
     "/{instance_id}/playbill/predictions/{prediction_id}/settlements",
-    response_model=contracts.PlaybillSettleResultV2,
+    response_model=contracts.PlaybillSettleResult,
 )
 def settle_prediction(
     instance_id: str,
     prediction_id: str,
-    req: contracts.PlaybillSettleRequestV2,
-) -> contracts.PlaybillSettleResultV2:
+    req: contracts.PlaybillSettleRequest,
+) -> contracts.PlaybillSettleResult:
     return playbill_api.playbill_settle_prediction(
         resolve_server_instance_id(instance_id),
         prediction_id,
@@ -965,12 +965,12 @@ def abandon_authoring_insertion(
 
 @router.post(
     "/{instance_id}/playbill/blocks/declare",
-    response_model=contracts.PlaybillBlockDeclareResultV1,
+    response_model=contracts.PlaybillBlockDeclareResult,
 )
 def declare_playbill_block(
     instance_id: str,
     req: PlaybillBlockDeclareRequest,
-) -> contracts.PlaybillBlockDeclareResultV1:
+) -> contracts.PlaybillBlockDeclareResult:
     return playbill_api.playbill_block_declare(
         resolve_server_instance_id(instance_id),
         req.stamp,
@@ -979,12 +979,12 @@ def declare_playbill_block(
 
 @router.post(
     "/{instance_id}/playbill/blocks/depublish",
-    response_model=contracts.PlaybillBlockDepublishResultV1,
+    response_model=contracts.PlaybillBlockDepublishResult,
 )
 def depublish_playbill_block(
     instance_id: str,
     req: PlaybillBlockDepublishRequest,
-) -> contracts.PlaybillBlockDepublishResultV1:
+) -> contracts.PlaybillBlockDepublishResult:
     return playbill_api.playbill_block_depublish(
         resolve_server_instance_id(instance_id),
         req.source_id,
@@ -994,45 +994,45 @@ def depublish_playbill_block(
     )
 
 
-@router.post("/{instance_id}/playbill/claims/read-batch", response_model=ClaimReadBatchResultV1)
-def read_claim_batch(instance_id: str, req: ClaimReadBatchRequestV1) -> ClaimReadBatchResultV1:
+@router.post("/{instance_id}/playbill/claims/read-batch", response_model=ClaimReadBatchResult)
+def read_claim_batch(instance_id: str, req: ClaimReadBatchRequest) -> ClaimReadBatchResult:
     return playbill_api.playbill_read_claim_batch(
         resolve_server_instance_id(instance_id), request=req
     )
 
 
-@router.post("/{instance_id}/playbill/get", response_model=PlaybillGetResultV1)
-def get_by_ref(instance_id: str, req: PlaybillGetRequestV1) -> PlaybillGetResultV1:
+@router.post("/{instance_id}/playbill/get", response_model=PlaybillGetResult)
+def get_by_ref(instance_id: str, req: PlaybillGetRequest) -> PlaybillGetResult:
     """One governed thing by reference, values first; ``detail`` chooses the depth."""
     return playbill_api.playbill_get(resolve_server_instance_id(instance_id), request=req)
 
 
-@router.post("/{instance_id}/playbill/get-batch", response_model=PlaybillGetBatchResultV1)
-def get_batch(instance_id: str, req: PlaybillGetBatchRequestV1) -> PlaybillGetBatchResultV1:
+@router.post("/{instance_id}/playbill/get-batch", response_model=PlaybillGetBatchResult)
+def get_batch(instance_id: str, req: PlaybillGetBatchRequest) -> PlaybillGetBatchResult:
     """SDK-internal: several references at one coordinate (agents call get per reference)."""
     return playbill_api.playbill_get_batch(resolve_server_instance_id(instance_id), request=req)
 
 
 @router.post("/{instance_id}/playbill/set", response_model=WriteOutcome)
-def set_value(instance_id: str, req: PlaybillSetRequestV1) -> WriteOutcome:
+def set_value(instance_id: str, req: PlaybillSetRequest) -> WriteOutcome:
     """Put one value in one field of one Subject; a refusal is an outcome, not an error."""
     return playbill_api.playbill_set(resolve_server_instance_id(instance_id), request=req)
 
 
 @router.post("/{instance_id}/playbill/retire", response_model=WriteOutcome)
-def retire(instance_id: str, req: PlaybillRetireRequestV1) -> WriteOutcome:
+def retire(instance_id: str, req: PlaybillRetireRequest) -> WriteOutcome:
     """End one live Claim, named by ID or by its Subject and field."""
     return playbill_api.playbill_retire(resolve_server_instance_id(instance_id), request=req)
 
 
 @router.post("/{instance_id}/playbill/write", response_model=WriteOutcome)
-def write(instance_id: str, req: PlaybillWriteRequestV1) -> WriteOutcome:
+def write(instance_id: str, req: PlaybillWriteRequest) -> WriteOutcome:
     """Apply set, add and retire changes as one change set."""
     return playbill_api.playbill_write(resolve_server_instance_id(instance_id), request=req)
 
 
-@router.post("/{instance_id}/playbill/claims/backings", response_model=ClaimBackingsResultV1)
-def read_claim_backings(instance_id: str, req: ClaimBackingsRequestV1) -> ClaimBackingsResultV1:
+@router.post("/{instance_id}/playbill/claims/backings", response_model=ClaimBackingsResult)
+def read_claim_backings(instance_id: str, req: ClaimBackingsRequest) -> ClaimBackingsResult:
     return playbill_api.playbill_read_claim_backings(
         resolve_server_instance_id(instance_id), request=req
     )
@@ -1040,11 +1040,11 @@ def read_claim_backings(instance_id: str, req: ClaimBackingsRequestV1) -> ClaimB
 
 @router.post(
     "/{instance_id}/playbill/projections/check",
-    response_model=contracts.PlaybillProjectionCheckResultV1,
+    response_model=contracts.PlaybillProjectionCheckResult,
 )
 def check_projection_blocks(
-    instance_id: str, req: contracts.PlaybillProjectionCheckRequestV1
-) -> contracts.PlaybillProjectionCheckResultV1:
+    instance_id: str, req: contracts.PlaybillProjectionCheckRequest
+) -> contracts.PlaybillProjectionCheckResult:
     return playbill_api.playbill_check_projection_blocks(
         resolve_server_instance_id(instance_id), request=req
     )
@@ -1052,12 +1052,12 @@ def check_projection_blocks(
 
 @router.post(
     "/{instance_id}/playbill/projections/sync-backing",
-    response_model=contracts.PlaybillBlockSyncReadResultV1,
+    response_model=contracts.PlaybillBlockSyncReadResult,
 )
 def read_block_sync_backing(
     instance_id: str,
-    req: contracts.PlaybillBlockSyncReadRequestV1,
-) -> contracts.PlaybillBlockSyncReadResultV1:
+    req: contracts.PlaybillBlockSyncReadRequest,
+) -> contracts.PlaybillBlockSyncReadResult:
     return playbill_api.playbill_read_block_sync_backing(
         resolve_server_instance_id(instance_id),
         request=req,
@@ -1067,17 +1067,17 @@ def read_block_sync_backing(
 @router.post("/{instance_id}/playbill/query", response_model=contracts.PlaybillQueryResult)
 def query_playbill(
     instance_id: str,
-    req: contracts.PlaybillQueryRequestV1,
+    req: contracts.PlaybillQueryRequest,
 ) -> contracts.PlaybillQueryResult:
     return playbill_api.playbill_query(resolve_server_instance_id(instance_id), request=req)
 
 
 @router.post(
-    "/{instance_id}/playbill/procedures/source/preview", response_model=ProcedureSourcePreviewV1
+    "/{instance_id}/playbill/procedures/source/preview", response_model=ProcedureSourcePreview
 )
 def procedure_source_preview(
-    instance_id: str, req: ProcedureSourcePreviewRequestV1
-) -> ProcedureSourcePreviewV1:
+    instance_id: str, req: ProcedureSourcePreviewRequest
+) -> ProcedureSourcePreview:
     return playbill_api.playbill_procedure_source_preview(
         resolve_server_instance_id(instance_id), request=req
     )
@@ -1113,7 +1113,7 @@ def procedure_readiness(
 def bind_procedure(
     instance_id: str,
     name: str,
-    req: ProcedureBindRequestV1,
+    req: ProcedureBindRequest,
 ) -> contracts.PlaybillProcedureBindResult:
     return playbill_api.playbill_procedure_bind(
         resolve_server_instance_id(instance_id),
@@ -1129,7 +1129,7 @@ def bind_procedure(
 def run_procedure(
     instance_id: str,
     name: str,
-    req: ProcedureRunRequestV2,
+    req: ProcedureRunRequest,
 ) -> contracts.PlaybillProcedureRunState:
     return playbill_api.playbill_procedure_run(
         resolve_server_instance_id(instance_id),
@@ -1139,59 +1139,59 @@ def run_procedure(
 
 
 @router.post(
-    "/{instance_id}/playbill/lines/{line}/check", response_model=contracts.LineTriggerCheckResultV1
+    "/{instance_id}/playbill/lines/{line}/check", response_model=contracts.LineTriggerCheckResult
 )
 def check_line_trigger(
-    instance_id: str, line: str, req: contracts.LineTriggerCheckRequestV1
-) -> contracts.LineTriggerCheckResultV1:
+    instance_id: str, line: str, req: contracts.LineTriggerCheckRequest
+) -> contracts.LineTriggerCheckResult:
     return playbill_api.playbill_line_check(
         resolve_server_instance_id(instance_id), line, request=req
     )
 
 
-@router.post("/{instance_id}/playbill/lines/{line}/arm", response_model=contracts.LineArmV1)
+@router.post("/{instance_id}/playbill/lines/{line}/arm", response_model=contracts.LineArm)
 def arm_line(
-    instance_id: str, line: str, req: ChangeControlRequestV1 | None = None
-) -> contracts.LineArmV1:
-    control = req or ChangeControlRequestV1()
+    instance_id: str, line: str, req: ChangeControlRequest | None = None
+) -> contracts.LineArm:
+    control = req or ChangeControlRequest()
     return playbill_api.playbill_line_arm(
         resolve_server_instance_id(instance_id), line, dry_run=control.dry_run, at=control.at
     )
 
 
-@router.post("/{instance_id}/playbill/lines/{line}/disarm", response_model=contracts.LineArmV1)
+@router.post("/{instance_id}/playbill/lines/{line}/disarm", response_model=contracts.LineArm)
 def disarm_line(
-    instance_id: str, line: str, req: ChangeControlRequestV1 | None = None
-) -> contracts.LineArmV1:
-    control = req or ChangeControlRequestV1()
+    instance_id: str, line: str, req: ChangeControlRequest | None = None
+) -> contracts.LineArm:
+    control = req or ChangeControlRequest()
     return playbill_api.playbill_line_disarm(
         resolve_server_instance_id(instance_id), line, dry_run=control.dry_run, at=control.at
     )
 
 
-@router.get("/{instance_id}/playbill/lines/{line}/arm", response_model=contracts.LineArmV1)
-def line_status(instance_id: str, line: str) -> contracts.LineArmV1:
+@router.get("/{instance_id}/playbill/lines/{line}/arm", response_model=contracts.LineArm)
+def line_status(instance_id: str, line: str) -> contracts.LineArm:
     return playbill_api.playbill_line_status(resolve_server_instance_id(instance_id), line)
 
 
 @router.post(
     "/{instance_id}/playbill/lines/{line}/evaluate",
-    response_model=contracts.LineTriggerCheckResultV1,
+    response_model=contracts.LineTriggerCheckResult,
 )
 def evaluate_line(
-    instance_id: str, line: str, req: contracts.LineEvaluateRequestV1
-) -> contracts.LineTriggerCheckResultV1:
+    instance_id: str, line: str, req: contracts.LineEvaluateRequest
+) -> contracts.LineTriggerCheckResult:
     return playbill_api.playbill_line_evaluate(
         resolve_server_instance_id(instance_id), line, request=req
     )
 
 
 @router.post(
-    "/{instance_id}/playbill/lines/{line}/dispatch", response_model=contracts.LineDispatchResultV1
+    "/{instance_id}/playbill/lines/{line}/dispatch", response_model=contracts.LineDispatchResult
 )
 def dispatch_line(
-    instance_id: str, line: str, req: contracts.LineDispatchRequestV1
-) -> contracts.LineDispatchResultV1:
+    instance_id: str, line: str, req: contracts.LineDispatchRequest
+) -> contracts.LineDispatchResult:
     return playbill_api.playbill_line_dispatch(
         resolve_server_instance_id(instance_id), line, request=req
     )
@@ -1204,7 +1204,7 @@ def dispatch_line(
 def run_line(
     instance_id: str,
     line: str,
-    req: LineRunRequestV1,
+    req: LineRunRequest,
 ) -> contracts.PlaybillProcedureRunState:
     return playbill_api.playbill_line_run(
         resolve_server_instance_id(instance_id),
@@ -1229,13 +1229,13 @@ def procedure_run_status(
 
 @router.post(
     "/{instance_id}/playbill/procedures/{name}/measurements",
-    response_model=contracts.PlaybillProcedureMeasureResultV1,
+    response_model=contracts.PlaybillProcedureMeasureResult,
 )
 def procedure_measure(
     instance_id: str,
     name: str,
-    req: contracts.PlaybillProcedureMeasureRequestV1,
-) -> contracts.PlaybillProcedureMeasureResultV1:
+    req: contracts.PlaybillProcedureMeasureRequest,
+) -> contracts.PlaybillProcedureMeasureResult:
     return playbill_api.playbill_procedure_measure(
         resolve_server_instance_id(instance_id),
         name,
@@ -1245,13 +1245,13 @@ def procedure_measure(
 
 @router.post(
     "/{instance_id}/playbill/procedures/{name}/readings",
-    response_model=contracts.PlaybillProcedureReadingsResultV1,
+    response_model=contracts.PlaybillProcedureReadingsResult,
 )
 def procedure_readings(
     instance_id: str,
     name: str,
-    req: contracts.PlaybillProcedureReadingsRequestV1,
-) -> contracts.PlaybillProcedureReadingsResultV1:
+    req: contracts.PlaybillProcedureReadingsRequest,
+) -> contracts.PlaybillProcedureReadingsResult:
     return playbill_api.playbill_procedure_readings(
         resolve_server_instance_id(instance_id),
         name,
@@ -1265,7 +1265,7 @@ def procedure_readings(
 )
 def next_work(
     instance_id: str,
-    req: PlaybillNextRequest | PlaybillNextRequestV2,
+    req: PlaybillNextRequestV1 | PlaybillNextRequest,
 ) -> contracts.PlaybillNextResult:
     return playbill_api.playbill_next(
         resolve_server_instance_id(instance_id),
@@ -1412,12 +1412,12 @@ async def export_floor(
 
 @router.post(
     "/{instance_id}/playbill/floor/delta",
-    response_model=PlaybillFloorDeltaV1,
+    response_model=PlaybillFloorDelta,
 )
 async def floor_delta(
     instance_id: str,
     req: PlaybillFloorDeltaRequest,
-) -> PlaybillFloorDeltaV1:
+) -> PlaybillFloorDelta:
     """What brings the caller's floor at its base generation to the head.
 
     Admitted exactly like `export_floor`, under the same `FLOOR_ADMISSION`: an
@@ -1428,7 +1428,7 @@ async def floor_delta(
 
     resolved = await run_in_threadpool(resolve_server_instance_id, instance_id)
 
-    def delta() -> PlaybillFloorDeltaV1:
+    def delta() -> PlaybillFloorDelta:
         return playbill_api.playbill_floor_delta(
             resolved,
             at=req.at,

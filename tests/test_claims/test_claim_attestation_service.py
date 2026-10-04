@@ -10,9 +10,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cruxible_client.authoring.attestations import LocalEd25519ClaimAttestationSigner
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.authoring.models import (
-    ClaimAuthoringPayloadV3,
-    ClaimDependencyDraftsV1,
-    ExistingCaptureCitationSourceV1,
+    ClaimAuthoringPayload,
+    ClaimDependencyDrafts,
+    ExistingCaptureCitationSource,
 )
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
@@ -26,15 +26,15 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claim_attestations import (
-    ClaimAttestationAppendRequestV1,
-    ClaimAttestationCaptureReferenceV1,
-    ClaimAttestationStatementV2,
-    ClaimAttestationV2,
+    ClaimAttestation,
+    ClaimAttestationAppendRequest,
+    ClaimAttestationCaptureReference,
+    ClaimAttestationStatement,
     claim_attestation_v2_statement_bytes,
 )
 from cruxible_client.contracts.claims import (
-    ClaimArtifactV3,
-    ClaimRetirementAttributionV1,
+    ClaimArtifact,
+    ClaimRetirementAttribution,
     SubjectClaimObject,
     claim_artifact_digest,
     claim_path,
@@ -45,13 +45,13 @@ from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.subjects import parse_subject, subject_digest
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.store import AuthoringIntentStore
-from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.evidence.attestation_verification import _examined_capture_semantics
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.service.discovery.next import (
+    PlaybillNextRequest,
     PlaybillNextRequestV1,
-    PlaybillNextRequestV2,
     service_playbill_next,
 )
 from cruxible_core.service.evidence.claim_attestations import (
@@ -98,7 +98,7 @@ def _request(
         )
     )
     cited = evidence_captures if captures is None else captures
-    statement = ClaimAttestationStatementV2(
+    statement = ClaimAttestationStatement(
         instance_id=instance.descriptor.instance_id,
         referent_coordinate=coordinate,
         claim_identity=claim.identity,
@@ -123,10 +123,10 @@ def _request(
         expected_public_key=owner.principal.public_key,
         forbidden_roots=(root / "workspace", instance.root),
     )
-    return ClaimAttestationAppendRequestV1(
+    return ClaimAttestationAppendRequest(
         attestation=signer.sign_claim_attestation_v2(statement),
         capture_references=(
-            tuple(ClaimAttestationCaptureReferenceV1(capture_digest=digest) for digest in cited)
+            tuple(ClaimAttestationCaptureReference(capture_digest=digest) for digest in cited)
             if basis == "new_capture"
             else ()
         ),
@@ -134,17 +134,17 @@ def _request(
 
 
 def _resign(
-    request: ClaimAttestationAppendRequestV1,
+    request: ClaimAttestationAppendRequest,
     owner,
     **statement_updates: object,
-) -> ClaimAttestationAppendRequestV1:  # type: ignore[no-untyped-def]
+) -> ClaimAttestationAppendRequest:  # type: ignore[no-untyped-def]
     statement = request.attestation.statement.model_copy(update=statement_updates)
     private_key = serialization.load_ssh_private_key(
         owner.private_key_path.read_bytes(),
         password=None,
     )
     assert isinstance(private_key, Ed25519PrivateKey)
-    attestation = ClaimAttestationV2(
+    attestation = ClaimAttestation(
         statement=statement,
         signature=private_key.sign(claim_attestation_v2_statement_bytes(statement)).hex(),
     )
@@ -153,7 +153,7 @@ def _resign(
 
 def _assert_refusal(
     instance,
-    request: ClaimAttestationAppendRequestV1,
+    request: ClaimAttestationAppendRequest,
     code: str,
 ) -> None:  # type: ignore[no-untyped-def]
     with pytest.raises(ClaimAttestationRefusal) as error:
@@ -235,7 +235,7 @@ def test_served_append_refuses_a_terminally_retired_current_claim(
         claim = accepted_claim(tree, requested_claim_id)
         if calls == 1:
             return claim
-        return ClaimArtifactV3(
+        return ClaimArtifact(
             identity=claim.identity,
             statement=claim.statement,
             backing=claim.backing,
@@ -244,7 +244,7 @@ def test_served_append_refuses_a_terminally_retired_current_claim(
                 state="retired",
                 predecessor_digest=claim_artifact_digest(claim).tagged,
             ),
-            retirement=ClaimRetirementAttributionV1(reason="was-rescinded"),
+            retirement=ClaimRetirementAttribution(reason="was-rescinded"),
         )
 
     monkeypatch.setattr(service_module, "_accepted_claim", accepted_then_retired)
@@ -664,7 +664,7 @@ def test_next_v2_reads_one_exact_evidence_head_while_v1_stays_legacy(
         actor_id="owner",
         recorded_at=RECORDED_AT,
     )
-    access = CoverageAccessProfileV1(
+    access = CoverageAccessProfile(
         profile_id="attestation-door-test",
         permitted_access_classes=("instance", "public"),
     )
@@ -678,7 +678,7 @@ def test_next_v2_reads_one_exact_evidence_head_while_v1_stays_legacy(
     )
     result = unfolded_next(
         instance,
-        request=PlaybillNextRequestV2(
+        request=PlaybillNextRequest(
             evaluation_time=RECORDED_AT,
             access_profile=access,
             at_attestation_head_digest=appended.current_head,
@@ -689,7 +689,7 @@ def test_next_v2_reads_one_exact_evidence_head_while_v1_stays_legacy(
     assert result.attestation_head_digest == appended.current_head
     assert result == unfolded_next(
         instance,
-        request=PlaybillNextRequestV2(
+        request=PlaybillNextRequest(
             evaluation_time=RECORDED_AT,
             access_profile=access,
             at_attestation_head_digest=appended.current_head,
@@ -767,7 +767,7 @@ def _assert_successor_resolves_attestation_membership(
         actor_id="owner",
         recorded_at=RECORDED_AT,
     )
-    access = CoverageAccessProfileV1(
+    access = CoverageAccessProfile(
         profile_id="attestation-door-resolution",
         permitted_access_classes=("instance", "public"),
     )
@@ -777,7 +777,7 @@ def _assert_successor_resolves_attestation_membership(
             item
             for item in unfolded_next(
                 instance,
-                request=PlaybillNextRequestV2(
+                request=PlaybillNextRequest(
                     evaluation_time=RECORDED_AT,
                     access_profile=access,
                 ),
@@ -790,13 +790,13 @@ def _assert_successor_resolves_attestation_membership(
             instance=instance,
             store=AuthoringIntentStore(instance.root / instance.descriptor.storage.exhaust),
         )
-        payload = ClaimAuthoringPayloadV3(
+        payload = ClaimAuthoringPayload(
             statement=shared_payload.statement,
             rationale="Adjudicate the newly observed Capture through the shipped citation path.",
-            source=ExistingCaptureCitationSourceV1(capture_digest=capture.capture_digest),
+            source=ExistingCaptureCitationSource(capture_digest=capture.capture_digest),
             citation_role=role,  # type: ignore[arg-type]
             revises=claim_id,
-            dependency_drafts=ClaimDependencyDraftsV1(),
+            dependency_drafts=ClaimDependencyDrafts(),
         )
         actor = AuthenticatedActor(actor_id="owner")
         intent = coordinator.create(
@@ -860,7 +860,7 @@ def test_new_evidence_rows_count_only_attestations_current_at_the_evaluation_tim
         actor_id="owner",
         recorded_at=RECORDED_AT,
     )
-    access = CoverageAccessProfileV1(
+    access = CoverageAccessProfile(
         profile_id="attestation-door-test",
         permitted_access_classes=("instance", "public"),
     )
@@ -868,7 +868,7 @@ def test_new_evidence_rows_count_only_attestations_current_at_the_evaluation_tim
     def rows(at: datetime) -> tuple:  # type: ignore[type-arg]
         result = service_playbill_next(
             instance,
-            request=PlaybillNextRequestV2(
+            request=PlaybillNextRequest(
                 evaluation_time=at,
                 access_profile=access,
                 at_attestation_head_digest=appended.current_head,

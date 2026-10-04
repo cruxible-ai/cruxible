@@ -323,7 +323,7 @@ def test_delivery_and_deliver_now_share_admission_but_instances_proceed(
 
 def test_persistent_base_mismatch_retries_once_and_stalls(world, monkeypatch):
     from cruxible_client.authoring import workspace as adapter
-    from cruxible_client.contracts.floor import PlaybillFloorApplyResultV1
+    from cruxible_client.contracts.floor import PlaybillFloorApplyResult
 
     instance, _, registry = world
     registry.set_floor_delivery(instance.descriptor.instance_id, True)
@@ -331,7 +331,7 @@ def test_persistent_base_mismatch_retries_once_and_stalls(world, monkeypatch):
 
     def mismatch(_, delta):
         calls.append(True)
-        return PlaybillFloorApplyResultV1(
+        return PlaybillFloorApplyResult(
             status="base_mismatch", kind=delta.kind, generation=delta.head.generation
         )
 
@@ -402,13 +402,13 @@ def test_new_routes_deliver_synchronously_and_refuse_tcp_callers(world, monkeypa
     )
     local = Request({"type": "http", "client": None})
     tcp = Request({"type": "http", "client": ("127.0.0.1", 1234)})
-    request = contracts.PlaybillFloorDeliveryRequestV1(enabled=True)
+    request = contracts.PlaybillFloorDeliveryRequest(enabled=True)
     with pytest.raises(ConfigError, match="Unix socket"):
         asyncio.run(routes.set_playbill_floor_delivery(instance_id, request, tcp))
     assert asyncio.run(
         routes.set_playbill_floor_delivery(instance_id, request, local)
     ).floor_delivery
-    deliver = contracts.PlaybillFloorDeliverNowRequestV1()
+    deliver = contracts.PlaybillFloorDeliverNowRequest()
     result = asyncio.run(routes.deliver_playbill_floor_now(instance_id, local, deliver))
     assert result.written.status == "written"
     with pytest.raises(ConfigError, match="Unix socket"):
@@ -416,7 +416,7 @@ def test_new_routes_deliver_synchronously_and_refuse_tcp_callers(world, monkeypa
 
 
 def test_floor_schedule_advisory_requires_delivery_and_no_live_floor_trigger(world, monkeypatch):
-    from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+    from cruxible_core.coverage.contracts import CoverageAccessProfile
     from cruxible_core.server import registry as registry_module
     from cruxible_core.service.discovery.next import _triggers_health
 
@@ -427,7 +427,7 @@ def test_floor_schedule_advisory_requires_delivery_and_no_live_floor_trigger(wor
         return _triggers_health(
             instance,
             coordinate=instance.accepted_coordinate(),
-            access_profile=CoverageAccessProfileV1(profile_id="floor-test"),
+            access_profile=CoverageAccessProfile(profile_id="floor-test"),
         )
 
     registry.set_floor_delivery(instance.descriptor.instance_id, False)

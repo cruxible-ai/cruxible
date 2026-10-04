@@ -27,8 +27,8 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
 
 from cruxible_client.contracts import PlaybillAcceptedCoordinate
-from cruxible_client.contracts.authoring.models import WorkingSelectionObservationV1
-from cruxible_client.contracts.get_reads import PlaybillGetCoordinateV1, PlaybillReadSurface
+from cruxible_client.contracts.authoring.models import WorkingSelectionObservation
+from cruxible_client.contracts.get_reads import PlaybillGetCoordinate, PlaybillReadSurface
 
 SUBJECT_REF_PATTERN = r"^[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*/[a-z][a-z0-9_.-]{0,255}$"
 CLAIM_ID_PATTERN = r"^(?:Claim:)?CLM-[0-9a-f]{32}$"
@@ -185,7 +185,7 @@ class FileEvidence(_StrictWriteModel):
         pattern=FILE_ANCHOR_PATTERN,
         description="PATH#ANCHOR: a catalogued workspace file and text found once in it.",
     )
-    observation: WorkingSelectionObservationV1 | None = Field(
+    observation: WorkingSelectionObservation | None = Field(
         default=None,
         description="Filled by the client that read the file; leave it out.",
     )
@@ -325,7 +325,7 @@ class _WriteRequestBase(_StrictWriteModel):
         return value
 
 
-class PlaybillSetRequestV1(_WriteRequestBase):
+class PlaybillSetRequest(_WriteRequestBase):
     tag: Literal["playbill-set-request-v1"] = "playbill-set-request-v1"
     subject: SubjectRef
     field: FieldName
@@ -347,7 +347,7 @@ class PlaybillSetRequestV1(_WriteRequestBase):
         )
 
 
-class PlaybillRetireRequestV1(_WriteRequestBase):
+class PlaybillRetireRequest(_WriteRequestBase):
     tag: Literal["playbill-retire-request-v1"] = "playbill-retire-request-v1"
     target: ClaimId | SlotRef
     reason: WriteRetireReason = "was-rescinded"
@@ -357,7 +357,7 @@ class PlaybillRetireRequestV1(_WriteRequestBase):
         return RetireChange(target=self.target, reason=self.reason, expect=self.expect)
 
 
-class PlaybillWriteRequestV1(_WriteRequestBase):
+class PlaybillWriteRequest(_WriteRequestBase):
     tag: Literal["playbill-write-request-v1"] = "playbill-write-request-v1"
     subject: SubjectRef | None = Field(
         default=None,
@@ -370,17 +370,17 @@ class PlaybillWriteRequestV1(_WriteRequestBase):
 
 
 def as_write_request(
-    request: PlaybillSetRequestV1 | PlaybillRetireRequestV1 | PlaybillWriteRequestV1,
-) -> PlaybillWriteRequestV1:
+    request: PlaybillSetRequest | PlaybillRetireRequest | PlaybillWriteRequest,
+) -> PlaybillWriteRequest:
     """Every write is a batch; ``set`` and ``retire`` are batches of one."""
 
-    if isinstance(request, PlaybillWriteRequestV1):
+    if isinstance(request, PlaybillWriteRequest):
         return request
     common = request.model_dump(
         include={"because", "dry_run", "accept", "at", "surface", "full_coordinate"}
     )
     common["at"] = request.at
-    return PlaybillWriteRequestV1(changes=(request.change(),), **common)
+    return PlaybillWriteRequest(changes=(request.change(),), **common)
 
 
 # -- outcome --------------------------------------------------------------------
@@ -516,13 +516,13 @@ class WriteOutcome(_StrictWriteModel):
     changes: tuple[ChangeOutcome, ...] = ()
     subjects_added: tuple[str, ...] = Field(default=(), exclude_if=_omit_empty)
     proposal: WriteProposalRef | None = Field(default=None, exclude_if=_omit_none)
-    coordinate: PlaybillGetCoordinateV1 = Field(
+    coordinate: PlaybillGetCoordinate = Field(
         description=(
             "Accepted: the new generation. Otherwise the head this write was checked "
             "against; pass it back as `at` to pin a later write to it."
         )
     )
-    base: PlaybillGetCoordinateV1 | None = Field(
+    base: PlaybillGetCoordinate | None = Field(
         default=None,
         exclude_if=_omit_none,
         description="Accepted only: the head the write was checked against.",
@@ -556,9 +556,9 @@ __all__ = [
     "FieldName",
     "FileEvidence",
     "NewerCaptureNotCitableWarning",
-    "PlaybillRetireRequestV1",
-    "PlaybillSetRequestV1",
-    "PlaybillWriteRequestV1",
+    "PlaybillRetireRequest",
+    "PlaybillSetRequest",
+    "PlaybillWriteRequest",
     "RetireChange",
     "SelfEvidence",
     "SetChange",

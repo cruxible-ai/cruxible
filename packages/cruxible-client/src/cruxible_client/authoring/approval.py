@@ -20,7 +20,7 @@ from cruxible_client.contracts.attestations import (
 )
 from cruxible_client.contracts.candidates import (
     CandidateMemberEvidence,
-    CandidateMemberLawEvidenceV2,
+    CandidateMemberLawEvidence,
     CandidateRecordAnyVersion,
     candidate_digest,
 )
@@ -79,7 +79,7 @@ def _checked_review(review: api.PlaybillProposalReview, proposal_id: str) -> Non
         raise ApprovalReviewMismatch("Review candidate, member roll, or settlement base differs")
     if [member.path for member in review.members] != [member.path for member in candidate.members]:
         raise ApprovalReviewMismatch("Review omits or duplicates candidate members")
-    candidate_members: tuple[CandidateMemberEvidence | CandidateMemberLawEvidenceV2, ...] = (
+    candidate_members: tuple[CandidateMemberEvidence | CandidateMemberLawEvidence, ...] = (
         candidate.members
     )
     for rendered, member in zip(review.members, candidate_members, strict=True):

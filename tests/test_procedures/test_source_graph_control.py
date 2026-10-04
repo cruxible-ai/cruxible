@@ -5,8 +5,8 @@ import pytest
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.procedures.artifacts import (
-    AcceptedProcedureV1,
-    ProcedureArtifactV2,
+    AcceptedProcedure,
+    ProcedureArtifact,
     procedure_artifact_digest,
     procedure_path,
 )
@@ -17,13 +17,13 @@ from cruxible_client.contracts.procedures.graph import (
     compute_procedure_definition_digest,
 )
 from cruxible_client.contracts.procedures.models import (
-    GuardNodeV3,
-    GuardPredicateV1,
-    PredicateOperandV1,
-    ProcedureDefinitionV6,
-    ProjectNodeV3,
-    ReturnNodeV6,
-    SelectNodeV6,
+    GuardNode,
+    GuardPredicate,
+    PredicateOperand,
+    ProcedureDefinition,
+    ProjectNode,
+    ReturnNode,
+    SelectNode,
 )
 from cruxible_core.procedures.execution import ProcedureExecutor
 from tests.test_procedures.test_procedure_execution import (
@@ -42,19 +42,19 @@ def definition(*, early=False):
     ci = _owned_contract("choice-input", {"choice": PropertySchema(type="bool")})
     co = _owned_contract("choice-output", {"value": PropertySchema(type="int")})
     pi, po = _owned_pin("contract-in", ci), _owned_pin("contract-out", co)
-    branch = GuardNodeV3(
+    branch = GuardNode(
         node_id="choose",
-        predicate=GuardPredicateV1(
-            left=PredicateOperandV1(kind="input", input_name="choice"),
+        predicate=GuardPredicate(
+            left=PredicateOperand(kind="input", input_name="choice"),
             operator="eq",
-            right=PredicateOperandV1(kind="literal", value=True),
+            right=PredicateOperand(kind="literal", value=True),
         ),
         on_true="yes",
         on_false="no",
         refusal_code="choice",
         message="Choose a branch",
     )
-    factory = ReturnNodeV6 if early else ProjectNodeV3
+    factory = ReturnNode if early else ProjectNode
     nodes = [
         branch,
         factory(
@@ -74,10 +74,10 @@ def definition(*, early=False):
     ]
     if not early:
         nodes += [
-            SelectNodeV6(node_id="join", sources=("yes", "no"), contract_out=po, as_="joined"),
-            ReturnNodeV6(node_id="return", fields="$steps.joined", contract_out=po, as_="result"),
+            SelectNode(node_id="join", sources=("yes", "no"), contract_out=po, as_="joined"),
+            ReturnNode(node_id="return", fields="$steps.joined", contract_out=po, as_="result"),
         ]
-    graph = ProcedureDefinitionV6(
+    graph = ProcedureDefinition(
         name="choice",
         contract_in=pi,
         contract_out=po,
@@ -87,7 +87,7 @@ def definition(*, early=False):
         hard_caps=_hard_caps(),
         terminal_capability=1,
     )
-    artifact = ProcedureArtifactV2(
+    artifact = ProcedureArtifact(
         identity=ArtifactIdentity(kind="Procedure", name="choice"),
         definition=graph,
         definition_digest=compute_procedure_definition_digest(graph).tagged,
@@ -97,7 +97,7 @@ def definition(*, early=False):
         ),
         activation_policy="snapshot",
     )
-    return AcceptedProcedureV1(
+    return AcceptedProcedure(
         path=procedure_path("choice"),
         procedure=artifact,
         artifact_digest=procedure_artifact_digest(artifact).tagged,
@@ -146,4 +146,4 @@ def test_unsafe_joins_fail_before_execution(mutation, message):
     else:
         graph["nodes"][1]["contract_out"]["artifact_digest"] = "sha256:" + "0" * 64
     with pytest.raises((ValueError, ProcedureGraphFormatError), match=message):
-        ProcedureDefinitionV6.model_validate(graph)
+        ProcedureDefinition.model_validate(graph)

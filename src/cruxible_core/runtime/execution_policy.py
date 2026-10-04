@@ -22,7 +22,7 @@ from collections.abc import Mapping
 from importlib.metadata import EntryPoint, entry_points
 from typing import Protocol, runtime_checkable
 
-from cruxible_client.contracts import IsolatedExecutorRegistrationV1
+from cruxible_client.contracts import IsolatedExecutorRegistration
 from cruxible_core.errors import (
     CustomerCodeExecutionUnsupportedError,
     HostedProfileUnknownError,
@@ -50,7 +50,7 @@ ISOLATED_EXECUTOR_ENTRY_POINT_GROUP = "cruxible.isolated_executors"
 class IsolatedExecutor(Protocol):
     """An executor that can run Provider code away from the daemon's host."""
 
-    def registration(self) -> IsolatedExecutorRegistrationV1:
+    def registration(self) -> IsolatedExecutorRegistration:
         """Return the pinned record this executor is selected and audited by."""
 
 
@@ -65,13 +65,13 @@ class IsolatedExecutor(Protocol):
 #: a claim into a selector -- and being installed on the daemon's `sys.path` is
 #: the WHOLE trust boundary: there is no provenance check, allow-list or digest
 #: pin on what a discovered distribution supplies.
-_REGISTERED_ISOLATED_EXECUTORS: dict[str, IsolatedExecutorRegistrationV1] = {}
+_REGISTERED_ISOLATED_EXECUTORS: dict[str, IsolatedExecutorRegistration] = {}
 
 
 def _refuse_backend_collision(
-    registration: IsolatedExecutorRegistrationV1,
+    registration: IsolatedExecutorRegistration,
     *,
-    against: Mapping[str, IsolatedExecutorRegistrationV1],
+    against: Mapping[str, IsolatedExecutorRegistration],
 ) -> None:
     """One collision law, for the in-process seam and for discovery alike."""
 
@@ -83,7 +83,7 @@ def _refuse_backend_collision(
         )
 
 
-def register_isolated_executor(executor: IsolatedExecutor) -> IsolatedExecutorRegistrationV1:
+def register_isolated_executor(executor: IsolatedExecutor) -> IsolatedExecutorRegistration:
     """Register one isolated executor under its own backend id.
 
     The record, not the environment, is the evidence: it names the backend id
@@ -98,7 +98,7 @@ def register_isolated_executor(executor: IsolatedExecutor) -> IsolatedExecutorRe
     return registration
 
 
-def registered_isolated_executors() -> Mapping[str, IsolatedExecutorRegistrationV1]:
+def registered_isolated_executors() -> Mapping[str, IsolatedExecutorRegistration]:
     """Return every isolated executor registered in this process, by backend id."""
 
     return dict(_REGISTERED_ISOLATED_EXECUTORS)
@@ -107,7 +107,7 @@ def registered_isolated_executors() -> Mapping[str, IsolatedExecutorRegistration
 def discover_isolated_executors(
     *,
     group: str = ISOLATED_EXECUTOR_ENTRY_POINT_GROUP,
-) -> tuple[IsolatedExecutorRegistrationV1, ...]:
+) -> tuple[IsolatedExecutorRegistration, ...]:
     """Register every isolated executor the installed distributions advertise.
 
     Called once at daemon start. Every entry point in the group is loaded and
@@ -124,8 +124,8 @@ def discover_isolated_executors(
     broken -- is exactly the state failing closed exists to prevent.
     """
 
-    staged: dict[str, IsolatedExecutorRegistrationV1] = {}
-    ordered: list[IsolatedExecutorRegistrationV1] = []
+    staged: dict[str, IsolatedExecutorRegistration] = {}
+    ordered: list[IsolatedExecutorRegistration] = []
     for entry_point in sorted(
         entry_points(group=group),
         key=lambda item: item.name.encode("utf-8"),
@@ -143,8 +143,8 @@ def _staged_registration(
     entry_point: EntryPoint,
     *,
     group: str,
-    staged: Mapping[str, IsolatedExecutorRegistrationV1],
-) -> IsolatedExecutorRegistrationV1:
+    staged: Mapping[str, IsolatedExecutorRegistration],
+) -> IsolatedExecutorRegistration:
     """Load one advertised executor and read its registration, or refuse typed."""
 
     def _refusal(detail: str) -> IsolatedExecutorDiscoveryError:

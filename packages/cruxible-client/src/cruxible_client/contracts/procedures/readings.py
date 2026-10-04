@@ -30,7 +30,7 @@ from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 
 #: Closed served refusals for the measurement doors. Each names a runnable
 #: repair in the shared repair catalog, so none joins the undeclared count.
-ProcedureMeasurementRefusalCodeV1: TypeAlias = Literal[
+ProcedureMeasurementRefusalCode: TypeAlias = Literal[
     # The named measurement is not declared on the accepted Procedure revision.
     "measurement_not_declared",
     # The run named for a reading executed another Procedure revision.
@@ -50,7 +50,7 @@ ProcedureMeasurementRefusalCodeV1: TypeAlias = Literal[
     "measurement_resolution_conflict",
 ]
 
-ProcedureMeasurementStatusV1: TypeAlias = Literal[
+ProcedureMeasurementStatus: TypeAlias = Literal[
     # The observation instant precedes check_at; nothing was evaluated.
     "pending",
     # The window closed with no standing resolution; nothing was evaluated.
@@ -59,7 +59,7 @@ ProcedureMeasurementStatusV1: TypeAlias = Literal[
     "resolved",
 ]
 
-ProcedureReadingStatusV1: TypeAlias = Literal[
+ProcedureReadingStatus: TypeAlias = Literal[
     # No run was named; the resolution alone was produced or found.
     "not_requested",
     # A reading was appended for this run and grain.
@@ -75,7 +75,7 @@ ProcedureReadingStatusV1: TypeAlias = Literal[
     "no_resolution",
 ]
 
-ProcedureMeasurementVerdictV1: TypeAlias = Literal["satisfied", "contradicted", "indeterminate"]
+ProcedureMeasurementVerdict: TypeAlias = Literal["satisfied", "contradicted", "indeterminate"]
 
 
 class _StrictReadingWireModel(BaseModel):
@@ -88,7 +88,7 @@ def _digest(value: str | None) -> str | None:
     return value
 
 
-class ProcedureMeasurementEligibilityV1(_StrictReadingWireModel):
+class ProcedureMeasurementEligibility(_StrictReadingWireModel):
     """The window the producer honours, and where this evaluation stood in it.
 
     ``activated_at`` reads the signed acceptance instant of the declaring
@@ -123,7 +123,7 @@ class ProcedureMeasurementEligibilityV1(_StrictReadingWireModel):
         return format_datetime(value)
 
 
-class ProcedureMeasurementResolutionSummaryV1(_StrictReadingWireModel):
+class ProcedureMeasurementResolutionSummary(_StrictReadingWireModel):
     """The standing resolution for one activation, with its retrievable record."""
 
     tag: Literal["playbill-procedure-measurement-resolution-summary-v1"] = (
@@ -132,7 +132,7 @@ class ProcedureMeasurementResolutionSummaryV1(_StrictReadingWireModel):
     resolution_id: str
     contract_id: str
     sequence: int = Field(ge=1)
-    verdict: ProcedureMeasurementVerdictV1
+    verdict: ProcedureMeasurementVerdict
     value: object | None = None
     note: str | None = None
     observed_at: datetime
@@ -173,7 +173,7 @@ class ProcedureMeasurementResolutionSummaryV1(_StrictReadingWireModel):
         return format_datetime(value)
 
 
-class ProcedureReadingSummaryV1(_StrictReadingWireModel):
+class ProcedureReadingSummary(_StrictReadingWireModel):
     """One retained exact-grain reading and the run it credits."""
 
     tag: Literal["playbill-procedure-reading-summary-v1"] = "playbill-procedure-reading-summary-v1"
@@ -192,7 +192,7 @@ class ProcedureReadingSummaryV1(_StrictReadingWireModel):
     measurement_name: str | None = None
     contract_id: str | None = None
     resolution_id: str | None = None
-    verdict: ProcedureMeasurementVerdictV1
+    verdict: ProcedureMeasurementVerdict
     value: object | None = None
     run_id: str | None = None
     run_receipt_digest: str | None = None
@@ -239,7 +239,7 @@ class ProcedureReadingSummaryV1(_StrictReadingWireModel):
         return format_datetime(value)
 
 
-class ProcedureMeasurementRowV1(_StrictReadingWireModel):
+class ProcedureMeasurementRow(_StrictReadingWireModel):
     """One declared measurement's outcome for this evaluation request."""
 
     tag: Literal["playbill-procedure-measurement-row-v1"] = "playbill-procedure-measurement-row-v1"
@@ -249,15 +249,15 @@ class ProcedureMeasurementRowV1(_StrictReadingWireModel):
     activation_id: str
     subject_grain: Literal["procedure_unit", "node", "arm"]
     subject: SemanticAddress
-    status: ProcedureMeasurementStatusV1
-    eligibility: ProcedureMeasurementEligibilityV1
-    resolution: ProcedureMeasurementResolutionSummaryV1 | None = None
-    reading_status: ProcedureReadingStatusV1
-    reading: ProcedureReadingSummaryV1 | None = None
+    status: ProcedureMeasurementStatus
+    eligibility: ProcedureMeasurementEligibility
+    resolution: ProcedureMeasurementResolutionSummary | None = None
+    reading_status: ProcedureReadingStatus
+    reading: ProcedureReadingSummary | None = None
     detail: str | None = None
 
 
-class PlaybillProcedureMeasureRequestV1(_StrictReadingWireModel):
+class PlaybillProcedureMeasureRequest(_StrictReadingWireModel):
     """Evaluate the due measurements of one accepted Procedure, optionally for one run.
 
     ``evaluation_time`` is the explicit OBSERVATION INSTANT; ``at`` is the
@@ -289,7 +289,7 @@ class PlaybillProcedureMeasureRequestV1(_StrictReadingWireModel):
         return format_datetime(value)
 
 
-class PlaybillProcedureMeasureResultV1(_StrictReadingWireModel):
+class PlaybillProcedureMeasureResult(_StrictReadingWireModel):
     tag: Literal["playbill-procedure-measure-result-v1"] = "playbill-procedure-measure-result-v1"
     procedure_identity: ArtifactIdentity
     procedure_artifact_digest: str
@@ -298,7 +298,7 @@ class PlaybillProcedureMeasureResultV1(_StrictReadingWireModel):
     observation_time: datetime
     run_id: str | None = None
     run_admission_coordinate: AcceptedCoordinate | None = None
-    rows: tuple[ProcedureMeasurementRowV1, ...]
+    rows: tuple[ProcedureMeasurementRow, ...]
 
     @field_validator("procedure_artifact_digest")
     @classmethod
@@ -315,7 +315,7 @@ class PlaybillProcedureMeasureResultV1(_StrictReadingWireModel):
         return format_datetime(value)
 
 
-class ProcedureMeasurementContractStatusV1(_StrictReadingWireModel):
+class ProcedureMeasurementContractStatus(_StrictReadingWireModel):
     """Read-only standing of one activation at the inspection instant."""
 
     tag: Literal["playbill-procedure-measurement-contract-status-v1"] = (
@@ -327,13 +327,13 @@ class ProcedureMeasurementContractStatusV1(_StrictReadingWireModel):
     activation_id: str
     subject_grain: Literal["procedure_unit", "node", "arm"]
     subject: SemanticAddress
-    status: ProcedureMeasurementStatusV1
-    eligibility: ProcedureMeasurementEligibilityV1
-    resolution: ProcedureMeasurementResolutionSummaryV1 | None = None
+    status: ProcedureMeasurementStatus
+    eligibility: ProcedureMeasurementEligibility
+    resolution: ProcedureMeasurementResolutionSummary | None = None
     reading_count: int = Field(ge=0)
 
 
-class PlaybillProcedureReadingsRequestV1(_StrictReadingWireModel):
+class PlaybillProcedureReadingsRequest(_StrictReadingWireModel):
     """Bounded, paginated inspection of retained readings. Never writes."""
 
     tag: Literal["playbill-procedure-readings-request-v1"] = (
@@ -364,15 +364,15 @@ class PlaybillProcedureReadingsRequestV1(_StrictReadingWireModel):
         return format_datetime(value)
 
 
-class PlaybillProcedureReadingsResultV1(_StrictReadingWireModel):
+class PlaybillProcedureReadingsResult(_StrictReadingWireModel):
     tag: Literal["playbill-procedure-readings-result-v1"] = "playbill-procedure-readings-result-v1"
     procedure_identity: ArtifactIdentity
     procedure_artifact_digest: str
     activation_coordinate: AcceptedCoordinate
     observation_coordinate: AcceptedCoordinate
     observation_time: datetime
-    contracts: tuple[ProcedureMeasurementContractStatusV1, ...]
-    readings: tuple[ProcedureReadingSummaryV1, ...]
+    contracts: tuple[ProcedureMeasurementContractStatus, ...]
+    readings: tuple[ProcedureReadingSummary, ...]
     truncated: bool = False
     cursor: str | None = None
 
@@ -392,17 +392,17 @@ class PlaybillProcedureReadingsResultV1(_StrictReadingWireModel):
 
 
 __all__ = [
-    "PlaybillProcedureMeasureRequestV1",
-    "PlaybillProcedureMeasureResultV1",
-    "PlaybillProcedureReadingsRequestV1",
-    "PlaybillProcedureReadingsResultV1",
-    "ProcedureMeasurementContractStatusV1",
-    "ProcedureMeasurementEligibilityV1",
-    "ProcedureMeasurementRefusalCodeV1",
-    "ProcedureMeasurementResolutionSummaryV1",
-    "ProcedureMeasurementRowV1",
-    "ProcedureMeasurementStatusV1",
-    "ProcedureMeasurementVerdictV1",
-    "ProcedureReadingStatusV1",
-    "ProcedureReadingSummaryV1",
+    "PlaybillProcedureMeasureRequest",
+    "PlaybillProcedureMeasureResult",
+    "PlaybillProcedureReadingsRequest",
+    "PlaybillProcedureReadingsResult",
+    "ProcedureMeasurementContractStatus",
+    "ProcedureMeasurementEligibility",
+    "ProcedureMeasurementRefusalCode",
+    "ProcedureMeasurementResolutionSummary",
+    "ProcedureMeasurementRow",
+    "ProcedureMeasurementStatus",
+    "ProcedureMeasurementVerdict",
+    "ProcedureReadingStatus",
+    "ProcedureReadingSummary",
 ]

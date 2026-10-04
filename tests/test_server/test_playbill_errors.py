@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cruxible_client import errors as client_errors
-from cruxible_client.contracts.compact_query import PlaybillQueryRequestV1
+from cruxible_client.contracts.compact_query import PlaybillQueryRequest
 from cruxible_client.contracts.errors import (
     ProposalEvaluationIntegrityError,
     ProposalIntegrityError,
@@ -303,7 +303,7 @@ def test_a_frozen_model_failing_inside_a_service_stays_a_generic_server_error(
     client, instance_id, _private_key = playbill_http
 
     def exploding_head(*_args: object, **_kwargs: object) -> object:
-        PlaybillQueryRequestV1(kind="x", limit=0)  # below the model's own floor
+        PlaybillQueryRequest(kind="x", limit=0)  # below the model's own floor
         raise AssertionError("unreachable")
 
     monkeypatch.setattr("cruxible_core.runtime.playbill_api.playbill_head", exploding_head)
@@ -317,7 +317,7 @@ def test_a_frozen_model_failing_inside_a_service_stays_a_generic_server_error(
     assert body["error_type"] == "InternalServerError"
     assert body["message"] == "internal server error"
     # The internal model name never reaches the client.
-    assert "PlaybillQueryRequestV1" not in response.text
+    assert "PlaybillQueryRequest" not in response.text
 
 
 def test_nearest_predicates_cover_typos_and_bare_leaf_names() -> None:

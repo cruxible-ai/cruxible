@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.contracts import ProcedureContractValidationError
-from cruxible_client.contracts.query.definitions import QueryDefinitionV1
+from cruxible_client.contracts.query.definitions import QueryDefinition
 from cruxible_client.contracts.query.values import coerce_query_value
 from cruxible_client.contracts.records import Record, RecordConstructor
 
@@ -15,7 +15,7 @@ from cruxible_client.contracts.records import Record, RecordConstructor
 class QueryParameters:
     """A constructor bound to one exact query's parameter declarations."""
 
-    definition: QueryDefinitionV1
+    definition: QueryDefinition
 
     @property
     def schema(self) -> ContractSchema:

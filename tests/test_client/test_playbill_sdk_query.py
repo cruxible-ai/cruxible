@@ -19,7 +19,7 @@ from cruxible_client.authoring.compact_query import (
     keyword_name,
     parse_where,
 )
-from cruxible_client.contracts.compact_query import PlaybillQueryRequestV1
+from cruxible_client.contracts.compact_query import PlaybillQueryRequest
 from tests.test_client._read_fakes import ClaimTypeListing
 from tests.test_client.test_playbill_sdk_world import (
     _COORDINATE,
@@ -38,10 +38,10 @@ class _QueryClient(_WorldClient):
 
     def __init__(self) -> None:
         super().__init__()
-        self.requests: list[PlaybillQueryRequestV1] = []
+        self.requests: list[PlaybillQueryRequest] = []
 
     def query_playbill(
-        self, _instance_id: str, *, request: PlaybillQueryRequestV1
+        self, _instance_id: str, *, request: PlaybillQueryRequest
     ) -> api.PlaybillQueryResult:
         if "retired" in request.status:
             # The World's own Subject listing, served as the base fake serves it.
@@ -51,7 +51,7 @@ class _QueryClient(_WorldClient):
         subject_id = "cve-2" if second else "cve-1"
         return api.PlaybillQueryResult(
             kind="sec.vulnerability",
-            columns=(api.PlaybillQueryColumnV1(name="severity", predicate=SEVERITY, type="enum"),),
+            columns=(api.PlaybillQueryColumn(name="severity", predicate=SEVERITY, type="enum"),),
             rows=(
                 {
                     "subject": f"sec.vulnerability/{subject_id}",
@@ -62,7 +62,7 @@ class _QueryClient(_WorldClient):
             ),
             truncated=not second,
             next_cursor=None if second else "page-2",
-            receipt=api.PlaybillQueryReceiptV1(
+            receipt=api.PlaybillQueryReceipt(
                 mode="inline",
                 spec_digest="sha256:" + "6" * 64,
                 coordinate=_COORDINATE.model_dump(mode="json"),  # type: ignore[arg-type]
@@ -128,7 +128,7 @@ def test_query_follows_backwards_from_a_tuple_a_mapping_or_the_model(
             ("dev.batch.delivers", "batch", "reverse"),
             ("refines", "parent"),
             {"field": "governs", "as": "decision", "direction": "reverse"},
-            api.QueryFollowV1(field="blocks", as_="blocker", direction="reverse"),
+            api.QueryFollow(field="blocks", as_="blocker", direction="reverse"),
         ],
     )
 

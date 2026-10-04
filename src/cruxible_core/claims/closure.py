@@ -31,7 +31,7 @@ from cruxible_client.contracts.artifacts import (
     ArtifactPin,
     parse_artifact_identity,
 )
-from cruxible_client.contracts.candidates import DependencyProofReferenceV1
+from cruxible_client.contracts.candidates import DependencyProofReference
 from cruxible_client.contracts.canonical import (
     ArtifactDigest,
     CanonicalValue,
@@ -418,18 +418,18 @@ class IncompleteClosureItemV1(_StrictClosureModel):
 
 class MemberDependencyProofsV1(_StrictClosureModel):
     path: str
-    proof_refs: tuple[DependencyProofReferenceV1, ...]
+    proof_refs: tuple[DependencyProofReference, ...]
 
 
 DEPENDENCY_EDGE_SET_DOMAIN: Final = "playbill-depgraph-edges-v1"
 
 
-def _edge_sort_key(edge: DependencyProofReferenceV1) -> bytes:
+def _edge_sort_key(edge: DependencyProofReference) -> bytes:
     return canonical_bytes(edge.model_dump(mode="json"))
 
 
 def dependency_edge_members(
-    edges: Sequence[DependencyProofReferenceV1],
+    edges: Sequence[DependencyProofReference],
 ) -> dict[str, str]:
     """Group edges by source member and digest each member's outgoing edge set.
 
@@ -455,7 +455,7 @@ def dependency_edge_members(
 
 
 def build_dependency_edge_tree(
-    edges: Sequence[DependencyProofReferenceV1],
+    edges: Sequence[DependencyProofReference],
 ) -> MerkleTree[DependencyEdgeRoot]:
     """Build the `playbill-dependency-graph-v3` trie over one tree's edge set."""
 
@@ -465,7 +465,7 @@ def build_dependency_edge_tree(
 def update_dependency_edge_tree(
     tree: MerkleTree[DependencyEdgeRoot],
     *,
-    updated: Mapping[str, Sequence[DependencyProofReferenceV1]] | None = None,
+    updated: Mapping[str, Sequence[DependencyProofReference]] | None = None,
     removed: Sequence[str] | None = None,
 ) -> MerkleTree[DependencyEdgeRoot]:
     """Re-digest only the named members' edge sets and the nodes above them.
@@ -495,7 +495,7 @@ def update_dependency_edge_tree(
 
 
 def dependency_edge_root(
-    edges: Sequence[DependencyProofReferenceV1],
+    edges: Sequence[DependencyProofReference],
 ) -> DependencyEdgeRoot:
     """Return the tagged v3 edge-set root, defined even for an edgeless tree."""
 
@@ -503,7 +503,7 @@ def dependency_edge_root(
 
 
 def verify_dependency_edge_root(
-    edges: Sequence[DependencyProofReferenceV1],
+    edges: Sequence[DependencyProofReference],
     *,
     claimed_root: str,
 ) -> MerkleTree[DependencyEdgeRoot]:
@@ -529,7 +529,7 @@ def _verify_closure_shape(evaluation: "ClosureEvaluationV2 | ClosureEvaluationV3
 def _proofs_for(
     member_dependency_proofs: tuple[MemberDependencyProofsV1, ...],
     path: str,
-) -> tuple[DependencyProofReferenceV1, ...]:
+) -> tuple[DependencyProofReference, ...]:
     for item in member_dependency_proofs:
         if item.path == path:
             return item.proof_refs
@@ -550,7 +550,7 @@ class ClosureEvaluationV2(_StrictClosureModel):
         _verify_closure_shape(self)
         return self
 
-    def proofs_for(self, path: str) -> tuple[DependencyProofReferenceV1, ...]:
+    def proofs_for(self, path: str) -> tuple[DependencyProofReference, ...]:
         return _proofs_for(self.member_dependency_proofs, path)
 
 
@@ -581,7 +581,7 @@ class ClosureEvaluationV3(_StrictClosureModel):
         _verify_closure_shape(self)
         return self
 
-    def proofs_for(self, path: str) -> tuple[DependencyProofReferenceV1, ...]:
+    def proofs_for(self, path: str) -> tuple[DependencyProofReference, ...]:
         return _proofs_for(self.member_dependency_proofs, path)
 
 
@@ -631,13 +631,13 @@ def is_provenance_pin(source_kind: str, pin_role: str) -> bool:
     return (source_kind, pin_role) in PROVENANCE_PIN_ROLES
 
 
-def _edge_order(edge: DependencyProofReferenceV1) -> bytes:
+def _edge_order(edge: DependencyProofReference) -> bytes:
     return canonical_bytes(edge.model_dump(mode="json"))
 
 
 def _sorted_edges(
-    edges: Iterable[DependencyProofReferenceV1],
-) -> tuple[DependencyProofReferenceV1, ...]:
+    edges: Iterable[DependencyProofReference],
+) -> tuple[DependencyProofReference, ...]:
     return tuple(sorted(edges, key=_edge_order))
 
 
@@ -646,17 +646,17 @@ def _outgoing_edges(
     *,
     states: Mapping[str, ArtifactDependencyStateV1],
     paths_by_identity: Mapping[str, str],
-) -> tuple[DependencyProofReferenceV1, ...]:
+) -> tuple[DependencyProofReference, ...]:
     """Resolve one member's outgoing edges against the tree it belongs to."""
 
-    edges: list[DependencyProofReferenceV1] = []
+    edges: list[DependencyProofReference] = []
     for pin in source.pins:
         target_path = paths_by_identity.get(pin.target.qualified)
         target = None if target_path is None else states[target_path]
         if target is None or target.artifact_digest != pin.artifact_digest:
             continue
         edges.append(
-            DependencyProofReferenceV1(
+            DependencyProofReference(
                 source_path=source.path,
                 source_artifact_digest=source.artifact_digest,
                 target_path=target.path,
@@ -669,7 +669,7 @@ def _outgoing_edges(
 
 def _edges(
     artifacts: tuple[ArtifactDependencyStateV1, ...],
-) -> tuple[DependencyProofReferenceV1, ...]:
+) -> tuple[DependencyProofReference, ...]:
     """Resolve one whole tree's edge set from scratch: the differential oracle."""
 
     states = {item.path: item for item in artifacts}
@@ -737,20 +737,20 @@ class DependencyIndexV1:
     states: Mapping[str, ArtifactDependencyStateV1]
     paths_by_identity: Mapping[str, str]
     sources_by_pinned_identity: Mapping[str, frozenset[str]]
-    edges_by_source: Mapping[str, tuple[DependencyProofReferenceV1, ...]]
-    edges_by_target: Mapping[str, tuple[DependencyProofReferenceV1, ...]]
+    edges_by_source: Mapping[str, tuple[DependencyProofReference, ...]]
+    edges_by_target: Mapping[str, tuple[DependencyProofReference, ...]]
     edge_tree: MerkleTree[DependencyEdgeRoot]
 
     @property
     def edge_root(self) -> DependencyEdgeRoot:
         return self.edge_tree.root
 
-    def edges(self) -> tuple[DependencyProofReferenceV1, ...]:
+    def edges(self) -> tuple[DependencyProofReference, ...]:
         """Return the whole edge set, which only the flat v2 digest still needs."""
 
         return _sorted_edges(edge for edges in self.edges_by_source.values() for edge in edges)
 
-    def touching(self, path: str) -> Iterable[DependencyProofReferenceV1]:
+    def touching(self, path: str) -> Iterable[DependencyProofReference]:
         return (*self.edges_by_source.get(path, ()), *self.edges_by_target.get(path, ()))
 
 
@@ -886,24 +886,24 @@ def _pin_sources(
 
 
 def _grouped_edges(
-    edges: Iterable[DependencyProofReferenceV1],
+    edges: Iterable[DependencyProofReference],
     *,
     key: str,
-) -> dict[str, tuple[DependencyProofReferenceV1, ...]]:
-    grouped: dict[str, list[DependencyProofReferenceV1]] = {}
+) -> dict[str, tuple[DependencyProofReference, ...]]:
+    grouped: dict[str, list[DependencyProofReference]] = {}
     for edge in edges:
         grouped.setdefault(getattr(edge, key), []).append(edge)
     return {path: _sorted_edges(items) for path, items in grouped.items()}
 
 
-_EDGE_ROWS = TypeAdapter(tuple[DependencyProofReferenceV1, ...])
+_EDGE_ROWS = TypeAdapter(tuple[DependencyProofReference, ...])
 
 
 def _encode_state(value: ArtifactDependencyStateV1) -> bytes:
     return canonical_bytes(value.model_dump(mode="json"))
 
 
-def _encode_edges(value: tuple[DependencyProofReferenceV1, ...]) -> bytes:
+def _encode_edges(value: tuple[DependencyProofReference, ...]) -> bytes:
     return canonical_bytes([edge.model_dump(mode="json") for edge in value])
 
 
@@ -918,8 +918,8 @@ def _state_rows(
 
 
 def _edge_rows(
-    values: Mapping[str, tuple[DependencyProofReferenceV1, ...]],
-) -> CanonicalRows[tuple[DependencyProofReferenceV1, ...]]:
+    values: Mapping[str, tuple[DependencyProofReference, ...]],
+) -> CanonicalRows[tuple[DependencyProofReference, ...]]:
     if isinstance(values, CanonicalRows):
         return values
     return CanonicalRows.build(values, encode=_encode_edges, decode=_EDGE_ROWS.validate_json)
@@ -1019,7 +1019,7 @@ def update_dependency_index(
 
     edges_by_source = _edge_rows(index.edges_by_source).mutate()
     affected_targets: set[str] = set()
-    updates: dict[str, tuple[DependencyProofReferenceV1, ...]] = {}
+    updates: dict[str, tuple[DependencyProofReference, ...]] = {}
     for path in sorted(affected):
         for edge in edges_by_source.get(path, ()):
             affected_targets.add(edge.target_path)

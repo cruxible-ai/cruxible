@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from cruxible_client.contracts.approval_policy import ApprovalPolicyV1
+from cruxible_client.contracts.approval_policy import ApprovalPolicy
 from cruxible_client.contracts.canonical import (
     ArtifactDigest,
     BootstrapRoot,
@@ -46,7 +46,7 @@ def test_semantic_genesis_has_a_frozen_end_to_end_golden() -> None:
     principals = tuple(
         PrincipalRecord.model_validate(record) for record in golden["input"]["principals"]
     )
-    approval_policy = ApprovalPolicyV1.model_validate(golden["input"]["approval_policy"])
+    approval_policy = ApprovalPolicy.model_validate(golden["input"]["approval_policy"])
     tree = genesis_tree(principals, approval_policy=approval_policy)
     parent = bootstrap_root(
         instance_id=golden["input"]["instance_id"],

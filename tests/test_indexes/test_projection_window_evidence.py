@@ -21,21 +21,21 @@ import pytest
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayloadV1,
-    SelfSourceBodyV1,
-    WorkingAnchorWindowV1,
-    WorkingDigestCoordinateV1,
-    WorkingSelectionObservationV1,
+    SelfSourceBody,
+    WorkingAnchorWindow,
+    WorkingDigestCoordinate,
+    WorkingSelectionObservation,
 )
-from cruxible_client.contracts.candidates import CandidateRecordV3
+from cruxible_client.contracts.candidates import CandidateRecord
 from cruxible_client.contracts.captures import (
-    DirectForeignSourceSelectionV1,
+    DirectForeignSourceSelection,
     build_foreign_source_capture,
     foreign_source_capture_contract,
 )
 from cruxible_client.contracts.claims import claim_path, parse_claim
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV1,
-    ProjectionClaimBackingV1,
+    ProjectionClaimBacking,
     render_projection_opening,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate as ClientCoordinate
@@ -85,7 +85,7 @@ def _stamp(*, source_id: str = SOURCE_ID) -> ProjectionBlockStampV1:
             compiler_digest="sha256:" + "4" * 64,
         ),
         backing=(
-            ProjectionClaimBackingV1(
+            ProjectionClaimBacking(
                 identity=ArtifactIdentity(kind="Claim", name="CLM-" + "a" * 32),
                 statement_digest="sha256:" + "5" * 64,
             ),
@@ -118,9 +118,9 @@ def _selection_payload(
     return ClaimAuthoringPayloadV1(
         statement=_self_source_payload().statement,
         rationale="The page says so.",
-        source=WorkingSelectionObservationV1(
+        source=WorkingSelectionObservation(
             source_id=SOURCE_ID,
-            coordinate=WorkingDigestCoordinateV1(
+            coordinate=WorkingDigestCoordinate(
                 source_content_digest=_digest(page),
                 source_byte_length=len(page),
             ),
@@ -129,7 +129,7 @@ def _selection_payload(
             ),
             selected_content_base64=base64.b64encode(page[start:end]).decode("ascii"),
             selected_bytes_digest=_digest(page[start:end]),
-            selector=WorkingAnchorWindowV1(
+            selector=WorkingAnchorWindow(
                 anchor=anchor.decode("utf-8").strip(),
                 start_byte=start,
                 end_byte=end,
@@ -223,7 +223,7 @@ def test_a_self_source_body_that_carries_a_stamped_block_is_its_own_projection(
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
     payload = _self_source_payload().model_copy(
-        update={"source": SelfSourceBodyV1(content_base64=base64.b64encode(_page()).decode())}
+        update={"source": SelfSourceBody(content_base64=base64.b64encode(_page()).decode())}
     )
 
     verdict, codes = _preflight_codes(coordinator, actor, payload)
@@ -373,7 +373,7 @@ def _page_span_capture(instance: Any, base: Any, page: bytes, *, anchor: bytes) 
         rationale="a span of the governed page",
         observed_at=datetime(2026, 8, 20, 12, tzinfo=UTC),
         accepted_coordinate=AcceptedCoordinate.from_internal(base),
-        selection=DirectForeignSourceSelectionV1(
+        selection=DirectForeignSourceSelection(
             logical_source_identity=PAGE_SOURCE_IDENTITY,
             span=ContentSpan(
                 content_digest=stored.digest,
@@ -430,7 +430,7 @@ def test_the_citation_gate_refuses_a_raw_candidate_citing_into_a_window(
         "2026-08-20T12:00:00.000000Z",
     )
     assert proposed.evaluation.diagnostics == (), proposed.evaluation.diagnostics
-    assert isinstance(proposed.candidate, CandidateRecordV3)
+    assert isinstance(proposed.candidate, CandidateRecord)
     # Un-windowed page prose under a declared contract still covers the Claim.
     evidence = _claim_law_evidence(proposed.candidate)
     assert evidence.initial_verdict == "supported"
@@ -453,7 +453,7 @@ def _candidate_tree(instance: Any, base: Any, contract: Any, claim_type: Any, cl
     }
 
 
-def _claim_law_evidence(candidate: CandidateRecordV3) -> Any:
+def _claim_law_evidence(candidate: CandidateRecord) -> Any:
     from tests.test_claims.test_claim_citations import _claim_evidence
 
     return _claim_evidence(candidate)

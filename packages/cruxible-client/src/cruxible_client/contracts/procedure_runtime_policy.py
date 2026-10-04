@@ -26,7 +26,7 @@ class ProcedureRuntimePolicyFormatError(PlaybillFormatError):
     """The governed Procedure-runtime-policy singleton is absent or malformed."""
 
 
-class ProcedureRuntimePolicyV1(BaseModel):
+class ProcedureRuntimePolicy(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-procedure-runtime-policy-v1"] = "playbill-procedure-runtime-policy-v1"
@@ -36,7 +36,7 @@ class ProcedureRuntimePolicyV1(BaseModel):
     repeat_attempts_cap: int | None = Field(default=None, ge=1, exclude_if=lambda v: v is None)
 
 
-def render_procedure_runtime_policy(policy: ProcedureRuntimePolicyV1) -> bytes:
+def render_procedure_runtime_policy(policy: ProcedureRuntimePolicy) -> bytes:
     return pretty_canonical_bytes(policy.model_dump(mode="json"))
 
 
@@ -45,14 +45,14 @@ def parse_procedure_runtime_policy(
     *,
     path: str,
     codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
-) -> ProcedureRuntimePolicyV1:
+) -> ProcedureRuntimePolicy:
     if not artifact_path_matches(PROCEDURE_RUNTIME_POLICY_PATH, path, codec=codec):
         raise ProcedureRuntimePolicyFormatError(
             "Procedure runtime policy must use its singleton path"
         )
     try:
         payload = json.loads(content)
-        policy = ProcedureRuntimePolicyV1.model_validate(payload)
+        policy = ProcedureRuntimePolicy.model_validate(payload)
     except (UnicodeDecodeError, ValueError) as exc:
         raise ProcedureRuntimePolicyFormatError(
             "Procedure runtime policy failed strict validation"
@@ -65,7 +65,7 @@ def parse_procedure_runtime_policy(
     return policy
 
 
-def procedure_runtime_policy_digest(policy: ProcedureRuntimePolicyV1) -> ArtifactDigest:
+def procedure_runtime_policy_digest(policy: ProcedureRuntimePolicy) -> ArtifactDigest:
     payload = policy.model_dump(mode="json")
     artifact_format = str(payload.pop("tag"))
     return typed_digest(
@@ -79,7 +79,7 @@ __all__ = [
     "PROCEDURE_RUNTIME_POLICY_IDENTITY",
     "PROCEDURE_RUNTIME_POLICY_PATH",
     "ProcedureRuntimePolicyFormatError",
-    "ProcedureRuntimePolicyV1",
+    "ProcedureRuntimePolicy",
     "parse_procedure_runtime_policy",
     "procedure_runtime_policy_digest",
     "render_procedure_runtime_policy",

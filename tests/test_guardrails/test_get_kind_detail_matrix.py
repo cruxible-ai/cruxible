@@ -17,7 +17,7 @@ from tests.test_service.test_operational_credentials import credential_world  # 
 from tests.test_service.test_operational_get import prediction_world  # noqa: F401
 from tests.test_service.test_procedure_run_reads import run_world  # noqa: F401
 
-from cruxible_client.contracts.get_reads import GET_DETAILS_BY_KIND, PlaybillGetRequestV1
+from cruxible_client.contracts.get_reads import GET_DETAILS_BY_KIND, PlaybillGetRequest
 from cruxible_client.errors import CoreError as ClientCoreError
 from cruxible_core.errors import CoreError
 from cruxible_core.service.discovery.get import service_playbill_get
@@ -113,7 +113,7 @@ def test_every_provider_interface_detail_answers_or_refuses_coded(  # type: igno
         try:
             result = service_playbill_get(
                 instance,
-                request=PlaybillGetRequestV1(
+                request=PlaybillGetRequest(
                     ref="ProviderInterface:demo.interface", detail=detail, at=at
                 ),
                 access=_ACCESS,
@@ -140,7 +140,7 @@ def test_every_kind_and_detail_answers_or_refuses_coded(refs, kind, detail, hist
 
     try:
         result = service_playbill_get(
-            instance, request=PlaybillGetRequestV1.model_validate(fields), access=_ACCESS
+            instance, request=PlaybillGetRequest.model_validate(fields), access=_ACCESS
         )
     except (CoreError, ClientCoreError):
         return

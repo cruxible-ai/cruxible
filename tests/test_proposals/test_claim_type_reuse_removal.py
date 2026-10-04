@@ -25,7 +25,7 @@ from cruxible_client.contracts.laws import (
     AcceptanceLawRegistry,
 )
 from cruxible_core.claims.claim_type_inputs import (
-    ClaimTypeInputV1,
+    ClaimTypeInputRecord,
     claim_type_input_template,
     lower_claim_type_input,
 )
@@ -56,7 +56,7 @@ def _claim_type(
     if object_subject_kind is not None:
         payload.pop("literal_schema", None)
         payload.update(object_kind="subject", allowed_object_subject_kinds=[object_subject_kind])
-    lowered = lower_claim_type_input(ClaimTypeInputV1.model_validate(payload), tree=tree)
+    lowered = lower_claim_type_input(ClaimTypeInputRecord.model_validate(payload), tree=tree)
     assert lowered.artifact_format == TAG
     return lowered
 

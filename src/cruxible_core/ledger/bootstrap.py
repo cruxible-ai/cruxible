@@ -12,8 +12,8 @@ from pydantic import ValidationError
 
 from cruxible_client.contracts.approval_policy import (
     APPROVAL_POLICY_PATH,
+    ApprovalPolicy,
     ApprovalPolicyFormatError,
-    ApprovalPolicyV1,
     parse_approval_policy,
     render_approval_policy,
 )
@@ -30,14 +30,14 @@ from cruxible_client.contracts.errors import PlaybillBootstrapError
 from cruxible_client.contracts.principal_rendering import render_principal
 from cruxible_client.contracts.procedure_runtime_policy import (
     PROCEDURE_RUNTIME_POLICY_PATH,
+    ProcedureRuntimePolicy,
     ProcedureRuntimePolicyFormatError,
-    ProcedureRuntimePolicyV1,
     parse_procedure_runtime_policy,
     render_procedure_runtime_policy,
 )
 from cruxible_client.contracts.triggers import (
+    Trigger,
     TriggerFormatError,
-    TriggerV1,
     parse_trigger,
     render_trigger,
     trigger_path,
@@ -62,8 +62,8 @@ class VerifiedGenesis:
     descriptor: GenerationDescriptor
     generation_root: GenerationRoot
     principals: tuple[PrincipalRecord, ...]
-    approval_policy: ApprovalPolicyV1
-    procedure_runtime_policy: ProcedureRuntimePolicyV1 | None
+    approval_policy: ApprovalPolicy
+    procedure_runtime_policy: ProcedureRuntimePolicy | None
 
 
 def bootstrap_root(*, instance_id: str, daemon_public_key: str) -> BootstrapRoot:
@@ -127,9 +127,9 @@ def generation_root(descriptor: GenerationDescriptor) -> GenerationRoot:
 def genesis_tree(
     principals: Sequence[PrincipalRecord],
     *,
-    approval_policy: ApprovalPolicyV1,
-    procedure_runtime_policy: ProcedureRuntimePolicyV1 | None = None,
-    triggers: Sequence[TriggerV1] = (),
+    approval_policy: ApprovalPolicy,
+    procedure_runtime_policy: ProcedureRuntimePolicy | None = None,
+    triggers: Sequence[Trigger] = (),
 ) -> dict[str, bytes]:
     ordered = sorted(principals, key=lambda record: record.principal_id)
     if [record.principal_id for record in ordered] != sorted(
@@ -155,7 +155,7 @@ def genesis_tree(
 SEEDED_TRIGGER_NAMES = ("evidence-sweep", "floor-refresh", "prediction-anchor-retry")
 
 
-def seeded_triggers() -> tuple[TriggerV1, ...]:
+def seeded_triggers() -> tuple[Trigger, ...]:
     """Load the checked-in sweep, floor-refresh and anchor-retry Triggers.
 
     They are ordinary governed Triggers from the first generation on: an
@@ -172,7 +172,7 @@ def seeded_triggers() -> tuple[TriggerV1, ...]:
     )
 
 
-def seeded_procedure_runtime_policy() -> ProcedureRuntimePolicyV1:
+def seeded_procedure_runtime_policy() -> ProcedureRuntimePolicy:
     """Load the checked-in genesis policy artifact; no runtime cap lives in code."""
 
     return parse_procedure_runtime_policy(
@@ -207,7 +207,7 @@ def verify_genesis(
         approval_policy = parse_approval_policy(policy_content, path=APPROVAL_POLICY_PATH)
     except ApprovalPolicyFormatError as exc:
         raise PlaybillBootstrapError("genesis approval policy is invalid") from exc
-    runtime_policy: ProcedureRuntimePolicyV1 | None = None
+    runtime_policy: ProcedureRuntimePolicy | None = None
     runtime_policy_content = tree.get(PROCEDURE_RUNTIME_POLICY_PATH)
     if runtime_policy_content is not None:
         try:
@@ -217,7 +217,7 @@ def verify_genesis(
             )
         except ProcedureRuntimePolicyFormatError as exc:
             raise PlaybillBootstrapError("genesis Procedure runtime policy is invalid") from exc
-    triggers: list[TriggerV1] = []
+    triggers: list[Trigger] = []
     for path in sorted(item for item in tree if item.startswith("triggers/")):
         try:
             triggers.append(parse_trigger(tree[path], path=path))
@@ -286,9 +286,9 @@ def prepare_genesis(
     ledger: GitLedger,
     *,
     trust_root: PlaybillTrustRoot,
-    approval_policy: ApprovalPolicyV1,
-    procedure_runtime_policy: ProcedureRuntimePolicyV1 | None = None,
-    triggers: Sequence[TriggerV1] = (),
+    approval_policy: ApprovalPolicy,
+    procedure_runtime_policy: ProcedureRuntimePolicy | None = None,
+    triggers: Sequence[Trigger] = (),
     timestamp: str,
 ) -> VerifiedGenesis:
     """Create, verify, and install the one no-parent genesis commit.

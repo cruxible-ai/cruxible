@@ -8,11 +8,11 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.contracts.declared_blocks import (
-    PlaybillPresentationPolicyV2,
-    PlaybillProjectionAdvisoryPolicyV1,
-    PlaybillProjectionCoverageBindingV1,
-    PlaybillProjectionCoverageObservationV1,
-    PlaybillReviewWorkspaceObservationV1,
+    PlaybillPresentationPolicy,
+    PlaybillProjectionAdvisoryPolicy,
+    PlaybillProjectionCoverageBinding,
+    PlaybillProjectionCoverageObservation,
+    PlaybillReviewWorkspaceObservation,
 )
 from cruxible_client.contracts.errors import PlaybillKeyError
 from cruxible_client.contracts.procedures.artifacts import render_procedure
@@ -42,8 +42,8 @@ from tests.test_authoring.test_authoring_preflight import _seed_claim_surface
 from tests.test_integration.test_graph_v4_provider_closure import _accepted_procedure
 from tests.test_service.test_playbill_documents import TIMESTAMP, _instance, _shell
 
-CLAIM_PROJECTION_POLICY = PlaybillPresentationPolicyV2(
-    projection_advisories=PlaybillProjectionAdvisoryPolicyV1(claim=True, procedure=True)
+CLAIM_PROJECTION_POLICY = PlaybillPresentationPolicy(
+    projection_advisories=PlaybillProjectionAdvisoryPolicy(claim=True, procedure=True)
 )
 
 
@@ -65,9 +65,9 @@ def _review_observation(instance, *, coordinate=None):  # type: ignore[no-untype
     public = ClientAcceptedCoordinate.model_validate(
         AcceptedCoordinate.from_internal(selected).model_dump(mode="json")
     )
-    return PlaybillReviewWorkspaceObservationV1(
+    return PlaybillReviewWorkspaceObservation(
         presentation_policy=CLAIM_PROJECTION_POLICY,
-        projection_coverage=PlaybillProjectionCoverageObservationV1(
+        projection_coverage=PlaybillProjectionCoverageObservation(
             coordinate=public,
             complete_kinds=("Claim", "Procedure"),
             bindings=(),
@@ -237,7 +237,7 @@ def test_candidate_projection_advisory_counts_generated_successors_and_excludes_
     procedure = _accepted_procedure()
     settlement = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     public = ClientAcceptedCoordinate.model_validate(settlement.model_dump(mode="json"))
-    coverage = PlaybillProjectionCoverageObservationV1(
+    coverage = PlaybillProjectionCoverageObservation(
         coordinate=public,
         complete_kinds=("Procedure",),
         bindings=(),
@@ -262,8 +262,8 @@ def test_candidate_projection_advisory_counts_generated_successors_and_excludes_
 
     # The Procedure catalog advisory is off by default; a kit or workspace
     # opts in.
-    default_policy = PlaybillReviewWorkspaceObservationV1(
-        presentation_policy=PlaybillPresentationPolicyV2(),
+    default_policy = PlaybillReviewWorkspaceObservation(
+        presentation_policy=PlaybillPresentationPolicy(),
         projection_coverage=coverage,
     )
     assert (
@@ -302,7 +302,7 @@ def test_candidate_projection_advisory_counts_generated_successors_and_excludes_
             "projection_coverage": coverage.model_copy(
                 update={
                     "bindings": (
-                        PlaybillProjectionCoverageBindingV1(
+                        PlaybillProjectionCoverageBinding(
                             artifact=procedure.procedure.identity,
                             workspace_path="runbooks/release.md",
                             evidence_kind="procedure_catalog",

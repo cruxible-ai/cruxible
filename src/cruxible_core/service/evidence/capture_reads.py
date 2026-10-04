@@ -6,9 +6,9 @@ from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from typing import Literal
 
-from cruxible_client.contracts.capture_reads import CaptureReadRequestV1, CaptureReadV1
+from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
 from cruxible_client.contracts.captures import (
-    CaptureContractV1,
+    CaptureContract,
     CaptureEnvelopeAny,
     classify_capture_reuse,
     parse_capture_envelope,
@@ -16,13 +16,13 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.errors import PlaybillError, PlaybillFormatError, ReadRefusalError
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.repairs import RepairOperationV1
+from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import (
-    CasSourceReferenceV1,
-    LedgerSourceReferenceV1,
-    OpenSourceRequestV1,
-    SourceHandleV1,
+    CasSourceReference,
+    LedgerSourceReference,
+    OpenSourceRequest,
+    SourceHandle,
 )
 from cruxible_core.errors import PermissionDeniedError
 from cruxible_core.exhaust.producer_receipts import local_producer_receipt_resolver
@@ -71,20 +71,20 @@ def _not_a_capture(
     owners = [*claims, *documents][:_MAX_OWNERS]
     if claims:
         what = f"the exact content of Claim {claims[0]}"
-        repair = RepairOperationV1(operation="playbill.get", arguments={"ref": claims[0]})
+        repair = RepairOperation(operation="playbill.get", arguments={"ref": claims[0]})
         line = (
             f"Read it with get on the Claim ({claims[0]}), which shows the value as text; "
             'detail="evidence" names the Captures behind it'
         )
     elif documents:
         what = f"the body of {documents[0]}"
-        repair = RepairOperationV1(
+        repair = RepairOperation(
             operation="playbill.get", arguments={"ref": documents[0], "detail": "body"}
         )
         line = f'Read it with get on {documents[0]} with detail="body"'
     else:
         what = "stored bytes that are not a Capture envelope"
-        repair = RepairOperationV1(operation="playbill.orient")
+        repair = RepairOperation(operation="playbill.orient")
         line = (
             'Pass a Capture\'s digest; get on a Claim with detail="proof" carries the full '
             "digests of the Captures behind it"
@@ -128,7 +128,7 @@ def _full_capture_digest(
             f"{value!r} is a prefix of {len(matches)} Captures",
             http_status=409,
             candidates=matches[:_MAX_PREFIX_CANDIDATES],
-            repair=RepairOperationV1(
+            repair=RepairOperation(
                 operation="playbill.capture.read", arguments={"capture_digest": matches[0]}
             ),
             repair_line="Pass one of them in full",
@@ -140,7 +140,7 @@ def _full_capture_digest(
         "playbill.capture.not_found",
         f"no Capture this instance holds has a digest starting with {hex_digits}",
         http_status=404,
-        repair=RepairOperationV1(operation="playbill.orient", arguments={"section": "captures"}),
+        repair=RepairOperation(operation="playbill.orient", arguments={"section": "captures"}),
         repair_line='Run orient(section="captures") to list them, or pass a full digest',
         context={"capture_digest": value},
     )
@@ -153,7 +153,7 @@ def capture_handle_exhausted(value: str, *, field: str) -> ReadRefusalError:
         "playbill.capture.ref_scan_exhausted",
         f"{value!r} was not resolved: more Captures share its prefix than one lookup examines",
         http_status=409,
-        repair=RepairOperationV1(operation="playbill.orient", arguments={"section": "captures"}),
+        repair=RepairOperation(operation="playbill.orient", arguments={"section": "captures"}),
         repair_line="Pass a longer handle, or the full sha256 digest",
         context={field: value},
     )
@@ -163,7 +163,7 @@ class _LedgerResolver:
     def __init__(self, instance: PlaybillInstance) -> None:
         self.instance = instance
 
-    def read_ledger_source(self, source: LedgerSourceReferenceV1) -> bytes:
+    def read_ledger_source(self, source: LedgerSourceReference) -> bytes:
         coordinate = self.instance.resolve_accepted_coordinate(
             **source.coordinate.model_dump(mode="python", exclude={"tag"})
         )
@@ -183,7 +183,7 @@ class VerifiedCapture:
     """A Capture verified against its exact contract accepted at one coordinate."""
 
     envelope: CaptureEnvelopeAny
-    contract: CaptureContractV1
+    contract: CaptureContract
     contract_address: str
 
 
@@ -227,7 +227,7 @@ def verify_accepted_capture(
             if row is None:
                 raise CaptureReadInvalid("CaptureContract index does not reproduce")
             contract = projection.typed.source(row[0])
-            if not isinstance(contract, CaptureContractV1):
+            if not isinstance(contract, CaptureContract):
                 raise CaptureReadInvalid("CaptureContract source has the wrong type")
             producers = {}
             for identity in {envelope.producer, envelope.run_coordinate.executable_identity}:
@@ -428,9 +428,9 @@ def _verifies(
 def service_read_playbill_capture(
     instance: PlaybillInstance,
     *,
-    request: CaptureReadRequestV1,
+    request: CaptureReadRequest,
     access: BodyAccessContext,
-) -> CaptureReadV1:
+) -> CaptureRead:
     # Envelopes also carry body-derived source/selector metadata. Authorize
     # before reading either them or their bodies, including for in-process callers.
     if not access.can_read_body:
@@ -450,7 +450,7 @@ def service_read_playbill_capture(
     )
     verified = verify_accepted_capture(instance, coordinate, request.capture_digest, access=access)
     if isinstance(verified, str):
-        return CaptureReadV1(
+        return CaptureRead(
             capture_digest=request.capture_digest,
             coordinate=public,
             status="unavailable",
@@ -462,15 +462,15 @@ def service_read_playbill_capture(
         # An external Capture can retain exact bytes locally. Open those bytes,
         # not the remote location; the original source remains in the envelope.
         source = (
-            CasSourceReferenceV1(content_digest=envelope.commitment.digest)
+            CasSourceReference(content_digest=envelope.commitment.digest)
             if envelope.commitment.materialization == "cas"
             else envelope.source
         )
-        material_at = source.coordinate if isinstance(source, LedgerSourceReferenceV1) else public
+        material_at = source.coordinate if isinstance(source, LedgerSourceReference) else public
         material = service_open_playbill_source(
             instance,
-            request=OpenSourceRequestV1(
-                source_handle=SourceHandleV1(
+            request=OpenSourceRequest(
+                source_handle=SourceHandle(
                     subject=SemanticAddress.whole_artifact(path),
                     at=material_at,
                     source=source,
@@ -486,7 +486,7 @@ def service_read_playbill_capture(
         raise
     except (PlaybillError, ValueError) as exc:
         raise CaptureReadInvalid(f"Capture verification failed: {exc}") from exc
-    return CaptureReadV1(
+    return CaptureRead(
         capture_digest=request.capture_digest,
         coordinate=public,
         status="verified",

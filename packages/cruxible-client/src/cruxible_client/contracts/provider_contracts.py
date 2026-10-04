@@ -16,7 +16,7 @@ from cruxible_client.contracts.procedures.contract_schema import ContractSchema
 ACQUISITION_RESULT = "playbill-provider-result-to-external-capture-v1"
 
 
-class ProviderOperationContractV1(BaseModel):
+class ProviderOperationContract(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     input: ContractSchema
@@ -24,17 +24,17 @@ class ProviderOperationContractV1(BaseModel):
     material: ContractSchema | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
-    def _material_schema(self) -> "ProviderOperationContractV1":
+    def _material_schema(self) -> "ProviderOperationContract":
         if self.material is not None and self.output != ACQUISITION_RESULT:
             raise ValueError("Only an acquisition interface declares captured material")
         return self
 
 
-def read_provider_operation_contract(interface_bytes_hex: str) -> ProviderOperationContractV1:
+def read_provider_operation_contract(interface_bytes_hex: str) -> ProviderOperationContract:
     definition = json.loads(bytes.fromhex(interface_bytes_hex))
     if not isinstance(definition, dict) or "contracts" not in definition:
         raise ValueError("ProviderInterface must declare its operation contracts")
-    return ProviderOperationContractV1.model_validate(definition["contracts"], extra="forbid")
+    return ProviderOperationContract.model_validate(definition["contracts"], extra="forbid")
 
 
 def operation_schema_shape(schema: ContractSchema) -> dict[str, object]:
@@ -61,16 +61,16 @@ def operation_schema_shape(schema: ContractSchema) -> dict[str, object]:
 
 
 def validate_provider_value(
-    contract: ProviderOperationContractV1, payload: object, *, direction: Literal["input", "output"]
+    contract: ProviderOperationContract, payload: object, *, direction: Literal["input", "output"]
 ) -> object:
     # Lazy imports keep the interface/Procedure/Capture contract graph acyclic.
     from cruxible_client.contracts.canonical import canonical_bytes
-    from cruxible_client.contracts.captures import ProviderResultToExternalCaptureV1
+    from cruxible_client.contracts.captures import ProviderResultToExternalCapture
     from cruxible_client.contracts.procedures.contracts import validate_contract_schema
 
     schema = contract.input if direction == "input" else contract.output
     if isinstance(schema, str):
-        parsed = ProviderResultToExternalCaptureV1.model_validate(payload)
+        parsed = ProviderResultToExternalCapture.model_validate(payload)
         if canonical_bytes(parsed.model_dump(mode="json")) != canonical_bytes(payload):
             raise ValueError("Acquisition output must use the canonical Capture result encoding")
         if contract.material is not None:

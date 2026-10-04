@@ -1,6 +1,6 @@
 """Attributed Claim-retirement laws, through the change-set retirement member.
 
-A retirement is one ``ClaimRetirementMemberV1`` naming the Claim it ``retires``
+A retirement is one ``ClaimRetirementMember`` naming the Claim it ``retires``
 and its exact live dependent closure; the write verbs lower ``retire`` to it.
 """
 
@@ -18,8 +18,8 @@ from cruxible_client.contracts.claim_types import (
     parse_claim_type,
 )
 from cruxible_client.contracts.claims import (
-    ClaimArtifactV3,
-    ClaimRetireDependentV1,
+    ClaimArtifact,
+    ClaimRetireDependent,
     LiteralClaimObject,
     _is_attributed_retirement,
     claim_artifact_digest,
@@ -33,10 +33,10 @@ from cruxible_client.contracts.query.definitions import (
 )
 from cruxible_core.claims.claim_retirement import ClaimRetireDependentUnsupported
 from cruxible_core.claims.claim_type_migrations import (
-    ClaimTypeDependentDispositionV3,
+    ClaimTypeDependentDisposition,
     ClaimTypeMigrationDependentInvalid,
     ClaimTypeMigrationIncomplete,
-    ClaimTypeMigrationRequestV3,
+    ClaimTypeMigrationRequest,
     service_migrate_claim_type,
 )
 from cruxible_core.proposals.proposals import AuthenticatedActor, evaluate_proposal_tree
@@ -270,7 +270,7 @@ def test_root_only_retirement_records_its_reason_and_is_terminal(
     retired = parse_claim(
         _candidate_tree(instance, submitted)[claim_path(claim_id)], path=claim_path(claim_id)
     )
-    assert isinstance(retired, ClaimArtifactV3)
+    assert isinstance(retired, ClaimArtifact)
     assert retired.retirement.reason == reason
     activate_submitted(instance, owner, submitted)
 
@@ -349,14 +349,14 @@ def test_invalid_effective_interval_is_typed_for_retirement_and_migration(
     ):
         service_migrate_claim_type(
             instance,
-            request=ClaimTypeMigrationRequestV3(
+            request=ClaimTypeMigrationRequest(
                 mode="submit",
                 successor=_decision_only_successor(
                     instance,
                     enum=["blocked", "ready", "waiting"],
                 ),
                 dependents=(
-                    ClaimTypeDependentDispositionV3(
+                    ClaimTypeDependentDisposition(
                         identity=ArtifactIdentity(kind="Claim", name=claim_id),
                         disposition="retire",
                         claim_retirement_reason="was-rescinded",
@@ -386,7 +386,7 @@ def test_transitive_dual_edge_closure_freezes_inputs_and_advances_only_claim_pin
     assert inventory[1].triggering_edge_roles == ("backing-input", "input-claim")
 
     dependents = tuple(
-        ClaimRetireDependentV1(
+        ClaimRetireDependent(
             artifact_identity=item.artifact_identity,
             predecessor_digest=item.predecessor_digest,
             reason="was-wrong" if item.artifact_identity == middle.identity else "was-rescinded",
@@ -407,9 +407,9 @@ def test_transitive_dual_edge_closure_freezes_inputs_and_advances_only_claim_pin
     retired_leaf = parse_claim(
         candidate_tree_mapping[claim_path(leaf_id)], path=claim_path(leaf_id)
     )
-    assert isinstance(retired_root, ClaimArtifactV3)
-    assert isinstance(retired_middle, ClaimArtifactV3)
-    assert isinstance(retired_leaf, ClaimArtifactV3)
+    assert isinstance(retired_root, ClaimArtifact)
+    assert isinstance(retired_middle, ClaimArtifact)
+    assert isinstance(retired_leaf, ClaimArtifact)
     assert retired_middle.retirement.reason == "was-wrong"
     assert retired_middle.backing.input_claim_digests == middle.backing.input_claim_digests
     assert retired_leaf.backing.input_claim_digests == leaf.backing.input_claim_digests
@@ -495,7 +495,7 @@ def test_transitive_dual_edge_closure_freezes_inputs_and_advances_only_claim_pin
             "pins": predecessor_with_non_claim_pin.pins,
         }
     )
-    assert isinstance(attributed_retirement_with_non_claim_pin, ClaimArtifactV3)
+    assert isinstance(attributed_retirement_with_non_claim_pin, ClaimArtifact)
     assert _is_attributed_retirement(
         attributed_retirement_with_non_claim_pin,
         predecessor=predecessor_with_non_claim_pin,
@@ -612,7 +612,7 @@ def test_a_retired_dependent_leaves_the_closure(
     candidate = dict(_candidate_tree(instance, submitted))
     assert isinstance(
         parse_claim(candidate[claim_path(middle_id)], path=claim_path(middle_id)),
-        ClaimArtifactV3,
+        ClaimArtifact,
     )
     assert candidate[claim_path(leaf_id)] == accepted[claim_path(leaf_id)]
     activate_submitted(instance, owner, submitted)
@@ -629,11 +629,11 @@ def test_live_target_successor_cannot_advance_a_retiring_dependent_pin(tmp_path:
         update={"literal_schema": {"type": "string", "minLength": 1}}
     )
     dispositions = (
-        ClaimTypeDependentDispositionV3(
+        ClaimTypeDependentDisposition(
             identity=middle_before.identity,
             disposition="successor",
         ),
-        ClaimTypeDependentDispositionV3(
+        ClaimTypeDependentDisposition(
             identity=ArtifactIdentity(kind="Claim", name=leaf_id),
             disposition="retire",
             claim_retirement_reason="was-rescinded",
@@ -645,7 +645,7 @@ def test_live_target_successor_cannot_advance_a_retiring_dependent_pin(tmp_path:
     ):
         service_migrate_claim_type(
             instance,
-            request=ClaimTypeMigrationRequestV3(
+            request=ClaimTypeMigrationRequest(
                 mode="submit",
                 successor=successor,
                 dependents=dispositions,
@@ -662,7 +662,7 @@ def test_retire_refuses_an_extra_dependent(tmp_path: Path) -> None:
             instance,
             claim_id,
             dependents=(
-                ClaimRetireDependentV1(
+                ClaimRetireDependent(
                     artifact_identity=ArtifactIdentity(
                         kind="Claim",
                         name="CLM-ffffffffffffffffffffffffffffffff",

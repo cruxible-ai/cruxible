@@ -8,17 +8,17 @@ from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.captures import capture_contract_digest
 from cruxible_client.contracts.errors import PlaybillExecutionError
 from cruxible_client.contracts.line_dispatch import (
-    LineArmPrincipalV1,
-    LineDispatchRequestV1,
+    LineArmPrincipal,
+    LineDispatchRequest,
 )
 from cruxible_client.contracts.procedures.line_specs import (
+    LineSpec,
     LineSpecV4,
-    LineSpecV6,
     line_spec_path,
     render_line_spec,
 )
-from cruxible_client.contracts.procedures.windows import CaptureEventSelectorV1
-from cruxible_client.contracts.triggers import CaptureLandingScheduleV1, WindowCloseScheduleV1
+from cruxible_client.contracts.procedures.windows import CaptureEventSelector
+from cruxible_client.contracts.triggers import CaptureLandingSchedule, WindowCloseSchedule
 from cruxible_core.exhaust.records import parse_journal_payload
 from cruxible_core.procedures.execution import parse_admission_payload
 from cruxible_core.service.procedures.line_dispatch import (
@@ -27,7 +27,7 @@ from cruxible_core.service.procedures.line_dispatch import (
     service_match_listening_lines,
 )
 from cruxible_core.service.procedures.procedure_runs import (
-    LineRunRequestV1,
+    LineRunRequest,
     _journal,
     _stream,
     service_run_playbill_line,
@@ -48,26 +48,26 @@ from tests.test_procedures.test_procedure_source_runs import (
     capture_contract,
 )
 
-LOCAL_OPERATOR = LineArmPrincipalV1(kind="local_operator", label="local-operator")
+LOCAL_OPERATOR = LineArmPrincipal(kind="local_operator", label="local-operator")
 TRIGGER = "trigger-source-trigger"
 
 
 def world(tmp_path, *, window=False, line_budget=None, with_owner=False, **kwargs):
     instance, owner, procedure, root, policy = _world(tmp_path, **kwargs)
     contract = kwargs.get("contract", capture_contract())
-    selector = CaptureEventSelectorV1(
+    selector = CaptureEventSelector(
         capture_contract_identity=contract.identity,
         capture_contract_digest=capture_contract_digest(contract).tagged,
     )
     original = _served_line(procedure, policy)
-    schedule = CaptureLandingScheduleV1(event=selector)
+    schedule = CaptureLandingSchedule(event=selector)
     if window:
-        from cruxible_client.contracts.procedures.windows import CaptureEventWindowV1
+        from cruxible_client.contracts.procedures.windows import CaptureEventWindow
 
-        schedule = WindowCloseScheduleV1(
-            window=CaptureEventWindowV1(event=selector, duration_seconds=60)
+        schedule = WindowCloseSchedule(
+            window=CaptureEventWindow(event=selector, duration_seconds=60)
         )
-    line = LineSpecV6.model_validate(
+    line = LineSpec.model_validate(
         {
             **original.model_dump(mode="python"),
             "trigger_input": SOURCE_ALIAS,
@@ -120,7 +120,7 @@ def run_line(instance, line, event, at=NOW + timedelta(seconds=2)):
     return service_run_playbill_line(
         instance,
         path_identity_digest=line.identity.name,
-        request=LineRunRequestV1(line=line.identity.name, trigger=TRIGGER, trigger_event=event),
+        request=LineRunRequest(line=line.identity.name, trigger=TRIGGER, trigger_event=event),
         actor_context=_actor(instance),
         caller_rung=2,
         daemon_clock=_TestClock(at),
@@ -233,7 +233,7 @@ def test_pending_dispatch_and_restart_keep_the_same_capture_binding(tmp_path):
     service_match_listening_lines(instance, actor=actor, now=now, daemon_id="test")
     (root / RELATIVE_PATH).unlink()
     dispatched = service_dispatch_line(
-        instance, line.identity.name, LineDispatchRequestV1(), actor=actor, now=now, caller_rung=2
+        instance, line.identity.name, LineDispatchRequest(), actor=actor, now=now, caller_rung=2
     )
     assert len(dispatched.items) == 1 and dispatched.items[0].status == "admitted", dispatched
     run_id = dispatched.items[0].run_id
@@ -273,9 +273,9 @@ def test_trigger_input_refuses_before_admission_without_refetch(tmp_path, failur
         now += timedelta(hours=2)
     elif failure == "wrong_event":
         # A forged event coordinate cannot redirect a valid Capture binding.
-        from cruxible_client.contracts.procedures.windows import TriggerEventReferenceV1
+        from cruxible_client.contracts.procedures.windows import TriggerEventReference
 
-        event = TriggerEventReferenceV1(
+        event = TriggerEventReference(
             **{**event.model_dump(), "record_digest": "sha256:" + "a" * 64}
         )
         refused = run_line(instance, line, event, at=now)
@@ -286,7 +286,7 @@ def test_trigger_input_refuses_before_admission_without_refetch(tmp_path, failur
     else:
         # Exercise the admission budget independently of acquisition-time provider caps.
         from cruxible_client.contracts.artifacts import ArtifactIdentity
-        from cruxible_client.contracts.procedures.windows import LineTriggerBindingV1
+        from cruxible_client.contracts.procedures.windows import LineTriggerBinding
         from cruxible_core.service.procedures.procedure_runs import (
             _accepted_procedure,
         )
@@ -302,7 +302,7 @@ def test_trigger_input_refuses_before_admission_without_refetch(tmp_path, failur
                 instance,
                 line=line,
                 procedure=accepted,
-                binding=LineTriggerBindingV1(
+                binding=LineTriggerBinding(
                     kind="capture_landing",
                     trigger=ArtifactIdentity(kind="Trigger", name=TRIGGER),
                     event=event,
@@ -347,7 +347,7 @@ def test_late_event_window_consumes_its_anchor_capture(tmp_path):
 def test_line_input_authoring_law_and_frozen_compiler_boundary(tmp_path):
     from pydantic import ValidationError
 
-    from cruxible_client.contracts.authoring.models import LineAuthoringPayloadV1
+    from cruxible_client.contracts.authoring.models import LineAuthoringPayload
     from cruxible_client.contracts.errors import ProjectionFormatError
     from cruxible_client.contracts.procedures.line_specs import (
         evaluate_line_spec_law,
@@ -365,7 +365,7 @@ def test_line_input_authoring_law_and_frozen_compiler_boundary(tmp_path):
     instance, _, line = world(tmp_path)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     # Authoring declares the event the trigger input accepts, read from its Source.
-    payload = LineAuthoringPayloadV1(
+    payload = LineAuthoringPayload(
         name="second-consumer",
         procedure_name=line.procedure.target.name,
         acquisition_policy_name=line.acquisition_policy.target.name,
@@ -374,17 +374,17 @@ def test_line_input_authoring_law_and_frozen_compiler_boundary(tmp_path):
     )
     path, raw, _ = _render_line_member(payload, tree=tree)
     authored = parse_line_spec(raw, path=path)
-    assert isinstance(authored, LineSpecV6) and authored.trigger_input == SOURCE_ALIAS
+    assert isinstance(authored, LineSpec) and authored.trigger_input == SOURCE_ALIAS
     assert authored.trigger_event == line.trigger_event
     with pytest.raises(ValidationError, match="trigger_event come together"):
-        LineSpecV6.model_validate({**line.model_dump(mode="python"), "trigger_event": None})
+        LineSpec.model_validate({**line.model_dump(mode="python"), "trigger_event": None})
     accepted = _accepted_procedure(
         instance, coordinate=instance.accepted_coordinate(), name=line.procedure.target.name
     )
     wrong = line.trigger_event.model_copy(update={"capture_contract_digest": "sha256:" + "b" * 64})
     for bad in (
         line.model_copy(update={"trigger_input": "result"}),
-        LineSpecV6.model_validate(
+        LineSpec.model_validate(
             {
                 **line.model_dump(mode="python"),
                 "trigger_event": wrong,
@@ -464,8 +464,8 @@ def test_trigger_input_reservations_release_on_failed_admission(tmp_path, monkey
 def test_unusable_occurrence_closes_without_starving_later_capture(tmp_path, failure):
     from cruxible_client.contracts.captures import parse_capture_envelope
     from cruxible_client.contracts.line_dispatch import (
-        LineEvaluateRequestV1,
-        LineTriggerCheckRequestV1,
+        LineEvaluateRequest,
+        LineTriggerCheckRequest,
     )
     from cruxible_core.exhaust.line_dispatch import LineDispatchStore
     from cruxible_core.service.procedures.line_dispatch import service_evaluate_line
@@ -493,7 +493,7 @@ def test_unusable_occurrence_closes_without_starving_later_capture(tmp_path, fai
     evaluated = service_evaluate_line(
         instance,
         line.identity.name,
-        LineEvaluateRequestV1(since=NOW, until=now),
+        LineEvaluateRequest(since=NOW, until=now),
         actor=actor,
         now=now,
     )
@@ -502,7 +502,7 @@ def test_unusable_occurrence_closes_without_starving_later_capture(tmp_path, fai
         o.occurrence_id for o in evaluated.occurrences if o.binding.event == event_from(first)
     )
     rejected = service_dispatch_line(
-        instance, line.identity.name, LineDispatchRequestV1(), actor=actor, now=now, caller_rung=2
+        instance, line.identity.name, LineDispatchRequest(), actor=actor, now=now, caller_rung=2
     ).items[0]
     assert rejected.occurrence_id == first_id
     assert rejected.status == "rejected"
@@ -517,7 +517,7 @@ def test_unusable_occurrence_closes_without_starving_later_capture(tmp_path, fai
     repeated = service_evaluate_line(
         instance,
         line.identity.name,
-        LineEvaluateRequestV1(since=NOW, until=now),
+        LineEvaluateRequest(since=NOW, until=now),
         actor=actor,
         now=now,
     )
@@ -525,11 +525,11 @@ def test_unusable_occurrence_closes_without_starving_later_capture(tmp_path, fai
     assert closed.dispatch_status == "rejected"
     assert not closed.pending
     admitted = service_dispatch_line(
-        instance, line.identity.name, LineDispatchRequestV1(), actor=actor, now=now, caller_rung=2
+        instance, line.identity.name, LineDispatchRequest(), actor=actor, now=now, caller_rung=2
     ).items[0]
     assert admitted.status == "admitted" and admitted.occurrence_id != first_id
     check = service_check_line_trigger(
-        instance, line.identity.name, LineTriggerCheckRequestV1(), now=now
+        instance, line.identity.name, LineTriggerCheckRequest(), now=now
     )
     assert (
         next(o for o in check.occurrences if o.occurrence_id == first_id).dispatch_status
@@ -540,7 +540,7 @@ def test_unusable_occurrence_closes_without_starving_later_capture(tmp_path, fai
         retry = service_dispatch_line(
             instance,
             line.identity.name,
-            LineDispatchRequestV1(occurrence_id=first_id, retry=True),
+            LineDispatchRequest(occurrence_id=first_id, retry=True),
             actor=actor,
             now=now,
             caller_rung=2,
@@ -550,7 +550,7 @@ def test_unusable_occurrence_closes_without_starving_later_capture(tmp_path, fai
 
 def test_over_budget_occurrence_closes_then_requires_successor_for_retry(tmp_path):
     from cruxible_client.contracts.artifacts import ArtifactLifecycle
-    from cruxible_client.contracts.line_dispatch import LineEvaluateRequestV1
+    from cruxible_client.contracts.line_dispatch import LineEvaluateRequest
     from cruxible_client.contracts.procedures.line_specs import line_spec_digest
     from cruxible_core.exhaust.line_dispatch import LineDispatchStore
     from cruxible_core.service.procedures.line_dispatch import service_evaluate_line
@@ -570,7 +570,7 @@ def test_over_budget_occurrence_closes_then_requires_successor_for_retry(tmp_pat
     evaluated = service_evaluate_line(
         instance,
         line.identity.name,
-        LineEvaluateRequestV1(since=NOW, until=now),
+        LineEvaluateRequest(since=NOW, until=now),
         actor=actor,
         now=now,
     )
@@ -580,7 +580,7 @@ def test_over_budget_occurrence_closes_then_requires_successor_for_retry(tmp_pat
     rejected = service_dispatch_line(
         instance,
         line.identity.name,
-        LineDispatchRequestV1(),
+        LineDispatchRequest(),
         actor=actor,
         now=now,
         caller_rung=2,
@@ -594,13 +594,13 @@ def test_over_budget_occurrence_closes_then_requires_successor_for_retry(tmp_pat
     small = service_dispatch_line(
         instance,
         line.identity.name,
-        LineDispatchRequestV1(),
+        LineDispatchRequest(),
         actor=actor,
         now=now,
         caller_rung=2,
     ).items[0]
     assert small.status == "admitted" and small.occurrence_id != first_id
-    retry_request = LineDispatchRequestV1(occurrence_id=first_id, retry=True)
+    retry_request = LineDispatchRequest(occurrence_id=first_id, retry=True)
     assert (
         service_dispatch_line(
             instance,
@@ -641,7 +641,7 @@ def test_over_budget_occurrence_closes_then_requires_successor_for_retry(tmp_pat
 def test_line_v6_states_its_authority_as_a_verb_and_defaults_to_the_procedure(tmp_path):
     import json
 
-    from cruxible_client.contracts.authoring.models import LineAuthoringPayloadV1
+    from cruxible_client.contracts.authoring.models import LineAuthoringPayload
     from cruxible_client.contracts.procedures.line_specs import (
         AUTHORITY_RUNG,
         line_requested_rung,
@@ -657,7 +657,7 @@ def test_line_v6_states_its_authority_as_a_verb_and_defaults_to_the_procedure(tm
     )
     capability = accepted.procedure.definition.terminal_capability
     path, raw, _ = _render_line_member(
-        LineAuthoringPayloadV1(
+        LineAuthoringPayload(
             name="manual-consumer",
             procedure_name=line.procedure.target.name,
             acquisition_policy_name=line.acquisition_policy.target.name,
@@ -665,7 +665,7 @@ def test_line_v6_states_its_authority_as_a_verb_and_defaults_to_the_procedure(tm
         tree=tree,
     )
     manual = parse_line_spec(raw, path=path)
-    assert isinstance(manual, LineSpecV6) and manual.trigger_input is None
+    assert isinstance(manual, LineSpec) and manual.trigger_input is None
     wire = json.loads(raw)
     assert "requested_terminal_rung" not in wire and "trigger_policy" not in wire
     assert wire["max_authority"] == manual.max_authority
@@ -676,11 +676,11 @@ def test_line_v6_states_its_authority_as_a_verb_and_defaults_to_the_procedure(tm
     assert line_requested_rung(manual.model_copy(update={"max_authority": above})) > capability
 
 
-def _embedded_trigger_line(line: LineSpecV6, *, retired: bool = False) -> LineSpecV4:
+def _embedded_trigger_line(line: LineSpec, *, retired: bool = False) -> LineSpecV4:
     """The same Line as the revision-30 wire that embedded its trigger."""
 
     from cruxible_client.contracts.artifacts import ArtifactLifecycle
-    from cruxible_client.contracts.procedures.line_specs import CaptureLandingTriggerPolicyV2
+    from cruxible_client.contracts.procedures.line_specs import CaptureLandingTriggerPolicy
 
     value = line.model_dump(mode="python")
     for field in ("max_authority", "trigger_event", "artifact_format"):
@@ -689,7 +689,7 @@ def _embedded_trigger_line(line: LineSpecV6, *, retired: bool = False) -> LineSp
         {
             **value,
             "artifact_format": "playbill-line-v4",
-            "trigger_policy": CaptureLandingTriggerPolicyV2(event=line.trigger_event),
+            "trigger_policy": CaptureLandingTriggerPolicy(event=line.trigger_event),
             "requested_terminal_rung": 1,
             "lifecycle": ArtifactLifecycle(state="retired" if retired else "live"),
         }
@@ -739,7 +739,7 @@ def test_embedded_trigger_lines_stay_history_across_the_revision_32_cut(tmp_path
 
 
 def test_a_line_that_binds_its_trigger_capture_accepts_only_triggers_on_that_event(tmp_path):
-    from cruxible_client.contracts.triggers import CadenceScheduleV1
+    from cruxible_client.contracts.triggers import CadenceSchedule
     from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 
     instance, _root, line = world(tmp_path)
@@ -761,7 +761,7 @@ def test_a_line_that_binds_its_trigger_capture_accepts_only_triggers_on_that_eve
         line_trigger(
             "consume-hourly",
             line=line.identity.name,
-            schedule=CadenceScheduleV1(interval_seconds=3600),
+            schedule=CadenceSchedule(interval_seconds=3600),
         ),
         "tick",
     )
@@ -773,7 +773,7 @@ def test_a_line_that_binds_its_trigger_capture_accepts_only_triggers_on_that_eve
         line_trigger(
             "consume-again",
             line=line.identity.name,
-            schedule=CaptureLandingScheduleV1(event=line.trigger_event),
+            schedule=CaptureLandingSchedule(event=line.trigger_event),
         ),
         "again",
     )

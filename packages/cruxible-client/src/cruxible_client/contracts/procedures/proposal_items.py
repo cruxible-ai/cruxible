@@ -19,11 +19,11 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from cruxible_client.contracts.authoring.models import (
-    AuthoringClaimStatementV1,
-    AuthoringExistingClaimDispositionV1,
-    ClaimDerivationBindingV1,
-    ExistingCaptureCitationSourceV1,
-    SelfSourceBodyV1,
+    AuthoringClaimStatement,
+    AuthoringExistingClaimDisposition,
+    ClaimDerivationBinding,
+    ExistingCaptureCitationSource,
+    SelfSourceBody,
 )
 from cruxible_client.contracts.claims import claim_path
 
@@ -38,7 +38,7 @@ class ProcedureClaimProposalItemV1(_StrictProposalItemModel):
     tag: Literal["playbill-procedure-claim-proposal-item-v1"] = (
         "playbill-procedure-claim-proposal-item-v1"
     )
-    statement: AuthoringClaimStatementV1
+    statement: AuthoringClaimStatement
     rationale: str
     revises: str | None = None
 
@@ -60,13 +60,13 @@ class ProcedureClaimProposalItemV1(_StrictProposalItemModel):
 __all__ = ["ProcedureClaimProposalItemV1"]
 
 
-class ProcedureClaimProposalItemV2(ProcedureClaimProposalItemV1):
+class ProcedureClaimProposalItem(ProcedureClaimProposalItemV1):
     """Resolved source candidate; evidence and derivation are bound by the executor."""
 
     tag: Literal["playbill-procedure-claim-proposal-item-v2"] = (
         "playbill-procedure-claim-proposal-item-v2"  # type: ignore[assignment]
     )
-    source: ExistingCaptureCitationSourceV1 | SelfSourceBodyV1
+    source: ExistingCaptureCitationSource | SelfSourceBody
     citation_role: Literal["evidence", "copy"] | None = None
-    derivation: ClaimDerivationBindingV1 | None = None
-    existing_claim_dispositions: tuple[AuthoringExistingClaimDispositionV1, ...] = ()
+    derivation: ClaimDerivationBinding | None = None
+    existing_claim_dispositions: tuple[AuthoringExistingClaimDisposition, ...] = ()

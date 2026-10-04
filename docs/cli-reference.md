@@ -968,7 +968,7 @@ Read the accepted ClaimTypes with `cruxible playbill orient --section
 claim_types`, one ClaimType with `cruxible playbill get ClaimType:PREDICATE`.
 
 A ClaimType is the governed interface a predicate must satisfy before any Claim
-may state it. `propose --input` accepts a complete `ClaimTypeInputV1`; ClaimType
+may state it. `propose --input` accepts a complete `ClaimTypeInputRecord`; ClaimType
 is not part of the authoring coordinator's example vocabulary. `propose
 --template` prints a complete literal `project.work_item.status` input with a
 `repo.replace-me` foreign-source evidence rule and does not contact the daemon.
@@ -1241,7 +1241,7 @@ command when the page is truncated; `--json` gives the full answer with its
 receipt. Cells show each slot's answer as `get` shows it; `--status` adds Claims
 resolution overturned or refused, or retired ones, and `--claims` names each
 cell's Claims (ID, status, verdict, role) beneath the table. `--spec` runs a
-`QueryDefinitionSpecV1` file inline; `--name` with `--param` runs an accepted
+`QueryDefinitionSpec` file inline; `--name` with `--param` runs an accepted
 named query (`orient --section queries` lists them, `get query:NAME --detail
 proof` reads one), `--budgets` sets its budgets up to the definition's maximum,
 and `--receipt full` adds its replay receipt (`receipt.replay`: the Claims each
@@ -1330,7 +1330,7 @@ declared-snapshot-group policies refuse before provider invocation. Actual
 captures are checked against the pinned replayability and maximum-age rules
 before selection, including the rule’s omission/default/refusal behavior.
 
-A completed Source run reports, per occurrence, the `SourceReadReceiptV1` the
+A completed Source run reports, per occurrence, the `SourceReadReceipt` the
 daemon minted for the exact bytes it read and the digest of the Capture those
 bytes became; `--json` carries both in `source_observations`. A direct Source
 run is identified by its evaluation instant, so re-running at the same instant
@@ -1669,7 +1669,7 @@ cruxible playbill settle PREDICTION_ID --request REQUEST_FILE [--json]
 
 Every Claim version these commands need is named by Claim ID (`CLM-...` or
 `Claim:CLM-...`); the daemon resolves its artifact and statement digests and the
-coordinate that accepted it. The exact `ClaimVersionReferenceV1` object is still
+coordinate that accepted it. The exact `ClaimVersionReference` object is still
 accepted, as the advanced form, anywhere a Claim ID is.
 
 `predict` submits a governed ResolutionContract whose `hypothesis` is an already

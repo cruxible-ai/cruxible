@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV1,
-    ProjectionClaimBackingV1,
+    ProjectionClaimBacking,
 )
 from cruxible_client.contracts.documents import (
     DocumentAuthority,
@@ -25,7 +25,7 @@ from cruxible_client.contracts.errors import (
     SubjectNotFoundError,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.runtime.instance import DESCRIPTOR_FILE, PlaybillInstance
 from cruxible_core.service.claims.subjects import service_get_playbill_subject
@@ -54,7 +54,7 @@ def _decommission_probe_stamp(instance: PlaybillInstance) -> ProjectionBlockStam
         declared_generation=0,
         declared_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         backing=(
-            ProjectionClaimBackingV1(
+            ProjectionClaimBacking(
                 identity=ArtifactIdentity(kind="Claim", name="CLM-" + "a" * 32),
                 statement_digest="sha256:" + "7" * 64,
             ),
@@ -120,7 +120,7 @@ def test_a_decommissioned_instance_refuses_writes_typed_and_keeps_serving_reads(
         instance,
         request=PlaybillNextRequestV1(
             evaluation_time=EVALUATION_TIME,
-            access_profile=CoverageAccessProfileV1(profile_id="decommission-test"),
+            access_profile=CoverageAccessProfile(profile_id="decommission-test"),
         ),
     ).status
     assert status.blocking

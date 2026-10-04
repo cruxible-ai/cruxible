@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from cruxible_client.contracts.cron import CronExpressionError, parse_cron
-from cruxible_client.contracts.triggers import CronScheduleV1
+from cruxible_client.contracts.triggers import CronSchedule
 from cruxible_core.triggers.cadence import timer_due
 from cruxible_core.triggers.journal import InternalTrigger, evaluate_triggers
 
@@ -62,7 +62,7 @@ def test_cron_is_utc_and_never_reads_a_host_timezone_database(tmp_path: Path) ->
     from cruxible_client.contracts.triggers import evaluate_trigger_law, trigger_path
 
     calendar = action_trigger(
-        "calendar", action="evidence.sweep", schedule=CronScheduleV1(expression="0 9 * * 1-5")
+        "calendar", action="evidence.sweep", schedule=CronSchedule(expression="0 9 * * 1-5")
     )
 
     def judged() -> tuple[str, datetime | None]:
@@ -82,7 +82,7 @@ def test_cron_is_utc_and_never_reads_a_host_timezone_database(tmp_path: Path) ->
         parse_cron.cache_clear()
     # There is no timezone to name.
     with pytest.raises(ValidationError, match="timezone"):
-        CronScheduleV1.model_validate({"expression": "0 9 * * *", "timezone": "UTC"})
+        CronSchedule.model_validate({"expression": "0 9 * * *", "timezone": "UTC"})
 
 
 @pytest.mark.parametrize("field", ["timezone", "tz", "time_zone"])
@@ -125,7 +125,7 @@ def test_the_trigger_example_says_cron_is_utc_and_how_to_convert(
         trigger_example,
     )
     from cruxible_client.contracts.cron import CRON_UTC_HINT
-    from cruxible_client.contracts.triggers import CronScheduleV1
+    from cruxible_client.contracts.triggers import CronSchedule
     from cruxible_core.cli.main import cli
     from cruxible_core.mcp.handlers import handle_playbill_authoring_example
 
@@ -146,7 +146,7 @@ def test_the_trigger_example_says_cron_is_utc_and_how_to_convert(
     }
     assert authoring_example_note("line") is None
     # The schema an agent reads says UTC on the expression itself.
-    description = CronScheduleV1.model_json_schema()["properties"]["expression"]["description"]
+    description = CronSchedule.model_json_schema()["properties"]["expression"]["description"]
     assert "evaluated in UTC" in description and CRON_UTC_HINT in description
 
     printed = CliRunner().invoke(cli, ["playbill", "authoring", "create", "--example", "trigger"])
@@ -158,7 +158,7 @@ def test_the_trigger_example_says_cron_is_utc_and_how_to_convert(
 
 
 def test_a_cron_line_tick_follows_its_last_fire_and_never_precedes_its_floor() -> None:
-    hourly = CronScheduleV1(expression="0 * * * *")
+    hourly = CronSchedule(expression="0 * * * *")
     noon = MONDAY.replace(hour=12)
     # The first instant after an acceptance or a fire, however long ago that was.
     assert timer_due(hourly, last=noon + timedelta(minutes=30)) == noon + timedelta(hours=1)
@@ -186,7 +186,7 @@ def test_a_new_weekly_cron_fires_nothing_before_its_next_instant(tmp_path: Path)
         InternalTrigger(
             "Trigger:weekly",
             "evidence.sweep",
-            CronScheduleV1(expression="0 9 * * 1"),
+            CronSchedule(expression="0 9 * * 1"),
             accepted_at=wednesday,
         ),
     )
@@ -204,7 +204,7 @@ def test_an_internal_cron_trigger_skips_the_instants_a_downtime_missed(tmp_path:
         InternalTrigger(
             "Trigger:nightly-sweep",
             "evidence.sweep",
-            CronScheduleV1(expression="0 0 * * *"),
+            CronSchedule(expression="0 0 * * *"),
             accepted_at=MONDAY - timedelta(hours=1),
         ),
     )

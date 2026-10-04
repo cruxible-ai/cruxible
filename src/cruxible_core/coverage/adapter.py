@@ -9,7 +9,7 @@ never sees a filesystem path, and this module never sees a Claim.
 
 Binding is declared, never inferred
 -----------------------------------
-A working path is bound to a `LogicalSourceIdentityV1` only by an explicit
+A working path is bound to a `LogicalSourceIdentity` only by an explicit
 declaration. Inferring one -- "the file is called `handbook.md` and the ledger
 holds `documents/handbook.md`, so they must be the same source" -- is precisely
 the mistake §11.6.1 exists to prevent: it would let identical bytes at a foreign
@@ -57,12 +57,12 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from cruxible_client.contracts.canonical import Sha256Value
 from cruxible_core.coverage.contracts import (
     CoverageError,
-    CoverageSelectionV1,
+    CoverageSelection,
     CoverageSpanRequestV1,
-    LogicalSourceIdentityV1,
+    LogicalSourceIdentity,
 )
 from cruxible_core.coverage.indexes import (
-    CoverageScanBudgetV1,
+    CoverageScanBudget,
     WorkingOccurrenceOverlayV2,
     WorkingSourceContent,
     build_working_occurrence_overlay,
@@ -81,7 +81,7 @@ class WorkingPathBindingV1(_StrictAdapterModel):
 
     tag: Literal["playbill-coverage-path-binding-v1"] = "playbill-coverage-path-binding-v1"
     path: str
-    source: LogicalSourceIdentityV1
+    source: LogicalSourceIdentity
 
     @field_validator("path")
     @classmethod
@@ -119,7 +119,7 @@ class WorkingPathBindingsV1(_StrictAdapterModel):
             raise ValueError("a logical source may be observed at most one working path")
         return value
 
-    def source_for(self, path: str) -> LogicalSourceIdentityV1:
+    def source_for(self, path: str) -> LogicalSourceIdentity:
         """Return the declared logical source, refusing to invent one."""
 
         for item in self.bindings:
@@ -138,18 +138,18 @@ class WorkingPathBindingsV1(_StrictAdapterModel):
 # -- observations ----------------------------------------------------------
 
 
-class WorkingSourceObservationV1(_StrictAdapterModel):
+class WorkingSourceObservation(_StrictAdapterModel):
     """One working source as a harness observed it, ready for the operation."""
 
     tag: Literal["playbill-coverage-working-source-observation-v1"] = (
         "playbill-coverage-working-source-observation-v1"
     )
-    source: LogicalSourceIdentityV1
+    source: LogicalSourceIdentity
     content_base64: str
     projection_manifests: dict[str, str] = Field(default_factory=dict)
     content_digest: str
     byte_length: int = Field(ge=0)
-    selections: tuple[CoverageSelectionV1, ...] = ()
+    selections: tuple[CoverageSelection, ...] = ()
 
     @field_validator("content_digest")
     @classmethod
@@ -158,7 +158,7 @@ class WorkingSourceObservationV1(_StrictAdapterModel):
         return value
 
     @model_validator(mode="after")
-    def _observation_reproduces(self) -> "WorkingSourceObservationV1":
+    def _observation_reproduces(self) -> "WorkingSourceObservation":
         content = self.content
         if self.projection_manifests:
             from cruxible_client.contracts.declared_blocks import (
@@ -221,15 +221,15 @@ def observed_commitment(content: bytes) -> str:
 
 
 def observe_working_source(
-    source: LogicalSourceIdentityV1,
+    source: LogicalSourceIdentity,
     content: bytes,
     *,
-    selections: Iterable[CoverageSelectionV1] = (),
-) -> WorkingSourceObservationV1:
+    selections: Iterable[CoverageSelection] = (),
+) -> WorkingSourceObservation:
     """Observe one already-read working source; the explicit-occurrence form."""
 
     windows = tuple(sorted(set(selections), key=lambda item: (item.start_byte, item.end_byte)))
-    return WorkingSourceObservationV1(
+    return WorkingSourceObservation(
         source=source,
         content_base64=base64.b64encode(content).decode("ascii"),
         content_digest=observed_commitment(content),
@@ -256,8 +256,8 @@ def observe_working_path(
     *,
     bindings: WorkingPathBindingsV1,
     root: Path,
-    selections: Iterable[CoverageSelectionV1] = (),
-) -> WorkingSourceObservationV1:
+    selections: Iterable[CoverageSelection] = (),
+) -> WorkingSourceObservation:
     """Bind, read, and hash exactly one working path."""
 
     return observe_working_source(
@@ -272,7 +272,7 @@ def observe_working_paths(
     *,
     bindings: WorkingPathBindingsV1,
     root: Path,
-) -> tuple[WorkingSourceObservationV1, ...]:
+) -> tuple[WorkingSourceObservation, ...]:
     """The changed-filesystem-paths form: whole sources, no windows."""
 
     ordered = tuple(sorted(set(paths)))
@@ -283,7 +283,7 @@ def working_set_observations(
     *,
     bindings: WorkingPathBindingsV1,
     root: Path,
-) -> tuple[WorkingSourceObservationV1, ...]:
+) -> tuple[WorkingSourceObservation, ...]:
     """The working-set-scope form: every path the harness declared."""
 
     return observe_working_paths(bindings.paths, bindings=bindings, root=root)
@@ -306,7 +306,7 @@ def selection_for_lines(
     *,
     start_line: int,
     end_line: int,
-) -> CoverageSelectionV1:
+) -> CoverageSelection:
     """Convert a 1-based inclusive line range into the byte window it covers.
 
     Presentation in, presentation out. The window is computed against the bytes
@@ -323,7 +323,7 @@ def selection_for_lines(
     end_byte = starts[end_line] if end_line < len(starts) else len(content)
     if end_byte <= start_byte:
         raise CoverageError("a line selection must cover at least one byte")
-    return CoverageSelectionV1(start_byte=start_byte, end_byte=end_byte)
+    return CoverageSelection(start_byte=start_byte, end_byte=end_byte)
 
 
 def observations_for_grep_hits(
@@ -331,7 +331,7 @@ def observations_for_grep_hits(
     *,
     bindings: WorkingPathBindingsV1,
     root: Path,
-) -> tuple[WorkingSourceObservationV1, ...]:
+) -> tuple[WorkingSourceObservation, ...]:
     """The grep-result-batch form: one observation per file, windows per hit.
 
     A grep batch is many hits across few files, so it collapses to one
@@ -345,7 +345,7 @@ def observations_for_grep_hits(
         if line < 1:
             raise CoverageError("a grep hit names a 1-based line number")
         by_path.setdefault(path, []).append(line)
-    observations: list[WorkingSourceObservationV1] = []
+    observations: list[WorkingSourceObservation] = []
     for path in sorted(by_path):
         content = read_working_path(path, root=root)
         windows = tuple(
@@ -382,7 +382,7 @@ def parse_grep_batch(text: str) -> tuple[tuple[str, int], ...]:
 
 
 def coverage_span_requests(
-    observations: Sequence[WorkingSourceObservationV1],
+    observations: Sequence[WorkingSourceObservation],
 ) -> tuple[CoverageSpanRequestV1, ...]:
     """Turn observations into the spans the operation resolves.
 
@@ -404,10 +404,10 @@ def coverage_span_requests(
 
 
 def build_overlay(
-    observations: Sequence[WorkingSourceObservationV1],
+    observations: Sequence[WorkingSourceObservation],
     *,
     wanted: Iterable[tuple[str, int, bytes | None]] = (),
-    budget: CoverageScanBudgetV1 | None = None,
+    budget: CoverageScanBudget | None = None,
 ) -> WorkingOccurrenceOverlayV2:
     """Build the working-occurrence overlay from observed bytes.
 
@@ -419,14 +419,14 @@ def build_overlay(
     return build_working_occurrence_overlay(
         tuple(observation.material for observation in observations),
         wanted=wanted,
-        budget=budget or CoverageScanBudgetV1(),
+        budget=budget or CoverageScanBudget(),
     )
 
 
 __all__ = [
     "WorkingPathBindingV1",
     "WorkingPathBindingsV1",
-    "WorkingSourceObservationV1",
+    "WorkingSourceObservation",
     "build_overlay",
     "coverage_span_requests",
     "observations_for_grep_hits",

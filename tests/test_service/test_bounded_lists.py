@@ -9,7 +9,7 @@ import pytest
 
 from cruxible_client import contracts
 from cruxible_client.contracts.claims import LiteralClaimObject, parse_claim, render_claim
-from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.service.claims.policies import service_playbill_policies_in_force
@@ -140,7 +140,7 @@ _ACTOR = GovernedActorContext(
     operation_id="op-list",
     timestamp=NOW,
 )
-_PROFILE = CoverageAccessProfileV1(profile_id="paging-test")
+_PROFILE = CoverageAccessProfile(profile_id="paging-test")
 
 
 def _curation(instance, *, limit: int, cursor: str | None = None):  # type: ignore[no-untyped-def]

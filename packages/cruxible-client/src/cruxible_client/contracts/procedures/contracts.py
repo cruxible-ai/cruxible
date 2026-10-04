@@ -11,9 +11,9 @@ from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.canonical import CanonicalValue, normalize_canonical
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.procedures.artifacts import (
-    AcceptedProcedureV1,
-    ProcedureArtifactV2,
-    ProcedureOwnedContractV1,
+    AcceptedProcedure,
+    ProcedureArtifact,
+    ProcedureOwnedContract,
     procedure_owned_contract_digest,
 )
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
@@ -223,7 +223,7 @@ def _normalize_fields(
 
 
 def _validate_payload(
-    contract: ProcedureOwnedContractV1,
+    contract: ProcedureOwnedContract,
     payload: CanonicalValue,
 ) -> CanonicalValue:
     return validate_contract_schema(contract.contract_schema, payload)
@@ -244,7 +244,7 @@ def validate_contract_schema(schema: ContractSchema, payload: object) -> Canonic
 
 
 def _validate_payload_with_budget(
-    contract: ProcedureOwnedContractV1,
+    contract: ProcedureOwnedContract,
     payload: CanonicalValue,
     *,
     max_items: int,
@@ -269,8 +269,8 @@ def _validate_payload_with_budget(
 class OwnedProcedureContractValidator:
     """Resolve Contract pins only from one accepted Procedure-v2 owner."""
 
-    def __init__(self, accepted: AcceptedProcedureV1) -> None:
-        if not isinstance(accepted.procedure, ProcedureArtifactV2):
+    def __init__(self, accepted: AcceptedProcedure) -> None:
+        if not isinstance(accepted.procedure, ProcedureArtifact):
             raise ProcedureContractValidationError(
                 "owner-carried Contract validation requires playbill-procedure-v2"
             )
@@ -280,7 +280,7 @@ class OwnedProcedureContractValidator:
         }
         self._structured = int(accepted.procedure.definition.graph_format) == 6
 
-    def _validate_structured(self, owned: ProcedureOwnedContractV1, value: CanonicalValue) -> None:
+    def _validate_structured(self, owned: ProcedureOwnedContract, value: CanonicalValue) -> None:
         if self._structured:
             from cruxible_client.contracts.records import validate_record_constraints
 
@@ -288,8 +288,8 @@ class OwnedProcedureContractValidator:
             validate_record_constraints(owned.contract_schema, value)
 
     def _normalization_contract(
-        self, owned: ProcedureOwnedContractV1, payload: object
-    ) -> ProcedureOwnedContractV1:
+        self, owned: ProcedureOwnedContract, payload: object
+    ) -> ProcedureOwnedContract:
         if not self._structured:
             return owned
         from cruxible_client.contracts.records import record_normalization_schema

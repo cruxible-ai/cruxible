@@ -20,9 +20,9 @@ from cruxible_client.authoring.blocks import (
 from cruxible_client.authoring.projection_manifests import load_projection_manifests
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.claims import ClaimStatement, LiteralClaimObject
-from cruxible_client.contracts.declared_blocks import ProjectionQueryBackingV1
+from cruxible_client.contracts.declared_blocks import ProjectionQueryBacking
 from cruxible_client.contracts.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
-from cruxible_client.contracts.query.results import ClaimQueryResultV1
+from cruxible_client.contracts.query.results import ClaimQueryResult
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.types import CompilerCoordinate
 
@@ -70,7 +70,7 @@ class _RepinClient:
         self,
         _instance_id: str,
         stamp: dict[str, Any],
-    ) -> api.PlaybillBlockDeclareResultV1:
+    ) -> api.PlaybillBlockDeclareResult:
         """Record the declaration a repin makes after it writes the marker.
 
         A stamped marker the instance has never heard of is an orphan to every
@@ -81,7 +81,7 @@ class _RepinClient:
         """
 
         self.declared.append(stamp)
-        return api.PlaybillBlockDeclareResultV1(
+        return api.PlaybillBlockDeclareResult(
             source_id=stamp["source_id"],
             block_id=stamp["block_id"],
             outcome="declared",
@@ -89,8 +89,8 @@ class _RepinClient:
             coordinate=COORDINATE,
         )
 
-    def playbill_head(self, instance_id: str, *, at: Any = None) -> api.PlaybillHeadV1:
-        return api.PlaybillHeadV1(
+    def playbill_head(self, instance_id: str, *, at: Any = None) -> api.PlaybillHead:
+        return api.PlaybillHead(
             instance=instance_id,
             coordinate=AcceptedCoordinate.model_validate(COORDINATE.model_dump(mode="json")),
             generation=7,
@@ -133,7 +133,7 @@ class _RepinClient:
         )
 
     def query_playbill(self, _instance_id: str, *, request: Any) -> Any:
-        from cruxible_client.contracts.compact_query import PlaybillQueryReplayV1
+        from cruxible_client.contracts.compact_query import PlaybillQueryReplay
         from cruxible_core.query.engine import query_execution_receipt
 
         assert request.name is not None and request.receipt == "full"
@@ -142,7 +142,7 @@ class _RepinClient:
             receipt=SimpleNamespace(
                 coordinate=run.coordinate,
                 spec_digest=run.definition_digest,
-                replay=PlaybillQueryReplayV1(
+                replay=PlaybillQueryReplay(
                     definition_path="queries/project.items.json",
                     result=run.result,
                     execution=query_execution_receipt(run.result),
@@ -168,7 +168,7 @@ class _RepinClient:
             coordinate=COORDINATE,
             name=name,
             definition_digest="sha256:" + "9" * 64,
-            result=ClaimQueryResultV1.model_validate(
+            result=ClaimQueryResult.model_validate(
                 {
                     "definition_path": "queries/project.items.json",
                     "definition_digest": "sha256:" + "9" * 64,
@@ -349,8 +349,8 @@ def test_query_backing_preserves_resolved_parameters_on_subsequent_repin(tmp_pat
     first = _repin(client, tmp_path, queries=(("project.items", {"status": "ready"}),))
     preserved = _repin(client, tmp_path)
 
-    assert isinstance(first.backing[0], ProjectionQueryBackingV1)
-    assert isinstance(preserved.backing[0], ProjectionQueryBackingV1)
+    assert isinstance(first.backing[0], ProjectionQueryBacking)
+    assert isinstance(preserved.backing[0], ProjectionQueryBacking)
     assert preserved.backing[0].resolved_parameter_bindings[0].value == "ready"
 
 
@@ -400,7 +400,7 @@ def test_sdk_block_facade_bootstraps_at_its_active_coordinate(tmp_path: Path) ->
 def test_repin_preserves_omitted_categories_and_policy_and_removes_only_explicit_ones(
     tmp_path: Path,
 ) -> None:
-    from cruxible_client.contracts.declared_blocks import ProjectionArtifactBackingV1
+    from cruxible_client.contracts.declared_blocks import ProjectionArtifactBacking
 
     source = _workspace(tmp_path)
     client = _RepinClient()
@@ -443,12 +443,12 @@ def test_repin_preserves_omitted_categories_and_policy_and_removes_only_explicit
         subject.qualified,
         predicate.qualified,
     }
-    assert next(b for b in second.backing if isinstance(b, ProjectionQueryBackingV1)) == next(
-        b for b in first.backing if isinstance(b, ProjectionQueryBackingV1)
+    assert next(b for b in second.backing if isinstance(b, ProjectionQueryBacking)) == next(
+        b for b in first.backing if isinstance(b, ProjectionQueryBacking)
     )
     assert repin().backing == second.backing
     third = repin(claims=(), queries=())
-    assert all(isinstance(b, ProjectionArtifactBackingV1) for b in third.backing)
+    assert all(isinstance(b, ProjectionArtifactBacking) for b in third.backing)
     assert repin().backing == third.backing  # artifact-only repin
     before = source.read_bytes()
     with pytest.raises(ProjectionRepinError, match="at least one"):

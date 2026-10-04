@@ -26,13 +26,13 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.procedures.windows import (
-    BoundObservationWindowV1,
-    ObservationWindowV1,
+    BoundObservationWindow,
+    ObservationWindow,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.resolution_rules import (
-    PredictionObservationSelectorV1,
-    PredictionRuleV1,
+    PredictionObservationSelector,
+    PredictionRule,
 )
 
 _NAME = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
@@ -42,7 +42,7 @@ class _ContractModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
 
 
-class ClaimVersionReferenceV1(_ContractModel):
+class ClaimVersionReference(_ContractModel):
     identity: ArtifactIdentity
     artifact_digest: str
     statement_digest: str
@@ -55,7 +55,7 @@ class ClaimVersionReferenceV1(_ContractModel):
         return value
 
     @model_validator(mode="after")
-    def _claim(self) -> ClaimVersionReferenceV1:
+    def _claim(self) -> ClaimVersionReference:
         if self.identity.kind != "Claim":
             raise ValueError("resolution hypothesis must be a Claim")
         return self
@@ -87,28 +87,28 @@ ClaimIdInput: TypeAlias = Annotated[str, AfterValidator(_claim_id_input)]
 #: resolves to its version at the accepted head (statement digest and accepting
 #: coordinate included), or -- the advanced form -- the exact reference itself.
 ClaimVersionInput: TypeAlias = Annotated[
-    ClaimIdInput | ClaimVersionReferenceV1,
+    ClaimIdInput | ClaimVersionReference,
     Field(
         description=(
             "A Claim ID (CLM-... or Claim:CLM-...); the daemon resolves its accepted version. "
-            "An exact ClaimVersionReferenceV1 object is accepted as the advanced form."
+            "An exact ClaimVersionReference object is accepted as the advanced form."
         )
     ),
 ]
 
 
-class ResolutionContractV1(_ContractModel):
+class ResolutionContract(_ContractModel):
     artifact_format: Literal["playbill-resolution-contract-v1"] = "playbill-resolution-contract-v1"
     identity: ArtifactIdentity
-    hypothesis: ClaimVersionReferenceV1
-    observation: PredictionObservationSelectorV1
-    rule: PredictionRuleV1
-    window: ObservationWindowV1
+    hypothesis: ClaimVersionReference
+    observation: PredictionObservationSelector
+    rule: PredictionRule
+    window: ObservationWindow
     outcome_class: str = "prediction-correctness"
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
 
     @model_validator(mode="after")
-    def _identity(self) -> ResolutionContractV1:
+    def _identity(self) -> ResolutionContract:
         if self.identity.kind != "ResolutionContract" or not _NAME.fullmatch(self.identity.name):
             raise ValueError("ResolutionContract identity is not path-addressable")
         if not _NAME.fullmatch(self.outcome_class):
@@ -140,11 +140,11 @@ def resolution_contract_path(name: str) -> str:
     return f"resolution-contracts/{name}.json"
 
 
-def render_resolution_contract(contract: ResolutionContractV1) -> bytes:
+def render_resolution_contract(contract: ResolutionContract) -> bytes:
     return pretty_canonical_bytes(contract.model_dump(mode="json"))
 
 
-def resolution_contract_digest(contract: ResolutionContractV1) -> ArtifactDigest:
+def resolution_contract_digest(contract: ResolutionContract) -> ArtifactDigest:
     return typed_digest(
         ArtifactDigest, "playbill-resolution-contract-artifact-v1", contract.model_dump(mode="json")
     )
@@ -152,9 +152,9 @@ def resolution_contract_digest(contract: ResolutionContractV1) -> ArtifactDigest
 
 def parse_resolution_contract(
     content: bytes, *, path: str, codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC
-) -> ResolutionContractV1:
+) -> ResolutionContract:
     try:
-        contract = ResolutionContractV1.model_validate(json.loads(content))
+        contract = ResolutionContract.model_validate(json.loads(content))
     except (ValueError, UnicodeDecodeError) as exc:
         raise PlaybillFormatError("ResolutionContract failed strict validation") from exc
     if not artifact_path_matches(
@@ -166,7 +166,7 @@ def parse_resolution_contract(
     return contract
 
 
-class ResolutionContractReferenceV1(_ContractModel):
+class ResolutionContractReference(_ContractModel):
     identity: ArtifactIdentity
     artifact_digest: str
     coordinate: AcceptedCoordinate
@@ -178,28 +178,28 @@ class ResolutionContractReferenceV1(_ContractModel):
         return value
 
     @model_validator(mode="after")
-    def _kind(self) -> ResolutionContractReferenceV1:
+    def _kind(self) -> ResolutionContractReference:
         if self.identity.kind != "ResolutionContract":
             raise ValueError("investigation must reference a ResolutionContract")
         return self
 
 
-class InvestigationBindingV1(_ContractModel):
-    contract: ResolutionContractReferenceV1
-    hypothesis: ClaimVersionReferenceV1
-    window: BoundObservationWindowV1
+class InvestigationBinding(_ContractModel):
+    contract: ResolutionContractReference
+    hypothesis: ClaimVersionReference
+    window: BoundObservationWindow
 
 
-class ResolutionContractsRequestV1(_ContractModel):
+class ResolutionContractsRequest(_ContractModel):
     hypothesis: ClaimVersionInput
     at: AcceptedCoordinate | None = None
 
 
-class ResolutionContractViewV1(_ContractModel):
-    reference: ResolutionContractReferenceV1
-    contract: ResolutionContractV1
+class ResolutionContractView(_ContractModel):
+    reference: ResolutionContractReference
+    contract: ResolutionContract
 
 
-class ResolutionContractsResultV1(_ContractModel):
+class ResolutionContractsResult(_ContractModel):
     coordinate: AcceptedCoordinate
-    contracts: tuple[ResolutionContractViewV1, ...]
+    contracts: tuple[ResolutionContractView, ...]

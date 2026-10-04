@@ -33,8 +33,8 @@ if TYPE_CHECKING:
 
 from cruxible_client.contracts.candidates import (
     CandidateMemberEvidence,
-    CandidateMemberLawEvidenceV2,
-    MemberLawEvaluationV2,
+    CandidateMemberLawEvidence,
+    MemberLawEvaluation,
 )
 from cruxible_client.contracts.errors import PlaybillFormatError, ProjectionIntegrityError
 from cruxible_client.contracts.projection import AcceptedCoordinate
@@ -553,7 +553,7 @@ class HistoryReader:
         artifact_digest: str,
         path: str,
         load_record: Callable[[str, str], bytes | None] | RetainedRecordReader,
-    ) -> MemberLawEvaluationV2 | None:
+    ) -> MemberLawEvaluation | None:
         location = self.claim_law_evidence(identity, artifact_digest=artifact_digest, path=path)
         if location is None:
             return None
@@ -726,11 +726,11 @@ def _close_working_database(
 
 def _record_members(
     record: ChangeSetRecordAnyVersion,
-) -> Sequence[CandidateMemberEvidence | CandidateMemberLawEvidenceV2]:
+) -> Sequence[CandidateMemberEvidence | CandidateMemberLawEvidence]:
     return record.members
 
 
-def _law_evidence(record: ChangeSetRecordAnyVersion) -> tuple[MemberLawEvaluationV2, ...]:
+def _law_evidence(record: ChangeSetRecordAnyVersion) -> tuple[MemberLawEvaluation, ...]:
     return () if isinstance(record, ChangeSetRecord) else record.law_evidence
 
 

@@ -9,8 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from cruxible_client.contracts.canonical import ArtifactDigest
 from cruxible_client.contracts.claim_type_structure import ClaimTypeStructure
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema
-from cruxible_client.contracts.provider_contracts import ProviderOperationContractV1
-from cruxible_client.contracts.query.definitions import QueryDefinitionV1
+from cruxible_client.contracts.provider_contracts import ProviderOperationContract
+from cruxible_client.contracts.query.definitions import QueryDefinition
 
 
 class _Closed(BaseModel):
@@ -41,7 +41,7 @@ class SourceProviderBinding(_Closed):
     interface_digest: str
     implementation_digest: str
     effect_class: Literal["none", "external_read", "external_mutation"]
-    operation: ProviderOperationContractV1
+    operation: ProviderOperationContract
 
     _versions = field_validator(
         "provider_version", "interface_version", "interface_digest", "implementation_digest"
@@ -52,7 +52,7 @@ class SourceQueryBinding(_Closed):
     kind: Literal["query"] = "query"
     name: str
     version: str
-    definition: QueryDefinitionV1
+    definition: QueryDefinition
 
     _versions = field_validator("version")(lambda value: ArtifactDigest.from_tagged(value).tagged)
 
@@ -82,7 +82,7 @@ class SourceClaimType(_Closed):
     _versions = field_validator("version")(lambda value: ArtifactDigest.from_tagged(value).tagged)
 
 
-class ProcedureSourceV1(_Closed):
+class ProcedureSource(_Closed):
     """Source plus explicit data dependencies; no closures or executable imports."""
 
     rules: Literal["cruxible.procedure-source.v1", "cruxible.procedure-source.v2"] = (

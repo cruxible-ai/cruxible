@@ -18,7 +18,7 @@ from cruxible_client.contracts.attestations import (
 )
 from cruxible_client.contracts.candidates import CandidateMemberEvidence, CandidateRecordAnyVersion
 from cruxible_client.contracts.canonical import ProposalDigest, file_digest
-from cruxible_client.contracts.compiler_upgrade import CompilerUpgradeV1
+from cruxible_client.contracts.compiler_upgrade import CompilerUpgrade
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.documents import (
     DocumentShell,
@@ -47,7 +47,7 @@ from cruxible_core.errors import RequestRefusedError
 from cruxible_core.indexes.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.proposals.proposals import (
     ProposalAdmissionRequest,
-    ProposalPreviewV1,
+    ProposalPreview,
     ProposalResult,
 )
 from cruxible_core.proposals.settlement import ChangeActorBinding
@@ -111,7 +111,7 @@ class PlaybillProposalInspection(_StrictServiceModel):
     #: whether it passed). ``would_propose``/``would_block``: a preview, which
     #: admitted nothing; ``proposal`` is its evaluation (R12).
     status: Literal["admitted", "would_propose", "would_block"] = "admitted"
-    proposal: ProposalResult | ProposalPreviewV1
+    proposal: ProposalResult | ProposalPreview
     #: The accepted coordinate after the call; a preview's is the one it was
     #: evaluated at, which a commit passes back as ``at``.
     accepted_coordinate: PlaybillAcceptedCoordinate
@@ -731,7 +731,7 @@ def service_playbill_document_history(
 
 
 def _compiler_upgrade_refusal(
-    value: CompilerUpgradeV1,
+    value: CompilerUpgrade,
     current: AcceptedProjectionCoordinate,
 ) -> RequestRefusedError:
     """Name why an upgrade cannot be proposed and the forward edges that can."""
@@ -787,18 +787,18 @@ def service_propose_compiler_upgrade(
     commit is pinned to (``at`` here already names the resolved base).
     """
     instance.require_writable()
-    from cruxible_client.contracts.candidates import LawEvaluationCoordinateV1
+    from cruxible_client.contracts.candidates import LawEvaluationCoordinate
     from cruxible_client.contracts.compiler_upgrade import (
         COMPILER_UPGRADE_PATH,
-        CompilerUpgradeV1,
+        CompilerUpgrade,
         render_compiler_upgrade,
     )
     from cruxible_core.compiler.upgrades import validate_upgrade
 
     at = _resolve_coordinate(instance, base)
-    value = CompilerUpgradeV1(
+    value = CompilerUpgrade(
         instance_id=at.instance_id,
-        base=LawEvaluationCoordinateV1(
+        base=LawEvaluationCoordinate(
             git_oid=at.git_oid,
             semantic_root=at.semantic_root,
             generation_root=at.generation_root,

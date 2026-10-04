@@ -26,7 +26,7 @@ import structlog
 from fastapi.testclient import TestClient
 
 from cruxible_client import contracts
-from cruxible_client.contracts.floor import PlaybillFloorDeltaV1
+from cruxible_client.contracts.floor import PlaybillFloorDelta
 from cruxible_core.errors import FloorAdmissionMisuse
 from cruxible_core.mcp.permissions import reset_permissions
 from cruxible_core.runtime import playbill_api
@@ -293,7 +293,7 @@ def test_a_delta_waits_behind_an_export_of_its_instance_only(
             tag="playbill-floor-export-v5", coordinate=_COORDINATE, manifest={}, files=[]
         )
 
-    def delta(instance_id: str, **_: object) -> PlaybillFloorDeltaV1:
+    def delta(instance_id: str, **_: object) -> PlaybillFloorDelta:
         with order_lock:
             order.append(f"delta {instance_id}")
         if instance_id == "inst_b":
@@ -360,7 +360,7 @@ def test_an_in_process_floor_holder_on_a_thread_excludes_that_instances_routes(
             resolved.append(instance_id)
         return instance_id
 
-    def delta(instance_id: str, **_: object) -> PlaybillFloorDeltaV1:
+    def delta(instance_id: str, **_: object) -> PlaybillFloorDelta:
         with order_lock:
             order.append(f"delta {instance_id}")
         if instance_id == "inst_b":
@@ -457,7 +457,7 @@ def test_a_route_cancelled_mid_render_keeps_its_instance_until_the_render_ends(
             tag="playbill-floor-export-v5", coordinate=_COORDINATE, manifest={}, files=[]
         )
 
-    def delta(instance_id: str, **_: object) -> PlaybillFloorDeltaV1:
+    def delta(instance_id: str, **_: object) -> PlaybillFloorDelta:
         enter("delta")
         leave("delta")
         return floor_v5_delta({}, coordinate=_COORDINATE, generation=1)
@@ -568,7 +568,7 @@ def test_attachment_and_delivery_requests_wait_without_worker_tokens(monkeypatch
     for routes in (playbill_routes, hosted_instances):
         monkeypatch.setattr(routes, "resolve_server_instance_id", lambda value: value)
     delta = floor_v5_delta({}, coordinate=_COORDINATE, generation=1)
-    delivered = contracts.PlaybillFloorDeliveryResultV1(
+    delivered = contracts.PlaybillFloorDeliveryResult(
         delta=delta,
         written=contracts.PlaybillWorkspaceFloorWriteResult(
             path=".playbill/floor",

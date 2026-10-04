@@ -13,12 +13,12 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.provider_interfaces import (
-    AcceptedProviderInterfaceRegistrationV1,
-    ProviderBucketClassV1,
-    ProviderBucketConformanceFixtureProofV1,
-    ProviderBucketConformanceFixtureV1,
-    ProviderBucketDimensionV1,
-    ProviderBucketVocabularyV1,
+    AcceptedProviderInterfaceRegistration,
+    ProviderBucketClass,
+    ProviderBucketConformanceFixture,
+    ProviderBucketConformanceFixtureProof,
+    ProviderBucketDimension,
+    ProviderBucketVocabulary,
     ProviderInterfaceRegistrationV1,
     provider_bucket_classifier_digest,
     provider_bucket_fixture_digest,
@@ -29,14 +29,14 @@ from cruxible_client.contracts.provider_interfaces import (
     provider_interface_path,
 )
 from cruxible_client.contracts.providers import (
-    AcceptedProviderV1,
-    ProviderDistributionPinV1,
-    ProviderDistributionRefV1,
+    AcceptedProvider,
+    ProviderDistributionPin,
+    ProviderDistributionRef,
     ProviderImplementationManifestV1,
-    ProviderLocalEnvBackendPinV1,
+    ProviderLocalEnvBackendPin,
     ProviderRuntimeArtifactPayloadV1,
     ProviderRuntimeManifestV1,
-    ProviderSigningKeyV1,
+    ProviderSigningKey,
     ProviderV2,
     provider_digest,
     provider_expected_implementation_records,
@@ -58,8 +58,8 @@ def pin(role: str, kind: str, name: str, *, value: str | None = None) -> Artifac
     )
 
 
-def interface_fixture() -> ProviderBucketConformanceFixtureV1:
-    return ProviderBucketConformanceFixtureV1(
+def interface_fixture() -> ProviderBucketConformanceFixture:
+    return ProviderBucketConformanceFixture(
         fixture_id="demo.small",
         canonical_input={"size": 3},
         measured_bucket_id="size=small",
@@ -69,23 +69,23 @@ def interface_fixture() -> ProviderBucketConformanceFixtureV1:
 def interface_registration() -> ProviderInterfaceRegistrationV1:
     interface_id = "demo.interface"
     interface_bytes = canonical_bytes({"name": interface_id, "version": 1})
-    vocabulary = ProviderBucketVocabularyV1(
+    vocabulary = ProviderBucketVocabulary(
         interface_id=interface_id,
         status="accepted",
         dimensions=(
-            ProviderBucketDimensionV1(
+            ProviderBucketDimension(
                 name="size",
                 description="input size",
                 classes=(
-                    ProviderBucketClassV1(id="small", description="small input"),
-                    ProviderBucketClassV1(id="large", description="large input"),
+                    ProviderBucketClass(id="small", description="small input"),
+                    ProviderBucketClass(id="large", description="large input"),
                 ),
             ),
         ),
     )
     vocabulary_bytes = canonical_bytes(vocabulary.model_dump(mode="json"))
     fixture = interface_fixture()
-    proof = ProviderBucketConformanceFixtureProofV1(
+    proof = ProviderBucketConformanceFixtureProof(
         selector="size=*",
         fixture_id=fixture.fixture_id,
         fixture_digest=provider_bucket_fixture_digest(fixture),
@@ -113,9 +113,9 @@ def interface_registration() -> ProviderInterfaceRegistrationV1:
     )
 
 
-def accepted_interface() -> AcceptedProviderInterfaceRegistrationV1:
+def accepted_interface() -> AcceptedProviderInterfaceRegistration:
     registration = interface_registration()
-    return AcceptedProviderInterfaceRegistrationV1(
+    return AcceptedProviderInterfaceRegistration(
         path=provider_interface_path(registration.interface_id),
         registration=registration,
         artifact_digest=provider_interface_digest(registration).tagged,
@@ -167,7 +167,7 @@ def provider_v2() -> ProviderV2:
     )
     manifest = ProviderRuntimeManifestV1(
         provider_id="demo-provider",
-        distribution=ProviderDistributionRefV1(name="demo-provider", version="1.0.0"),
+        distribution=ProviderDistributionRef(name="demo-provider", version="1.0.0"),
         supported_protocol_majors=(1,),
         implementations=(implementation,),
     )
@@ -176,7 +176,7 @@ def provider_v2() -> ProviderV2:
         status="accepted",
         manifest=manifest,
         manifest_digest=provider_manifest_digest(manifest),
-        distribution=ProviderDistributionPinV1(
+        distribution=ProviderDistributionPin(
             name="demo-provider",
             version="1.0.0",
             filename="demo_provider-1.0.0-py3-none-any.whl",
@@ -184,7 +184,7 @@ def provider_v2() -> ProviderV2:
             index_url="https://packages.example.test/simple",
             url="https://packages.example.test/demo-provider.whl",
         ),
-        local_env=ProviderLocalEnvBackendPinV1(
+        local_env=ProviderLocalEnvBackendPin(
             lock_sha256=f"sha256:{'b' * 64}",
             materialization_digests={
                 "linux-cp311": f"sha256:{'c' * 64}",
@@ -197,7 +197,7 @@ def provider_v2() -> ProviderV2:
         identity=ArtifactIdentity(kind="Provider", name="demo-provider"),
         control_domain="demo-provider",
         signing_keys=(
-            ProviderSigningKeyV1(
+            ProviderSigningKey(
                 key_id="primary",
                 public_key="11" * 32,
                 valid_from=datetime(2026, 1, 1, tzinfo=UTC),
@@ -217,9 +217,9 @@ def provider_v2() -> ProviderV2:
     )
 
 
-def accepted_provider() -> AcceptedProviderV1:
+def accepted_provider() -> AcceptedProvider:
     provider = provider_v2()
-    return AcceptedProviderV1(
+    return AcceptedProvider(
         path=provider_path(provider.identity.name),
         provider=provider,
         artifact_digest=provider_digest(provider).tagged,

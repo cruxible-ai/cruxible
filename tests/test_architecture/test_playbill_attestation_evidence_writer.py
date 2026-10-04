@@ -1,4 +1,4 @@
-"""Freeze the sanctioned evidence-plane ClaimAttestation append path.
+"""Freeze the sanctioned evidence-plane ClaimAttestationV1 append path.
 
 This is intentionally independent of the Door-A derivative-text inventory: the
 attestation ledger writes attributed evidence events, never substrate text.

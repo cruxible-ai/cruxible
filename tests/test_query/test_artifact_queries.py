@@ -9,8 +9,8 @@ from pydantic import ValidationError
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.authoring.inputs import QueryDefinitionInput, lower_authoring_input
 from cruxible_client.contracts.authoring.models import (
-    ChangeSetAuthoringPayloadV1,
-    ClaimTypeAuthoringPayloadV1,
+    ChangeSetAuthoringPayload,
+    ClaimTypeAuthoringPayload,
 )
 from cruxible_client.contracts.claim_types import (
     claim_type_digest,
@@ -19,14 +19,14 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.declared_blocks import projection_query_semantic_result_digest
 from cruxible_client.contracts.query.definitions import (
-    QueryDefinitionSpecV1,
-    QueryDefinitionV1,
+    QueryDefinition,
+    QueryDefinitionSpec,
     parse_query_definition,
     query_definition_digest,
     query_definition_path,
     render_query_definition,
 )
-from cruxible_client.contracts.query.grammar import QueryArtifactsEntryV2, QueryBudgetsV1
+from cruxible_client.contracts.query.grammar import QueryArtifactsEntry, QueryBudgets
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.indexes.typed_state import TypedStateReader
 from cruxible_core.proposals.proposals import AuthenticatedActor, ProposalAdmissionRequest
@@ -42,10 +42,10 @@ NOW = datetime(2026, 9, 16, tzinfo=UTC)
 def definition(
     kind="ClaimType", *, namespaces=(), prefixes=(), name="security.ontology", max_results=100
 ):
-    return QueryDefinitionV1(
+    return QueryDefinition(
         artifact_format="playbill-query-definition-v2",
         identity=ArtifactIdentity(kind="QueryDefinition", name=name),
-        entry=QueryArtifactsEntryV2(
+        entry=QueryArtifactsEntry(
             artifact_kind=kind,
             selection="namespaces" if namespaces else "name_prefixes" if prefixes else "all",
             namespaces=namespaces,
@@ -56,15 +56,15 @@ def definition(
         result_cardinality="many",
         dedupe="artifact",
         evaluation_policy=work_item_query().evaluation_policy,
-        default_budgets=QueryBudgetsV1(max_results=max_results, max_traversal_depth=0),
-        maximum_budgets=QueryBudgetsV1(max_results=max_results, max_traversal_depth=0),
+        default_budgets=QueryBudgets(max_results=max_results, max_traversal_depth=0),
+        maximum_budgets=QueryBudgets(max_results=max_results, max_traversal_depth=0),
     )
 
 
 def accept(instance, owner, *artifacts):
     tree = dict(instance.tree_at(instance.accepted_coordinate().git_oid))
     for item in artifacts:
-        if isinstance(item, QueryDefinitionV1):
+        if isinstance(item, QueryDefinition):
             tree[query_definition_path(item.identity.name)] = render_query_definition(item)
         else:
             tree[claim_type_path(item.predicate)] = render_claim_type(item)
@@ -100,7 +100,7 @@ def run(instance, query, **kwargs):
 )
 def test_invalid_scope_is_not_a_broad_read(entry):
     with pytest.raises(ValidationError):
-        QueryArtifactsEntryV2(**entry)
+        QueryArtifactsEntry(**entry)
 
 
 def test_v1_definition_and_result_encoding_stay_frozen():
@@ -114,7 +114,7 @@ def test_v1_definition_and_result_encoding_stay_frozen():
     bad = definition().model_dump(mode="json")
     bad["artifact_format"] = "playbill-query-definition-v1"
     with pytest.raises(ValidationError):
-        QueryDefinitionV1.model_validate(bad)
+        QueryDefinition.model_validate(bad)
 
 
 def test_scope_membership_versions_history_and_empty_result(tmp_path, monkeypatch):
@@ -204,7 +204,7 @@ def test_limits_and_bad_parameters_are_explicit(tmp_path):
     assert run(instance, query, parameters={"unknown": True}).result.verdict == "refused"
     assert (
         run(
-            instance, query, budgets=QueryBudgetsV1(max_results=2, max_traversal_depth=0)
+            instance, query, budgets=QueryBudgets(max_results=2, max_traversal_depth=0)
         ).result.verdict
         == "refused"
     )
@@ -215,10 +215,10 @@ def test_changeset_resolves_query_vocabulary_without_manual_pins(tmp_path):
     payload = work_item_query().model_dump(mode="json")
     payload["pins"] = []
     draft = QueryDefinitionInput(
-        kind="query_definition", query_definition=QueryDefinitionSpecV1.model_validate(payload)
+        kind="query_definition", query_definition=QueryDefinitionSpec.model_validate(payload)
     )
     members = (
-        ClaimTypeAuthoringPayloadV1(claim_type=_predicate_type("project.work_item.status")),
+        ClaimTypeAuthoringPayload(claim_type=_predicate_type("project.work_item.status")),
         lower_authoring_input(draft),
     )
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
@@ -226,7 +226,7 @@ def test_changeset_resolves_query_vocabulary_without_manual_pins(tmp_path):
     intent = coordinator.create(
         actor=actor,
         canonical_timestamp=TIMESTAMP,
-        payload=ChangeSetAuthoringPayloadV1(members=members),
+        payload=ChangeSetAuthoringPayload(members=members),
     ).intent
     result = coordinator.preflight(intent.intent_id, actor=actor)
     assert result.verdict == "passed", result.frontier
@@ -326,10 +326,10 @@ def test_procedure_selection_retains_versions_and_uses_name_scope(tmp_path):
 
 @pytest.mark.parametrize("policy,severity", [("warn", "warning"), ("require_current", "blocking")])
 def test_ontology_query_only_blocks_share_sync_and_next_currency(tmp_path, policy, severity):
-    from cruxible_client.contracts.authoring.models import PlaybillProjectionCheckRequestV1
+    from cruxible_client.contracts.authoring.models import PlaybillProjectionCheckRequest
     from cruxible_client.contracts.declared_blocks import (
-        ProjectionBlockStampV2,
-        ProjectionQueryBackingV1,
+        ProjectionBlockStamp,
+        ProjectionQueryBacking,
         projection_parameter_digest,
     )
     from cruxible_client.contracts.projection import AcceptedCoordinate
@@ -340,7 +340,7 @@ def test_ontology_query_only_blocks_share_sync_and_next_currency(tmp_path, polic
     query = definition(namespaces=("security",), max_results=1)
     accept(instance, owner, query)
     initial = run(instance, query)
-    backing = ProjectionQueryBackingV1(
+    backing = ProjectionQueryBacking(
         identity=query.identity,
         definition_digest=query_definition_digest(query).tagged,
         resolved_parameter_bindings=(),
@@ -351,7 +351,7 @@ def test_ontology_query_only_blocks_share_sync_and_next_currency(tmp_path, polic
     request = _request(instance, backing=(backing,), evaluation_time=NOW)
     observed = request.workspace_observation.source_observations[0]
     marker = observed.marker_summaries[0]
-    stamp = ProjectionBlockStampV2.model_validate(
+    stamp = ProjectionBlockStamp.model_validate(
         {
             **marker.stamp.model_dump(mode="json"),
             "tag": "playbill-projection-stamp-v2",
@@ -363,7 +363,7 @@ def test_ontology_query_only_blocks_share_sync_and_next_currency(tmp_path, polic
         at = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
         check = service_check_projection_blocks(
             instance,
-            request=PlaybillProjectionCheckRequestV1(stamps=(stamp,), at=at, evaluation_time=NOW),
+            request=PlaybillProjectionCheckRequest(stamps=(stamp,), at=at, evaluation_time=NOW),
         ).results[0]
         current_request = request.model_copy(
             update={
@@ -451,7 +451,7 @@ def test_query_pin_resolution_refuses_missing_or_different_vocabulary(tmp_path, 
     intent = coordinator.create_input(
         actor=actor,
         input=QueryDefinitionInput(
-            kind="query_definition", query_definition=QueryDefinitionSpecV1.model_validate(body)
+            kind="query_definition", query_definition=QueryDefinitionSpec.model_validate(body)
         ),
         canonical_timestamp=TIMESTAMP,
     ).intent

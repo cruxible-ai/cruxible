@@ -61,8 +61,8 @@ def test_typed_batch_pending_and_historical_verdict_boundaries(tmp_path: Path) -
     from datetime import timedelta
 
     from cruxible_client.contracts.authoring.models import (
-        AttestationAuthoringPayloadV1,
-        ChangeSetAuthoringPayloadV1,
+        AttestationAuthoringPayload,
+        ChangeSetAuthoringPayload,
         authoring_member_identity,
     )
     from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
@@ -98,11 +98,11 @@ def test_typed_batch_pending_and_historical_verdict_boundaries(tmp_path: Path) -
         stance="support",
         attested_at=RECORDED_AT + timedelta(seconds=1),
     )
-    payload = ChangeSetAuthoringPayloadV1(
+    payload = ChangeSetAuthoringPayload(
         members=tuple(
             sorted(
                 (
-                    AttestationAuthoringPayloadV1(attestation=item.attestation)
+                    AttestationAuthoringPayload(attestation=item.attestation)
                     for item in (request, second)
                 ),
                 key=authoring_member_identity,
@@ -299,7 +299,7 @@ def test_new_kind_does_not_change_previous_compiler_registration() -> None:
 
 def test_new_capture_acceptance_uses_historical_binding_and_discovery(tmp_path: Path) -> None:
     from cruxible_client.contracts.claims import claim_path
-    from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+    from cruxible_core.coverage.contracts import CoverageAccessProfile
     from cruxible_core.service.discovery.next import PlaybillNextRequestV1
     from tests.test_claims.test_claim_attestation_service import (
         RECORDED_AT,
@@ -342,7 +342,7 @@ def test_new_capture_acceptance_uses_historical_binding_and_discovery(tmp_path: 
         instance,
         request=PlaybillNextRequestV1(
             evaluation_time=RECORDED_AT,
-            access_profile=CoverageAccessProfileV1(
+            access_profile=CoverageAccessProfile(
                 profile_id="test", permitted_access_classes=("instance", "public")
             ),
         ),

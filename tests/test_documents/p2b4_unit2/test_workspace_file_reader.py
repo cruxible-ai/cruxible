@@ -10,8 +10,8 @@ import pytest
 import cruxible_core.documents.workspace_file as workspace_file_module
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.workspace_file import (
-    SourceReadReceiptV1,
-    WorkspaceFileSourceRequestV1,
+    SourceReadReceipt,
+    WorkspaceFileSourceRequest,
 )
 from cruxible_core.documents.workspace_file import (
     WorkspaceFileReader,
@@ -39,8 +39,8 @@ def _reader(root: Path, **kwargs: object) -> WorkspaceFileReader:
     )
 
 
-def _request(root: Path, relative_path: str) -> WorkspaceFileSourceRequestV1:
-    return WorkspaceFileSourceRequestV1(
+def _request(root: Path, relative_path: str) -> WorkspaceFileSourceRequest:
+    return WorkspaceFileSourceRequest(
         logical_source="workspace.docs",
         workspace_binding_digest=workspace_binding_digest(
             instance_id="workspace-reader-test", canonical_root=root.resolve()
@@ -55,7 +55,7 @@ def _request(root: Path, relative_path: str) -> WorkspaceFileSourceRequestV1:
 
 def _read(
     reader: WorkspaceFileReader,
-    request: WorkspaceFileSourceRequestV1,
+    request: WorkspaceFileSourceRequest,
     *,
     max_bytes: int = 1024,
 ):
@@ -136,7 +136,7 @@ def test_a_receipt_without_a_requested_path_keeps_its_exact_serialized_bytes(
     payload = _read(_reader(root), _request(root, "docs/note.txt")).receipt.model_dump(mode="json")
     payload.pop("requested_path")
 
-    legacy = SourceReadReceiptV1.model_validate(payload)
+    legacy = SourceReadReceipt.model_validate(payload)
 
     assert legacy.requested_path is None
     assert legacy.model_dump(mode="json") == payload

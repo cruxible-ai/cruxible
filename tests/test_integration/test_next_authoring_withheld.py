@@ -14,8 +14,8 @@ import pytest
 from pydantic import ValidationError
 
 from cruxible_client import contracts
-from cruxible_client.contracts.principals import PlaybillAuthoringRefusalV1
-from cruxible_client.contracts.repairs import RepairOperationV1
+from cruxible_client.contracts.principals import PlaybillAuthoringRefusal
+from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.discovery.next import (
     PlaybillNextRepairRequirementV1,
@@ -27,10 +27,10 @@ from tests.test_integration.test_next_caller_view import (
     _conflict_with_uncovered_member,
 )
 
-UNBOUND = PlaybillAuthoringRefusalV1(
+UNBOUND = PlaybillAuthoringRefusal(
     code="playbill.identity.credential_unbound",
     detail="this bearer credential (manager) acts as no principal; repair: mint one",
-    repair=RepairOperationV1(
+    repair=RepairOperation(
         operation="credential.mint", arguments={"unbound_credential_id": "cred-1"}
     ),
 )
@@ -40,7 +40,7 @@ def _view(
     *,
     surface: str = "cli",
     caller_rung: int | None = 3,
-    refusal: PlaybillAuthoringRefusalV1 | None = UNBOUND,
+    refusal: PlaybillAuthoringRefusal | None = UNBOUND,
     tools: tuple[str, ...] | None = None,
 ) -> _CallerView:
     return _CallerView(

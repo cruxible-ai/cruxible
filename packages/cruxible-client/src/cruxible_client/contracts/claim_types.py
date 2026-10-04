@@ -42,11 +42,11 @@ from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.governance import PermissionTier, governance_identifier
 from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicyV1,
+    ClaimAdmissionPolicy,
+    ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionPolicyV2,
-    ClaimEvidenceAdmissionPolicyV3,
-    ClaimResolutionPolicyV1,
+    ClaimResolutionPolicy,
 )
 
 _PREDICATE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})+$")
@@ -64,23 +64,23 @@ class _StrictClaimTypeModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
 
 
-class ClaimFreshnessDurationV1(_StrictClaimTypeModel):
+class ClaimFreshnessDuration(_StrictClaimTypeModel):
     tag: Literal["playbill-duration-v1"] = "playbill-duration-v1"
     microseconds: int = Field(ge=0)
 
 
-class ClaimEvidenceFreshnessV1(_StrictClaimTypeModel):
+class ClaimEvidenceFreshness(_StrictClaimTypeModel):
     tag: Literal["playbill-claim-evidence-freshness-v1"] = "playbill-claim-evidence-freshness-v1"
-    stale_after: ClaimFreshnessDurationV1
+    stale_after: ClaimFreshnessDuration
 
     @model_validator(mode="after")
-    def _positive_horizon(self) -> "ClaimEvidenceFreshnessV1":
+    def _positive_horizon(self) -> "ClaimEvidenceFreshness":
         if self.stale_after.microseconds <= 0:
             raise ValueError("evidence freshness stale_after must be positive")
         return self
 
 
-class ClaimAttestationConsequenceRuleV1(_StrictClaimTypeModel):
+class ClaimAttestationConsequenceRule(_StrictClaimTypeModel):
     tag: Literal["playbill-claim-attestation-consequence-rule-v1"] = (
         "playbill-claim-attestation-consequence-rule-v1"
     )
@@ -96,17 +96,17 @@ class ClaimAttestationConsequenceRuleV1(_StrictClaimTypeModel):
         return governance_identifier(value, label="attestation consequence rule_id")
 
 
-class ClaimAttestationConsequencePolicyV1(_StrictClaimTypeModel):
+class ClaimAttestationConsequencePolicy(_StrictClaimTypeModel):
     tag: Literal["playbill-claim-attestation-consequence-policy-v1"] = (
         "playbill-claim-attestation-consequence-policy-v1"
     )
-    rules: tuple[ClaimAttestationConsequenceRuleV1, ...] = Field(min_length=1)
+    rules: tuple[ClaimAttestationConsequenceRule, ...] = Field(min_length=1)
 
     @field_validator("rules")
     @classmethod
     def _rules(
-        cls, value: tuple[ClaimAttestationConsequenceRuleV1, ...]
-    ) -> tuple[ClaimAttestationConsequenceRuleV1, ...]:
+        cls, value: tuple[ClaimAttestationConsequenceRule, ...]
+    ) -> tuple[ClaimAttestationConsequenceRule, ...]:
         rule_ids = tuple(rule.rule_id for rule in value)
         if rule_ids != tuple(sorted(set(rule_ids), key=lambda item: item.encode("utf-8"))):
             raise ValueError("attestation consequence rules must be sorted and unique by rule_id")
@@ -164,7 +164,7 @@ def canonical_description_text(value: str) -> str:
     return unicodedata.normalize("NFC", value).strip()
 
 
-class ClaimTypeMemberDescriptionV1(_StrictClaimTypeModel):
+class ClaimTypeMemberDescription(_StrictClaimTypeModel):
     """What one literal enum member means, beside the ClaimType that admits it."""
 
     member: str | int | bool | None
@@ -219,28 +219,28 @@ class ClaimType(_StrictClaimTypeModel):
     evidence_admission_policy: (
         ClaimEvidenceAdmissionPolicyV1
         | ClaimEvidenceAdmissionPolicyV2
-        | ClaimEvidenceAdmissionPolicyV3
+        | ClaimEvidenceAdmissionPolicy
     )
-    admission_policy: ClaimAdmissionPolicyV1
-    resolution_policy: ClaimResolutionPolicyV1
+    admission_policy: ClaimAdmissionPolicy
+    resolution_policy: ClaimResolutionPolicy
     pins: tuple[ArtifactPin, ...] = ()
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
     # Existing v3 envelopes committed these null placeholders. They remain
     # null-only compatibility bytes, never supported authoring capabilities.
     subject_scope: None = None
     slot_policy: None = None
-    evidence_freshness: ClaimEvidenceFreshnessV1 | None = None
-    attestation_consequence_policy: ClaimAttestationConsequencePolicyV1 | None = None
+    evidence_freshness: ClaimEvidenceFreshness | None = None
+    attestation_consequence_policy: ClaimAttestationConsequencePolicy | None = None
     #: How long an ``unsure`` examined attestation holds a standing ``next`` row
     #: (stale or uncovered evidence) when it names no ``valid_until``. Absent,
     #: the engine default applies.
-    unsure_hold_for: ClaimFreshnessDurationV1 | None = None
+    unsure_hold_for: ClaimFreshnessDuration | None = None
     # ClaimType v7. Every earlier format holds these at null or empty and never
     # writes them, so its bytes and digests are exactly what they were.
     #: What the predicate means, for the people and agents who read and write it.
     description: str | None = None
     #: What each literal enum member means, sorted by the member's canonical bytes.
-    member_descriptions: tuple[ClaimTypeMemberDescriptionV1, ...] = ()
+    member_descriptions: tuple[ClaimTypeMemberDescription, ...] = ()
     #: The role a write takes when it names none. Never ``derivation``.
     default_role: ClaimRole | None = None
     #: Read through ``effective_evidence_requirement``; null before v7.
@@ -297,8 +297,8 @@ class ClaimType(_StrictClaimTypeModel):
     @field_validator("member_descriptions")
     @classmethod
     def _member_descriptions(
-        cls, value: tuple[ClaimTypeMemberDescriptionV1, ...]
-    ) -> tuple[ClaimTypeMemberDescriptionV1, ...]:
+        cls, value: tuple[ClaimTypeMemberDescription, ...]
+    ) -> tuple[ClaimTypeMemberDescription, ...]:
         keys = tuple(_member_key(item.member) for item in value)
         if keys != tuple(sorted(set(keys))):
             raise ValueError(
@@ -372,7 +372,7 @@ class ClaimType(_StrictClaimTypeModel):
         self._validate_v7_fields()
         if self.artifact_format in _IDENTITY_RULE_FORMATS:
             version = self.artifact_format.removeprefix("playbill-claim-type-")
-            if not isinstance(self.evidence_admission_policy, ClaimEvidenceAdmissionPolicyV3):
+            if not isinstance(self.evidence_admission_policy, ClaimEvidenceAdmissionPolicy):
                 raise ValueError(
                     f"ClaimType {version} requires evidence policy v3 naming CaptureContracts "
                     "by identity"
@@ -764,18 +764,18 @@ __all__ = [
     "AcceptedClaimType",
     "CLAIM_TYPE_DIGEST_FUNCTIONS",
     "CLAIM_TYPE_FORMATS",
-    "ClaimAttestationConsequencePolicyV1",
-    "ClaimAttestationConsequenceRuleV1",
+    "ClaimAttestationConsequencePolicy",
+    "ClaimAttestationConsequenceRule",
     "ClaimType",
-    "ClaimTypeMemberDescriptionV1",
+    "ClaimTypeMemberDescription",
     "EvidenceRequirement",
     "RevisionEvidence",
     "V7_FIELDS",
     "canonical_description_text",
     "effective_evidence_requirement",
     "effective_revision_evidence",
-    "ClaimEvidenceFreshnessV1",
-    "ClaimFreshnessDurationV1",
+    "ClaimEvidenceFreshness",
+    "ClaimFreshnessDuration",
     "ClaimTypeFreshnessHorizonInvalid",
     "ClaimTypeFormatError",
     "ClaimTypeLawResult",

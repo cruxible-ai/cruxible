@@ -38,7 +38,7 @@ from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_core.cli.commands import _common
 from cruxible_core.cli.context import load_cli_context
 from cruxible_core.cli.main import cli
-from cruxible_core.coverage.adapter import WorkingSourceObservationV1
+from cruxible_core.coverage.adapter import WorkingSourceObservation
 from cruxible_core.coverage.claude_code import (
     ANNOTATABLE_TOOLS,
     ENVELOPE_VERSION,
@@ -83,7 +83,7 @@ PREFIX_IDENTITY = "corpus.handbook.md"
 def _resolver(client: Any, instance_id: str) -> ResolveCoverage:
     """The embedding recipe: observations in, one frozen coverage result out."""
 
-    def resolve(observations: Sequence[WorkingSourceObservationV1]) -> CoverageResultV3:
+    def resolve(observations: Sequence[WorkingSourceObservation]) -> CoverageResultV3:
         answered = client.resolve_playbill_coverage(
             instance_id,
             observations=[item.model_dump(mode="json") for item in observations],

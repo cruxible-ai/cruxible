@@ -10,7 +10,7 @@ from cruxible_client.contracts.procedures.artifacts import procedure_artifact_di
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.models import ProcedureDefinitionV4, ProcedureDefinitionV5
 from cruxible_client.contracts.provider_contracts import (
-    ProviderOperationContractV1,
+    ProviderOperationContract,
     read_provider_operation_contract,
 )
 from cruxible_core.procedures.execution import ProcedureExecutor
@@ -25,7 +25,7 @@ from tests.test_providers.test_provider_invocation_journal import (
 
 
 def operation():
-    return ProviderOperationContractV1.model_validate(
+    return ProviderOperationContract.model_validate(
         {
             "input": {"fields": {"size": {"type": "int"}}},
             "output": {"fields": {"size": {"type": "int"}}},
@@ -159,16 +159,16 @@ def test_contract_compatibility_ignores_documentation_and_type_aliases():
 def test_specialization_and_carried_schemas_match_before_execution(case):
     from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
     from cruxible_client.contracts.procedures.artifacts import (
-        ProcedureArtifactV2,
-        ProcedureOwnedContractV1,
+        ProcedureArtifact,
+        ProcedureOwnedContract,
         check_provider_node_contract,
         procedure_owned_contract_digest,
     )
-    from cruxible_client.contracts.procedures.models import SourceNodeV4
+    from cruxible_client.contracts.procedures.models import SourceNode
     from tests.core_support._p2b1_support import accepted_interface
 
     schema = operation().input
-    owned = ProcedureOwnedContractV1(
+    owned = ProcedureOwnedContract(
         identity=ArtifactIdentity(kind="Contract", name="size"), schema=schema
     )
     pin = ArtifactPin(
@@ -182,7 +182,7 @@ def test_specialization_and_carried_schemas_match_before_execution(case):
     definition = old.definition.model_copy(
         update={"contract_in": pin, "contract_out": out_pin, "nodes": (node,)}
     )
-    procedure = ProcedureArtifactV2(
+    procedure = ProcedureArtifact(
         identity=old.identity,
         definition=definition,
         definition_digest=compute_procedure_definition_digest(definition).tagged,
@@ -200,7 +200,7 @@ def test_specialization_and_carried_schemas_match_before_execution(case):
     if case in {"wrong-input", "wrong-output"}:
         declaration[case.removeprefix("wrong-")] = {"fields": {"size": {"type": "string"}}}
     if case in {"source", "mutation"}:
-        node = SourceNodeV4(
+        node = SourceNode(
             node_id="source",
             provider=node.provider,
             interface=node.interface,
@@ -258,7 +258,7 @@ def test_previous_compiler_cannot_project_the_call_grammar():
 
 def test_web_interface_classification_matches_the_recorded_fixtures():
     from cruxible_client.contracts.provider_interfaces import (
-        AcceptedProviderInterfaceRegistrationV1,
+        AcceptedProviderInterfaceRegistration,
         provider_interface_digest,
         provider_interface_path,
     )
@@ -268,7 +268,7 @@ def test_web_interface_classification_matches_the_recorded_fixtures():
     )
 
     registration = web_fetch_interface_registration()
-    accepted = AcceptedProviderInterfaceRegistrationV1(
+    accepted = AcceptedProviderInterfaceRegistration(
         registration=registration,
         path=provider_interface_path("web.fetch"),
         artifact_digest=provider_interface_digest(registration).tagged,

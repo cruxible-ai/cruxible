@@ -70,7 +70,7 @@ def _validated_candidate_scope(value: tuple[str, ...]) -> tuple[str, ...]:
     return value
 
 
-class SemanticCandidate(_StrictCandidateModel):
+class SemanticCandidateV1(_StrictCandidateModel):
     """The complete locator-free object signed by reviewers in PB-D."""
 
     tag: Literal["playbill-candidate-v1"] = "playbill-candidate-v1"
@@ -109,7 +109,7 @@ class SemanticCandidate(_StrictCandidateModel):
         return validate_candidate_timestamp(value)
 
 
-class SemanticCandidateV2(_StrictCandidateModel):
+class SemanticCandidate(_StrictCandidateModel):
     """The same five C_s fields, with the manifest root carried as a merkle root.
 
     The merkle root *replaces* the flat root; a v2 candidate never carries both,
@@ -157,7 +157,7 @@ class SemanticCandidateV2(_StrictCandidateModel):
         return validate_candidate_timestamp(value)
 
 
-SemanticCandidateLike = SemanticCandidate | SemanticCandidateV2
+SemanticCandidateLike = SemanticCandidateV1 | SemanticCandidate
 
 
 def candidate_digest(candidate: SemanticCandidateLike) -> CandidateDigest:
@@ -173,11 +173,11 @@ def candidate_digest(candidate: SemanticCandidateLike) -> CandidateDigest:
     return typed_digest(CandidateDigest, domain, payload)
 
 
-class CandidateRecord(_StrictCandidateModel):
+class CandidateRecordV1(_StrictCandidateModel):
     """Family-neutral validated candidate and its complete law/closure evidence."""
 
     tag: Literal["playbill-validated-candidate-v1"] = "playbill-validated-candidate-v1"
-    candidate: SemanticCandidate
+    candidate: SemanticCandidateV1
     candidate_digest: str
     required_tier: PermissionTier
     approval_requirements: tuple[ApprovalRequirement, ...]
@@ -219,7 +219,7 @@ class CandidateRecord(_StrictCandidateModel):
         return value
 
     @model_validator(mode="after")
-    def _complete_binding(self) -> "CandidateRecord":
+    def _complete_binding(self) -> "CandidateRecordV1":
         if candidate_digest(self.candidate).tagged != self.candidate_digest:
             raise ValueError("candidate record digest does not reproduce from its complete C_s")
         if self.closure_paths != self.candidate.scope:
@@ -275,7 +275,7 @@ class CandidateMemberEvidence(_StrictCandidateModel):
         return value
 
 
-class DependencyProofReferenceV1(_StrictCandidateModel):
+class DependencyProofReference(_StrictCandidateModel):
     """Exact artifact dependency edge read while evaluating one member."""
 
     tag: Literal["playbill-dependency-proof-ref-v1"] = "playbill-dependency-proof-ref-v1"
@@ -305,7 +305,7 @@ class DependencyProofReferenceV1(_StrictCandidateModel):
         return governance_identifier(value, label="dependency proof pin role")
 
 
-class LawEvaluationCoordinateV1(_StrictCandidateModel):
+class LawEvaluationCoordinate(_StrictCandidateModel):
     """Path-free accepted coordinate at which a member law was evaluated."""
 
     tag: Literal["playbill-law-evaluation-coordinate-v1"] = "playbill-law-evaluation-coordinate-v1"
@@ -341,7 +341,7 @@ class LawEvaluationCoordinateV1(_StrictCandidateModel):
         return value
 
 
-class MemberLawEvaluationV2(_StrictCandidateModel):
+class MemberLawEvaluation(_StrictCandidateModel):
     """Structured output whose digest is recorded beside one changed member."""
 
     tag: Literal["playbill-member-law-evaluation-v2"] = "playbill-member-law-evaluation-v2"
@@ -349,8 +349,8 @@ class MemberLawEvaluationV2(_StrictCandidateModel):
     law_identifier: str
     law_digest: str
     evaluation_time: str
-    evaluation_coordinate: LawEvaluationCoordinateV1
-    dependency_proof_refs: tuple[DependencyProofReferenceV1, ...] = ()
+    evaluation_coordinate: LawEvaluationCoordinate
+    dependency_proof_refs: tuple[DependencyProofReference, ...] = ()
     policy_digests: tuple[str, ...] = ()
     query_receipt_digests: tuple[str, ...] = ()
     result: dict[str, object]
@@ -382,8 +382,8 @@ class MemberLawEvaluationV2(_StrictCandidateModel):
     @field_validator("dependency_proof_refs")
     @classmethod
     def _proofs(
-        cls, value: tuple[DependencyProofReferenceV1, ...]
-    ) -> tuple[DependencyProofReferenceV1, ...]:
+        cls, value: tuple[DependencyProofReference, ...]
+    ) -> tuple[DependencyProofReference, ...]:
         encoded = tuple(canonical_bytes(item.model_dump(mode="json")) for item in value)
         if encoded != tuple(sorted(set(encoded))):
             raise ValueError("dependency proof refs must be canonically sorted and unique")
@@ -407,7 +407,7 @@ class MemberLawEvaluationV2(_StrictCandidateModel):
         return {str(key): item for key, item in normalized.items()}
 
 
-def member_law_evidence_digest(evidence: MemberLawEvaluationV2) -> str:
+def member_law_evidence_digest(evidence: MemberLawEvaluation) -> str:
     payload = evidence.model_dump(mode="json")
     payload.pop("tag")
     return typed_digest(
@@ -417,7 +417,7 @@ def member_law_evidence_digest(evidence: MemberLawEvaluationV2) -> str:
     ).tagged
 
 
-class CandidateMemberLawEvidenceV2(_StrictCandidateModel):
+class CandidateMemberLawEvidence(_StrictCandidateModel):
     tag: Literal["playbill-candidate-member-law-evidence-v2"] = (
         "playbill-candidate-member-law-evidence-v2"
     )
@@ -430,7 +430,7 @@ class CandidateMemberLawEvidenceV2(_StrictCandidateModel):
     law_digest: str
     law_evidence_digest: str
     closure_role: Literal["authored", "generated_successor", "invalidation"]
-    dependency_proof_refs: tuple[DependencyProofReferenceV1, ...] = ()
+    dependency_proof_refs: tuple[DependencyProofReference, ...] = ()
 
     @field_validator("path")
     @classmethod
@@ -466,15 +466,15 @@ class CandidateMemberLawEvidenceV2(_StrictCandidateModel):
     @field_validator("dependency_proof_refs")
     @classmethod
     def _proofs(
-        cls, value: tuple[DependencyProofReferenceV1, ...]
-    ) -> tuple[DependencyProofReferenceV1, ...]:
+        cls, value: tuple[DependencyProofReference, ...]
+    ) -> tuple[DependencyProofReference, ...]:
         encoded = tuple(canonical_bytes(item.model_dump(mode="json")) for item in value)
         if encoded != tuple(sorted(set(encoded))):
             raise ValueError("member dependency proofs must be sorted and unique")
         return value
 
     @model_validator(mode="after")
-    def _digest_shape(self) -> "CandidateMemberLawEvidenceV2":
+    def _digest_shape(self) -> "CandidateMemberLawEvidence":
         if self.disposition == "create":
             valid = (
                 self.predecessor_artifact_digest is None
@@ -520,7 +520,7 @@ class ClosureProofV2(_StrictCandidateModel):
         return value
 
 
-class ClosureProofV3(_StrictCandidateModel):
+class ClosureProof(_StrictCandidateModel):
     """The v2 closure proof with an incrementally maintainable edge commitment.
 
     `dependency_graph_digest` hashed the full edge lists of both trees, so it
@@ -559,11 +559,11 @@ class ClosureProofV3(_StrictCandidateModel):
         return value
 
 
-ClosureProofLike = ClosureProofV2 | ClosureProofV3
+ClosureProofLike = ClosureProofV2 | ClosureProof
 
 
 def candidate_member_evidence_digest(
-    members: tuple[CandidateMemberLawEvidenceV2, ...],
+    members: tuple[CandidateMemberLawEvidence, ...],
 ) -> str:
     """Hash the ordered member evidence under its own unchanged frozen domain."""
 
@@ -579,8 +579,8 @@ def _verify_multi_member_binding(
     candidate: SemanticCandidateLike,
     candidate_digest_value: str,
     closure_proof: ClosureProofLike,
-    members: tuple[CandidateMemberLawEvidenceV2, ...],
-    law_evidence: tuple[MemberLawEvaluationV2, ...],
+    members: tuple[CandidateMemberLawEvidence, ...],
+    law_evidence: tuple[MemberLawEvaluation, ...],
     law_digests: dict[str, str],
     label: str,
 ) -> None:
@@ -638,14 +638,14 @@ class CandidateRecordV2(_StrictCandidateModel):
     """Validated multi-member candidate without changing the frozen C_s."""
 
     tag: Literal["playbill-validated-candidate-v2"] = "playbill-validated-candidate-v2"
-    candidate: SemanticCandidate
+    candidate: SemanticCandidateV1
     candidate_digest: str
     required_tier: PermissionTier
     approval_requirements: tuple[ApprovalRequirement, ...]
     activation_policy: ActivationPolicy
     closure_proof: ClosureProofV2
-    members: tuple[CandidateMemberLawEvidenceV2, ...]
-    law_evidence: tuple[MemberLawEvaluationV2, ...]
+    members: tuple[CandidateMemberLawEvidence, ...]
+    law_evidence: tuple[MemberLawEvaluation, ...]
     law_digests: dict[str, str]
     compiler_digest: str
 
@@ -687,7 +687,7 @@ class CandidateRecordV2(_StrictCandidateModel):
         return self
 
 
-class CandidateRecordV3(_StrictCandidateModel):
+class CandidateRecord(_StrictCandidateModel):
     """The v2 validated candidate carrying a v2 C_s and a v3 closure proof.
 
     Only the two embedded wire versions move. Member evidence, structured law
@@ -698,14 +698,14 @@ class CandidateRecordV3(_StrictCandidateModel):
     """
 
     tag: Literal["playbill-validated-candidate-v3"] = "playbill-validated-candidate-v3"
-    candidate: SemanticCandidateV2
+    candidate: SemanticCandidate
     candidate_digest: str
     required_tier: PermissionTier
     approval_requirements: tuple[ApprovalRequirement, ...]
     activation_policy: ActivationPolicy
-    closure_proof: ClosureProofV3
-    members: tuple[CandidateMemberLawEvidenceV2, ...]
-    law_evidence: tuple[MemberLawEvaluationV2, ...]
+    closure_proof: ClosureProof
+    members: tuple[CandidateMemberLawEvidence, ...]
+    law_evidence: tuple[MemberLawEvaluation, ...]
     law_digests: dict[str, str]
     compiler_digest: str
 
@@ -734,7 +734,7 @@ class CandidateRecordV3(_StrictCandidateModel):
         return value
 
     @model_validator(mode="after")
-    def _complete_binding(self) -> "CandidateRecordV3":
+    def _complete_binding(self) -> "CandidateRecord":
         _verify_multi_member_binding(
             candidate=self.candidate,
             candidate_digest_value=self.candidate_digest,
@@ -747,7 +747,7 @@ class CandidateRecordV3(_StrictCandidateModel):
         return self
 
 
-CandidateRecordAnyVersion = CandidateRecord | CandidateRecordV2 | CandidateRecordV3
+CandidateRecordAnyVersion = CandidateRecordV1 | CandidateRecordV2 | CandidateRecord
 
 CandidateWireVersion = Literal[
     "playbill-validated-candidate-v1",
@@ -774,22 +774,22 @@ def render_candidate_record(record: CandidateRecordAnyVersion) -> bytes:
 
 __all__ = [
     "PRODUCED_CANDIDATE_VERSION",
-    "CandidateMemberLawEvidenceV2",
+    "CandidateMemberLawEvidence",
     "CandidateWireVersion",
-    "CandidateRecord",
+    "CandidateRecordV1",
     "CandidateRecordAnyVersion",
     "CandidateRecordV2",
-    "CandidateRecordV3",
+    "CandidateRecord",
     "CandidateMemberEvidence",
     "ClosureProofLike",
     "ClosureProofV2",
-    "ClosureProofV3",
-    "DependencyProofReferenceV1",
-    "LawEvaluationCoordinateV1",
-    "MemberLawEvaluationV2",
-    "SemanticCandidate",
+    "ClosureProof",
+    "DependencyProofReference",
+    "LawEvaluationCoordinate",
+    "MemberLawEvaluation",
+    "SemanticCandidateV1",
     "SemanticCandidateLike",
-    "SemanticCandidateV2",
+    "SemanticCandidate",
     "candidate_digest",
     "candidate_member_evidence_digest",
     "canonical_candidate_timestamp",

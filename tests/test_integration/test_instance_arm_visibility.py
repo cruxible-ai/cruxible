@@ -19,7 +19,7 @@ from click.testing import CliRunner
 
 from cruxible_client import contracts
 from cruxible_core.cli.main import cli
-from cruxible_core.service.discovery.next import PlaybillNextRequestV2, service_playbill_next
+from cruxible_core.service.discovery.next import PlaybillNextRequest, service_playbill_next
 from cruxible_core.service.discovery.orient import service_playbill_orient
 from cruxible_core.service.procedures.line_dispatch import service_stop_line_arm
 from tests.test_procedures.test_line_arming import _armed_world
@@ -48,7 +48,7 @@ def test_next_counts_line_arms_in_the_consumers_facet(stopped) -> None:  # type:
 
     result = service_playbill_next(
         instance,
-        request=PlaybillNextRequestV2(evaluation_time=when, access_profile=_PROFILE),
+        request=PlaybillNextRequest(evaluation_time=when, access_profile=_PROFILE),
         caller_rung=1,
     )
 
@@ -74,7 +74,7 @@ def test_orient_attention_names_a_stopped_arm_for_an_instance_caller(stopped) ->
 
 def test_orient_says_when_armed_lines_have_no_consumer_loop_or_lane(tmp_path: Path) -> None:
     instance, _line, _procedure, start = _armed_world(tmp_path)
-    lane_down = contracts.ProviderLaneStatusV1(
+    lane_down = contracts.ProviderLaneStatus(
         state="unavailable", code="provider_runtime_recovery_failed", detail="recovery failed"
     )
 
@@ -121,7 +121,7 @@ class _Stub:
         return service_playbill_orient(self.instance, **values)
 
     def next_playbill(self, instance_id: str, **values: Any) -> Any:
-        request = PlaybillNextRequestV2.model_validate(
+        request = PlaybillNextRequest.model_validate(
             {
                 "evaluation_time": values["evaluation_time"],
                 "access_profile": values["access_profile"],

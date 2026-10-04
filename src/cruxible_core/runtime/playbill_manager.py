@@ -16,7 +16,7 @@ from cruxible_client.contracts.errors import (
     PlaybillObjectFormatConflict,
     PlaybillReseedRequired,
 )
-from cruxible_client.contracts.repairs import RepairOperationV1
+from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_client.contracts.temporal import utc_now
 from cruxible_client.contracts.types import (
     GitObjectFormat,
@@ -267,7 +267,7 @@ class PlaybillInstanceManager:
                 "write; run an ordinary read (`cruxible playbill orient`) to reopen it, then "
                 "preview again",
                 operation="playbill.orient",
-                repair=RepairOperationV1(operation="playbill.orient", arguments={}),
+                repair=RepairOperation(operation="playbill.orient", arguments={}),
             ) from exc
 
     def initialized(self, instance_id: str) -> PlaybillInstance | None:

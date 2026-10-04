@@ -7,9 +7,9 @@ from pydantic import ValidationError
 
 from cruxible_client.contracts.errors import ProjectionFormatError
 from cruxible_client.contracts.provider_interfaces import (
-    AcceptedProviderInterfaceRegistrationV1,
-    ProviderClassifierCodeV1,
-    ProviderInterfaceRegistrationV2,
+    AcceptedProviderInterfaceRegistration,
+    ProviderClassifierCode,
+    ProviderInterfaceRegistration,
     evaluate_provider_interface_law,
     provider_interface_digest,
     provider_interface_path,
@@ -17,11 +17,11 @@ from cruxible_client.contracts.provider_interfaces import (
     render_provider_interface,
 )
 from cruxible_client.contracts.providers import (
-    AcceptedProviderV1,
-    ProviderRuntimeArtifactPayloadV2,
-    ProviderRuntimeManifestV2,
+    AcceptedProvider,
+    Provider,
+    ProviderRuntimeArtifactPayload,
+    ProviderRuntimeManifest,
     ProviderV2,
-    ProviderV3,
     provider_digest,
     provider_expected_implementation_records,
     provider_manifest_digest,
@@ -48,12 +48,12 @@ from tests.core_support._p2b1_support import (
 )
 
 
-def package_interface() -> ProviderInterfaceRegistrationV2:
+def package_interface() -> ProviderInterfaceRegistration:
     old = interface_registration()
-    code = ProviderClassifierCodeV1(
+    code = ProviderClassifierCode(
         entrypoint="demo.classifier:classify", source_digest="sha256:" + "a" * 64
     )
-    return ProviderInterfaceRegistrationV2.model_validate(
+    return ProviderInterfaceRegistration.model_validate(
         {
             **old.model_dump(mode="json"),
             "artifact_format": "playbill-provider-interface-v2",
@@ -69,7 +69,7 @@ def package_interface() -> ProviderInterfaceRegistrationV2:
     )
 
 
-def package_provider(*, engine: bool = True) -> ProviderV3:
+def package_provider(*, engine: bool = True) -> Provider:
     old = provider_v2()
     document = old.runtime_artifact.model_dump(mode="json")
     document["schema_version"] = 2
@@ -78,12 +78,12 @@ def package_provider(*, engine: bool = True) -> ProviderV3:
         "dynamic:target-from-configuration"
     ]
     document["manifest_digest"] = provider_manifest_digest(
-        ProviderRuntimeManifestV2.model_validate(document["manifest"])
+        ProviderRuntimeManifest.model_validate(document["manifest"])
     )
     if not engine:
         document["local_env"]["materialization_digests"] = {"linux-cp311": "sha256:" + "b" * 64}
-    payload = ProviderRuntimeArtifactPayloadV2.model_validate(document)
-    return ProviderV3.model_validate(
+    payload = ProviderRuntimeArtifactPayload.model_validate(document)
+    return Provider.model_validate(
         {
             **old.model_dump(mode="json"),
             "artifact_format": "playbill-provider-v3",
@@ -119,7 +119,7 @@ def test_package_classifier_authority_retains_fixture_bytes_and_executable_ident
         ).verdict
         == "accepted"
     )
-    accepted = AcceptedProviderInterfaceRegistrationV1(
+    accepted = AcceptedProviderInterfaceRegistration(
         path=provider_interface_path(registration.interface_id),
         registration=registration,
         artifact_digest=provider_interface_digest(registration).tagged,
@@ -128,11 +128,11 @@ def test_package_classifier_authority_retains_fixture_bytes_and_executable_ident
     data = registration.model_dump(mode="json")
     data["conformance_fixtures"][0]["canonical_input"]["size"] = 4
     with pytest.raises(ValidationError, match="fixture bytes"):
-        ProviderInterfaceRegistrationV2.model_validate(data)
+        ProviderInterfaceRegistration.model_validate(data)
     data = registration.model_dump(mode="json")
     data["classifier_code"]["source_digest"] = "sha256:" + "b" * 64
     with pytest.raises(ValidationError, match="classifier digest"):
-        ProviderInterfaceRegistrationV2.model_validate(data)
+        ProviderInterfaceRegistration.model_validate(data)
 
 
 def test_advertised_but_unprepared_implementation_refuses_before_reading_environment(
@@ -140,12 +140,12 @@ def test_advertised_but_unprepared_implementation_refuses_before_reading_environ
 ) -> None:
     provider = package_provider(engine=False)
     registration = package_interface()
-    accepted_provider = AcceptedProviderV1(
+    accepted_provider = AcceptedProvider(
         path=provider_path(provider.identity.name),
         provider=provider,
         artifact_digest=provider_digest(provider).tagged,
     )
-    accepted_interface = AcceptedProviderInterfaceRegistrationV1(
+    accepted_interface = AcceptedProviderInterfaceRegistration(
         path=provider_interface_path(registration.interface_id),
         registration=registration,
         artifact_digest=provider_interface_digest(registration).tagged,

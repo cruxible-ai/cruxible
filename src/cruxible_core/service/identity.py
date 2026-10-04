@@ -11,10 +11,10 @@ from __future__ import annotations
 from typing import Literal, cast
 
 from cruxible_client.contracts.principals import (
-    AuthoringRefusalCodeV1,
-    PlaybillAuthoringRefusalV1,
+    AuthoringRefusalCode,
+    PlaybillAuthoringRefusal,
 )
-from cruxible_client.contracts.repairs import RepairOperationV1, hand_edit_repair
+from cruxible_client.contracts.repairs import RepairOperation, hand_edit_repair
 from cruxible_core.actor_vocabulary import LOCAL_OPERATOR_ACTOR_ID
 from cruxible_core.errors import PrincipalRefusedError
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -71,7 +71,7 @@ def principal_refusal(
             f"'{LOCAL_OPERATOR_ACTOR_ID}' is not a registered principal on {instance_id}; "
             "repair: set CRUXIBLE_PRINCIPAL_ID (or pass --principal-id) to your "
             f"registered principal ID (active principals: {named})",
-            repair=RepairOperationV1(
+            repair=RepairOperation(
                 operation="playbill.orient",
                 arguments={"section": "principals", "configure": "CRUXIBLE_PRINCIPAL_ID"},
             ),
@@ -81,7 +81,7 @@ def principal_refusal(
             "playbill.identity.principal_revoked",
             f"principal {principal_id!r} was revoked on {instance_id}; repair: act as an "
             "active principal (`cruxible playbill orient --section principals`)",
-            repair=RepairOperationV1(
+            repair=RepairOperation(
                 operation="playbill.orient",
                 arguments={"section": "principals", "revoked_principal_id": principal_id},
             ),
@@ -91,7 +91,7 @@ def principal_refusal(
         f"principal {principal_id!r} is not registered on {instance_id}; repair: an "
         f"owner runs `cruxible playbill principal add {principal_id} --key-dir DIR`, "
         "then this process acts with the settings it writes",
-        repair=RepairOperationV1(
+        repair=RepairOperation(
             operation="playbill.principal.add",
             arguments={"principal_id": principal_id},
         ),
@@ -110,7 +110,7 @@ def credential_unbound_refusal(
         "author or attribute governed work; repair: mint one bound to your principal with "
         "its key: `cruxible credential mint --principal-id ID --key-dir DIR --mode "
         "governed_write`, then revoke this one",
-        repair=RepairOperationV1(
+        repair=RepairOperation(
             operation="credential.mint",
             arguments=({} if credential_id is None else {"unbound_credential_id": credential_id}),
         ),
@@ -138,7 +138,7 @@ def authoring_refusal(
     credential_id: str | None,
     credential_label: str | None,
     permission_mode: PermissionMode,
-) -> PlaybillAuthoringRefusalV1 | None:
+) -> PlaybillAuthoringRefusal | None:
     """Why this actor cannot author here, or None when it can.
 
     The first applicable reason wins, in the order a write meets them: a
@@ -149,7 +149,7 @@ def authoring_refusal(
     refusal: PrincipalRefusedError | None
     terminal = instance.descriptor.decommissioned
     if terminal is not None:
-        return PlaybillAuthoringRefusalV1(
+        return PlaybillAuthoringRefusal(
             code="playbill.instance.decommissioned",
             detail=(
                 f"the instance was decommissioned at {terminal.decommissioned_at} "
@@ -175,7 +175,7 @@ def authoring_refusal(
             "governed_write; repair: mint a governed_write credential for your principal: "
             f"`cruxible credential mint --principal-id {actor_id} --key-dir DIR --mode "
             "governed_write`",
-            repair=RepairOperationV1(
+            repair=RepairOperation(
                 operation="credential.mint",
                 arguments={"principal_id": actor_id, "permission_mode": "governed_write"},
             ),
@@ -183,8 +183,8 @@ def authoring_refusal(
     if refusal is None:
         return None
     assert refusal.repair is not None
-    return PlaybillAuthoringRefusalV1(
-        code=cast(AuthoringRefusalCodeV1, refusal.error_code),
+    return PlaybillAuthoringRefusal(
+        code=cast(AuthoringRefusalCode, refusal.error_code),
         detail=str(refusal).removeprefix(f"{refusal.error_code}: "),
         repair=refusal.repair,
     )

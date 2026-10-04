@@ -34,21 +34,21 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.evidence_rule_upgrade import (
-    EvidenceRuleConversionV1,
-    EvidenceRuleRefusalV1,
-    EvidenceRuleUpgradeRequestV1,
-    EvidenceRuleUpgradeResultV1,
+    EvidenceRuleConversion,
+    EvidenceRuleRefusal,
+    EvidenceRuleUpgradeRequest,
+    EvidenceRuleUpgradeResult,
 )
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
-    ClaimEvidenceAdmissionPolicyV3,
+    ClaimEvidenceAdmissionPolicy,
+    ClaimEvidenceAdmissionRule,
     ClaimEvidenceAdmissionRuleV1,
     ClaimEvidenceAdmissionRuleV2,
-    ClaimEvidenceAdmissionRuleV3,
 )
 from cruxible_core.claims.claim_type_inputs import identity_rules_supported
 from cruxible_core.claims.claim_type_migrations import (
-    ClaimTypeDependentDispositionV3,
+    ClaimTypeDependentDisposition,
     ClaimTypeMigrationError,
     build_dependent_closure_candidate,
     dependent_closure_inventory,
@@ -115,7 +115,7 @@ class _Lineages:
         return self._lineage[identity]
 
 
-def _overlaps(first: ClaimEvidenceAdmissionRuleV3, second: ClaimEvidenceAdmissionRuleV3) -> bool:
+def _overlaps(first: ClaimEvidenceAdmissionRule, second: ClaimEvidenceAdmissionRule) -> bool:
     return (
         bool(set(first.claim_roles) & set(second.claim_roles))
         and bool(set(first.evidence_kinds) & set(second.evidence_kinds))
@@ -128,10 +128,10 @@ def _overlaps(first: ClaimEvidenceAdmissionRuleV3, second: ClaimEvidenceAdmissio
 
 def _convert(
     claim_type: ClaimType, lineages: _Lineages
-) -> tuple[ClaimType, EvidenceRuleConversionV1]:
+) -> tuple[ClaimType, EvidenceRuleConversion]:
     if any(pin.target.kind == "CaptureContract" for pin in claim_type.pins):
         raise _Refused("pins a CaptureContract exactly; remove the pin first")
-    rules: list[ClaimEvidenceAdmissionRuleV3] = []
+    rules: list[ClaimEvidenceAdmissionRule] = []
     before: list[ClaimEvidenceAdmissionRuleV1 | ClaimEvidenceAdmissionRuleV2] = []
     widened: set[str] = set()
     for rule in claim_type.evidence_admission_policy.rules:
@@ -151,7 +151,7 @@ def _convert(
             admitted = {item.artifact_digest for item in lineages.lineage(identity)}
             widened.update(f"{identity}@{digest}" for digest in admitted - digests)
         rules.append(
-            ClaimEvidenceAdmissionRuleV3(
+            ClaimEvidenceAdmissionRule(
                 rule_id=rule.rule_id,
                 claim_roles=rule.claim_roles,
                 evidence_kinds=rule.evidence_kinds,
@@ -195,10 +195,10 @@ def _convert(
     payload = claim_type.model_dump(mode="python")
     payload.update(
         artifact_format="playbill-claim-type-v6",
-        evidence_admission_policy=ClaimEvidenceAdmissionPolicyV3(rules=tuple(rules)),
+        evidence_admission_policy=ClaimEvidenceAdmissionPolicy(rules=tuple(rules)),
         lifecycle=ArtifactLifecycle(predecessor_digest=claim_type_digest(claim_type).tagged),
     )
-    return ClaimType.model_validate(payload), EvidenceRuleConversionV1(
+    return ClaimType.model_validate(payload), EvidenceRuleConversion(
         claim_type=claim_type.identity.qualified,
         widened_versions=tuple(sorted(widened, key=lambda item: item.encode("utf-8"))),
     )
@@ -207,10 +207,10 @@ def _convert(
 def service_upgrade_evidence_rules(
     instance: PlaybillInstance,
     *,
-    request: EvidenceRuleUpgradeRequestV1,
+    request: EvidenceRuleUpgradeRequest,
     actor_id: str,
     timestamp: str,
-) -> EvidenceRuleUpgradeResultV1:
+) -> EvidenceRuleUpgradeResult:
     """Propose (or preview) the change set moving every convertible exact-rule ClaimType to v6.
 
     The change set carries every dependent Claim, so it previews unless
@@ -232,7 +232,7 @@ def service_upgrade_evidence_rules(
 
 def _upgrade(
     instance: PlaybillInstance, mode: ChangeMode, *, actor_id: str, timestamp: str
-) -> EvidenceRuleUpgradeResultV1:
+) -> EvidenceRuleUpgradeResult:
     assert mode.head is not None
     base = mode.head
     if not identity_rules_supported(base.compiler):
@@ -242,8 +242,8 @@ def _upgrade(
     tree = instance.immutable_tree_at(base.git_oid)
     lineages = _Lineages(instance, AcceptedCoordinate.from_internal(base))
     changed: dict[str, bytes] = {}
-    converted: list[EvidenceRuleConversionV1] = []
-    refused: list[EvidenceRuleRefusalV1] = []
+    converted: list[EvidenceRuleConversion] = []
+    refused: list[EvidenceRuleRefusal] = []
     for path in sorted(item for item in tree if item.startswith("claim-types/")):
         claim_type = parse_claim_type(tree[path], path=path)
         if claim_type.artifact_format in {"playbill-claim-type-v6", "playbill-claim-type-v7"}:
@@ -254,13 +254,13 @@ def _upgrade(
             successor, conversion = _convert(claim_type, lineages)
         except (_Refused, PlaybillFormatError, ValueError) as error:
             refused.append(
-                EvidenceRuleRefusalV1(claim_type=claim_type.identity.qualified, reason=str(error))
+                EvidenceRuleRefusal(claim_type=claim_type.identity.qualified, reason=str(error))
             )
             continue
         changed[path] = render_claim_type(successor)
         converted.append(conversion)
     if not changed:
-        return EvidenceRuleUpgradeResultV1(
+        return EvidenceRuleUpgradeResult(
             status="unchanged",
             refused=tuple(refused),
             detail="No ClaimType to convert.",
@@ -274,12 +274,12 @@ def _upgrade(
             changed=changed,
             inventory=inventory,
             dispositions=tuple(
-                ClaimTypeDependentDispositionV3(identity=item.identity, disposition="successor")
+                ClaimTypeDependentDisposition(identity=item.identity, disposition="successor")
                 for item in inventory
             ),
         )
     except ClaimTypeMigrationError as error:
-        return EvidenceRuleUpgradeResultV1(
+        return EvidenceRuleUpgradeResult(
             status="would_block" if mode.previewing else "blocked",
             converted=tuple(converted),
             refused=tuple(refused),
@@ -305,7 +305,7 @@ def _upgrade(
         timestamp=timestamp,
     )
     if not admitted.admitted:
-        return EvidenceRuleUpgradeResultV1(
+        return EvidenceRuleUpgradeResult(
             status=admitted.status,
             proposal_id=admitted.proposal_id,
             converted=tuple(converted),
@@ -313,7 +313,7 @@ def _upgrade(
             detail=admitted.refusal_detail(),
             coordinate=mode.coordinate,
         )
-    return EvidenceRuleUpgradeResultV1(
+    return EvidenceRuleUpgradeResult(
         status=admitted.status,
         proposal_id=admitted.proposal_id,
         converted=tuple(converted),

@@ -18,14 +18,14 @@ from fastapi.testclient import TestClient
 
 from cruxible_client import CruxibleClient, Playbill
 from cruxible_client.authoring.blocks import _query_backing
-from cruxible_client.contracts.compact_query import PlaybillQueryRequestV1, PlaybillQueryResult
+from cruxible_client.contracts.compact_query import PlaybillQueryRequest, PlaybillQueryResult
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.query.definitions import QueryDefinitionSpecV1, QueryDefinitionV1
+from cruxible_client.contracts.query.definitions import QueryDefinition, QueryDefinitionSpec
 from cruxible_client.contracts.query.grammar import (
-    QueryClaimValueRefV1,
-    QueryComparisonFilterV1,
-    QueryParameterDeclarationV1,
-    QueryParameterRefV1,
+    QueryClaimValueRef,
+    QueryComparisonFilter,
+    QueryParameterDeclaration,
+    QueryParameterRef,
 )
 from cruxible_core.runtime import playbill_api
 from cruxible_core.runtime.permissions import reset_permissions
@@ -49,7 +49,7 @@ BARE = "project.work_items_bare"
 WHEN = datetime.fromisoformat(EVALUATION_TIME)
 
 
-def _by_status_query() -> QueryDefinitionV1:
+def _by_status_query() -> QueryDefinition:
     """The work-item read filtered by an optional status parameter (default ``ready``)."""
 
     declared = work_item_query(BY_STATUS)
@@ -57,21 +57,21 @@ def _by_status_query() -> QueryDefinitionV1:
         {
             **declared.model_dump(mode="json"),
             "parameters": (
-                QueryParameterDeclarationV1(
+                QueryParameterDeclaration(
                     name="optional_status", value_type="string", required=False, default="ready"
                 ).model_dump(mode="json"),
             ),
-            "where": QueryComparisonFilterV1(
-                left=QueryClaimValueRefV1(binding="item", predicate=PREDICATE),
+            "where": QueryComparisonFilter(
+                left=QueryClaimValueRef(binding="item", predicate=PREDICATE),
                 operator="eq",
-                right=QueryParameterRefV1(parameter="optional_status"),
+                right=QueryParameterRef(parameter="optional_status"),
                 value_type="string",
             ).model_dump(mode="json"),
         }
     )
 
 
-def _bare_query() -> QueryDefinitionV1:
+def _bare_query() -> QueryDefinition:
     """The work-item read with no projection: rows render the Subjects' own cells."""
 
     declared = work_item_query(BARE)
@@ -228,12 +228,12 @@ def test_a_block_backing_pins_an_explicit_null_binding(
 
 
 def test_the_request_model_admits_null_params_only() -> None:
-    request = PlaybillQueryRequestV1.model_validate(
+    request = PlaybillQueryRequest.model_validate(
         {"name": BY_STATUS, "params": {"optional_status": None}}
     )
     assert request.params == {"optional_status": None}
     with pytest.raises(ValueError):
-        PlaybillQueryRequestV1.model_validate({"name": BY_STATUS, "params": {"x": [1]}})
+        PlaybillQueryRequest.model_validate({"name": BY_STATUS, "params": {"x": [1]}})
 
 
 # -- F-004: a replay runs the definition's declared budgets ---------------------
@@ -306,7 +306,7 @@ def test_a_query_without_a_projection_records_the_claims_its_cells_served(
     if mode == "named":
         body["name"] = BARE
     else:
-        body["spec"] = QueryDefinitionSpecV1.model_validate(
+        body["spec"] = QueryDefinitionSpec.model_validate(
             {**_bare_query().model_dump(mode="json"), "pins": []}
         ).model_dump(mode="json")
     response = client._client.post(f"/api/v1/{instance_id}/playbill/query", json=body)

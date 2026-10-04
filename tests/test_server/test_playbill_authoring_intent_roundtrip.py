@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cruxible_client import contracts
-from cruxible_client.contracts.authoring.models import AuthoringIntentV1, AuthoringIntentV2
+from cruxible_client.contracts.authoring.models import AuthoringIntent, AuthoringIntentV1
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from tests.test_authoring.test_authoring_preflight import _self_source_payload
@@ -32,7 +32,7 @@ def test_public_create_get_resume_pending_and_submit_preserve_intent_version(
     assert created.status_code == 200, created.text
     expected = created.json()["intent"]
     intent_id = expected["intent_id"]
-    model = AuthoringIntentV2 if version == 2 else AuthoringIntentV1
+    model = AuthoringIntent if version == 2 else AuthoringIntentV1
     assert model.model_validate(expected).model_dump(mode="json") == expected
     if version == 2:
         assert expected["reference_expectations"] == references

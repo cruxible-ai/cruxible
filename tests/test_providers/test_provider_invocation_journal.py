@@ -11,48 +11,48 @@ import cruxible_core.service.procedures.procedure_runs as procedure_run_service
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.errors import PlaybillExecutionError
 from cruxible_client.contracts.procedures.artifacts import (
-    AcceptedProcedureV1,
+    AcceptedProcedure,
     procedure_artifact_digest,
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v4
 from cruxible_client.contracts.procedures.models import (
-    GuardPredicateV1,
-    PredicateOperandV1,
-    ProviderNodeV4,
+    GuardPredicate,
+    PredicateOperand,
+    ProviderNode,
     RepeatBodyNodeV4,
     RepeatNodeV4,
 )
 from cruxible_client.contracts.procedures.results import (
-    ProcedureAcquisitionPlanV2,
-    ProcedureAdmissionMaterialManifestV1,
-    ProcedureInternalFailureCodeV1,
-    ProcedureInternalFailureV1,
-    ProcedureNodeRefusalV1,
-    ProcedureProviderBindingV2,
-    ProcedureRunReceiptV6,
-    ProviderBucketClassificationPlanV1,
+    ProcedureAcquisitionPlan,
+    ProcedureAdmissionMaterialManifest,
+    ProcedureInternalFailure,
+    ProcedureInternalFailureCode,
+    ProcedureNodeRefusal,
+    ProcedureProviderBinding,
+    ProcedureRunReceipt,
+    ProviderBucketClassificationPlan,
     procedure_acquisition_plan_digest,
     procedure_admission_material_digest,
 )
 from cruxible_client.contracts.provider_execution import (
-    ProviderBudgetTranslationV1,
-    ProviderEgressObservationV1,
-    ProviderExternalOccurrencePlanV1,
-    ProviderInvocationCompletedV1,
-    ProviderInvocationReceiptV1,
-    ProviderInvocationStartedV1,
-    ProviderSecretBindingIdentityV1,
-    ProviderSecretReceiptReferenceV1,
-    ProviderSecretReferenceV1,
-    ProviderSecretResolutionPlanV1,
-    VerifiedProviderBindingV1,
+    ProviderBudgetTranslation,
+    ProviderEgressObservation,
+    ProviderExternalOccurrencePlan,
+    ProviderInvocationCompleted,
+    ProviderInvocationReceipt,
+    ProviderInvocationStarted,
+    ProviderSecretBindingIdentity,
+    ProviderSecretReceiptReference,
+    ProviderSecretReference,
+    ProviderSecretResolutionPlan,
+    VerifiedProviderBinding,
     provider_invocation_receipt_digest,
     provider_secret_binding_identity_digest,
 )
 from cruxible_client.contracts.provider_interfaces import (
-    AcceptedProviderInterfaceRegistrationV1,
+    AcceptedProviderInterfaceRegistration,
 )
-from cruxible_client.contracts.providers import AcceptedProviderV1
+from cruxible_client.contracts.providers import AcceptedProvider
 from cruxible_core.exhaust import parse_journal_payload
 from cruxible_core.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.procedures.execution import (
@@ -117,7 +117,7 @@ class _Invoker:
             ),
             stderr="",
             duration_seconds=0.001234,
-            egress=ProviderEgressObservationV1(
+            egress=ProviderEgressObservation(
                 observer_backend="test-attribution",
                 observer_grade="attribution",
             ),
@@ -151,11 +151,11 @@ def _accepted_one_provider(
     *,
     mutation: bool = False,
     repeat: bool = False,
-) -> AcceptedProcedureV1:
+) -> AcceptedProcedure:
     accepted = _provider_v4_procedure()
     definition = accepted.procedure.definition
     node = definition.nodes[0]
-    assert isinstance(node, ProviderNodeV4)
+    assert isinstance(node, ProviderNode)
     effect_policy = (
         ArtifactPin(
             role="effect-policy",
@@ -166,7 +166,7 @@ def _accepted_one_provider(
         else None
     )
     node = node.model_copy(update={"input": {"size": 3}, "effect_policy": effect_policy})
-    graph_node: ProviderNodeV4 | RepeatNodeV4 = node
+    graph_node: ProviderNode | RepeatNodeV4 = node
     returns = node.as_
     if repeat:
         graph_node = RepeatNodeV4(
@@ -187,10 +187,10 @@ def _accepted_one_provider(
                     as_=node.as_,
                 ),
             ),
-            until=GuardPredicateV1(
-                left=PredicateOperandV1(kind="exists", alias=node.as_),
+            until=GuardPredicate(
+                left=PredicateOperand(kind="exists", alias=node.as_),
                 operator="eq",
-                right=PredicateOperandV1(kind="literal", value=True),
+                right=PredicateOperand(kind="literal", value=True),
             ),
             as_="repeat_result",
         )
@@ -215,7 +215,7 @@ def _accepted_one_provider(
             "pins": pins,
         }
     )
-    return AcceptedProcedureV1(
+    return AcceptedProcedure(
         path=accepted.path,
         procedure=procedure,
         artifact_digest=procedure_artifact_digest(procedure).tagged,
@@ -223,14 +223,14 @@ def _accepted_one_provider(
 
 
 def _prepared_v5(
-    accepted: AcceptedProcedureV1,
+    accepted: AcceptedProcedure,
     tmp_path: Path,
     *,
     effect_class: str = "external_read",
-    secret_plan: ProviderSecretResolutionPlanV1 | None = None,
-    provider: AcceptedProviderV1 | None = None,
-    interface: AcceptedProviderInterfaceRegistrationV1 | None = None,
-    local_binding: VerifiedProviderBindingV1 | None = None,
+    secret_plan: ProviderSecretResolutionPlan | None = None,
+    provider: AcceptedProvider | None = None,
+    interface: AcceptedProviderInterfaceRegistration | None = None,
+    local_binding: VerifiedProviderBinding | None = None,
     operation_contract=None,
 ) -> tuple[PreparedProcedureRunV5, object]:
     fixture = _fixture(tmp_path)
@@ -245,12 +245,12 @@ def _prepared_v5(
         assert isinstance(node, RepeatBodyNodeV4)
     else:
         node = graph_node
-        assert isinstance(node, ProviderNodeV4)
+        assert isinstance(node, ProviderNode)
     registration = interface.registration
     implementation_digest = provider.provider.implementations[0].implementation_digest
-    secret_plan = secret_plan or ProviderSecretResolutionPlanV1()
+    secret_plan = secret_plan or ProviderSecretResolutionPlan()
     selectors = tuple(item.selector for item in registration.conformance_proofs)
-    classification = ProviderBucketClassificationPlanV1(
+    classification = ProviderBucketClassificationPlan(
         node_id=node.node_id,
         interface_artifact_digest=interface.artifact_digest,
         interface_digest=registration.interface_digest,
@@ -258,7 +258,7 @@ def _prepared_v5(
         classifier_digest=registration.classifier_digest,
         accepted_bucket_selectors=selectors,
     )
-    binding = ProcedureProviderBindingV2(
+    binding = ProcedureProviderBinding(
         node_id=node.node_id,
         provider_artifact_digest=provider.artifact_digest,
         classification_plan=classification,
@@ -292,7 +292,7 @@ def _prepared_v5(
             ),
         }
     )
-    local = local_binding or VerifiedProviderBindingV1(
+    local = local_binding or VerifiedProviderBinding(
         provider_artifact_digest=provider.artifact_digest,
         interface_artifact_digest=interface.artifact_digest,
         interface_id=registration.interface_id,
@@ -307,7 +307,7 @@ def _prepared_v5(
         environment_manifest_digest=_digest("environment"),
         entrypoint=provider.provider.runtime_artifact.manifest.implementations[0].entrypoint,
     )
-    budget = ProviderBudgetTranslationV1(
+    budget = ProviderBudgetTranslation(
         remaining_wall_clock_microseconds=v4.budget.wall_clock.microseconds,
         procedure_wall_clock_microseconds=v4.budget.wall_clock.microseconds,
         hard_cap_wall_clock_microseconds=v4.hard_caps.max_wall_clock.microseconds,
@@ -318,7 +318,7 @@ def _prepared_v5(
         max_items=v4.budget.max_items,
         result_bytes_cap=1024,
     )
-    occurrence = ProviderExternalOccurrencePlanV1(
+    occurrence = ProviderExternalOccurrencePlan(
         operation_contract=operation_contract,
         occurrence_path=(
             f"repeat/{repeat_node_id}/{node.node_id}"
@@ -343,7 +343,7 @@ def _prepared_v5(
         secret_plan=secret_plan,
         budget_translation=budget,
     )
-    plan = ProcedureAcquisitionPlanV2(
+    plan = ProcedureAcquisitionPlan(
         accepted_coordinate=v4.accepted_coordinate,
         line_identity=v4.line_identity,
         line_spec_digest=v4.line_spec_digest or "",
@@ -386,7 +386,7 @@ def _prepared_v5(
         }
     )
     direct = _prepare(accepted, fixture, _StateReader())
-    manifest = ProcedureAdmissionMaterialManifestV1(members=())
+    manifest = ProcedureAdmissionMaterialManifest(members=())
     prepared = PreparedProcedureRunV5(
         admission=v5,
         accepted_state_materials=direct.accepted_state_materials,
@@ -461,7 +461,7 @@ def test_graph_v4_provider_journals_completed_receipt_before_progress(
     state = procedure_run_service._state_from_records(  # noqa: SLF001
         _Instance(), run_id=prepared.admission.run_id
     )
-    assert isinstance(state.receipt, ProcedureRunReceiptV6)
+    assert isinstance(state.receipt, ProcedureRunReceipt)
     assert state.receipt.invocation_receipt_digests == (
         payload["receipt_digest"],  # type: ignore[index]
     )
@@ -478,14 +478,14 @@ def test_graph_v4_provider_journals_completed_receipt_before_progress(
             if stored.record.event_kind != "provider_invocation_completed":
                 mismatch_index.apply_record(stored, payload=actual_payload)
                 continue
-            original = ProviderInvocationCompletedV1.model_validate(actual_payload)
-            forged_receipt = ProviderInvocationReceiptV1.model_validate(
+            original = ProviderInvocationCompleted.model_validate(actual_payload)
+            forged_receipt = ProviderInvocationReceipt.model_validate(
                 {
                     **original.receipt.model_dump(mode="python"),
                     "invocation_id": _digest("another-invocation"),
                 }
             )
-            forged_completion = ProviderInvocationCompletedV1(
+            forged_completion = ProviderInvocationCompleted(
                 invocation_id=forged_receipt.invocation_id,
                 receipt=forged_receipt,
                 receipt_digest=provider_invocation_receipt_digest(forged_receipt),
@@ -529,7 +529,7 @@ def test_classifier_failure_projects_as_a_typed_node_refusal(
     state = procedure_run_service._state_from_records(  # noqa: SLF001
         _Instance(), run_id=prepared.admission.run_id
     )
-    assert isinstance(state.terminal, ProcedureNodeRefusalV1)
+    assert isinstance(state.terminal, ProcedureNodeRefusal)
     assert state.terminal.code == "classifier_not_installed"
 
 
@@ -543,7 +543,7 @@ _PROCESS_FENCE_CODES = (
 
 
 def test_every_process_fence_code_is_in_the_internal_failure_vocabulary() -> None:
-    assert set(_PROCESS_FENCE_CODES).issubset(set(get_args(ProcedureInternalFailureCodeV1)))
+    assert set(_PROCESS_FENCE_CODES).issubset(set(get_args(ProcedureInternalFailureCode)))
 
 
 @pytest.mark.parametrize("code", _PROCESS_FENCE_CODES)
@@ -590,7 +590,7 @@ def test_process_fence_failures_project_their_exact_typed_code(
         _Instance(),  # type: ignore[arg-type]
         run_id=prepared.admission.run_id,
     )
-    assert isinstance(state.terminal, ProcedureInternalFailureV1)
+    assert isinstance(state.terminal, ProcedureInternalFailure)
     assert state.terminal.code == code
 
 
@@ -831,7 +831,7 @@ def test_recovery_aggregates_prior_provider_receipts_and_budget_observations(
         )
         if item.record.event_kind == "provider_invocation_completed"
     )
-    successful_completion = ProviderInvocationCompletedV1.model_validate(
+    successful_completion = ProviderInvocationCompleted.model_validate(
         parse_journal_payload(
             successful_fixture.bodies.read(
                 successful_completion_record.record.payload_digest,
@@ -859,7 +859,7 @@ def test_recovery_aggregates_prior_provider_receipts_and_budget_observations(
         prepared.admission.journal_stream,
         prepared.admission.journal_partition_id,
     )
-    orphan_start = ProviderInvocationStartedV1.model_validate(
+    orphan_start = ProviderInvocationStarted.model_validate(
         parse_journal_payload(
             fixture.bodies.read(
                 next(
@@ -885,7 +885,7 @@ def test_recovery_aggregates_prior_provider_receipts_and_budget_observations(
             "input_bucket": orphan_start.input_bucket,
         }
     )
-    prior_completion = ProviderInvocationCompletedV1(
+    prior_completion = ProviderInvocationCompleted(
         invocation_id=prior_invocation_id,
         receipt=prior_receipt,
         receipt_digest=provider_invocation_receipt_digest(prior_receipt),
@@ -1045,7 +1045,7 @@ def test_typed_start_failure_journals_completion_and_is_replayable(tmp_path: Pat
 def test_invocation_receipt_commits_only_secret_binding_digest_and_purpose(
     tmp_path: Path,
 ) -> None:
-    reference = ProviderSecretReferenceV1(
+    reference = ProviderSecretReference(
         realm="private_realm",
         name="credential_name",
         epoch="secret_epoch",
@@ -1053,9 +1053,9 @@ def test_invocation_receipt_commits_only_secret_binding_digest_and_purpose(
         resolver_kind="environment",
     )
     identity_digest = provider_secret_binding_identity_digest(
-        ProviderSecretBindingIdentityV1(realm=reference.realm, name=reference.name)
+        ProviderSecretBindingIdentity(realm=reference.realm, name=reference.name)
     )
-    plan = ProviderSecretResolutionPlanV1(
+    plan = ProviderSecretResolutionPlan(
         references=(reference,),
         binding_identity_digests=(identity_digest,),
     )
@@ -1081,7 +1081,7 @@ def test_invocation_receipt_commits_only_secret_binding_digest_and_purpose(
         )
         if item.record.event_kind == "provider_invocation_completed"
     )
-    completed = ProviderInvocationCompletedV1.model_validate(
+    completed = ProviderInvocationCompleted.model_validate(
         parse_journal_payload(
             fixture.bodies.read(
                 completed_record.record.payload_digest,
@@ -1090,7 +1090,7 @@ def test_invocation_receipt_commits_only_secret_binding_digest_and_purpose(
         )
     )
     assert completed.receipt.secret_references == (
-        ProviderSecretReceiptReferenceV1(
+        ProviderSecretReceiptReference(
             binding_identity_digest=identity_digest,
             purpose=reference.purpose,
         ),
@@ -1202,7 +1202,7 @@ def test_an_egress_observer_backend_may_be_namespaced_by_an_out_of_tree_observer
     about which backend saw the traffic or not being recordable at all.
     """
 
-    observation = ProviderEgressObservationV1(
+    observation = ProviderEgressObservation(
         observer_backend=backend,
         observer_grade="attribution",
     )
@@ -1216,7 +1216,7 @@ def test_an_egress_observer_backend_is_a_name_not_prose(backend: str) -> None:
     observation cannot carry whitespace, a control character or a path."""
 
     with pytest.raises(ValidationError):
-        ProviderEgressObservationV1(
+        ProviderEgressObservation(
             observer_backend=backend,
             observer_grade="attribution",
         )

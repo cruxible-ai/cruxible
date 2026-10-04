@@ -17,17 +17,17 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from cruxible_client.contracts import PlaybillAcceptedCoordinate
 from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import (
-    ClaimTypeMemberDescriptionV1,
+    ClaimTypeMemberDescription,
     EvidenceRequirement,
     RevisionEvidence,
 )
 from cruxible_client.contracts.operational_reads import (
-    PlaybillGetCaptureCardV1,
-    PlaybillGetLineCardV1,
-    PlaybillGetMandateCardV1,
-    PlaybillGetProcedureRunCardV1,
-    PlaybillGetResolutionContractCardV1,
-    PlaybillLiveViewV1,
+    PlaybillGetCaptureCard,
+    PlaybillGetLineCard,
+    PlaybillGetMandateCard,
+    PlaybillGetProcedureRunCard,
+    PlaybillGetResolutionContractCard,
+    PlaybillLiveView,
 )
 
 PlaybillGetDetail = Literal["summary", "evidence", "why", "history", "proof", "body"]
@@ -99,14 +99,14 @@ def _omit_none(value: object) -> bool:
     return value is None
 
 
-class PlaybillByteRangeV1(_StrictGetModel):
+class PlaybillByteRange(_StrictGetModel):
     """A half-open byte range ``[start, end)`` of a Document body."""
 
     start: int = Field(ge=0, description="First byte, zero-based.")
     end: int = Field(gt=0, description="One past the last byte.")
 
     @model_validator(mode="after")
-    def _ordered(self) -> PlaybillByteRangeV1:
+    def _ordered(self) -> PlaybillByteRange:
         if self.end <= self.start:
             raise ValueError("range end must be greater than start (for example 0:4096)")
         if self.end - self.start > GET_BODY_RANGE_MAX_BYTES:
@@ -117,7 +117,7 @@ class PlaybillByteRangeV1(_StrictGetModel):
         return self
 
     @classmethod
-    def parse(cls, value: str) -> PlaybillByteRangeV1:
+    def parse(cls, value: str) -> PlaybillByteRange:
         """Read the CLI spelling ``start:end``."""
 
         start, separator, end = value.partition(":")
@@ -126,11 +126,11 @@ class PlaybillByteRangeV1(_StrictGetModel):
         return cls(start=int(start), end=int(end))
 
 
-class PlaybillGetRequestV1(_StrictGetModel):
+class PlaybillGetRequest(_StrictGetModel):
     tag: Literal["playbill-get-request-v1"] = "playbill-get-request-v1"
     ref: str = Field(min_length=1, max_length=512)
     detail: PlaybillGetDetail = "summary"
-    range: PlaybillByteRangeV1 | None = None
+    range: PlaybillByteRange | None = None
     at: PlaybillAcceptedCoordinate | str | None = None
     evaluation_time: datetime | None = None
     surface: PlaybillReadSurface = "mcp"
@@ -163,7 +163,7 @@ class PlaybillGetRequestV1(_StrictGetModel):
         return value
 
     @model_validator(mode="after")
-    def _range_only_for_body(self) -> PlaybillGetRequestV1:
+    def _range_only_for_body(self) -> PlaybillGetRequest:
         if self.range is not None and self.detail != "body":
             raise ValueError('range applies only to detail="body"')
         if (self.limit is not None or self.cursor is not None) and self.detail != "history":
@@ -171,7 +171,7 @@ class PlaybillGetRequestV1(_StrictGetModel):
         return self
 
 
-class PlaybillGetTruncatedTextV1(_StrictGetModel):
+class PlaybillGetTruncatedText(_StrictGetModel):
     """A long string value cut short on a summary card.
 
     ``value`` is its first ``GET_SUMMARY_TEXT_MAX_CHARS`` characters and
@@ -188,15 +188,13 @@ def summary_value(value: Any) -> Any:
     """A value as a summary card shows it: long strings cut, lists element-wise."""
 
     if isinstance(value, str) and len(value) > GET_SUMMARY_TEXT_MAX_CHARS:
-        return PlaybillGetTruncatedTextV1(
-            value=value[:GET_SUMMARY_TEXT_MAX_CHARS], length=len(value)
-        )
+        return PlaybillGetTruncatedText(value=value[:GET_SUMMARY_TEXT_MAX_CHARS], length=len(value))
     if isinstance(value, list | tuple):
         return [summary_value(item) for item in value]
     return value
 
 
-class PlaybillExactContentRefV1(_StrictGetModel):
+class PlaybillExactContentRef(_StrictGetModel):
     """An exact-content Claim value shown by digest, because it cannot be shown as text.
 
     An exact-content value reads as its UTF-8 text wherever a value is shown.
@@ -213,14 +211,14 @@ class PlaybillExactContentRefV1(_StrictGetModel):
     length: int | None = Field(default=None, ge=0, exclude_if=_omit_none)
 
 
-class PlaybillGetCoordinateV1(_StrictGetModel):
+class PlaybillGetCoordinate(_StrictGetModel):
     """Which accepted generation answered: the git oid's 12-hex prefix and its sequence."""
 
     git_oid: str = Field(pattern=r"^[0-9a-f]{12}$")
     generation: int = Field(ge=0)
 
 
-class PlaybillGetContenderV1(_StrictGetModel):
+class PlaybillGetContender(_StrictGetModel):
     claim: str
     value: Any
     # An exact-content value's digest; its text is ``value``.
@@ -228,7 +226,7 @@ class PlaybillGetContenderV1(_StrictGetModel):
     verdict: str
 
 
-class PlaybillGetClaimCardV1(_StrictGetModel):
+class PlaybillGetClaimCard(_StrictGetModel):
     claim: str
     subject: str
     predicate: str
@@ -241,12 +239,12 @@ class PlaybillGetClaimCardV1(_StrictGetModel):
     status: str
     revision: int
     accepted: str | None = Field(default=None, exclude_if=_omit_none)
-    contenders: tuple[PlaybillGetContenderV1, ...] = ()
+    contenders: tuple[PlaybillGetContender, ...] = ()
     flags: tuple[PlaybillReadFlag, ...] = ()
     next: tuple[str, ...] = ()
 
 
-class PlaybillGetSubjectClaimV1(_StrictGetModel):
+class PlaybillGetSubjectClaim(_StrictGetModel):
     predicate: str
     qualifier: str | None = Field(default=None, exclude_if=_omit_none)
     # The Claim behind the value; a list, aligned with ``value``, when the row
@@ -258,16 +256,16 @@ class PlaybillGetSubjectClaimV1(_StrictGetModel):
     flags: tuple[PlaybillReadFlag, ...] = ()
 
 
-class PlaybillGetSubjectCardV1(_StrictGetModel):
+class PlaybillGetSubjectCard(_StrictGetModel):
     subject: str
     kind: str
     lifecycle: str
-    claims: tuple[PlaybillGetSubjectClaimV1, ...]
+    claims: tuple[PlaybillGetSubjectClaim, ...]
     incoming_count: int
     next: tuple[str, ...] = ()
 
 
-class PlaybillGetEvidenceRuleV1(_StrictGetModel):
+class PlaybillGetEvidenceRule(_StrictGetModel):
     """One evidence rule: which roles it admits evidence for, under which contracts."""
 
     rule_id: str
@@ -276,7 +274,7 @@ class PlaybillGetEvidenceRuleV1(_StrictGetModel):
     admission: Literal["origin_only", "direct", "derivational"]
 
 
-class PlaybillGetClaimTypeCardV1(_StrictGetModel):
+class PlaybillGetClaimTypeCard(_StrictGetModel):
     predicate: str
     subject_kinds: tuple[str, ...]
     object: str
@@ -284,7 +282,7 @@ class PlaybillGetClaimTypeCardV1(_StrictGetModel):
     members: tuple[Any, ...] | None = Field(default=None, exclude_if=_omit_none)
     description: str | None = Field(default=None, exclude_if=_omit_none)
     # Each described enum member, as its literal value beside what it means.
-    member_descriptions: tuple[ClaimTypeMemberDescriptionV1, ...] = Field(
+    member_descriptions: tuple[ClaimTypeMemberDescription, ...] = Field(
         default=(), exclude_if=lambda value: not value
     )
     roles: tuple[ClaimRole, ...]
@@ -297,12 +295,12 @@ class PlaybillGetClaimTypeCardV1(_StrictGetModel):
     # Accepted evidence, as CaptureContract names; never a digest where the
     # contract's identity resolves. ``unresolved:<digest prefix>`` otherwise.
     evidence: tuple[str, ...]
-    evidence_rules: tuple[PlaybillGetEvidenceRuleV1, ...] = ()
+    evidence_rules: tuple[PlaybillGetEvidenceRule, ...] = ()
     live_claims: int
     next: tuple[str, ...] = ()
 
 
-class PlaybillGetDocumentCardV1(_StrictGetModel):
+class PlaybillGetDocumentCard(_StrictGetModel):
     document: str
     title: str
     document_kind: str
@@ -312,7 +310,7 @@ class PlaybillGetDocumentCardV1(_StrictGetModel):
     next: tuple[str, ...] = ()
 
 
-class PlaybillGetProcedureTrackRecordV1(_StrictGetModel):
+class PlaybillGetProcedureTrackRecord(_StrictGetModel):
     """One accepted promotion of a Procedure's run exhaust, and what it computed.
 
     A promotion pins a contiguous range of run records and a reducer; its
@@ -328,7 +326,7 @@ class PlaybillGetProcedureTrackRecordV1(_StrictGetModel):
     promotion_digest: str
 
 
-class PlaybillGetProcedureCardV1(_StrictGetModel):
+class PlaybillGetProcedureCard(_StrictGetModel):
     procedure: str
     description: str | None = Field(default=None, exclude_if=_omit_none)
     inputs: dict[str, Any]
@@ -336,24 +334,24 @@ class PlaybillGetProcedureCardV1(_StrictGetModel):
     required_slots: tuple[str, ...] = ()
     unsupported_nodes: int = 0
     #: Accepted promotions of this Procedure's runs, by promotion name.
-    track_record: tuple[PlaybillGetProcedureTrackRecordV1, ...] = ()
+    track_record: tuple[PlaybillGetProcedureTrackRecord, ...] = ()
     next: tuple[str, ...] = ()
 
 
-class PlaybillGetQueryParameterV1(_StrictGetModel):
+class PlaybillGetQueryParameter(_StrictGetModel):
     name: str
     type: str
     required: bool
 
 
-class PlaybillGetQueryCardV1(_StrictGetModel):
+class PlaybillGetQueryCard(_StrictGetModel):
     query: str
     description: str | None = Field(default=None, exclude_if=_omit_none)
-    params: tuple[PlaybillGetQueryParameterV1, ...] = ()
+    params: tuple[PlaybillGetQueryParameter, ...] = ()
     next: tuple[str, ...] = ()
 
 
-class PlaybillGetCaptureContractCardV1(_StrictGetModel):
+class PlaybillGetCaptureContractCard(_StrictGetModel):
     contract: str
     version: int
     lifecycle: str
@@ -362,7 +360,7 @@ class PlaybillGetCaptureContractCardV1(_StrictGetModel):
     next: tuple[str, ...] = ()
 
 
-class PlaybillGetTriggerCardV1(_StrictGetModel):
+class PlaybillGetTriggerCard(_StrictGetModel):
     """One Trigger: when it fires and what it sets off."""
 
     trigger: str
@@ -373,12 +371,12 @@ class PlaybillGetTriggerCardV1(_StrictGetModel):
     next: tuple[str, ...] = ()
 
 
-class PlaybillGetProposalChangeV1(_StrictGetModel):
+class PlaybillGetProposalChange(_StrictGetModel):
     path: str
     change: str
 
 
-class PlaybillGetProposalCardV1(_StrictGetModel):
+class PlaybillGetProposalCard(_StrictGetModel):
     proposal: str
     status: str
     # Retained partial evidence: which records are missing, as the list says.
@@ -388,11 +386,11 @@ class PlaybillGetProposalCardV1(_StrictGetModel):
     actor: str | None = Field(default=None, exclude_if=_omit_none)
     admitted_at: str | None = Field(default=None, exclude_if=_omit_none)
     rationale: str | None = Field(default=None, exclude_if=_omit_none)
-    changes: tuple[PlaybillGetProposalChangeV1, ...] = ()
+    changes: tuple[PlaybillGetProposalChange, ...] = ()
     next: tuple[str, ...] = ()
 
 
-class PlaybillGetPrincipalCardV1(_StrictGetModel):
+class PlaybillGetPrincipalCard(_StrictGetModel):
     """One registered principal: who it is, what kind, and whether it is active."""
 
     principal: str
@@ -403,7 +401,7 @@ class PlaybillGetPrincipalCardV1(_StrictGetModel):
     next: tuple[str, ...] = ()
 
 
-class PlaybillGetApprovalPolicyCardV1(_StrictGetModel):
+class PlaybillGetApprovalPolicyCard(_StrictGetModel):
     """The instance's approval policy: whether a proposer may approve its own change."""
 
     policy: str
@@ -411,12 +409,12 @@ class PlaybillGetApprovalPolicyCardV1(_StrictGetModel):
     next: tuple[str, ...] = ()
 
 
-class PlaybillGetProviderInterfaceProviderV1(_StrictGetModel):
+class PlaybillGetProviderInterfaceProvider(_StrictGetModel):
     provider: str
     implementation_digest: str
 
 
-class PlaybillGetProviderInterfaceCardV1(_StrictGetModel):
+class PlaybillGetProviderInterfaceCard(_StrictGetModel):
     """One live provider interface: its contract fields, effect and implementations.
 
     ``detail="proof"`` answers the accepted inventory entry a Procedure node
@@ -429,33 +427,33 @@ class PlaybillGetProviderInterfaceCardV1(_StrictGetModel):
     input: tuple[str, ...] = ()
     output: tuple[str, ...] = ()
     effect: Literal["none", "external_read", "external_mutation"]
-    providers: tuple[PlaybillGetProviderInterfaceProviderV1, ...] = ()
+    providers: tuple[PlaybillGetProviderInterfaceProvider, ...] = ()
     interface_digest: str
     next: tuple[str, ...] = ()
 
 
-PlaybillGetCardV1 = (
-    PlaybillGetClaimCardV1
-    | PlaybillGetSubjectCardV1
-    | PlaybillGetClaimTypeCardV1
-    | PlaybillGetDocumentCardV1
-    | PlaybillGetProcedureCardV1
-    | PlaybillGetQueryCardV1
-    | PlaybillGetCaptureContractCardV1
-    | PlaybillGetTriggerCardV1
-    | PlaybillGetProposalCardV1
-    | PlaybillGetLineCardV1
-    | PlaybillGetCaptureCardV1
-    | PlaybillGetResolutionContractCardV1
-    | PlaybillGetMandateCardV1
-    | PlaybillGetProcedureRunCardV1
-    | PlaybillGetPrincipalCardV1
-    | PlaybillGetApprovalPolicyCardV1
-    | PlaybillGetProviderInterfaceCardV1
+PlaybillGetCard = (
+    PlaybillGetClaimCard
+    | PlaybillGetSubjectCard
+    | PlaybillGetClaimTypeCard
+    | PlaybillGetDocumentCard
+    | PlaybillGetProcedureCard
+    | PlaybillGetQueryCard
+    | PlaybillGetCaptureContractCard
+    | PlaybillGetTriggerCard
+    | PlaybillGetProposalCard
+    | PlaybillGetLineCard
+    | PlaybillGetCaptureCard
+    | PlaybillGetResolutionContractCard
+    | PlaybillGetMandateCard
+    | PlaybillGetProcedureRunCard
+    | PlaybillGetPrincipalCard
+    | PlaybillGetApprovalPolicyCard
+    | PlaybillGetProviderInterfaceCard
 )
 
 
-class PlaybillGetCaptureEvidenceV1(_StrictGetModel):
+class PlaybillGetCaptureEvidence(_StrictGetModel):
     capture: str = Field(
         description="Capture handle, CAP- plus the digest's first 12 hex; get and read_capture "
         "accept it."
@@ -468,23 +466,23 @@ class PlaybillGetCaptureEvidenceV1(_StrictGetModel):
     admitted: bool
 
 
-class PlaybillGetAttestationEvidenceV1(_StrictGetModel):
+class PlaybillGetAttestationEvidence(_StrictGetModel):
     stance: str
     principal: str
     at: datetime
     current: bool
 
 
-class PlaybillGetEvidenceV1(_StrictGetModel):
+class PlaybillGetEvidence(_StrictGetModel):
     # The Claim's whole value, never cut as a summary card cuts a long one.
     value: Any
     content_digest: str | None = Field(default=None, exclude_if=_omit_none)
-    captures: tuple[PlaybillGetCaptureEvidenceV1, ...]
-    attestations: tuple[PlaybillGetAttestationEvidenceV1, ...]
+    captures: tuple[PlaybillGetCaptureEvidence, ...]
+    attestations: tuple[PlaybillGetAttestationEvidence, ...]
     rationale: str | None = Field(default=None, exclude_if=_omit_none)
 
 
-class PlaybillGetRevisionV1(_StrictGetModel):
+class PlaybillGetRevision(_StrictGetModel):
     revision: int
     sequence: int
     # The accepted generation's git oid (12-hex prefix): pass it, or the
@@ -501,17 +499,17 @@ class PlaybillGetRevisionV1(_StrictGetModel):
     next: tuple[str, ...] = Field(default=(), exclude_if=lambda value: not value)
 
 
-class PlaybillGetHistoryV1(_StrictGetModel):
+class PlaybillGetHistory(_StrictGetModel):
     """One page of revisions, newest first; ``revision`` counts from the oldest.
 
     Each revision's value follows the summary card rule: a string over 500
     characters is cut to ``{value, truncated: true, length}``.
     """
 
-    revisions: tuple[PlaybillGetRevisionV1, ...]
+    revisions: tuple[PlaybillGetRevision, ...]
 
 
-class PlaybillGetBodyV1(_StrictGetModel):
+class PlaybillGetBody(_StrictGetModel):
     """A byte range of one Document body; ``body_digest`` names the whole body."""
 
     document: str
@@ -519,20 +517,20 @@ class PlaybillGetBodyV1(_StrictGetModel):
     size: int
     body_digest: str
     # The bytes returned; absent for an empty Document, which has none.
-    range: PlaybillByteRangeV1 | None = None
+    range: PlaybillByteRange | None = None
     text: str | None = Field(default=None, exclude_if=_omit_none)
     content_base64: str | None = Field(default=None, exclude_if=_omit_none)
 
 
-class PlaybillGetResultV1(_StrictGetModel):
+class PlaybillGetResult(_StrictGetModel):
     tag: Literal["playbill-get-result-v1"] = "playbill-get-result-v1"
     ref: str
     kind: PlaybillGetRefKind
     detail: PlaybillGetDetail
-    card: PlaybillGetCardV1 | None = Field(default=None, exclude_if=_omit_none)
-    evidence: PlaybillGetEvidenceV1 | None = Field(default=None, exclude_if=_omit_none)
-    history: PlaybillGetHistoryV1 | None = Field(default=None, exclude_if=_omit_none)
-    body: PlaybillGetBodyV1 | None = Field(default=None, exclude_if=_omit_none)
+    card: PlaybillGetCard | None = Field(default=None, exclude_if=_omit_none)
+    evidence: PlaybillGetEvidence | None = Field(default=None, exclude_if=_omit_none)
+    history: PlaybillGetHistory | None = Field(default=None, exclude_if=_omit_none)
+    body: PlaybillGetBody | None = Field(default=None, exclude_if=_omit_none)
     # Today's explain output, unchanged.
     why: dict[str, Any] | None = Field(default=None, exclude_if=_omit_none)
     # Today's full accepted envelope, unchanged.
@@ -540,14 +538,14 @@ class PlaybillGetResultV1(_StrictGetModel):
     # ``detail="history"`` paging; absent on every other detail.
     truncated: bool | None = Field(default=None, exclude_if=_omit_none)
     next_cursor: str | None = Field(default=None, exclude_if=_omit_none)
-    coordinate: PlaybillGetCoordinateV1
+    coordinate: PlaybillGetCoordinate
     # The full accepted coordinate: under ``detail="proof"``, or when asked for.
     accepted_coordinate: PlaybillAcceptedCoordinate | None = Field(
         default=None, exclude_if=_omit_none
     )
     # Present when part of the answer is operational state, read live at the
     # current head (``live.as_of``) whatever ``coordinate`` the read named.
-    live: PlaybillLiveViewV1 | None = Field(default=None, exclude_if=_omit_none)
+    live: PlaybillLiveView | None = Field(default=None, exclude_if=_omit_none)
     evaluation_time: datetime
 
 
@@ -555,7 +553,7 @@ class PlaybillGetResultV1(_StrictGetModel):
 GET_BATCH_MAX_REFS = 64
 
 
-class PlaybillGetBatchRequestV1(_StrictGetModel):
+class PlaybillGetBatchRequest(_StrictGetModel):
     """Several references read at one coordinate and one detail: an SDK-internal route.
 
     Agents call ``get`` once per reference; the SDK reads a whole vocabulary
@@ -571,10 +569,10 @@ class PlaybillGetBatchRequestV1(_StrictGetModel):
     surface: PlaybillReadSurface = "sdk"
 
 
-class PlaybillGetBatchResultV1(_StrictGetModel):
+class PlaybillGetBatchResult(_StrictGetModel):
     tag: Literal["playbill-get-batch-result-v1"] = "playbill-get-batch-result-v1"
     coordinate: PlaybillAcceptedCoordinate
-    results: tuple[PlaybillGetResultV1, ...]
+    results: tuple[PlaybillGetResult, ...]
 
 
 __all__ = [
@@ -585,42 +583,42 @@ __all__ = [
     "GET_HISTORY_DEFAULT_LIMIT",
     "GET_HISTORY_MAX_LIMIT",
     "GET_SUMMARY_TEXT_MAX_CHARS",
-    "PlaybillByteRangeV1",
-    "PlaybillExactContentRefV1",
-    "PlaybillGetApprovalPolicyCardV1",
-    "PlaybillGetAttestationEvidenceV1",
-    "PlaybillGetBatchRequestV1",
-    "PlaybillGetBatchResultV1",
-    "PlaybillGetBodyV1",
-    "PlaybillGetCaptureContractCardV1",
-    "PlaybillGetTriggerCardV1",
-    "PlaybillGetCaptureEvidenceV1",
-    "PlaybillGetCardV1",
-    "PlaybillGetClaimCardV1",
-    "PlaybillGetClaimTypeCardV1",
-    "PlaybillGetEvidenceRuleV1",
-    "PlaybillGetContenderV1",
-    "PlaybillGetCoordinateV1",
+    "PlaybillByteRange",
+    "PlaybillExactContentRef",
+    "PlaybillGetApprovalPolicyCard",
+    "PlaybillGetAttestationEvidence",
+    "PlaybillGetBatchRequest",
+    "PlaybillGetBatchResult",
+    "PlaybillGetBody",
+    "PlaybillGetCaptureContractCard",
+    "PlaybillGetTriggerCard",
+    "PlaybillGetCaptureEvidence",
+    "PlaybillGetCard",
+    "PlaybillGetClaimCard",
+    "PlaybillGetClaimTypeCard",
+    "PlaybillGetEvidenceRule",
+    "PlaybillGetContender",
+    "PlaybillGetCoordinate",
     "PlaybillGetDetail",
-    "PlaybillGetDocumentCardV1",
-    "PlaybillGetEvidenceV1",
-    "PlaybillGetHistoryV1",
-    "PlaybillGetPrincipalCardV1",
-    "PlaybillGetProcedureCardV1",
-    "PlaybillGetProcedureTrackRecordV1",
-    "PlaybillGetProviderInterfaceCardV1",
-    "PlaybillGetProviderInterfaceProviderV1",
-    "PlaybillGetProposalCardV1",
-    "PlaybillGetProposalChangeV1",
-    "PlaybillGetQueryCardV1",
-    "PlaybillGetQueryParameterV1",
+    "PlaybillGetDocumentCard",
+    "PlaybillGetEvidence",
+    "PlaybillGetHistory",
+    "PlaybillGetPrincipalCard",
+    "PlaybillGetProcedureCard",
+    "PlaybillGetProcedureTrackRecord",
+    "PlaybillGetProviderInterfaceCard",
+    "PlaybillGetProviderInterfaceProvider",
+    "PlaybillGetProposalCard",
+    "PlaybillGetProposalChange",
+    "PlaybillGetQueryCard",
+    "PlaybillGetQueryParameter",
     "PlaybillGetRefKind",
-    "PlaybillGetRequestV1",
-    "PlaybillGetResultV1",
-    "PlaybillGetRevisionV1",
-    "PlaybillGetSubjectCardV1",
-    "PlaybillGetSubjectClaimV1",
-    "PlaybillGetTruncatedTextV1",
+    "PlaybillGetRequest",
+    "PlaybillGetResult",
+    "PlaybillGetRevision",
+    "PlaybillGetSubjectCard",
+    "PlaybillGetSubjectClaim",
+    "PlaybillGetTruncatedText",
     "PlaybillReadFlag",
     "PlaybillReadSurface",
     "summary_value",

@@ -9,7 +9,7 @@ from typing import Callable, Literal, Mapping, NoReturn, Protocol
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.captures import (
     AcceptedCaptureContract,
-    CaptureContractV1,
+    CaptureContract,
     CaptureObjectStoreProtocol,
     ProducerReceiptResolverProtocol,
     capture_contract_digest,
@@ -20,16 +20,16 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claim_attestations import (
-    ClaimAttestationResolvedArtifactV1,
-    ClaimAttestationStatementV2,
-    ClaimAttestationV2,
+    ClaimAttestation,
+    ClaimAttestationResolvedArtifact,
+    ClaimAttestationStatement,
     verify_claim_attestation_v2_principal,
 )
 from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
 from cruxible_client.contracts.claims import (
+    ClaimArtifact,
     ClaimArtifactAny,
-    ClaimArtifactV3,
-    ClaimBackingV2,
+    ClaimBacking,
     ClaimLawEvidenceAny,
     SubjectClaimObject,
     claim_artifact_digest,
@@ -45,7 +45,7 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_path,
 )
 from cruxible_client.contracts.providers import parse_provider, provider_digest, provider_path
-from cruxible_client.contracts.source_references import LedgerSourceReferenceV1
+from cruxible_client.contracts.source_references import LedgerSourceReference
 from cruxible_client.contracts.subjects import parse_subject, subject_digest
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_core.indexes.projection import AcceptedCoordinate
@@ -91,7 +91,7 @@ class _TreeLedgerResolver:
     tree: Mapping[str, bytes]
     coordinate: AcceptedCoordinate
 
-    def read_ledger_source(self, source: LedgerSourceReferenceV1) -> bytes:
+    def read_ledger_source(self, source: LedgerSourceReference) -> bytes:
         if source.coordinate != self.coordinate:
             _refuse("capture_binding_invalid", "Capture names another accepted coordinate")
         content = self.tree.get(source.address.artifact_path)
@@ -144,7 +144,7 @@ def _object_shell_digest(tree: Mapping[str, bytes], claim: ClaimArtifactAny) -> 
 def _examined_capture_semantics(claim: ClaimArtifactAny, capture_digest: str) -> None:
     if capture_digest not in claim.backing.capture_digests:
         _refuse("examined_capture_not_backing", "Capture is not backing of the signed Claim")
-    if not isinstance(claim.backing, ClaimBackingV2):
+    if not isinstance(claim.backing, ClaimBacking):
         return
     associations = tuple(
         item for item in claim.backing.citations if item.capture_digest == capture_digest
@@ -205,12 +205,12 @@ def _new_capture_accounts(
     principals: ActivePrincipalReader,
     law: ClaimLawEvidenceAny,
     producer_receipt_resolver: ProducerReceiptResolverProtocol | None,
-    statement: ClaimAttestationStatementV2,
+    statement: ClaimAttestationStatement,
     claim: ClaimArtifactAny,
     referent_tree: Mapping[str, bytes],
     append_tree: Mapping[str, bytes],
     historical_capture_contract: Callable[[str], AcceptedCaptureContract | None] | None = None,
-) -> tuple[tuple[str, ...], tuple[ClaimAttestationResolvedArtifactV1, ...]]:
+) -> tuple[tuple[str, ...], tuple[ClaimAttestationResolvedArtifact, ...]]:
     contracts = _capture_contracts(referent_tree)
     live_identities = {
         accepted.contract.identity.qualified
@@ -234,7 +234,7 @@ def _new_capture_accounts(
             "capture_admission_refused",
             "Claim evidence admission inputs do not reproduce at the signed referent",
         ) from exc
-    resolved: dict[tuple[str, str], ClaimAttestationResolvedArtifactV1] = {}
+    resolved: dict[tuple[str, str], ClaimAttestationResolvedArtifact] = {}
     for digest in statement.cited_capture_digests:
         try:
             raw = bodies.read(
@@ -264,7 +264,7 @@ def _new_capture_accounts(
                 )
         if accepted is None:
             _refuse("capture_contract_unresolved", "CaptureContract is not accepted at referent")
-        contract: CaptureContractV1 = accepted.contract
+        contract: CaptureContract = accepted.contract
         if contract.lifecycle.state != "live":
             _refuse(
                 "capture_contract_not_live_at_referent",
@@ -357,7 +357,7 @@ def _new_capture_accounts(
             )
         if any(item.trace.result.verdict == "eligible" for item in decisions):
             admitted.append(digest)
-        contract_resolved = ClaimAttestationResolvedArtifactV1(
+        contract_resolved = ClaimAttestationResolvedArtifact(
             identity=contract.identity,
             artifact_digest=accepted.artifact_digest,
             live_at_append=_live_at_append(contract.identity, append_tree=append_tree),
@@ -369,7 +369,7 @@ def _new_capture_accounts(
             artifact_digest = producers.get(identity.qualified)
             if artifact_digest is None:
                 _refuse("capture_provider_unresolved", "Capture Provider is not accepted")
-            resolved[(identity.qualified, artifact_digest)] = ClaimAttestationResolvedArtifactV1(
+            resolved[(identity.qualified, artifact_digest)] = ClaimAttestationResolvedArtifact(
                 identity=identity,
                 artifact_digest=artifact_digest,
                 live_at_append=_live_at_append(identity, append_tree=append_tree),
@@ -387,7 +387,7 @@ def _new_capture_accounts(
 
 
 def verify_attestation_referent(
-    attestation: ClaimAttestationV2,
+    attestation: ClaimAttestation,
     *,
     instance_id: str,
     referent_tree: Mapping[str, bytes],
@@ -423,7 +423,7 @@ def verify_attestation_referent(
 
 
 def _verify_principal(
-    attestation: ClaimAttestationV2,
+    attestation: ClaimAttestation,
     registry: ActivePrincipalReader,
     *,
     phase: Literal["referent", "append"],
@@ -449,7 +449,7 @@ def _verify_principal(
 
 
 def verify_attestation_admission(
-    attestation: ClaimAttestationV2,
+    attestation: ClaimAttestation,
     *,
     claim: ClaimArtifactAny,
     referent_tree: Mapping[str, bytes],
@@ -460,7 +460,7 @@ def verify_attestation_admission(
     law: ClaimLawEvidenceAny | None,
     producer_receipt_resolver: ProducerReceiptResolverProtocol | None,
     historical_capture_contract: Callable[[str], AcceptedCaptureContract | None] | None = None,
-) -> tuple[tuple[str, ...], tuple[ClaimAttestationResolvedArtifactV1, ...]]:
+) -> tuple[tuple[str, ...], tuple[ClaimAttestationResolvedArtifact, ...]]:
     """Check current eligibility after authenticating the exact signed referent.
 
     `historical_capture_contract` resolves an exact contract version accepted at
@@ -470,7 +470,7 @@ def verify_attestation_admission(
     s = attestation.statement
     _verify_principal(attestation, current_principals, phase="append")
     current = _accepted_claim(current_tree, s.claim_identity.name)
-    if isinstance(current, ClaimArtifactV3):
+    if isinstance(current, ClaimArtifact):
         _refuse("claim_terminally_retired", "Claim lineage is terminally retired")
     if s.attestation_basis == "examined_existing":
         for digest in s.cited_capture_digests:
@@ -492,7 +492,7 @@ def verify_attestation_admission(
 
 
 def verify_attestation_binding(
-    attestation: ClaimAttestationV2,
+    attestation: ClaimAttestation,
     *,
     instance_id: str,
     referent_tree: Mapping[str, bytes],
@@ -504,7 +504,7 @@ def verify_attestation_binding(
     law: ClaimLawEvidenceAny | None,
     producer_receipt_resolver: ProducerReceiptResolverProtocol | None,
     historical_capture_contract: Callable[[str], AcceptedCaptureContract | None] | None = None,
-) -> tuple[tuple[str, ...], tuple[ClaimAttestationResolvedArtifactV1, ...]]:
+) -> tuple[tuple[str, ...], tuple[ClaimAttestationResolvedArtifact, ...]]:
     claim = verify_attestation_referent(
         attestation,
         instance_id=instance_id,

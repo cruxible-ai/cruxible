@@ -37,7 +37,7 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.query.grammar import QueryValueTypeV1
+from cruxible_client.contracts.query.grammar import QueryValueType
 from cruxible_client.contracts.temporal import ensure_utc
 
 PROJECTION_MARKER_GRAMMAR: Literal["playbill-projection-marker-grammar-v1"] = (
@@ -79,7 +79,7 @@ class PlaybillPresentationPolicyV1(_StrictDeclaredBlockModel):
         return value
 
 
-class PlaybillProjectionAdvisoryPolicyV1(_StrictDeclaredBlockModel):
+class PlaybillProjectionAdvisoryPolicy(_StrictDeclaredBlockModel):
     """Per-artifact-kind switches for local projection advisories."""
 
     claim: bool = False
@@ -87,12 +87,12 @@ class PlaybillProjectionAdvisoryPolicyV1(_StrictDeclaredBlockModel):
     procedure: bool = False
 
 
-class PlaybillPresentationPolicyV2(_StrictDeclaredBlockModel):
+class PlaybillPresentationPolicy(_StrictDeclaredBlockModel):
     """Current local-only presentation policy; V1 remains readable."""
 
     tag: Literal["playbill-presentation-policy-v2"] = "playbill-presentation-policy-v2"
     archival_source_ids: tuple[str, ...] = ()
-    projection_advisories: PlaybillProjectionAdvisoryPolicyV1 = PlaybillProjectionAdvisoryPolicyV1()
+    projection_advisories: PlaybillProjectionAdvisoryPolicy = PlaybillProjectionAdvisoryPolicy()
 
     @field_validator("archival_source_ids")
     @classmethod
@@ -103,24 +103,22 @@ class PlaybillPresentationPolicyV2(_StrictDeclaredBlockModel):
         return value
 
 
-PlaybillPresentationPolicyAny: TypeAlias = (
-    PlaybillPresentationPolicyV1 | PlaybillPresentationPolicyV2
-)
+PlaybillPresentationPolicyAny: TypeAlias = PlaybillPresentationPolicyV1 | PlaybillPresentationPolicy
 
 
 def upgrade_playbill_presentation_policy(
     policy: PlaybillPresentationPolicyAny,
-) -> PlaybillPresentationPolicyV2:
-    if isinstance(policy, PlaybillPresentationPolicyV2):
+) -> PlaybillPresentationPolicy:
+    if isinstance(policy, PlaybillPresentationPolicy):
         return policy
-    return PlaybillPresentationPolicyV2(
+    return PlaybillPresentationPolicy(
         archival_source_ids=tuple(
             sorted(policy.archival_source_ids, key=lambda item: item.encode("utf-8"))
         )
     )
 
 
-PlaybillPresentationPolicyNoteV1: TypeAlias = Literal[
+PlaybillPresentationPolicyNote: TypeAlias = Literal[
     "presentation_policy_malformed",
     "presentation_policy_path_escape",
     "presentation_policy_unknown_source_id",
@@ -128,7 +126,7 @@ PlaybillPresentationPolicyNoteV1: TypeAlias = Literal[
 ]
 
 
-class PlaybillProjectionCoverageBindingV1(_StrictDeclaredBlockModel):
+class PlaybillProjectionCoverageBinding(_StrictDeclaredBlockModel):
     """One client-observed mapping from governed identity to local projection path."""
 
     artifact: ArtifactIdentity
@@ -136,7 +134,7 @@ class PlaybillProjectionCoverageBindingV1(_StrictDeclaredBlockModel):
     evidence_kind: Literal["claim_marker", "procedure_catalog"]
 
     @model_validator(mode="after")
-    def _shape(self) -> "PlaybillProjectionCoverageBindingV1":
+    def _shape(self) -> "PlaybillProjectionCoverageBinding":
         if self.artifact.kind not in {"Claim", "Procedure"}:
             raise ValueError("projection coverage may identify only a Claim or Procedure")
         expected = "claim_marker" if self.artifact.kind == "Claim" else "procedure_catalog"
@@ -145,7 +143,7 @@ class PlaybillProjectionCoverageBindingV1(_StrictDeclaredBlockModel):
         return self
 
 
-class PlaybillProjectionCoverageObservationV1(_StrictDeclaredBlockModel):
+class PlaybillProjectionCoverageObservation(_StrictDeclaredBlockModel):
     """Bounded local projection evidence at one exact accepted coordinate."""
 
     tag: Literal["playbill-projection-coverage-observation-v1"] = (
@@ -153,7 +151,7 @@ class PlaybillProjectionCoverageObservationV1(_StrictDeclaredBlockModel):
     )
     coordinate: AcceptedCoordinate
     complete_kinds: tuple[Literal["Claim", "Procedure"], ...]
-    bindings: tuple[PlaybillProjectionCoverageBindingV1, ...] = Field(
+    bindings: tuple[PlaybillProjectionCoverageBinding, ...] = Field(
         max_length=MAX_PROJECTION_COVERAGE_BINDINGS
     )
 
@@ -169,8 +167,8 @@ class PlaybillProjectionCoverageObservationV1(_StrictDeclaredBlockModel):
     @field_validator("bindings")
     @classmethod
     def _bindings(
-        cls, value: tuple[PlaybillProjectionCoverageBindingV1, ...]
-    ) -> tuple[PlaybillProjectionCoverageBindingV1, ...]:
+        cls, value: tuple[PlaybillProjectionCoverageBinding, ...]
+    ) -> tuple[PlaybillProjectionCoverageBinding, ...]:
         keys = tuple(
             (item.artifact.qualified, item.workspace_path, item.evidence_kind) for item in value
         )
@@ -181,33 +179,33 @@ class PlaybillProjectionCoverageObservationV1(_StrictDeclaredBlockModel):
         return value
 
     @model_validator(mode="after")
-    def _binding_kinds(self) -> "PlaybillProjectionCoverageObservationV1":
+    def _binding_kinds(self) -> "PlaybillProjectionCoverageObservation":
         if any(item.artifact.kind not in self.complete_kinds for item in self.bindings):
             raise ValueError("projection bindings require complete observation of their kind")
         return self
 
 
-class PlaybillReviewWorkspaceObservationV1(_StrictDeclaredBlockModel):
+class PlaybillReviewWorkspaceObservation(_StrictDeclaredBlockModel):
     """Review-scoped subset of local projection facts; no daemon path access."""
 
     tag: Literal["playbill-review-workspace-observation-v1"] = (
         "playbill-review-workspace-observation-v1"
     )
     presentation_policy: PlaybillPresentationPolicyAny | None = None
-    presentation_policy_notes: tuple[PlaybillPresentationPolicyNoteV1, ...] = ()
-    projection_coverage: PlaybillProjectionCoverageObservationV1 | None = None
+    presentation_policy_notes: tuple[PlaybillPresentationPolicyNote, ...] = ()
+    projection_coverage: PlaybillProjectionCoverageObservation | None = None
 
     @field_validator("presentation_policy_notes")
     @classmethod
     def _notes(
-        cls, value: tuple[PlaybillPresentationPolicyNoteV1, ...]
-    ) -> tuple[PlaybillPresentationPolicyNoteV1, ...]:
+        cls, value: tuple[PlaybillPresentationPolicyNote, ...]
+    ) -> tuple[PlaybillPresentationPolicyNote, ...]:
         if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
             raise ValueError("presentation-policy notes must be sorted and unique")
         return value
 
 
-class ProjectionClaimBackingV1(_StrictDeclaredBlockModel):
+class ProjectionClaimBacking(_StrictDeclaredBlockModel):
     tag: Literal["playbill-projection-claim-backing-v1"] = "playbill-projection-claim-backing-v1"
     identity: ArtifactIdentity
     statement_digest: str
@@ -219,13 +217,13 @@ class ProjectionClaimBackingV1(_StrictDeclaredBlockModel):
         return value
 
     @model_validator(mode="after")
-    def _identity(self) -> ProjectionClaimBackingV1:
+    def _identity(self) -> ProjectionClaimBacking:
         if self.identity.kind != "Claim":
             raise ValueError("a projection Claim backing must identify a Claim")
         return self
 
 
-class ProjectionArtifactBackingV1(_StrictDeclaredBlockModel):
+class ProjectionArtifactBacking(_StrictDeclaredBlockModel):
     """A governed vocabulary or entity artifact pinned by exact digest."""
 
     tag: Literal["playbill-projection-artifact-backing-v1"] = (
@@ -241,18 +239,18 @@ class ProjectionArtifactBackingV1(_StrictDeclaredBlockModel):
         return value
 
     @model_validator(mode="after")
-    def _identity(self) -> ProjectionArtifactBackingV1:
+    def _identity(self) -> ProjectionArtifactBacking:
         if self.identity.kind not in {"ClaimType", "Subject"}:
             raise ValueError("a projection artifact backing must identify a ClaimType or Subject")
         return self
 
 
-class ProjectionResolvedParameterBindingV1(_StrictDeclaredBlockModel):
+class ProjectionResolvedParameterBinding(_StrictDeclaredBlockModel):
     """The exact existing query-parameter-binding wire spelling, shared by both sides."""
 
     tag: Literal["playbill-query-parameter-binding-v1"] = "playbill-query-parameter-binding-v1"
     name: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
-    value_type: QueryValueTypeV1
+    value_type: QueryValueType
     value: object = None
 
     @field_validator("value", mode="before")
@@ -262,7 +260,7 @@ class ProjectionResolvedParameterBindingV1(_StrictDeclaredBlockModel):
 
 
 def projection_parameter_digest(
-    parameters: tuple[ProjectionResolvedParameterBindingV1, ...],
+    parameters: tuple[ProjectionResolvedParameterBinding, ...],
 ) -> str:
     return typed_digest(
         Sha256Value,
@@ -271,11 +269,11 @@ def projection_parameter_digest(
     ).tagged
 
 
-class ProjectionQueryBackingV1(_StrictDeclaredBlockModel):
+class ProjectionQueryBacking(_StrictDeclaredBlockModel):
     tag: Literal["playbill-projection-query-backing-v1"] = "playbill-projection-query-backing-v1"
     identity: ArtifactIdentity
     definition_digest: str
-    resolved_parameter_bindings: tuple[ProjectionResolvedParameterBindingV1, ...] = ()
+    resolved_parameter_bindings: tuple[ProjectionResolvedParameterBinding, ...] = ()
     canonical_param_digest: str
     declared_evaluation_time: datetime
     semantic_result_digest: str
@@ -294,7 +292,7 @@ class ProjectionQueryBackingV1(_StrictDeclaredBlockModel):
         return ensure_utc(value)
 
     @model_validator(mode="after")
-    def _bindings(self) -> ProjectionQueryBackingV1:
+    def _bindings(self) -> ProjectionQueryBacking:
         if self.identity.kind != "QueryDefinition":
             raise ValueError("a projection query backing must identify a QueryDefinition")
         names = tuple(item.name for item in self.resolved_parameter_bindings)
@@ -308,8 +306,8 @@ class ProjectionQueryBackingV1(_StrictDeclaredBlockModel):
         return self
 
 
-ProjectionBackingV1: TypeAlias = Annotated[
-    ProjectionArtifactBackingV1 | ProjectionClaimBackingV1 | ProjectionQueryBackingV1,
+ProjectionBacking: TypeAlias = Annotated[
+    ProjectionArtifactBacking | ProjectionClaimBacking | ProjectionQueryBacking,
     Field(discriminator="tag"),
 ]
 
@@ -319,7 +317,7 @@ class _ProjectionBlockStamp(_StrictDeclaredBlockModel):
     block_id: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,63}$")
     declared_generation: int = Field(ge=0)
     declared_coordinate: AcceptedCoordinate
-    backing: tuple[ProjectionBackingV1, ...] = Field(min_length=1)
+    backing: tuple[ProjectionBacking, ...] = Field(min_length=1)
     body_digest: str
     grammar_version: Literal["playbill-projection-marker-grammar-v1"] = PROJECTION_MARKER_GRAMMAR
 
@@ -331,12 +329,12 @@ class _ProjectionBlockStamp(_StrictDeclaredBlockModel):
 
     @field_validator("backing")
     @classmethod
-    def _backing(cls, value: tuple[ProjectionBackingV1, ...]) -> tuple[ProjectionBackingV1, ...]:
+    def _backing(cls, value: tuple[ProjectionBacking, ...]) -> tuple[ProjectionBacking, ...]:
         identities = tuple(item.identity.qualified for item in value)
         if identities != tuple(sorted(set(identities), key=lambda item: item.encode("utf-8"))):
             raise ValueError("projection block backings must be sorted and unique by identity")
         # Explicit and query-selected dependencies share one currency policy.
-        queries = sum(1 for item in value if isinstance(item, ProjectionQueryBackingV1))
+        queries = sum(1 for item in value if isinstance(item, ProjectionQueryBacking))
         if queries > 1:
             raise ValueError("a projection block binds at most one query")
         return value
@@ -355,19 +353,21 @@ class ProjectionBlockStampV1(_ProjectionBlockStamp):
         return "warn"
 
 
-class ProjectionBlockStampV2(_ProjectionBlockStamp):
+class ProjectionBlockStamp(_ProjectionBlockStamp):
     tag: Literal["playbill-projection-stamp-v2"] = "playbill-projection-stamp-v2"
     currency_policy: ProjectionCurrencyPolicy = "warn"
 
 
-ProjectionBlockStamp: TypeAlias = Annotated[
-    ProjectionBlockStampV1 | ProjectionBlockStampV2, Field(discriminator="tag")
+ProjectionBlockStampAny: TypeAlias = Annotated[
+    ProjectionBlockStampV1 | ProjectionBlockStamp, Field(discriminator="tag")
 ]
-PROJECTION_STAMP_ADAPTER: TypeAdapter[ProjectionBlockStamp] = TypeAdapter(ProjectionBlockStamp)
+PROJECTION_STAMP_ADAPTER: TypeAdapter[ProjectionBlockStampAny] = TypeAdapter(
+    ProjectionBlockStampAny
+)
 
 
-class ProjectionMarkerSummaryV1(_StrictDeclaredBlockModel):
-    stamp: ProjectionBlockStamp
+class ProjectionMarkerSummary(_StrictDeclaredBlockModel):
+    stamp: ProjectionBlockStampAny
     observed_body_digest: str
     start_byte: int = Field(ge=0)
     end_byte: int = Field(ge=0)
@@ -379,7 +379,7 @@ class ProjectionMarkerSummaryV1(_StrictDeclaredBlockModel):
         return value
 
     @model_validator(mode="after")
-    def _window(self) -> ProjectionMarkerSummaryV1:
+    def _window(self) -> ProjectionMarkerSummary:
         if self.end_byte <= self.start_byte:
             raise ValueError("projection marker summary byte range must be increasing")
         return self
@@ -392,32 +392,32 @@ class ProjectionMarkerError(PlaybillError):
         super().__init__(f"{self.code}: {message}")
 
 
-class ProjectionProcessingPolicyV1(BaseModel):
+class ProjectionProcessingPolicy(BaseModel):
     """Local processing budget, independent of a document's validity or identity."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
     max_bytes: int = Field(default=32 * 1024 * 1024, ge=1)
 
 
-_projection_processing_policy: ContextVar[ProjectionProcessingPolicyV1 | None] = ContextVar(
+_projection_processing_policy: ContextVar[ProjectionProcessingPolicy | None] = ContextVar(
     "projection_processing_policy", default=None
 )
 
 
-def projection_processing_policy() -> ProjectionProcessingPolicyV1:
+def projection_processing_policy() -> ProjectionProcessingPolicy:
     configured = _projection_processing_policy.get()
     if configured is not None:
         return configured
     value = os.environ.get("CRUXIBLE_PROJECTION_PROCESSING_MAX_BYTES")
     return (
-        ProjectionProcessingPolicyV1()
+        ProjectionProcessingPolicy()
         if value is None
-        else ProjectionProcessingPolicyV1(max_bytes=int(value))
+        else ProjectionProcessingPolicy(max_bytes=int(value))
     )
 
 
 @contextmanager
-def projection_processing_budget(policy: ProjectionProcessingPolicyV1) -> Iterator[None]:
+def projection_processing_budget(policy: ProjectionProcessingPolicy) -> Iterator[None]:
     """Apply an explicit SDK/embedded-service work budget to this operation only."""
     token = _projection_processing_policy.set(policy)
     try:
@@ -460,7 +460,7 @@ class ProjectionBootstrapUnstampedError(ProjectionMarkerError):
 class ParsedProjectionBlock:
     source_id: str
     block_id: str
-    stamp: ProjectionBlockStamp | None
+    stamp: ProjectionBlockStampAny | None
     opening_start: int
     opening_end: int
     body_start: int
@@ -468,12 +468,12 @@ class ParsedProjectionBlock:
     closing_end: int
     body_digest: str
 
-    def summary(self) -> ProjectionMarkerSummaryV1:
+    def summary(self) -> ProjectionMarkerSummary:
         if self.stamp is None:
             raise ProjectionBootstrapUnstampedError(
                 "an unstamped bootstrap block is not a declaration"
             )
-        return ProjectionMarkerSummaryV1(
+        return ProjectionMarkerSummary(
             stamp=self.stamp,
             observed_body_digest=self.body_digest,
             start_byte=self.opening_start,
@@ -490,7 +490,7 @@ def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def _parse_projection_stamp(encoded: bytes) -> ProjectionBlockStamp:
+def _parse_projection_stamp(encoded: bytes) -> ProjectionBlockStampAny:
     check_projection_processing_bytes((len(encoded) * 3) // 4)
     try:
         padding = b"=" * (-len(encoded) % 4)
@@ -510,21 +510,21 @@ def _parse_projection_stamp(encoded: bytes) -> ProjectionBlockStamp:
     return stamp
 
 
-def render_projection_opening(stamp: ProjectionBlockStamp) -> bytes:
+def render_projection_opening(stamp: ProjectionBlockStampAny) -> bytes:
     content = canonical_bytes(stamp.model_dump(mode="json"))
     check_projection_processing_bytes(len(content))
     encoded = base64.urlsafe_b64encode(content).rstrip(b"=")
     return b"<!-- playbill:block:" + stamp.block_id.encode("ascii") + b":" + encoded + b" -->\n"
 
 
-def projection_manifest(stamp: ProjectionBlockStamp) -> tuple[str, bytes]:
+def projection_manifest(stamp: ProjectionBlockStampAny) -> tuple[str, bytes]:
     """The exact authored declaration, addressed by full SHA-256."""
     content = canonical_bytes(stamp.model_dump(mode="json"))
     check_projection_processing_bytes(len(content))
     return "sha256:" + hashlib.sha256(content).hexdigest(), content
 
 
-def render_compact_projection_opening(stamp: ProjectionBlockStamp) -> bytes:
+def render_compact_projection_opening(stamp: ProjectionBlockStampAny) -> bytes:
     digest, _ = projection_manifest(stamp)
     return (
         b"<!-- playbill:block:"
@@ -564,7 +564,7 @@ def resolve_projection_manifest_digest(ref: str, digests: Iterable[str]) -> str:
 
 def _resolve_projection_manifest(
     ref: str, manifests: Mapping[str, bytes] | None
-) -> ProjectionBlockStamp:
+) -> ProjectionBlockStampAny:
     digest = resolve_projection_manifest_digest(ref, manifests or ())
     assert manifests is not None
     content = manifests[digest]
@@ -761,7 +761,7 @@ def _parse_projection_blocks(
     check_projection_processing_bytes(
         len(content) + sum(len(v) for v in (manifests or {}).values())
     )
-    active: tuple[str, ProjectionBlockStamp | None, int, int] | None = None
+    active: tuple[str, ProjectionBlockStampAny | None, int, int] | None = None
     seen: set[str] = set()
     blocks: list[ParsedProjectionBlock] = []
     for line, line_start, offset in _marker_candidate_lines(content):
@@ -863,7 +863,7 @@ def discover_projection_blocks(
 
 
 def frame_projection_block(
-    *, stamp: ProjectionBlockStamp, body: bytes, compact: bool = False
+    *, stamp: ProjectionBlockStampAny, body: bytes, compact: bool = False
 ) -> bytes:
     """Mechanically frame accepted bytes and prove the one frozen marker grammar."""
 
@@ -891,7 +891,7 @@ def assert_projection_block_frame(
     *,
     source_id: str,
     block_id: str,
-    stamp: ProjectionBlockStamp,
+    stamp: ProjectionBlockStampAny,
     body_digest: str,
     start_byte: int | None = None,
     end_byte: int | None = None,
@@ -945,7 +945,7 @@ def projection_query_semantic_result_digest(result: object) -> str:
     ).tagged
 
 
-class PlaybillBlockRepinResultV1(BaseModel):
+class PlaybillBlockRepinResult(BaseModel):
     """One block repinned through the client-side adapter, or (preview) what would be.
 
     The adapter reads the page, computes the stamp from the instance's own
@@ -962,11 +962,11 @@ class PlaybillBlockRepinResultV1(BaseModel):
     #: The page, relative to the workspace root.
     path: str
     declared_generation: int
-    stamp: ProjectionBlockStampV2
+    stamp: ProjectionBlockStamp
 
 
 __all__ = [
-    "PlaybillBlockRepinResultV1",
+    "PlaybillBlockRepinResult",
     "MAX_PROJECTION_CARDS_PER_SOURCE",
     "MAX_PROJECTION_COVERAGE_BINDINGS",
     "PROJECTION_MARKER_GRAMMAR",
@@ -974,30 +974,30 @@ __all__ = [
     "PROJECTION_QUERY_SEMANTIC_RESULT_DOMAIN",
     "PlaybillPresentationPolicyAny",
     "PlaybillPresentationPolicyV1",
-    "PlaybillPresentationPolicyV2",
-    "PlaybillProjectionAdvisoryPolicyV1",
-    "PlaybillProjectionCoverageBindingV1",
-    "PlaybillProjectionCoverageObservationV1",
-    "PlaybillReviewWorkspaceObservationV1",
+    "PlaybillPresentationPolicy",
+    "PlaybillProjectionAdvisoryPolicy",
+    "PlaybillProjectionCoverageBinding",
+    "PlaybillProjectionCoverageObservation",
+    "PlaybillReviewWorkspaceObservation",
     "ParsedProjectionBlock",
-    "ProjectionBackingV1",
-    "ProjectionArtifactBackingV1",
-    "ProjectionBlockStamp",
+    "ProjectionBacking",
+    "ProjectionArtifactBacking",
+    "ProjectionBlockStampAny",
     "ProjectionBlockStampV1",
-    "ProjectionBlockStampV2",
+    "ProjectionBlockStamp",
     "ProjectionCurrencyPolicy",
     "ProjectionBootstrapUnstampedError",
-    "ProjectionClaimBackingV1",
-    "ProjectionMarkerSummaryV1",
+    "ProjectionClaimBacking",
+    "ProjectionMarkerSummary",
     "ProjectionMarkerError",
-    "ProjectionProcessingPolicyV1",
+    "ProjectionProcessingPolicy",
     "ProjectionProcessingLimitExceeded",
     "projection_processing_policy",
     "projection_processing_budget",
     "check_projection_processing_bytes",
     "read_projection_source",
-    "ProjectionQueryBackingV1",
-    "ProjectionResolvedParameterBindingV1",
+    "ProjectionQueryBacking",
+    "ProjectionResolvedParameterBinding",
     "ProjectionWindow",
     "assert_projection_block_frame",
     "declares_projection_block",

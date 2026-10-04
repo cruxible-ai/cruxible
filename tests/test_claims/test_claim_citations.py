@@ -8,15 +8,15 @@ import pytest
 from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
-from cruxible_client.contracts.candidates import CandidateRecordV3
+from cruxible_client.contracts.candidates import CandidateRecord
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     AcceptedCaptureContract,
-    CaptureContractV1,
-    DirectByteSpanSelectionV1,
-    DirectForeignSourceSelectionV1,
+    CaptureContract,
+    DirectByteSpanSelection,
+    DirectForeignSourceSelection,
     build_coordinator_self_source_capture,
     build_direct_claim_capture,
     build_direct_claim_selection_capture,
@@ -30,9 +30,9 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, render_claim_type
 from cruxible_client.contracts.claims import (
     ClaimArtifactV2,
-    ClaimBackingV2,
+    ClaimBacking,
     ClaimLawEvidenceV1,
-    LegacyCitationReferenceV1,
+    LegacyCitationReference,
     _capture_is_explicitly_eligible,
     _copy_capture_admitted_by_rule,
     build_claim_citation,
@@ -86,7 +86,7 @@ def _v2_claim(*, role: str = "evidence", origin: str = "independent") -> ClaimAr
     return ClaimArtifactV2(
         identity=legacy.identity,
         statement=legacy.statement,
-        backing=ClaimBackingV2(
+        backing=ClaimBacking(
             referent_context=legacy.backing.referent_context,
             capture_digests=legacy.backing.capture_digests,
             citations=(citation,),
@@ -150,7 +150,7 @@ def test_legacy_reference_is_derived_without_fabricating_role_or_origin() -> Non
 
     assert len(references) == 1
     reference = references[0]
-    assert isinstance(reference, LegacyCitationReferenceV1)
+    assert isinstance(reference, LegacyCitationReference)
     assert reference.legacy_semantics is True
     assert reference.model_dump(mode="json") == {
         "tag": "playbill-legacy-claim-citation-v1",
@@ -173,7 +173,7 @@ def test_v2_backing_successor_keeps_uncited_legacy_capture_implicit() -> None:
     successor = ClaimArtifactV2(
         identity=legacy.identity,
         statement=legacy.statement,
-        backing=ClaimBackingV2(
+        backing=ClaimBacking(
             referent_context=legacy.backing.referent_context.model_copy(
                 update={"observed_at": datetime(2026, 8, 20, tzinfo=timezone.utc)}
             ),
@@ -187,7 +187,7 @@ def test_v2_backing_successor_keeps_uncited_legacy_capture_implicit() -> None:
 
     references = claim_citation_references(successor)
     assert len(references) == 1
-    assert isinstance(references[0], LegacyCitationReferenceV1)
+    assert isinstance(references[0], LegacyCitationReference)
     assert parse_claim(render_claim(successor), path=claim_path(CLAIM_ID)) == successor
 
 
@@ -248,7 +248,7 @@ def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
         candidate_tree=initial_tree,
         timestamp="2026-08-20T12:00:00.000000Z",
     )
-    assert isinstance(initial.candidate, CandidateRecordV3)
+    assert isinstance(initial.candidate, CandidateRecord)
     _activate(instance, owner, initial.candidate, initial.evaluation.evaluated_tree_oid, sequence=1)
 
     accepted_v1 = instance.accepted_coordinate()
@@ -275,7 +275,7 @@ def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
         rationale="existing source copy",
         observed_at=datetime(2026, 8, 20, 12, 1, tzinfo=timezone.utc),
         accepted_coordinate=AcceptedCoordinate.from_internal(accepted_v1),
-        selection=DirectByteSpanSelectionV1(
+        selection=DirectByteSpanSelection(
             span=ContentSpan(
                 content_digest=substrate_digest,
                 start_byte=0,
@@ -310,7 +310,7 @@ def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
     v2 = ClaimArtifactV2(
         identity=legacy.identity,
         statement=legacy.statement,
-        backing=ClaimBackingV2(
+        backing=ClaimBacking(
             referent_context=legacy.backing.referent_context.model_copy(
                 update={"observed_at": datetime(2026, 8, 20, 12, 1, tzinfo=timezone.utc)}
             ),
@@ -520,7 +520,7 @@ def _activate(instance, owner, candidate, evaluated_oid, *, sequence: int) -> No
     instance.refresh()
 
 
-def _claim_evidence(candidate: CandidateRecordV3) -> ClaimLawEvidenceV1:
+def _claim_evidence(candidate: CandidateRecord) -> ClaimLawEvidenceV1:
     return ClaimLawEvidenceV1.model_validate(
         next(
             item.result["claim_evidence"]
@@ -530,7 +530,7 @@ def _claim_evidence(candidate: CandidateRecordV3) -> ClaimLawEvidenceV1:
     )
 
 
-def _accepted(contract: CaptureContractV1) -> AcceptedCaptureContract:
+def _accepted(contract: CaptureContract) -> AcceptedCaptureContract:
     return AcceptedCaptureContract(
         path=capture_contract_path(contract.identity.name),
         contract=contract,
@@ -538,7 +538,7 @@ def _accepted(contract: CaptureContractV1) -> AcceptedCaptureContract:
     )
 
 
-def _page_source_contract() -> CaptureContractV1:
+def _page_source_contract() -> CaptureContract:
     """A declared source contract, the way a governed page is captured.
 
     Not one of the compiler's own self-assertion contracts: the bytes exist
@@ -549,7 +549,7 @@ def _page_source_contract() -> CaptureContractV1:
     return _capture_contract(name="docs.page-capture-v1")
 
 
-def _type_admitting(contract: CaptureContractV1) -> ClaimType:
+def _type_admitting(contract: CaptureContract) -> ClaimType:
     return _claim_type().model_copy(
         update={
             "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
@@ -674,7 +674,7 @@ def _page_capture(instance, base):
         rationale="the governed page block this Claim is about",
         observed_at=datetime(2026, 8, 20, 12, tzinfo=timezone.utc),
         accepted_coordinate=AcceptedCoordinate.from_internal(base),
-        selection=DirectForeignSourceSelectionV1(
+        selection=DirectForeignSourceSelection(
             logical_source_identity=PAGE_SOURCE_IDENTITY,
             span=ContentSpan(
                 content_digest=stored.digest,
@@ -685,7 +685,7 @@ def _page_capture(instance, base):
     )
 
 
-def _type_naming(contract: CaptureContractV1) -> ClaimType:
+def _type_naming(contract: CaptureContract) -> ClaimType:
     """The domain ClaimType, plus one rule naming `contract` for its own roles."""
 
     base = _claim_type()
@@ -708,7 +708,7 @@ def _type_naming(contract: CaptureContractV1) -> ClaimType:
     )
 
 
-def _claim_citing(capture, *, contract: CaptureContractV1, claim_type: ClaimType, role: str):
+def _claim_citing(capture, *, contract: CaptureContract, claim_type: ClaimType, role: str):
     shell = _subject()
     assert capture.envelope.commitment.byte_length is not None
     claim = _claim(
@@ -723,7 +723,7 @@ def _claim_citing(capture, *, contract: CaptureContractV1, claim_type: ClaimType
             "statement": claim.statement.model_copy(
                 update={"claim_type_digest": claim_type_digest_value}
             ),
-            "backing": ClaimBackingV2(
+            "backing": ClaimBacking(
                 referent_context=claim.backing.referent_context,
                 capture_digests=(capture.capture_digest,),
                 citations=(
@@ -767,7 +767,7 @@ def _verdict(
     base,
     *,
     capture,
-    contract: CaptureContractV1,
+    contract: CaptureContract,
     claim_type: ClaimType,
     name: str,
 ):
@@ -789,7 +789,7 @@ def _verdict(
         "2026-08-20T12:00:00.000000Z",
     )
     assert proposed.evaluation.diagnostics == (), proposed.evaluation.diagnostics
-    assert isinstance(proposed.candidate, CandidateRecordV3)
+    assert isinstance(proposed.candidate, CandidateRecord)
     return _claim_evidence(proposed.candidate)
 
 
@@ -816,7 +816,7 @@ def _direct_selection_capture(instance, base):
         rationale="a copy of the value this Claim itself authored",
         observed_at=datetime(2026, 8, 20, 12, tzinfo=timezone.utc),
         accepted_coordinate=AcceptedCoordinate.from_internal(base),
-        selection=DirectByteSpanSelectionV1(
+        selection=DirectByteSpanSelection(
             span=ContentSpan(
                 content_digest=substrate_digest,
                 start_byte=0,

@@ -9,10 +9,10 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.claims import (
+    ClaimArtifact,
     ClaimArtifactAny,
-    ClaimArtifactV3,
-    ClaimRetireDependentV1,
-    ClaimRetirementAttributionV1,
+    ClaimRetireDependent,
+    ClaimRetirementAttribution,
     ClaimRetirementReason,
     ClaimStatement,
     claim_artifact_digest,
@@ -83,7 +83,7 @@ def _retired_claim(
     reason: ClaimRetirementReason,
     effective_until: datetime | None,
     successor_digests: Mapping[str, str],
-) -> ClaimArtifactV3:
+) -> ClaimArtifact:
     statement = claim.statement
     if effective_until is not None:
         try:
@@ -104,7 +104,7 @@ def _retired_claim(
         else pin
         for pin in claim.pins
     )
-    return ClaimArtifactV3(
+    return ClaimArtifact(
         identity=claim.identity,
         statement=statement,
         backing=claim.backing,
@@ -113,15 +113,15 @@ def _retired_claim(
             state="retired",
             predecessor_digest=claim_artifact_digest(claim).tagged,
         ),
-        retirement=ClaimRetirementAttributionV1(reason=reason),
+        retirement=ClaimRetirementAttribution(reason=reason),
     )
 
 
 def build_claim_retirement_candidate(
     tree: Mapping[str, bytes],
     *,
-    root: ClaimRetireDependentV1,
-    dependents: tuple[ClaimRetireDependentV1, ...],
+    root: ClaimRetireDependent,
+    dependents: tuple[ClaimRetireDependent, ...],
 ) -> tuple[CandidateTree, tuple[ClaimRetirementResultItemV1, ...]]:
     requests = {item.artifact_identity.qualified: item for item in (root, *dependents)}
     claims = {
@@ -139,7 +139,7 @@ def build_claim_retirement_candidate(
 
     candidate_tree = fork_tree(tree)
     successor_digests: dict[str, str] = {}
-    successors: dict[str, ClaimArtifactV3] = {}
+    successors: dict[str, ClaimArtifact] = {}
     pending = set(requests)
     while pending:
         progressed = False

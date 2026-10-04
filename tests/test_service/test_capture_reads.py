@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.authoring.sdk_types import CaptureView
-from cruxible_client.contracts.capture_reads import CaptureReadRequestV1
+from cruxible_client.contracts.capture_reads import CaptureReadRequest
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.errors import ReadRefusalError
 from cruxible_core.errors import PermissionDeniedError
@@ -21,7 +21,7 @@ def test_capture_read_is_verified_bounded_and_does_not_refetch(tmp_path: Path) -
         tmp_path
     )
     access = BodyAccessContext(principal_id="reader", can_read_body=True)
-    request = CaptureReadRequestV1(capture_digest=payload.source.capture_digest)
+    request = CaptureReadRequest(capture_digest=payload.source.capture_digest)
     result = service_read_playbill_capture(instance, request=request, access=access)
     assert result.status == "verified"
     view = CaptureView(result=result)
@@ -38,7 +38,7 @@ def test_capture_read_is_verified_bounded_and_does_not_refetch(tmp_path: Path) -
     with pytest.raises(ReadRefusalError) as not_a_capture:
         service_read_playbill_capture(
             instance,
-            request=CaptureReadRequestV1(capture_digest=result.envelope.commitment.digest),
+            request=CaptureReadRequest(capture_digest=result.envelope.commitment.digest),
             access=access,
         )
     assert not_a_capture.value.error_code == "playbill.capture.not_a_capture"
@@ -54,7 +54,7 @@ def test_capture_read_denies_before_accessing_instance() -> None:
     with pytest.raises(PermissionDeniedError, match="requires"):
         service_read_playbill_capture(
             None,  # type: ignore[arg-type]
-            request=CaptureReadRequestV1(capture_digest="sha256:" + "0" * 64),
+            request=CaptureReadRequest(capture_digest="sha256:" + "0" * 64),
             access=BodyAccessContext(principal_id="reader", can_read_body=False),
         )
 
@@ -75,7 +75,7 @@ def test_an_exact_content_digest_refuses_naming_the_claim_whose_value_it_is(
     with pytest.raises(ReadRefusalError) as refused:
         service_read_playbill_capture(
             instance,
-            request=CaptureReadRequestV1(capture_digest=ruling.digest),
+            request=CaptureReadRequest(capture_digest=ruling.digest),
             access=BodyAccessContext(principal_id="reader", can_read_body=True),
         )
 

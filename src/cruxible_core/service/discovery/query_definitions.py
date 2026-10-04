@@ -8,8 +8,8 @@ from pydantic import BaseModel, ConfigDict
 
 from cruxible_client.contracts.errors import ClaimNotFoundError, ProjectionIntegrityError
 from cruxible_client.contracts.query.definitions import (
-    AcceptedQueryDefinitionV1,
-    QueryDefinitionV1,
+    AcceptedQueryDefinition,
+    QueryDefinition,
     query_definition_digest,
     query_definition_path,
 )
@@ -51,7 +51,7 @@ def _resolve_coordinate(
 
 
 def _view(
-    query: QueryDefinitionV1,
+    query: QueryDefinition,
     *,
     path: str,
     coordinate: AcceptedProjectionCoordinate,
@@ -71,7 +71,7 @@ def accepted_query_definition(
     *,
     name: str,
     coordinate: AcceptedProjectionCoordinate,
-) -> AcceptedQueryDefinitionV1:
+) -> AcceptedQueryDefinition:
     """Return one accepted QueryDefinition bound to its exact accepted digest."""
 
     path = query_definition_path(name)
@@ -81,9 +81,9 @@ def accepted_query_definition(
         if envelope is None:
             raise ClaimNotFoundError(path)
         query = projection.typed.source(identity)
-        if not isinstance(query, QueryDefinitionV1):
+        if not isinstance(query, QueryDefinition):
             raise ProjectionIntegrityError("accepted QueryDefinition source is absent or invalid")
-        return AcceptedQueryDefinitionV1(
+        return AcceptedQueryDefinition(
             path=envelope.path,
             query=query,
             artifact_digest=envelope.artifact_digest,

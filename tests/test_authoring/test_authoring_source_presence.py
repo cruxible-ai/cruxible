@@ -21,13 +21,13 @@ from cruxible_client.contracts.authoring.models import (
     AUTHORING_CHANGE_SET_MEMBERSHIP_DIGEST_DOMAIN,
     AUTHORING_CREATE_FINGERPRINT_DOMAIN,
     AUTHORING_PAYLOAD_DIGEST_DOMAIN,
+    AuthoringIntent,
     AuthoringIntentV1,
-    AuthoringIntentV2,
-    AuthoringProgramStampV1,
-    CandidateStatusV1,
-    ChangeSetAuthoringPayloadV1,
-    ChangeSetClaimIdentityV1,
-    WorkingSelectionObservationV1,
+    AuthoringProgramStamp,
+    CandidateStatus,
+    ChangeSetAuthoringPayload,
+    ChangeSetClaimIdentity,
+    WorkingSelectionObservation,
     authoring_change_set_membership,
     authoring_create_fingerprint,
     authoring_member_identity,
@@ -73,10 +73,10 @@ def _commit_raw_event(raw: dict[str, Any]) -> None:
 
 def _wire_event(presence: Presence, version: int = 2) -> dict[str, Any]:
     claim = _working_payload(occurrence_count=1)
-    assert isinstance(claim.source, WorkingSelectionObservationV1)
+    assert isinstance(claim.source, WorkingSelectionObservation)
     # Explicit null is a valid stored representation both before and after the fix.
     claim = claim.model_copy(update={"source": claim.source.model_copy(update={FIELD: None})})
-    payload = ChangeSetAuthoringPayloadV1(members=(claim,))
+    payload = ChangeSetAuthoringPayload(members=(claim,))
     membership = authoring_change_set_membership(payload.members)
     semantic_identity = "ChangeSet:" + typed_digest(
         Sha256Value,
@@ -95,11 +95,11 @@ def _wire_event(presence: Presence, version: int = 2) -> dict[str, Any]:
         "create_fingerprint": authoring_create_fingerprint(
             instance_id="source-presence-fixture", actor_id="fixture-author", payload=payload
         ),
-        "candidate_status": CandidateStatusV1(
+        "candidate_status": CandidateStatus(
             state="draft", current_accepted_coordinate=_coordinate()
         ),
         "change_set_claim_identities": (
-            ChangeSetClaimIdentityV1(
+            ChangeSetClaimIdentity(
                 member_identity=authoring_member_identity(claim), claim_id="CLM-" + "2" * 32
             ),
         ),
@@ -107,7 +107,7 @@ def _wire_event(presence: Presence, version: int = 2) -> dict[str, Any]:
     intent = (
         AuthoringIntentV1.model_validate(fields)
         if version == 1
-        else AuthoringIntentV2.model_validate({**fields, "reference_expectations": ()})
+        else AuthoringIntent.model_validate({**fields, "reference_expectations": ()})
     )
     event = build_authoring_intent_event(
         sequence=0,
@@ -115,7 +115,7 @@ def _wire_event(presence: Presence, version: int = 2) -> dict[str, Any]:
         operation_key="sha256:" + "3" * 64,
         intent=intent,
         program_stamp=(
-            AuthoringProgramStampV1(
+            AuthoringProgramStamp(
                 program_digest="sha256:" + "4" * 64,
                 sdk_version="0.4.0",
                 sdk_contract_snapshot_digest="sha256:" + "5" * 64,
@@ -170,7 +170,7 @@ def test_missing_null_and_content_keep_distinct_idempotency_domains() -> None:
     assert len({event["intent"]["create_fingerprint"] for event in events}) == 3
     assert len({event["event_digest"] for event in events}) == 3
     sources = [
-        WorkingSelectionObservationV1.model_validate(
+        WorkingSelectionObservation.model_validate(
             event["intent"]["payload"]["members"][0]["source"]
         )
         for event in events

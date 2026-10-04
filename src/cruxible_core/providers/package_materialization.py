@@ -23,9 +23,9 @@ from packaging.tags import sys_tags
 
 from cruxible_client.contracts.canonical import canonical_digest
 from cruxible_client.contracts.providers import (
-    ProviderLocalDistributionPinV1,
-    ProviderLocalEnvBackendPinV1,
-    ProviderV3,
+    Provider,
+    ProviderLocalDistributionPin,
+    ProviderLocalEnvBackendPin,
 )
 from cruxible_core.errors import ConfigError
 from cruxible_core.providers.package_registration import PackageRegistrationDocumentV1
@@ -66,7 +66,7 @@ def package_preparation_errors() -> Iterator[None]:
 @dataclass(frozen=True)
 class PreparedProviderPackage:
     document: PackageRegistrationDocumentV1
-    provider: ProviderV3
+    provider: Provider
     deployment: LocalProviderDeploymentV1
 
 
@@ -146,13 +146,13 @@ def prepare_provider_package(
     materialization = toolchain("digests").materialization_digest(
         resolved, distribution_sha256=pin.artifact_id
     )
-    distribution = ProviderLocalDistributionPinV1(
+    distribution = ProviderLocalDistributionPin(
         name=pin.name,
         version=pin.version,
         filename=pin.filename,
         sha256=pin.artifact_id,
     )
-    local_env = ProviderLocalEnvBackendPinV1(
+    local_env = ProviderLocalEnvBackendPin(
         lock_sha256=lock.lock_sha256,
         materialization_digests={resolved.pin_key(): materialization},
     )

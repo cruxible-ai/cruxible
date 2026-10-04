@@ -4,7 +4,7 @@ from typing import Any, Literal
 
 from cruxible_client.contracts.canonical import CanonicalValue, canonical_digest
 from cruxible_client.contracts.primitives import new_id
-from cruxible_client.contracts.provider_interfaces import ProviderInterfaceRegistrationV2
+from cruxible_client.contracts.provider_interfaces import ProviderInterfaceRegistration
 from cruxible_core.providers.provider_classifiers import ProviderClassifierInstallationRefused
 from cruxible_core.providers.provider_local_runtime import LocalProviderDeploymentV1, _run_child
 from cruxible_core.providers.provider_process_leases import ProviderProcessLeaseStore
@@ -18,7 +18,7 @@ from cruxible_core.providers.provider_runtime_contract import (
 class PackageBucketClassifier:
     def __init__(
         self,
-        registration: ProviderInterfaceRegistrationV2,
+        registration: ProviderInterfaceRegistration,
         deployment: LocalProviderDeploymentV1,
         leases: ProviderProcessLeaseStore,
     ) -> None:

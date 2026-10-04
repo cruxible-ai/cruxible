@@ -13,25 +13,25 @@ from cruxible_client.contracts.artifacts import (
     ArtifactPin,
 )
 from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
-from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.procedures.artifacts import (
-    AcceptedProcedureV1,
+    AcceptedProcedure,
     ProcedureArtifactV1,
     procedure_artifact_digest,
     procedure_path,
 )
 from cruxible_client.contracts.procedures.closure import (
-    LineSlotBindingV1,
+    LineSlotBinding,
     ProcedurePinClosureError,
     close_procedure_pin_slots,
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
 from cruxible_client.contracts.procedures.line_specs import (
-    AcceptedLineSpecV1,
-    CadenceTriggerPolicyV1,
+    AcceptedLineSpec,
+    CadenceTriggerPolicy,
     CaptureLandingTriggerPolicyV1,
     LineSpecV1,
-    ManualTriggerPolicyV1,
+    ManualTriggerPolicy,
     TriggerPolicyV1,
     WindowCloseTriggerPolicyV1,
     evaluate_line_spec_law,
@@ -41,12 +41,12 @@ from cruxible_client.contracts.procedures.line_specs import (
     render_line_spec,
 )
 from cruxible_client.contracts.procedures.models import (
-    ProcedureBudgetV3,
+    ProcedureBudget,
     ProcedureDefinitionV3,
-    ProcedureHardCapsV3,
-    ProcedurePinSlotRefV1,
-    ProcedurePinSlotV1,
-    ProjectNodeV3,
+    ProcedureHardCaps,
+    ProcedurePinSlot,
+    ProcedurePinSlotRef,
+    ProjectNode,
     StateTapNodeV3,
 )
 
@@ -63,7 +63,7 @@ def _pin(role: str, kind: str, name: str, *, digest: str | None = None) -> Artif
     )
 
 
-def _accepted_procedure() -> tuple[AcceptedProcedureV1, ArtifactPin, Mapping[str, str]]:
+def _accepted_procedure() -> tuple[AcceptedProcedure, ArtifactPin, Mapping[str, str]]:
     interface_digest = _digest("query-interface")
     query_pin = _pin("query", "QueryDefinition", "claims-by-status")
     contract_in = _pin("contract-in", "Contract", "empty-input")
@@ -75,11 +75,11 @@ def _accepted_procedure() -> tuple[AcceptedProcedureV1, ArtifactPin, Mapping[str
         nodes=(
             StateTapNodeV3(
                 node_id="read",
-                query=ProcedurePinSlotRefV1(slot_name="query"),
+                query=ProcedurePinSlotRef(slot_name="query"),
                 parameters={},
                 as_="rows",
             ),
-            ProjectNodeV3(
+            ProjectNode(
                 node_id="shape",
                 fields={"rows": "$steps.rows"},
                 contract_out=contract_out,
@@ -88,21 +88,21 @@ def _accepted_procedure() -> tuple[AcceptedProcedureV1, ArtifactPin, Mapping[str
         ),
         returns="result",
         pin_slots=(
-            ProcedurePinSlotV1(
+            ProcedurePinSlot(
                 slot_name="query",
                 pin_role="query",
                 artifact_kind="QueryDefinition",
                 interface_digest=interface_digest,
             ),
         ),
-        budget=ProcedureBudgetV3(
-            wall_clock=CanonicalDurationV1(microseconds=1_000_000),
+        budget=ProcedureBudget(
+            wall_clock=CanonicalDuration(microseconds=1_000_000),
             max_provider_calls=0,
             max_capture_bytes=0,
             max_items=100,
         ),
-        hard_caps=ProcedureHardCapsV3(
-            max_wall_clock=CanonicalDurationV1(microseconds=2_000_000),
+        hard_caps=ProcedureHardCaps(
+            max_wall_clock=CanonicalDuration(microseconds=2_000_000),
             max_provider_calls=0,
             max_capture_bytes=0,
             max_items=200,
@@ -122,7 +122,7 @@ def _accepted_procedure() -> tuple[AcceptedProcedureV1, ArtifactPin, Mapping[str
         ),
         activation_policy="drain",
     )
-    accepted = AcceptedProcedureV1(
+    accepted = AcceptedProcedure(
         path=procedure_path("triage"),
         procedure=procedure,
         artifact_digest=procedure_artifact_digest(procedure).tagged,
@@ -135,9 +135,9 @@ def _line(
     trigger: TriggerPolicyV1 | None = None,
     epoch: int = 1,
     predecessor_digest: str | None = None,
-    bindings: tuple[LineSlotBindingV1, ...] | None = None,
+    bindings: tuple[LineSlotBinding, ...] | None = None,
     requested_rung: int = 2,
-) -> tuple[LineSpecV1, AcceptedProcedureV1, Mapping[str, str]]:
+) -> tuple[LineSpecV1, AcceptedProcedure, Mapping[str, str]]:
     accepted, query_pin, interfaces = _accepted_procedure()
     procedure_pin = _pin(
         "procedure",
@@ -148,11 +148,11 @@ def _line(
     bindings = (
         bindings
         if bindings is not None
-        else (LineSlotBindingV1(slot_name="query", artifact_pin=query_pin),)
+        else (LineSlotBinding(slot_name="query", artifact_pin=query_pin),)
     )
-    trigger = trigger or ManualTriggerPolicyV1()
+    trigger = trigger or ManualTriggerPolicy()
     pins = [procedure_pin, *(binding.artifact_pin for binding in bindings)]
-    if isinstance(trigger, CadenceTriggerPolicyV1):
+    if isinstance(trigger, CadenceTriggerPolicy):
         pins.append(
             _pin(
                 "trigger-cadence-policy",
@@ -243,7 +243,7 @@ def test_slot_closure_refuses_missing_extra_kind_role_and_interface() -> None:
         )
 
     query_binding = line.slot_bindings[0]
-    wrong_role = LineSlotBindingV1(
+    wrong_role = LineSlotBinding(
         slot_name="query",
         artifact_pin=query_binding.artifact_pin.model_copy(update={"role": "provider"}),
     )
@@ -254,7 +254,7 @@ def test_slot_closure_refuses_missing_extra_kind_role_and_interface() -> None:
             interface_digests=interfaces,
         )
 
-    wrong_kind = LineSlotBindingV1(
+    wrong_kind = LineSlotBinding(
         slot_name="query",
         artifact_pin=query_binding.artifact_pin.model_copy(
             update={"target": ArtifactIdentity(kind="Provider", name="claims-by-status")}
@@ -279,7 +279,7 @@ def test_slot_closure_refuses_missing_extra_kind_role_and_interface() -> None:
 
 def test_line_trigger_change_advances_epoch_but_rebinding_does_not() -> None:
     original, accepted, interfaces = _line()
-    prior = AcceptedLineSpecV1(
+    prior = AcceptedLineSpec(
         path=line_spec_path(original.identity.name),
         line=original,
         artifact_digest=line_spec_digest(original).tagged,
@@ -299,7 +299,7 @@ def test_line_trigger_change_advances_epoch_but_rebinding_does_not() -> None:
         == "accepted"
     )
 
-    cadence = CadenceTriggerPolicyV1(cadence_policy_digest=_digest("hourly"), interval_seconds=3600)
+    cadence = CadenceTriggerPolicy(cadence_policy_digest=_digest("hourly"), interval_seconds=3600)
     changed, _accepted, _interfaces = _line(
         trigger=cadence,
         epoch=2,
@@ -335,7 +335,7 @@ def test_line_trigger_change_advances_epoch_but_rebinding_does_not() -> None:
     ("trigger", "pin_role"),
     (
         (
-            CadenceTriggerPolicyV1(cadence_policy_digest=_digest("hourly"), interval_seconds=3600),
+            CadenceTriggerPolicy(cadence_policy_digest=_digest("hourly"), interval_seconds=3600),
             "trigger-cadence-policy",
         ),
         (
@@ -396,7 +396,7 @@ def test_line_refuses_noncanonical_epsilon_and_rung_above_procedure_cap() -> Non
 
 
 def test_a_served_line_interprets_its_result_budget() -> None:
-    from cruxible_client.contracts.procedures.line_specs import LineSpecV6
+    from cruxible_client.contracts.procedures.line_specs import LineSpec
     from cruxible_core.service.procedures.procedure_runs import _line_budget
 
     line, procedure, _ = _line()
@@ -404,10 +404,10 @@ def test_a_served_line_interprets_its_result_budget() -> None:
     for field in ("artifact_format", "trigger_policy", "requested_terminal_rung"):
         value.pop(field)
     value["budgets"]["max_result_bytes"] = 2 * 1024 * 1024
-    served = LineSpecV6.model_validate(
+    served = LineSpec.model_validate(
         {**value, "max_authority": "propose", "provider_implementation_closures": []}
     )
-    accepted = AcceptedLineSpecV1(
+    accepted = AcceptedLineSpec(
         path=line_spec_path(served.identity.name),
         line=served,
         artifact_digest=line_spec_digest(served).tagged,
@@ -416,8 +416,8 @@ def test_a_served_line_interprets_its_result_budget() -> None:
 
 
 def test_a_v6_line_advances_its_epoch_exactly_when_its_accepted_event_changes() -> None:
-    from cruxible_client.contracts.procedures.line_specs import LineSpecV6
-    from cruxible_client.contracts.procedures.windows import CaptureEventSelectorV1
+    from cruxible_client.contracts.procedures.line_specs import LineSpec
+    from cruxible_client.contracts.procedures.windows import CaptureEventSelector
     from tests.support.lines import graph_v4
     from tests.test_procedures.test_procedure_run_surface import _slotless_procedure
     from tests.test_server.test_playbill_line_run_refusals import (
@@ -428,7 +428,7 @@ def test_a_v6_line_advances_its_epoch_exactly_when_its_accepted_event_changes() 
     accepted = graph_v4(_slotless_procedure("epoch-method"))
     interfaces: dict[str, str] = {}
     first = _served_line("epoch-line", accepted=accepted, policy=_acquisition_policy("epoch"))
-    prior = AcceptedLineSpecV1(
+    prior = AcceptedLineSpec(
         path=line_spec_path(first.identity.name),
         line=first,
         artifact_digest=line_spec_digest(first).tagged,
@@ -463,19 +463,19 @@ def test_a_v6_line_advances_its_epoch_exactly_when_its_accepted_event_changes() 
     downgraded = LineSpecV5.model_validate(
         {
             **embedded,
-            "trigger_policy": ManualTriggerPolicyV1(),
+            "trigger_policy": ManualTriggerPolicy(),
             "lifecycle": ArtifactLifecycle(predecessor_digest=prior.artifact_digest),
         }
     )
     assert verdict(downgraded).diagnostics[0].code == "playbill.line.wire_downgrade"
-    selector = CaptureEventSelectorV1(
+    selector = CaptureEventSelector(
         capture_contract_identity=ArtifactIdentity(kind="CaptureContract", name="anchor"),
         capture_contract_digest=_digest("anchor"),
     )
     with pytest.raises(ValidationError, match="come together"):
-        LineSpecV6.model_validate({**first.model_dump(mode="python"), "trigger_event": selector})
+        LineSpec.model_validate({**first.model_dump(mode="python"), "trigger_event": selector})
     with pytest.raises(ValidationError, match="pins exactly the CaptureContract"):
-        LineSpecV6.model_validate(
+        LineSpec.model_validate(
             {**first.model_dump(mode="python"), "trigger_event": selector, "trigger_input": "feed"}
         )
 

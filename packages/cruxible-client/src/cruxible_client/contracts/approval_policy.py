@@ -30,14 +30,14 @@ class ApprovalPolicyFormatError(PlaybillFormatError):
     """The governed approval-policy singleton is absent or malformed."""
 
 
-class ApprovalPolicyV1(BaseModel):
+class ApprovalPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-approval-policy-v1"] = "playbill-approval-policy-v1"
     mode: ApprovalPolicyMode
 
 
-def render_approval_policy(policy: ApprovalPolicyV1) -> bytes:
+def render_approval_policy(policy: ApprovalPolicy) -> bytes:
     return pretty_canonical_bytes(policy.model_dump(mode="json"))
 
 
@@ -46,12 +46,12 @@ def parse_approval_policy(
     *,
     path: str,
     codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
-) -> ApprovalPolicyV1:
+) -> ApprovalPolicy:
     if not artifact_path_matches(APPROVAL_POLICY_PATH, path, codec=codec):
         raise ApprovalPolicyFormatError("approval policy must use its singleton path")
     try:
         payload = json.loads(content)
-        policy = ApprovalPolicyV1.model_validate(payload)
+        policy = ApprovalPolicy.model_validate(payload)
     except (UnicodeDecodeError, ValueError) as exc:
         raise ApprovalPolicyFormatError("approval policy failed strict validation") from exc
     if artifact_bytes_for_path(render_approval_policy(policy), path, codec=codec) != content:
@@ -59,7 +59,7 @@ def parse_approval_policy(
     return policy
 
 
-def approval_policy_digest(policy: ApprovalPolicyV1) -> ArtifactDigest:
+def approval_policy_digest(policy: ApprovalPolicy) -> ArtifactDigest:
     payload = policy.model_dump(mode="json")
     artifact_format = str(payload.pop("tag"))
     return typed_digest(
@@ -74,7 +74,7 @@ __all__ = [
     "APPROVAL_POLICY_PATH",
     "ApprovalPolicyFormatError",
     "ApprovalPolicyMode",
-    "ApprovalPolicyV1",
+    "ApprovalPolicy",
     "approval_policy_digest",
     "parse_approval_policy",
     "render_approval_policy",

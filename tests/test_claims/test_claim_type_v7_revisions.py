@@ -19,15 +19,15 @@ import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.authoring.models import (
-    AuthoringClaimStatementV1,
+    AuthoringClaimStatement,
+    ClaimAuthoringPayload,
     ClaimAuthoringPayloadV1,
-    ClaimAuthoringPayloadV3,
-    ClaimDependencyDraftsV1,
-    ExistingCaptureCitationSourceV1,
-    SelfSourceBodyV1,
-    WorkingAnchorWindowV1,
-    WorkingDigestCoordinateV1,
-    WorkingSelectionObservationV1,
+    ClaimDependencyDrafts,
+    ExistingCaptureCitationSource,
+    SelfSourceBody,
+    WorkingAnchorWindow,
+    WorkingDigestCoordinate,
+    WorkingSelectionObservation,
 )
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import render_capture_contract
@@ -54,7 +54,7 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_core.authoring.lowering import lower_authoring
 from cruxible_core.claims.claim_type_migrations import (
-    ClaimTypeDependentDispositionV3,
+    ClaimTypeDependentDisposition,
     build_dependent_closure_candidate,
     dependent_closure_inventory,
 )
@@ -118,15 +118,15 @@ class _V7World(_World):
         statement = _self_source_payload().statement.model_copy(
             update={"object": LiteralClaimObject(value=value), "predicate": predicate}
         )
-        assert isinstance(statement, AuthoringClaimStatementV1)
+        assert isinstance(statement, AuthoringClaimStatement)
         payload_type = (
-            ClaimAuthoringPayloadV3
-            if isinstance(source, ExistingCaptureCitationSourceV1)
+            ClaimAuthoringPayload
+            if isinstance(source, ExistingCaptureCitationSource)
             else ClaimAuthoringPayloadV1
         )
         extra = (
-            {"dependency_drafts": ClaimDependencyDraftsV1()}
-            if payload_type is ClaimAuthoringPayloadV3
+            {"dependency_drafts": ClaimDependencyDrafts()}
+            if payload_type is ClaimAuthoringPayload
             else {}
         )
         payload = payload_type(
@@ -171,7 +171,7 @@ class _V7World(_World):
             changed=changed,
             inventory=inventory,
             dispositions=tuple(
-                ClaimTypeDependentDispositionV3(identity=item.identity, disposition="successor")
+                ClaimTypeDependentDisposition(identity=item.identity, disposition="successor")
                 for item in inventory
             ),
         )
@@ -190,16 +190,16 @@ class _V7World(_World):
         return index.law_evidence[claim_path(claim_id)]
 
 
-def _selection(text: bytes) -> WorkingSelectionObservationV1:
+def _selection(text: bytes) -> WorkingSelectionObservation:
     digest = "sha256:" + hashlib.sha256(text).hexdigest()
-    return WorkingSelectionObservationV1(
+    return WorkingSelectionObservation(
         source_id=SOURCE,
-        coordinate=WorkingDigestCoordinateV1(
+        coordinate=WorkingDigestCoordinate(
             source_content_digest=digest, source_byte_length=len(text)
         ),
         selected_content_base64=base64.b64encode(text).decode("ascii"),
         selected_bytes_digest=digest,
-        selector=WorkingAnchorWindowV1(
+        selector=WorkingAnchorWindow(
             anchor=text.decode("ascii"),
             start_byte=0,
             end_byte=len(text),
@@ -208,8 +208,8 @@ def _selection(text: bytes) -> WorkingSelectionObservationV1:
     )
 
 
-def _own_words(text: bytes) -> SelfSourceBodyV1:
-    return SelfSourceBodyV1(content_base64=base64.b64encode(text).decode("ascii"))
+def _own_words(text: bytes) -> SelfSourceBody:
+    return SelfSourceBody(content_base64=base64.b64encode(text).decode("ascii"))
 
 
 @pytest.fixture
@@ -358,7 +358,7 @@ def test_a_recited_capture_still_counts_as_inherited(world: _V7World) -> None:
     (capture,) = first.backing.capture_digests
 
     tree, path = world.author(
-        ExistingCaptureCitationSourceV1(capture_digest=capture), value="done", claim_ref=claim_id
+        ExistingCaptureCitationSource(capture_digest=capture), value="done", claim_ref=claim_id
     )
     revised = parse_claim(tree[path], path=path)
     assert revised.backing.capture_digests == (capture,)

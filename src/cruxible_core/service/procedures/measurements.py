@@ -35,9 +35,9 @@ from typing import Literal, cast, get_args
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from cruxible_client.contracts.accepted_attestations import AcceptedClaimAttestationEvidenceV1
+from cruxible_client.contracts.accepted_attestations import AcceptedClaimAttestationEvidence
 from cruxible_client.contracts.canonical import CanonicalValue, normalize_canonical
-from cruxible_client.contracts.claim_attestation_store import ClaimAttestationEventPayloadV1
+from cruxible_client.contracts.claim_attestation_store import ClaimAttestationEventPayload
 from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
 from cruxible_client.contracts.claim_verdicts import ClaimVerdictResultV1, claim_verdict_v1_compat
 from cruxible_client.contracts.claims import (
@@ -57,34 +57,34 @@ from cruxible_client.contracts.errors import (
 )
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.procedures.artifacts import (
-    AcceptedProcedureV1,
+    AcceptedProcedure,
     parse_procedure,
     procedure_artifact_digest,
     procedure_path,
 )
 from cruxible_client.contracts.procedures.measurements import (
-    AcceptedQueryProcedureMeasurementV1,
-    ClaimAttestationProcedureMeasurementV1,
-    ClaimStatementProcedureMeasurementV1,
-    ProcedureMeasurementDeclarationV1,
+    AcceptedQueryProcedureMeasurement,
+    ClaimAttestationProcedureMeasurement,
+    ClaimStatementProcedureMeasurement,
+    ProcedureMeasurementDeclaration,
 )
 from cruxible_client.contracts.procedures.readings import (
-    PlaybillProcedureMeasureRequestV1,
-    PlaybillProcedureMeasureResultV1,
-    PlaybillProcedureReadingsRequestV1,
-    PlaybillProcedureReadingsResultV1,
-    ProcedureMeasurementContractStatusV1,
-    ProcedureMeasurementEligibilityV1,
-    ProcedureMeasurementRefusalCodeV1,
-    ProcedureMeasurementResolutionSummaryV1,
-    ProcedureMeasurementRowV1,
-    ProcedureMeasurementStatusV1,
-    ProcedureReadingStatusV1,
-    ProcedureReadingSummaryV1,
+    PlaybillProcedureMeasureRequest,
+    PlaybillProcedureMeasureResult,
+    PlaybillProcedureReadingsRequest,
+    PlaybillProcedureReadingsResult,
+    ProcedureMeasurementContractStatus,
+    ProcedureMeasurementEligibility,
+    ProcedureMeasurementRefusalCode,
+    ProcedureMeasurementResolutionSummary,
+    ProcedureMeasurementRow,
+    ProcedureMeasurementStatus,
+    ProcedureReadingStatus,
+    ProcedureReadingSummary,
 )
-from cruxible_client.contracts.query.grammar import QueryBudgetsV1
+from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_client.contracts.query.results import (
-    QueryExecutionReceiptV1,
+    QueryExecutionReceipt,
 )
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, parse_datetime
 from cruxible_core.derived.memo import memo_discard, memo_get, memo_put
@@ -156,7 +156,7 @@ _QUERY_RECEIPT_STREAM = "measurements"
 _QUERY_RECEIPT_PARTITION = "default"
 _WRITER_TOKEN = "playbill-procedure-measurement-v1"
 _ACCESS = BodyAccessContext(principal_id="playbill-measurement", can_read_body=True)
-_QUERY_BUDGET_KEYS = frozenset(QueryBudgetsV1.model_fields) - {"tag"}
+_QUERY_BUDGET_KEYS = frozenset(QueryBudgets.model_fields) - {"tag"}
 _READING_INDEX_MEMO_CAPACITY = 16
 MEASUREMENT_QUERY_EVIDENCE_TAG = "playbill-measurement-query-evidence-v1"
 MEASUREMENT_ATTESTATION_EVIDENCE_TAG = "playbill-measurement-attestation-evidence-v1"
@@ -179,7 +179,7 @@ class ProcedureMeasurementRefused(ProcedureSurfaceError):
 
     def __init__(
         self,
-        error_code: ProcedureMeasurementRefusalCodeV1,
+        error_code: ProcedureMeasurementRefusalCode,
         message: str,
         *,
         details: Mapping[str, object] | None = None,
@@ -190,7 +190,7 @@ class ProcedureMeasurementRefused(ProcedureSurfaceError):
 
 
 def _refuse(
-    code: ProcedureMeasurementRefusalCodeV1,
+    code: ProcedureMeasurementRefusalCode,
     message: str,
     **details: object,
 ) -> ProcedureMeasurementRefused:
@@ -294,13 +294,13 @@ def _accepted_procedure(
     *,
     name: str,
     coordinate: AcceptedProjectionCoordinate,
-) -> AcceptedProcedureV1:
+) -> AcceptedProcedure:
     path = procedure_path(name)
     content = instance.blob_at(coordinate.git_oid, path)
     if content is None:
         raise ProcedureNotFound(f"{ProcedureNotFound.code}: {name}")
     procedure = parse_procedure(content, path=path)
-    return AcceptedProcedureV1(
+    return AcceptedProcedure(
         path=path,
         procedure=procedure,
         artifact_digest=procedure_artifact_digest(procedure).tagged,
@@ -310,7 +310,7 @@ def _accepted_procedure(
 def _accepting_generation(
     instance: PlaybillInstance,
     *,
-    accepted: AcceptedProcedureV1,
+    accepted: AcceptedProcedure,
     observation: AcceptedProjectionCoordinate,
 ) -> tuple[AcceptedCoordinate, datetime]:
     """Find the generation, at or before the observation, that accepted this revision.
@@ -355,7 +355,7 @@ def _accepting_generation(
 def measurement_activation_basis(
     instance: PlaybillInstance,
     *,
-    accepted: AcceptedProcedureV1,
+    accepted: AcceptedProcedure,
     observation: AcceptedProjectionCoordinate,
 ) -> MeasurementActivationBasisV1:
     """Derive activations from the indexed, exact historical acceptance record."""
@@ -391,8 +391,8 @@ def _eligibility(
     *,
     observation: AcceptedCoordinate,
     observation_time: datetime,
-) -> ProcedureMeasurementEligibilityV1:
-    return ProcedureMeasurementEligibilityV1(
+) -> ProcedureMeasurementEligibility:
+    return ProcedureMeasurementEligibility(
         activation_coordinate=activation.subject.accepted_coordinate,
         activated_at=activation.activated_at,
         check_at=activation.check_at,
@@ -457,11 +457,11 @@ def _resolution_summary(
     state: _ContractState,
     *,
     written_now: bool,
-) -> ProcedureMeasurementResolutionSummaryV1 | None:
+) -> ProcedureMeasurementResolutionSummary | None:
     if state.latest is None or state.latest_record is None:
         return None
     resolution = state.latest
-    return ProcedureMeasurementResolutionSummaryV1(
+    return ProcedureMeasurementResolutionSummary(
         resolution_id=resolution.resolution_id,
         contract_id=resolution.contract_id,
         sequence=resolution.sequence,
@@ -500,8 +500,8 @@ def _sorted_proofs(
 
 
 def _query_budgets(
-    measurement: AcceptedQueryProcedureMeasurementV1,
-) -> QueryBudgetsV1 | None:
+    measurement: AcceptedQueryProcedureMeasurement,
+) -> QueryBudgets | None:
     options = measurement.execution_options
     if not isinstance(options, dict) or not options:
         return None
@@ -514,7 +514,7 @@ def _query_budgets(
             supported_options=sorted(_QUERY_BUDGET_KEYS),
         )
     try:
-        return QueryBudgetsV1.model_validate(options)
+        return QueryBudgets.model_validate(options)
     except ValidationError as exc:
         raise _refuse(
             "measurement_basis_unsupported",
@@ -543,7 +543,7 @@ def _record_query_receipt(
 def _evaluate_accepted_query(
     instance: PlaybillInstance,
     *,
-    measurement: AcceptedQueryProcedureMeasurementV1,
+    measurement: AcceptedQueryProcedureMeasurement,
     observation: AcceptedProjectionCoordinate,
     observation_time: datetime,
     receipt_journal: PlaybillQueryReceiptJournal,
@@ -644,7 +644,7 @@ def _accepted_claim_at(
     instance: PlaybillInstance,
     *,
     tree: Mapping[str, bytes],
-    measurement: ClaimStatementProcedureMeasurementV1 | ClaimAttestationProcedureMeasurementV1,
+    measurement: ClaimStatementProcedureMeasurement | ClaimAttestationProcedureMeasurement,
 ) -> ClaimArtifactAny:
     path = measurement.claim_statement.artifact_path
     content = tree.get(path)
@@ -708,7 +708,7 @@ class RetainedClaimVerdictObservationV1:
 def _evaluate_claim_statement(
     instance: PlaybillInstance,
     *,
-    measurement: ClaimStatementProcedureMeasurementV1,
+    measurement: ClaimStatementProcedureMeasurement,
     observation: AcceptedProjectionCoordinate,
     observation_time: datetime,
     tree: Mapping[str, bytes],
@@ -776,7 +776,7 @@ def _evaluate_claim_statement(
 def _evaluate_claim_attestation(
     instance: PlaybillInstance,
     *,
-    measurement: ClaimAttestationProcedureMeasurementV1,
+    measurement: ClaimAttestationProcedureMeasurement,
     observation: AcceptedProjectionCoordinate,
     observation_time: datetime,
     tree: Mapping[str, bytes],
@@ -817,7 +817,7 @@ def _evaluate_claim_attestation(
     # standing word; (3) validity and stance are judged on that word alone. An
     # expired standing word contributes no current proof, and it does not
     # hand the floor back to the older word it superseded.
-    latest_door: dict[str, tuple[int, ClaimAttestationEventPayloadV1]] = {}
+    latest_door: dict[str, tuple[int, ClaimAttestationEventPayload]] = {}
     for event, payload in door_events:
         statement = payload.attestation.statement
         if (
@@ -861,7 +861,7 @@ def _evaluate_claim_attestation(
         if (
             not item.current
             or (
-                isinstance(item, AcceptedClaimAttestationEvidenceV1)
+                isinstance(item, AcceptedClaimAttestationEvidence)
                 and item.envelope.statement.attestation_basis != "examined_existing"
             )
             or item.attestation_grade != "verified_principal"
@@ -946,7 +946,7 @@ def _evaluate_claim_attestation(
 def _evaluate_evidence(
     instance: PlaybillInstance,
     *,
-    declaration: ProcedureMeasurementDeclarationV1,
+    declaration: ProcedureMeasurementDeclaration,
     observation: AcceptedProjectionCoordinate,
     observation_time: datetime,
     tree: Mapping[str, bytes],
@@ -956,7 +956,7 @@ def _evaluate_evidence(
     recorded_at: datetime,
 ) -> tuple[_Evidence, PlaybillQueryReceiptJournal | None]:
     measurement = declaration.measurement
-    if isinstance(measurement, AcceptedQueryProcedureMeasurementV1):
+    if isinstance(measurement, AcceptedQueryProcedureMeasurement):
         if receipts is None:
             receipts = _record_query_receipt(
                 instance,
@@ -973,7 +973,7 @@ def _evaluate_evidence(
             ),
             receipts,
         )
-    if isinstance(measurement, ClaimStatementProcedureMeasurementV1):
+    if isinstance(measurement, ClaimStatementProcedureMeasurement):
         return (
             _evaluate_claim_statement(
                 instance,
@@ -1096,9 +1096,9 @@ def _verify_retained(instance: PlaybillInstance, entry: _IndexedReading) -> _Ind
     return entry
 
 
-def _reading_summary(entry: _IndexedReading) -> ProcedureReadingSummaryV1:
+def _reading_summary(entry: _IndexedReading) -> ProcedureReadingSummary:
     reading = entry.reading
-    return ProcedureReadingSummaryV1(
+    return ProcedureReadingSummary(
         reading_id=reading.reading_id,
         reading_digest=procedure_reading_digest(reading),
         journal_partition_id=entry.stored.record.partition_id,
@@ -1243,10 +1243,10 @@ def service_measure_playbill_procedure(
     instance: PlaybillInstance,
     *,
     name: str,
-    request: PlaybillProcedureMeasureRequestV1,
+    request: PlaybillProcedureMeasureRequest,
     actor_context: GovernedActorContext,
     recorded_at: datetime,
-) -> PlaybillProcedureMeasureResultV1:
+) -> PlaybillProcedureMeasureResult:
     """Evaluate due measurements, persist resolutions, and credit one real run.
 
     Idempotent and resumable: a standing resolution is returned rather than
@@ -1290,7 +1290,7 @@ def service_measure_playbill_procedure(
     receipt_backend, _receipt_stream = _query_receipt_journal(instance)
     fenced_receipts = _FencedWriter(instance, receipt_backend)
     receipts: PlaybillQueryReceiptJournal | None = None
-    rows: list[ProcedureMeasurementRowV1] = []
+    rows: list[ProcedureMeasurementRow] = []
     try:
         # Recover append-window leases exactly as the run and settlement
         # writers do, over the COMPLETE scan of every journal this lane writes
@@ -1402,7 +1402,7 @@ def service_measure_playbill_procedure(
                 else:
                     written_now = True
                     state = _contract_state(instance, journal, stream, activation)
-            status: ProcedureMeasurementStatusV1 = (
+            status: ProcedureMeasurementStatus = (
                 "resolved"
                 if state.latest is not None
                 else "pending"
@@ -1410,8 +1410,8 @@ def service_measure_playbill_procedure(
                 else "expired"
             )
             detail: str | None = None
-            reading_status: ProcedureReadingStatusV1 = "not_requested"
-            reading_summary: ProcedureReadingSummaryV1 | None = None
+            reading_status: ProcedureReadingStatus = "not_requested"
+            reading_summary: ProcedureReadingSummary | None = None
             if grain is not None:
                 if state.latest is None:
                     reading_status = "no_resolution"
@@ -1444,7 +1444,7 @@ def service_measure_playbill_procedure(
                             partition_id=reading_partition,
                         )
             rows.append(
-                ProcedureMeasurementRowV1(
+                ProcedureMeasurementRow(
                     measurement_name=activation.measurement_name,
                     measurement_kind=activation.declaration.measurement.kind,
                     contract_id=activation.contract_id,
@@ -1462,7 +1462,7 @@ def service_measure_playbill_procedure(
     finally:
         fenced_receipts.release()
         fenced.release()
-    return PlaybillProcedureMeasureResultV1(
+    return PlaybillProcedureMeasureResult(
         procedure_identity=accepted.procedure.identity,
         procedure_artifact_digest=accepted.artifact_digest,
         activation_coordinate=basis.coordinate,
@@ -1483,7 +1483,7 @@ def service_measure_playbill_procedure(
 def _credit_reading(
     instance: PlaybillInstance,
     *,
-    accepted: AcceptedProcedureV1,
+    accepted: AcceptedProcedure,
     activation: ResolutionContractActivationV1,
     resolution: ProcedureResolutionV1,
     book: ProcedureResolutionBook,
@@ -1494,7 +1494,7 @@ def _credit_reading(
     journal: LocalJournalBackend,
     stream: JournalStreamIdentityV1,
     partition_id: str,
-) -> tuple[ProcedureReadingStatusV1, ProcedureReadingSummaryV1]:
+) -> tuple[ProcedureReadingStatus, ProcedureReadingSummary]:
     """Credit one grain exactly once.
 
     Lookup and append are one compare-and-set: the partition is indexed at a
@@ -1649,7 +1649,7 @@ def _parse_cursor(cursor: str, *, selection: str) -> _Continuation:
     return _Continuation(observation_time=ensure_utc(observation_time), at=at, after=after)
 
 
-def _selection_digest(request: PlaybillProcedureReadingsRequestV1) -> str:
+def _selection_digest(request: PlaybillProcedureReadingsRequest) -> str:
     # The instant and coordinate are the continuation's, carried by the
     # cursor; the rest of the request must not change between pages.
     return canonical_json(
@@ -1661,9 +1661,9 @@ def service_list_playbill_procedure_readings(
     instance: PlaybillInstance,
     *,
     name: str,
-    request: PlaybillProcedureReadingsRequestV1,
+    request: PlaybillProcedureReadingsRequest,
     evaluation_time: datetime,
-) -> PlaybillProcedureReadingsResultV1:
+) -> PlaybillProcedureReadingsResult:
     """Bounded, read-only inspection of contract standing and retained readings."""
 
     selection = _selection_digest(request)
@@ -1721,7 +1721,7 @@ def service_list_playbill_procedure_readings(
         if truncated and page
         else None
     )
-    contracts: list[ProcedureMeasurementContractStatusV1] = []
+    contracts: list[ProcedureMeasurementContractStatus] = []
     for activation in activations:
         state = _contract_state(instance, journal, stream, activation)
         eligibility = _eligibility(
@@ -1730,7 +1730,7 @@ def service_list_playbill_procedure_readings(
             observation_time=observation_time,
         )
         contracts.append(
-            ProcedureMeasurementContractStatusV1(
+            ProcedureMeasurementContractStatus(
                 measurement_name=activation.measurement_name,
                 measurement_kind=activation.declaration.measurement.kind,
                 contract_id=activation.contract_id,
@@ -1749,7 +1749,7 @@ def service_list_playbill_procedure_readings(
                 reading_count=counts.get(activation.contract_id, 0),
             )
         )
-    return PlaybillProcedureReadingsResultV1(
+    return PlaybillProcedureReadingsResult(
         procedure_identity=accepted.procedure.identity,
         procedure_artifact_digest=accepted.artifact_digest,
         activation_coordinate=basis.coordinate,
@@ -1772,7 +1772,7 @@ class RetainedQueryEvidenceV1:
     """One retained query receipt and the record that retains it."""
 
     stored: StoredProcedureJournalRecordV1
-    receipt: QueryExecutionReceiptV1
+    receipt: QueryExecutionReceipt
 
 
 def load_retained_query_receipt(
@@ -1798,7 +1798,7 @@ def load_retained_query_receipt(
             instance.body_store().read(stored.record.payload_digest, access=_ACCESS)
         )
         try:
-            receipt = QueryExecutionReceiptV1.model_validate(payload)
+            receipt = QueryExecutionReceipt.model_validate(payload)
         except ValidationError as exc:
             raise PlaybillFormatError("retained query receipt does not reproduce") from exc
         return RetainedQueryEvidenceV1(stored=stored, receipt=receipt)

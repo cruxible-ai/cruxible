@@ -13,9 +13,9 @@ from pydantic import ValidationError
 from cruxible_client._safe_files import read_regular_file
 from cruxible_client.authoring.sdk_types import SourceSelectionError
 from cruxible_client.contracts.authoring.models import (
-    WorkingAnchorWindowV1,
-    WorkingDigestCoordinateV1,
-    WorkingSelectionObservationV1,
+    WorkingAnchorWindow,
+    WorkingDigestCoordinate,
+    WorkingSelectionObservation,
 )
 from cruxible_client.contracts.declared_blocks import stamped_projection_windows
 from cruxible_client.contracts.source_catalog import (
@@ -95,18 +95,18 @@ class EvidenceSelection:
     start_byte: int
     end_byte: int
 
-    def observation(self) -> WorkingSelectionObservationV1:
+    def observation(self) -> WorkingSelectionObservation:
         selected = self.content[self.start_byte : self.end_byte]
-        return WorkingSelectionObservationV1(
+        return WorkingSelectionObservation(
             source_id=self.source_id,
-            coordinate=WorkingDigestCoordinateV1(
+            coordinate=WorkingDigestCoordinate(
                 source_content_digest=_digest(self.content),
                 source_byte_length=len(self.content),
             ),
             source_content_base64=source_content_for_observation(self.content),
             selected_content_base64=base64.b64encode(selected).decode("ascii"),
             selected_bytes_digest=_digest(selected),
-            selector=WorkingAnchorWindowV1(
+            selector=WorkingAnchorWindow(
                 anchor=self.anchor_text,
                 start_byte=self.start_byte,
                 end_byte=self.end_byte,

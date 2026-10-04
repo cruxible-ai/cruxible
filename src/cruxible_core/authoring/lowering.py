@@ -32,36 +32,36 @@ from cruxible_client.contracts.artifacts import (
 )
 from cruxible_client.contracts.authoring.models import (
     MAX_REPAIR_BYTES,
-    ApprovalPolicyAuthoringPayloadV1,
-    AttestationAuthoringPayloadV1,
-    AuthoringArtifactReferenceV1,
-    AuthoringCandidateReferenceV1,
-    AuthoringChangeSetMemberV1,
-    AuthoringExactContentObjectV1,
+    ApprovalPolicyAuthoringPayload,
+    AttestationAuthoringPayload,
+    AuthoringArtifactReference,
+    AuthoringCandidateReference,
+    AuthoringChangeSetMember,
+    AuthoringExactContentObject,
     AuthoringIntentV1,
-    CaptureContractAuthoringPayloadV1,
-    ChangeSetAuthoringPayloadV1,
+    CaptureContractAuthoringPayload,
+    ChangeSetAuthoringPayload,
+    ClaimAuthoringPayload,
     ClaimAuthoringPayloadV1,
     ClaimAuthoringPayloadV2,
-    ClaimAuthoringPayloadV3,
-    ClaimRetirementMemberV1,
-    ClaimTypeAuthoringPayloadV1,
-    ClaimTypeSuccessionDependentV1,
-    ClaimTypeSuccessionMemberV1,
-    ExistingCaptureCitationSourceV1,
-    LineAuthoringPayloadV1,
+    ClaimRetirementMember,
+    ClaimTypeAuthoringPayload,
+    ClaimTypeSuccessionDependent,
+    ClaimTypeSuccessionMember,
+    ExistingCaptureCitationSource,
+    LineAuthoringPayload,
+    ProcedureAuthoringPayload,
     ProcedureAuthoringPayloadV1,
-    ProcedureAuthoringPayloadV2,
-    ProcedureMandateAuthoringPayloadV1,
-    ProcedureRuntimePolicyAuthoringPayloadV1,
-    QueryDefinitionAuthoringPayloadV1,
-    RepairAlternativeV1,
-    ResolutionContractAuthoringPayloadV1,
-    SelfSourceBodyV1,
-    SourceAcquisitionPolicyAuthoringPayloadV1,
-    SubjectAuthoringPayloadV1,
-    TriggerAuthoringPayloadV1,
-    WorkingSelectionObservationV1,
+    ProcedureMandateAuthoringPayload,
+    ProcedureRuntimePolicyAuthoringPayload,
+    QueryDefinitionAuthoringPayload,
+    RepairAlternative,
+    ResolutionContractAuthoringPayload,
+    SelfSourceBody,
+    SourceAcquisitionPolicyAuthoringPayload,
+    SubjectAuthoringPayload,
+    TriggerAuthoringPayload,
+    WorkingSelectionObservation,
     authoring_member_identity,
 )
 from cruxible_client.contracts.canonical import canonical_bytes, normalize_canonical
@@ -93,12 +93,12 @@ from cruxible_client.contracts.claim_types import (
 from cruxible_client.contracts.claims import (
     CitationOrigin,
     CitationRole,
+    ClaimArtifact,
     ClaimArtifactAny,
     ClaimArtifactV2,
-    ClaimArtifactV3,
-    ClaimBackingV2,
+    ClaimBacking,
     ClaimReferentContext,
-    ClaimRetireDependentV1,
+    ClaimRetireDependent,
     ClaimStatement,
     ExactContentClaimObject,
     LiteralClaimObject,
@@ -123,9 +123,9 @@ from cruxible_client.contracts.declared_blocks import (
 from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.procedure_mandates import (
     MANDATE_CHANGE_KIND_ORDER,
-    MandateClaimScopeV1,
-    MandateConditionV1,
-    ProcedureMandateV2,
+    MandateClaimScope,
+    MandateCondition,
+    ProcedureMandate,
     parse_procedure_mandate_any,
     procedure_mandate_digest,
     procedure_mandate_path,
@@ -137,11 +137,11 @@ from cruxible_client.contracts.procedure_runtime_policy import (
     render_procedure_runtime_policy,
 )
 from cruxible_client.contracts.procedures.artifacts import (
-    AcceptedProcedureV1,
+    AcceptedProcedure,
+    ProcedureArtifact,
     ProcedureArtifactAny,
     ProcedureArtifactV1,
-    ProcedureArtifactV2,
-    ProcedureOwnedContractV1,
+    ProcedureOwnedContract,
     parse_procedure,
     procedure_artifact_digest,
     procedure_owned_contract_digest,
@@ -158,29 +158,29 @@ from cruxible_client.contracts.procedures.graph import (
 )
 from cruxible_client.contracts.procedures.line_specs import (
     RUNG_AUTHORITY,
-    LineSpecV6,
+    LineSpec,
     line_spec_digest,
     line_spec_path,
     parse_line_spec,
     render_line_spec,
 )
 from cruxible_client.contracts.procedures.models import (
-    ExhaustTapNodeV3,
+    ExhaustTapNode,
+    ProcedureDefinition,
     ProcedureDefinitionAny,
     ProcedureDefinitionV3,
     ProcedureDefinitionV4,
     ProcedureDefinitionV5,
-    ProcedureDefinitionV6,
-    ProcedurePinSlotRefV1,
+    ProcedurePinSlotRef,
+    SourceNode,
     SourceNodeV3,
-    SourceNodeV4,
     iter_pin_bindings,
 )
-from cruxible_client.contracts.procedures.windows import CaptureEventSelectorV1
+from cruxible_client.contracts.procedures.windows import CaptureEventSelector
 from cruxible_client.contracts.providers import parse_provider, provider_digest, provider_path
 from cruxible_client.contracts.query.definitions import (
     CLAIM_TYPE_PIN_ROLE,
-    QueryDefinitionV1,
+    QueryDefinition,
     parse_query_definition,
     query_definition_digest,
     query_definition_path,
@@ -188,8 +188,8 @@ from cruxible_client.contracts.query.definitions import (
 )
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress, SourceMapping
 from cruxible_client.contracts.source_references import (
-    ExternalSourceReferenceV1,
-    LedgerSourceReferenceV1,
+    ExternalSourceReference,
+    LedgerSourceReference,
 )
 from cruxible_client.contracts.subjects import (
     parse_subject,
@@ -199,10 +199,10 @@ from cruxible_client.contracts.subjects import (
 )
 from cruxible_client.contracts.triggers import (
     TRIGGER_LINE_REF_ROLE,
-    ActionTargetV1,
-    LineTargetV1,
-    TriggerTargetV1,
-    TriggerV1,
+    ActionTarget,
+    LineTarget,
+    Trigger,
+    TriggerTarget,
     parse_trigger,
     render_trigger,
     schedule_capture_selector,
@@ -218,7 +218,7 @@ from cruxible_core.claims.claim_retirement import (
 )
 from cruxible_core.claims.claim_type_inputs import identity_rules_supported
 from cruxible_core.claims.claim_type_migrations import (
-    ClaimTypeDependentDispositionV3,
+    ClaimTypeDependentDisposition,
     ClaimTypeMigrationError,
     build_claim_type_migration_candidate,
     claim_type_migration_inventory,
@@ -244,7 +244,7 @@ class AuthoringLoweringError(ValueError):
     code: str
     offending_element: str
     message: str
-    repairs: tuple[RepairAlternativeV1, ...]
+    repairs: tuple[RepairAlternative, ...]
 
     def __str__(self) -> str:
         return self.message
@@ -278,7 +278,7 @@ class _TreeLedgerResolver:
     tree: Mapping[str, bytes]
     coordinate: AcceptedCoordinate
 
-    def read_ledger_source(self, source: LedgerSourceReferenceV1) -> bytes:
+    def read_ledger_source(self, source: LedgerSourceReference) -> bytes:
         if source.coordinate != self.coordinate:
             raise ValueError("ledger Capture source names another accepted coordinate")
         content = self.tree.get(source.address.artifact_path)
@@ -383,7 +383,7 @@ def _repair_bytes(kind: str, description: str, replacement: object | None) -> in
     )
 
 
-def bounded_repair(kind: str, description: str, replacement: object | None) -> RepairAlternativeV1:
+def bounded_repair(kind: str, description: str, replacement: object | None) -> RepairAlternative:
     """A repair that fits the frozen repair-byte limit, however large its replacement.
 
     A replacement over the limit used to fail the repair's own validator, which
@@ -394,9 +394,9 @@ def bounded_repair(kind: str, description: str, replacement: object | None) -> R
     """
 
     if _repair_bytes(kind, description, replacement) <= MAX_REPAIR_BYTES:
-        return RepairAlternativeV1(kind=kind, description=description, replacement=replacement)
+        return RepairAlternative(kind=kind, description=description, replacement=replacement)
     if not isinstance(replacement, Mapping):
-        return RepairAlternativeV1(
+        return RepairAlternative(
             kind=kind,
             description=description,
             replacement={"truncated": True, "omitted": "the replacement exceeds the repair limit"},
@@ -422,8 +422,8 @@ def bounded_repair(kind: str, description: str, replacement: object | None) -> R
                 high = middle - 1
         trimmed[key] = items[:low]
         if _repair_bytes(kind, description, trimmed) <= MAX_REPAIR_BYTES:
-            return RepairAlternativeV1(kind=kind, description=description, replacement=trimmed)
-    return RepairAlternativeV1(
+            return RepairAlternative(kind=kind, description=description, replacement=trimmed)
+    return RepairAlternative(
         kind=kind,
         description=description,
         replacement={"truncated": True, "omitted": "the replacement exceeds the repair limit"},
@@ -504,7 +504,7 @@ def _exact_object(
     instance: PlaybillInstance,
     value: object,
 ) -> LiteralClaimObject | SubjectClaimObject | ExactContentClaimObject:
-    if not isinstance(value, AuthoringExactContentObjectV1):
+    if not isinstance(value, AuthoringExactContentObject):
         assert isinstance(value, LiteralClaimObject | SubjectClaimObject)
         return value
     content = value.content
@@ -685,7 +685,7 @@ def _install_claim_dependencies(
 
     candidate_tree = fork_tree(base_tree)
     changed_paths: set[str] = set()
-    if not isinstance(payload, ClaimAuthoringPayloadV2 | ClaimAuthoringPayloadV3):
+    if not isinstance(payload, ClaimAuthoringPayloadV2 | ClaimAuthoringPayload):
         return candidate_tree, changed_paths
 
     drafts = payload.dependency_drafts
@@ -793,7 +793,7 @@ def _refuse_citation_into_projection_window(
     store = instance.body_store()
     source_id: str | None = None
     page: bytes | None = None
-    if isinstance(payload.source, WorkingSelectionObservationV1):
+    if isinstance(payload.source, WorkingSelectionObservation):
         source_id = payload.source.source_id
         page = payload.source.source_content
         if page is not None:
@@ -825,7 +825,7 @@ def _refuse_citation_into_projection_window(
             page = resolved_source.content
     cited_source = (
         envelope.source.source_identity
-        if isinstance(envelope.source, ExternalSourceReferenceV1)
+        if isinstance(envelope.source, ExternalSourceReference)
         else source_id
     )
     if cited_source is None:
@@ -921,7 +921,7 @@ def _lower_claim(
     authored = intent.payload if payload is None else payload
     assert isinstance(authored, ClaimAuthoringPayloadV1)
     payload = authored
-    derivation = payload.derivation if isinstance(payload, ClaimAuthoringPayloadV3) else None
+    derivation = payload.derivation if isinstance(payload, ClaimAuthoringPayload) else None
     if payload.statement.role == "derivation" or derivation is not None:
         if (
             derivation is None
@@ -1084,7 +1084,7 @@ def _lower_claim(
     predecessor: ClaimArtifactAny | None = None
     if path in candidate_base_tree:
         predecessor = parse_claim(candidate_base_tree[path], path=path)
-        if isinstance(predecessor, ClaimArtifactV3):
+        if isinstance(predecessor, ClaimArtifact):
             _refuse(
                 "playbill.authoring.claim_terminal",
                 "revises",
@@ -1108,7 +1108,7 @@ def _lower_claim(
     accepted_contract: AcceptedCaptureContract | None = None
     accepted_producer_digests: dict[str, str] = {}
     install_contract = True
-    if isinstance(payload.source, SelfSourceBodyV1):
+    if isinstance(payload.source, SelfSourceBody):
         built_capture = build_coordinator_self_source_capture(
             store=instance.body_store(),
             actor_id=actor_id,
@@ -1120,7 +1120,7 @@ def _lower_claim(
         contract = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
         citation_role: CitationRole = "copy"
         citation_origin: CitationOrigin = "self_source"
-    elif isinstance(payload.source, ExistingCaptureCitationSourceV1):
+    elif isinstance(payload.source, ExistingCaptureCitationSource):
         install_contract = False
         store = instance.body_store()
         try:
@@ -1222,7 +1222,7 @@ def _lower_claim(
         citation_origin = "self_source" if classification == "claim_bound" else "independent"
     else:
         source = payload.source
-        assert isinstance(source, WorkingSelectionObservationV1)
+        assert isinstance(source, WorkingSelectionObservation)
         # A source contract improved through a successor is captured under its
         # accepted head, which is then already installed; the first capture of a
         # source installs its deterministic contract.
@@ -1271,12 +1271,12 @@ def _lower_claim(
 
     capture_digest_value = (
         payload.source.capture_digest
-        if isinstance(payload.source, ExistingCaptureCitationSourceV1)
+        if isinstance(payload.source, ExistingCaptureCitationSource)
         else built_capture.capture_digest
     )
     capture_envelope = (
         envelope
-        if isinstance(payload.source, ExistingCaptureCitationSourceV1)
+        if isinstance(payload.source, ExistingCaptureCitationSource)
         else built_capture.envelope
     )
 
@@ -1308,7 +1308,7 @@ def _lower_claim(
         inherited = None
     predecessor_citations = (
         inherited.backing.citations
-        if inherited is not None and isinstance(inherited.backing, ClaimBackingV2)
+        if inherited is not None and isinstance(inherited.backing, ClaimBacking)
         else ()
     )
     capture_digests = tuple(
@@ -1406,7 +1406,7 @@ def _lower_claim(
     claim = ClaimArtifactV2(
         identity=identity,
         statement=statement,
-        backing=ClaimBackingV2(
+        backing=ClaimBacking(
             referent_context=context,
             capture_digests=capture_digests,
             citations=merge_claim_citations(predecessor_citations, (citation,)),
@@ -1430,7 +1430,7 @@ def _lower_claim(
             )
         ),
     )
-    if isinstance(payload.source, ExistingCaptureCitationSourceV1) and citation_role == "evidence":
+    if isinstance(payload.source, ExistingCaptureCitationSource) and citation_role == "evidence":
         assert accepted_contract is not None
         admissions = evaluate_capture_evidence_admissions(
             claim,
@@ -1488,7 +1488,7 @@ def _lower_claim(
         if base_tree.get(member_path) != candidate_tree[member_path]
     )
     idempotent = (
-        isinstance(payload.source, ExistingCaptureCitationSourceV1)
+        isinstance(payload.source, ExistingCaptureCitationSource)
         and predecessor is not None
         and claim.statement == predecessor.statement
         and citation in predecessor_citations
@@ -1562,7 +1562,7 @@ def _validation_error_lines(exc: ValidationError, *, root: str) -> tuple[str, ..
 
 
 def _acquisition_policy_pin(
-    payload: ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2,
+    payload: ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayload,
     *,
     accepted: dict[str, tuple[str, str]],
     candidates: dict[str, tuple[str, str]],
@@ -1577,7 +1577,7 @@ def _acquisition_policy_pin(
     every other Procedure member uses resolves it.
     """
 
-    name = payload.acquisition_policy if isinstance(payload, ProcedureAuthoringPayloadV2) else None
+    name = payload.acquisition_policy if isinstance(payload, ProcedureAuthoringPayload) else None
     if name is None:
         return None
     try:
@@ -1590,10 +1590,10 @@ def _acquisition_policy_pin(
             repair_kind="replace_reference",
             repair_description="Name an accepted SourceAcquisitionPolicy by its semantic name.",
         )
-    reference: AuthoringArtifactReferenceV1 | AuthoringCandidateReferenceV1 = (
-        AuthoringCandidateReferenceV1(role=ACQUISITION_POLICY_PIN_ROLE, target=target)
+    reference: AuthoringArtifactReference | AuthoringCandidateReference = (
+        AuthoringCandidateReference(role=ACQUISITION_POLICY_PIN_ROLE, target=target)
         if target.qualified in candidate_identities
-        else AuthoringArtifactReferenceV1(role=ACQUISITION_POLICY_PIN_ROLE, target=target)
+        else AuthoringArtifactReference(role=ACQUISITION_POLICY_PIN_ROLE, target=target)
     )
     resolved = _resolve_authoring_references(
         reference.model_dump(mode="json"),
@@ -1611,13 +1611,13 @@ def _resolve_authoring_references(
     accepted: dict[str, tuple[str, str]],
     candidates: dict[str, tuple[str, str]] | None = None,
     candidate_identities: frozenset[str] = frozenset(),
-    owned_contracts: dict[str, ProcedureOwnedContractV1] | None = None,
+    owned_contracts: dict[str, ProcedureOwnedContract] | None = None,
     location: str = "definition",
 ) -> object:
     if isinstance(value, dict):
         if value.get("tag") == "playbill-authoring-artifact-reference-v1":
             try:
-                reference = AuthoringArtifactReferenceV1.model_validate(value)
+                reference = AuthoringArtifactReference.model_validate(value)
             except ValidationError as exc:
                 _refuse(
                     "playbill.authoring.artifact_reference_invalid",
@@ -1648,7 +1648,7 @@ def _resolve_authoring_references(
             ).model_dump(mode="json")
         if value.get("tag") == "playbill-authoring-candidate-reference-v1":
             try:
-                candidate_reference = AuthoringCandidateReferenceV1.model_validate(value)
+                candidate_reference = AuthoringCandidateReference.model_validate(value)
             except ValidationError as exc:
                 _refuse(
                     "playbill.authoring.candidate_reference_invalid",
@@ -1802,20 +1802,20 @@ def _lower_procedure(
     candidate_paths: tuple[str, ...] = (),
 ) -> LoweredAuthoring:
     payload = intent.payload
-    assert isinstance(payload, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2)
+    assert isinstance(payload, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayload)
     source_authoring = "source_request" in payload.definition
     accepted: dict[str, tuple[str, str]] = {}
     candidate_artifacts: dict[str, tuple[str, str]] = {}
     if source_authoring:
         from cruxible_client.contracts.procedures.source_compiler import SourceCompileError
-        from cruxible_client.contracts.procedures.source_requests import ProcedureSourceRequestV1
+        from cruxible_client.contracts.procedures.source_requests import ProcedureSourceRequest
         from cruxible_core.authoring.procedure_source import resolve_indexed_source
         from cruxible_core.indexes.evaluated_state import EvaluationRows
 
         try:
             if set(payload.definition) != {"name", "source_request"}:
                 raise ValueError("Source authoring accepts a name and source_request only")
-            source_request = ProcedureSourceRequestV1.model_validate(
+            source_request = ProcedureSourceRequest.model_validate(
                 payload.definition["source_request"]
             )
             if source_request.name != payload.definition["name"]:
@@ -1838,11 +1838,11 @@ def _lower_procedure(
                         ).fetchone()
                         if row is not None:
                             target[identity] = (row[0], row[1])
-            payload = ProcedureAuthoringPayloadV2(
+            payload = ProcedureAuthoringPayload(
                 definition=compiled.definition.model_dump(mode="json", by_alias=True),
                 activation_policy=payload.activation_policy,
                 owned_contracts=tuple(
-                    ProcedureOwnedContractV1(
+                    ProcedureOwnedContract(
                         identity=ArtifactIdentity(kind="Contract", name=contract.name),
                         schema=contract.schema_,
                     )
@@ -1888,7 +1888,7 @@ def _lower_procedure(
                     )
     owned_contracts = (
         {contract.identity.name: contract for contract in payload.owned_contracts}
-        if isinstance(payload, ProcedureAuthoringPayloadV2)
+        if isinstance(payload, ProcedureAuthoringPayload)
         else None
     )
     resolved_definition = (
@@ -1911,7 +1911,7 @@ def _lower_procedure(
     # does. Only the parse generation differs; historical v3 bytes are untouched.
     graph_generation = graph_format if graph_format in {4, 5, 6} else 3
     definition_model = (
-        ProcedureDefinitionV6
+        ProcedureDefinition
         if graph_generation == 6
         else ProcedureDefinitionV5
         if graph_generation == 5
@@ -1970,7 +1970,7 @@ def _lower_procedure(
             ),
         )
     )
-    if isinstance(payload, ProcedureAuthoringPayloadV2):
+    if isinstance(payload, ProcedureAuthoringPayload):
         referenced_contract_digests = {
             pin.artifact_digest for pin in pins if pin.target.kind == "Contract"
         }
@@ -1997,9 +1997,9 @@ def _lower_procedure(
                 ),
             )
 
-    if isinstance(payload, ProcedureAuthoringPayloadV2) and definition.budget.max_items is not None:
+    if isinstance(payload, ProcedureAuthoringPayload) and definition.budget.max_items is not None:
 
-        def carries_list(contract: ProcedureOwnedContractV1) -> bool:
+        def carries_list(contract: ProcedureOwnedContract) -> bool:
             pending = list(contract.contract_schema.fields.values())
             while pending:
                 field = pending.pop()
@@ -2031,8 +2031,8 @@ def _lower_procedure(
         ),
     )
     try:
-        if isinstance(payload, ProcedureAuthoringPayloadV2):
-            procedure: ProcedureArtifactAny = ProcedureArtifactV2(
+        if isinstance(payload, ProcedureAuthoringPayload):
+            procedure: ProcedureArtifactAny = ProcedureArtifact(
                 identity=identity,
                 definition=definition,
                 definition_digest=compute_procedure_definition_digest(definition).tagged,
@@ -2086,19 +2086,19 @@ def _lower_procedure(
 
 
 def _render_non_procedure_member(
-    payload: ResolutionContractAuthoringPayloadV1
-    | AttestationAuthoringPayloadV1
-    | SubjectAuthoringPayloadV1
-    | QueryDefinitionAuthoringPayloadV1
-    | ClaimTypeAuthoringPayloadV1
-    | ApprovalPolicyAuthoringPayloadV1
-    | ProcedureRuntimePolicyAuthoringPayloadV1
-    | CaptureContractAuthoringPayloadV1
-    | SourceAcquisitionPolicyAuthoringPayloadV1,
+    payload: ResolutionContractAuthoringPayload
+    | AttestationAuthoringPayload
+    | SubjectAuthoringPayload
+    | QueryDefinitionAuthoringPayload
+    | ClaimTypeAuthoringPayload
+    | ApprovalPolicyAuthoringPayload
+    | ProcedureRuntimePolicyAuthoringPayload
+    | CaptureContractAuthoringPayload
+    | SourceAcquisitionPolicyAuthoringPayload,
     *,
     tree: Mapping[str, bytes] | None = None,
 ) -> tuple[str, bytes, str]:
-    if isinstance(payload, ResolutionContractAuthoringPayloadV1):
+    if isinstance(payload, ResolutionContractAuthoringPayload):
         from cruxible_client.contracts.resolution_contracts import (
             render_resolution_contract,
             resolution_contract_digest,
@@ -2111,7 +2111,7 @@ def _render_non_procedure_member(
             render_resolution_contract(contract_value),
             resolution_contract_digest(contract_value).tagged,
         )
-    if isinstance(payload, AttestationAuthoringPayloadV1):
+    if isinstance(payload, AttestationAuthoringPayload):
         from cruxible_client.contracts.accepted_attestations import (
             attestation_artifact_digest,
             attestation_identity,
@@ -2125,36 +2125,36 @@ def _render_non_procedure_member(
             render_accepted_attestation(value),
             attestation_artifact_digest(value).tagged,
         )
-    if isinstance(payload, CaptureContractAuthoringPayloadV1):
+    if isinstance(payload, CaptureContractAuthoringPayload):
         contract = payload.capture_contract
         return (
             capture_contract_path(contract.identity.name),
             render_capture_contract(contract),
             capture_contract_digest(contract).tagged,
         )
-    if isinstance(payload, SourceAcquisitionPolicyAuthoringPayloadV1):
+    if isinstance(payload, SourceAcquisitionPolicyAuthoringPayload):
         policy = payload.acquisition_policy
         return (
             acquisition_policy_path(policy.identity.name),
             render_acquisition_policy(policy),
             acquisition_policy_digest(policy).tagged,
         )
-    if isinstance(payload, ClaimTypeAuthoringPayloadV1):
+    if isinstance(payload, ClaimTypeAuthoringPayload):
         definition = payload.claim_type
         return (
             claim_type_path(definition.predicate),
             render_claim_type(definition),
             claim_type_digest(definition).tagged,
         )
-    if isinstance(payload, SubjectAuthoringPayloadV1):
+    if isinstance(payload, SubjectAuthoringPayload):
         shell = payload.subject
         return (
             subject_path(shell.subject_kind, shell.subject_id),
             render_subject(shell),
             subject_digest(shell).tagged,
         )
-    if isinstance(payload, QueryDefinitionAuthoringPayloadV1):
-        query: QueryDefinitionV1 = payload.query_definition
+    if isinstance(payload, QueryDefinitionAuthoringPayload):
+        query: QueryDefinition = payload.query_definition
         if tree is not None:
             pins = {(pin.role, pin.target.qualified): pin for pin in query.pins}
             for predicate in query.referenced_predicates:
@@ -2199,13 +2199,13 @@ def _render_non_procedure_member(
                     pins.values(), key=lambda p: (p.role, p.target.qualified, p.artifact_digest)
                 )
             ]
-            query = QueryDefinitionV1.model_validate(body)
+            query = QueryDefinition.model_validate(body)
         return (
             query_definition_path(query.identity.name),
             render_query_definition(query),
             query_definition_digest(query).tagged,
         )
-    if isinstance(payload, ApprovalPolicyAuthoringPayloadV1):
+    if isinstance(payload, ApprovalPolicyAuthoringPayload):
         return (
             APPROVAL_POLICY_PATH,
             render_approval_policy(payload.approval_policy),
@@ -2219,7 +2219,7 @@ def _render_non_procedure_member(
 
 
 def _render_line_member(
-    payload: LineAuthoringPayloadV1,
+    payload: LineAuthoringPayload,
     *,
     tree: Mapping[str, bytes],
 ) -> tuple[str, bytes, str]:
@@ -2250,7 +2250,7 @@ def _render_line_member(
         acquiring = sorted(
             node.node_id
             for node in procedure.definition.nodes
-            if isinstance(node, SourceNodeV3 | SourceNodeV4 | ExhaustTapNodeV3)
+            if isinstance(node, SourceNodeV3 | SourceNode | ExhaustTapNode)
         )
         if acquiring:
             _refuse(
@@ -2325,7 +2325,7 @@ def _render_line_member(
     if previous_content is not None:
         previous = parse_line_spec(previous_content, path=path)
         predecessor_digest = line_spec_digest(previous).tagged
-    trigger_event: CaptureEventSelectorV1 | None = None
+    trigger_event: CaptureEventSelector | None = None
     trigger_pins: tuple[ArtifactPin, ...] = ()
     if payload.trigger_input is not None:
         sources = [
@@ -2335,7 +2335,7 @@ def _render_line_member(
         ]
         contract = (
             sources[0].capture_contract
-            if len(sources) == 1 and isinstance(sources[0], SourceNodeV4)
+            if len(sources) == 1 and isinstance(sources[0], SourceNode)
             else None
         )
         if not isinstance(contract, ArtifactPin):
@@ -2348,7 +2348,7 @@ def _render_line_member(
                 repair_description="Name the `as` alias of one Source node, or omit it.",
             )
         assert isinstance(contract, ArtifactPin)
-        trigger_event = CaptureEventSelectorV1(
+        trigger_event = CaptureEventSelector(
             capture_contract_identity=contract.target,
             capture_contract_digest=contract.artifact_digest,
         )
@@ -2393,14 +2393,14 @@ def _render_line_member(
             predecessor_digest=predecessor_digest,
         ),
     )
-    line = LineSpecV6.model_validate(line_fields)
+    line = LineSpec.model_validate(line_fields)
     if previous_content is not None and _same_revision_content(line, previous):
         return path, previous_content, line_spec_digest(previous).tagged
     return path, render_line_spec(line), line_spec_digest(line).tagged
 
 
 def _render_trigger_member(
-    payload: TriggerAuthoringPayloadV1,
+    payload: TriggerAuthoringPayload,
     *,
     tree: Mapping[str, bytes],
 ) -> tuple[str, bytes, str]:
@@ -2422,7 +2422,7 @@ def _render_trigger_member(
                 repair_kind="replace_line_name",
                 repair_description="Use a Line name present at the authoring coordinate.",
             )
-        target: TriggerTargetV1 = LineTargetV1(
+        target: TriggerTarget = LineTarget(
             line=ArtifactRef(
                 role=TRIGGER_LINE_REF_ROLE,
                 target=ArtifactIdentity(kind="Line", name=payload.line_name),
@@ -2430,7 +2430,7 @@ def _render_trigger_member(
         )
     else:
         assert payload.action is not None
-        target = ActionTargetV1(action=payload.action)
+        target = ActionTarget(action=payload.action)
     selector = schedule_capture_selector(payload.schedule)
     if live and selector is not None:
         capture_path = capture_contract_path(selector.capture_contract_identity.name)
@@ -2450,7 +2450,7 @@ def _render_trigger_member(
     path = trigger_path(payload.name)
     previous_content = tree.get(path)
     previous = None if previous_content is None else parse_trigger(previous_content, path=path)
-    trigger = TriggerV1(
+    trigger = Trigger(
         identity=ArtifactIdentity(kind="Trigger", name=payload.name),
         schedule=payload.schedule,
         target=target,
@@ -2466,9 +2466,7 @@ def _render_trigger_member(
     return path, render_trigger(trigger), trigger_digest(trigger).tagged
 
 
-def _contract_fields_summary(
-    procedure: ProcedureArtifactV2, contract: ArtifactPin
-) -> dict[str, str]:
+def _contract_fields_summary(procedure: ProcedureArtifact, contract: ArtifactPin) -> dict[str, str]:
     for owned in procedure.owned_contracts:
         if (
             owned.identity == contract.target
@@ -2482,7 +2480,7 @@ def _contract_fields_summary(
 
 
 def _check_line_parameters(
-    payload: LineAuthoringPayloadV1,
+    payload: LineAuthoringPayload,
     *,
     procedure: ProcedureArtifactAny,
     procedure_path_value: str,
@@ -2495,12 +2493,12 @@ def _check_line_parameters(
     is authored rather than on every later run.
     """
 
-    if not isinstance(procedure, ProcedureArtifactV2):
+    if not isinstance(procedure, ProcedureArtifact):
         return
     contract = procedure.definition.contract_in
     if not isinstance(contract, ArtifactPin):
         return
-    accepted = AcceptedProcedureV1(
+    accepted = AcceptedProcedure(
         path=procedure_path_value,
         procedure=procedure,
         artifact_digest=procedure_artifact_digest(procedure).tagged,
@@ -2531,13 +2529,13 @@ def _required_slot_names(procedure: ProcedureArtifactAny) -> tuple[str, ...]:
     names: list[str] = []
     for node in procedure.definition.nodes:
         for binding in iter_pin_bindings(node):
-            if isinstance(binding, ProcedurePinSlotRefV1):
+            if isinstance(binding, ProcedurePinSlotRef):
                 names.append(binding.slot_name)
     return tuple(sorted(set(names)))
 
 
 def _render_procedure_mandate_member(
-    payload: ProcedureMandateAuthoringPayloadV1,
+    payload: ProcedureMandateAuthoringPayload,
     *,
     tree: Mapping[str, bytes],
 ) -> tuple[str, bytes, str]:
@@ -2559,7 +2557,7 @@ def _render_procedure_mandate_member(
     if previous_content is not None:
         previous = parse_procedure_mandate_any(previous_content, path=path)
         predecessor_digest = procedure_mandate_digest(previous).tagged
-    scope: list[MandateClaimScopeV1] = []
+    scope: list[MandateClaimScope] = []
     for index, item in enumerate(payload.scope):
         type_path = claim_type_path(item.claim_type)
         type_content = tree.get(type_path)
@@ -2573,7 +2571,7 @@ def _render_procedure_mandate_member(
             )
         claim_type = parse_claim_type(type_content, path=type_path)
         scope.append(
-            MandateClaimScopeV1(
+            MandateClaimScope(
                 claim_type=ArtifactPin(
                     role="claim-type",
                     target=claim_type.identity,
@@ -2598,7 +2596,7 @@ def _render_procedure_mandate_member(
                 repair_description="Name a QueryDefinition present at the authoring coordinate.",
             )
         query = parse_query_definition(query_content, path=query_path)
-        condition = MandateConditionV1(
+        condition = MandateCondition(
             query=ArtifactPin(
                 role="condition-query",
                 target=query.identity,
@@ -2609,7 +2607,7 @@ def _render_procedure_mandate_member(
             required_fields=tuple(sorted(set(payload.condition.required_fields))),
             fallback=payload.condition.fallback,
         )
-    mandate = ProcedureMandateV2(
+    mandate = ProcedureMandate(
         identity=ArtifactIdentity(kind="ProcedureMandate", name=payload.name),
         procedure=ArtifactPin(
             role="procedure",
@@ -2645,14 +2643,14 @@ def _render_procedure_mandate_member(
 
 def _lower_non_procedure(
     *,
-    payload: ResolutionContractAuthoringPayloadV1
-    | AttestationAuthoringPayloadV1
-    | SubjectAuthoringPayloadV1
-    | QueryDefinitionAuthoringPayloadV1
-    | ApprovalPolicyAuthoringPayloadV1
-    | ProcedureRuntimePolicyAuthoringPayloadV1
-    | CaptureContractAuthoringPayloadV1
-    | SourceAcquisitionPolicyAuthoringPayloadV1,
+    payload: ResolutionContractAuthoringPayload
+    | AttestationAuthoringPayload
+    | SubjectAuthoringPayload
+    | QueryDefinitionAuthoringPayload
+    | ApprovalPolicyAuthoringPayload
+    | ProcedureRuntimePolicyAuthoringPayload
+    | CaptureContractAuthoringPayload
+    | SourceAcquisitionPolicyAuthoringPayload,
     base_tree: Mapping[str, bytes],
 ) -> LoweredAuthoring:
     path, content, digest = _render_non_procedure_member(payload, tree=base_tree)
@@ -2683,7 +2681,7 @@ MEMBER_STAGING_ORDER = (
 )
 
 
-def _member_stage(member: AuthoringChangeSetMemberV1) -> str:
+def _member_stage(member: AuthoringChangeSetMember) -> str:
     """Say which staging pass writes this member into the change set's tree.
 
     Members are byte-sorted by semantic identity on the wire so one intent has
@@ -2701,27 +2699,27 @@ def _member_stage(member: AuthoringChangeSetMemberV1) -> str:
     member-path ownership refuses the set before any of these passes run.
     """
 
-    if isinstance(member, QueryDefinitionAuthoringPayloadV1):
+    if isinstance(member, QueryDefinitionAuthoringPayload):
         return "query"
     if isinstance(member, ClaimAuthoringPayloadV1):
         return "claim"
-    if isinstance(member, ClaimTypeSuccessionMemberV1):
+    if isinstance(member, ClaimTypeSuccessionMember):
         return "claim_type_succession"
-    if isinstance(member, ClaimRetirementMemberV1):
+    if isinstance(member, ClaimRetirementMember):
         return "claim_retirement"
-    if isinstance(member, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2):
+    if isinstance(member, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayload):
         return "procedure"
-    if isinstance(member, ProcedureMandateAuthoringPayloadV1):
+    if isinstance(member, ProcedureMandateAuthoringPayload):
         return "procedure_mandate"
-    if isinstance(member, LineAuthoringPayloadV1):
+    if isinstance(member, LineAuthoringPayload):
         return "line"
-    if isinstance(member, TriggerAuthoringPayloadV1):
+    if isinstance(member, TriggerAuthoringPayload):
         return "trigger"
     return "definition"
 
 
 def _member_primary_path(
-    member: AuthoringChangeSetMemberV1,
+    member: AuthoringChangeSetMember,
     *,
     claim_identities: Mapping[str, str],
 ) -> str:
@@ -2729,19 +2727,19 @@ def _member_primary_path(
 
     if isinstance(member, ClaimAuthoringPayloadV1):
         return claim_path(claim_identities[authoring_member_identity(member)])
-    if isinstance(member, ClaimTypeSuccessionMemberV1):
+    if isinstance(member, ClaimTypeSuccessionMember):
         return claim_type_path(member.predicate)
-    if isinstance(member, ClaimRetirementMemberV1):
+    if isinstance(member, ClaimRetirementMember):
         return claim_path(member.claim_id)
-    if isinstance(member, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2):
+    if isinstance(member, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayload):
         return procedure_path(str(member.definition["name"]))
-    if isinstance(member, ProcedureMandateAuthoringPayloadV1):
+    if isinstance(member, ProcedureMandateAuthoringPayload):
         return procedure_mandate_path(member.name)
-    if isinstance(member, LineAuthoringPayloadV1):
+    if isinstance(member, LineAuthoringPayload):
         return line_spec_path(member.name)
-    if isinstance(member, TriggerAuthoringPayloadV1):
+    if isinstance(member, TriggerAuthoringPayload):
         return trigger_path(member.name)
-    if isinstance(member, QueryDefinitionAuthoringPayloadV1):
+    if isinstance(member, QueryDefinitionAuthoringPayload):
         return query_definition_path(member.query_definition.identity.name)
     path, _content, _digest = _render_non_procedure_member(member)
     return path
@@ -2821,12 +2819,12 @@ class ChangeSetSingletonOnlyMember:
 
 CHANGE_SET_SINGLETON_ONLY_MEMBERS: tuple[ChangeSetSingletonOnlyMember, ...] = (
     ChangeSetSingletonOnlyMember(
-        payload=ApprovalPolicyAuthoringPayloadV1,
+        payload=ApprovalPolicyAuthoringPayload,
         kind="approval_policy",
         artifact="ApprovalPolicy",
     ),
     ChangeSetSingletonOnlyMember(
-        payload=ProcedureRuntimePolicyAuthoringPayloadV1,
+        payload=ProcedureRuntimePolicyAuthoringPayload,
         kind="procedure_runtime_policy",
         artifact="ProcedureRuntimePolicy",
     ),
@@ -2843,7 +2841,7 @@ def _lower_change_set(
     derivation_procedure: ArtifactPin | None = None,
 ) -> LoweredAuthoring:
     payload = intent.payload
-    assert isinstance(payload, ChangeSetAuthoringPayloadV1)
+    assert isinstance(payload, ChangeSetAuthoringPayload)
     for singleton in CHANGE_SET_SINGLETON_ONLY_MEMBERS:
         if any(isinstance(member, singleton.payload) for member in payload.members):
             _refuse(
@@ -2901,12 +2899,12 @@ def _lower_change_set(
     candidate_identities = frozenset(
         authoring_member_identity(member)
         for member in payload.members
-        if not isinstance(member, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2)
+        if not isinstance(member, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayload)
     )
     candidate_paths = tuple(
         primary_paths[i]
         for i, member in enumerate(payload.members)
-        if not isinstance(member, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2)
+        if not isinstance(member, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayload)
     )
     for stage in MEMBER_STAGING_ORDER:
         for index, member in enumerate(payload.members):
@@ -2949,7 +2947,7 @@ def _lower_change_set(
                         index=index,
                         sibling_member_by_claim_id=sibling_member_by_claim_id,
                     ) from error
-                if isinstance(member, ClaimTypeSuccessionMemberV1):
+                if isinstance(member, ClaimTypeSuccessionMember):
                     _refuse_contended_succession_paths(
                         index=index,
                         changed_paths=extra_paths,
@@ -3006,7 +3004,7 @@ what any sibling member it consumed resolved to."""
 def _stage_change_set_member(
     instance: PlaybillInstance,
     *,
-    member: AuthoringChangeSetMemberV1,
+    member: AuthoringChangeSetMember,
     intent: AuthoringIntentV1,
     actor_id: str,
     base: AcceptedProjectionCoordinate,
@@ -3014,7 +3012,7 @@ def _stage_change_set_member(
     staged_tree: Mapping[str, bytes],
     claim_index: _ClaimPredicateIndex,
     path: str,
-    members: tuple[AuthoringChangeSetMemberV1, ...],
+    members: tuple[AuthoringChangeSetMember, ...],
     claim_identities: Mapping[str, str],
     candidate_identities: frozenset[str],
     candidate_paths: tuple[str, ...],
@@ -3040,7 +3038,7 @@ def _stage_change_set_member(
         member_resolved["claim_id"] = claim_id
         extra = {member_path for member_path, _content in lowered.changed_members}
         return fork_tree(lowered.proposed_tree), member_resolved, extra, {}
-    if isinstance(member, ClaimTypeSuccessionMemberV1):
+    if isinstance(member, ClaimTypeSuccessionMember):
         return _stage_claim_type_succession(
             instance,
             member=member,
@@ -3053,7 +3051,7 @@ def _stage_change_set_member(
             claim_identities=claim_identities,
             re_author_siblings=re_author_siblings,
         )
-    if isinstance(member, ClaimRetirementMemberV1):
+    if isinstance(member, ClaimRetirementMember):
         tree, resolved, extra = _stage_claim_retirement(
             instance,
             member=member,
@@ -3062,7 +3060,7 @@ def _stage_change_set_member(
             path=path,
         )
         return tree, resolved, extra, {}
-    if isinstance(member, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2):
+    if isinstance(member, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayload):
         lowered = _lower_procedure(
             instance,
             intent=intent.model_copy(update={"payload": member}),
@@ -3073,17 +3071,17 @@ def _stage_change_set_member(
             candidate_paths=candidate_paths,
         )
         return fork_tree(lowered.proposed_tree), dict(lowered.resolved_authoring), set(), {}
-    if isinstance(member, ProcedureMandateAuthoringPayloadV1):
+    if isinstance(member, ProcedureMandateAuthoringPayload):
         mandate_path, content, digest = _render_procedure_mandate_member(member, tree=staged_tree)
         candidate_tree = fork_tree(staged_tree)
         candidate_tree[mandate_path] = content
         return candidate_tree, {"artifact_digest": digest}, set(), {}
-    if isinstance(member, LineAuthoringPayloadV1):
+    if isinstance(member, LineAuthoringPayload):
         line_path, content, digest = _render_line_member(member, tree=staged_tree)
         candidate_tree = fork_tree(staged_tree)
         candidate_tree[line_path] = content
         return candidate_tree, {"artifact_digest": digest}, set(), {}
-    if isinstance(member, TriggerAuthoringPayloadV1):
+    if isinstance(member, TriggerAuthoringPayload):
         trigger_member_path, content, digest = _render_trigger_member(member, tree=staged_tree)
         candidate_tree = fork_tree(staged_tree)
         candidate_tree[trigger_member_path] = content
@@ -3095,7 +3093,7 @@ def _stage_change_set_member(
 
 
 def _resolve_re_author_siblings(
-    members: tuple[AuthoringChangeSetMemberV1, ...],
+    members: tuple[AuthoringChangeSetMember, ...],
     *,
     base_tree: Mapping[str, bytes],
     sibling_member_by_claim_id: Mapping[str, int],
@@ -3116,7 +3114,7 @@ def _resolve_re_author_siblings(
     resolved: dict[int, dict[str, int]] = {}
     owner: dict[int, int] = {}
     for index, member in enumerate(members):
-        if not isinstance(member, ClaimTypeSuccessionMemberV1):
+        if not isinstance(member, ClaimTypeSuccessionMember):
             continue
         bound: dict[str, int] = {}
         for position, dependent in enumerate(member.dependents):
@@ -3236,12 +3234,12 @@ def _refuse_contended_succession_paths(
     changed_paths: set[str],
     owner_by_path: Mapping[str, int],
     re_authored: frozenset[int],
-    members: tuple[AuthoringChangeSetMemberV1, ...],
+    members: tuple[AuthoringChangeSetMember, ...],
 ) -> None:
     """Refuse a set that settles one artifact twice: in a succession and as a member.
 
     A succession rewrites every dependent of the ClaimType it succeeds. Another
-    member that authors one of those same paths -- a `ClaimRetirementMemberV1`
+    member that authors one of those same paths -- a `ClaimRetirementMember`
     withdrawing a carried Claim, say -- chains off a version this generation
     never accepts, and the compiler answers with a raw `stale_predecessor`
     diagnostic rather than a refusal an author can act on. Both members are
@@ -3275,13 +3273,13 @@ def _refuse_contended_succession_paths(
 def _stage_claim_type_succession(
     instance: PlaybillInstance,
     *,
-    member: ClaimTypeSuccessionMemberV1,
+    member: ClaimTypeSuccessionMember,
     intent: AuthoringIntentV1,
     actor_id: str,
     base: AcceptedProjectionCoordinate,
     staged_tree: Mapping[str, bytes],
     path: str,
-    members: tuple[AuthoringChangeSetMemberV1, ...],
+    members: tuple[AuthoringChangeSetMember, ...],
     claim_identities: Mapping[str, str],
     re_author_siblings: Mapping[str, int],
 ) -> StagedMember:
@@ -3363,7 +3361,7 @@ def _stage_claim_type_succession(
                         (
                             *member.dependents,
                             *(
-                                ClaimTypeSuccessionDependentV1(
+                                ClaimTypeSuccessionDependent(
                                     identity=item.identity, disposition="successor"
                                 )
                                 for item in inventory
@@ -3478,7 +3476,7 @@ def _stage_claim_type_succession(
         member_resolved["claim_id"] = claim_id
         sibling_resolved[sibling_index] = member_resolved
     dispositions = tuple(
-        ClaimTypeDependentDispositionV3(
+        ClaimTypeDependentDisposition(
             identity=item.identity,
             disposition="successor" if item.disposition == "re_author" else item.disposition,
             claim_retirement_reason=item.claim_retirement_reason,
@@ -3525,7 +3523,7 @@ def _stage_claim_type_succession(
 def _stage_claim_retirement(
     instance: PlaybillInstance,
     *,
-    member: ClaimRetirementMemberV1,
+    member: ClaimRetirementMember,
     base: AcceptedProjectionCoordinate,
     staged_tree: Mapping[str, bytes],
     path: str,
@@ -3550,7 +3548,7 @@ def _stage_claim_retirement(
             repair_kind="drop_member",
             repair_description="Remove this retirement member; the Claim is already retired.",
         )
-    root = ClaimRetireDependentV1(
+    root = ClaimRetireDependent(
         artifact_identity=claim.identity,
         predecessor_digest=claim_artifact_digest(claim).tagged,
         reason=member.reason,
@@ -3683,9 +3681,9 @@ def lower_authoring(
             base_tree=base_tree,
             derivation_procedure=derivation_procedure,
         )
-    if isinstance(intent.payload, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2):
+    if isinstance(intent.payload, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayload):
         return _lower_procedure(instance, intent=intent, base=base, base_tree=base_tree)
-    if isinstance(intent.payload, ProcedureMandateAuthoringPayloadV1):
+    if isinstance(intent.payload, ProcedureMandateAuthoringPayload):
         path, content, digest = _render_procedure_mandate_member(
             intent.payload,
             tree=base_tree,
@@ -3703,7 +3701,7 @@ def lower_authoring(
             changed_members=changed,
             idempotent=not changed and base.git_oid == instance.accepted_coordinate().git_oid,
         )
-    if isinstance(intent.payload, ChangeSetAuthoringPayloadV1):
+    if isinstance(intent.payload, ChangeSetAuthoringPayload):
         return _lower_change_set(
             instance,
             intent=intent,
@@ -3712,10 +3710,10 @@ def lower_authoring(
             base_tree=base_tree,
             derivation_procedure=derivation_procedure,
         )
-    if isinstance(intent.payload, LineAuthoringPayloadV1 | TriggerAuthoringPayloadV1):
+    if isinstance(intent.payload, LineAuthoringPayload | TriggerAuthoringPayload):
         path, content, digest = (
             _render_line_member(intent.payload, tree=base_tree)
-            if isinstance(intent.payload, LineAuthoringPayloadV1)
+            if isinstance(intent.payload, LineAuthoringPayload)
             else _render_trigger_member(intent.payload, tree=base_tree)
         )
         candidate_tree = fork_tree(base_tree)

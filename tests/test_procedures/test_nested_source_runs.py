@@ -10,7 +10,7 @@ from cruxible_client.authoring.source import halt, invoke, procedure
 from cruxible_client.contracts.authoring.inputs import lower_authoring_input
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_client.contracts.procedures.source_requests import (
-    ProcedureSourcePreviewRequestV1,
+    ProcedureSourcePreviewRequest,
     SourceProcedureSelection,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
@@ -20,7 +20,7 @@ from cruxible_core.exhaust.records import parse_journal_payload
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.service.procedures.procedure_runs import (
-    ProcedureRunRequestV2,
+    ProcedureRunRequest,
     _journal,
     _records_for_run,
     service_get_playbill_procedure_run,
@@ -87,7 +87,7 @@ def accept_blueprint(instance, owner, blueprint, **bindings):
         )
     preview = service_preview_procedure_source(
         instance,
-        request=ProcedureSourcePreviewRequestV1(
+        request=ProcedureSourcePreviewRequest(
             source=source,
             at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
         ),
@@ -169,7 +169,7 @@ def test_child_occurrences_have_exact_bindings_and_replay_without_execution(
     result = service_run_playbill_procedure(
         instance,
         name="parent",
-        request=ProcedureRunRequestV2(input={"positive": positive}),
+        request=ProcedureRunRequest(input={"positive": positive}),
         actor_context=actor,
     )
     assert result.status == "succeeded", payloads(instance, result.run_id)[-1][1]
@@ -225,7 +225,7 @@ def test_child_occurrences_have_exact_bindings_and_replay_without_execution(
     replay = service_run_playbill_procedure(
         instance,
         name="parent",
-        request=ProcedureRunRequestV2(input={"positive": positive}),
+        request=ProcedureRunRequest(input={"positive": positive}),
         actor_context=actor,
     )
     assert replay.run_id == result.run_id
@@ -242,7 +242,7 @@ def test_calls_share_the_parent_provider_budget(tmp_path, planning_delay):
     from cruxible_client.contracts.procedures.contracts import OwnedProcedureContractValidator
     from cruxible_client.contracts.procedures.source_compiler import compile_source
     from cruxible_client.contracts.procedures.source_program import (
-        ProcedureSourceV1,
+        ProcedureSource,
         SourceProcedureBinding,
     )
     from cruxible_core.procedures.execution import ProcedureExecutor
@@ -262,7 +262,7 @@ def test_calls_share_the_parent_provider_budget(tmp_path, planning_delay):
     child = call_procedure()
     base, fixture = _prepared_v5(child, tmp_path, operation_contract=operation())
     compiled = compile_source(
-        ProcedureSourceV1(
+        ProcedureSource(
             text=textwrap.dedent("""
                 def example(request, bindings):
                     first = invoke(bindings.child, input=bindings.child.input(size=1))
@@ -537,7 +537,7 @@ def test_source_combines_typed_field_read_and_existing_query(tmp_path):
     result = service_run_playbill_procedure(
         instance,
         name="assess-work",
-        request=ProcedureRunRequestV2(input={"item": "wi-42"}),
+        request=ProcedureRunRequest(input={"item": "wi-42"}),
         actor_context=actor,
     )
     assert result.status == "succeeded", result.model_dump_json(indent=2)

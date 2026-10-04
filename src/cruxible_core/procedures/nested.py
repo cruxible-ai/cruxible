@@ -7,12 +7,12 @@ from typing import Protocol
 
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.errors import PlaybillExecutionError
-from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
+from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.procedures.models import (
-    InvokeNodeV6,
-    ProcedureBudgetV3,
-    ProcedureDefinitionV6,
-    ProcedureHardCapsV3,
+    InvokeNode,
+    ProcedureBudget,
+    ProcedureDefinition,
+    ProcedureHardCaps,
 )
 from cruxible_client.contracts.procedures.results import procedure_acquisition_plan_digest
 from cruxible_core.procedures.egress import EffectiveRungV1
@@ -38,15 +38,13 @@ def _minimum(*values: int | None) -> int | None:
     return min(present) if present else None
 
 
-def constrained_caps(
-    child: ProcedureHardCapsV3, parent: ProcedureHardCapsV3
-) -> ProcedureHardCapsV3:
+def constrained_caps(child: ProcedureHardCaps, parent: ProcedureHardCaps) -> ProcedureHardCaps:
     fields = {
         name: _minimum(getattr(child, name), getattr(parent, name))
         for name in type(child).model_fields
         if name not in {"tag", "max_wall_clock"}
     }
-    return ProcedureHardCapsV3.model_validate(
+    return ProcedureHardCaps.model_validate(
         {
             **fields,
             "max_wall_clock": min(
@@ -57,11 +55,11 @@ def constrained_caps(
 
 
 def constrained_budget(
-    child: ProcedureBudgetV3,
-    remaining: ProcedureBudgetV3,
-    caps: ProcedureHardCapsV3,
-) -> ProcedureBudgetV3:
-    return ProcedureBudgetV3(
+    child: ProcedureBudget,
+    remaining: ProcedureBudget,
+    caps: ProcedureHardCaps,
+) -> ProcedureBudget:
+    return ProcedureBudget(
         wall_clock=min(
             (child.wall_clock, remaining.wall_clock, caps.max_wall_clock),
             key=lambda d: d.microseconds,
@@ -84,9 +82,9 @@ class ParentInvocationContext:
     """Constructed by the executing parent, never deserialized from an SDK request."""
 
     admission: ProcedureRunAdmissionV2
-    accepted: AcceptedProcedureV1
-    node: InvokeNodeV6
-    remaining: ProcedureBudgetV3
+    accepted: AcceptedProcedure
+    node: InvokeNode
+    remaining: ProcedureBudget
     rung: EffectiveRungV1 | None
     deadline_ns: int | None = None
 
@@ -119,7 +117,7 @@ class ParentInvocationContext:
             ),
         )
 
-    def child_rung(self, accepted: AcceptedProcedureV1) -> EffectiveRungV1 | None:
+    def child_rung(self, accepted: AcceptedProcedure) -> EffectiveRungV1 | None:
         if self.rung is None:
             return None
         terms = tuple(
@@ -210,7 +208,7 @@ class ParentInvocationContext:
             }
         )
 
-    def verify(self, child: ProcedureRunAdmissionV8, accepted: AcceptedProcedureV1) -> None:
+    def verify(self, child: ProcedureRunAdmissionV8, accepted: AcceptedProcedure) -> None:
         definition = accepted.procedure.definition
         caps = constrained_caps(definition.hard_caps, self.admission.hard_caps)
         if (
@@ -218,7 +216,7 @@ class ParentInvocationContext:
             or self.admission.procedure_identity != self.accepted.procedure.identity
             or self.admission.procedure_artifact_digest != self.accepted.artifact_digest
             or self.admission.definition_digest != self.accepted.procedure.definition_digest
-            or not isinstance(self.accepted.procedure.definition, ProcedureDefinitionV6)
+            or not isinstance(self.accepted.procedure.definition, ProcedureDefinition)
             or self.node not in self.accepted.procedure.definition.nodes
             or self.node.procedure.target != accepted.procedure.identity
             or self.node.procedure.artifact_digest != accepted.artifact_digest
@@ -254,7 +252,7 @@ class ProcedureDelegation:
     """
 
     context: ParentInvocationContext
-    child: AcceptedProcedureV1
+    child: AcceptedProcedure
 
     def authority(self, admission: ProcedureRunAdmissionV8) -> ArtifactPin:
         self.context.verify(admission, self.child)
@@ -279,7 +277,7 @@ def authority_procedure(
 
 
 class NestedProcedureRunner(Protocol):
-    def preflight(self, accepted: AcceptedProcedureV1, admission: ProcedureRunAdmissionV1) -> None:
+    def preflight(self, accepted: AcceptedProcedure, admission: ProcedureRunAdmissionV1) -> None:
         """Verify all child capabilities before the parent's first effect."""
         ...
 

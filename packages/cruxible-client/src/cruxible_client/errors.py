@@ -16,7 +16,7 @@ from cruxible_client.contracts.errors import (
     ProposalSelectorAmbiguousError,
     ReadRefusalError,
 )
-from cruxible_client.contracts.repairs import ServedRepairV1
+from cruxible_client.contracts.repairs import ServedRepair
 
 _MAX_DISPLAY_ERRORS = 10
 
@@ -217,7 +217,7 @@ class ErrorResponse(BaseModel):
     # optional on the parsing side so a client never invents a repair the server
     # did not send: a null repair is the truthful reading of an envelope that
     # carried none.
-    repair: ServedRepairV1 | None = None
+    repair: ServedRepair | None = None
 
 
 def response_to_error(status: int, body: ErrorResponse) -> CoreError:

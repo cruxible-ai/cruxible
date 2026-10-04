@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 from cruxible_client.contracts.candidates import (
     CandidateMemberEvidence,
-    CandidateMemberLawEvidenceV2,
+    CandidateMemberLawEvidence,
 )
 from cruxible_client.contracts.documents import render_document
 from cruxible_client.contracts.errors import PlaybillGitError
@@ -44,8 +44,8 @@ def _law_member(
     *,
     kind: str = "document",
     closure_role: str = "authored",
-) -> CandidateMemberLawEvidenceV2:
-    return CandidateMemberLawEvidenceV2(
+) -> CandidateMemberLawEvidence:
+    return CandidateMemberLawEvidence(
         path=path,
         artifact_kind=kind,
         disposition="create",

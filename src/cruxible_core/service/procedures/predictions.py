@@ -9,8 +9,8 @@ from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
-    AuthoringIntentViewV1,
-    ResolutionContractAuthoringPayloadV1,
+    AuthoringIntentView,
+    ResolutionContractAuthoringPayload,
 )
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
 from cruxible_client.contracts.canonical import CanonicalValue
@@ -23,22 +23,22 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.predictions import (
-    ObservationSettlementEvidenceV2,
-    PlaybillPredictRequestV2,
-    PlaybillPredictResultV2,
-    PlaybillSettleRequestV2,
-    PlaybillSettleResultV2,
-    PredictionRefusalCodeV1,
-    TerminalSettlementEvidenceV2,
+    ObservationSettlementEvidence,
+    PlaybillPredictRequest,
+    PlaybillPredictResult,
+    PlaybillSettleRequest,
+    PlaybillSettleResult,
+    PredictionRefusalCode,
+    TerminalSettlementEvidence,
 )
-from cruxible_client.contracts.procedures.windows import TriggerEventReferenceV1
+from cruxible_client.contracts.procedures.windows import TriggerEventReference
 from cruxible_client.contracts.projection import AcceptedCoordinate as PublicAcceptedCoordinate
-from cruxible_client.contracts.repairs import ServedRepairV1, served_repair_for_refusal
+from cruxible_client.contracts.repairs import ServedRepair, served_repair_for_refusal
 from cruxible_client.contracts.resolution_contracts import (
-    ClaimVersionReferenceV1,
-    InvestigationBindingV1,
-    ResolutionContractReferenceV1,
-    ResolutionContractV1,
+    ClaimVersionReference,
+    InvestigationBinding,
+    ResolutionContract,
+    ResolutionContractReference,
     resolution_contract_digest,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -93,10 +93,10 @@ class PredictionRefused(PlaybillFormatError):
 
     def __init__(
         self,
-        code: PredictionRefusalCodeV1,
+        code: PredictionRefusalCode,
         message: str,
         *,
-        repair: ServedRepairV1,
+        repair: ServedRepair,
     ) -> None:
         self.code = code
         self.error_code = code
@@ -105,7 +105,7 @@ class PredictionRefused(PlaybillFormatError):
 
 
 def _refuse(
-    code: PredictionRefusalCodeV1,
+    code: PredictionRefusalCode,
     message: str,
 ) -> PredictionRefused:
     return PredictionRefused(code, message, repair=served_repair_for_refusal(code))
@@ -114,17 +114,17 @@ def _refuse(
 def service_predict_playbill(
     instance: PlaybillInstance,
     *,
-    request: PlaybillPredictRequestV2,
+    request: PlaybillPredictRequest,
     actor: AuthenticatedActor,
     evaluation_time: datetime,
-) -> PlaybillPredictResultV2:
+) -> PlaybillPredictResult:
     """Submit a governed test of an already accepted exact hypothesis.
 
     A hypothesis named by Claim ID is resolved here to the exact version
     accepted at the head, so the authored contract pins one Claim version.
     """
     instance.require_writable()
-    contract = ResolutionContractV1.model_validate(
+    contract = ResolutionContract.model_validate(
         {
             **request.contract.model_dump(mode="json"),
             "hypothesis": resolve_claim_version(instance, request.contract.hypothesis).model_dump(
@@ -135,7 +135,7 @@ def service_predict_playbill(
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     created = coordinator.create(
         actor=actor,
-        payload=ResolutionContractAuthoringPayloadV1(resolution_contract=contract),
+        payload=ResolutionContractAuthoringPayload(resolution_contract=contract),
         canonical_timestamp=canonical_candidate_timestamp(ensure_utc(evaluation_time)),
     )
     submitted = coordinator.submit(created.intent.intent_id, actor=actor)
@@ -145,16 +145,16 @@ def service_predict_playbill(
             "Resolution contract did not produce a valid proposal; repair the authoring "
             "diagnostics.",
         )
-    return PlaybillPredictResultV2(
+    return PlaybillPredictResult(
         contract_identity=contract.identity.qualified,
         contract_digest=resolution_contract_digest(contract).tagged,
         proposal_id=submitted.status.proposal_id,
-        intent=AuthoringIntentViewV1(intent=submitted.intent).model_dump(mode="json"),
+        intent=AuthoringIntentView(intent=submitted.intent).model_dump(mode="json"),
     )
 
 
 def _observation_matches(
-    declaration: ResolutionContractV1,
+    declaration: ResolutionContract,
     claim: ClaimArtifactAny,
 ) -> bool:
     statement = claim.statement
@@ -184,8 +184,8 @@ def _journal(
 def _terminal_record(
     instance: PlaybillInstance,
     *,
-    evidence: TerminalSettlementEvidenceV2,
-    investigation: InvestigationBindingV1,
+    evidence: TerminalSettlementEvidence,
+    investigation: InvestigationBinding,
 ) -> StoredProcedureJournalRecordV1:
     from cruxible_core.service.procedures.procedure_runs import _state_from_records
 
@@ -372,8 +372,8 @@ def _settlement_route(
     instance: PlaybillInstance,
     *,
     prediction_id: str,
-    request: PlaybillSettleRequestV2,
-) -> tuple[ResolutionContractReferenceV1, TriggerEventReferenceV1 | None]:
+    request: PlaybillSettleRequest,
+) -> tuple[ResolutionContractReference, TriggerEventReference | None]:
     """The exact contract (and anchor) a settle route names, unless given outright.
 
     A bound window id (RSC-...) is held by the prediction worker with its exact
@@ -413,7 +413,7 @@ def _settlement_route(
             "its contract name or by the RSC-... window id `cruxible playbill next` shows.",
         )
     return (
-        ResolutionContractReferenceV1(
+        ResolutionContractReference(
             identity=ArtifactIdentity(kind="ResolutionContract", name=name),
             artifact_digest=digest,
             coordinate=PublicAcceptedCoordinate.from_internal(instance.accepted_coordinate()),
@@ -426,10 +426,10 @@ def service_settle_playbill_prediction(
     instance: PlaybillInstance,
     *,
     prediction_id: str,
-    request: PlaybillSettleRequestV2,
+    request: PlaybillSettleRequest,
     actor_context: GovernedActorContext,
     recorded_at: datetime,
-) -> PlaybillSettleResultV2:
+) -> PlaybillSettleResult:
     """Settle one accepted predicted Claim from a later accepted outcome.
 
     The route names the contract (its name or qualified identity) or one bound
@@ -442,7 +442,7 @@ def service_settle_playbill_prediction(
     reference, trigger_event = _settlement_route(
         instance, prediction_id=prediction_id, request=request
     )
-    evidence = request.evidence or ObservationSettlementEvidenceV2(
+    evidence = request.evidence or ObservationSettlementEvidence(
         claim=cast(str, request.observation)
     )
     evidence = evidence.model_copy(
@@ -459,7 +459,7 @@ def service_settle_playbill_prediction(
             "settlement_evidence_mismatch",
             "Settlement must reference the original live contract version, not its retirement.",
         )
-    investigation = InvestigationBindingV1(
+    investigation = InvestigationBinding(
         contract=reference,
         hypothesis=contract.hypothesis,
         window=bind_window(instance, contract.window, trigger_event, now=ensure_utc(recorded_at)),
@@ -475,7 +475,7 @@ def service_settle_playbill_prediction(
             "Settlement route differs from its exact contract reference and bound window.",
         )
     prediction_claim = read_claim_reference(instance, contract.hypothesis)
-    observation_reference = cast(ClaimVersionReferenceV1, evidence.claim)
+    observation_reference = cast(ClaimVersionReference, evidence.claim)
     observation = read_claim_reference(instance, observation_reference)
     observation_coordinate = observation_reference.coordinate
     if not _observation_matches(contract, observation):
@@ -531,7 +531,7 @@ def service_settle_playbill_prediction(
         "tag": "playbill-prediction-settlement-authorization-v1",
         "kind": "observation_admission",
     }
-    if isinstance(evidence, TerminalSettlementEvidenceV2):
+    if isinstance(evidence, TerminalSettlementEvidence):
         terminal = _terminal_record(
             instance,
             evidence=evidence,
@@ -558,7 +558,7 @@ def service_settle_playbill_prediction(
             "terminal_record_digest": terminal.record_digest,
             "mandate_actor_id": mandate_actor.actor_id,
         }
-    elif not isinstance(evidence, ObservationSettlementEvidenceV2):
+    elif not isinstance(evidence, ObservationSettlementEvidence):
         raise _refuse(
             "settlement_evidence_mismatch",
             "Settlement evidence kind is unsupported.",
@@ -599,7 +599,7 @@ def service_settle_playbill_prediction(
         resolution=resolution,
     )
     relation = build_settled_outcome_relation(activation, resolution)
-    return PlaybillSettleResultV2(
+    return PlaybillSettleResult(
         prediction_id=prediction_id,
         activation=activation.model_dump(mode="json"),
         resolution=resolution.model_dump(mode="json"),

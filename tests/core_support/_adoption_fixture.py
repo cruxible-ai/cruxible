@@ -59,7 +59,7 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, render_claim_type
 from cruxible_client.contracts.claims import (
     ClaimArtifactV2,
-    ClaimBackingV2,
+    ClaimBacking,
     ClaimReferentContext,
     ClaimStatement,
     LiteralClaimObject,
@@ -76,25 +76,25 @@ from cruxible_client.contracts.documents import (
     render_document,
 )
 from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicyV1,
+    ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionRuleV1,
-    ClaimResolutionPolicyV1,
+    ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.query.definitions import (
-    QueryDefinitionV1,
-    QueryEvaluationPolicyV1,
+    QueryDefinition,
+    QueryEvaluationPolicy,
     query_definition_path,
     render_query_definition,
 )
 from cruxible_client.contracts.query.grammar import (
-    QueryBudgetsV1,
-    QueryClaimValueRefV1,
-    QueryEntryV1,
-    QueryParameterDeclarationV1,
-    QueryParameterRefV1,
-    QueryProjectionFieldV1,
-    QueryProjectionV1,
+    QueryBudgets,
+    QueryClaimValueRef,
+    QueryEntry,
+    QueryParameterDeclaration,
+    QueryParameterRef,
+    QueryProjection,
+    QueryProjectionField,
 )
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress, SourceMapping
 from cruxible_client.contracts.subjects import (
@@ -258,8 +258,8 @@ def _claim_type(index: int) -> ClaimType:
                 ),
             )
         ),
-        admission_policy=ClaimAdmissionPolicyV1(),
-        resolution_policy=ClaimResolutionPolicyV1(
+        admission_policy=ClaimAdmissionPolicy(),
+        resolution_policy=ClaimResolutionPolicy(
             cardinality="one",
             eligible_verdicts=("supported",),
             selector="only_contender",
@@ -272,34 +272,34 @@ def _claim_type_path(claim_type: ClaimType) -> str:
     return f"claim-types/{namespace}/{leaf}.json"
 
 
-def _query_definition(index: int, claim_type: ClaimType) -> QueryDefinitionV1:
-    return QueryDefinitionV1(
+def _query_definition(index: int, claim_type: ClaimType) -> QueryDefinition:
+    return QueryDefinition(
         identity=ArtifactIdentity(kind="QueryDefinition", name=f"project.reading_{index:04d}"),
-        entry=QueryEntryV1(
+        entry=QueryEntry(
             binding="item",
             subject_kinds=(SUBJECT_KIND,),
-            subject_id=QueryParameterRefV1(parameter="item_id"),
+            subject_id=QueryParameterRef(parameter="item_id"),
         ),
         result_binding="item",
         result_shape="subject",
         result_cardinality="one",
         dedupe="subject",
-        projection=QueryProjectionV1(
+        projection=QueryProjection(
             fields=(
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="value",
-                    value=QueryClaimValueRefV1(binding="item", predicate=claim_type.predicate),
+                    value=QueryClaimValueRef(binding="item", predicate=claim_type.predicate),
                 ),
             )
         ),
-        parameters=(QueryParameterDeclarationV1(name="item_id", value_type="string"),),
-        evaluation_policy=QueryEvaluationPolicyV1(
+        parameters=(QueryParameterDeclaration(name="item_id", value_type="string"),),
+        evaluation_policy=QueryEvaluationPolicy(
             visible_verdicts=("supported",),
             visible_currency=("current",),
             conflict_behavior="refuse_on_conflict",
         ),
-        default_budgets=QueryBudgetsV1(max_results=1, max_traversal_depth=0),
-        maximum_budgets=QueryBudgetsV1(max_results=1, max_traversal_depth=0),
+        default_budgets=QueryBudgets(max_results=1, max_traversal_depth=0),
+        maximum_budgets=QueryBudgets(max_results=1, max_traversal_depth=0),
         pins=(
             ArtifactPin(
                 role="claim-type",
@@ -347,7 +347,7 @@ def _claim(
             object=LiteralClaimObject(value=value),
             role="observation",
         ),
-        backing=ClaimBackingV2(
+        backing=ClaimBacking(
             referent_context=ClaimReferentContext(
                 subject_content_digest=subject_digest(subject).tagged,
                 observed_at=observed_at,

@@ -28,7 +28,7 @@ from __future__ import annotations
 from typing import Literal
 
 from cruxible_client._error_base import CoreError as CoreError
-from cruxible_client.contracts.repairs import HandEditRepairV1, RepairOperationV1
+from cruxible_client.contracts.repairs import HandEditRepair, RepairOperation
 from cruxible_client.errors import permission_denied_message
 
 _MAX_DISPLAY_ERRORS = 10
@@ -131,13 +131,13 @@ class ChangeRefusedError(RequestRefusedError):
         message: str,
         *,
         operation: str,
-        repair: RepairOperationV1 | None = None,
+        repair: RepairOperation | None = None,
     ) -> None:
         self.http_status = 400 if error_code == "playbill.preview.confirmation_required" else 409
         super().__init__(
             error_code,
             message,
-            repair=repair or RepairOperationV1(operation=operation, arguments={"dry_run": True}),
+            repair=repair or RepairOperation(operation=operation, arguments={"dry_run": True}),
         )
 
 
@@ -350,7 +350,7 @@ class PrincipalRefusedError(CoreError):
         error_code: PrincipalRefusalCode,
         message: str,
         *,
-        repair: RepairOperationV1 | HandEditRepairV1 | None = None,
+        repair: RepairOperation | HandEditRepair | None = None,
     ) -> None:
         self.error_code = error_code
         self.repair = repair

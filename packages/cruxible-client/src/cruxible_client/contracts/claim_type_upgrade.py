@@ -8,14 +8,14 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from cruxible_client.contracts.change_control import DryRun, PreviewAt
 from cruxible_client.contracts.claim_types import RevisionEvidence
-from cruxible_client.contracts.get_reads import PlaybillGetCoordinateV1
+from cruxible_client.contracts.get_reads import PlaybillGetCoordinate
 
 
 class _Model(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
 
 
-class ClaimTypeUpgradeRequestV1(_Model):
+class ClaimTypeUpgradeRequest(_Model):
     """Which ClaimTypes move to v7, and what their statement-changing revisions keep.
 
     Every ClaimType before v7 accumulates evidence across revisions; the upgrade
@@ -40,7 +40,7 @@ class ClaimTypeUpgradeRequestV1(_Model):
         return tuple(sorted(set(names), key=lambda item: item.encode("utf-8")))
 
 
-class ClaimTypeUpgradeV1(_Model):
+class ClaimTypeUpgrade(_Model):
     """One ClaimType moved to v7, and the one meaning that changes with it."""
 
     claim_type: str
@@ -60,30 +60,30 @@ class ClaimTypeUpgradeV1(_Model):
     widened_versions: tuple[str, ...] = ()
 
 
-class ClaimTypeUpgradeRefusalV1(_Model):
+class ClaimTypeUpgradeRefusal(_Model):
     claim_type: str
     reason: str
 
 
-class ClaimTypeUpgradeResultV1(_Model):
+class ClaimTypeUpgradeResult(_Model):
     tag: Literal["playbill-claim-type-upgrade-result-v1"] = "playbill-claim-type-upgrade-result-v1"
     #: ``would_propose``/``would_block`` answer a dry run, which writes nothing.
     status: Literal["unchanged", "proposed", "blocked", "would_propose", "would_block"]
     proposal_id: str | None = None
-    upgraded: tuple[ClaimTypeUpgradeV1, ...] = ()
+    upgraded: tuple[ClaimTypeUpgrade, ...] = ()
     #: ClaimTypes already at v7.
     unchanged: tuple[str, ...] = ()
-    refused: tuple[ClaimTypeUpgradeRefusalV1, ...] = ()
+    refused: tuple[ClaimTypeUpgradeRefusal, ...] = ()
     carried_claims: int = Field(default=0, ge=0)
     detail: str | None = None
     #: The accepted coordinate the change set was evaluated at; pass it as ``at``
     #: to commit exactly this preview.
-    coordinate: PlaybillGetCoordinateV1 | None = None
+    coordinate: PlaybillGetCoordinate | None = None
 
 
 __all__ = [
-    "ClaimTypeUpgradeRefusalV1",
-    "ClaimTypeUpgradeRequestV1",
-    "ClaimTypeUpgradeResultV1",
-    "ClaimTypeUpgradeV1",
+    "ClaimTypeUpgradeRefusal",
+    "ClaimTypeUpgradeRequest",
+    "ClaimTypeUpgradeResult",
+    "ClaimTypeUpgrade",
 ]

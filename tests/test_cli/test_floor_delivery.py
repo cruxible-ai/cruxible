@@ -19,7 +19,7 @@ def test_local_workspace_delivery_controls(tmp_path, monkeypatch, command):
 
     class Client:
         def playbill_host_workspace_registration(self, instance_id):
-            return contracts.PlaybillHostWorkspaceRegistrationV1(
+            return contracts.PlaybillHostWorkspaceRegistration(
                 instance_id=instance_id,
                 status="registered",
                 workspace_path=str(workspace.resolve()),

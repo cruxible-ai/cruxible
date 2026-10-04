@@ -11,14 +11,14 @@ from __future__ import annotations
 
 import pytest
 
-from cruxible_client.contracts.capture_reads import CaptureReadRequestV1
+from cruxible_client.contracts.capture_reads import CaptureReadRequest
 from cruxible_core.errors import DataValidationError
 from cruxible_core.mcp import handlers
 
 
 @pytest.mark.parametrize("changes", [{"capture_digest": "/etc/passwd"}, {"max_bytes": -1}])
 def test_capture_read_revalidates_before_local_dispatch(monkeypatch, changes) -> None:
-    request = CaptureReadRequestV1(capture_digest="sha256:" + "f" * 64).model_copy(update=changes)
+    request = CaptureReadRequest(capture_digest="sha256:" + "f" * 64).model_copy(update=changes)
     monkeypatch.setattr(handlers, "_get_client", lambda: None)
     monkeypatch.setattr(
         handlers.playbill_api,

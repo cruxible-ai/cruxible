@@ -325,7 +325,7 @@ def test_an_accepted_readmission_supersedes_its_source(tmp_path: Path) -> None:
     live readmission that went stale itself is the row, not its source.
     """
 
-    from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+    from cruxible_core.coverage.contracts import CoverageAccessProfile
     from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
     from cruxible_core.service.discovery.next import PlaybillNextRequestV1, service_playbill_next
     from cruxible_core.service.proposals.proposals import (
@@ -338,7 +338,7 @@ def test_an_accepted_readmission_supersedes_its_source(tmp_path: Path) -> None:
             instance,
             request=PlaybillNextRequestV1(
                 evaluation_time=datetime(2026, 8, 22, 12, tzinfo=UTC),
-                access_profile=CoverageAccessProfileV1(
+                access_profile=CoverageAccessProfile(
                     profile_id="readmit", permitted_access_classes=("instance",)
                 ),
             ),

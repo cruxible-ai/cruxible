@@ -15,44 +15,44 @@ from cruxible_client import Playbill
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.authoring.inputs import QueryDefinitionInput
-from cruxible_client.contracts.authoring.models import ClaimTypeSuccessionDependentV1
+from cruxible_client.contracts.authoring.models import ClaimTypeSuccessionDependent
 from cruxible_client.contracts.captures import (
-    CaptureContractV1,
+    CaptureContract,
     capture_contract_digest,
     parse_capture_contract,
     render_capture_contract,
 )
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, parse_claim_type
-from cruxible_client.contracts.claims import ClaimArtifactV3, parse_claim
+from cruxible_client.contracts.claims import ClaimArtifact, parse_claim
 from cruxible_client.contracts.documents import DocumentLifecycle, DocumentShell
 from cruxible_client.contracts.kits import (
-    KitArtifactBytesV1,
-    KitArtifactV1,
-    KitBundleV1,
-    PlaybillKitAddRequestV1,
-    PlaybillKitBuildRequestV1,
-    PlaybillKitChangeResultV1,
-    PlaybillKitRemoveRequestV1,
+    KitArtifact,
+    KitArtifactBytes,
+    KitBundle,
+    PlaybillKitAddRequest,
+    PlaybillKitBuildRequest,
+    PlaybillKitChangeResult,
+    PlaybillKitRemoveRequest,
 )
 from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicyV1,
+    ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionRuleV1,
-    ClaimResolutionPolicyV1,
+    ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.query.definitions import (
-    QueryDefinitionSpecV1,
-    QueryDefinitionV1,
-    QueryEvaluationPolicyV1,
+    QueryDefinition,
+    QueryDefinitionSpec,
+    QueryEvaluationPolicy,
     parse_query_definition,
     query_definition_digest,
 )
 from cruxible_client.contracts.query.grammar import (
-    QueryBudgetsV1,
-    QueryClaimValueRefV1,
-    QueryEntryV1,
-    QueryProjectionFieldV1,
-    QueryProjectionV1,
+    QueryBudgets,
+    QueryClaimValueRef,
+    QueryEntry,
+    QueryProjection,
+    QueryProjectionField,
 )
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.kits import read_kit_directory, write_kit_directory
@@ -105,7 +105,7 @@ class _World:
         assert activated.status_code == 200, activated.text
         assert activated.json()["status"] == "accepted", activated.text
 
-    def settle(self, result: PlaybillKitChangeResultV1) -> None:
+    def settle(self, result: PlaybillKitChangeResult) -> None:
         assert result.status == "proposed" and result.proposal_id is not None, result
         if result.approval_required:
             self.approve(result.proposal_id)
@@ -136,7 +136,7 @@ class _World:
         self,
         *definitions: ClaimType,
         successions: tuple[ClaimType, ...] = (),
-        dependents: tuple[ClaimTypeSuccessionDependentV1, ...] = (),
+        dependents: tuple[ClaimTypeSuccessionDependent, ...] = (),
     ) -> None:
         draft = self.pb.changes(rationale="Shape the account vocabulary.")
         for definition in definitions:
@@ -156,7 +156,7 @@ class _World:
         self,
         predicate: str,
         schema: dict[str, object],
-        dependents: tuple[ClaimTypeSuccessionDependentV1, ...] = (),
+        dependents: tuple[ClaimTypeSuccessionDependent, ...] = (),
     ) -> None:
         current = self.claim_type(predicate)
         successor = current.model_copy(
@@ -171,17 +171,17 @@ class _World:
 
     def build(
         self, version: str, owns: tuple[str, ...] = ("acme.",), kit_id: str = "acme"
-    ) -> KitBundleV1:
+    ) -> KitBundle:
         return playbill_api.playbill_kit_build(
             self.instance_id,
-            PlaybillKitBuildRequestV1(kit_id=kit_id, version=version, owns=owns),
+            PlaybillKitBuildRequest(kit_id=kit_id, version=version, owns=owns),
         ).bundle
 
-    def add(self, bundle: KitBundleV1) -> PlaybillKitChangeResultV1:
+    def add(self, bundle: KitBundle) -> PlaybillKitChangeResult:
         before = self.tree()
         result = playbill_api.playbill_kit_add(
             self.instance_id,
-            PlaybillKitAddRequestV1(bundle=bundle, source="test", dry_run=False),
+            PlaybillKitAddRequest(bundle=bundle, source="test", dry_run=False),
         )
         if result.status == "proposed":
             # Proposing lands nothing; the ordinary activation does.
@@ -201,8 +201,8 @@ def _claim_type(predicate: str, schema: dict[str, object]) -> ClaimType:
         cardinality="one",
         permitted_roles=("normative", "observation"),
         evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(),
-        admission_policy=ClaimAdmissionPolicyV1(),
-        resolution_policy=ClaimResolutionPolicyV1(
+        admission_policy=ClaimAdmissionPolicy(),
+        resolution_policy=ClaimResolutionPolicy(
             cardinality="one",
             eligible_verdicts=("supported",),
             selector="only_contender",
@@ -457,13 +457,13 @@ def test_a_kit_upgrade_carries_a_replace_claim_types_claims_with_their_backing(
     """The distro's rule b: a carry is not a revision, whatever the ClaimType says."""
 
     from cruxible_client.contracts.canonical import canonical_bytes
-    from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicyV3
+    from cruxible_client.contracts.policies import ClaimEvidenceAdmissionPolicy
 
     publisher, consumer = worlds
     replacing = _claim_type(SEATS, {"type": "integer"}).model_copy(
         update={
             "artifact_format": "playbill-claim-type-v7",
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV3(),
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(),
             "evidence_requirement": "self",
             "revision_evidence": "replace",
             "default_role": "observation",
@@ -521,7 +521,7 @@ def test_a_kit_upgrade_carries_a_replace_claim_types_claims_with_their_backing(
 def test_claim_type_upgrade_is_one_verb_on_the_sdk_http_and_mcp_doors(
     worlds: tuple[_World, _World],
 ) -> None:
-    from cruxible_client.contracts.claim_type_upgrade import ClaimTypeUpgradeRequestV1
+    from cruxible_client.contracts.claim_type_upgrade import ClaimTypeUpgradeRequest
     from cruxible_core.mcp import handlers
 
     publisher, _consumer = worlds
@@ -537,7 +537,7 @@ def test_claim_type_upgrade_is_one_verb_on_the_sdk_http_and_mcp_doors(
 
     local = handlers.handle_playbill_claim_type_upgrade(
         publisher.instance_id,
-        ClaimTypeUpgradeRequestV1(
+        ClaimTypeUpgradeRequest(
             claim_types=(SEATS,), revision_evidence="accumulate", dry_run=False
         ),
     )
@@ -592,7 +592,7 @@ def test_removing_a_kit_retires_what_it_installed(worlds: tuple[_World, _World])
     consumer.add(publisher.build("1.0.0"))
 
     removed = playbill_api.playbill_kit_remove(
-        consumer.instance_id, PlaybillKitRemoveRequestV1(kit_id="acme", dry_run=False)
+        consumer.instance_id, PlaybillKitRemoveRequest(kit_id="acme", dry_run=False)
     )
     consumer.settle(removed)
 
@@ -612,7 +612,7 @@ def test_removing_a_kit_that_is_not_installed_is_refused_naming_the_installed_on
 
     with pytest.raises(RequestRefusedError) as refused:
         playbill_api.playbill_kit_remove(
-            consumer.instance_id, PlaybillKitRemoveRequestV1(kit_id="nokit")
+            consumer.instance_id, PlaybillKitRemoveRequest(kit_id="nokit")
         )
 
     assert refused.value.error_code == "playbill.kit.not_installed"
@@ -626,7 +626,7 @@ def test_a_kit_needs_the_approval_the_consumer_policy_requires(
     publisher.author(_claim_type(SEATS, {"type": "integer"}))
     proposed = playbill_api.playbill_kit_add(
         consumer.instance_id,
-        PlaybillKitAddRequestV1(bundle=publisher.build("1.0.0"), source="test", dry_run=False),
+        PlaybillKitAddRequest(bundle=publisher.build("1.0.0"), source="test", dry_run=False),
     )
 
     assert proposed.status == "proposed" and proposed.approval_required
@@ -649,7 +649,7 @@ def test_a_release_travels_as_a_directory_through_the_http_client(
 
     built = transport.build_playbill_kit(
         publisher.instance_id,
-        PlaybillKitBuildRequestV1(kit_id="acme", version="1.0.0", owns=("acme.",)),
+        PlaybillKitBuildRequest(kit_id="acme", version="1.0.0", owns=("acme.",)),
     )
     directory = tmp_path / "acme-1.0.0"
     write_kit_directory(built.bundle, directory)
@@ -662,7 +662,7 @@ def test_a_release_travels_as_a_directory_through_the_http_client(
 
     proposed = transport.add_playbill_kit(
         consumer.instance_id,
-        PlaybillKitAddRequestV1(bundle=read_back, source=directory.name, dry_run=False),
+        PlaybillKitAddRequest(bundle=read_back, source=directory.name, dry_run=False),
     )
     consumer.settle(proposed)
     status = transport.playbill_kit_status(consumer.instance_id)
@@ -681,7 +681,7 @@ def test_a_build_with_nothing_owned_is_refused(worlds: tuple[_World, _World]) ->
         publisher.build("1.0.0", owns=("nothing.",))
 
 
-def _contract(name: str, *, max_rows: int = 4, predecessor: str | None = None) -> CaptureContractV1:
+def _contract(name: str, *, max_rows: int = 4, predecessor: str | None = None) -> CaptureContract:
     base = capture_contract(name=name)
     return base.model_copy(
         update={
@@ -691,7 +691,7 @@ def _contract(name: str, *, max_rows: int = 4, predecessor: str | None = None) -
     )
 
 
-def _pinning_type(predicate: str, contract: CaptureContractV1) -> ClaimType:
+def _pinning_type(predicate: str, contract: CaptureContract) -> ClaimType:
     return _claim_type(predicate, {"type": "string"}).model_copy(
         update={
             "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
@@ -710,7 +710,7 @@ def _pinning_type(predicate: str, contract: CaptureContractV1) -> ClaimType:
     )
 
 
-def _author_contract(world: _World, contract: CaptureContractV1) -> None:
+def _author_contract(world: _World, contract: CaptureContract) -> None:
     draft = world.pb.changes(rationale="Define the orders capture.")
     draft.capture_contract(contract)
     intent = draft.prepare()
@@ -772,7 +772,7 @@ def test_a_kit_never_replaces_or_retires_a_definition_it_only_carries(
     acme = publisher.build("1.0.0")
     beta = playbill_api.playbill_kit_build(
         publisher.instance_id,
-        PlaybillKitBuildRequestV1(kit_id="beta", version="1.0.0", owns=("beta.",)),
+        PlaybillKitBuildRequest(kit_id="beta", version="1.0.0", owns=("beta.",)),
     ).bundle
     assert CONTRACT_PATH in beta.manifest.digests()
 
@@ -787,15 +787,15 @@ def test_a_kit_never_replaces_or_retires_a_definition_it_only_carries(
     artifacts = tuple(
         item
         if item.path != CONTRACT_PATH
-        else KitArtifactV1(
+        else KitArtifact(
             path=CONTRACT_PATH, artifact_digest=capture_contract_digest(revised).tagged
         )
         for item in beta.manifest.artifacts
     )
-    forged = KitBundleV1(
+    forged = KitBundle(
         manifest=beta.manifest.model_copy(update={"version": "1.1.0", "artifacts": artifacts}),
         artifacts=tuple(
-            item if item.path != CONTRACT_PATH else KitArtifactBytesV1.of(CONTRACT_PATH, content)
+            item if item.path != CONTRACT_PATH else KitArtifactBytes.of(CONTRACT_PATH, content)
             for item in beta.artifacts
         ),
     )
@@ -804,7 +804,7 @@ def test_a_kit_never_replaces_or_retires_a_definition_it_only_carries(
     assert (CONTRACT_PATH, "conflict") in {(item.path, item.action) for item in refused.plan}
 
     removed = playbill_api.playbill_kit_remove(
-        consumer.instance_id, PlaybillKitRemoveRequestV1(kit_id="beta")
+        consumer.instance_id, PlaybillKitRemoveRequest(kit_id="beta")
     )
     assert {item.path for item in removed.plan} == {"claim-types/beta.orders/status.json"}
 
@@ -880,38 +880,38 @@ def test_an_ordinary_document_named_like_a_receipt_does_not_break_kits(
 )
 def test_a_kit_path_must_be_a_canonical_path_inside_a_kit_family(path: str) -> None:
     with pytest.raises(ValueError):
-        KitArtifactV1(path=path, artifact_digest="sha256:" + "a" * 64)
+        KitArtifact(path=path, artifact_digest="sha256:" + "a" * 64)
     with pytest.raises(ValueError):
-        KitArtifactBytesV1.of(path, b"{}\n")
+        KitArtifactBytes.of(path, b"{}\n")
 
 
 def _query(name: str, predicates: tuple[str, ...]) -> QueryDefinitionInput:
     return QueryDefinitionInput(
         kind="query_definition",
-        query_definition=QueryDefinitionSpecV1(
+        query_definition=QueryDefinitionSpec(
             identity=ArtifactIdentity(kind="QueryDefinition", name=name),
             description="Accounts with their seats and plan.",
-            entry=QueryEntryV1(binding="item", subject_kinds=("acme.account",)),
+            entry=QueryEntry(binding="item", subject_kinds=("acme.account",)),
             result_binding="item",
             result_shape="subject",
             result_cardinality="many",
             dedupe="subject",
-            projection=QueryProjectionV1(
+            projection=QueryProjection(
                 fields=tuple(
-                    QueryProjectionFieldV1(
+                    QueryProjectionField(
                         name=predicate.rpartition(".")[2],
-                        value=QueryClaimValueRefV1(binding="item", predicate=predicate),
+                        value=QueryClaimValueRef(binding="item", predicate=predicate),
                     )
                     for predicate in predicates
                 )
             ),
-            evaluation_policy=QueryEvaluationPolicyV1(
+            evaluation_policy=QueryEvaluationPolicy(
                 visible_verdicts=("supported",),
                 visible_currency=("current",),
                 conflict_behavior="surface_conflicts",
             ),
-            default_budgets=QueryBudgetsV1(max_results=100, max_traversal_depth=0),
-            maximum_budgets=QueryBudgetsV1(max_results=1000, max_traversal_depth=0),
+            default_budgets=QueryBudgets(max_results=100, max_traversal_depth=0),
+            maximum_budgets=QueryBudgets(max_results=1000, max_traversal_depth=0),
         ),
     )
 
@@ -965,7 +965,7 @@ def test_a_kit_dependent_lands_as_the_kit_wrote_it_when_its_type_changes(
         SEATS,
         {"type": "integer", "minimum": 0},
         dependents=(
-            ClaimTypeSuccessionDependentV1(
+            ClaimTypeSuccessionDependent(
                 identity=ArtifactIdentity(kind="QueryDefinition", name="acme.accounts"),
                 disposition="successor",
             ),
@@ -1010,9 +1010,9 @@ def _digest_fields(
 @pytest.mark.parametrize(
     ("prefix", "model"),
     [
-        ("capture-contracts/", CaptureContractV1),
+        ("capture-contracts/", CaptureContract),
         ("claim-types/", ClaimType),
-        ("query-definitions/", QueryDefinitionV1),
+        ("query-definitions/", QueryDefinition),
     ],
 )
 def test_the_reference_table_names_every_digest_field_of_each_kit_family(
@@ -1023,7 +1023,7 @@ def test_the_reference_table_names_every_digest_field_of_each_kit_family(
 
 
 @pytest.mark.parametrize(
-    ("prefix", "model"), [("claims/", ClaimArtifactV3), ("documents/", DocumentShell)]
+    ("prefix", "model"), [("claims/", ClaimArtifact), ("documents/", DocumentShell)]
 )
 def test_state_reference_fields_are_real_digest_fields(prefix: str, model: type[BaseModel]) -> None:
     # Claims and Documents also hold content digests, which are never references.
@@ -1095,11 +1095,11 @@ def test_a_local_type_pinning_a_changed_contract_keeps_its_literals_and_its_clai
     )
     result = playbill_api.playbill_kit_add(
         consumer.instance_id,
-        PlaybillKitAddRequestV1(
+        PlaybillKitAddRequest(
             bundle=publisher.build("1.1.0"),
             source="test",
             dependents=(
-                ClaimTypeSuccessionDependentV1(
+                ClaimTypeSuccessionDependent(
                     identity=claim_id,
                     disposition="retire",
                     claim_retirement_reason="was-rescinded",
@@ -1143,7 +1143,7 @@ def test_a_kit_install_and_removal_preview_by_default_and_write_nothing(
     preview = assert_writes_nothing(
         [tmp_path],
         lambda: playbill_api.playbill_kit_add(
-            consumer.instance_id, PlaybillKitAddRequestV1(bundle=release, source="test")
+            consumer.instance_id, PlaybillKitAddRequest(bundle=release, source="test")
         ),
         warm=settle_background,
     )
@@ -1153,7 +1153,7 @@ def test_a_kit_install_and_removal_preview_by_default_and_write_nothing(
     assert {item.action for item in preview.plan} == {"add"}
     committed = playbill_api.playbill_kit_add(
         consumer.instance_id,
-        PlaybillKitAddRequestV1(
+        PlaybillKitAddRequest(
             bundle=release, source="test", dry_run=False, at=preview.coordinate.git_oid
         ),
     )
@@ -1162,7 +1162,7 @@ def test_a_kit_install_and_removal_preview_by_default_and_write_nothing(
     with pytest.raises(ChangeRefusedError) as moved:
         playbill_api.playbill_kit_add(
             consumer.instance_id,
-            PlaybillKitAddRequestV1(
+            PlaybillKitAddRequest(
                 bundle=release, source="test", dry_run=False, at=preview.coordinate.git_oid
             ),
         )
@@ -1171,7 +1171,7 @@ def test_a_kit_install_and_removal_preview_by_default_and_write_nothing(
     removal = assert_writes_nothing(
         [tmp_path],
         lambda: playbill_api.playbill_kit_remove(
-            consumer.instance_id, PlaybillKitRemoveRequestV1(kit_id="acme")
+            consumer.instance_id, PlaybillKitRemoveRequest(kit_id="acme")
         ),
         warm=settle_background,
     )

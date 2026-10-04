@@ -16,9 +16,9 @@ from click.testing import CliRunner
 
 from cruxible_client.authoring.sdk import Playbill
 from cruxible_client.authoring.sdk_types import RefKind
-from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
-from cruxible_client.contracts.line_dispatch import LineDispatchRequestV1, LineEvaluateRequestV1
-from cruxible_client.contracts.operational_reads import PlaybillGetLineCardV1
+from cruxible_client.contracts.get_reads import PlaybillGetRequest
+from cruxible_client.contracts.line_dispatch import LineDispatchRequest, LineEvaluateRequest
+from cruxible_client.contracts.operational_reads import PlaybillGetLineCard
 from cruxible_core.cli.main import cli
 from cruxible_core.mcp import handlers
 from cruxible_core.mcp.server import create_server
@@ -46,14 +46,14 @@ def world(tmp_path_factory: pytest.TempPathFactory):  # type: ignore[no-untyped-
     service_evaluate_line(
         instance,
         line.identity.name,
-        LineEvaluateRequestV1(since=start, until=later),
+        LineEvaluateRequest(since=start, until=later),
         actor=_actor(instance),
         now=later,
     )
     service_dispatch_line(
         instance,
         line.identity.name,
-        LineDispatchRequestV1(limit=1),
+        LineDispatchRequest(limit=1),
         actor=_actor(instance),
         now=later + timedelta(seconds=1),
         caller_rung=3,
@@ -74,9 +74,9 @@ class _ServiceClient:
 
     def __init__(self, instance: Any) -> None:
         self.instance = instance
-        self.requests: list[PlaybillGetRequestV1] = []
+        self.requests: list[PlaybillGetRequest] = []
 
-    def playbill_get(self, instance_id: str, *, request: PlaybillGetRequestV1) -> Any:
+    def playbill_get(self, instance_id: str, *, request: PlaybillGetRequest) -> Any:
         self.requests.append(request)
         return service_playbill_get(self.instance, request=request, access=_ACCESS)
 
@@ -151,7 +151,7 @@ def test_the_sdk_returns_typed_operational_cards(world, tmp_path) -> None:  # ty
     card = playbill.get(line.identity.qualified)
 
     assert card.kind is RefKind.LINE and card.identity == line.identity.name
-    assert isinstance(card.value, PlaybillGetLineCardV1)
+    assert isinstance(card.value, PlaybillGetLineCard)
     assert card.value.next[0] == f'pb.get("{line.procedure.target.qualified}")'
     mandate = playbill.get("ProcedureMandate:served-line-mandate")
     assert mandate.kind is RefKind.MANDATE

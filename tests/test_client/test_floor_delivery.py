@@ -28,7 +28,7 @@ def test_floor_write_delegates_only_to_an_opted_in_local_daemon(
         ),
         file_count=1,
     )
-    result = contracts.PlaybillFloorDeliveryResultV1(delta=delta, written=receipt)
+    result = contracts.PlaybillFloorDeliveryResult(delta=delta, written=receipt)
 
     def deliver(_):
         delivered.append(True)
@@ -36,13 +36,11 @@ def test_floor_write_delegates_only_to_an_opted_in_local_daemon(
 
     client = SimpleNamespace(
         socket_path=str(tmp_path / "socket") if local else None,
-        playbill_host_workspace_registration=lambda _: (
-            contracts.PlaybillHostWorkspaceRegistrationV1(
-                instance_id="inst_floor",
-                status="registered",
-                workspace_path=str(workspace),
-                floor_delivery=enabled,
-            )
+        playbill_host_workspace_registration=lambda _: contracts.PlaybillHostWorkspaceRegistration(
+            instance_id="inst_floor",
+            status="registered",
+            workspace_path=str(workspace),
+            floor_delivery=enabled,
         ),
         deliver_playbill_floor_now=deliver,
     )
@@ -73,13 +71,11 @@ def test_floor_write_delegates_only_to_an_opted_in_local_daemon(
 def test_delivery_refuses_a_different_registered_workspace(tmp_path):
     client = SimpleNamespace(
         socket_path=str(tmp_path / "socket"),
-        playbill_host_workspace_registration=lambda _: (
-            contracts.PlaybillHostWorkspaceRegistrationV1(
-                instance_id="inst_floor",
-                status="registered",
-                workspace_path=str(tmp_path / "other"),
-                floor_delivery=True,
-            )
+        playbill_host_workspace_registration=lambda _: contracts.PlaybillHostWorkspaceRegistration(
+            instance_id="inst_floor",
+            status="registered",
+            workspace_path=str(tmp_path / "other"),
+            floor_delivery=True,
         ),
     )
     with pytest.raises(authoring.PlaybillWorkspaceError, match="another workspace"):
@@ -107,15 +103,13 @@ def test_activation_refresh_uses_the_same_daemon_writer(tmp_path, monkeypatch):
     )
     client = SimpleNamespace(
         socket_path=str(tmp_path / "socket"),
-        playbill_host_workspace_registration=lambda _: (
-            contracts.PlaybillHostWorkspaceRegistrationV1(
-                instance_id="inst_floor",
-                status="registered",
-                workspace_path=str(tmp_path),
-                floor_delivery=True,
-            )
+        playbill_host_workspace_registration=lambda _: contracts.PlaybillHostWorkspaceRegistration(
+            instance_id="inst_floor",
+            status="registered",
+            workspace_path=str(tmp_path),
+            floor_delivery=True,
         ),
-        deliver_playbill_floor_now=lambda *_a, **_k: contracts.PlaybillFloorDeliveryResultV1(
+        deliver_playbill_floor_now=lambda *_a, **_k: contracts.PlaybillFloorDeliveryResult(
             delta=delta, written=written
         ),
     )
@@ -133,7 +127,7 @@ def test_client_transport_sends_typed_delivery_requests(tmp_path):
 
     calls = []
     delta = _delta()
-    delivered = contracts.PlaybillFloorDeliveryResultV1(
+    delivered = contracts.PlaybillFloorDeliveryResult(
         delta=delta,
         written=contracts.PlaybillWorkspaceFloorWriteResult(
             path=".playbill/floor",
@@ -154,7 +148,7 @@ def test_client_transport_sends_typed_delivery_requests(tmp_path):
             return httpx.Response(200, json=delivered.model_dump(mode="json"))
         return httpx.Response(
             200,
-            json=contracts.PlaybillHostWorkspaceRegistrationV1(
+            json=contracts.PlaybillHostWorkspaceRegistration(
                 instance_id="inst_floor", status="registered", floor_delivery=True
             ).model_dump(mode="json"),
         )

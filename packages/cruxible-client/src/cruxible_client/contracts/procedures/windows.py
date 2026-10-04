@@ -23,14 +23,14 @@ class _WindowModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
 
 
-class CaptureEventSelectorV1(_WindowModel):
+class CaptureEventSelector(_WindowModel):
     """Match a durable produced-capture event, never an accepted-head change."""
 
     capture_contract_identity: ArtifactIdentity
     capture_contract_digest: str
 
     @model_validator(mode="after")
-    def _kind(self) -> CaptureEventSelectorV1:
+    def _kind(self) -> CaptureEventSelector:
         if self.capture_contract_identity.kind != "CaptureContract":
             raise ValueError("capture event selector must name a CaptureContract")
         return self
@@ -42,7 +42,7 @@ class CaptureEventSelectorV1(_WindowModel):
         return value
 
 
-class TriggerEventReferenceV1(_WindowModel):
+class TriggerEventReference(_WindowModel):
     run_id: str = Field(min_length=1)
     partition_id: str = Field(min_length=1)
     sequence: int = Field(ge=1, description="Reads SETTLEMENT ORDER.")
@@ -55,7 +55,7 @@ class TriggerEventReferenceV1(_WindowModel):
         return value
 
 
-class FixedWindowV1(_WindowModel):
+class FixedWindow(_WindowModel):
     kind: Literal["fixed"] = "fixed"
     starts_at: datetime = Field(description="Reads VALIDITY WINDOW.")
     duration_seconds: int = Field(gt=0, description="Reads VALIDITY WINDOW.")
@@ -72,21 +72,21 @@ class FixedWindowV1(_WindowModel):
         return rendered
 
 
-class CaptureEventWindowV1(_WindowModel):
+class CaptureEventWindow(_WindowModel):
     kind: Literal["capture_event"] = "capture_event"
-    event: CaptureEventSelectorV1
+    event: CaptureEventSelector
     duration_seconds: int = Field(gt=0, description="Reads VALIDITY WINDOW.")
 
 
-ObservationWindowV1 = Annotated[FixedWindowV1 | CaptureEventWindowV1, Field(discriminator="kind")]
+ObservationWindow = Annotated[FixedWindow | CaptureEventWindow, Field(discriminator="kind")]
 
 
-class BoundObservationWindowV1(_WindowModel):
+class BoundObservationWindow(_WindowModel):
     """Exact boundaries retained at admission, including the verified event anchor."""
 
     starts_at: datetime = Field(description="Reads VALIDITY WINDOW.")
     ends_at: datetime = Field(description="Reads VALIDITY WINDOW.")
-    event: TriggerEventReferenceV1 | None = None
+    event: TriggerEventReference | None = None
 
     @field_validator("starts_at", "ends_at")
     @classmethod
@@ -100,20 +100,20 @@ class BoundObservationWindowV1(_WindowModel):
         return rendered
 
     @model_validator(mode="after")
-    def _ordered(self) -> BoundObservationWindowV1:
+    def _ordered(self) -> BoundObservationWindow:
         if self.ends_at <= self.starts_at:
             raise ValueError("observation window must be finite and increasing")
         return self
 
 
 def bind_observation_window(
-    policy: ObservationWindowV1,
+    policy: ObservationWindow,
     *,
-    event: TriggerEventReferenceV1 | None = None,
+    event: TriggerEventReference | None = None,
     event_time: datetime | None = None,
-) -> BoundObservationWindowV1:
+) -> BoundObservationWindow:
     """The caller authenticates the event and selector before supplying its time."""
-    if isinstance(policy, FixedWindowV1):
+    if isinstance(policy, FixedWindow):
         if event is not None or event_time is not None:
             raise ValueError("fixed window cannot accept an event anchor")
         start = policy.starts_at
@@ -121,7 +121,7 @@ def bind_observation_window(
         if event is None or event_time is None:
             raise ValueError("event window is waiting for its exact retained event")
         start = ensure_utc(event_time)
-    return BoundObservationWindowV1(
+    return BoundObservationWindow(
         starts_at=start,
         ends_at=start + timedelta(seconds=policy.duration_seconds),
         event=event,
@@ -132,7 +132,7 @@ def bind_observation_window(
 TIMED_BINDING_KINDS = frozenset({"cadence", "cron"})
 
 
-class LineTriggerBindingV1(_WindowModel):
+class LineTriggerBinding(_WindowModel):
     """Semantic cause of one occurrence, independent of its dispatch instant.
 
     ``trigger`` is the Trigger artifact that fired. A cadence or cron tick binds
@@ -142,11 +142,11 @@ class LineTriggerBindingV1(_WindowModel):
     kind: Literal["cadence", "cron", "capture_landing", "window_close", "generation_accepted"]
     trigger: ArtifactIdentity
     generation: int | None = Field(default=None, ge=0)
-    event: TriggerEventReferenceV1 | None = None
-    window: BoundObservationWindowV1 | None = None
+    event: TriggerEventReference | None = None
+    window: BoundObservationWindow | None = None
 
     @model_validator(mode="after")
-    def _shape(self) -> LineTriggerBindingV1:
+    def _shape(self) -> LineTriggerBinding:
         if self.trigger.kind != "Trigger":
             raise ValueError("a trigger binding names the Trigger that fired")
         if (self.kind == "generation_accepted") != (self.generation is not None):

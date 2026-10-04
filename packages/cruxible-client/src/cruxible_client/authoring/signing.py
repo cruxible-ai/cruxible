@@ -20,9 +20,9 @@ from cruxible_client.contracts.attestations import (
 )
 from cruxible_client.contracts.errors import PlaybillKeyError
 from cruxible_client.contracts.runtime_credentials import (
-    RuntimeCredentialMintStatementV1,
-    RuntimeCredentialPermissionModeV1,
-    RuntimeCredentialPrincipalProofV1,
+    RuntimeCredentialMintStatement,
+    RuntimeCredentialPermissionMode,
+    RuntimeCredentialPrincipalProof,
     runtime_credential_mint_statement_bytes,
 )
 from cruxible_client.contracts.temporal import format_datetime, utc_now
@@ -108,11 +108,11 @@ def sign_runtime_credential_mint(
     *,
     instance_id: str,
     principal_id: str,
-    permission_mode: RuntimeCredentialPermissionModeV1,
+    permission_mode: RuntimeCredentialPermissionMode,
     label: str,
     private_key_path: Path,
     forbidden_roots: Sequence[Path],
-) -> RuntimeCredentialPrincipalProofV1:
+) -> RuntimeCredentialPrincipalProof:
     """Sign one single-use consent to a credential minted in this principal's name.
 
     The daemon verifies the signature against the principal's registered key,
@@ -123,7 +123,7 @@ def sign_runtime_credential_mint(
     private_key = _load_private_key(private_key_path)
     issued_at = format_datetime(utc_now())
     assert issued_at is not None
-    statement = RuntimeCredentialMintStatementV1(
+    statement = RuntimeCredentialMintStatement(
         instance_id=instance_id,
         principal_id=principal_id,
         permission_mode=permission_mode,
@@ -132,7 +132,7 @@ def sign_runtime_credential_mint(
         nonce=secrets.token_hex(16),
     )
     signature = private_key.sign(runtime_credential_mint_statement_bytes(statement)).hex()
-    return RuntimeCredentialPrincipalProofV1(statement=statement, signature=signature)
+    return RuntimeCredentialPrincipalProof(statement=statement, signature=signature)
 
 
 def _load_private_key(path: Path) -> Ed25519PrivateKey:

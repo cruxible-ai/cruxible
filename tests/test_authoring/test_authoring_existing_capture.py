@@ -9,16 +9,16 @@ import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
-    AuthoringIntentV2,
-    ClaimAuthoringPayloadV3,
-    ClaimDependencyDraftsV1,
-    ExistingCaptureCitationSourceV1,
+    AuthoringIntent,
+    ClaimAuthoringPayload,
+    ClaimDependencyDrafts,
+    ExistingCaptureCitationSource,
 )
 from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     CaptureRunCoordinateV1,
-    DirectByteSpanSelectionV1,
-    InputReceiptSetManifestV1,
+    DirectByteSpanSelection,
+    InputReceiptSetManifest,
     build_cas_capture,
     build_derived_cas_capture,
     build_direct_claim_selection_capture,
@@ -107,21 +107,21 @@ def shared_capture_world(root: Path):  # type: ignore[no-untyped-def]
         store=AuthoringIntentStore(instance.root / instance.descriptor.storage.exhaust),
         claim_id_factory=lambda: "CLM-" + "3" * 32,
     )
-    payload = ClaimAuthoringPayloadV3(
+    payload = ClaimAuthoringPayload(
         statement=_working_payload(occurrence_count=1).statement.model_copy(
             update={"qualifier": "reused"}
         ),
         rationale="The same accepted observation supports another qualified statement.",
-        source=ExistingCaptureCitationSourceV1(capture_digest=capture_digest),
+        source=ExistingCaptureCitationSource(capture_digest=capture_digest),
         citation_role="evidence",
-        dependency_drafts=ClaimDependencyDraftsV1(),
+        dependency_drafts=ClaimDependencyDrafts(),
     )
     intent = coordinator.create(
         actor=actor,
         payload=payload,
         canonical_timestamp="2026-08-21T12:01:00.000000Z",
     ).intent
-    assert isinstance(intent, AuthoringIntentV2)
+    assert isinstance(intent, AuthoringIntent)
     assert len(intent.reference_expectations) == 1
     assert intent.reference_expectations[0].address == capture_contract_path(contract.identity.name)
 
@@ -202,7 +202,7 @@ def _direct_selection_intent(
         rationale="Bind an already selected exact source span.",
         observed_at=datetime(2026, 8, 21, 12, 1, tzinfo=UTC),
         accepted_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
-        selection=DirectByteSpanSelectionV1(
+        selection=DirectByteSpanSelection(
             span=ContentSpan(
                 content_digest=selected.digest,
                 start_byte=0,
@@ -215,12 +215,12 @@ def _direct_selection_intent(
         store=AuthoringIntentStore(instance.root / instance.descriptor.storage.exhaust),
         claim_id_factory=lambda: claim_id,
     )
-    payload = ClaimAuthoringPayloadV3(
+    payload = ClaimAuthoringPayload(
         statement=_working_payload(occurrence_count=1).statement,
         rationale="Reuse the exact direct selection on its bound Claim.",
-        source=ExistingCaptureCitationSourceV1(capture_digest=capture.capture_digest),
+        source=ExistingCaptureCitationSource(capture_digest=capture.capture_digest),
         citation_role="copy",
-        dependency_drafts=ClaimDependencyDraftsV1(),
+        dependency_drafts=ClaimDependencyDrafts(),
     )
     intent = coordinator.create(
         actor=AuthenticatedActor(actor_id="owner"),
@@ -354,7 +354,7 @@ def test_existing_capture_shareability_and_admission_refusals_are_reachable(
         capture = build_derived_cas_capture(
             **common,
             output_body=b'{"status":"ready"}',
-            manifest=InputReceiptSetManifestV1(
+            manifest=InputReceiptSetManifest(
                 input_receipt_digests=(digest("input-receipt", grade),)
             ),
             reducer_digest=artifact_digest("reducer", grade),
@@ -368,12 +368,12 @@ def test_existing_capture_shareability_and_admission_refusals_are_reachable(
     )
     intent = coordinator.create(
         actor=AuthenticatedActor(actor_id="owner"),
-        payload=ClaimAuthoringPayloadV3(
+        payload=ClaimAuthoringPayload(
             statement=_working_payload(occurrence_count=1).statement,
             rationale="Probe the exact shareability and admission refusal.",
-            source=ExistingCaptureCitationSourceV1(capture_digest=capture.capture_digest),
+            source=ExistingCaptureCitationSource(capture_digest=capture.capture_digest),
             citation_role="evidence",
-            dependency_drafts=ClaimDependencyDraftsV1(),
+            dependency_drafts=ClaimDependencyDrafts(),
         ),
         canonical_timestamp="2026-08-21T12:05:00.000000Z",
     ).intent
@@ -397,14 +397,14 @@ def test_claim_bound_capture_cannot_be_reused_by_another_claim(tmp_path: Path) -
     lowered = lower_authoring(instance, intent=self_source, actor_id=actor.actor_id)
     capture_digest = lowered.resolved_authoring["capture_digest"]
     assert isinstance(capture_digest, str)
-    second = ClaimAuthoringPayloadV3(
+    second = ClaimAuthoringPayload(
         statement=_working_payload(occurrence_count=1).statement.model_copy(
             update={"qualifier": "other"}
         ),
         rationale="Attempt to reuse another Claim's self source.",
-        source=ExistingCaptureCitationSourceV1(capture_digest=capture_digest),
+        source=ExistingCaptureCitationSource(capture_digest=capture_digest),
         citation_role="copy",
-        dependency_drafts=ClaimDependencyDraftsV1(),
+        dependency_drafts=ClaimDependencyDrafts(),
     )
     coordinator = AuthoringIntentCoordinator(
         instance=instance,
@@ -460,14 +460,14 @@ def test_missing_invalid_and_unaccepted_contract_captures_refuse_at_the_source_p
             ),
             claim_id_factory=lambda index=index: f"CLM-{index + 6:032x}",
         )
-        payload = ClaimAuthoringPayloadV3(
+        payload = ClaimAuthoringPayload(
             statement=_working_payload(occurrence_count=1).statement.model_copy(
                 update={"qualifier": f"refusal-{index}"}
             ),
             rationale="Probe the typed cite-existing refusal.",
-            source=ExistingCaptureCitationSourceV1(capture_digest=capture_digest),
+            source=ExistingCaptureCitationSource(capture_digest=capture_digest),
             citation_role="evidence",
-            dependency_drafts=ClaimDependencyDraftsV1(),
+            dependency_drafts=ClaimDependencyDrafts(),
         )
         intent = coordinator.create(
             actor=actor,

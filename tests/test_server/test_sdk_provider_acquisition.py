@@ -19,7 +19,7 @@ from cruxible_client.contracts.acquisition_policies import (
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
-    ProviderResultToExternalCaptureV1,
+    ProviderResultToExternalCapture,
     capture_component_pin,
     capture_contract_path,
     render_capture_contract,
@@ -92,7 +92,7 @@ def web_provider(registration, selectors=WEB_FETCH_SELECTORS):
 
 def acquisition_result():
     content = canonical_bytes({"derived": {"text": "critical"}, "retrieved": {"url": URL}})
-    return ProviderResultToExternalCaptureV1(
+    return ProviderResultToExternalCapture(
         source_identity="web.response",
         coordinate_type="http-response-v1",
         coordinate={"status": 200},
@@ -112,7 +112,7 @@ class AcquisitionInvoker(source._WorkspaceInvoker):
         self.output = output
 
     def invoke_provider(self, *, occurrence, context, invocation_id, bound):
-        from cruxible_client.contracts.provider_execution import ProviderEgressObservationV1
+        from cruxible_client.contracts.provider_execution import ProviderEgressObservation
         from cruxible_core.providers.provider_local_runtime import ProviderDriverOutcomeV1
         from cruxible_core.providers.provider_runtime_contract import (
             ProviderRuntimeResultEnvelopeV1,
@@ -135,7 +135,7 @@ class AcquisitionInvoker(source._WorkspaceInvoker):
             stderr="",
             duration_seconds=0.001,
             verified_binding=bound.binding,
-            egress=ProviderEgressObservationV1(
+            egress=ProviderEgressObservation(
                 observer_backend="test-attribution", observer_grade="attribution"
             ),
         )
@@ -252,14 +252,14 @@ def test_sdk_source_retains_and_reads_acquisition(playbill_http, tmp_path, monke
 
     monkeypatch.setattr(manager, "provider_runtime_operator", lambda: Lane())
     from cruxible_client.contracts.provider_interfaces import (
-        AcceptedProviderInterfaceRegistrationV1,
+        AcceptedProviderInterfaceRegistration,
     )
     from cruxible_core.providers.provider_classifiers import (
         install_compiler_owned_provider_classifier,
     )
 
     install_compiler_owned_provider_classifier(
-        AcceptedProviderInterfaceRegistrationV1(
+        AcceptedProviderInterfaceRegistration(
             registration=registration,
             path=provider_interface_path(registration.interface_id),
             artifact_digest=provider_interface_digest(registration).tagged,
@@ -300,7 +300,7 @@ def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
     from cruxible_client.authoring.inputs import CarriedContractInput
     from cruxible_client.contracts.procedures.contract_schema import PropertySchema
     from cruxible_client.contracts.provider_interfaces import (
-        AcceptedProviderInterfaceRegistrationV1,
+        AcceptedProviderInterfaceRegistration,
         provider_interface_definition_digest,
     )
     from cruxible_core.providers.provider_classifiers import PROVIDER_BUCKET_CLASSIFIER_REGISTRY
@@ -336,7 +336,7 @@ def test_sdk_call_uses_universal_protocol_without_producing_a_capture(
     assert proposal.candidate is not None, proposal.evaluation.diagnostics
     _approve_and_activate(http, instance_id, reviewer, proposal.admission.proposal_id)
     PROVIDER_BUCKET_CLASSIFIER_REGISTRY.install(
-        AcceptedProviderInterfaceRegistrationV1(
+        AcceptedProviderInterfaceRegistration(
             registration=registration,
             path=provider_interface_path(registration.interface_id),
             artifact_digest=provider_interface_digest(registration).tagged,

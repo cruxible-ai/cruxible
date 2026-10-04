@@ -14,7 +14,7 @@ from pathlib import Path
 
 from cruxible_core.mcp.curation import PROFILE_DEFAULT, ToolCuration, advertised_tool_names
 from cruxible_core.runtime.permissions import TOOL_PERMISSIONS, PermissionMode
-from cruxible_core.service.discovery.next import PlaybillNextRequestV2, service_playbill_next
+from cruxible_core.service.discovery.next import PlaybillNextRequest, service_playbill_next
 from cruxible_core.service.discovery.orient import service_playbill_orient
 from cruxible_core.service.procedures.line_dispatch import service_stop_line_arm
 from tests.test_procedures.test_line_arming import _armed_world
@@ -56,7 +56,7 @@ def test_the_default_mcp_profile_keeps_a_stopped_arm_row_and_names_what_it_needs
     tools = _default_profile_tools()
     assert "cruxible_playbill_line_arm" not in tools
 
-    request = PlaybillNextRequestV2(
+    request = PlaybillNextRequest(
         evaluation_time=when,
         access_profile=_PROFILE,
         caller_surface="mcp",
@@ -95,7 +95,7 @@ def test_a_read_only_cli_caller_keeps_the_row_with_the_tier_it_needs(tmp_path: P
 
     result = service_playbill_next(
         instance,
-        request=PlaybillNextRequestV2(evaluation_time=when, access_profile=_PROFILE),
+        request=PlaybillNextRequest(evaluation_time=when, access_profile=_PROFILE),
         caller_rung=0,
     )
 

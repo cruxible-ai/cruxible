@@ -7,16 +7,16 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.acquisition_policies import AcquisitionCandidateV1, select_sources
+from cruxible_client.contracts.acquisition_policies import AcquisitionCandidate, select_sources
 from cruxible_client.contracts.capture_journal import (
+    CaptureLandingEvent,
     CaptureLandingEventV1,
-    CaptureLandingEventV2,
     InMemoryCaptureLandingJournal,
     capture_landing_idempotency_key,
 )
 from cruxible_client.contracts.captures import (
+    CaptureEnvelope,
     CaptureEnvelopeV1,
-    CaptureEnvelopeV2,
     CaptureRunCoordinateV1,
     build_provider_external_capture_v2,
     capture_digest,
@@ -40,7 +40,7 @@ def test_mixed_v1_v2_replay_from_genesis_preserves_every_event_object(
         bound_generation=fixture.bound_generation,
     )
     envelope_v2 = built_v2.envelope
-    assert isinstance(envelope_v2, CaptureEnvelopeV2)
+    assert isinstance(envelope_v2, CaptureEnvelope)
     envelope_v1 = CaptureEnvelopeV1(
         capture_contract_digest=envelope_v2.capture_contract_digest,
         source=envelope_v2.source,
@@ -79,7 +79,7 @@ def test_mixed_v1_v2_replay_from_genesis_preserves_every_event_object(
     )
 
     assert isinstance(first, CaptureLandingEventV1)
-    assert isinstance(second, CaptureLandingEventV2)
+    assert isinstance(second, CaptureLandingEvent)
     assert first.idempotency_key == (
         "e44868c72ea643c28b86ac66246be064baac3bf7c9d7be22c0525dd96a4ec9d7"
     )
@@ -103,7 +103,7 @@ def test_mixed_v1_v2_replay_from_genesis_preserves_every_event_object(
     selected = select_sources(
         _policy(_rule("orders")),
         (
-            AcquisitionCandidateV1(
+            AcquisitionCandidate(
                 input_name="orders",
                 envelope=envelope_v1,
                 capture_digest=first.capture_digest,
@@ -114,7 +114,7 @@ def test_mixed_v1_v2_replay_from_genesis_preserves_every_event_object(
                 selected_rows=1,
                 selected_items=1,
             ),
-            AcquisitionCandidateV1(
+            AcquisitionCandidate(
                 input_name="orders",
                 envelope=envelope_v2,
                 capture_digest=second.capture_digest,
@@ -141,7 +141,7 @@ def test_mixed_v1_v2_replay_from_genesis_preserves_every_event_object(
         }
     )
     with pytest.raises(ValueError, match="crosses Capture landing versions"):
-        AcquisitionCandidateV1(
+        AcquisitionCandidate(
             input_name="orders",
             envelope=envelope_v1,
             capture_digest=capture_digest(envelope_v1).tagged,

@@ -34,25 +34,25 @@ from cruxible_client.contracts.artifacts import (
     ArtifactLifecycle,
 )
 from cruxible_client.contracts.authoring.models import (
-    AuthoringExactContentObjectV1,
+    AuthoringExactContentObject,
+    ClaimAuthoringPayload,
     ClaimAuthoringPayloadV2,
-    ClaimAuthoringPayloadV3,
-    WorkingSelectionObservationV1,
+    WorkingSelectionObservation,
 )
 from cruxible_client.contracts.claim_types import (
-    ClaimAttestationConsequencePolicyV1,
-    ClaimAttestationConsequenceRuleV1,
+    ClaimAttestationConsequencePolicy,
+    ClaimAttestationConsequenceRule,
     ClaimType,
 )
 from cruxible_client.contracts.claims import LiteralClaimObject, SubjectClaimObject
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV1,
-    ProjectionClaimBackingV1,
+    ProjectionClaimBacking,
 )
 from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicyV1,
+    ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV1,
-    ClaimResolutionPolicyV1,
+    ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -78,8 +78,8 @@ class _Client:
         self.claim_type_object_kinds: dict[str, str] = {"sec.vuln.affects_package": "subject"}
         self.claim_type_reads = 0
 
-    def playbill_head(self, instance_id: str, *, at: object = None) -> api.PlaybillHeadV1:
-        return api.PlaybillHeadV1(
+    def playbill_head(self, instance_id: str, *, at: object = None) -> api.PlaybillHead:
+        return api.PlaybillHead(
             instance=instance_id,
             coordinate=_COORDINATE.model_dump(mode="json"),  # type: ignore[arg-type]
             generation=4,
@@ -89,8 +89,8 @@ class _Client:
         """``get(detail="proof")`` over this fake's ClaimType and Claim views."""
 
         from cruxible_client.contracts.get_reads import (
-            PlaybillGetCoordinateV1,
-            PlaybillGetResultV1,
+            PlaybillGetCoordinate,
+            PlaybillGetResult,
         )
 
         assert request.detail == "proof"
@@ -102,12 +102,12 @@ class _Client:
         else:
             kind = "claim"
             view = self._claim_view(instance_id, request.ref, at=request.at)
-        return PlaybillGetResultV1(
+        return PlaybillGetResult(
             ref=request.ref,
             kind=kind,  # type: ignore[arg-type]
             detail="proof",
             proof=view.model_dump(mode="json"),
-            coordinate=PlaybillGetCoordinateV1(git_oid=view.coordinate.git_oid[:12], generation=4),
+            coordinate=PlaybillGetCoordinate(git_oid=view.coordinate.git_oid[:12], generation=4),
             accepted_coordinate=view.coordinate,
             evaluation_time=request.evaluation_time or datetime(2026, 9, 1, tzinfo=UTC),
         )
@@ -408,7 +408,7 @@ def test_sdk_declared_block_refuses_every_citation_role_inside_it(
         declared_generation=1,
         declared_coordinate=AcceptedCoordinate.model_validate(_COORDINATE.model_dump(mode="json")),
         backing=(
-            ProjectionClaimBackingV1(
+            ProjectionClaimBacking(
                 identity=ArtifactIdentity(kind="Claim", name="CLM-source"),
                 statement_digest="sha256:" + "9" * 64,
             ),
@@ -455,7 +455,7 @@ def test_sdk_declared_block_refuses_every_citation_role_inside_it(
 
     copy = pb.claim(supported_by=None, copied_from=outside, **common)
     assert copy.payload.citation_role == "copy"
-    assert isinstance(copy.payload.source, WorkingSelectionObservationV1)
+    assert isinstance(copy.payload.source, WorkingSelectionObservation)
     assert copy.payload.source.source_content == page
 
 
@@ -464,7 +464,7 @@ def test_sdk_procedure_run_binds_its_typed_input_contract_coordinate(tmp_path: P
 
     from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
     from cruxible_client.contracts.procedures.contract_schema import PropertySchema
-    from cruxible_client.contracts.procedures.models import ProcedureDefinitionV3, ProjectNodeV3
+    from cruxible_client.contracts.procedures.models import ProcedureDefinitionV3, ProjectNode
     from tests.test_procedures.test_procedure_execution import (
         _budget,
         _hard_caps,
@@ -482,7 +482,7 @@ def test_sdk_procedure_run_binds_its_typed_input_contract_coordinate(tmp_path: P
             contract_in=pi,
             contract_out=po,
             nodes=(
-                ProjectNodeV3(node_id="result", fields={"ok": True}, contract_out=po, as_="result"),
+                ProjectNode(node_id="result", fields={"ok": True}, contract_out=po, as_="result"),
             ),
             returns="result",
             budget=_budget(),
@@ -603,12 +603,12 @@ def test_sdk_line_run_carries_the_asserted_identity_and_occurrence(tmp_path: Pat
         "evaluation_time": "2026-08-24T12:00:00+00:00",
     }
 
-    contract = api.ResolutionContractReferenceV1(
+    contract = api.ResolutionContractReference(
         identity={"kind": "ResolutionContract", "name": "test"},
         artifact_digest=_DIGEST,
         coordinate=_COORDINATE.model_dump(),
     )
-    event = api.TriggerEventReferenceV1(
+    event = api.TriggerEventReference(
         run_id="RUN-anchor",
         partition_id="direct:anchor",
         sequence=1,
@@ -631,13 +631,13 @@ def test_procedure_run_track_record_reads_the_procedure_card_from_get(tmp_path: 
 
     _workspace(tmp_path)
     from cruxible_client.contracts.get_reads import (
-        PlaybillGetCoordinateV1,
-        PlaybillGetProcedureCardV1,
-        PlaybillGetProcedureTrackRecordV1,
-        PlaybillGetResultV1,
+        PlaybillGetCoordinate,
+        PlaybillGetProcedureCard,
+        PlaybillGetProcedureTrackRecord,
+        PlaybillGetResult,
     )
 
-    entry = PlaybillGetProcedureTrackRecordV1(
+    entry = PlaybillGetProcedureTrackRecord(
         promotion="daily-summary-runs",
         first_sequence=1,
         last_sequence=4,
@@ -651,19 +651,19 @@ def test_procedure_run_track_record_reads_the_procedure_card_from_get(tmp_path: 
             super().__init__()
             self.gets: list[Any] = []
 
-        def playbill_get(self, _instance_id: str, *, request: Any) -> PlaybillGetResultV1:
+        def playbill_get(self, _instance_id: str, *, request: Any) -> PlaybillGetResult:
             self.gets.append(request)
-            return PlaybillGetResultV1(
+            return PlaybillGetResult(
                 ref=request.ref,
                 kind="procedure",
                 detail=request.detail,
-                card=PlaybillGetProcedureCardV1(
+                card=PlaybillGetProcedureCard(
                     procedure="daily-summary",
                     inputs={"input": "daily-summary-input"},
                     readiness="ready",
                     track_record=(entry,),
                 ),
-                coordinate=PlaybillGetCoordinateV1(git_oid="a" * 12, generation=3),
+                coordinate=PlaybillGetCoordinate(git_oid="a" * 12, generation=3),
                 accepted_coordinate=_COORDINATE,
                 evaluation_time=datetime(2026, 8, 24, 12, tzinfo=UTC),
             )
@@ -753,8 +753,8 @@ def test_cold_claim_prepares_one_payload_with_dependencies_and_program_stamp(
         permitted_roles=(ClaimRole.NORMATIVE,),
         referent_sensitivity=ReferentSensitivity.IDENTITY,
         sources=("corpus.runbook",),
-        admission_policy=ClaimAdmissionPolicyV1(),
-        resolution_policy=ClaimResolutionPolicyV1(
+        admission_policy=ClaimAdmissionPolicy(),
+        resolution_policy=ClaimResolutionPolicy(
             cardinality="one",
             eligible_verdicts=("supported",),
             selector="only_contender",
@@ -954,9 +954,9 @@ def test_claim_type_builder_preserves_attestation_consequences_in_v5(tmp_path: P
         workspace=tmp_path,
         clock=lambda: datetime(2026, 8, 24, 12, tzinfo=UTC),
     )
-    policy = ClaimAttestationConsequencePolicyV1(
+    policy = ClaimAttestationConsequencePolicy(
         rules=(
-            ClaimAttestationConsequenceRuleV1(
+            ClaimAttestationConsequenceRule(
                 rule_id="two-independent-unsure",
                 stance="unsure",
                 minimum_independent_control_components=2,
@@ -974,8 +974,8 @@ def test_claim_type_builder_preserves_attestation_consequences_in_v5(tmp_path: P
         permitted_roles=(ClaimRole.NORMATIVE,),
         referent_sensitivity=ReferentSensitivity.IDENTITY,
         sources=("corpus.runbook",),
-        admission_policy=ClaimAdmissionPolicyV1(),
-        resolution_policy=ClaimResolutionPolicyV1(
+        admission_policy=ClaimAdmissionPolicy(),
+        resolution_policy=ClaimResolutionPolicy(
             cardinality="one",
             eligible_verdicts=("supported",),
             selector="only_contender",
@@ -1138,7 +1138,7 @@ def test_capture_ref_builds_v3_authoring_and_owns_the_contract_expectation(
         claim_type_definition=None,
     )
 
-    assert isinstance(draft.payload, ClaimAuthoringPayloadV3)
+    assert isinstance(draft.payload, ClaimAuthoringPayload)
     assert draft.payload.source.capture_digest == capture.capture_digest
     assert [item.payload_path for item in draft.reference_expectations] == ["source"]
     assert draft.reference_expectations[0].address == capture.contract_address
@@ -1153,8 +1153,8 @@ def test_claim_view_mints_capture_refs_from_typed_admission_accounts(tmp_path: P
             _instance_id: str,
             _identity: str,
             **_values: Any,
-        ) -> api.PlaybillClaimViewV2:
-            return api.PlaybillClaimViewV2(
+        ) -> api.ClaimViewRecord:
+            return api.ClaimViewRecord(
                 tag="playbill-claim-read-v2",
                 coordinate_kind="canonical",
                 coordinate=_COORDINATE,
@@ -1180,7 +1180,7 @@ def test_claim_view_mints_capture_refs_from_typed_admission_accounts(tmp_path: P
                     },
                 ],
                 admission_evaluation_time="2026-08-28T12:00:00Z",
-                statement=api.ClaimStatementCardV1(
+                statement=api.ClaimStatementCard(
                     subject={
                         "artifact_path": "subjects/secops.policy/a.json",
                         "selector": {"scheme": "artifact-v1", "value": ""},
@@ -1413,8 +1413,8 @@ def _staged_claim_type(predicate: str, *, object_kind: str) -> ClaimType:
         cardinality="one",
         permitted_roles=("normative", "observation"),
         evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(rules=()),
-        admission_policy=ClaimAdmissionPolicyV1(),
-        resolution_policy=ClaimResolutionPolicyV1(
+        admission_policy=ClaimAdmissionPolicy(),
+        resolution_policy=ClaimResolutionPolicy(
             cardinality="one",
             eligible_verdicts=("supported",),
             selector="only_contender",
@@ -1444,7 +1444,7 @@ def test_exact_content_authors_the_object_the_wire_has_always_carried(
         **_OBJECT_KIND_CLAIM_DEFAULTS,  # type: ignore[arg-type]
     )
 
-    assert draft.payload.statement.object == AuthoringExactContentObjectV1(
+    assert draft.payload.statement.object == AuthoringExactContentObject(
         content_base64=base64.b64encode(b"the ruling exactly as it was written\n").decode("ascii")
     )
     assert draft.payload.statement.object.content == b"the ruling exactly as it was written\n"
@@ -1560,18 +1560,18 @@ def test_sdk_measure_and_readings_carry_the_run_and_observation_basis(tmp_path: 
     class MeasureClient(_Client):
         def __init__(self) -> None:
             super().__init__()
-            self.measure_requests: list[api.PlaybillProcedureMeasureRequestV1] = []
-            self.readings_requests: list[api.PlaybillProcedureReadingsRequestV1] = []
+            self.measure_requests: list[api.PlaybillProcedureMeasureRequest] = []
+            self.readings_requests: list[api.PlaybillProcedureReadingsRequest] = []
 
         def measure_playbill_procedure(
             self,
             _instance_id: str,
             name: str,
             *,
-            request: api.PlaybillProcedureMeasureRequestV1,
-        ) -> api.PlaybillProcedureMeasureResultV1:
+            request: api.PlaybillProcedureMeasureRequest,
+        ) -> api.PlaybillProcedureMeasureResult:
             self.measure_requests.append(request)
-            return api.PlaybillProcedureMeasureResultV1(
+            return api.PlaybillProcedureMeasureResult(
                 procedure_identity={"kind": "Procedure", "name": name},
                 procedure_artifact_digest=_DIGEST,
                 activation_coordinate=coordinate,
@@ -1579,7 +1579,7 @@ def test_sdk_measure_and_readings_carry_the_run_and_observation_basis(tmp_path: 
                 observation_time=observation,
                 run_id=request.run_id,
                 rows=(
-                    api.ProcedureMeasurementRowV1(
+                    api.ProcedureMeasurementRow(
                         measurement_name="rows-present",
                         measurement_kind="accepted_query",
                         contract_id="RSC-" + "a" * 32,
@@ -1587,7 +1587,7 @@ def test_sdk_measure_and_readings_carry_the_run_and_observation_basis(tmp_path: 
                         subject_grain="procedure_unit",
                         subject=SemanticAddress.procedure_unit("procedures/daily-summary.json"),
                         status="pending",
-                        eligibility=api.ProcedureMeasurementEligibilityV1(
+                        eligibility=api.ProcedureMeasurementEligibility(
                             activation_coordinate=coordinate,
                             activated_at=observation,
                             check_at=observation,
@@ -1607,10 +1607,10 @@ def test_sdk_measure_and_readings_carry_the_run_and_observation_basis(tmp_path: 
             _instance_id: str,
             name: str,
             *,
-            request: api.PlaybillProcedureReadingsRequestV1,
-        ) -> api.PlaybillProcedureReadingsResultV1:
+            request: api.PlaybillProcedureReadingsRequest,
+        ) -> api.PlaybillProcedureReadingsResult:
             self.readings_requests.append(request)
-            return api.PlaybillProcedureReadingsResultV1(
+            return api.PlaybillProcedureReadingsResult(
                 procedure_identity={"kind": "Procedure", "name": name},
                 procedure_artifact_digest=_DIGEST,
                 activation_coordinate=coordinate,

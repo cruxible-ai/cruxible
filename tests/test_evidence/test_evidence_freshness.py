@@ -7,27 +7,27 @@ from pathlib import Path
 
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
 from cruxible_client.contracts.captures import (
-    CanonicalDurationV1,
-    DirectForeignSourceSelectionV1,
+    CanonicalDuration,
+    DirectForeignSourceSelection,
     foreign_source_capture_contract,
 )
 from cruxible_client.contracts.claim_types import (
-    ClaimEvidenceFreshnessV1,
-    ClaimFreshnessDurationV1,
+    ClaimEvidenceFreshness,
+    ClaimFreshnessDuration,
     ClaimType,
     claim_type_digest,
     claim_type_path,
     parse_claim_type,
 )
-from cruxible_client.contracts.claim_verdicts import ClaimVerdictResultV2
-from cruxible_client.contracts.claims import ClaimLawEvidenceV2
+from cruxible_client.contracts.claim_verdicts import ClaimVerdictResult
+from cruxible_client.contracts.claims import ClaimLawEvidence
 from cruxible_client.contracts.semantic import ContentSpan
 from cruxible_core.claims.claim_type_migrations import (
     ClaimTypeDependentDispositionV1,
     ClaimTypeMigrationRequestV1,
     service_migrate_claim_type,
 )
-from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.proposals.proposals import AuthenticatedActor
 from cruxible_core.service.authoring.documents import (
     service_activate_playbill_proposal,
@@ -83,7 +83,7 @@ def _fresh_world(tmp_path: Path):  # type: ignore[no-untyped-def]
             update={
                 "subject_shell": None,
                 "claim_type_artifact": None,
-                "source_selection": DirectForeignSourceSelectionV1(
+                "source_selection": DirectForeignSourceSelection(
                     logical_source_identity=source_id,
                     span=ContentSpan(
                         content_digest=body.digest,
@@ -108,8 +108,8 @@ def _fresh_world(tmp_path: Path):  # type: ignore[no-untyped-def]
         {
             **predecessor.model_dump(mode="json"),
             "artifact_format": "playbill-claim-type-v3",
-            "evidence_freshness": ClaimEvidenceFreshnessV1(
-                stale_after=ClaimFreshnessDurationV1(microseconds=10_000_000)
+            "evidence_freshness": ClaimEvidenceFreshness(
+                stale_after=ClaimFreshnessDuration(microseconds=10_000_000)
             ).model_dump(mode="json"),
             "lifecycle": ArtifactLifecycle(
                 predecessor_digest=claim_type_digest(predecessor).tagged
@@ -140,8 +140,8 @@ def _fresh_world(tmp_path: Path):  # type: ignore[no-untyped-def]
     return instance, proposed.claim_identity.removeprefix("Claim:")
 
 
-def _access() -> CoverageAccessProfileV1:
-    return CoverageAccessProfileV1(
+def _access() -> CoverageAccessProfile:
+    return CoverageAccessProfile(
         profile_id="freshness-test",
         permitted_access_classes=("instance", "public"),
     )
@@ -164,7 +164,7 @@ def test_v3_freshness_succeeds_service_wires_and_next_queue(tmp_path: Path) -> N
     )
 
     assert isinstance(current, PlaybillClaimVerdictQueryV2)
-    assert isinstance(current.verdict, ClaimVerdictResultV2)
+    assert isinstance(current.verdict, ClaimVerdictResult)
     assert current.verdict.verdict == "supported"
     assert isinstance(expired, PlaybillClaimVerdictQueryV2)
     assert expired.verdict.verdict == "stale_evidence"
@@ -180,7 +180,7 @@ def test_v3_freshness_succeeds_service_wires_and_next_queue(tmp_path: Path) -> N
         evaluation_time=at_expiry,
     )
     assert isinstance(explanation, PlaybillClaimExplanationV3)
-    assert isinstance(explanation.law_evidence, ClaimLawEvidenceV2)
+    assert isinstance(explanation.law_evidence, ClaimLawEvidence)
     assert explanation.freshness[0].state == "expired"
     assert explanation.freshness[0].recapture_operation.operation == "playbill.authoring.bind"
 
@@ -189,7 +189,7 @@ def test_v3_freshness_succeeds_service_wires_and_next_queue(tmp_path: Path) -> N
         request=PlaybillNextRequestV1(
             evaluation_time=before_expiry,
             access_profile=_access(),
-            expiring_within=CanonicalDurationV1(microseconds=2_000_000),
+            expiring_within=CanonicalDuration(microseconds=2_000_000),
         ),
     )
     stale = service_playbill_next(

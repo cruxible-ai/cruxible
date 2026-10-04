@@ -17,21 +17,21 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from cruxible_client.contracts.canonical import ArtifactDigest
 from cruxible_client.contracts.claim_types import ClaimType, parse_claim_type
-from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
-from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpecV1
+from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
+from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpec
 from cruxible_client.contracts.provider_contracts import (
-    ProviderOperationContractV1,
+    ProviderOperationContract,
     read_provider_operation_contract,
 )
 from cruxible_client.contracts.provider_interfaces import (
-    ProviderEffectClassV1,
-    ProviderInterfaceRegistration,
+    ProviderEffectClass,
+    ProviderInterfaceRegistrationAny,
     parse_provider_interface,
     provider_interface_digest,
 )
 from cruxible_client.contracts.providers import ProviderV2, parse_provider, provider_digest
 from cruxible_client.contracts.query.definitions import (
-    AcceptedQueryDefinitionV1,
+    AcceptedQueryDefinition,
     parse_query_definition,
     query_definition_digest,
 )
@@ -79,13 +79,13 @@ class ProviderInterfaceEntryV1(_StrictDiscoveryServiceModel):
     interface_digest: str
     vocabulary_digest: str
     classifier_digest: str
-    effect_class: ProviderEffectClassV1
+    effect_class: ProviderEffectClass
     classifier_status: Literal["installed", "not_installed"]
     interface_basis: Literal["accepted_registration"] = "accepted_registration"
     # Additive: the live Providers implementing this interface, so an author can
     # pin a graph-v4 Source node from the served inventory alone.
     providers: tuple[ProviderInterfaceImplementationV1, ...] = ()
-    operation_contract: ProviderOperationContractV1 | None = None
+    operation_contract: ProviderOperationContract | None = None
 
     @field_validator(
         "artifact_digest",
@@ -103,7 +103,7 @@ class ProviderInterfaceEntryV1(_StrictDiscoveryServiceModel):
 class AcceptedProviderInterface:
     """One live accepted interface: its registration and its inventory entry."""
 
-    registration: ProviderInterfaceRegistration
+    registration: ProviderInterfaceRegistrationAny
     entry: ProviderInterfaceEntryV1
 
 
@@ -212,16 +212,16 @@ def accepted_claim_types(tree: Mapping[str, bytes]) -> tuple[ClaimType, ...]:
 
 def accepted_query_definitions(
     tree: Mapping[str, bytes],
-) -> tuple[AcceptedQueryDefinitionV1, ...]:
+) -> tuple[AcceptedQueryDefinition, ...]:
     """Return every accepted QueryDefinition in byte-sorted ledger-path order."""
 
-    definitions: list[AcceptedQueryDefinitionV1] = []
+    definitions: list[AcceptedQueryDefinition] = []
     for path in sorted(tree, key=lambda item: item.encode("utf-8")):
         if not path.startswith(QUERY_DEFINITION_PATH_PREFIX):
             continue
         query = parse_query_definition(tree[path], path=path)
         definitions.append(
-            AcceptedQueryDefinitionV1(
+            AcceptedQueryDefinition(
                 path=path,
                 query=query,
                 artifact_digest=query_definition_digest(query).tagged,
@@ -235,8 +235,8 @@ def build_accepted_discovery_vocabulary(
     *,
     coordinate: AcceptedProjectionCoordinate,
     facts: ClaimQueryFactsV1 | None = None,
-    procedures: Iterable[AcceptedProcedureV1] = (),
-    line_specs: Iterable[AcceptedLineSpecV1] = (),
+    procedures: Iterable[AcceptedProcedure] = (),
+    line_specs: Iterable[AcceptedLineSpec] = (),
     external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,
 ) -> DiscoveryVocabularyV1:
     """Project the accepted naming layer at one coordinate into a vocabulary."""

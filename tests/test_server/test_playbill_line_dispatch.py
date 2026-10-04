@@ -3,7 +3,7 @@
 from datetime import timedelta
 
 from cruxible_client import AccessProfile, CruxibleClient, Playbill
-from cruxible_client.contracts.triggers import CaptureLandingScheduleV1
+from cruxible_client.contracts.triggers import CaptureLandingSchedule
 from cruxible_core.exhaust.line_dispatch import dispatch_root
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from tests.test_procedures.test_line_triggers import SELECTOR, capture, line_world
@@ -14,7 +14,7 @@ def test_typed_sdk_http_check_listen_evaluate_and_dispatch(playbill_http, tmp_pa
     http, instance_id, _ = playbill_http
     (tmp_path / "line-world").mkdir()
     instance, line, procedure = line_world(
-        tmp_path / "line-world", CaptureLandingScheduleV1(event=SELECTOR)
+        tmp_path / "line-world", CaptureLandingSchedule(event=SELECTOR)
     )
     manager = get_playbill_manager()
     manager.consumer_runner.close()  # deterministic matching is exercised in its own thread test

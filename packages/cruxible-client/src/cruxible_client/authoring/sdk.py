@@ -20,7 +20,7 @@ import cruxible_client.compatibility as client_compatibility
 from cruxible_client import contracts as api
 from cruxible_client.authoring.approval import ReviewedProposal, approve_reviewed, review_proposal
 from cruxible_client.authoring.attestations import (
-    ClaimAttestationV2Signer,
+    ClaimAttestationSigner,
     append_prepared_claim_attestation,
     prepare_claim_attestation,
 )
@@ -92,7 +92,7 @@ from cruxible_client.authoring.workspace import (
 )
 from cruxible_client.authoring.write_evidence import observe_changes
 from cruxible_client.contracts.acquisition_policies import (
-    SourceAcquisitionPolicyV1,
+    SourceAcquisitionPolicy,
 )
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
@@ -101,43 +101,43 @@ from cruxible_client.contracts.artifacts import (
 )
 from cruxible_client.contracts.authoring.inputs import (
     ProcedureInput,
-    ProcedureMandateInputV1,
+    ProcedureMandateInput,
     QueryDefinitionInput,
     lower_authoring_input,
 )
 from cruxible_client.contracts.authoring.models import (
     AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST,
     AUTHORING_SDK_VERSION,
-    AttestationAuthoringPayloadV1,
-    AuthoringChangeSetMemberV1,
-    AuthoringClaimStatementV1,
-    AuthoringExactContentObjectV1,
-    AuthoringExistingClaimDispositionV1,
-    AuthoringIntentViewV1,
-    AuthoringProgramOperationV1,
-    AuthoringProgramStampV1,
-    AuthoringReferenceExpectationV1,
-    CaptureContractAuthoringPayloadV1,
-    ChangeSetAuthoringPayloadV1,
+    AttestationAuthoringPayload,
+    AuthoringChangeSetMember,
+    AuthoringClaimStatement,
+    AuthoringExactContentObject,
+    AuthoringExistingClaimDisposition,
+    AuthoringIntentView,
+    AuthoringProgramOperation,
+    AuthoringProgramStamp,
+    AuthoringReferenceExpectation,
+    CaptureContractAuthoringPayload,
+    ChangeSetAuthoringPayload,
+    ClaimAuthoringPayload,
     ClaimAuthoringPayloadV1,
     ClaimAuthoringPayloadV2,
-    ClaimAuthoringPayloadV3,
-    ClaimDependencyDraftsV1,
-    ClaimRetirementMemberV1,
-    ClaimTypeAuthoringPayloadV1,
-    ClaimTypeSuccessionDependentV1,
-    ClaimTypeSuccessionMemberV1,
-    ExistingCaptureCitationSourceV1,
-    LineAuthoringPayloadV1,
+    ClaimDependencyDrafts,
+    ClaimRetirementMember,
+    ClaimTypeAuthoringPayload,
+    ClaimTypeSuccessionDependent,
+    ClaimTypeSuccessionMember,
+    ExistingCaptureCitationSource,
+    LineAuthoringPayload,
+    ProcedureAuthoringPayload,
     ProcedureAuthoringPayloadV1,
-    ProcedureAuthoringPayloadV2,
-    ProcedureMandateAuthoringPayloadV1,
-    QueryDefinitionAuthoringPayloadV1,
-    ResolutionContractAuthoringPayloadV1,
-    SelfSourceBodyV1,
-    SourceAcquisitionPolicyAuthoringPayloadV1,
-    SubjectAuthoringPayloadV1,
-    TriggerAuthoringPayloadV1,
+    ProcedureMandateAuthoringPayload,
+    QueryDefinitionAuthoringPayload,
+    ResolutionContractAuthoringPayload,
+    SelfSourceBody,
+    SourceAcquisitionPolicyAuthoringPayload,
+    SubjectAuthoringPayload,
+    TriggerAuthoringPayload,
     authoring_member_identity,
     authoring_program_digest,
 )
@@ -145,35 +145,35 @@ from cruxible_client.contracts.canonical import (
     CanonicalValue,
     normalize_canonical,
 )
-from cruxible_client.contracts.capture_reads import CaptureReadRequestV1
+from cruxible_client.contracts.capture_reads import CaptureReadRequest
 from cruxible_client.contracts.captures import (
-    CaptureContractV1,
+    CaptureContract,
     capture_contract_digest,
     capture_contract_path,
     foreign_source_capture_contract,
 )
 from cruxible_client.contracts.claim_attestations import (
-    ClaimAttestationAppendResultV1,
-    ClaimAttestationV2,
+    ClaimAttestation,
+    ClaimAttestationAppendResult,
     ClaimStance,
-    PreparedClaimAttestationRequestV1,
+    PreparedClaimAttestationRequest,
 )
 from cruxible_client.contracts.claim_type_structure import ClaimRole as ClaimRoleValue
 from cruxible_client.contracts.claim_type_upgrade import (
-    ClaimTypeUpgradeRequestV1,
-    ClaimTypeUpgradeResultV1,
+    ClaimTypeUpgradeRequest,
+    ClaimTypeUpgradeResult,
 )
 from cruxible_client.contracts.claim_types import (
-    ClaimAttestationConsequencePolicyV1,
-    ClaimEvidenceFreshnessV1,
-    ClaimFreshnessDurationV1,
+    ClaimAttestationConsequencePolicy,
+    ClaimEvidenceFreshness,
+    ClaimFreshnessDuration,
     ClaimType,
 )
 from cruxible_client.contracts.claims import (
+    ClaimArtifact,
     ClaimArtifactAny,
     ClaimArtifactV2,
-    ClaimArtifactV3,
-    ClaimRetireDependentV1,
+    ClaimRetireDependent,
     ClaimRetirementReason,
     ClaimUnsupportedFormatError,
     LiteralClaimObject,
@@ -181,73 +181,73 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.compact_query import (
     QueryClaimStatus,
-    QueryFilterV1,
+    QueryFilter,
+    QueryFollow,
     QueryFollowDirection,
-    QueryFollowV1,
     QueryReceiptDetail,
 )
 from cruxible_client.contracts.declared_blocks import (
-    ProjectionBlockStampV2,
+    ProjectionBlockStamp,
     ProjectionCurrencyPolicy,
 )
 from cruxible_client.contracts.errors import WriteRefusalError
 from cruxible_client.contracts.get_reads import (
     GET_BATCH_MAX_REFS,
-    PlaybillByteRangeV1,
-    PlaybillExactContentRefV1,
-    PlaybillGetBatchRequestV1,
+    PlaybillByteRange,
+    PlaybillExactContentRef,
+    PlaybillGetBatchRequest,
     PlaybillGetDetail,
-    PlaybillGetProcedureCardV1,
-    PlaybillGetProcedureTrackRecordV1,
-    PlaybillGetRequestV1,
-    PlaybillGetResultV1,
+    PlaybillGetProcedureCard,
+    PlaybillGetProcedureTrackRecord,
+    PlaybillGetRequest,
+    PlaybillGetResult,
 )
 from cruxible_client.contracts.line_dispatch import (
-    LineTriggerCheckRequestV1,
-    LineTriggerCheckResultV1,
+    LineTriggerCheckRequest,
+    LineTriggerCheckResult,
 )
 from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicyV1,
+    ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV2,
     ClaimEvidenceAdmissionRuleV2,
-    ClaimResolutionPolicyV1,
+    ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.predictions import (
-    ObservationSettlementEvidenceV2,
-    PlaybillPredictRequestV2,
-    ResolutionContractInputV1,
-    TerminalSettlementEvidenceV2,
+    ObservationSettlementEvidence,
+    PlaybillPredictRequest,
+    ResolutionContractInput,
+    TerminalSettlementEvidence,
 )
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifactAny,
     procedure_artifact_digest,
 )
-from cruxible_client.contracts.procedures.results import ProcedureTerminalEgressV1
+from cruxible_client.contracts.procedures.results import ProcedureTerminalEgress
 from cruxible_client.contracts.procedures.windows import (
-    TriggerEventReferenceV1,
+    TriggerEventReference,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.query.definitions import QueryDefinitionSpecV1, QueryDefinitionV1
-from cruxible_client.contracts.query.grammar import QueryBudgetsV1
+from cruxible_client.contracts.query.definitions import QueryDefinition, QueryDefinitionSpec
+from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_client.contracts.records import Record, RecordConstructor
 from cruxible_client.contracts.resolution_contracts import (
-    ClaimVersionReferenceV1,
-    ResolutionContractReferenceV1,
-    ResolutionContractV1,
+    ClaimVersionReference,
+    ResolutionContract,
+    ResolutionContractReference,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import format_datetime
-from cruxible_client.contracts.triggers import InternalActionName, TriggerScheduleV1
+from cruxible_client.contracts.triggers import InternalActionName, TriggerSchedule
 from cruxible_client.contracts.write import (
     AddChange,
     Change,
     ClaimValue,
     Evidence,
     ExpectedValue,
-    PlaybillRetireRequestV1,
-    PlaybillSetRequestV1,
-    PlaybillWriteRequestV1,
+    PlaybillRetireRequest,
+    PlaybillSetRequest,
+    PlaybillWriteRequest,
     RetireChange,
     SetChange,
     SlotRef,
@@ -279,7 +279,7 @@ def _coordinate(value: api.PlaybillAcceptedCoordinate | Mapping[str, object]) ->
     return AcceptedCoordinate.model_validate(payload)
 
 
-def _get_coordinate(result: PlaybillGetResultV1) -> AcceptedCoordinate:
+def _get_coordinate(result: PlaybillGetResult) -> AcceptedCoordinate:
     """The full accepted coordinate a ``get`` answered at (requested by the SDK)."""
 
     if result.accepted_coordinate is None:  # pragma: no cover - the SDK always asks for it
@@ -333,7 +333,7 @@ class ClaimView:
     role: str
     object_kind: str
     # The object's value: a literal, a Subject path, or an exact-content
-    # Claim's text (a PlaybillExactContentRefV1 marker when it is not text).
+    # Claim's text (a PlaybillExactContentRef marker when it is not text).
     value: object
     lifecycle_state: str
     verdict: str
@@ -403,7 +403,7 @@ def _expectation(
     *,
     expected: RefKind,
     payload_path: str,
-) -> AuthoringReferenceExpectationV1 | None:
+) -> AuthoringReferenceExpectation | None:
     if isinstance(value, str):
         return None
     _address(value, expected)
@@ -414,7 +414,7 @@ def _expectation(
         # so asserting it there would refuse in preflight against the base tree.
         # The set lowers definitions before the members that read them.
         return None
-    return AuthoringReferenceExpectationV1(
+    return AuthoringReferenceExpectation(
         payload_path=payload_path,
         artifact_kind=cast(Any, _REFERENCE_KINDS[expected]),
         address=_claim_id(cast(ClaimRef, value)) if expected is RefKind.CLAIM else value.address,
@@ -423,8 +423,8 @@ def _expectation(
 
 
 def _sorted_expectations(
-    values: Sequence[AuthoringReferenceExpectationV1 | None],
-) -> tuple[AuthoringReferenceExpectationV1, ...]:
+    values: Sequence[AuthoringReferenceExpectation | None],
+) -> tuple[AuthoringReferenceExpectation, ...]:
     return tuple(
         sorted(
             (value for value in values if value is not None),
@@ -437,9 +437,9 @@ def _sorted_expectations(
     )
 
 
-def _program_stamp(operation: str, decisions: Mapping[str, object]) -> AuthoringProgramStampV1:
-    operation_value = AuthoringProgramOperationV1(operation=operation, decisions=dict(decisions))
-    return AuthoringProgramStampV1(
+def _program_stamp(operation: str, decisions: Mapping[str, object]) -> AuthoringProgramStamp:
+    operation_value = AuthoringProgramOperation(operation=operation, decisions=dict(decisions))
+    return AuthoringProgramStamp(
         program_digest=authoring_program_digest(
             sdk_contract_snapshot_digest=SDK_CONTRACT_SNAPSHOT_DIGEST,
             operations=(operation_value,),
@@ -449,7 +449,7 @@ def _program_stamp(operation: str, decisions: Mapping[str, object]) -> Authoring
     )
 
 
-def _claim_from_public_view(view: api.PlaybillClaimViewV2) -> ClaimArtifactAny:
+def _claim_from_public_view(view: api.ClaimViewRecord) -> ClaimArtifactAny:
     """Reconstruct the exact Claim from its pure projection envelope and facts."""
 
     statement = next(
@@ -487,9 +487,9 @@ def _claim_from_public_view(view: api.PlaybillClaimViewV2) -> ClaimArtifactAny:
     ):
         raise ValueError("Claim read lacks its complete canonical artifact")
     if artifact_format == "playbill-claim-v2":
-        model: type[ClaimArtifactV2] | type[ClaimArtifactV3] = ClaimArtifactV2
+        model: type[ClaimArtifactV2] | type[ClaimArtifact] = ClaimArtifactV2
     elif artifact_format == "playbill-claim-v3":
-        model = ClaimArtifactV3
+        model = ClaimArtifact
     else:
         raise ClaimUnsupportedFormatError(
             f"{ClaimUnsupportedFormatError.error_code}: {artifact_format!r}"
@@ -615,15 +615,15 @@ class _IntentDraft:
     payload: (
         ClaimAuthoringPayloadV1
         | ClaimAuthoringPayloadV2
-        | ClaimAuthoringPayloadV3
+        | ClaimAuthoringPayload
         | ProcedureAuthoringPayloadV1
-        | ProcedureAuthoringPayloadV2
-        | SubjectAuthoringPayloadV1
-        | ChangeSetAuthoringPayloadV1
-        | QueryDefinitionAuthoringPayloadV1
+        | ProcedureAuthoringPayload
+        | SubjectAuthoringPayload
+        | ChangeSetAuthoringPayload
+        | QueryDefinitionAuthoringPayload
     )
-    reference_expectations: tuple[AuthoringReferenceExpectationV1, ...]
-    program_stamp: AuthoringProgramStampV1
+    reference_expectations: tuple[AuthoringReferenceExpectation, ...]
+    program_stamp: AuthoringProgramStamp
     source_map: DiagnosticSourceMap
 
     def prepare(self) -> Intent:
@@ -747,7 +747,7 @@ class QueryDraft(_IntentDraft):
     pass
 
 
-def carry(claim: str | ClaimRef) -> ClaimTypeSuccessionDependentV1:
+def carry(claim: str | ClaimRef) -> ClaimTypeSuccessionDependent:
     """Carry one dependent to the successor by re-pinning it, unchanged.
 
     Available when the dependent still says something true under the successor.
@@ -755,13 +755,13 @@ def carry(claim: str | ClaimRef) -> ClaimTypeSuccessionDependentV1:
     object no longer says what the ClaimType now means.
     """
 
-    return ClaimTypeSuccessionDependentV1(
+    return ClaimTypeSuccessionDependent(
         identity=_claim_identity(claim),
         disposition="successor",
     )
 
 
-def rescind(claim: str | ClaimRef) -> ClaimTypeSuccessionDependentV1:
+def rescind(claim: str | ClaimRef) -> ClaimTypeSuccessionDependent:
     """Tombstone one dependent because it should never have been stated.
 
     The tombstone keeps the exact statement it was accepted with, under the
@@ -769,7 +769,7 @@ def rescind(claim: str | ClaimRef) -> ClaimTypeSuccessionDependentV1:
     after the vocabulary moves, rather than silently rewritten.
     """
 
-    return ClaimTypeSuccessionDependentV1(
+    return ClaimTypeSuccessionDependent(
         identity=_claim_identity(claim),
         disposition="retire",
         claim_retirement_reason="was-rescinded",
@@ -781,10 +781,10 @@ def retire(
     *,
     reason: ClaimRetirementReason,
     effective_until: datetime | None = None,
-) -> ClaimTypeSuccessionDependentV1:
+) -> ClaimTypeSuccessionDependent:
     """Retire one dependent with an attributed reason as the succession lands."""
 
-    return ClaimTypeSuccessionDependentV1(
+    return ClaimTypeSuccessionDependent(
         identity=_claim_identity(claim),
         disposition="retire",
         claim_retirement_reason=reason,
@@ -796,7 +796,7 @@ def re_author(
     claim: str | ClaimRef,
     *,
     with_: str | ClaimRef | None = None,
-) -> ClaimTypeSuccessionDependentV1:
+) -> ClaimTypeSuccessionDependent:
     """Say this dependent again, under the successor, as a sibling Claim member.
 
     The sibling revises this same Claim -- a re-authoring keeps the identity,
@@ -805,7 +805,7 @@ def re_author(
     already says, and `re_author(claim)` alone is complete.
     """
 
-    return ClaimTypeSuccessionDependentV1(
+    return ClaimTypeSuccessionDependent(
         identity=_claim_identity(claim),
         disposition="re_author",
         successor_claim_id=_claim_id(claim if with_ is None else with_),
@@ -822,8 +822,8 @@ def _claim_identity(claim: str | ClaimRef) -> ArtifactIdentity:
 
 @dataclass(frozen=True)
 class _ChangeSetMember:
-    payload: AuthoringChangeSetMemberV1
-    expectations: tuple[AuthoringReferenceExpectationV1, ...]
+    payload: AuthoringChangeSetMember
+    expectations: tuple[AuthoringReferenceExpectation, ...]
     source_map: DiagnosticSourceMap
     decisions: dict[str, object]
 
@@ -897,7 +897,7 @@ class ChangeSetDraft:
         )
         return self
 
-    def signed_attestation(self, attestation: ClaimAttestationV2) -> ChangeSetDraft:
+    def signed_attestation(self, attestation: ClaimAttestation) -> ChangeSetDraft:
         """Add an already signed statement, without changing its bytes or Claim.
 
         It becomes accepted only when this changeset passes ordinary approval
@@ -907,7 +907,7 @@ class ChangeSetDraft:
         """
         self._members.append(
             _ChangeSetMember(
-                payload=AttestationAuthoringPayloadV1(attestation=attestation),
+                payload=AttestationAuthoringPayload(attestation=attestation),
                 expectations=(),
                 source_map=DiagnosticSourceMap(()),
                 decisions={
@@ -923,7 +923,7 @@ class ChangeSetDraft:
         claim: ClaimRef | str,
         *,
         stance: ClaimStance,
-        signer: ClaimAttestationV2Signer,
+        signer: ClaimAttestationSigner,
         valid_until: datetime | None = None,
     ) -> ChangeSetDraft:
         """Sign an exact Claim and stage it in this governed batch.
@@ -931,7 +931,7 @@ class ChangeSetDraft:
         Next: ``.submit()``.
         """
         identity = claim.address if isinstance(claim, ClaimRef) else claim
-        prepared = PreparedClaimAttestationRequestV1(
+        prepared = PreparedClaimAttestationRequest(
             claim_id=identity.removeprefix("Claim:"),
             attestation_basis="examined_existing",
             stance=stance,
@@ -966,7 +966,7 @@ class ChangeSetDraft:
         return {
             member.payload.claim_type.predicate: member.payload.claim_type
             for member in self._members
-            if isinstance(member.payload, ClaimTypeAuthoringPayloadV1)
+            if isinstance(member.payload, ClaimTypeAuthoringPayload)
         }
 
     def subject(self, definition: SubjectDraft | SubjectShell) -> PendingSubjectRef:
@@ -985,7 +985,7 @@ class ChangeSetDraft:
         shell = definition.shell if isinstance(definition, SubjectDraft) else definition
         self._members.append(
             _ChangeSetMember(
-                payload=SubjectAuthoringPayloadV1(subject=shell),
+                payload=SubjectAuthoringPayload(subject=shell),
                 expectations=(),
                 source_map=DiagnosticSourceMap(()),
                 decisions={"kind": "subject", "subject": shell.identity.name},
@@ -996,7 +996,7 @@ class ChangeSetDraft:
             coordinate=self._playbill.coordinate,
         )
 
-    def capture_contract(self, contract: CaptureContractV1) -> ChangeSetDraft:
+    def capture_contract(self, contract: CaptureContract) -> ChangeSetDraft:
         """Define one CaptureContract inside this changeset.
 
         Next: more members, then ``.submit()``.
@@ -1004,7 +1004,7 @@ class ChangeSetDraft:
 
         self._members.append(
             _ChangeSetMember(
-                payload=CaptureContractAuthoringPayloadV1(capture_contract=contract),
+                payload=CaptureContractAuthoringPayload(capture_contract=contract),
                 expectations=(),
                 source_map=DiagnosticSourceMap(()),
                 decisions={"kind": "capture_contract", "name": contract.identity.name},
@@ -1012,7 +1012,7 @@ class ChangeSetDraft:
         )
         return self
 
-    def resolution_contract(self, contract: ResolutionContractV1) -> ChangeSetDraft:
+    def resolution_contract(self, contract: ResolutionContract) -> ChangeSetDraft:
         """Define one ResolutionContract inside this changeset.
 
         Next: more members, then ``.submit()``.
@@ -1020,7 +1020,7 @@ class ChangeSetDraft:
 
         self._members.append(
             _ChangeSetMember(
-                payload=ResolutionContractAuthoringPayloadV1(resolution_contract=contract),
+                payload=ResolutionContractAuthoringPayload(resolution_contract=contract),
                 expectations=(),
                 source_map=DiagnosticSourceMap(()),
                 decisions={"kind": "resolution_contract", "name": contract.identity.name},
@@ -1028,7 +1028,7 @@ class ChangeSetDraft:
         )
         return self
 
-    def acquisition_policy(self, policy: SourceAcquisitionPolicyV1) -> ChangeSetDraft:
+    def acquisition_policy(self, policy: SourceAcquisitionPolicy) -> ChangeSetDraft:
         """Define one SourceAcquisitionPolicy inside this changeset.
 
         Next: ``.line(..., acquisition_policy=name)``, then ``.submit()``.
@@ -1036,7 +1036,7 @@ class ChangeSetDraft:
 
         self._members.append(
             _ChangeSetMember(
-                payload=SourceAcquisitionPolicyAuthoringPayloadV1(acquisition_policy=policy),
+                payload=SourceAcquisitionPolicyAuthoringPayload(acquisition_policy=policy),
                 expectations=(),
                 source_map=DiagnosticSourceMap(()),
                 decisions={"kind": "acquisition_policy", "name": policy.identity.name},
@@ -1052,7 +1052,7 @@ class ChangeSetDraft:
         Next: ``.line(name=..., procedure=...)`` to run it, then ``.submit()``.
         """
         draft = self._playbill.procedure(definition=definition)
-        assert isinstance(draft.payload, (ProcedureAuthoringPayloadV1, ProcedureAuthoringPayloadV2))
+        assert isinstance(draft.payload, (ProcedureAuthoringPayloadV1, ProcedureAuthoringPayload))
         self._members.append(
             _ChangeSetMember(
                 payload=draft.payload,
@@ -1063,13 +1063,13 @@ class ChangeSetDraft:
         )
         return self
 
-    def procedure_mandate(self, definition: ProcedureMandateInputV1) -> ChangeSetDraft:
+    def procedure_mandate(self, definition: ProcedureMandateInput) -> ChangeSetDraft:
         """Stage a typed mandate through the shared authoring-input lowering.
 
         Next: more members, then ``.submit()``.
         """
         payload = lower_authoring_input(definition)
-        assert isinstance(payload, ProcedureMandateAuthoringPayloadV1)
+        assert isinstance(payload, ProcedureMandateAuthoringPayload)
         self._members.append(
             _ChangeSetMember(
                 payload=payload,
@@ -1120,7 +1120,7 @@ class ChangeSetDraft:
 
         self._members.append(
             _ChangeSetMember(
-                payload=LineAuthoringPayloadV1(
+                payload=LineAuthoringPayload(
                     name=name,
                     procedure_name=procedure,
                     acquisition_policy_name=acquisition_policy,
@@ -1142,7 +1142,7 @@ class ChangeSetDraft:
         self,
         *,
         name: str,
-        schedule: TriggerScheduleV1,
+        schedule: TriggerSchedule,
         line: str | None = None,
         action: InternalActionName | None = None,
         retire: bool = False,
@@ -1160,7 +1160,7 @@ class ChangeSetDraft:
         Next: ``.submit()`` to propose the changeset for review and acceptance.
         """
 
-        payload = TriggerAuthoringPayloadV1(
+        payload = TriggerAuthoringPayload(
             name=name, schedule=schedule, line_name=line, action=action, retire=retire
         )
         self._members.append(
@@ -1184,7 +1184,7 @@ class ChangeSetDraft:
         Next: ``.submit()``; once accepted, ``pb.query(name=..., params={...})``.
         """
         draft = self._playbill.query_definition(definition=definition, vocabulary=vocabulary)
-        assert isinstance(draft.payload, QueryDefinitionAuthoringPayloadV1)
+        assert isinstance(draft.payload, QueryDefinitionAuthoringPayload)
         self._members.append(
             _ChangeSetMember(
                 payload=draft.payload,
@@ -1211,7 +1211,7 @@ class ChangeSetDraft:
         value = definition.definition if isinstance(definition, ClaimTypeDraft) else definition
         self._members.append(
             _ChangeSetMember(
-                payload=ClaimTypeAuthoringPayloadV1(claim_type=value),
+                payload=ClaimTypeAuthoringPayload(claim_type=value),
                 expectations=(),
                 source_map=DiagnosticSourceMap(()),
                 decisions={"kind": "claim_type", "predicate": value.predicate},
@@ -1229,7 +1229,7 @@ class ChangeSetDraft:
         *,
         reason: ClaimRetirementReason,
         effective_until: datetime | None = None,
-        dependents: Sequence[ClaimRetireDependentV1] = (),
+        dependents: Sequence[ClaimRetireDependent] = (),
     ) -> ChangeSetDraft:
         """Retire one accepted Claim, and its live closure, inside this changeset.
 
@@ -1245,7 +1245,7 @@ class ChangeSetDraft:
         address = _address(claim, RefKind.CLAIM).removeprefix("Claim:")
         self._members.append(
             _ChangeSetMember(
-                payload=ClaimRetirementMemberV1(
+                payload=ClaimRetirementMember(
                     retires=address,
                     reason=reason,
                     effective_until=effective_until,
@@ -1262,7 +1262,7 @@ class ChangeSetDraft:
         self,
         successor: ClaimTypeDraft | ClaimType,
         *,
-        dependents: Sequence[ClaimTypeSuccessionDependentV1] = (),
+        dependents: Sequence[ClaimTypeSuccessionDependent] = (),
     ) -> ChangeSetDraft:
         """Succeed one accepted ClaimType, and settle its closure, in this set.
 
@@ -1279,7 +1279,7 @@ class ChangeSetDraft:
         value = successor.definition if isinstance(successor, ClaimTypeDraft) else successor
         self._members.append(
             _ChangeSetMember(
-                payload=ClaimTypeSuccessionMemberV1(
+                payload=ClaimTypeSuccessionMember(
                     successor=value,
                     dependents=tuple(
                         sorted(
@@ -1326,7 +1326,7 @@ class ChangeSetDraft:
 
         if not self._members:
             raise ValueError("a changeset needs at least one member")
-        payload = ChangeSetAuthoringPayloadV1(
+        payload = ChangeSetAuthoringPayload(
             members=tuple(
                 sorted(
                     (member.payload for member in self._members),
@@ -1342,7 +1342,7 @@ class ChangeSetDraft:
         index_by_identity = {
             authoring_member_identity(member): index for index, member in enumerate(payload.members)
         }
-        expectations: list[AuthoringReferenceExpectationV1 | None] = []
+        expectations: list[AuthoringReferenceExpectation | None] = []
         entries: list[SourceMapEntry] = []
         decisions: list[dict[str, object]] = []
         for member in sorted(
@@ -1619,7 +1619,7 @@ class WriteBatch:
         if not self.changes:
             raise ValueError("a write needs at least one change")
         return self._playbill._write(
-            PlaybillWriteRequestV1(
+            PlaybillWriteRequest(
                 because=self.because,
                 subject=self.subject,
                 changes=tuple(self.changes),
@@ -2406,7 +2406,7 @@ class Playbill:
         proof = self._get(
             identity, "proof", None, claim.coordinate if isinstance(claim, ClaimRef) else None
         ).proof
-        view = api.PlaybillClaimViewV2.model_validate(proof)
+        view = api.ClaimViewRecord.model_validate(proof)
         return self._with_exact_text(
             self._typed_claim_view(view, identity), _coordinate(view.coordinate)
         )
@@ -2427,7 +2427,7 @@ class Playbill:
             return view
         value: object = evidence.value
         if isinstance(value, Mapping) and "exact_content" in value:
-            value = PlaybillExactContentRefV1.model_validate(value)
+            value = PlaybillExactContentRef.model_validate(value)
         digest = evidence.content_digest
         return replace(
             view,
@@ -2436,7 +2436,7 @@ class Playbill:
         )
 
     @staticmethod
-    def _typed_claim_view(view: api.PlaybillClaimViewV2, identity: str = "") -> ClaimView:
+    def _typed_claim_view(view: api.ClaimViewRecord, identity: str = "") -> ClaimView:
         facts = {
             str(fact.get("schema_id")): fact.get("value")
             for fact in view.facts
@@ -2503,7 +2503,7 @@ class Playbill:
             self._assert_coordinate(capture.coordinate)
         result = self._client.read_playbill_capture(
             self._instance_id,
-            CaptureReadRequestV1(
+            CaptureReadRequest(
                 capture_digest=capture.capture_digest
                 if isinstance(capture, CaptureRef)
                 else capture,
@@ -2521,13 +2521,13 @@ class Playbill:
 
         Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
         """
-        from cruxible_client.contracts.claim_reads import ClaimReadBatchRequestV1
+        from cruxible_client.contracts.claim_reads import ClaimReadBatchRequest
 
         coordinates = [claim.coordinate for claim in claims if isinstance(claim, ClaimRef)]
         if coordinates and any(value != coordinates[0] for value in coordinates):
             raise ValueError("Claim references in a batch must share one coordinate")
         requested = self._read_at(coordinates[0] if coordinates else None)
-        request = ClaimReadBatchRequestV1(
+        request = ClaimReadBatchRequest(
             at=requested,
             claim_ids=tuple(
                 _address(claim, RefKind.CLAIM) if isinstance(claim, ClaimRef) else claim
@@ -2553,32 +2553,32 @@ class Playbill:
         )
 
     def resolution_contracts(
-        self, hypothesis: str | ClaimVersionReferenceV1
-    ) -> api.ResolutionContractsResultV1:
+        self, hypothesis: str | ClaimVersionReference
+    ) -> api.ResolutionContractsResult:
         """Find accepted tests of a Claim, including retired tests.
 
         ``hypothesis`` is a Claim ID (``CLM-...``); the daemon resolves its
-        accepted version. An exact ``ClaimVersionReferenceV1`` is the advanced form.
+        accepted version. An exact ``ClaimVersionReference`` is the advanced form.
 
         Next: ``pb.settle(contract, observation=...)`` once an observation is accepted.
         """
         return self._client.resolution_contracts(
             self._instance_id,
-            request=api.ResolutionContractsRequestV1(hypothesis=hypothesis, at=self.coordinate),
+            request=api.ResolutionContractsRequest(hypothesis=hypothesis, at=self.coordinate),
         )
 
-    def predict(self, contract: ResolutionContractV1 | ResolutionContractInputV1) -> Prediction:
+    def predict(self, contract: ResolutionContract | ResolutionContractInput) -> Prediction:
         """Propose a governed test of an accepted Claim.
 
-        The contract's ``hypothesis`` may be a Claim ID (``ResolutionContractInputV1``);
+        The contract's ``hypothesis`` may be a Claim ID (``ResolutionContractInput``);
         the daemon pins the exact accepted version it resolves to.
 
         Next: ``prediction.proposal.review()``, then approve and ``accept()`` it.
         """
         result = self._client.predict_playbill(
-            self._instance_id, request=PlaybillPredictRequestV2(contract=contract)
+            self._instance_id, request=PlaybillPredictRequest(contract=contract)
         )
-        view = AuthoringIntentViewV1.model_validate(result.intent)
+        view = AuthoringIntentView.model_validate(result.intent)
         return Prediction(
             self,
             contract_identity=result.contract_identity,
@@ -2589,10 +2589,10 @@ class Playbill:
 
     def settle(
         self,
-        prediction: str | ResolutionContractReferenceV1,
+        prediction: str | ResolutionContractReference,
         *,
-        observation: str | ClaimVersionReferenceV1,
-        trigger_event: TriggerEventReferenceV1 | None = None,
+        observation: str | ClaimVersionReference,
+        trigger_event: TriggerEventReference | None = None,
         terminal_run_id: str | None = None,
         terminal_record_digest: str | None = None,
     ) -> PredictionSettlement:
@@ -2610,20 +2610,20 @@ class Playbill:
         contract = None if isinstance(prediction, str) else prediction
         route = prediction if isinstance(prediction, str) else prediction.identity.name
         if terminal_run_id is None and isinstance(observation, str):
-            request = api.PlaybillSettleRequestV2(
+            request = api.PlaybillSettleRequest(
                 observation=observation, contract=contract, trigger_event=trigger_event
             )
         else:
             evidence = (
-                ObservationSettlementEvidenceV2(claim=observation)
+                ObservationSettlementEvidence(claim=observation)
                 if terminal_run_id is None
-                else TerminalSettlementEvidenceV2(
+                else TerminalSettlementEvidence(
                     claim=observation,
                     run_id=terminal_run_id,
                     terminal_record_digest=cast(str, terminal_record_digest),
                 )
             )
-            request = api.PlaybillSettleRequestV2(
+            request = api.PlaybillSettleRequest(
                 contract=contract, trigger_event=trigger_event, evidence=evidence
             )
         result = self._client.settle_playbill_prediction(self._instance_id, route, request=request)
@@ -2737,7 +2737,7 @@ class Playbill:
         revision_evidence: Literal["replace", "accumulate"] = "replace",
         dry_run: bool | None = None,
         at: str | None = None,
-    ) -> ClaimTypeUpgradeResultV1:
+    ) -> ClaimTypeUpgradeResult:
         """Propose moving live ClaimTypes to v7 as one reviewed change set.
 
         Names no ClaimType to move every live one before v7. v7 states what a
@@ -2753,7 +2753,7 @@ class Playbill:
         for item in claim_types:
             if isinstance(item, ClaimTypeRef):
                 self._assert_coordinate(item.coordinate)
-        request = ClaimTypeUpgradeRequestV1(
+        request = ClaimTypeUpgradeRequest(
             claim_types=tuple(_address(item, RefKind.CLAIM_TYPE) for item in claim_types),
             revision_evidence=revision_evidence,
             dry_run=dry_run,
@@ -2761,7 +2761,7 @@ class Playbill:
         )
         return self._client.upgrade_playbill_claim_types(self._instance_id, request)
 
-    def refresh(self) -> api.PlaybillHeadV1:
+    def refresh(self) -> api.PlaybillHead:
         """Re-read the accepted head (a pinned context re-reads its own coordinate).
 
         Next: Playbill.orient() to map state, Playbill.query() for rows, or Playbill.get().
@@ -2809,7 +2809,7 @@ class Playbill:
         )
         return SubjectDraft(
             self,
-            SubjectAuthoringPayloadV1(subject=shell),
+            SubjectAuthoringPayload(subject=shell),
             (),
             _program_stamp(
                 "subject",
@@ -2831,11 +2831,11 @@ class Playbill:
         permitted_roles: Sequence[ClaimRole | str],
         referent_sensitivity: ReferentSensitivity | str,
         sources: Sequence[str | SourceRef],
-        admission_policy: ClaimAdmissionPolicyV1,
-        resolution_policy: ClaimResolutionPolicyV1,
+        admission_policy: ClaimAdmissionPolicy,
+        resolution_policy: ClaimResolutionPolicy,
         pins: Sequence[ArtifactPin],
         evidence_freshness: Duration | None,
-        attestation_consequence_policy: ClaimAttestationConsequencePolicyV1 | None = None,
+        attestation_consequence_policy: ClaimAttestationConsequencePolicy | None = None,
     ) -> ClaimTypeDraft:
         """Draft a ClaimType, reading its accepted definition through get.
 
@@ -2903,8 +2903,8 @@ class Playbill:
             evidence_freshness=(
                 None
                 if evidence_freshness is None
-                else ClaimEvidenceFreshnessV1(
-                    stale_after=ClaimFreshnessDurationV1(microseconds=evidence_freshness.value)
+                else ClaimEvidenceFreshness(
+                    stale_after=ClaimFreshnessDuration(microseconds=evidence_freshness.value)
                 )
             ),
             attestation_consequence_policy=attestation_consequence_policy,
@@ -2957,7 +2957,7 @@ class Playbill:
         for start in range(0, len(names), GET_BATCH_MAX_REFS):
             batch = self._client.playbill_get_batch(
                 self._instance_id,
-                request=PlaybillGetBatchRequestV1(
+                request=PlaybillGetBatchRequest(
                     refs=tuple(names[start : start + GET_BATCH_MAX_REFS]),
                     at=_api_coordinate(coordinate),
                     evaluation_time=datetime.fromisoformat(self._evaluation_time()),
@@ -3026,7 +3026,7 @@ class Playbill:
             return at
         return api.PlaybillAcceptedCoordinate.model_validate(at.model_dump(mode="json"))
 
-    def _write(self, request: PlaybillWriteRequestV1) -> WriteOutcome:
+    def _write(self, request: PlaybillWriteRequest) -> WriteOutcome:
         """Send one write and answer its outcome, or raise its refusal."""
 
         request = request.model_copy(
@@ -3086,7 +3086,7 @@ class Playbill:
         the value back with its verdict.
         """
 
-        request = PlaybillSetRequestV1(
+        request = PlaybillSetRequest(
             subject=_write_subject(subject),
             field=_write_field(field),
             value=_write_value(value),
@@ -3127,7 +3127,7 @@ class Playbill:
         shows the retirement.
         """
 
-        request = PlaybillRetireRequestV1(
+        request = PlaybillRetireRequest(
             target=_write_target(target),
             because=because,
             reason=reason,
@@ -3237,7 +3237,7 @@ class Playbill:
             elif subject_name.endswith(".yaml"):
                 subject_name = subject_name.removesuffix(".yaml")
         predicate_name = _address(predicate, RefKind.CLAIM_TYPE)
-        statement_object: LiteralClaimObject | SubjectClaimObject | AuthoringExactContentObjectV1
+        statement_object: LiteralClaimObject | SubjectClaimObject | AuthoringExactContentObject
         if isinstance(value, ExactContent):
             # Exact bytes name their own kind, so the only question left is
             # whether the predicate states one. Asking here turns a shape the
@@ -3254,7 +3254,7 @@ class Playbill:
                     predicate=predicate_name,
                     object_kind=object_kind,
                 )
-            statement_object = AuthoringExactContentObjectV1(
+            statement_object = AuthoringExactContentObject(
                 content_base64=base64.b64encode(value.content).decode("ascii")
             )
         elif isinstance(value, LiteralValue):
@@ -3309,7 +3309,7 @@ class Playbill:
                         "a CaptureRef minted from a copy or legacy citation cannot be "
                         "promoted to independent evidence; reuse it with copied_from"
                     )
-                source = ExistingCaptureCitationSourceV1(capture_digest=supported_by.capture_digest)
+                source = ExistingCaptureCitationSource(capture_digest=supported_by.capture_digest)
             else:
                 assert_independent_projection_evidence(
                     source_id=supported_by.source_id,
@@ -3322,7 +3322,7 @@ class Playbill:
         elif copied_from is not None:
             if isinstance(copied_from, CaptureRef):
                 self._assert_coordinate(copied_from.coordinate)
-                source = ExistingCaptureCitationSourceV1(capture_digest=copied_from.capture_digest)
+                source = ExistingCaptureCitationSource(capture_digest=copied_from.capture_digest)
             else:
                 # A copy of projection bytes attests them into concrete exactly
                 # as evidence would; the role changes nothing about the law.
@@ -3336,7 +3336,7 @@ class Playbill:
             citation_role = "copy"
         else:
             assert self_source is not None
-            source = SelfSourceBodyV1(
+            source = SelfSourceBody(
                 content_base64=base64.b64encode(self_source.encode("utf-8")).decode("ascii")
             )
             citation_role = None
@@ -3347,7 +3347,7 @@ class Playbill:
             )
         )
         payload_values = dict(
-            statement=AuthoringClaimStatementV1(
+            statement=AuthoringClaimStatement(
                 subject=_subject_address(subject_name),
                 predicate=predicate_name,
                 qualifier=qualifier,
@@ -3361,12 +3361,10 @@ class Playbill:
             citation_role=citation_role,
             revises=(None if revises is None else _claim_id(revises)),
             existing_claim_dispositions=tuple(
-                AuthoringExistingClaimDispositionV1(
-                    claim_id=claim_id, disposition=disposition.value
-                )
+                AuthoringExistingClaimDisposition(claim_id=claim_id, disposition=disposition.value)
                 for claim_id, disposition in sorted_dispositions
             ),
-            dependency_drafts=ClaimDependencyDraftsV1(
+            dependency_drafts=ClaimDependencyDrafts(
                 subject=None if subject_definition is None else subject_definition.shell,
                 claim_type=(
                     None if claim_type_definition is None else claim_type_definition.definition
@@ -3374,11 +3372,11 @@ class Playbill:
             ),
         )
         payload = (
-            ClaimAuthoringPayloadV3(**payload_values)
-            if isinstance(source, ExistingCaptureCitationSourceV1)
+            ClaimAuthoringPayload(**payload_values)
+            if isinstance(source, ExistingCaptureCitationSource)
             else ClaimAuthoringPayloadV2(**payload_values)
         )
-        expectations: list[AuthoringReferenceExpectationV1 | None] = [
+        expectations: list[AuthoringReferenceExpectation | None] = [
             _expectation(
                 subject,
                 expected=RefKind.SUBJECT,
@@ -3411,7 +3409,7 @@ class Playbill:
         )
         if capture_ref is not None:
             expectations.append(
-                AuthoringReferenceExpectationV1(
+                AuthoringReferenceExpectation(
                     payload_path="source",
                     artifact_kind="Source",
                     address=capture_ref.contract_address,
@@ -3436,7 +3434,7 @@ class Playbill:
                     "statement.object.address"
                     if isinstance(statement_object, SubjectClaimObject)
                     else "statement.object.content_base64"
-                    if isinstance(statement_object, AuthoringExactContentObjectV1)
+                    if isinstance(statement_object, AuthoringExactContentObject)
                     else "statement.object.value"
                 ),
             ),
@@ -3462,7 +3460,7 @@ class Playbill:
                 # content is already stored and digested by the daemon, and a
                 # second copy of it here would put the same bytes in the stamp.
                 else statement_object.content_base64
-                if isinstance(statement_object, AuthoringExactContentObjectV1)
+                if isinstance(statement_object, AuthoringExactContentObject)
                 else statement_object.value
             ),
             "role": claim_role.value,
@@ -3620,7 +3618,7 @@ class Playbill:
         it.
         """
         payload = lower_authoring_input(definition)
-        assert isinstance(payload, QueryDefinitionAuthoringPayloadV1)
+        assert isinstance(payload, QueryDefinitionAuthoringPayload)
         expectations = []
 
         def visit(value: object, path: str, ref: ClaimTypeRef) -> None:
@@ -3707,7 +3705,7 @@ class Playbill:
         if not isinstance(definition, ProcedureInput):
             raise TypeError("procedure definition must be a ProcedureInput or authoring Sequence")
         payload = lower_authoring_input(definition)
-        assert isinstance(payload, (ProcedureAuthoringPayloadV1, ProcedureAuthoringPayloadV2))
+        assert isinstance(payload, (ProcedureAuthoringPayloadV1, ProcedureAuthoringPayload))
         # `source` is served by the graph-v4/v5 observation path: a v3 Source
         # node names no interface or implementation, so nothing can plan its
         # Provider occurrence. Keep it out of the v3 allow-list rather than
@@ -3728,10 +3726,10 @@ class Playbill:
         nodes = definition.definition.get("nodes")
         if "source_request" in definition.definition:
             from cruxible_client.contracts.procedures.source_requests import (
-                ProcedureSourceRequestV1,
+                ProcedureSourceRequest,
             )
 
-            ProcedureSourceRequestV1.model_validate(definition.definition["source_request"])
+            ProcedureSourceRequest.model_validate(definition.definition["source_request"])
             nodes = ()
         if not isinstance(nodes, list | tuple):
             raise ValueError("Procedure input must declare its nodes")
@@ -3792,7 +3790,7 @@ class Playbill:
         coordinate = _coordinate(view.coordinate)
         return QueryBinding(
             QueryRef(view.name, coordinate),
-            QueryDefinitionV1.model_validate(view.envelope),
+            QueryDefinition.model_validate(view.envelope),
             view.artifact_digest,
         )
 
@@ -3801,7 +3799,7 @@ class Playbill:
         query: str | QueryRef | QueryBinding,
         *,
         parameters: Mapping[str, object] | None = None,
-        budgets: QueryBudgetsV1 | None = None,
+        budgets: QueryBudgets | None = None,
     ) -> api.PlaybillQueryRun:
         """Run a named query at this SDK view's coordinate with a replay receipt.
 
@@ -3818,7 +3816,7 @@ class Playbill:
         # execution receipt; one rendered row is enough beside it.
         page = self._client.query_playbill(
             self._instance_id,
-            request=api.PlaybillQueryRequestV1.model_validate(
+            request=api.PlaybillQueryRequest.model_validate(
                 {
                     "name": name,
                     "params": None if parameters is None else dict(parameters),
@@ -3851,11 +3849,11 @@ class Playbill:
         self,
         kind: str | None = None,
         *,
-        where: Sequence[QueryFilterV1 | Mapping[str, object]] | None = None,
+        where: Sequence[QueryFilter | Mapping[str, object]] | None = None,
         contains: str | None = None,
         select: Sequence[str] | None = None,
         follow: Sequence[
-            QueryFollowV1
+            QueryFollow
             | Mapping[str, str]
             | tuple[str, str]
             | tuple[str, str, QueryFollowDirection]
@@ -3864,14 +3862,14 @@ class Playbill:
         order_by: Sequence[str] | None = None,
         limit: int = api.PLAYBILL_QUERY_DEFAULT_LIMIT,
         cursor: str | None = None,
-        spec: QueryDefinitionSpecV1 | None = None,
+        spec: QueryDefinitionSpec | None = None,
         name: str | QueryRef | None = None,
         params: Mapping[str, object] | None = None,
         at: AcceptedCoordinate | str | None = None,
         evaluation_time: datetime | str | None = None,
         status: Sequence[QueryClaimStatus] = ("live",),
         claims: bool = False,
-        budgets: QueryBudgetsV1 | None = None,
+        budgets: QueryBudgets | None = None,
         receipt: QueryReceiptDetail = "compact",
     ) -> QueryResult:
         """Answer any question over accepted state: one page of values with flags.
@@ -3884,7 +3882,7 @@ class Playbill:
         A follow is ``(field, alias)`` forward along the kind's own predicate, or
         ``(field, alias, "reverse")`` backwards along another kind's predicate
         that points at this kind, e.g. ``("dev.batch.delivers", "batch",
-        "reverse")`` from ``dev.roadmap_item``; a mapping or ``QueryFollowV1``
+        "reverse")`` from ``dev.roadmap_item``; a mapping or ``QueryFollow``
         with ``direction`` works too.
 
         Next: ``result.next_page()`` while truncated; ``pb.get(ref)`` on any row's ref or
@@ -3897,7 +3895,7 @@ class Playbill:
             else item
             for item in follow or ()
         ]
-        request = api.PlaybillQueryRequestV1.model_validate(
+        request = api.PlaybillQueryRequest.model_validate(
             {
                 "kind": kind,
                 "where": filters_from_mappings(where or ()),
@@ -3905,7 +3903,7 @@ class Playbill:
                 "select": tuple(select or ()),
                 "follow": [
                     item.model_dump(mode="json", by_alias=True)
-                    if isinstance(item, QueryFollowV1)
+                    if isinstance(item, QueryFollow)
                     else dict(item)
                     for item in follows
                 ],
@@ -3925,7 +3923,7 @@ class Playbill:
 
     def _run_query_request(
         self,
-        request: api.PlaybillQueryRequestV1,
+        request: api.PlaybillQueryRequest,
         *,
         at: AcceptedCoordinate | str | None = None,
         evaluation_time: datetime | str | None = None,
@@ -3990,7 +3988,7 @@ class Playbill:
         until: datetime | None = None,
         limit: int = 100,
         cursor: str | None = None,
-    ) -> LineTriggerCheckResultV1:
+    ) -> LineTriggerCheckResult:
         """Inspect trigger eligibility and retained admissions without starting work.
 
         Next: ``pb.evaluate_line(...)`` for a missed range, or ``pb.dispatch_line(line)``
@@ -3999,12 +3997,12 @@ class Playbill:
         return self._client.check_playbill_line(
             self._instance_id,
             line,
-            request=LineTriggerCheckRequestV1(since=since, until=until, limit=limit, cursor=cursor),
+            request=LineTriggerCheckRequest(since=since, until=until, limit=limit, cursor=cursor),
         )
 
     def arm_line(
         self, line: str, *, dry_run: bool | None = None, at: str | None = None
-    ) -> api.LineArmV1:
+    ) -> api.LineArm:
         """Arm a Line forward-only: the daemon admits what it matches from now on.
 
         Runs use this connection's credential, rechecked before each admission,
@@ -4020,7 +4018,7 @@ class Playbill:
 
     def disarm_line(
         self, line: str, *, dry_run: bool | None = None, at: str | None = None
-    ) -> api.LineArmV1:
+    ) -> api.LineArm:
         """Stop a Line admitting work on its own; admitted runs are not cancelled.
 
         A Line whose arm already stopped returns `outcome="already_disarmed"`.
@@ -4030,7 +4028,7 @@ class Playbill:
         """
         return self._client.disarm_playbill_line(self._instance_id, line, dry_run=dry_run, at=at)
 
-    def line_status(self, line: str) -> api.LineArmV1:
+    def line_status(self, line: str) -> api.LineArm:
         """The Line's current arm, or its last one and why it stopped.
 
         Next: ``pb.arm_line(line)`` if it stopped, or ``pb.get(f"Line:{line}")`` for its
@@ -4046,7 +4044,7 @@ class Playbill:
         until: datetime,
         limit: int = 100,
         cursor: str | None = None,
-    ) -> api.LineTriggerCheckResultV1:
+    ) -> api.LineTriggerCheckResult:
         """Explicitly turn a missed range into pending occurrences.
 
         Next: ``pb.dispatch_line(line)`` to admit what it found.
@@ -4054,12 +4052,12 @@ class Playbill:
         return self._client.evaluate_playbill_line(
             self._instance_id,
             line,
-            request=api.LineEvaluateRequestV1(since=since, until=until, limit=limit, cursor=cursor),
+            request=api.LineEvaluateRequest(since=since, until=until, limit=limit, cursor=cursor),
         )
 
     def dispatch_line(
         self, line: str, *, occurrence_id: str | None = None, limit: int = 1, retry: bool = False
-    ) -> api.LineDispatchResultV1:
+    ) -> api.LineDispatchResult:
         """Admit pending work using this connection's current actor and authority.
 
         Next: ``pb.get(f"ProcedureRun:{item.run_id}")`` for each admitted run.
@@ -4067,9 +4065,7 @@ class Playbill:
         return self._client.dispatch_playbill_line(
             self._instance_id,
             line,
-            request=api.LineDispatchRequestV1(
-                occurrence_id=occurrence_id, limit=limit, retry=retry
-            ),
+            request=api.LineDispatchRequest(occurrence_id=occurrence_id, limit=limit, retry=retry),
         )
 
     def run_line(
@@ -4078,8 +4074,8 @@ class Playbill:
         *,
         trigger: str | None = None,
         occurrence_id: str | None = None,
-        resolution_contract: ResolutionContractReferenceV1 | None = None,
-        trigger_event: TriggerEventReferenceV1 | None = None,
+        resolution_contract: ResolutionContractReference | None = None,
+        trigger_event: TriggerEventReference | None = None,
     ) -> ProcedureRun:
         """Trigger a named accepted Line; the daemon resolves its exact identity.
 
@@ -4143,11 +4139,11 @@ class Playbill:
             if ref.kind not in prefixes:
                 raise ReferenceKindError(f"get does not read {ref.kind.value} references")
             text = prefixes[ref.kind] + ref.address
-        window: PlaybillByteRangeV1 | None = None
+        window: PlaybillByteRange | None = None
         if isinstance(range, str):
-            window = PlaybillByteRangeV1.parse(range)
+            window = PlaybillByteRange.parse(range)
         elif range is not None:
-            window = PlaybillByteRangeV1(start=range[0], end=range[1])
+            window = PlaybillByteRange(start=range[0], end=range[1])
         claim_summary = detail == "summary" and (
             (not isinstance(ref, str) and ref.kind is RefKind.CLAIM)
             or (isinstance(ref, str) and ref.removeprefix("Claim:").startswith("CLM-"))
@@ -4167,7 +4163,7 @@ class Playbill:
             identity = result.ref.removeprefix("Proposal:")
         value: object
         if result.kind == "claim" and result.detail == "proof":
-            view = api.PlaybillClaimViewV2.model_validate(result.proof)
+            view = api.ClaimViewRecord.model_validate(result.proof)
             value = (
                 self._with_exact_text(
                     self._typed_claim_view(view, identity), _get_coordinate(result)
@@ -4189,11 +4185,11 @@ class Playbill:
         self,
         ref: str,
         detail: PlaybillGetDetail,
-        window: PlaybillByteRangeV1 | None,
+        window: PlaybillByteRange | None,
         coordinate: AcceptedCoordinate | None,
-    ) -> PlaybillGetResultV1:
+    ) -> PlaybillGetResult:
         requested = self._read_at(coordinate)
-        request = PlaybillGetRequestV1(
+        request = PlaybillGetRequest(
             ref=ref,
             detail=detail,
             range=window,
@@ -4250,7 +4246,7 @@ class Playbill:
         section: api.PlaybillOrientSection | None = None,
         limit: int = api.PLAYBILL_ORIENT_DEFAULT_LIMIT,
         cursor: str | None = None,
-    ) -> api.PlaybillOrientResultV1:
+    ) -> api.PlaybillOrientResult:
         """Map accepted state in one call, at this context's coordinate.
 
         With no arguments: each Subject kind with its count and predicates,
@@ -4293,9 +4289,9 @@ class Playbill:
     def _append_attestation(
         self,
         *,
-        prepared: PreparedClaimAttestationRequestV1,
-        signer: ClaimAttestationV2Signer,
-    ) -> ClaimAttestationAppendResultV1:
+        prepared: PreparedClaimAttestationRequest,
+        signer: ClaimAttestationSigner,
+    ) -> ClaimAttestationAppendResult:
         return append_prepared_claim_attestation(
             self._client,
             self._instance_id,
@@ -4308,10 +4304,10 @@ class Playbill:
         claim: ClaimRef | str,
         *,
         stance: ClaimStance,
-        signer: ClaimAttestationV2Signer,
+        signer: ClaimAttestationSigner,
         note: str | None = None,
         valid_until: datetime | None = None,
-    ) -> ClaimAttestationAppendResultV1:
+    ) -> ClaimAttestationAppendResult:
         """Sign that the caller examined the current exact Claim and append it once.
 
         Next: ``pb.get(claim)`` shows the attestation among the Claim's flags;
@@ -4320,7 +4316,7 @@ class Playbill:
 
         identity = claim.address if isinstance(claim, ClaimRef) else claim
         return self._append_attestation(
-            prepared=PreparedClaimAttestationRequestV1(
+            prepared=PreparedClaimAttestationRequest(
                 claim_id=identity.removeprefix("Claim:"),
                 attestation_basis="examined_existing",
                 stance=stance,
@@ -4340,10 +4336,10 @@ class Playbill:
 
     def attest_new_capture(
         self,
-        request: PreparedClaimAttestationRequestV1,
+        request: PreparedClaimAttestationRequest,
         *,
-        signer: ClaimAttestationV2Signer,
-    ) -> ClaimAttestationAppendResultV1:
+        signer: ClaimAttestationSigner,
+    ) -> ClaimAttestationAppendResult:
         """Append a pre-staged new-Capture observation after exact client signing.
 
         Next: ``pb.get(claim, detail="evidence")`` to see it among the Claim's attestations.
@@ -4604,7 +4600,7 @@ class ProjectionBlocks:
         body: str | bytes | None = None,
         compact: bool = True,
         dry_run: bool = False,
-    ) -> ProjectionBlockStampV2:
+    ) -> ProjectionBlockStamp:
         """Refresh backing pins and optionally replace this block's authored body.
 
         Compact markers are the default: digest references with local manifests. Subsequent
@@ -4654,7 +4650,7 @@ class ProjectionBlocks:
         all: bool = False,
         check: bool = False,
         detach: Sequence[str | Path] = (),
-    ) -> api.PlaybillBlockSyncResultV1:
+    ) -> api.PlaybillBlockSyncResult:
         """Check every block; policy controls whether drift fails the check.
 
         Next: ``pb.next(...)`` names each drifted block with its repair.
@@ -4685,7 +4681,7 @@ class MeasurementOutcome:
     resolution_id: str | None
     reading_id: str | None
     detail: str | None
-    raw: api.ProcedureMeasurementRowV1
+    raw: api.ProcedureMeasurementRow
 
 
 @dataclass(frozen=True)
@@ -4700,7 +4696,7 @@ class MeasurementBatch:
     observation_coordinate: AcceptedCoordinate
     observation_time: datetime
     outcomes: tuple[MeasurementOutcome, ...]
-    raw: api.PlaybillProcedureMeasureResultV1
+    raw: api.PlaybillProcedureMeasureResult
 
     def __getitem__(self, measurement_name: str) -> MeasurementOutcome:
         for outcome in self.outcomes:
@@ -4709,7 +4705,7 @@ class MeasurementBatch:
         raise KeyError(measurement_name)
 
 
-def _measurement_batch(raw: api.PlaybillProcedureMeasureResultV1) -> MeasurementBatch:
+def _measurement_batch(raw: api.PlaybillProcedureMeasureResult) -> MeasurementBatch:
     return MeasurementBatch(
         run_id=raw.run_id,
         activation_coordinate=raw.activation_coordinate,
@@ -4839,8 +4835,8 @@ class Procedure:
         *,
         input: Record | None = None,
         at: AcceptedCoordinate | None = None,
-        resolution_contract: ResolutionContractReferenceV1 | None = None,
-        trigger_event: TriggerEventReferenceV1 | None = None,
+        resolution_contract: ResolutionContractReference | None = None,
+        trigger_event: TriggerEventReference | None = None,
     ) -> ProcedureRun:
         """Run this Procedure on a typed input and return the run.
 
@@ -4896,7 +4892,7 @@ class Procedure:
         result = self._playbill._client.measure_playbill_procedure(
             self._playbill._instance_id,
             self._name,
-            request=api.PlaybillProcedureMeasureRequestV1(
+            request=api.PlaybillProcedureMeasureRequest(
                 run_id=run_id,
                 measurement_names=tuple(sorted(set(measurements), key=lambda item: item.encode())),
                 evaluation_time=datetime.fromisoformat(self._playbill._evaluation_time()),
@@ -4914,7 +4910,7 @@ class Procedure:
         limit: int = 50,
         cursor: str | None = None,
         at: AcceptedCoordinate | None = None,
-    ) -> api.PlaybillProcedureReadingsResultV1:
+    ) -> api.PlaybillProcedureReadingsResult:
         """Inspect measurement standing and retained readings. Never writes.
 
         A page's ``cursor`` continues that page's selection: the observation
@@ -4932,7 +4928,7 @@ class Procedure:
         result = self._playbill._client.list_playbill_procedure_readings(
             self._playbill._instance_id,
             self._name,
-            request=api.PlaybillProcedureReadingsRequestV1(
+            request=api.PlaybillProcedureReadingsRequest(
                 run_id=run_id,
                 measurement_names=tuple(sorted(set(measurements), key=lambda item: item.encode())),
                 evaluation_time=datetime.fromisoformat(self._playbill._evaluation_time()),
@@ -5009,7 +5005,7 @@ class ProcedureRun:
         return self._raw.model_copy(deep=True)
 
     @property
-    def terminal_egress(self) -> tuple[ProcedureTerminalEgressV1, ...]:
+    def terminal_egress(self) -> tuple[ProcedureTerminalEgress, ...]:
         """What each terminal did, with the authority it needed and the run held.
 
         A settle terminal reports `settle_outcome`: `settled` with the
@@ -5054,7 +5050,7 @@ class ProcedureRun:
         )
 
     @property
-    def track_record(self) -> tuple[PlaybillGetProcedureTrackRecordV1, ...]:
+    def track_record(self) -> tuple[PlaybillGetProcedureTrackRecord, ...]:
         """This run's Procedure's accepted track record: one entry per promotion.
 
         Read from ``pb.get("Procedure:<name>")`` in this connection's context
@@ -5066,7 +5062,7 @@ class ProcedureRun:
 
         name = str(self._raw.procedure_identity["name"])
         card = self._playbill._get(f"Procedure:{name}", "summary", None, None).card
-        if not isinstance(card, PlaybillGetProcedureCardV1):
+        if not isinstance(card, PlaybillGetProcedureCard):
             raise ValueError(f"get did not answer Procedure:{name} with a Procedure card")
         return card.track_record
 

@@ -15,11 +15,11 @@ from collections.abc import Iterator
 from datetime import datetime, timedelta
 
 from cruxible_client.contracts.cron import parse_cron
-from cruxible_client.contracts.triggers import CadenceScheduleV1, CronScheduleV1, TriggerScheduleV1
+from cruxible_client.contracts.triggers import CadenceSchedule, CronSchedule, TriggerSchedule
 
 
 def timer_due(
-    schedule: TriggerScheduleV1, *, last: datetime, not_before: datetime | None = None
+    schedule: TriggerSchedule, *, last: datetime, not_before: datetime | None = None
 ) -> datetime:
     """The first instant after ``last`` (an acceptance or a fire), never before a floor.
 
@@ -28,10 +28,10 @@ def timer_due(
     the floor.
     """
 
-    if isinstance(schedule, CadenceScheduleV1):
+    if isinstance(schedule, CadenceSchedule):
         due = last + timedelta(seconds=schedule.interval_seconds)
         return due if not_before is None else max(due, not_before)
-    if isinstance(schedule, CronScheduleV1):
+    if isinstance(schedule, CronSchedule):
         spec = parse_cron(schedule.expression)
         floor = last if not_before is None else max(last, not_before - timedelta(microseconds=1))
         found = spec.next_after(floor)
@@ -42,7 +42,7 @@ def timer_due(
 
 
 def timer_instants(
-    schedule: TriggerScheduleV1, *, accepted_at: datetime, after: datetime, through: datetime
+    schedule: TriggerSchedule, *, accepted_at: datetime, after: datetime, through: datetime
 ) -> Iterator[datetime]:
     """Every instant of a timer in ``(after, through]``, in order.
 
@@ -50,7 +50,7 @@ def timer_instants(
     acceptance; skipping some never moves the ones after them.
     """
 
-    if isinstance(schedule, CadenceScheduleV1):
+    if isinstance(schedule, CadenceSchedule):
         interval = timedelta(seconds=schedule.interval_seconds)
         steps = max(1, (after - accepted_at) // interval + 1)
         instant = accepted_at + steps * interval
@@ -58,7 +58,7 @@ def timer_instants(
             yield instant
             instant += interval
         return
-    if isinstance(schedule, CronScheduleV1):
+    if isinstance(schedule, CronSchedule):
         spec = parse_cron(schedule.expression)
         found = spec.next_after(max(after, accepted_at))
         while found is not None and found <= through:

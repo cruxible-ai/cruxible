@@ -47,7 +47,7 @@ class _StrictProviderModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class ProviderSigningKeyV1(_StrictProviderModel):
+class ProviderSigningKey(_StrictProviderModel):
     """One public key interval; private custody is never a Provider field."""
 
     tag: Literal["playbill-provider-signing-key-v1"] = "playbill-provider-signing-key-v1"
@@ -73,7 +73,7 @@ class ProviderSigningKeyV1(_StrictProviderModel):
         return value
 
     @model_validator(mode="after")
-    def _interval(self) -> "ProviderSigningKeyV1":
+    def _interval(self) -> "ProviderSigningKey":
         if self.valid_from.tzinfo is None or self.valid_from.utcoffset() is None:
             raise ValueError("Provider key validity must be timezone-aware")
         if self.valid_until is not None:
@@ -102,7 +102,7 @@ class ProviderV1(_StrictProviderModel):
     identity: ArtifactIdentity
     control_domain: str
     upstream_provenance: tuple[ArtifactIdentity, ...] = ()
-    signing_keys: tuple[ProviderSigningKeyV1, ...]
+    signing_keys: tuple[ProviderSigningKey, ...]
     capture_contract_digests: tuple[str, ...]
     pins: tuple[ArtifactPin, ...] = ()
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
@@ -124,7 +124,7 @@ class ProviderV1(_StrictProviderModel):
 
     @field_validator("signing_keys")
     @classmethod
-    def _keys(cls, value: tuple[ProviderSigningKeyV1, ...]) -> tuple[ProviderSigningKeyV1, ...]:
+    def _keys(cls, value: tuple[ProviderSigningKey, ...]) -> tuple[ProviderSigningKey, ...]:
         ids = tuple(item.key_id for item in value)
         if ids != tuple(sorted(set(ids), key=lambda item: item.encode("utf-8"))):
             raise ValueError("Provider signing keys must be sorted and unique")
@@ -160,7 +160,7 @@ class ProviderV1(_StrictProviderModel):
             raise ValueError("Provider v1 signing keys must be nonempty")
         return self
 
-    def require_key(self, key_id: str, *, at: datetime) -> ProviderSigningKeyV1:
+    def require_key(self, key_id: str, *, at: datetime) -> ProviderSigningKey:
         for key in self.signing_keys:
             if key.key_id == key_id and key.active_at(at):
                 return key
@@ -183,7 +183,7 @@ def _external_domain_digest(domain: str, payload: Mapping[str, object]) -> str:
     return f"sha256:{hasher.hexdigest()}"
 
 
-class ProviderDistributionRefV1(_StrictProviderModel):
+class ProviderDistributionRef(_StrictProviderModel):
     name: str
     version: str
 
@@ -258,7 +258,7 @@ class ProviderImplementationManifestV1(_StrictProviderModel):
 class ProviderRuntimeManifestV1(_StrictProviderModel):
     schema_version: Literal[1] = 1
     provider_id: str
-    distribution: ProviderDistributionRefV1
+    distribution: ProviderDistributionRef
     entrypoint_group: Literal["cruxible.providers"] = "cruxible.providers"
     supported_protocol_majors: tuple[int, ...]
     implementations: tuple[ProviderImplementationManifestV1, ...]
@@ -282,7 +282,7 @@ class ProviderRuntimeManifestV1(_StrictProviderModel):
         return value
 
 
-class ProviderImplementationManifestV2(ProviderImplementationManifestV1):
+class ProviderImplementationManifest(ProviderImplementationManifestV1):
     """Current endpoint vocabulary; the V1 reader remains frozen."""
 
     @field_validator("declared_endpoints")
@@ -294,8 +294,8 @@ class ProviderImplementationManifestV2(ProviderImplementationManifestV1):
         return value
 
 
-class ProviderRuntimeManifestV2(ProviderRuntimeManifestV1):
-    implementations: tuple[ProviderImplementationManifestV2, ...]
+class ProviderRuntimeManifest(ProviderRuntimeManifestV1):
+    implementations: tuple[ProviderImplementationManifest, ...]
 
 
 def provider_manifest_digest(manifest: ProviderRuntimeManifestV1) -> str:
@@ -305,7 +305,7 @@ def provider_manifest_digest(manifest: ProviderRuntimeManifestV1) -> str:
     )
 
 
-class ProviderDistributionPinV1(_StrictProviderModel):
+class ProviderDistributionPin(_StrictProviderModel):
     materialization_source: Literal["registry"] = Field(
         default="registry",
         exclude_if=lambda value: value == "registry",
@@ -332,7 +332,7 @@ class ProviderDistributionPinV1(_StrictProviderModel):
         return value
 
 
-class ProviderLocalDistributionPinV1(_StrictProviderModel):
+class ProviderLocalDistributionPin(_StrictProviderModel):
     """Exact wheel identity whose materialization comes from operator custody."""
 
     materialization_source: Literal["local"] = "local"
@@ -346,10 +346,10 @@ class ProviderLocalDistributionPinV1(_StrictProviderModel):
     @field_validator("filename")
     @classmethod
     def _filename(cls, value: str) -> str:
-        return ProviderDistributionPinV1._filename(value)
+        return ProviderDistributionPin._filename(value)
 
 
-class ProviderImageProvenanceV1(_StrictProviderModel):
+class ProviderImageProvenance(_StrictProviderModel):
     provider_artifact_digest: str
     materialization_digest: str
     base_image_digest: str
@@ -362,15 +362,15 @@ class ProviderImageProvenanceV1(_StrictProviderModel):
     )(_sha256)
 
 
-class ProviderContainerBackendPinV1(_StrictProviderModel):
+class ProviderContainerBackendPin(_StrictProviderModel):
     image_reference: str
     image_digest: str
-    provenance: ProviderImageProvenanceV1
+    provenance: ProviderImageProvenance
 
     _image_digest = field_validator("image_digest")(_sha256)
 
 
-class ProviderLocalEnvBackendPinV1(_StrictProviderModel):
+class ProviderLocalEnvBackendPin(_StrictProviderModel):
     lock_sha256: str
     materialization_digests: dict[str, str]
 
@@ -398,9 +398,9 @@ class ProviderRuntimeArtifactPayloadV1(_StrictProviderModel):
     status: Literal["proposed", "accepted"] = "proposed"
     manifest: ProviderRuntimeManifestV1
     manifest_digest: str
-    distribution: ProviderDistributionPinV1 | ProviderLocalDistributionPinV1
-    local_env: ProviderLocalEnvBackendPinV1 | None = None
-    container: ProviderContainerBackendPinV1 | None = None
+    distribution: ProviderDistributionPin | ProviderLocalDistributionPin
+    local_env: ProviderLocalEnvBackendPin | None = None
+    container: ProviderContainerBackendPin | None = None
 
     _manifest_digest = field_validator("manifest_digest")(_sha256)
 
@@ -414,11 +414,11 @@ class ProviderRuntimeArtifactPayloadV1(_StrictProviderModel):
         return value
 
 
-class ProviderRuntimeArtifactPayloadV2(ProviderRuntimeArtifactPayloadV1):
+class ProviderRuntimeArtifactPayload(ProviderRuntimeArtifactPayloadV1):
     """Advertised manifest with pins only for prepared execution backends."""
 
     schema_version: Literal[2] = 2  # type: ignore[assignment]
-    manifest: ProviderRuntimeManifestV2
+    manifest: ProviderRuntimeManifest
 
 
 def provider_runtime_artifact_digest(payload: ProviderRuntimeArtifactPayloadV1) -> str:
@@ -431,7 +431,7 @@ def provider_runtime_artifact_digest(payload: ProviderRuntimeArtifactPayloadV1) 
             provenance.pop("provider_artifact_digest", None)
     return _external_domain_digest(
         "cruxible.provider.artifact.v2"
-        if isinstance(payload, ProviderRuntimeArtifactPayloadV2)
+        if isinstance(payload, ProviderRuntimeArtifactPayload)
         else "cruxible.provider.artifact.v1",
         document,
     )
@@ -457,7 +457,7 @@ def provider_implementation_digest(
     )
 
 
-class ProviderLocalMaterializationReferenceV1(_StrictProviderModel):
+class ProviderLocalMaterializationReference(_StrictProviderModel):
     tag: Literal["playbill-provider-local-materialization-reference-v1"] = (
         "playbill-provider-local-materialization-reference-v1"
     )
@@ -468,7 +468,7 @@ class ProviderLocalMaterializationReferenceV1(_StrictProviderModel):
     _materialization_digest = field_validator("materialization_digest")(_sha256)
 
 
-class ProviderContainerMaterializationReferenceV1(_StrictProviderModel):
+class ProviderContainerMaterializationReference(_StrictProviderModel):
     tag: Literal["playbill-provider-container-materialization-reference-v1"] = (
         "playbill-provider-container-materialization-reference-v1"
     )
@@ -480,14 +480,14 @@ class ProviderContainerMaterializationReferenceV1(_StrictProviderModel):
     _digests = field_validator("image_digest", "materialization_digest")(_sha256)
 
     @model_validator(mode="after")
-    def _container_identity(self) -> "ProviderContainerMaterializationReferenceV1":
+    def _container_identity(self) -> "ProviderContainerMaterializationReference":
         if self.materialization_digest != self.image_digest:
             raise ValueError("Provider container materialization is its exact image digest")
         return self
 
 
-ProviderMaterializationReferenceV1: TypeAlias = Annotated[
-    ProviderLocalMaterializationReferenceV1 | ProviderContainerMaterializationReferenceV1,
+ProviderMaterializationReference: TypeAlias = Annotated[
+    ProviderLocalMaterializationReference | ProviderContainerMaterializationReference,
     Field(discriminator="kind"),
 ]
 
@@ -497,11 +497,11 @@ def _backend_key(value: str) -> int:
 
 
 def _materialization_key(
-    reference: ProviderMaterializationReferenceV1,
+    reference: ProviderMaterializationReference,
 ) -> tuple[int, bytes, bytes]:
     name = (
         reference.environment_pin_key
-        if isinstance(reference, ProviderLocalMaterializationReferenceV1)
+        if isinstance(reference, ProviderLocalMaterializationReference)
         else reference.image_reference
     )
     return (
@@ -511,14 +511,14 @@ def _materialization_key(
     )
 
 
-class ProviderImplementationRecordV1(_StrictProviderModel):
+class ProviderImplementationRecord(_StrictProviderModel):
     tag: Literal["playbill-provider-implementation-v1"] = "playbill-provider-implementation-v1"
     interface_id: str
     interface_digest: str
     entrypoint: str
     implementation_digest: str
     backend_kinds: tuple[Literal["local_env", "container"], ...]
-    materialization_references: tuple[ProviderMaterializationReferenceV1, ...]
+    materialization_references: tuple[ProviderMaterializationReference, ...]
 
     _digests = field_validator("interface_digest", "implementation_digest")(_sha256)
 
@@ -536,8 +536,8 @@ class ProviderImplementationRecordV1(_StrictProviderModel):
     @classmethod
     def _references(
         cls,
-        value: tuple[ProviderMaterializationReferenceV1, ...],
-    ) -> tuple[ProviderMaterializationReferenceV1, ...]:
+        value: tuple[ProviderMaterializationReference, ...],
+    ) -> tuple[ProviderMaterializationReference, ...]:
         if value != tuple(sorted(value, key=_materialization_key)):
             raise ValueError("Provider materialization references must be canonically sorted")
         keys = tuple((item.kind, _materialization_key(item)[1]) for item in value)
@@ -547,7 +547,7 @@ class ProviderImplementationRecordV1(_StrictProviderModel):
 
 
 def _eligible_local_pin_keys(
-    local_env: ProviderLocalEnvBackendPinV1,
+    local_env: ProviderLocalEnvBackendPin,
     *,
     extras: tuple[str, ...],
     allow_superset: bool = False,
@@ -574,8 +574,8 @@ def _eligible_local_pin_keys(
 
 def provider_expected_implementation_records(
     payload: ProviderRuntimeArtifactPayloadV1,
-) -> tuple[ProviderImplementationRecordV1, ...]:
-    records: list[ProviderImplementationRecordV1] = []
+) -> tuple[ProviderImplementationRecord, ...]:
+    records: list[ProviderImplementationRecord] = []
     for manifest in payload.manifest.implementations:
         implementation_digest = provider_implementation_digest(
             interface_id=manifest.interface_id,
@@ -583,8 +583,8 @@ def provider_expected_implementation_records(
             entrypoint=manifest.entrypoint,
             distribution_sha256=payload.distribution.sha256,
         )
-        references: list[ProviderMaterializationReferenceV1] = []
-        available_only = isinstance(payload, ProviderRuntimeArtifactPayloadV2)
+        references: list[ProviderMaterializationReference] = []
+        available_only = isinstance(payload, ProviderRuntimeArtifactPayload)
         if "local_env" in manifest.backends and (
             payload.local_env is not None or not available_only
         ):
@@ -596,7 +596,7 @@ def provider_expected_implementation_records(
             if not pin_keys and not available_only:
                 raise ValueError("materialization_reference_missing: local_env")
             references.extend(
-                ProviderLocalMaterializationReferenceV1(
+                ProviderLocalMaterializationReference(
                     environment_pin_key=pin_key,
                     materialization_digest=payload.local_env.materialization_digests[pin_key],
                 )
@@ -608,7 +608,7 @@ def provider_expected_implementation_records(
             if payload.container is None:
                 raise ValueError("backend_pin_missing: container")
             references.append(
-                ProviderContainerMaterializationReferenceV1(
+                ProviderContainerMaterializationReference(
                     image_reference=payload.container.image_reference,
                     image_digest=payload.container.image_digest,
                     materialization_digest=payload.container.image_digest,
@@ -617,7 +617,7 @@ def provider_expected_implementation_records(
         if available_only and not references:
             continue
         records.append(
-            ProviderImplementationRecordV1(
+            ProviderImplementationRecord(
                 interface_id=manifest.interface_id,
                 interface_digest=manifest.interface_digest,
                 entrypoint=manifest.entrypoint,
@@ -647,14 +647,14 @@ class ProviderV2(ProviderV1):
 
     artifact_format: Literal["playbill-provider-v2"] = "playbill-provider-v2"  # type: ignore[assignment]
     runtime_artifact: ProviderRuntimeArtifactPayloadV1
-    implementations: tuple[ProviderImplementationRecordV1, ...]
+    implementations: tuple[ProviderImplementationRecord, ...]
 
     @field_validator("implementations")
     @classmethod
     def _implementation_order(
         cls,
-        value: tuple[ProviderImplementationRecordV1, ...],
-    ) -> tuple[ProviderImplementationRecordV1, ...]:
+        value: tuple[ProviderImplementationRecord, ...],
+    ) -> tuple[ProviderImplementationRecord, ...]:
         expected = tuple(
             sorted(
                 value,
@@ -672,7 +672,7 @@ class ProviderV2(ProviderV1):
     def _runtime_correspondence(self) -> "ProviderV2":
         payload = self.runtime_artifact
         if not self.signing_keys and not isinstance(
-            payload.distribution, ProviderLocalDistributionPinV1
+            payload.distribution, ProviderLocalDistributionPin
         ):
             raise ValueError("keyless Provider v2 is restricted to local materialization")
         if (
@@ -702,15 +702,15 @@ class ProviderV2(ProviderV1):
         return self
 
 
-class ProviderV3(ProviderV2):
+class Provider(ProviderV2):
     """Package registration separates advertised capabilities from prepared ones."""
 
     artifact_format: Literal["playbill-provider-v3"] = "playbill-provider-v3"  # type: ignore[assignment]
-    runtime_artifact: ProviderRuntimeArtifactPayloadV2
+    runtime_artifact: ProviderRuntimeArtifactPayload
 
 
 ProviderAny: TypeAlias = Annotated[
-    ProviderV1 | ProviderV2 | ProviderV3,
+    ProviderV1 | ProviderV2 | Provider,
     Field(discriminator="artifact_format"),
 ]
 _PROVIDER_ADAPTER: TypeAdapter[ProviderAny] = TypeAdapter(ProviderAny)
@@ -757,13 +757,13 @@ def provider_digest(provider: ProviderAny) -> ArtifactDigest:
     )
 
 
-class AcceptedProviderV1(_StrictProviderModel):
+class AcceptedProvider(_StrictProviderModel):
     path: str
     provider: ProviderAny
     artifact_digest: str
 
     @model_validator(mode="after")
-    def _correspondence(self) -> "AcceptedProviderV1":
+    def _correspondence(self) -> "AcceptedProvider":
         if self.path != provider_path(self.provider.identity.name):
             raise ValueError("accepted Provider path does not reproduce")
         if self.artifact_digest != provider_digest(self.provider).tagged:
@@ -771,7 +771,7 @@ class AcceptedProviderV1(_StrictProviderModel):
         return self
 
 
-class ProviderLawResultV1(_StrictProviderModel):
+class ProviderLawResult(_StrictProviderModel):
     verdict: Literal["accepted", "refused"]
     artifact_digest: str | None = None
     required_tier: PermissionTier | None = None
@@ -779,8 +779,8 @@ class ProviderLawResultV1(_StrictProviderModel):
     diagnostics: tuple[CompilerDiagnostic, ...] = ()
 
 
-def _law_refusal(code: str, message: str, *, path: str) -> ProviderLawResultV1:
-    return ProviderLawResultV1(
+def _law_refusal(code: str, message: str, *, path: str) -> ProviderLawResult:
+    return ProviderLawResult(
         verdict="refused",
         diagnostics=(
             CompilerDiagnostic(
@@ -797,9 +797,9 @@ def evaluate_provider_law(
     provider: ProviderAny,
     *,
     path: str,
-    predecessor: AcceptedProviderV1 | None,
+    predecessor: AcceptedProvider | None,
     interface_registrations: Mapping[str, object] | None = None,
-) -> ProviderLawResultV1:
+) -> ProviderLawResult:
     if path != provider_path(provider.identity.name):
         return _law_refusal(
             "playbill.provider.path_mismatch",
@@ -898,7 +898,7 @@ def evaluate_provider_law(
                     "Provider side_effects must equal the governed interface effect class.",
                     path=path,
                 )
-    return ProviderLawResultV1(
+    return ProviderLawResult(
         verdict="accepted",
         artifact_digest=provider_digest(provider).tagged,
         required_tier="governed_write",
@@ -907,30 +907,30 @@ def evaluate_provider_law(
 
 
 __all__ = [
-    "AcceptedProviderV1",
+    "AcceptedProvider",
     "ProviderAny",
-    "ProviderContainerBackendPinV1",
-    "ProviderContainerMaterializationReferenceV1",
-    "ProviderDistributionPinV1",
-    "ProviderDistributionRefV1",
+    "ProviderContainerBackendPin",
+    "ProviderContainerMaterializationReference",
+    "ProviderDistributionPin",
+    "ProviderDistributionRef",
     "ProviderFormatError",
-    "ProviderImageProvenanceV1",
+    "ProviderImageProvenance",
     "ProviderImplementationManifestV1",
-    "ProviderImplementationRecordV1",
-    "ProviderLocalDistributionPinV1",
-    "ProviderLocalEnvBackendPinV1",
-    "ProviderLocalMaterializationReferenceV1",
-    "ProviderMaterializationReferenceV1",
+    "ProviderImplementationRecord",
+    "ProviderLocalDistributionPin",
+    "ProviderLocalEnvBackendPin",
+    "ProviderLocalMaterializationReference",
+    "ProviderMaterializationReference",
     "ProviderRuntimeArtifactPayloadV1",
     "ProviderRuntimeManifestV1",
-    "ProviderSigningKeyV1",
+    "ProviderSigningKey",
     "ProviderV1",
     "ProviderV2",
-    "ProviderV3",
-    "ProviderRuntimeArtifactPayloadV2",
-    "ProviderRuntimeManifestV2",
-    "ProviderImplementationManifestV2",
-    "ProviderLawResultV1",
+    "Provider",
+    "ProviderRuntimeArtifactPayload",
+    "ProviderRuntimeManifest",
+    "ProviderImplementationManifest",
+    "ProviderLawResult",
     "evaluate_provider_law",
     "parse_provider",
     "provider_digest",

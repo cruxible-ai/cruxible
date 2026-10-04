@@ -38,34 +38,34 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.declared_blocks import (
     ParsedProjectionBlock,
-    ProjectionClaimBackingV1,
+    ProjectionClaimBacking,
     ProjectionMarkerError,
     ProjectionProcessingLimitExceeded,
     parse_projection_blocks,
 )
 from cruxible_client.contracts.errors import PlaybillCasError, ProposalIntegrityError
 from cruxible_client.contracts.source_references import (
-    ExternalSourceReferenceV1,
-    LedgerSourceReferenceV1,
+    ExternalSourceReference,
+    LedgerSourceReference,
     SourceAccessClass,
 )
 from cruxible_core.coverage.adapter import (
-    WorkingSourceObservationV1,
+    WorkingSourceObservation,
     build_overlay,
     coverage_span_requests,
 )
 from cruxible_core.coverage.contracts import (
-    CoverageAccessProfileV1,
-    CoverageCardBudgetV1,
+    CoverageAccessProfile,
+    CoverageCardBudget,
     CoverageCommitmentMaterializationCorrupt,
-    CoverageLineOverlayV1,
+    CoverageLineOverlay,
     CoverageRequestV1,
     CoverageResultV3,
-    LogicalSourceIdentityV1,
-    PlaybillCitationWindowObservationV1,
+    LogicalSourceIdentity,
+    PlaybillCitationWindowObservation,
 )
 from cruxible_core.coverage.indexes import (
-    CoverageScanBudgetV1,
+    CoverageScanBudget,
     EvidenceCitationIndexV1,
     EvidenceCitationIndexV2,
     WorkingOccurrenceOverlayV1,
@@ -93,7 +93,7 @@ COVERAGE_PRINCIPAL = "playbill-coverage"
 COVERAGE_EVIDENCE_ACCESS_CLASS: SourceAccessClass = "instance"
 
 
-def coverage_access_profile() -> CoverageAccessProfileV1:
+def coverage_access_profile() -> CoverageAccessProfile:
     """The access profile the served coverage surface reads under.
 
     Accepted evidence is indexed at the `instance` access class, exactly as the
@@ -101,7 +101,7 @@ def coverage_access_profile() -> CoverageAccessProfileV1:
     holding this instance's read authority sees it and nothing wider.
     """
 
-    return CoverageAccessProfileV1(
+    return CoverageAccessProfile(
         profile_id=COVERAGE_ACCESS_PROFILE_ID,
         permitted_access_classes=("instance", "public"),
         disclose_restricted_existence=True,
@@ -160,10 +160,10 @@ def _accepted_evidence_inputs_v2(
 
 def accepted_evidence_sources(
     index: EvidenceCitationIndexV1 | EvidenceCitationIndexV2,
-) -> tuple[LogicalSourceIdentityV1, ...]:
+) -> tuple[LogicalSourceIdentity, ...]:
     """The logical sources accepted evidence names, in canonical order."""
 
-    seen: dict[bytes, LogicalSourceIdentityV1] = {
+    seen: dict[bytes, LogicalSourceIdentity] = {
         citation.accepted_source.sort_key: citation.accepted_source
         for citation in index.citations
         if citation.accepted_source is not None
@@ -216,7 +216,7 @@ def _materialized_wanted_selections(
                     raise CoverageCommitmentMaterializationCorrupt(
                         "retained commitment bytes failed CAS verification"
                     ) from exc
-            elif isinstance(envelope.source, LedgerSourceReferenceV1):
+            elif isinstance(envelope.source, LedgerSourceReference):
                 content = instance.blob_at(
                     envelope.source.coordinate.git_oid, envelope.source.address.artifact_path
                 )
@@ -246,16 +246,16 @@ def _materialized_wanted_selections(
 def _citation_window_observations(
     *,
     index: EvidenceCitationIndexV2,
-    observations: Sequence[WorkingSourceObservationV1],
+    observations: Sequence[WorkingSourceObservation],
     envelopes: Mapping[str, CaptureEnvelopeAny],
-    retired_associations: Sequence[tuple[LogicalSourceIdentityV1, str, str]] = (),
-) -> tuple[PlaybillCitationWindowObservationV1, ...]:
+    retired_associations: Sequence[tuple[LogicalSourceIdentity, str, str]] = (),
+) -> tuple[PlaybillCitationWindowObservation, ...]:
     """Observe each accepted citation's original window in its named working source."""
 
     by_source = {item.source.sort_key: item for item in observations}
     source_content: dict[bytes, bytes] = {}
-    windows: dict[tuple[bytes, bytes, int, int], PlaybillCitationWindowObservationV1] = {}
-    associations: list[tuple[LogicalSourceIdentityV1, str, str, str]] = []
+    windows: dict[tuple[bytes, bytes, int, int], PlaybillCitationWindowObservation] = {}
+    associations: list[tuple[LogicalSourceIdentity, str, str, str]] = []
     for citation in index.citations:
         if citation.accepted_source is None or citation.byte_length is None:
             continue
@@ -277,7 +277,7 @@ def _citation_window_observations(
     for accepted_source, citation_id, capture_digest, commitment_digest in associations:
         observed = by_source.get(accepted_source.sort_key)
         envelope = envelopes[capture_digest]
-        if not isinstance(envelope.source, ExternalSourceReferenceV1):
+        if not isinstance(envelope.source, ExternalSourceReference):
             continue
         selector = envelope.source.selector
         if not isinstance(selector, Mapping):
@@ -303,7 +303,7 @@ def _citation_window_observations(
             observed_digest = (
                 f"sha256:{hashlib.sha256(source_content[source_key][start:end]).hexdigest()}"
             )
-        item = PlaybillCitationWindowObservationV1(
+        item = PlaybillCitationWindowObservation(
             source=accepted_source,
             citation_id=citation_id,
             commitment_digest=commitment_digest,
@@ -326,8 +326,8 @@ def _retired_citation_window_inputs(
     instance: PlaybillInstance,
     *,
     coordinate: PlaybillAcceptedCoordinate,
-    observations: Sequence[WorkingSourceObservationV1],
-) -> tuple[tuple[LogicalSourceIdentityV1, str, str], ...]:
+    observations: Sequence[WorkingSourceObservation],
+) -> tuple[tuple[LogicalSourceIdentity, str, str], ...]:
     """Read retired citation windows from the coordinate-bound relation projection.
 
     These inputs extend only the authenticated citation-window observation set.
@@ -341,13 +341,13 @@ def _retired_citation_window_inputs(
         generation_root=coordinate.generation_root,
         compiler_digest=coordinate.compiler_digest,
     )
-    inputs: dict[tuple[bytes, bytes], tuple[LogicalSourceIdentityV1, str, str]] = {}
+    inputs: dict[tuple[bytes, bytes], tuple[LogicalSourceIdentity, str, str]] = {}
     with instance.bind_accepted_projection(internal) as projection:
         observed_sources = {
             item.source.identity for item in observations if item.source.plane == "external"
         }
         for source_id in sorted(observed_sources, key=lambda item: item.encode("utf-8")):
-            logical = LogicalSourceIdentityV1(plane="external", identity=source_id)
+            logical = LogicalSourceIdentity(plane="external", identity=source_id)
             for use in projection.citations.source_claim_uses(source_id, lifecycle="retired"):
                 citation_id, digest = str(use["use_key"]), str(use["capture_digest"])
                 item = (logical, citation_id, digest)
@@ -378,7 +378,7 @@ def _publish_manifest_v2(
     instance_id: str,
     index: EvidenceCitationIndexV2,
     overlay: WorkingOccurrenceOverlayV1 | WorkingOccurrenceOverlayV2,
-    access_profile: CoverageAccessProfileV1,
+    access_profile: CoverageAccessProfile,
 ) -> CoverageManifestBodyV2:
     directory = instance.root / COVERAGE_DIRECTORY
     existing = load_coverage_manifest_file_v2(directory)
@@ -406,9 +406,9 @@ def _publish_manifest_v2(
     return candidate
 
 
-def _line_overlay(content: bytes, *, start_byte: int, end_byte: int) -> CoverageLineOverlayV1:
+def _line_overlay(content: bytes, *, start_byte: int, end_byte: int) -> CoverageLineOverlay:
     last_byte = max(start_byte, end_byte - 1)
-    return CoverageLineOverlayV1(
+    return CoverageLineOverlay(
         start_byte=start_byte,
         end_byte=end_byte,
         start_line=content.count(b"\n", 0, start_byte) + 1,
@@ -420,7 +420,7 @@ def _bound_publication_observations(
     instance: PlaybillInstance,
     *,
     at: PlaybillAcceptedCoordinate,
-    observations: Sequence[WorkingSourceObservationV1],
+    observations: Sequence[WorkingSourceObservation],
 ) -> tuple[BoundPublicationObservation, ...]:
     """Join confirmed publication protocol state to parsed working blocks."""
 
@@ -448,7 +448,7 @@ def _bound_publication_observations(
             or preparation.body_digest != preparation.stamp.body_digest
         ):
             continue
-        expected_backing = ProjectionClaimBackingV1(
+        expected_backing = ProjectionClaimBacking(
             identity=claim.identity,
             statement_digest=registration.claim_statement_digest,
         )
@@ -476,7 +476,7 @@ def _bound_publication_observations(
         body_start = block.body_start
         body_end = block.body_end
         item = BoundPublicationObservation(
-            source=LogicalSourceIdentityV1(
+            source=LogicalSourceIdentity(
                 plane="external",
                 identity=preparation.source_id,
             ),
@@ -499,10 +499,10 @@ def service_resolve_playbill_coverage(
     instance: PlaybillInstance,
     *,
     instance_id: str,
-    observations: Sequence[WorkingSourceObservationV1],
+    observations: Sequence[WorkingSourceObservation],
     at: PlaybillAcceptedCoordinate | None = None,
-    budget: CoverageCardBudgetV1 | None = None,
-    scan_budget: CoverageScanBudgetV1 | None = None,
+    budget: CoverageCardBudget | None = None,
+    scan_budget: CoverageScanBudget | None = None,
 ) -> CoverageResultV3:
     """Resolve one batch of working-set observations against accepted state.
 
@@ -540,7 +540,7 @@ def service_resolve_playbill_coverage(
         instance_id=instance_id,
         at=coordinate,
         spans=coverage_span_requests(observations),
-        budget=budget or CoverageCardBudgetV1(),
+        budget=budget or CoverageCardBudget(),
     )
     return resolve_coverage_v3(
         request,

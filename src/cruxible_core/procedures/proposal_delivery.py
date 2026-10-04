@@ -9,7 +9,7 @@ sole proposal door exactly once per admitted operation.
 Three properties are load-bearing:
 
 * **Evidence is the run's own.** Each item cites the produced Capture in its
-  own dependency closure as `ExistingCaptureCitationSourceV1`. Nothing an
+  own dependency closure as `ExistingCaptureCitationSource`. Nothing an
   author writes into a template can name, borrow, or omit evidence, and the
   Claim's grade is whatever its ClaimType's evidence admission policy says
   about that Capture.
@@ -36,13 +36,13 @@ from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.authoring.models import (
     AUTHORING_CHANGE_SET_MEMBERSHIP_DIGEST_DOMAIN,
     AuthoringIntentV1,
-    CandidateStatusV1,
-    ChangeSetAuthoringPayloadV1,
-    ChangeSetClaimIdentityV1,
-    ClaimAuthoringPayloadV3,
-    ClaimDependencyDraftsV1,
-    ExistingCaptureCitationSourceV1,
-    SelfSourceBodyV1,
+    CandidateStatus,
+    ChangeSetAuthoringPayload,
+    ChangeSetClaimIdentity,
+    ClaimAuthoringPayload,
+    ClaimDependencyDrafts,
+    ExistingCaptureCitationSource,
+    SelfSourceBody,
     authoring_change_set_membership,
     authoring_create_fingerprint,
     authoring_member_identity,
@@ -52,19 +52,19 @@ from cruxible_client.contracts.candidates import canonical_candidate_timestamp
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.claims import claim_path
 from cruxible_client.contracts.procedure_mandates import (
+    ProcedureMandate,
     ProcedureMandateAny,
-    ProcedureMandateInvocationV1,
-    ProcedureMandateV2,
+    ProcedureMandateInvocation,
     evaluate_procedure_mandate,
 )
 from cruxible_client.contracts.procedures.models import TERMINAL_REQUIRED_RUNGS
 from cruxible_client.contracts.procedures.proposal_items import (
+    ProcedureClaimProposalItem,
     ProcedureClaimProposalItemV1,
-    ProcedureClaimProposalItemV2,
 )
 from cruxible_client.contracts.proposal_models import (
     ProposalResult,
-    ProposalSettleSubmissionV1,
+    ProposalSettleSubmission,
 )
 from cruxible_core.authoring import lowering as authoring_lowering
 from cruxible_core.authoring.lowering import AuthoringLoweringError, LoweredAuthoring
@@ -151,7 +151,7 @@ def proposal_items(
     for item in request.items:
         try:
             model = (
-                ProcedureClaimProposalItemV2
+                ProcedureClaimProposalItem
                 if isinstance(item.value, dict)
                 and item.value.get("tag") == "playbill-procedure-claim-proposal-item-v2"
                 else ProcedureClaimProposalItemV1
@@ -188,8 +188,8 @@ def evidence_by_item(
             isinstance(item.value, dict)
             and item.value.get("tag") == "playbill-procedure-claim-proposal-item-v2"
         ):
-            parsed = ProcedureClaimProposalItemV2.model_validate(item.value)
-            if isinstance(parsed.source, SelfSourceBodyV1):
+            parsed = ProcedureClaimProposalItem.model_validate(item.value)
+            if isinstance(parsed.source, SelfSourceBody):
                 continue
             selected = parsed.source.capture_digest
             if selected not in produced:
@@ -224,10 +224,10 @@ def _claim_members(
     *,
     items: tuple[ProcedureClaimProposalItemV1, ...],
     evidence: Mapping[str, str],
-) -> tuple[tuple[ClaimAuthoringPayloadV3, ...], dict[str, str], dict[str, str]]:
+) -> tuple[tuple[ClaimAuthoringPayload, ...], dict[str, str], dict[str, str]]:
     """Build one Claim member per item; return members, item->claim id, identity->item."""
 
-    members: list[ClaimAuthoringPayloadV3] = []
+    members: list[ClaimAuthoringPayload] = []
     claim_ids: dict[str, str] = {}
     identity_to_item: dict[str, str] = {}
     for egress_item, item in zip(request.items, items, strict=True):
@@ -236,25 +236,25 @@ def _claim_members(
             node_id=request.node_id,
             item_key=egress_item.item_key,
         )
-        member = ClaimAuthoringPayloadV3(
+        member = ClaimAuthoringPayload(
             statement=item.statement,
             rationale=item.rationale,
             source=(
                 item.source
-                if isinstance(item, ProcedureClaimProposalItemV2)
-                else ExistingCaptureCitationSourceV1(capture_digest=evidence[egress_item.item_key])
+                if isinstance(item, ProcedureClaimProposalItem)
+                else ExistingCaptureCitationSource(capture_digest=evidence[egress_item.item_key])
             ),
             citation_role=item.citation_role
-            if isinstance(item, ProcedureClaimProposalItemV2)
+            if isinstance(item, ProcedureClaimProposalItem)
             else "evidence",
-            derivation=item.derivation if isinstance(item, ProcedureClaimProposalItemV2) else None,
+            derivation=item.derivation if isinstance(item, ProcedureClaimProposalItem) else None,
             existing_claim_dispositions=(
                 item.existing_claim_dispositions
-                if isinstance(item, ProcedureClaimProposalItemV2)
+                if isinstance(item, ProcedureClaimProposalItem)
                 else ()
             ),
             revises=item.revises,
-            dependency_drafts=ClaimDependencyDraftsV1(),
+            dependency_drafts=ClaimDependencyDrafts(),
         )
         identity = authoring_member_identity(member)
         if identity in identity_to_item:
@@ -276,8 +276,8 @@ def _intent(
     request: TerminalEgressRequestV1,
     *,
     instance_id: str,
-    payload: ChangeSetAuthoringPayloadV1,
-    claim_identities: tuple[ChangeSetClaimIdentityV1, ...],
+    payload: ChangeSetAuthoringPayload,
+    claim_identities: tuple[ChangeSetClaimIdentity, ...],
 ) -> AuthoringIntentV1:
     membership_digest = typed_digest(
         Sha256Value,
@@ -316,7 +316,7 @@ def _intent(
             actor_id=request.actor_context.actor_id,
             payload=payload,
         ),
-        candidate_status=CandidateStatusV1(
+        candidate_status=CandidateStatus(
             state="draft",
             current_accepted_coordinate=request.accepted_coordinate,
         ),
@@ -351,7 +351,7 @@ def select_procedure_mandate(
     for digest, mandate in sorted(accepted_mandates.items(), key=lambda item: item[0]):
         evaluation = evaluate_procedure_mandate(
             mandate,
-            ProcedureMandateInvocationV1(
+            ProcedureMandateInvocation(
                 procedure_identity=authority.target,
                 procedure_artifact_digest=authority.artifact_digest,
                 requested_rung=TERMINAL_REQUIRED_RUNGS[request.kind],  # type: ignore[arg-type]
@@ -386,11 +386,11 @@ def select_settle_mandate(
     authority = authority_procedure(admission, delegation)
     covering: list[str] = []
     for digest, mandate in sorted(accepted_mandates.items(), key=lambda item: item[0]):
-        if not isinstance(mandate, ProcedureMandateV2) or mandate.grants != "settle":
+        if not isinstance(mandate, ProcedureMandate) or mandate.grants != "settle":
             continue
         evaluation = evaluate_procedure_mandate(
             mandate,
-            ProcedureMandateInvocationV1(
+            ProcedureMandateInvocation(
                 procedure_identity=authority.target,
                 procedure_artifact_digest=authority.artifact_digest,
                 requested_rung=3,
@@ -470,8 +470,8 @@ class ProposalTerminalEgressSink:
                 for egress_item, item in zip(request.items, items, strict=True)
                 if egress_item.item_key not in evidence
                 and not (
-                    isinstance(item, ProcedureClaimProposalItemV2)
-                    and isinstance(item.source, SelfSourceBodyV1)
+                    isinstance(item, ProcedureClaimProposalItem)
+                    and isinstance(item.source, SelfSourceBody)
                 )
             ]
             if missing:
@@ -492,11 +492,11 @@ class ProposalTerminalEgressSink:
             f"Proposed by Procedure {request.procedure_identity.name} "
             f"run {request.run_id} terminal {request.node_id}"
         )
-        payload = ChangeSetAuthoringPayloadV1(members=ordered, rationale=rationale)
+        payload = ChangeSetAuthoringPayload(members=ordered, rationale=rationale)
         claim_identities = tuple(
             sorted(
                 (
-                    ChangeSetClaimIdentityV1(
+                    ChangeSetClaimIdentity(
                         member_identity=identity,
                         claim_id=claim_ids[item_key],
                     )
@@ -758,7 +758,7 @@ class ProposalTerminalEgressSink:
 
         digest = request.procedure_mandate_digest
         mandate = None if digest is None else self.accepted_mandates.get(digest)
-        if not isinstance(mandate, ProcedureMandateV2) or mandate.condition is None:
+        if not isinstance(mandate, ProcedureMandate) or mandate.condition is None:
             raise ProposalDeliveryRefused(
                 "settle_mandate_missing",
                 "The settle terminal's bound mandate is no longer an accepted settle grant.",
@@ -785,11 +785,11 @@ class ProposalTerminalEgressSink:
                     details={"codes": codes, "messages": [m for _code, m in issues]},
                 )
             submission = (
-                ProposalSettleSubmissionV1(
+                ProposalSettleSubmission(
                     mode="fallback", mandate_digest=digest, fallback_reason=", ".join(codes)
                 )
                 if issues
-                else ProposalSettleSubmissionV1(mode="delegated", mandate_digest=digest)
+                else ProposalSettleSubmission(mode="delegated", mandate_digest=digest)
             )
             result = adapter.submit(
                 request=request,
@@ -855,7 +855,7 @@ class ProposalTerminalEgressSink:
         result: ProposalResult,
         *,
         request: TerminalEgressRequestV2,
-        mandate: ProcedureMandateV2,
+        mandate: ProcedureMandate,
         digest: str,
     ) -> str:
         from cruxible_client.contracts.errors import SettlementIntegrityError

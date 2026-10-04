@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from cruxible_client.authoring.approval import ApprovalReviewMismatch, ReviewedProposal
     from cruxible_client.authoring.attestations import (
-        ClaimAttestationV2Signer,
+        ClaimAttestationSigner,
         LocalEd25519ClaimAttestationSigner,
     )
     from cruxible_client.authoring.compact_query import CompactQuery, QueryNameError, QueryResult
@@ -71,25 +71,25 @@ if TYPE_CHECKING:
         ArtifactLifecycle,
         ArtifactPin,
     )
-    from cruxible_client.contracts.captures import CanonicalDurationV1
+    from cruxible_client.contracts.captures import CanonicalDuration
     from cruxible_client.contracts.policies import (
-        ClaimAdmissionPolicyV1,
-        ClaimResolutionPolicyV1,
+        ClaimAdmissionPolicy,
+        ClaimResolutionPolicy,
     )
-    from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContractV1
+    from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContract
     from cruxible_client.contracts.procedures.contract_schema import (
         ContractSchema,
         PropertySchema,
     )
     from cruxible_client.contracts.procedures.models import (
-        ProcedureBudgetV3,
-        ProcedureDefinitionV3,
-        ProcedureHardCapsV3,
-        ProcedurePinSlotRefV1,
-        ProcedurePinSlotV1,
-        ProjectNodeV3,
-        StateTapNodeV3,
-        TransformNodeV3,
+        ProcedureBudget,
+        ProcedureDefinition,
+        ProcedureHardCaps,
+        ProcedurePinSlot,
+        ProcedurePinSlotRef,
+        ProjectNode,
+        StateTapNode,
+        TransformNode,
     )
     from cruxible_client.contracts.write import SlotRef
     from cruxible_client.transport.http import CruxibleClient
@@ -115,16 +115,16 @@ __all__ = [
     "CaptureRef",
     "CaptureView",
     "ClaimObjectKind",
-    "ClaimAdmissionPolicyV1",
-    "ClaimAttestationV2Signer",
+    "ClaimAdmissionPolicy",
+    "ClaimAttestationSigner",
     "ClaimRef",
     "ClaimRole",
     "ClaimTypeRef",
-    "ClaimResolutionPolicyV1",
+    "ClaimResolutionPolicy",
     "CruxibleClient",
     "Disposition",
     "Duration",
-    "CanonicalDurationV1",
+    "CanonicalDuration",
     "ContractSchema",
     "EffectivePeriod",
     "ExactContent",
@@ -148,14 +148,14 @@ __all__ = [
     "observe_playbill_next_workspace",
     "materialize_playbill_floor",
     "ProcedureRef",
-    "ProcedureBudgetV3",
-    "ProcedureDefinitionV3",
-    "ProcedureHardCapsV3",
-    "ProcedureOwnedContractV1",
-    "ProcedurePinSlotRefV1",
-    "ProcedurePinSlotV1",
+    "ProcedureBudget",
+    "ProcedureDefinition",
+    "ProcedureHardCaps",
+    "ProcedureOwnedContract",
+    "ProcedurePinSlotRef",
+    "ProcedurePinSlot",
     "ProcedureSlotRef",
-    "ProjectNodeV3",
+    "ProjectNode",
     "PropertySchema",
     "QueryNameError",
     "QueryRef",
@@ -163,10 +163,10 @@ __all__ = [
     "ReferentSensitivity",
     "SlotRef",
     "SourceRef",
-    "StateTapNodeV3",
+    "StateTapNode",
     "SubjectRef",
     "TypedRef",
-    "TransformNodeV3",
+    "TransformNode",
     "World",
     "WorldClaimType",
     "WorldStructureError",
@@ -207,7 +207,7 @@ def __getattr__(name: str) -> Any:
         from cruxible_client.authoring import compact_query
 
         return getattr(compact_query, name)
-    if name in {"ClaimAttestationV2Signer", "LocalEd25519ClaimAttestationSigner"}:
+    if name in {"ClaimAttestationSigner", "LocalEd25519ClaimAttestationSigner"}:
         from cruxible_client.authoring import attestations
 
         return getattr(attestations, name)
@@ -264,31 +264,31 @@ def __getattr__(name: str) -> Any:
         from cruxible_client.contracts import artifacts as artifact_models
 
         return getattr(artifact_models, name)
-    if name == "CanonicalDurationV1":
+    if name == "CanonicalDuration":
         from cruxible_client.contracts import captures
 
-        return captures.CanonicalDurationV1
-    if name in {"ClaimAdmissionPolicyV1", "ClaimResolutionPolicyV1"}:
+        return captures.CanonicalDuration
+    if name in {"ClaimAdmissionPolicy", "ClaimResolutionPolicy"}:
         from cruxible_client.contracts import policies
 
         return getattr(policies, name)
-    if name == "ProcedureOwnedContractV1":
-        from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContractV1
+    if name == "ProcedureOwnedContract":
+        from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContract
 
-        return ProcedureOwnedContractV1
+        return ProcedureOwnedContract
     if name in {"ContractSchema", "PropertySchema"}:
         from cruxible_client.contracts.procedures import contract_schema
 
         return getattr(contract_schema, name)
     if name in {
-        "ProcedureBudgetV3",
-        "ProcedureDefinitionV3",
-        "ProcedureHardCapsV3",
-        "ProcedurePinSlotRefV1",
-        "ProcedurePinSlotV1",
-        "ProjectNodeV3",
-        "StateTapNodeV3",
-        "TransformNodeV3",
+        "ProcedureBudget",
+        "ProcedureDefinition",
+        "ProcedureHardCaps",
+        "ProcedurePinSlotRef",
+        "ProcedurePinSlot",
+        "ProjectNode",
+        "StateTapNode",
+        "TransformNode",
     }:
         from cruxible_client.contracts.procedures import models
 

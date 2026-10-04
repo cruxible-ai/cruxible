@@ -83,7 +83,7 @@ provenance or evidence on demand.
 Optional recall-only tags may assist fuzzy retrieval without becoming identity
 or authority.
 
-## ClaimAttestation
+## ClaimAttestationV1
 
 An attestation is an append-only observation about a Claim: support,
 contradiction, or uncertainty, with evidence and attribution. It does not

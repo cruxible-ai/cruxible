@@ -13,11 +13,11 @@ import pytest
 from cruxible_client import contracts
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.declared_blocks import (
-    ProjectionBlockStampV2,
-    ProjectionClaimBackingV1,
+    ProjectionBlockStamp,
+    ProjectionClaimBacking,
     frame_projection_block,
 )
-from cruxible_client.contracts.floor import PlaybillFloorDeltaV1
+from cruxible_client.contracts.floor import PlaybillFloorDelta
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.mcp import handlers
@@ -65,11 +65,11 @@ class _StubClient:
         at=None,  # type: ignore[no-untyped-def]
         base_generation: int | None = None,
         base_renderer: str | None = None,
-    ) -> PlaybillFloorDeltaV1:
+    ) -> PlaybillFloorDelta:
         return delta_from_export(_export())
 
-    def playbill_head(self, instance_id: str) -> contracts.PlaybillHeadV1:
-        return contracts.PlaybillHeadV1(
+    def playbill_head(self, instance_id: str) -> contracts.PlaybillHead:
+        return contracts.PlaybillHead(
             instance=instance_id,
             coordinate=_coordinate().model_dump(mode="json"),  # type: ignore[arg-type]
             generation=3,
@@ -174,13 +174,13 @@ def test_library_mode_activate_checks_an_attached_workspace(
     )
     old_body = b"status: old\n"
     # The page declares it must stay current, so drift under it gates the sweep.
-    stamp = ProjectionBlockStampV2(
+    stamp = ProjectionBlockStamp(
         source_id="corpus.runbook",
         block_id="pub-mcp",
         declared_generation=1,
         declared_coordinate=AcceptedCoordinate.model_validate(_coordinate().model_dump()),
         backing=(
-            ProjectionClaimBackingV1(
+            ProjectionClaimBacking(
                 identity=ArtifactIdentity(kind="Claim", name="CLM-" + "a" * 32),
                 statement_digest="sha256:" + "7" * 64,
             ),
@@ -210,25 +210,25 @@ def test_library_mode_activate_checks_an_attached_workspace(
         lambda _instance, **_kwargs: delta_from_export(_export()),
     )
 
-    checked: list[contracts.PlaybillProjectionCheckRequestV1] = []
+    checked: list[contracts.PlaybillProjectionCheckRequest] = []
 
     def check_blocks(
         instance_id: str,
         *,
-        request: contracts.PlaybillProjectionCheckRequestV1,
-    ) -> contracts.PlaybillProjectionCheckResultV1:
+        request: contracts.PlaybillProjectionCheckRequest,
+    ) -> contracts.PlaybillProjectionCheckResult:
         # Block sync asks the daemon for every stamp's currency in one batch.
         assert instance_id == "inst_test"
         checked.append(request)
         coordinate = AcceptedCoordinate.model_validate(_coordinate().model_dump())
         results = []
         for held in request.stamps:
-            moved = ProjectionClaimBackingV1(
+            moved = ProjectionClaimBacking(
                 identity=held.backing[0].identity,
                 statement_digest="sha256:" + "a" * 64,
             )
             results.append(
-                contracts.PlaybillBlockSyncReadResultV1(
+                contracts.PlaybillBlockSyncReadResult(
                     status="successor",
                     original_artifact_digest="sha256:" + "8" * 64,
                     artifact_digest="sha256:" + "9" * 64,
@@ -238,7 +238,7 @@ def test_library_mode_activate_checks_an_attached_workspace(
                     moved_backings=(moved,),
                 )
             )
-        return contracts.PlaybillProjectionCheckResultV1(
+        return contracts.PlaybillProjectionCheckResult(
             coordinate=coordinate,
             evaluation_time=datetime(2026, 9, 16, tzinfo=UTC),
             results=tuple(results),
@@ -412,7 +412,7 @@ class _PartsClient(_StubClient):
         at=None,  # type: ignore[no-untyped-def]
         base_generation: int | None = None,
         base_renderer: str | None = None,
-    ) -> PlaybillFloorDeltaV1:
+    ) -> PlaybillFloorDelta:
         # The default floor travels as a delta, never with the discovery cards.
         self.includes.append(())
         return delta_from_export(_export_files({"current/k/a.yaml": b"# k/a  kind=k\n"}))

@@ -21,18 +21,18 @@ from cruxible_client.contracts.authoring.inputs import (
 )
 from cruxible_client.contracts.authoring.models import (
     AUTHORING_CHANGE_SET_MEMBERSHIP_DIGEST_DOMAIN,
-    AuthoringClaimStatementV1,
-    AuthoringDiagnosticV1,
-    AuthoringReferenceExpectationV1,
-    ChangeSetAuthoringPayloadV1,
+    AuthoringClaimStatement,
+    AuthoringDiagnostic,
+    AuthoringReferenceExpectation,
+    ChangeSetAuthoringPayload,
     ClaimAuthoringPayloadV1,
     ClaimAuthoringPayloadV2,
-    ClaimDependencyDraftsV1,
-    ClaimRetirementMemberV1,
-    ClaimTypeAuthoringPayloadV1,
-    PublicationSourceObservationV2,
-    SelfSourceBodyV1,
-    SubjectAuthoringPayloadV1,
+    ClaimDependencyDrafts,
+    ClaimRetirementMember,
+    ClaimTypeAuthoringPayload,
+    PublicationSourceObservation,
+    SelfSourceBody,
+    SubjectAuthoringPayload,
     authoring_change_set_membership,
     authoring_member_identity,
     authoring_payload_digest,
@@ -41,7 +41,7 @@ from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_path
 from cruxible_client.contracts.claims import (
     ClaimFormatError,
-    ClaimRetireDependentV1,
+    ClaimRetireDependent,
     LiteralClaimObject,
     claim_artifact_digest,
     claim_path,
@@ -126,7 +126,7 @@ def _claim(
     dispositions: tuple[object, ...] = (),
 ) -> ClaimAuthoringPayloadV1:
     return ClaimAuthoringPayloadV1(
-        statement=AuthoringClaimStatementV1(
+        statement=AuthoringClaimStatement(
             subject=SemanticAddress.whole_artifact(subject_path(SUBJECT_KIND, subject_id)),
             predicate=predicate,
             qualifier=qualifier,
@@ -134,15 +134,15 @@ def _claim(
             role="observation",
         ),
         rationale=rationale,
-        source=SelfSourceBodyV1(content_base64=base64.b64encode(body.encode("utf-8")).decode()),
+        source=SelfSourceBody(content_base64=base64.b64encode(body.encode("utf-8")).decode()),
         revises=revises,
         existing_claim_dispositions=dispositions,  # type: ignore[arg-type]
         insertion_target=insertion_target,  # type: ignore[arg-type]
     )
 
 
-def _change_set(*members: object) -> ChangeSetAuthoringPayloadV1:
-    return ChangeSetAuthoringPayloadV1(
+def _change_set(*members: object) -> ChangeSetAuthoringPayload:
+    return ChangeSetAuthoringPayload(
         members=tuple(  # type: ignore[arg-type]
             sorted(
                 members,  # type: ignore[type-var]
@@ -191,8 +191,8 @@ def test_a_mixed_change_set_lands_every_member_in_one_generation(tmp_path: Path)
     generations_before = len(instance.accepted_history())
 
     payload = _change_set(
-        SubjectAuthoringPayloadV1(subject=_shell("wi-2")),
-        ClaimTypeAuthoringPayloadV1(claim_type=_predicate_type("project.work_item.owner")),
+        SubjectAuthoringPayload(subject=_shell("wi-2")),
+        ClaimTypeAuthoringPayload(claim_type=_predicate_type("project.work_item.owner")),
         _claim(subject_id="wi-42", value="ready"),
         _claim(subject_id="wi-2", value="blocked"),
         _claim(subject_id="wi-2", predicate="project.work_item.owner", value="done"),
@@ -255,7 +255,7 @@ def test_one_malformed_member_refuses_the_whole_intent_at_its_index(tmp_path: Pa
     # This member's ClaimType is neither accepted at the base nor defined here.
     malformed = _claim(subject_id="wi-2", predicate="project.work_item.owner", value="done")
     payload = _change_set(
-        SubjectAuthoringPayloadV1(subject=_shell("wi-2")),
+        SubjectAuthoringPayload(subject=_shell("wi-2")),
         _claim(subject_id="wi-2", value="ready"),
         malformed,
     )
@@ -294,8 +294,8 @@ def test_a_member_reads_a_sibling_definition_only_when_the_set_carries_it(
     carried = coordinator.create(
         actor=actor,
         payload=_change_set(
-            SubjectAuthoringPayloadV1(subject=_shell("wi-sibling")),
-            ClaimTypeAuthoringPayloadV1(claim_type=_predicate_type("project.work_item.owner")),
+            SubjectAuthoringPayload(subject=_shell("wi-sibling")),
+            ClaimTypeAuthoringPayload(claim_type=_predicate_type("project.work_item.owner")),
             _claim(subject_id="wi-sibling", predicate="project.work_item.owner", value="ready"),
         ),
         canonical_timestamp=TIMESTAMP,
@@ -308,7 +308,7 @@ def test_a_member_reads_a_sibling_definition_only_when_the_set_carries_it(
     missing = coordinator.create(
         actor=actor,
         payload=_change_set(
-            ClaimTypeAuthoringPayloadV1(claim_type=_predicate_type("project.work_item.owner")),
+            ClaimTypeAuthoringPayload(claim_type=_predicate_type("project.work_item.owner")),
             _claim(subject_id="wi-absent", predicate="project.work_item.owner", value="ready"),
         ),
         canonical_timestamp=TIMESTAMP,
@@ -334,7 +334,7 @@ def test_two_members_on_one_path_and_one_slot_name_their_member_indices(
         actor=actor,
         payload=_change_set(
             _claim(revises=accepted_claim_id, value="done", rationale="Revise the status."),
-            ClaimRetirementMemberV1(
+            ClaimRetirementMember(
                 retires=accepted_claim_id,
                 reason="was-wrong",
             ),
@@ -397,8 +397,8 @@ def test_a_retirement_member_carries_its_closure_and_lands_with_the_set(
     claim_id = _accept_one_claim(instance, owner, coordinator, actor)
 
     payload = _change_set(
-        SubjectAuthoringPayloadV1(subject=_shell("wi-retire")),
-        ClaimRetirementMemberV1(retires=claim_id, reason="was-rescinded"),
+        SubjectAuthoringPayload(subject=_shell("wi-retire")),
+        ClaimRetirementMember(retires=claim_id, reason="was-rescinded"),
     )
     intent = coordinator.create(
         actor=actor,
@@ -425,12 +425,12 @@ def test_a_retirement_member_refuses_an_incomplete_closure(tmp_path: Path) -> No
     intent = coordinator.create(
         actor=actor,
         payload=_change_set(
-            SubjectAuthoringPayloadV1(subject=_shell("wi-noise")),
-            ClaimRetirementMemberV1(
+            SubjectAuthoringPayload(subject=_shell("wi-noise")),
+            ClaimRetirementMember(
                 retires=claim_id,
                 reason="was-wrong",
                 dependents=(
-                    ClaimRetireDependentV1(
+                    ClaimRetireDependent(
                         artifact_identity=claim.identity,
                         predecessor_digest=claim_artifact_digest(claim).tagged,
                         reason="was-wrong",
@@ -456,8 +456,8 @@ def test_the_changed_member_ceiling_is_an_operator_knob_that_ignores_cards(
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
     payload = _change_set(
-        SubjectAuthoringPayloadV1(subject=_shell("wi-2")),
-        SubjectAuthoringPayloadV1(subject=_shell("wi-3")),
+        SubjectAuthoringPayload(subject=_shell("wi-2")),
+        SubjectAuthoringPayload(subject=_shell("wi-3")),
         _claim(subject_id="wi-2", value="ready"),
     )
     intent = coordinator.create(
@@ -486,8 +486,8 @@ def _digest(content: bytes) -> str:
     return "sha256:" + hashlib.sha256(content).hexdigest()
 
 
-def _observation(content: bytes) -> PublicationSourceObservationV2:
-    return PublicationSourceObservationV2(
+def _observation(content: bytes) -> PublicationSourceObservation:
+    return PublicationSourceObservation(
         source_id="repo.work-items",
         content_base64=base64.b64encode(content).decode("ascii"),
         content_digest=_digest(content),
@@ -519,15 +519,14 @@ def test_eighty_members_of_every_kind_become_exactly_one_generation(tmp_path: Pa
     seeded = sorted(item.claim_id for item in seed.change_set_claim_identities)
     generations_before = len(instance.accepted_history())
 
-    subjects = [SubjectAuthoringPayloadV1(subject=_shell(f"wi-b{index}")) for index in range(5)]
+    subjects = [SubjectAuthoringPayload(subject=_shell(f"wi-b{index}")) for index in range(5)]
     predicates = ["project.work_item.owner", "project.work_item.reviewer"]
     claim_types = [
-        ClaimTypeAuthoringPayloadV1(claim_type=_predicate_type(predicate))
-        for predicate in predicates
+        ClaimTypeAuthoringPayload(claim_type=_predicate_type(predicate)) for predicate in predicates
     ]
     retirements = [
-        ClaimRetirementMemberV1(retires=seeded[0], reason="was-rescinded"),
-        ClaimRetirementMemberV1(retires=seeded[1], reason="was-wrong"),
+        ClaimRetirementMember(retires=seeded[0], reason="was-rescinded"),
+        ClaimRetirementMember(retires=seeded[1], reason="was-wrong"),
     ]
     revision = _claim(
         qualifier="seed2",
@@ -593,7 +592,7 @@ def test_an_indexed_member_reference_expectation_resolves_and_refuses(
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
 
     payload = _change_set(
-        SubjectAuthoringPayloadV1(subject=_shell("wi-2")),
+        SubjectAuthoringPayload(subject=_shell("wi-2")),
         _claim(qualifier="a"),
         _claim(qualifier="b"),
     )
@@ -607,7 +606,7 @@ def test_an_indexed_member_reference_expectation_resolves_and_refuses(
         payload=payload,
         canonical_timestamp=TIMESTAMP,
         reference_expectations=(
-            AuthoringReferenceExpectationV1(
+            AuthoringReferenceExpectation(
                 payload_path=f"members[{index}].statement.subject",
                 artifact_kind="Subject",
                 address=f"{SUBJECT_KIND}/wi-42",
@@ -627,7 +626,7 @@ def test_an_indexed_member_reference_expectation_resolves_and_refuses(
         payload=payload,
         canonical_timestamp="2026-08-21T12:05:00.000000Z",
         reference_expectations=(
-            AuthoringReferenceExpectationV1(
+            AuthoringReferenceExpectation(
                 payload_path=f"members[{index}].statement.subject",
                 artifact_kind="Subject",
                 address=f"{SUBJECT_KIND}/wi-2",
@@ -722,7 +721,7 @@ def _refused_diagnostics(
     coordinator: AuthoringIntentCoordinator,
     intent_id: str,
     actor: AuthenticatedActor,
-) -> dict[str, AuthoringDiagnosticV1]:
+) -> dict[str, AuthoringDiagnostic]:
     """Submit one intent expected to refuse, and return its diagnostics by code."""
 
     result = coordinator.submit(intent_id, actor=actor)
@@ -733,7 +732,7 @@ def _refused_diagnostics(
     return {item.code: item for item in preflight.frontier.diagnostics}
 
 
-def _repair_replacement(diagnostic: AuthoringDiagnosticV1) -> dict[str, object]:
+def _repair_replacement(diagnostic: AuthoringDiagnostic) -> dict[str, object]:
     replacement = diagnostic.repairs[0].replacement
     assert isinstance(replacement, dict)
     return replacement
@@ -771,9 +770,9 @@ def test_compiler_stage_refusals_are_addressed_to_the_offending_member(
     rewritten = _predicate_type("project.work_item.status").model_copy(
         update={"literal_schema": {"type": "string"}}
     )
-    claim_type_member = ClaimTypeAuthoringPayloadV1(claim_type=rewritten)
+    claim_type_member = ClaimTypeAuthoringPayload(claim_type=rewritten)
     # Succession, Subject: rewriting an accepted Subject in place.
-    subject_member = SubjectAuthoringPayloadV1(
+    subject_member = SubjectAuthoringPayload(
         subject=_shell("wi-42").model_copy(
             update={"lifecycle": ArtifactLifecycle(predecessor_digest="sha256:" + "0" * 64)}
         )
@@ -782,7 +781,7 @@ def test_compiler_stage_refusals_are_addressed_to_the_offending_member(
     normative_only = _predicate_type("project.work_item.owner").model_copy(
         update={"permitted_roles": ("normative",)}
     )
-    role_type_member = ClaimTypeAuthoringPayloadV1(claim_type=normative_only)
+    role_type_member = ClaimTypeAuthoringPayload(claim_type=normative_only)
     role_claim_member = _claim(predicate="project.work_item.owner", value="ready")
     # Literal schema: a value the accepted ClaimType's enum does not admit.
     schema_claim_member = _claim(value="not-a-status")
@@ -792,7 +791,7 @@ def test_compiler_stage_refusals_are_addressed_to_the_offending_member(
     cases: tuple[tuple[str, tuple[object, ...], object, str, str, str], ...] = (
         (
             "claim_type_succession",
-            (claim_type_member, SubjectAuthoringPayloadV1(subject=_shell("wi-2"))),
+            (claim_type_member, SubjectAuthoringPayload(subject=_shell("wi-2"))),
             claim_type_member,
             "playbill.claim_type.stale_predecessor",
             claim_type_path("project.work_item.status"),
@@ -800,7 +799,7 @@ def test_compiler_stage_refusals_are_addressed_to_the_offending_member(
         ),
         (
             "subject_succession",
-            (subject_member, SubjectAuthoringPayloadV1(subject=_shell("wi-2"))),
+            (subject_member, SubjectAuthoringPayload(subject=_shell("wi-2"))),
             subject_member,
             "playbill.subject.stale_predecessor",
             subject_path(SUBJECT_KIND, "wi-42"),
@@ -816,7 +815,7 @@ def test_compiler_stage_refusals_are_addressed_to_the_offending_member(
         ),
         (
             "literal_schema",
-            (schema_claim_member, SubjectAuthoringPayloadV1(subject=_shell("wi-2"))),
+            (schema_claim_member, SubjectAuthoringPayload(subject=_shell("wi-2"))),
             schema_claim_member,
             "playbill.claim.literal_schema_invalid",
             "",
@@ -888,7 +887,7 @@ def _claim_with_subject_draft(subject_id: str, shell: SubjectShell) -> ClaimAuth
         statement=authored.statement,
         rationale=authored.rationale,
         source=authored.source,
-        dependency_drafts=ClaimDependencyDraftsV1(subject=shell),
+        dependency_drafts=ClaimDependencyDrafts(subject=shell),
     )
 
 
@@ -927,7 +926,7 @@ def test_a_dependency_draft_that_carries_a_succession_still_refuses_typed(
             update={"lifecycle": ArtifactLifecycle(predecessor_digest="sha256:" + "0" * 64)}
         ),
     )
-    payload = _change_set(succeeding, SubjectAuthoringPayloadV1(subject=_shell("wi-2")))
+    payload = _change_set(succeeding, SubjectAuthoringPayload(subject=_shell("wi-2")))
     index = payload.members.index(succeeding)
     intent = coordinator.create(
         actor=actor,
@@ -953,7 +952,7 @@ def test_a_dependency_draft_that_carries_a_succession_still_refuses_typed(
     )
     born_retired = coordinator.create(
         actor=actor,
-        payload=_change_set(retired, SubjectAuthoringPayloadV1(subject=_shell("wi-3"))),
+        payload=_change_set(retired, SubjectAuthoringPayload(subject=_shell("wi-3"))),
         canonical_timestamp=TIMESTAMP,
     ).intent
     pinned = _refused_diagnostics(coordinator, born_retired.intent_id, actor)
@@ -1082,14 +1081,14 @@ def test_a_retirement_member_spells_what_it_retires_the_way_a_claim_does(
     """
 
     claim_id = "CLM-" + "1" * 32
-    member = ClaimRetirementMemberV1(retires=claim_id, reason="was-rescinded")
+    member = ClaimRetirementMember(retires=claim_id, reason="was-rescinded")
     assert member.claim_id == claim_id
     assert authoring_member_identity(member) == f"ClaimRetirement:{claim_id}"
 
     # Both Claim-addressing member kinds refuse the prefixed spelling, the same
     # way, with the same message.
     with pytest.raises(ClaimFormatError, match="Claim ID must be CLM-"):
-        ClaimRetirementMemberV1(retires=f"Claim:{claim_id}", reason="was-rescinded")
+        ClaimRetirementMember(retires=f"Claim:{claim_id}", reason="was-rescinded")
     with pytest.raises(ClaimFormatError, match="Claim ID must be CLM-"):
         _claim(revises=f"Claim:{claim_id}")
 
@@ -1114,8 +1113,8 @@ def test_a_retirement_member_spells_what_it_retires_the_way_a_claim_does(
     actor = AuthenticatedActor(actor_id="owner")
     accepted = _accept_one_claim(instance, owner, coordinator, actor)
     payload = _change_set(
-        ClaimRetirementMemberV1(retires=accepted, reason="was-rescinded"),
-        SubjectAuthoringPayloadV1(subject=_shell("wi-dedup")),
+        ClaimRetirementMember(retires=accepted, reason="was-rescinded"),
+        SubjectAuthoringPayload(subject=_shell("wi-dedup")),
     )
     first = coordinator.create(actor=actor, payload=payload, canonical_timestamp=TIMESTAMP).intent
     again = coordinator.create(actor=actor, payload=payload, canonical_timestamp=TIMESTAMP).intent
@@ -1142,7 +1141,7 @@ def _measured_subject_set(
 ) -> None:
     payload = _change_set(
         *(
-            SubjectAuthoringPayloadV1(subject=_shell(f"wi-fresh-{index:03d}"))
+            SubjectAuthoringPayload(subject=_shell(f"wi-fresh-{index:03d}"))
             for index in range(count)
         )
     )
@@ -1159,9 +1158,7 @@ def _measured_claim_type_set(
 ) -> None:
     payload = _change_set(
         *(
-            ClaimTypeAuthoringPayloadV1(
-                claim_type=_predicate_type(f"project.work_item.p{index:03d}")
-            )
+            ClaimTypeAuthoringPayload(claim_type=_predicate_type(f"project.work_item.p{index:03d}"))
             for index in range(count)
         )
     )
@@ -1193,10 +1190,7 @@ def _measured_retirement_set(
 ) -> None:
     claim_ids = _measured_claim_set(instance, owner, coordinator, actor, count)
     payload = _change_set(
-        *(
-            ClaimRetirementMemberV1(retires=claim_id, reason="was-rescinded")
-            for claim_id in claim_ids
-        )
+        *(ClaimRetirementMember(retires=claim_id, reason="was-rescinded") for claim_id in claim_ids)
     )
     intent = coordinator.create(actor=actor, payload=payload, canonical_timestamp=TIMESTAMP).intent
     _accept(instance, owner, coordinator, intent.intent_id, actor)
@@ -1291,10 +1285,7 @@ def test_a_thousand_member_change_set_refuses_before_it_is_compiled(
     instance.bind_receive_limits(limits)
     assert limits.max_change_set_members == 372
     payload = _change_set(
-        *(
-            SubjectAuthoringPayloadV1(subject=_shell(f"wi-bulk-{index:04d}"))
-            for index in range(1_000)
-        )
+        *(SubjectAuthoringPayload(subject=_shell(f"wi-bulk-{index:04d}")) for index in range(1_000))
     )
     intent = coordinator.create(
         actor=actor,
@@ -1346,8 +1337,8 @@ def test_a_set_at_the_record_ceiling_still_compiles(tmp_path: Path) -> None:
     instance.bind_receive_limits(ProposalReceiveLimits(max_change_set_record_bytes=3 * per_member))
     assert instance.proposal_service().receive_limits.max_change_set_members == 3
     payload = _change_set(
-        SubjectAuthoringPayloadV1(subject=_shell("wi-2")),
-        SubjectAuthoringPayloadV1(subject=_shell("wi-3")),
+        SubjectAuthoringPayload(subject=_shell("wi-2")),
+        SubjectAuthoringPayload(subject=_shell("wi-3")),
         _claim(subject_id="wi-2", value="ready"),
     )
     intent = coordinator.create(
@@ -1394,7 +1385,7 @@ def test_a_set_of_retirements_at_the_old_ceiling_refuses(
     instance.bind_receive_limits(limits)
     payload = _change_set(
         *(
-            ClaimRetirementMemberV1(retires=f"CLM-{index:032x}", reason="was-rescinded")
+            ClaimRetirementMember(retires=f"CLM-{index:032x}", reason="was-rescinded")
             for index in range(582)
         )
     )
@@ -1491,7 +1482,7 @@ def test_a_compile_that_exhausts_memory_refuses_typed_instead_of_propagating(
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
     payload = _change_set(
-        SubjectAuthoringPayloadV1(subject=_shell("wi-2")),
+        SubjectAuthoringPayload(subject=_shell("wi-2")),
         _claim(subject_id="wi-2", value="ready"),
     )
     intent = coordinator.create(
@@ -1536,7 +1527,7 @@ def test_a_revision_that_moves_the_subject_refuses_by_name(tmp_path: Path) -> No
     moved = coordinator.create(
         actor=actor,
         payload=_change_set(
-            SubjectAuthoringPayloadV1(subject=_shell("wi-9")),
+            SubjectAuthoringPayload(subject=_shell("wi-9")),
             _claim(
                 revises=accepted_claim_id,
                 subject_id="wi-9",
@@ -1571,7 +1562,7 @@ def test_a_revision_that_moves_the_predicate_refuses_by_name(tmp_path: Path) -> 
     moved = coordinator.create(
         actor=actor,
         payload=_change_set(
-            ClaimTypeAuthoringPayloadV1(claim_type=_predicate_type("project.work_item.owner")),
+            ClaimTypeAuthoringPayload(claim_type=_predicate_type("project.work_item.owner")),
             _claim(
                 revises=accepted_claim_id,
                 predicate="project.work_item.owner",

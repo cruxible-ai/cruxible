@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Self
 from cruxible_client._error_base import CoreError, printable
 
 if TYPE_CHECKING:
-    from cruxible_client.contracts.repairs import RepairOperationV1
+    from cruxible_client.contracts.repairs import RepairOperation
 
 
 class PlaybillError(CoreError):
@@ -446,7 +446,7 @@ class ReadRefusalError(CoreError):
         *,
         http_status: int = 400,
         candidates: Iterable[str] = (),
-        repair: RepairOperationV1 | None = None,
+        repair: RepairOperation | None = None,
         repair_line: str | None = None,
         field_path: str | None = None,
         context: Mapping[str, Any] | None = None,

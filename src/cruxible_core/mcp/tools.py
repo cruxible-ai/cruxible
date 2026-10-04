@@ -12,52 +12,52 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue
 from pydantic.json_schema import SkipJsonSchema
 
 from cruxible_client import contracts
-from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
+from cruxible_client.authoring.inputs import AuthoringInput, ClaimInput
 from cruxible_client.contracts.attestations import ApprovalAttestation
 from cruxible_client.contracts.authoring.models import (
-    PlaybillBlockDetachResultV1,
-    WorkingSelectionObservationV1,
+    PlaybillBlockDetachResult,
+    WorkingSelectionObservation,
 )
-from cruxible_client.contracts.capture_reads import CaptureReadRequestV1, CaptureReadV1
-from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
+from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.change_control import DryRun, PreviewAt
-from cruxible_client.contracts.claim_attestations import ClaimAttestationAppendResultV1
+from cruxible_client.contracts.claim_attestations import ClaimAttestationAppendResult
 from cruxible_client.contracts.claim_type_upgrade import (
-    ClaimTypeUpgradeRequestV1,
-    ClaimTypeUpgradeResultV1,
+    ClaimTypeUpgradeRequest,
+    ClaimTypeUpgradeResult,
 )
 from cruxible_client.contracts.compact_query import (
     QueryClaimStatus,
-    QueryFilterV1,
-    QueryFollowV1,
+    QueryFilter,
+    QueryFollow,
     QueryReceiptDetail,
 )
-from cruxible_client.contracts.declared_blocks import PlaybillBlockRepinResultV1
+from cruxible_client.contracts.declared_blocks import PlaybillBlockRepinResult
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.evidence_rule_upgrade import (
-    EvidenceRuleUpgradeRequestV1,
-    EvidenceRuleUpgradeResultV1,
+    EvidenceRuleUpgradeRequest,
+    EvidenceRuleUpgradeResult,
 )
 from cruxible_client.contracts.get_reads import (
     GET_HISTORY_MAX_LIMIT,
-    PlaybillByteRangeV1,
-    PlaybillGetResultV1,
+    PlaybillByteRange,
+    PlaybillGetResult,
 )
 from cruxible_client.contracts.kits import (
-    PlaybillKitAddRequestV1,
-    PlaybillKitBuildRequestV1,
-    PlaybillKitBuildResultV1,
-    PlaybillKitChangeResultV1,
-    PlaybillKitRemoveRequestV1,
-    PlaybillKitStatusV1,
+    PlaybillKitAddRequest,
+    PlaybillKitBuildRequest,
+    PlaybillKitBuildResult,
+    PlaybillKitChangeResult,
+    PlaybillKitRemoveRequest,
+    PlaybillKitStatus,
 )
 from cruxible_client.contracts.provider_installation import (
-    PlaybillProviderCatalogV1,
-    PlaybillProviderInstallRequestV1,
-    PlaybillProviderInstallResultV1,
+    PlaybillProviderCatalog,
+    PlaybillProviderInstallRequest,
+    PlaybillProviderInstallResult,
 )
-from cruxible_client.contracts.query.definitions import QueryDefinitionSpecV1
-from cruxible_client.contracts.query.grammar import QueryBudgetsV1
+from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
+from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_client.contracts.source_catalog import SourceCompilationBundle
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_client.contracts.write import (
@@ -76,12 +76,12 @@ from cruxible_client.contracts.write import (
     WriteRetireReason,
     WriteRole,
 )
-from cruxible_core.claims.claim_type_inputs import ClaimTypeInputV1
-from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequest
-from cruxible_core.coverage.adapter import WorkingSourceObservationV1
-from cruxible_core.coverage.contracts import CoverageAccessProfileV1, CoverageCardBudgetV1
-from cruxible_core.coverage.indexes import CoverageScanBudgetV1
-from cruxible_core.curation.audit import AuditCursorV1
+from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord
+from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequestAny
+from cruxible_core.coverage.adapter import WorkingSourceObservation
+from cruxible_core.coverage.contracts import CoverageAccessProfile, CoverageCardBudget
+from cruxible_core.coverage.indexes import CoverageScanBudget
+from cruxible_core.curation.audit import AuditCursor
 from cruxible_core.curation.curation_calibration import (
     AUDIT_BUDGET_DEFAULT_MAX_BYTES,
     AUDIT_BUDGET_DEFAULT_MAX_ROWS,
@@ -94,8 +94,8 @@ from cruxible_core.mcp import handlers
 from cruxible_core.mcp.results import McpServerInfoResult, McpWhoAmIResult
 from cruxible_core.mcp.target import MCP_INSTANCE_ENV, require_instance_id
 from cruxible_core.mcp.tool_prompts import tool_description
-from cruxible_core.service.discovery.next import PlaybillNextWorkspaceObservationV1
-from cruxible_core.service.procedures.procedure_runs import ProcedureSlotBindingRequestV1
+from cruxible_core.service.discovery.next import PlaybillNextWorkspaceObservation
+from cruxible_core.service.procedures.procedure_runs import ProcedureSlotBindingRequest
 
 
 class McpBlockQuery(BaseModel):
@@ -147,7 +147,7 @@ class McpFileEvidence(FileEvidence):
     before the request leaves it. The field stays out of the advertised schema.
     """
 
-    observation: SkipJsonSchema[WorkingSelectionObservationV1 | None] = None
+    observation: SkipJsonSchema[WorkingSelectionObservation | None] = None
 
 
 McpEvidence = Annotated[
@@ -229,7 +229,7 @@ def register_tools(
     @_tool
     def cruxible_playbill_provider_catalog(
         instance_id: InstanceId = None,
-    ) -> PlaybillProviderCatalogV1:
+    ) -> PlaybillProviderCatalog:
         """Discover provider packages available from the configured repository."""
         return handlers.handle_playbill_provider_catalog(require_instance_id(instance_id))
 
@@ -237,8 +237,8 @@ def register_tools(
     def cruxible_playbill_provider_install(
         instance_id: InstanceId = None,
         *,
-        request: PlaybillProviderInstallRequestV1,
-    ) -> PlaybillProviderInstallResultV1:
+        request: PlaybillProviderInstallRequest,
+    ) -> PlaybillProviderInstallResult:
         """Install a provider package and propose its definitions; requires ADMIN."""
         return handlers.handle_playbill_provider_install(require_instance_id(instance_id), request)
 
@@ -246,13 +246,13 @@ def register_tools(
     def cruxible_playbill_kit_build(
         instance_id: InstanceId = None,
         *,
-        request: PlaybillKitBuildRequestV1,
-    ) -> PlaybillKitBuildResultV1:
+        request: PlaybillKitBuildRequest,
+    ) -> PlaybillKitBuildResult:
         """Export this instance's definitions under the owned prefixes as one kit release."""
         return handlers.handle_playbill_kit_build(require_instance_id(instance_id), request)
 
     @_tool
-    def cruxible_playbill_kit_status(instance_id: InstanceId = None) -> PlaybillKitStatusV1:
+    def cruxible_playbill_kit_status(instance_id: InstanceId = None) -> PlaybillKitStatus:
         """List installed kits and the kit paths edited since install."""
         return handlers.handle_playbill_kit_status(require_instance_id(instance_id))
 
@@ -260,8 +260,8 @@ def register_tools(
     def cruxible_playbill_kit_add(
         instance_id: InstanceId = None,
         *,
-        request: PlaybillKitAddRequestV1,
-    ) -> PlaybillKitChangeResultV1:
+        request: PlaybillKitAddRequest,
+    ) -> PlaybillKitChangeResult:
         """Propose installing or upgrading a kit as one change set; activation is separate."""
         return handlers.handle_playbill_kit_add(require_instance_id(instance_id), request)
 
@@ -269,8 +269,8 @@ def register_tools(
     def cruxible_playbill_claim_type_upgrade(
         instance_id: InstanceId = None,
         *,
-        request: ClaimTypeUpgradeRequestV1,
-    ) -> ClaimTypeUpgradeResultV1:
+        request: ClaimTypeUpgradeRequest,
+    ) -> ClaimTypeUpgradeResult:
         """Propose moving live ClaimTypes to v7 (dry_run evaluates and proposes nothing)."""
         return handlers.handle_playbill_claim_type_upgrade(
             require_instance_id(instance_id), request
@@ -282,19 +282,19 @@ def register_tools(
         *,
         dry_run: DryRun = None,
         at: PreviewAt = None,
-    ) -> EvidenceRuleUpgradeResultV1:
+    ) -> EvidenceRuleUpgradeResult:
         """Propose moving live ClaimTypes to evidence rules that name contracts by identity."""
         return handlers.handle_playbill_evidence_rules_upgrade(
             require_instance_id(instance_id),
-            EvidenceRuleUpgradeRequestV1(dry_run=dry_run, at=at),
+            EvidenceRuleUpgradeRequest(dry_run=dry_run, at=at),
         )
 
     @_tool
     def cruxible_playbill_kit_remove(
         instance_id: InstanceId = None,
         *,
-        request: PlaybillKitRemoveRequestV1,
-    ) -> PlaybillKitChangeResultV1:
+        request: PlaybillKitRemoveRequest,
+    ) -> PlaybillKitChangeResult:
         """Propose retiring every artifact a kit installed; activation is separate."""
         return handlers.handle_playbill_kit_remove(require_instance_id(instance_id), request)
 
@@ -470,7 +470,7 @@ def register_tools(
         evaluation_time: Annotated[
             str | None, Field(description="ISO-8601 instant; defaults to now.")
         ] = None,
-    ) -> contracts.PlaybillOrientResultV1:
+    ) -> contracts.PlaybillOrientResult:
         """Map accepted state: kinds and predicates, artifacts, you, attention, next calls."""
         return handlers.handle_playbill_orient(
             require_instance_id(instance_id),
@@ -526,8 +526,8 @@ def register_tools(
 
     @_tool
     def cruxible_playbill_read_capture(
-        instance_id: InstanceId = None, *, request: CaptureReadRequestV1
-    ) -> CaptureReadV1:
+        instance_id: InstanceId = None, *, request: CaptureReadRequest
+    ) -> CaptureRead:
         """Read exact retained Capture evidence with a byte budget and body permission."""
         return handlers.handle_playbill_read_capture(require_instance_id(instance_id), request)
 
@@ -626,7 +626,7 @@ def register_tools(
     def cruxible_playbill_propose_claim_type(
         instance_id: InstanceId = None,
         *,
-        input: ClaimTypeInputV1,
+        input: ClaimTypeInputRecord,
         proposal_name: str,
         dry_run: DryRun = None,
         at: PreviewAt = None,
@@ -644,7 +644,7 @@ def register_tools(
     def cruxible_playbill_claim_type_migrate(
         instance_id: InstanceId = None,
         *,
-        request: ClaimTypeMigrationRequest,
+        request: ClaimTypeMigrationRequestAny,
     ) -> contracts.PlaybillClaimTypeMigrationResponse:
         """Propose one ClaimType successor and its dependent dispositions atomically."""
         return handlers.handle_playbill_migrate_claim_type(
@@ -676,7 +676,7 @@ def register_tools(
             datetime | None,
             Field(description="With capture_digests: when you observed the new Capture."),
         ] = None,
-    ) -> ClaimAttestationAppendResultV1:
+    ) -> ClaimAttestationAppendResult:
         """Sign that the caller examined this exact Claim, then append the evidence.
 
         ``unsure`` holds the Claim's contested ``next`` rows until what was examined
@@ -699,7 +699,7 @@ def register_tools(
     def cruxible_playbill_authoring_create(
         instance_id: InstanceId = None,
         *,
-        payload: AuthoringInputV1,
+        payload: AuthoringInput,
     ) -> contracts.PlaybillAuthoringIntentView:
         """Create or recover a daemon-owned authoring intent."""
         return handlers.handle_playbill_authoring_create(
@@ -750,7 +750,7 @@ def register_tools(
     def cruxible_playbill_authoring_compile(
         instance_id: InstanceId = None,
         *,
-        payload: AuthoringInputV1,
+        payload: AuthoringInput,
         intent_id: str | None = None,
     ) -> contracts.PlaybillAuthoringPreflightResult:
         """Create or update an intent and return its complete preflight."""
@@ -866,7 +866,7 @@ def register_tools(
         dry_run: Annotated[
             bool | None, Field(description="true: compute the stamp and write nothing.")
         ] = None,
-    ) -> PlaybillBlockRepinResultV1:
+    ) -> PlaybillBlockRepinResult:
         """Stamp (or restamp) one projection block; this adapter computes the stamp."""
         return handlers.handle_playbill_block_repin(
             require_instance_id(instance_id),
@@ -893,7 +893,7 @@ def register_tools(
         all_sources: Annotated[
             bool, Field(description="Check every page the source catalog names.")
         ] = False,
-    ) -> contracts.PlaybillBlockSyncResultV1:
+    ) -> contracts.PlaybillBlockSyncResult:
         """Check each block's backings against the instance; reads only, edits no page."""
         return handlers.handle_playbill_block_sync(
             require_instance_id(instance_id),
@@ -914,7 +914,7 @@ def register_tools(
         ],
         dry_run: DryRun = None,
         at: PreviewAt = None,
-    ) -> PlaybillBlockDetachResultV1:
+    ) -> PlaybillBlockDetachResult:
         """Remove retired blocks' markers from pages (bodies kept); dry_run edits nothing."""
         return handlers.handle_playbill_block_detach(
             require_instance_id(instance_id), files=files, dry_run=dry_run, at=at
@@ -928,7 +928,7 @@ def register_tools(
         block_id: str,
         dry_run: DryRun = None,
         at: PreviewAt = None,
-    ) -> contracts.PlaybillBlockDepublishResultV1:
+    ) -> contracts.PlaybillBlockDepublishResult:
         """Release the publication registration that demands one page block."""
         return handlers.handle_playbill_block_depublish(
             require_instance_id(instance_id), source_id, block_id, dry_run=dry_run, at=at
@@ -952,7 +952,7 @@ def register_tools(
         ],
         detail: Literal["summary", "evidence", "why", "history", "proof", "body"] = "summary",
         range: Annotated[
-            PlaybillByteRangeV1 | None,
+            PlaybillByteRange | None,
             Field(description='Byte range [start, end) of a Document body; detail="body" only.'),
         ] = None,
         at: ReadAt = None,
@@ -972,7 +972,7 @@ def register_tools(
             str | None,
             Field(description='next_cursor of the previous detail="history" page.'),
         ] = None,
-    ) -> PlaybillGetResultV1:
+    ) -> PlaybillGetResult:
         """Read one governed thing by reference, values first."""
         return handlers.handle_playbill_get(
             require_instance_id(instance_id),
@@ -1170,10 +1170,10 @@ def register_tools(
         instance_id: InstanceId = None,
         *,
         kind: str | None = None,
-        where: list[QueryFilterV1] | None = None,
+        where: list[QueryFilter] | None = None,
         contains: str | None = None,
         select: list[str] | None = None,
-        follow: list[QueryFollowV1] | None = None,
+        follow: list[QueryFollow] | None = None,
         order_by: list[str] | None = None,
         limit: Annotated[
             int, Field(ge=1, le=contracts.PLAYBILL_QUERY_MAX_LIMIT)
@@ -1183,7 +1183,7 @@ def register_tools(
         params: dict[str, str | int | bool | None] | None = None,
         status: list[QueryClaimStatus] | None = None,
         claims: bool = False,
-        budgets: QueryBudgetsV1 | None = None,
+        budgets: QueryBudgets | None = None,
         receipt: QueryReceiptDetail = "compact",
         at: ReadAt = None,
         evaluation_time: str | None = None,
@@ -1213,7 +1213,7 @@ def register_tools(
     def cruxible_playbill_query_spec(
         instance_id: InstanceId = None,
         *,
-        spec: QueryDefinitionSpecV1,
+        spec: QueryDefinitionSpec,
         limit: Annotated[
             int, Field(ge=1, le=contracts.PLAYBILL_QUERY_MAX_LIMIT)
         ] = contracts.PLAYBILL_QUERY_DEFAULT_LIMIT,
@@ -1250,7 +1250,7 @@ def register_tools(
         instance_id: InstanceId = None,
         *,
         name: str,
-        bindings: list[ProcedureSlotBindingRequestV1],
+        bindings: list[ProcedureSlotBindingRequest],
     ) -> contracts.PlaybillProcedureBindResult:
         """Propose exact accepted bindings for one Procedure's open slots."""
         return handlers.handle_playbill_procedure_bind(
@@ -1272,8 +1272,8 @@ def register_tools(
         ],
         evaluation_time: str | None = None,
         at: contracts.PlaybillAcceptedCoordinate | None = None,
-        resolution_contract: contracts.ResolutionContractReferenceV1 | None = None,
-        trigger_event: contracts.TriggerEventReferenceV1 | None = None,
+        resolution_contract: contracts.ResolutionContractReference | None = None,
+        trigger_event: contracts.TriggerEventReference | None = None,
     ) -> contracts.PlaybillProcedureRunState:
         """Run one accepted Procedure deterministically."""
         return handlers.handle_playbill_procedure_run(
@@ -1302,8 +1302,8 @@ def register_tools(
         instance_id: InstanceId = None,
         *,
         name: str,
-        request: contracts.PlaybillProcedureMeasureRequestV1,
-    ) -> contracts.PlaybillProcedureMeasureResultV1:
+        request: contracts.PlaybillProcedureMeasureRequest,
+    ) -> contracts.PlaybillProcedureMeasureResult:
         """Evaluate due Procedure measurements from real evidence and credit one run."""
         return handlers.handle_playbill_procedure_measure(
             require_instance_id(instance_id), name, request
@@ -1314,8 +1314,8 @@ def register_tools(
         instance_id: InstanceId = None,
         *,
         name: str,
-        request: contracts.PlaybillProcedureReadingsRequestV1,
-    ) -> contracts.PlaybillProcedureReadingsResultV1:
+        request: contracts.PlaybillProcedureReadingsRequest,
+    ) -> contracts.PlaybillProcedureReadingsResult:
         """Inspect measurement standing and retained exact-grain readings."""
         return handlers.handle_playbill_procedure_readings(
             require_instance_id(instance_id), name, request
@@ -1323,8 +1323,8 @@ def register_tools(
 
     @_tool
     def cruxible_playbill_line_check(
-        instance_id: InstanceId = None, *, line: str, request: contracts.LineTriggerCheckRequestV1
-    ) -> contracts.LineTriggerCheckResultV1:
+        instance_id: InstanceId = None, *, line: str, request: contracts.LineTriggerCheckRequest
+    ) -> contracts.LineTriggerCheckResult:
         """Check a Line's trigger and admitted occurrences; never enqueue or execute."""
         return handlers.handle_playbill_line_check(require_instance_id(instance_id), line, request)
 
@@ -1335,7 +1335,7 @@ def register_tools(
         line: str,
         dry_run: DryRun = None,
         at: PreviewAt = None,
-    ) -> contracts.LineArmV1:
+    ) -> contracts.LineArm:
         """Arm a Line forward-only; the daemon admits what it matches under your credential."""
         return handlers.handle_playbill_line_arm(
             require_instance_id(instance_id), line, dry_run=dry_run, at=at
@@ -1348,7 +1348,7 @@ def register_tools(
         line: str,
         dry_run: DryRun = None,
         at: PreviewAt = None,
-    ) -> contracts.LineArmV1:
+    ) -> contracts.LineArm:
         """Stop a Line admitting work on its own; admitted runs are not cancelled."""
         return handlers.handle_playbill_line_disarm(
             require_instance_id(instance_id), line, dry_run=dry_run, at=at
@@ -1357,14 +1357,14 @@ def register_tools(
     @_tool
     def cruxible_playbill_line_status(
         instance_id: InstanceId = None, *, line: str
-    ) -> contracts.LineArmV1:
+    ) -> contracts.LineArm:
         """Read a Line's current arm, or its last one and why it stopped."""
         return handlers.handle_playbill_line_status(require_instance_id(instance_id), line)
 
     @_tool
     def cruxible_playbill_line_evaluate(
-        instance_id: InstanceId = None, *, line: str, request: contracts.LineEvaluateRequestV1
-    ) -> contracts.LineTriggerCheckResultV1:
+        instance_id: InstanceId = None, *, line: str, request: contracts.LineEvaluateRequest
+    ) -> contracts.LineTriggerCheckResult:
         """Explicitly evaluate a historical range into pending work; never execute."""
         return handlers.handle_playbill_line_evaluate(
             require_instance_id(instance_id), line, request
@@ -1372,8 +1372,8 @@ def register_tools(
 
     @_tool
     def cruxible_playbill_line_dispatch(
-        instance_id: InstanceId = None, *, line: str, request: contracts.LineDispatchRequestV1
-    ) -> contracts.LineDispatchResultV1:
+        instance_id: InstanceId = None, *, line: str, request: contracts.LineDispatchRequest
+    ) -> contracts.LineDispatchResult:
         """Execute retained pending occurrences using the current authenticated actor."""
         return handlers.handle_playbill_line_dispatch(
             require_instance_id(instance_id), line, request
@@ -1387,8 +1387,8 @@ def register_tools(
         trigger: str | None = None,
         evaluation_time: str | None = None,
         occurrence_id: str | None = None,
-        resolution_contract: contracts.ResolutionContractReferenceV1 | None = None,
-        trigger_event: contracts.TriggerEventReferenceV1 | None = None,
+        resolution_contract: contracts.ResolutionContractReference | None = None,
+        trigger_event: contracts.TriggerEventReference | None = None,
     ) -> contracts.PlaybillProcedureRunState:
         """Trigger one due occurrence of an accepted Line.
 
@@ -1409,8 +1409,8 @@ def register_tools(
         instance_id: InstanceId = None,
         *,
         claim_id: str | None = None,
-        request: contracts.ResolutionContractsRequestV1 | None = None,
-    ) -> contracts.ResolutionContractsResultV1:
+        request: contracts.ResolutionContractsRequest | None = None,
+    ) -> contracts.ResolutionContractsResult:
         """Find accepted resolution contracts testing a Claim, by Claim ID.
 
         The daemon resolves the Claim's accepted version. ``request`` is the
@@ -1420,15 +1420,15 @@ def register_tools(
             raise ValueError("pass exactly one of claim_id or request")
         return handlers.handle_playbill_resolution_contracts(
             require_instance_id(instance_id),
-            request or contracts.ResolutionContractsRequestV1(hypothesis=cast(str, claim_id)),
+            request or contracts.ResolutionContractsRequest(hypothesis=cast(str, claim_id)),
         )
 
     @_tool
     def cruxible_playbill_predict(
         instance_id: InstanceId = None,
         *,
-        request: contracts.PlaybillPredictRequestV2,
-    ) -> contracts.PlaybillPredictResultV2:
+        request: contracts.PlaybillPredictRequest,
+    ) -> contracts.PlaybillPredictResult:
         """Propose a governed test of an accepted Claim, named by Claim ID in the hypothesis."""
         return handlers.handle_playbill_predict(require_instance_id(instance_id), request)
 
@@ -1438,8 +1438,8 @@ def register_tools(
         *,
         prediction_id: str,
         observation: str | None = None,
-        request: contracts.PlaybillSettleRequestV2 | None = None,
-    ) -> contracts.PlaybillSettleResultV2:
+        request: contracts.PlaybillSettleRequest | None = None,
+    ) -> contracts.PlaybillSettleResult:
         """Settle one prediction from the Claim ID of an accepted observation.
 
         ``prediction_id`` is the contract name or the RSC-... window id ``next``
@@ -1451,7 +1451,7 @@ def register_tools(
         return handlers.handle_playbill_settle_prediction(
             require_instance_id(instance_id),
             prediction_id,
-            request or contracts.PlaybillSettleRequestV2(observation=observation),
+            request or contracts.PlaybillSettleRequest(observation=observation),
         )
 
     @_tool
@@ -1459,9 +1459,9 @@ def register_tools(
         instance_id: InstanceId = None,
         *,
         evaluation_time: str | None = None,
-        access_profile: CoverageAccessProfileV1 | None = None,
+        access_profile: CoverageAccessProfile | None = None,
         expiring_within: Annotated[
-            CanonicalDurationV1 | None,
+            CanonicalDuration | None,
             Field(
                 description=(
                     "Evidence-expiration lead window as {'microseconds': N}; defaults to 7 days."
@@ -1492,7 +1492,7 @@ def register_tools(
         *,
         generation: int,
         at: contracts.PlaybillAcceptedCoordinate | None = None,
-        access_profile: CoverageAccessProfileV1 | None = None,
+        access_profile: CoverageAccessProfile | None = None,
         max_rows: Annotated[int, Field(ge=1, le=1000)] = 100,
         max_bytes: Annotated[int, Field(ge=1, le=1_048_576)] = 65_536,
         cursor: contracts.PlaybillSinceCursor | None = None,
@@ -1513,8 +1513,8 @@ def register_tools(
         instance_id: InstanceId = None,
         *,
         evaluation_time: str,
-        access_profile: CoverageAccessProfileV1 | None = None,
-        workspace_observation: PlaybillNextWorkspaceObservationV1 | None = None,
+        access_profile: CoverageAccessProfile | None = None,
+        workspace_observation: PlaybillNextWorkspaceObservation | None = None,
         limit: Annotated[
             int, Field(ge=1, le=contracts.PLAYBILL_CURATION_LIST_MAX_LIMIT)
         ] = contracts.PLAYBILL_CURATION_LIST_DEFAULT_LIMIT,
@@ -1538,7 +1538,7 @@ def register_tools(
         instance_id: InstanceId = None,
         *,
         evaluation_time: str,
-        access_profile: CoverageAccessProfileV1 | None = None,
+        access_profile: CoverageAccessProfile | None = None,
         claim_type_identities: list[str] | None = None,
         subject_kinds: list[str] | None = None,
         max_rows: Annotated[
@@ -1549,7 +1549,7 @@ def register_tools(
             int,
             Field(ge=AUDIT_BUDGET_MIN_MAX_BYTES, le=AUDIT_BUDGET_MAX_MAX_BYTES),
         ] = AUDIT_BUDGET_DEFAULT_MAX_BYTES,
-        cursor: AuditCursorV1 | None = None,
+        cursor: AuditCursor | None = None,
     ) -> contracts.PlaybillAuditResult:
         """Read ranked Claim verification work and record completed coverage."""
         return handlers.handle_playbill_audit(
@@ -1642,7 +1642,7 @@ def register_tools(
         instance_id: InstanceId = None,
         *,
         observations: Annotated[
-            list[WorkingSourceObservationV1] | None,
+            list[WorkingSourceObservation] | None,
             Field(description="Working-source observations you built; omit with bindings."),
         ] = None,
         bindings: Annotated[
@@ -1660,8 +1660,8 @@ def register_tools(
         whole_working_set: Annotated[
             bool, Field(description="With bindings, cover every declared workspace file.")
         ] = False,
-        budget: CoverageCardBudgetV1 | None = None,
-        scan_budget: CoverageScanBudgetV1 | None = None,
+        budget: CoverageCardBudget | None = None,
+        scan_budget: CoverageScanBudget | None = None,
     ) -> contracts.PlaybillCoverageResult:
         """Resolve what working sources have to do with accepted state."""
         return handlers.handle_playbill_coverage(

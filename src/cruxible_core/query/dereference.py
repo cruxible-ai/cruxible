@@ -21,12 +21,12 @@ from typing import Protocol
 
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes
 from cruxible_client.contracts.source_references import (
-    BodyAccessResultV1,
-    CoverageDescriptorV1,
-    ExternalSourceReferenceV1,
-    OpenSourceRequestV1,
-    SourceDereferenceResultV1,
-    SourceHandleV1,
+    BodyAccessResult,
+    CoverageDescriptor,
+    ExternalSourceReference,
+    OpenSourceRequest,
+    SourceDereferenceResult,
+    SourceHandle,
     source_handle_digest,
 )
 from cruxible_core.storage.cas import BodyAccessContext
@@ -37,7 +37,7 @@ SOURCE_MATERIAL_FACET = "source_material"
 class ExternalSelectionReaderProtocol(Protocol):
     """The injectable read-only adapter seam an external dereference calls."""
 
-    def read_external_selection(self, source: ExternalSourceReferenceV1) -> object | None:
+    def read_external_selection(self, source: ExternalSourceReference) -> object | None:
         """Return the canonical value at that exact native coordinate, or None."""
 
 
@@ -50,7 +50,7 @@ class SourceMaterialResolverProtocol(Protocol):
     def read_cas(self, content_digest: str, *, access: BodyAccessContext) -> bytes | None:
         """Return retained CAS bytes, or None when the body is no longer present."""
 
-    def read_external(self, source: ExternalSourceReferenceV1) -> object | None:
+    def read_external(self, source: ExternalSourceReference) -> object | None:
         """Return the exact external selection's canonical value, or None if retired.
 
         This is a read-only adapter call at the recorded native coordinate and
@@ -64,8 +64,8 @@ def _coverage(
     omitted_for_access: bool = False,
     truncated: bool = False,
     reason_codes: tuple[str, ...] = (),
-) -> CoverageDescriptorV1:
-    return CoverageDescriptorV1(
+) -> CoverageDescriptor:
+    return CoverageDescriptor(
         requested_facets=(SOURCE_MATERIAL_FACET,),
         available_facets=(SOURCE_MATERIAL_FACET,) if available else (),
         omitted_for_access=(SOURCE_MATERIAL_FACET,) if omitted_for_access else (),
@@ -75,12 +75,12 @@ def _coverage(
 
 
 def _metadata_only(
-    handle: SourceHandleV1,
+    handle: SourceHandle,
     *,
     status: str,
-    coverage: CoverageDescriptorV1,
-) -> SourceDereferenceResultV1:
-    return SourceDereferenceResultV1(
+    coverage: CoverageDescriptor,
+) -> SourceDereferenceResult:
+    return SourceDereferenceResult(
         source_handle_digest=source_handle_digest(handle),
         status=status,  # type: ignore[arg-type]
         commitment_verified=False,
@@ -89,7 +89,7 @@ def _metadata_only(
     )
 
 
-def _selected_bytes(handle: SourceHandleV1, content: bytes) -> tuple[bytes, bool]:
+def _selected_bytes(handle: SourceHandle, content: bytes) -> tuple[bytes, bool]:
     """Return the committed span selection, or the whole content when unspanned."""
 
     if not handle.exact_spans:
@@ -101,11 +101,11 @@ def _selected_bytes(handle: SourceHandleV1, content: bytes) -> tuple[bytes, bool
 
 
 def dereference_source_handle(
-    request: OpenSourceRequestV1,
+    request: OpenSourceRequest,
     *,
     access: BodyAccessContext,
     resolver: SourceMaterialResolverProtocol,
-) -> SourceDereferenceResultV1:
+) -> SourceDereferenceResult:
     """Dereference one exact source handle without mutating or refreshing anything."""
 
     handle = request.source_handle
@@ -115,7 +115,7 @@ def dereference_source_handle(
             status="denied",
             coverage=_coverage(omitted_for_access=True, reason_codes=("restricted_access_class",)),
         )
-    if isinstance(handle.source, ExternalSourceReferenceV1):
+    if isinstance(handle.source, ExternalSourceReference):
         return _dereference_external(handle, handle.source, request=request, resolver=resolver)
     if not access.can_read_body:
         return _metadata_only(
@@ -146,13 +146,13 @@ def dereference_source_handle(
         )
     verified = observed == handle.commitment.digest
     reason_codes = ("exact_span_selection",) if spanned else ()
-    return SourceDereferenceResultV1(
+    return SourceDereferenceResult(
         source_handle_digest=source_handle_digest(handle),
         status="verified" if verified else "drifted",
         commitment_verified=verified,
         observed_commitment_digest=observed,
         material_kind="bytes",
-        body_access=BodyAccessResultV1(
+        body_access=BodyAccessResult(
             status="available",
             content_digest=handle.commitment.digest,
             byte_length=len(selection),
@@ -163,12 +163,12 @@ def dereference_source_handle(
 
 
 def _dereference_external(
-    handle: SourceHandleV1,
-    source: ExternalSourceReferenceV1,
+    handle: SourceHandle,
+    source: ExternalSourceReference,
     *,
-    request: OpenSourceRequestV1,
+    request: OpenSourceRequest,
     resolver: SourceMaterialResolverProtocol,
-) -> SourceDereferenceResultV1:
+) -> SourceDereferenceResult:
     """Read the exact native selection back and compare it to the commitment."""
 
     if source.replayability == "attested_only":
@@ -195,7 +195,7 @@ def _dereference_external(
         )
     observed = Sha256Value(hashlib.sha256(encoded).hexdigest()).tagged
     verified = observed == handle.commitment.digest
-    return SourceDereferenceResultV1(
+    return SourceDereferenceResult(
         source_handle_digest=source_handle_digest(handle),
         status="verified" if verified else "drifted",
         commitment_verified=verified,

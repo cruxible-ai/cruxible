@@ -8,9 +8,9 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from cruxible_client.contracts.canonical import CasDigest
-from cruxible_client.contracts.captures import CaptureEnvelopeV1, CaptureEnvelopeV2
+from cruxible_client.contracts.captures import CaptureEnvelope, CaptureEnvelopeV1
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.source_references import SourceDereferenceResultV1
+from cruxible_client.contracts.source_references import SourceDereferenceResult
 
 #: A Capture named by the handle a card prints (``CAP-`` plus 12+ hex) or a
 #: digest prefix of 12+ hex; the daemon resolves it as the write verbs do: among
@@ -18,7 +18,7 @@ from cruxible_client.contracts.source_references import SourceDereferenceResultV
 _CAPTURE_PREFIX = re.compile(r"^(?:CAP-|sha256:)[0-9a-f]{12,63}$")
 
 
-class CaptureReadRequestV1(BaseModel):
+class CaptureReadRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     capture_digest: str = Field(
         description=(
@@ -38,15 +38,15 @@ class CaptureReadRequestV1(BaseModel):
         return value
 
 
-class CaptureReadV1(BaseModel):
+class CaptureRead(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     tag: Literal["playbill-capture-read-v1"] = "playbill-capture-read-v1"
     capture_digest: str
     coordinate: AcceptedCoordinate
     status: Literal["verified", "unavailable"]
     reason: str | None = None
-    envelope: CaptureEnvelopeV1 | CaptureEnvelopeV2 | None = None
+    envelope: CaptureEnvelopeV1 | CaptureEnvelope | None = None
     contract_address: str | None = None
     epistemic_grade: Literal["observed", "derived", "predicted"] | None = None
     citation_role: Literal["evidence", "copy"] | None = None
-    material: SourceDereferenceResultV1 | None = None
+    material: SourceDereferenceResult | None = None

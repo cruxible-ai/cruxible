@@ -9,87 +9,87 @@ from typing import Annotated, Any, Literal, TypeAlias
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.approval_policy import ApprovalPolicyMode
-from cruxible_client.contracts.authoring.inputs import AuthoringInputV1
+from cruxible_client.contracts.authoring.inputs import AuthoringInput
 from cruxible_client.contracts.authoring.models import (
-    PlaybillBlockSyncItemV1 as PlaybillBlockSyncItemV1,
+    PlaybillBlockSyncItem as PlaybillBlockSyncItem,
 )
 from cruxible_client.contracts.authoring.models import (
-    PlaybillBlockSyncReadRequestV1 as PlaybillBlockSyncReadRequestV1,
+    PlaybillBlockSyncReadRequest as PlaybillBlockSyncReadRequest,
 )
 from cruxible_client.contracts.authoring.models import (
-    PlaybillBlockSyncReadResultV1 as PlaybillBlockSyncReadResultV1,
+    PlaybillBlockSyncReadResult as PlaybillBlockSyncReadResult,
 )
 from cruxible_client.contracts.authoring.models import (
-    PlaybillBlockSyncResultV1 as PlaybillBlockSyncResultV1,
+    PlaybillBlockSyncResult as PlaybillBlockSyncResult,
 )
 from cruxible_client.contracts.authoring.models import (
-    PlaybillBlockSyncSuccessorCandidateV1 as PlaybillBlockSyncSuccessorCandidateV1,
+    PlaybillBlockSyncSuccessorCandidate as PlaybillBlockSyncSuccessorCandidate,
 )
 from cruxible_client.contracts.authoring.models import (
-    PlaybillProjectionCheckRequestV1 as PlaybillProjectionCheckRequestV1,
+    PlaybillProjectionCheckRequest as PlaybillProjectionCheckRequest,
 )
 from cruxible_client.contracts.authoring.models import (
-    PlaybillProjectionCheckResultV1 as PlaybillProjectionCheckResultV1,
+    PlaybillProjectionCheckResult as PlaybillProjectionCheckResult,
 )
 from cruxible_client.contracts.canonical import Sha256Value
-from cruxible_client.contracts.change_control import PlaybillStateCoordinateV1
-from cruxible_client.contracts.claims import ClaimStatementCardV1 as ClaimStatementCardV1
+from cruxible_client.contracts.change_control import PlaybillStateCoordinate
+from cruxible_client.contracts.claims import ClaimStatementCard as ClaimStatementCard
 from cruxible_client.contracts.compact_query import (
     PLAYBILL_QUERY_DEFAULT_LIMIT as PLAYBILL_QUERY_DEFAULT_LIMIT,
 )
 from cruxible_client.contracts.compact_query import (
     PLAYBILL_QUERY_MAX_LIMIT as PLAYBILL_QUERY_MAX_LIMIT,
 )
-from cruxible_client.contracts.compact_query import PlaybillQueryColumnV1 as PlaybillQueryColumnV1
-from cruxible_client.contracts.compact_query import PlaybillQueryReceiptV1 as PlaybillQueryReceiptV1
-from cruxible_client.contracts.compact_query import PlaybillQueryRequestV1 as PlaybillQueryRequestV1
+from cruxible_client.contracts.compact_query import PlaybillQueryColumn as PlaybillQueryColumn
+from cruxible_client.contracts.compact_query import PlaybillQueryReceipt as PlaybillQueryReceipt
+from cruxible_client.contracts.compact_query import PlaybillQueryRequest as PlaybillQueryRequest
 from cruxible_client.contracts.compact_query import PlaybillQueryResult as PlaybillQueryResult
-from cruxible_client.contracts.compact_query import QueryFilterContainsV1 as QueryFilterContainsV1
-from cruxible_client.contracts.compact_query import QueryFilterEqV1 as QueryFilterEqV1
-from cruxible_client.contracts.compact_query import QueryFilterExistsV1 as QueryFilterExistsV1
-from cruxible_client.contracts.compact_query import QueryFilterGteV1 as QueryFilterGteV1
-from cruxible_client.contracts.compact_query import QueryFilterGtV1 as QueryFilterGtV1
-from cruxible_client.contracts.compact_query import QueryFilterInV1 as QueryFilterInV1
-from cruxible_client.contracts.compact_query import QueryFilterLteV1 as QueryFilterLteV1
-from cruxible_client.contracts.compact_query import QueryFilterLtV1 as QueryFilterLtV1
-from cruxible_client.contracts.compact_query import QueryFilterNeV1 as QueryFilterNeV1
-from cruxible_client.contracts.compact_query import QueryFollowV1 as QueryFollowV1
-from cruxible_client.contracts.floor import PlaybillFloorDeltaV1
+from cruxible_client.contracts.compact_query import QueryFilterContains as QueryFilterContains
+from cruxible_client.contracts.compact_query import QueryFilterEq as QueryFilterEq
+from cruxible_client.contracts.compact_query import QueryFilterExists as QueryFilterExists
+from cruxible_client.contracts.compact_query import QueryFilterGt as QueryFilterGt
+from cruxible_client.contracts.compact_query import QueryFilterGte as QueryFilterGte
+from cruxible_client.contracts.compact_query import QueryFilterIn as QueryFilterIn
+from cruxible_client.contracts.compact_query import QueryFilterLt as QueryFilterLt
+from cruxible_client.contracts.compact_query import QueryFilterLte as QueryFilterLte
+from cruxible_client.contracts.compact_query import QueryFilterNe as QueryFilterNe
+from cruxible_client.contracts.compact_query import QueryFollow as QueryFollow
+from cruxible_client.contracts.floor import PlaybillFloorDelta
 from cruxible_client.contracts.line_dispatch import (
-    LineArmOutcomeV1 as LineArmOutcomeV1,
+    LineArm as LineArm,
 )
 from cruxible_client.contracts.line_dispatch import (
-    LineArmPrincipalV1 as LineArmPrincipalV1,
+    LineArmOutcome as LineArmOutcome,
 )
 from cruxible_client.contracts.line_dispatch import (
-    LineArmStopReasonV1 as LineArmStopReasonV1,
+    LineArmPrincipal as LineArmPrincipal,
 )
 from cruxible_client.contracts.line_dispatch import (
-    LineArmV1 as LineArmV1,
+    LineArmStopReason as LineArmStopReason,
 )
 from cruxible_client.contracts.line_dispatch import (
-    LineDispatchItemV1 as LineDispatchItemV1,
+    LineDispatchItem as LineDispatchItem,
 )
 from cruxible_client.contracts.line_dispatch import (
-    LineDispatchRequestV1 as LineDispatchRequestV1,
+    LineDispatchRequest as LineDispatchRequest,
 )
 from cruxible_client.contracts.line_dispatch import (
-    LineDispatchResultV1 as LineDispatchResultV1,
+    LineDispatchResult as LineDispatchResult,
 )
 from cruxible_client.contracts.line_dispatch import (
-    LineEvaluateRequestV1 as LineEvaluateRequestV1,
+    LineEvaluateRequest as LineEvaluateRequest,
 )
 from cruxible_client.contracts.line_dispatch import (
-    LineTriggerCheckRequestV1 as LineTriggerCheckRequestV1,
+    LineTriggerCheckRequest as LineTriggerCheckRequest,
 )
 from cruxible_client.contracts.line_dispatch import (
-    LineTriggerCheckResultV1 as LineTriggerCheckResultV1,
+    LineTriggerCheckResult as LineTriggerCheckResult,
 )
 from cruxible_client.contracts.line_dispatch import (
-    LineTriggerOccurrenceV1 as LineTriggerOccurrenceV1,
+    LineTriggerOccurrence as LineTriggerOccurrence,
 )
 from cruxible_client.contracts.line_dispatch import (
-    LineTriggerVersionV1 as LineTriggerVersionV1,
+    LineTriggerVersion as LineTriggerVersion,
 )
 from cruxible_client.contracts.orient import (
     PLAYBILL_ORIENT_DEFAULT_LIMIT as PLAYBILL_ORIENT_DEFAULT_LIMIT,
@@ -98,13 +98,13 @@ from cruxible_client.contracts.orient import (
     PLAYBILL_ORIENT_MAX_LIMIT as PLAYBILL_ORIENT_MAX_LIMIT,
 )
 from cruxible_client.contracts.orient import (
-    PlaybillHeadV1 as PlaybillHeadV1,
+    PlaybillHead as PlaybillHead,
 )
 from cruxible_client.contracts.orient import (
-    PlaybillOrientFloorV1 as PlaybillOrientFloorV1,
+    PlaybillOrientFloor as PlaybillOrientFloor,
 )
 from cruxible_client.contracts.orient import (
-    PlaybillOrientResultV1 as PlaybillOrientResultV1,
+    PlaybillOrientResult as PlaybillOrientResult,
 )
 from cruxible_client.contracts.orient import (
     PlaybillOrientSection as PlaybillOrientSection,
@@ -115,168 +115,165 @@ from cruxible_client.contracts.orient import (
 from cruxible_client.contracts.policy_rows import PlaybillPolicyInForce as PlaybillPolicyInForce
 from cruxible_client.contracts.policy_rows import PlaybillPolicyKind as PlaybillPolicyKind
 from cruxible_client.contracts.predictions import (
-    ObservationSettlementEvidenceV2 as ObservationSettlementEvidenceV2,
+    ObservationSettlementEvidence as ObservationSettlementEvidence,
 )
 from cruxible_client.contracts.predictions import (
-    PlaybillPredictRequestV2 as PlaybillPredictRequestV2,
+    PlaybillPredictRequest as PlaybillPredictRequest,
 )
-from cruxible_client.contracts.predictions import PlaybillPredictResultV2 as PlaybillPredictResultV2
-from cruxible_client.contracts.predictions import PlaybillSettleRequestV2 as PlaybillSettleRequestV2
-from cruxible_client.contracts.predictions import PlaybillSettleResultV2 as PlaybillSettleResultV2
+from cruxible_client.contracts.predictions import PlaybillPredictResult as PlaybillPredictResult
+from cruxible_client.contracts.predictions import PlaybillSettleRequest as PlaybillSettleRequest
+from cruxible_client.contracts.predictions import PlaybillSettleResult as PlaybillSettleResult
 from cruxible_client.contracts.predictions import (
-    PredictionEqualityRuleV1 as PredictionEqualityRuleV1,
-)
-from cruxible_client.contracts.predictions import (
-    PredictionObservationSelectorV1 as PredictionObservationSelectorV1,
+    PredictionEqualityRule as PredictionEqualityRule,
 )
 from cruxible_client.contracts.predictions import (
-    PredictionPresenceRuleV1 as PredictionPresenceRuleV1,
+    PredictionObservationSelector as PredictionObservationSelector,
 )
 from cruxible_client.contracts.predictions import (
-    PredictionThresholdRuleV1 as PredictionThresholdRuleV1,
+    PredictionPresenceRule as PredictionPresenceRule,
 )
 from cruxible_client.contracts.predictions import (
-    ResolutionContractInputV1 as ResolutionContractInputV1,
+    PredictionThresholdRule as PredictionThresholdRule,
 )
 from cruxible_client.contracts.predictions import (
-    TerminalSettlementEvidenceV2 as TerminalSettlementEvidenceV2,
+    ResolutionContractInput as ResolutionContractInput,
+)
+from cruxible_client.contracts.predictions import (
+    TerminalSettlementEvidence as TerminalSettlementEvidence,
 )
 from cruxible_client.contracts.primitives import canonical_json
-from cruxible_client.contracts.principals import PlaybillAuthoringRefusalV1
+from cruxible_client.contracts.principals import PlaybillAuthoringRefusal
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifactAny as _ProcedureArtifactAny,
 )
 from cruxible_client.contracts.procedures.readings import (
-    PlaybillProcedureMeasureRequestV1 as PlaybillProcedureMeasureRequestV1,
+    PlaybillProcedureMeasureRequest as PlaybillProcedureMeasureRequest,
 )
 from cruxible_client.contracts.procedures.readings import (
-    PlaybillProcedureMeasureResultV1 as PlaybillProcedureMeasureResultV1,
+    PlaybillProcedureMeasureResult as PlaybillProcedureMeasureResult,
 )
 from cruxible_client.contracts.procedures.readings import (
-    PlaybillProcedureReadingsRequestV1 as PlaybillProcedureReadingsRequestV1,
+    PlaybillProcedureReadingsRequest as PlaybillProcedureReadingsRequest,
 )
 from cruxible_client.contracts.procedures.readings import (
-    PlaybillProcedureReadingsResultV1 as PlaybillProcedureReadingsResultV1,
+    PlaybillProcedureReadingsResult as PlaybillProcedureReadingsResult,
 )
 from cruxible_client.contracts.procedures.readings import (
-    ProcedureMeasurementContractStatusV1 as ProcedureMeasurementContractStatusV1,
+    ProcedureMeasurementContractStatus as ProcedureMeasurementContractStatus,
 )
 from cruxible_client.contracts.procedures.readings import (
-    ProcedureMeasurementEligibilityV1 as ProcedureMeasurementEligibilityV1,
+    ProcedureMeasurementEligibility as ProcedureMeasurementEligibility,
 )
 from cruxible_client.contracts.procedures.readings import (
-    ProcedureMeasurementRefusalCodeV1 as ProcedureMeasurementRefusalCodeV1,
+    ProcedureMeasurementRefusalCode as ProcedureMeasurementRefusalCode,
 )
 from cruxible_client.contracts.procedures.readings import (
-    ProcedureMeasurementResolutionSummaryV1 as ProcedureMeasurementResolutionSummaryV1,
+    ProcedureMeasurementResolutionSummary as ProcedureMeasurementResolutionSummary,
 )
 from cruxible_client.contracts.procedures.readings import (
-    ProcedureMeasurementRowV1 as ProcedureMeasurementRowV1,
+    ProcedureMeasurementRow as ProcedureMeasurementRow,
 )
 from cruxible_client.contracts.procedures.readings import (
-    ProcedureReadingSummaryV1 as ProcedureReadingSummaryV1,
+    ProcedureReadingSummary as ProcedureReadingSummary,
 )
 from cruxible_client.contracts.procedures.results import (
-    ProcedureChildInvocationV1,
-    ProcedurePendingSuccessorV1,
-    ProcedureRunAttributionV1,
-    ProcedureRunAttributionWithheldV1,
+    ProcedureChildInvocation,
+    ProcedurePendingSuccessor,
+    ProcedureRunAttribution,
+    ProcedureRunAttributionWithheld,
+    ProcedureRunReceipt,
     ProcedureRunReceiptV2,
     ProcedureRunReceiptV3,
     ProcedureRunReceiptV4,
     ProcedureRunReceiptV5,
-    ProcedureRunReceiptV6,
-    ProcedureRunReceiptWithheldV1,
-    ProcedureSourceObservationV1,
-    ProcedureTerminalEgressV1,
-    ProcedureTerminalV1,
+    ProcedureRunReceiptWithheld,
+    ProcedureSourceObservation,
+    ProcedureTerminal,
+    ProcedureTerminalEgress,
 )
 from cruxible_client.contracts.procedures.windows import (
-    LineTriggerBindingV1,
+    LineTriggerBinding,
 )
 from cruxible_client.contracts.procedures.windows import (
-    TriggerEventReferenceV1 as TriggerEventReferenceV1,
+    TriggerEventReference as TriggerEventReference,
 )
 from cruxible_client.contracts.provider_contracts import (
-    ProviderOperationContractV1 as _ProviderOperationContractV1,
+    ProviderOperationContract as _ProviderOperationContractV1,
 )
 from cruxible_client.contracts.provider_installation import (
-    PlaybillProviderCatalogV1 as PlaybillProviderCatalogV1,
+    PlaybillProviderCatalog as PlaybillProviderCatalog,
 )
 from cruxible_client.contracts.provider_installation import (
-    PlaybillProviderInstallRequestV1 as PlaybillProviderInstallRequestV1,
+    PlaybillProviderInstallRequest as PlaybillProviderInstallRequest,
 )
 from cruxible_client.contracts.provider_installation import (
-    PlaybillProviderInstallResultV1 as PlaybillProviderInstallResultV1,
+    PlaybillProviderInstallResult as PlaybillProviderInstallResult,
 )
 from cruxible_client.contracts.provider_installation import (
-    ProviderOperationReadinessV1 as ProviderOperationReadinessV1,
+    ProviderOperationReadiness as ProviderOperationReadiness,
 )
 from cruxible_client.contracts.provider_installation import (
-    ProviderPackageSummaryV1 as ProviderPackageSummaryV1,
+    ProviderPackageSummary as ProviderPackageSummary,
 )
 from cruxible_client.contracts.provider_installation import (
-    ProviderWheelObjectV1 as ProviderWheelObjectV1,
+    ProviderWheelObject as ProviderWheelObject,
 )
 from cruxible_client.contracts.query.results import (
-    ClaimQueryResultV1 as _ClaimQueryResultV1,
+    ClaimQueryResult as _ClaimQueryResultV1,
 )
 from cruxible_client.contracts.query.results import (
-    QueryArtifactDefinitionV2 as _QueryArtifactDefinitionV2,
+    QueryArtifactDefinition as _QueryArtifactDefinitionV2,
 )
 from cruxible_client.contracts.query.results import (
-    QueryExecutionReceiptV1 as _QueryExecutionReceiptV1,
+    QueryExecutionReceipt as _QueryExecutionReceiptV1,
 )
 from cruxible_client.contracts.resolution_contracts import (
-    ClaimVersionReferenceV1 as ClaimVersionReferenceV1,
+    ClaimVersionReference as ClaimVersionReference,
 )
 from cruxible_client.contracts.resolution_contracts import (
-    InvestigationBindingV1,
+    InvestigationBinding,
 )
 from cruxible_client.contracts.resolution_contracts import (
-    ResolutionContractReferenceV1 as ResolutionContractReferenceV1,
+    ResolutionContract as ResolutionContract,
 )
 from cruxible_client.contracts.resolution_contracts import (
-    ResolutionContractsRequestV1 as ResolutionContractsRequestV1,
+    ResolutionContractReference as ResolutionContractReference,
 )
 from cruxible_client.contracts.resolution_contracts import (
-    ResolutionContractsResultV1 as ResolutionContractsResultV1,
+    ResolutionContractsRequest as ResolutionContractsRequest,
 )
 from cruxible_client.contracts.resolution_contracts import (
-    ResolutionContractV1 as ResolutionContractV1,
+    ResolutionContractsResult as ResolutionContractsResult,
+)
+from cruxible_client.contracts.runtime_credentials import (
+    RuntimeCredentialPermissionMode as RuntimeCredentialPermissionMode,
 )
 from cruxible_client.contracts.triggers import (
-    CadenceScheduleV1 as CadenceScheduleV1,
+    CadenceSchedule as CadenceSchedule,
 )
 from cruxible_client.contracts.triggers import (
-    CaptureLandingScheduleV1 as CaptureLandingScheduleV1,
+    CaptureLandingSchedule as CaptureLandingSchedule,
 )
 from cruxible_client.contracts.triggers import (
-    CronScheduleV1 as CronScheduleV1,
+    CronSchedule as CronSchedule,
 )
 from cruxible_client.contracts.triggers import (
-    TriggerV1 as TriggerV1,
+    Trigger as Trigger,
 )
 from cruxible_client.contracts.triggers import (
-    WindowCloseScheduleV1 as WindowCloseScheduleV1,
+    WindowCloseSchedule as WindowCloseSchedule,
 )
 from cruxible_client.contracts.workspace_advertisement import (
     NOT_ATTACHED_ADVERTISEMENT,
     PlaybillWorkspaceAdvertisement,
 )
 from cruxible_client.contracts.workspace_file import (
-    SourceReadReceiptV1 as SourceReadReceiptV1,
+    SourceReadReceipt as SourceReadReceipt,
 )
 from cruxible_client.contracts.workspace_file import (
-    WorkspaceFileSourceRequestV1 as WorkspaceFileSourceRequestV1,
+    WorkspaceFileSourceRequest as WorkspaceFileSourceRequest,
 )
 
-RuntimeCredentialPermissionMode = Literal[
-    "read_only",
-    "governed_write",
-    "graph_write",
-    "admin",
-]
 PlaybillHostStatus = Literal["created", "already_exists", "would_create"]
 PlaybillHostWorkspaceRegistrationStatus = Literal["registered", "not_registered"]
 PlaybillAuthoringExampleName = Literal[
@@ -353,7 +350,7 @@ PlaybillNextRepairOperation: TypeAlias = Literal[
 # The next queue's own refusals that carry a declared repair. A page cursor
 # names the whole queue it continues; once that queue moves, re-reading page
 # one is the repair.
-PlaybillNextRefusalCodeV1: TypeAlias = Literal["playbill.next.cursor_mismatch"]
+PlaybillNextRefusalCode: TypeAlias = Literal["playbill.next.cursor_mismatch"]
 #: Rows per next page when the request names none, and the most one page carries.
 PLAYBILL_NEXT_DEFAULT_LIMIT = 100
 PLAYBILL_NEXT_MAX_LIMIT = 1000
@@ -364,7 +361,7 @@ PLAYBILL_PROPOSAL_LIST_DEFAULT_LIMIT = 50
 PLAYBILL_PROPOSAL_LIST_MAX_LIMIT = 500
 PLAYBILL_CURATION_LIST_DEFAULT_LIMIT = 25
 PLAYBILL_CURATION_LIST_MAX_LIMIT = 200
-ProviderLaneUnavailableCodeV1: TypeAlias = Literal[
+ProviderLaneUnavailableCode: TypeAlias = Literal[
     "provider_process_lease_invalid",
     "provider_process_lease_missing",
     "provider_process_lease_echo_failed",
@@ -374,7 +371,7 @@ ProviderLaneUnavailableCodeV1: TypeAlias = Literal[
 ]
 
 
-class GitWorkspaceNoteV1(BaseModel):
+class GitWorkspaceNote(BaseModel):
     """Client-side advisory when CWD wins over inherited Git selectors."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -389,13 +386,13 @@ class PlaybillHostResult(BaseModel):
 
     instance_id: str
     status: PlaybillHostStatus
-    git_workspace_note: GitWorkspaceNoteV1 | None = None
+    git_workspace_note: GitWorkspaceNote | None = None
     #: The host's registry row the allocation was checked against (absent, for
     #: a new host), read where it is written; commit a preview with ``at``.
-    coordinate: PlaybillStateCoordinateV1 | None = None
+    coordinate: PlaybillStateCoordinate | None = None
 
 
-class PlaybillHostWorkspaceRegistrationV1(BaseModel):
+class PlaybillHostWorkspaceRegistration(BaseModel):
     """Whether one daemon host has a daemon-local workspace registration."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -409,10 +406,10 @@ class PlaybillHostWorkspaceRegistrationV1(BaseModel):
     floor_delivery: bool = False
 
 
-PlaybillHostCompatibilityV1: TypeAlias = Literal[
+PlaybillHostCompatibility: TypeAlias = Literal[
     "uninitialized", "writable", "reseed_required", "decommissioned", "refused"
 ]
-PlaybillHostCompatibilityReasonCodeV1: TypeAlias = Literal[
+PlaybillHostCompatibilityReasonCode: TypeAlias = Literal[
     "legacy_layout_requires_reseed",
     "host_state_incomplete",
     "host_state_malformed",
@@ -422,15 +419,15 @@ PlaybillHostCompatibilityReasonCodeV1: TypeAlias = Literal[
 ]
 
 
-class PlaybillHostCompatibilityReasonV1(BaseModel):
+class PlaybillHostCompatibilityReason(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    code: PlaybillHostCompatibilityReasonCodeV1
+    code: PlaybillHostCompatibilityReasonCode
     detail: str
     repair_commands: tuple[str, ...]
 
 
-class PlaybillHostInspectionV1(BaseModel):
+class PlaybillHostInspection(BaseModel):
     """Credential-safe compatibility view of one governed daemon host."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -442,12 +439,12 @@ class PlaybillHostInspectionV1(BaseModel):
     floor_delivery: bool = False
     compiler_coordinate: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
     compiler_revision: str | None = None
-    compatibility: PlaybillHostCompatibilityV1
+    compatibility: PlaybillHostCompatibility
     writable: bool
-    reason: PlaybillHostCompatibilityReasonV1 | None = None
+    reason: PlaybillHostCompatibilityReason | None = None
 
     @model_validator(mode="after")
-    def _compatibility_fields_agree(self) -> PlaybillHostInspectionV1:
+    def _compatibility_fields_agree(self) -> PlaybillHostInspection:
         if self.writable != (self.compatibility == "writable"):
             raise ValueError("writable must agree with compatibility")
         if self.compatibility == "uninitialized" and (
@@ -473,7 +470,7 @@ class RuntimeCredentialBootstrapResult(BaseModel):
     token: str | None = None
     #: The host's credentials the claim was checked against (none, for a
     #: claimable host), read where the claim is written.
-    coordinate: PlaybillStateCoordinateV1 | None = None
+    coordinate: PlaybillStateCoordinate | None = None
 
 
 class RuntimeCredentialMetadata(BaseModel):
@@ -511,14 +508,14 @@ class RuntimeCredentialResult(BaseModel):
     #: itself, or for a mint or recovery the credentials it adds to), read where
     #: it writes. A commit of a revoke or rotate (which cannot be undone)
     #: passes its digest as ``at``; it exists before Playbill is initialized.
-    coordinate: PlaybillStateCoordinateV1 | None = None
+    coordinate: PlaybillStateCoordinate | None = None
 
 
 class RuntimeCredentialListResult(BaseModel):
     credentials: list[RuntimeCredentialMetadata] = Field(default_factory=list)
 
 
-class ProviderLaneStatusV1(BaseModel):
+class ProviderLaneStatus(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["cruxible-provider-lane-status-v1"] = "cruxible-provider-lane-status-v1"
@@ -529,7 +526,7 @@ class ProviderLaneStatusV1(BaseModel):
     # `unavailable` would have demanded a refusal code, and every code in that
     # vocabulary describes a lane that broke.
     state: Literal["available", "unavailable", "not_applicable"]
-    code: ProviderLaneUnavailableCodeV1 | None
+    code: ProviderLaneUnavailableCode | None
     detail: str | None
     # Backend ids of the isolated executors this daemon registered at start, from
     # the `cruxible.isolated_executors` entry-point group. Empty is the ordinary
@@ -538,7 +535,7 @@ class ProviderLaneStatusV1(BaseModel):
     isolated_executors: tuple[str, ...] = ()
 
     @model_validator(mode="after")
-    def _state_matches_reason(self) -> ProviderLaneStatusV1:
+    def _state_matches_reason(self) -> ProviderLaneStatus:
         if self.state != "unavailable" and self.code is not None:
             raise ValueError("only an unavailable Provider lane carries a refusal code")
         if self.state == "unavailable" and (self.code is None or self.detail is None):
@@ -552,7 +549,7 @@ class ProviderLaneStatusV1(BaseModel):
         return self
 
 
-class ConsumerStatusV1(BaseModel):
+class ConsumerStatus(BaseModel):
     """One daemon consumer on one instance: an armed Line, or a built-in worker."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -572,11 +569,11 @@ class ServerInfoResult(BaseModel):
     instance_count: int
     auth_enabled: bool
     auth_required: bool
-    provider_lane: ProviderLaneStatusV1
+    provider_lane: ProviderLaneStatus
     compiler_coordinate: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
     compiler_revision: str | None = None
-    hosts: tuple[PlaybillHostInspectionV1, ...] = ()
-    consumers: tuple[ConsumerStatusV1, ...] = ()
+    hosts: tuple[PlaybillHostInspection, ...] = ()
+    consumers: tuple[ConsumerStatus, ...] = ()
 
 
 class ServerRestartResult(BaseModel):
@@ -597,7 +594,7 @@ class ServerStopResult(BaseModel):
     pid: int
 
 
-class IsolatedExecutorRegistrationV1(BaseModel):
+class IsolatedExecutorRegistration(BaseModel):
     """What a runtime must publish to be a REGISTERED isolated executor.
 
     A shared hosted profile executes Provider code only through an executor
@@ -637,7 +634,7 @@ class PlaybillInitResult(BaseModel):
     recovery_posture: str
     approval_policy_mode: ApprovalPolicyMode
     workspace_advertisement: PlaybillWorkspaceAdvertisement
-    git_workspace_note: GitWorkspaceNoteV1 | None = None
+    git_workspace_note: GitWorkspaceNote | None = None
 
 
 class PlaybillCasObjectResult(BaseModel):
@@ -697,7 +694,7 @@ class PlaybillProposalList(BaseModel):
     next_cursor: str | None = None
 
 
-class PlaybillProposalSelectorResultV1(BaseModel):
+class PlaybillProposalSelectorResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-proposal-selector-result-v1"] = "playbill-proposal-selector-result-v1"
@@ -751,7 +748,7 @@ class PlaybillWhoAmI(BaseModel):
     # Whether authoring create would accept this actor, and the refusal it
     # would return otherwise: the same code, detail and repair.
     can_author: bool
-    authoring_refusal: PlaybillAuthoringRefusalV1 | None
+    authoring_refusal: PlaybillAuthoringRefusal | None
 
 
 class PlaybillRefusalInspection(BaseModel):
@@ -897,7 +894,7 @@ class PlaybillApprovalReceipt(BaseModel):
     signing_semantic_root: str
     attestation_digest: str
     key_history_ref: str
-    git_workspace_note: GitWorkspaceNoteV1 | None = None
+    git_workspace_note: GitWorkspaceNote | None = None
 
 
 class PlaybillActivationReceipt(BaseModel):
@@ -929,7 +926,7 @@ class PlaybillWorkspaceActivationResult(PlaybillActivationReceipt):
     """Activation receipt plus the independent client-workspace refresh outcome."""
 
     floor_refresh: PlaybillFloorRefreshResult
-    block_sync: PlaybillBlockSyncResultV1 | None = None
+    block_sync: PlaybillBlockSyncResult | None = None
 
 
 class PlaybillSourceContext(BaseModel):
@@ -949,7 +946,7 @@ class PlaybillSourceCheckResult(BaseModel):
     alignments: list[dict[str, Any]]
 
 
-class PlaybillInstanceDecommissionResultV1(BaseModel):
+class PlaybillInstanceDecommissionResult(BaseModel):
     """Receipt for the terminal lifecycle state of one governed instance."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -967,7 +964,7 @@ class PlaybillInstanceDecommissionResultV1(BaseModel):
     coordinate: PlaybillAcceptedCoordinate
 
 
-class PlaybillLedgerMirrorV1(BaseModel):
+class PlaybillLedgerMirror(BaseModel):
     """Where one instance publishes its ledger, and whether that copy is current.
 
     `ledger set-mirror` binds a remote and waits boundedly for initial publication;
@@ -1015,7 +1012,7 @@ class PlaybillClaimTypeInputProposalResult(BaseModel):
     lint: PlaybillClaimTypeProposalLint
 
 
-class PlaybillClaimTypeMigrationResult(BaseModel):
+class PlaybillClaimTypeMigrationResultV1(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-claim-type-migration-result-v1"] = (
@@ -1066,7 +1063,7 @@ class PlaybillClaimTypeMigrationResultV2(BaseModel):
     )
 
 
-class PlaybillClaimTypeMigrationResultV3(BaseModel):
+class PlaybillClaimTypeMigrationResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-claim-type-migration-result-v3"] = (
@@ -1084,10 +1081,10 @@ class PlaybillClaimTypeMigrationResultV3(BaseModel):
 
 
 PlaybillClaimTypeMigrationResponse: TypeAlias = (
-    PlaybillClaimTypeMigrationResult
+    PlaybillClaimTypeMigrationResultV1
     | PlaybillClaimTypeMigrationPreflight
     | PlaybillClaimTypeMigrationResultV2
-    | PlaybillClaimTypeMigrationResultV3
+    | PlaybillClaimTypeMigrationResult
 )
 
 
@@ -1117,7 +1114,7 @@ class PlaybillCaptureAdmissionAccount(BaseModel):
     decisions: list[PlaybillCaptureEvidenceKindAdmission]
 
 
-class PlaybillClaimViewV2(BaseModel):
+class ClaimViewRecord(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-claim-read-v2"]
@@ -1127,7 +1124,7 @@ class PlaybillClaimViewV2(BaseModel):
     facts: list[dict[str, Any]]
     admission_evaluation_time: str
     admission_accounts: list[PlaybillCaptureAdmissionAccount]
-    statement: ClaimStatementCardV1
+    statement: ClaimStatementCard
 
 
 class PlaybillCandidateStatus(BaseModel):
@@ -1167,7 +1164,7 @@ class PlaybillAuthoringExampleResult(BaseModel):
 
     tag: Literal["playbill-authoring-example-result-v1"] = "playbill-authoring-example-result-v1"
     name: PlaybillAuthoringExampleName
-    payload: AuthoringInputV1
+    payload: AuthoringInput
     #: A line to read beside the payload, such as that cron is evaluated in UTC.
     note: str | None = None
 
@@ -1223,7 +1220,7 @@ class PlaybillInsertionAbandonResult(BaseModel):
     expectation: dict[str, Any]
 
 
-class PlaybillBlockDeclareResultV1(BaseModel):
+class PlaybillBlockDeclareResult(BaseModel):
     """One projection block registered with the instance that governs its page.
 
     A block declared with `block repin` was known only to the bytes in the page:
@@ -1244,7 +1241,7 @@ class PlaybillBlockDeclareResultV1(BaseModel):
     coordinate: PlaybillAcceptedCoordinate
 
 
-class PlaybillBlockDepublishResultV1(BaseModel):
+class PlaybillBlockDepublishResult(BaseModel):
     """One published block released from the registration that demanded it.
 
     A publication registration was terminal at `bound`: publish once, and that
@@ -1271,7 +1268,7 @@ class PlaybillBlockDepublishResultV1(BaseModel):
     coordinate: PlaybillAcceptedCoordinate
 
     @model_validator(mode="after")
-    def _origin_shape(self) -> "PlaybillBlockDepublishResultV1":
+    def _origin_shape(self) -> "PlaybillBlockDepublishResult":
         publication = (self.intent_id, self.expectation_id, self.claim_identity)
         if self.origin == "publication":
             if any(value is None for value in publication):
@@ -1368,13 +1365,13 @@ class PlaybillProcedureBindResult(BaseModel):
     tag: Literal["playbill-procedure-bind-result-v2"] = "playbill-procedure-bind-result-v2"
     accepted_digest: str
     accepted_readiness: PlaybillProcedureReadiness
-    pending: "ProcedurePendingSuccessorV1 | None" = None
+    pending: "ProcedurePendingSuccessor | None" = None
     workspace_advertisement: PlaybillWorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
 
 
 class PlaybillProcedureRunState(BaseModel):
-    investigation: InvestigationBindingV1 | None = None
-    trigger_binding: LineTriggerBindingV1 | None = None
+    investigation: InvestigationBinding | None = None
+    trigger_binding: LineTriggerBinding | None = None
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-procedure-run-state-v2"] = "playbill-procedure-run-state-v2"
@@ -1402,7 +1399,7 @@ class PlaybillProcedureRunState(BaseModel):
     #: arming credential, as on the run card.
     attribution: (
         Annotated[
-            ProcedureRunAttributionV1 | ProcedureRunAttributionWithheldV1,
+            ProcedureRunAttribution | ProcedureRunAttributionWithheld,
             Field(discriminator="tag"),
         ]
         | None
@@ -1414,15 +1411,15 @@ class PlaybillProcedureRunState(BaseModel):
         | ProcedureRunReceiptV3
         | ProcedureRunReceiptV4
         | ProcedureRunReceiptV5
-        | ProcedureRunReceiptV6
-        | ProcedureRunReceiptWithheldV1
+        | ProcedureRunReceipt
+        | ProcedureRunReceiptWithheld
         | None
     ) = None
     receipt_digest: str | None = None
-    terminal: ProcedureTerminalV1 | None = None
-    children: list[ProcedureChildInvocationV1] = Field(default_factory=list)
-    source_observations: list[ProcedureSourceObservationV1] = Field(default_factory=list)
-    terminal_egress: list[ProcedureTerminalEgressV1] = Field(default_factory=list)
+    terminal: ProcedureTerminal | None = None
+    children: list[ProcedureChildInvocation] = Field(default_factory=list)
+    source_observations: list[ProcedureSourceObservation] = Field(default_factory=list)
+    terminal_egress: list[ProcedureTerminalEgress] = Field(default_factory=list)
 
     @property
     def coordinate(self) -> PlaybillAcceptedCoordinate:
@@ -1459,7 +1456,7 @@ class PlaybillNextRepairRequirement(BaseModel):
     tier: Literal["read_only", "governed_write", "graph_write", "admin"]
     profile: Literal["full"] | None = None
     because: list[Literal["tier", "profile", "authoring"]]
-    authoring_refusal: PlaybillAuthoringRefusalV1 | None = None
+    authoring_refusal: PlaybillAuthoringRefusal | None = None
 
 
 class PlaybillNextFinding(BaseModel):
@@ -1771,7 +1768,7 @@ def _validate_since_access_profile(value: dict[str, Any]) -> dict[str, Any]:
         }
         or value.get("tag") != "playbill-coverage-access-profile-v1"
     ):
-        raise ValueError("since access_profile is not a CoverageAccessProfileV1")
+        raise ValueError("since access_profile is not a CoverageAccessProfile")
     classes = value.get("permitted_access_classes")
     if not isinstance(classes, list | tuple) or any(not isinstance(item, str) for item in classes):
         raise ValueError("since access_profile classes must be strings")
@@ -1979,20 +1976,20 @@ class PlaybillWorkspaceFloorWriteResult(BaseModel):
     floor_digest: str
     coordinate: PlaybillAcceptedCoordinate
     file_count: int = Field(ge=1)
-    git_workspace_note: GitWorkspaceNoteV1 | None = None
+    git_workspace_note: GitWorkspaceNote | None = None
 
 
-class PlaybillFloorDeliveryResultV1(BaseModel):
+class PlaybillFloorDeliveryResult(BaseModel):
     """The same floor delta and write receipt returned by a daemon delivery."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
     tag: Literal["playbill-floor-delivery-result-v1"] = "playbill-floor-delivery-result-v1"
-    delta: PlaybillFloorDeltaV1
+    delta: PlaybillFloorDelta
     written: PlaybillWorkspaceFloorWriteResult
     export: PlaybillFloorExport | None = None
 
 
-class PlaybillFloorConsumerOutcomeV1(BaseModel):
+class PlaybillFloorConsumerOutcome(BaseModel):
     """One floor refresh at an accepted head, including a typed stalled outcome."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -2003,18 +2000,18 @@ class PlaybillFloorConsumerOutcomeV1(BaseModel):
     error: str | None = None
 
 
-class PlaybillFloorDeliverNowRequestV1(BaseModel):
+class PlaybillFloorDeliverNowRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     include: tuple[PlaybillFloorExportPart, ...] = ()
     at: PlaybillAcceptedCoordinate | None = None
 
 
-class PlaybillFloorDeliveryRequestV1(BaseModel):
+class PlaybillFloorDeliveryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     enabled: bool
 
 
-class PlaybillWorkspaceAttachResultV1(BaseModel):
+class PlaybillWorkspaceAttachResult(BaseModel):
     """Client-owned result of binding local config to an existing daemon host."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -2024,10 +2021,10 @@ class PlaybillWorkspaceAttachResultV1(BaseModel):
     workspace_root: str
     config_path: str
     transport: str
-    git_workspace_note: GitWorkspaceNoteV1 | None = None
+    git_workspace_note: GitWorkspaceNote | None = None
 
 
-class PlaybillWorkspaceDetachResultV1(BaseModel):
+class PlaybillWorkspaceDetachResult(BaseModel):
     """One daemon host released from the Git worktree it was attached to.
 
     The registry exclusivity is a UNIQUE index on (backend, workspace_root), so
@@ -2046,10 +2043,10 @@ class PlaybillWorkspaceDetachResultV1(BaseModel):
     workspace_root: str | None = None
     #: The host's worktree binding this was checked against; commit a preview
     #: with ``at`` set to its digest.
-    coordinate: PlaybillStateCoordinateV1 | None = None
+    coordinate: PlaybillStateCoordinate | None = None
 
 
-class PlaybillHostWorkspaceAttachResultV1(BaseModel):
+class PlaybillHostWorkspaceAttachResult(BaseModel):
     """One daemon host attached to a Git worktree, before or after its init.
 
     An initialized host attaches when the worktree is in the ledger's own Git
@@ -2069,7 +2066,7 @@ class PlaybillHostWorkspaceAttachResultV1(BaseModel):
     initialized: bool
     #: The host's worktree binding this was checked against, read where the
     #: attach writes it; commit a preview with ``at`` set to its digest.
-    coordinate: PlaybillStateCoordinateV1 | None = None
+    coordinate: PlaybillStateCoordinate | None = None
 
 
 class PlaybillWorkspaceFloorStatus(BaseModel):

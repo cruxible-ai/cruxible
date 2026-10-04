@@ -15,12 +15,12 @@ from cruxible_client.contracts.captures import (
     render_capture_contract,
 )
 from cruxible_client.contracts.claim_attestations import (
-    ClaimAttestationStatement,
+    ClaimAttestationStatementV1,
     VerifiedClaimAttestationV1,
 )
 from cruxible_client.contracts.claim_types import (
-    ClaimAttestationConsequencePolicyV1,
-    ClaimAttestationConsequenceRuleV1,
+    ClaimAttestationConsequencePolicy,
+    ClaimAttestationConsequenceRule,
     claim_type_digest,
     claim_type_path,
     render_claim_type,
@@ -28,7 +28,7 @@ from cruxible_client.contracts.claim_types import (
 from cruxible_client.contracts.claims import claim_path, claim_statement_digest
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.subjects import render_subject, subject_path
-from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.service.claims.claims import (
     _claim_from_view,
@@ -36,8 +36,8 @@ from cruxible_core.service.claims.claims import (
     service_list_playbill_claims,
 )
 from cruxible_core.service.discovery.next import (
+    PlaybillNextRequest,
     PlaybillNextRequestV1,
-    PlaybillNextRequestV2,
     service_playbill_next,
 )
 from cruxible_core.service.evidence.claim_attestations import service_append_claim_attestation
@@ -52,8 +52,8 @@ from tests.test_claims.test_claims import _claim_type
 EVALUATION_TIME = datetime(2026, 8, 24, 18, tzinfo=UTC)
 
 
-def _access() -> CoverageAccessProfileV1:
-    return CoverageAccessProfileV1(
+def _access() -> CoverageAccessProfile:
+    return CoverageAccessProfile(
         profile_id="attestation-consequence-test",
         permitted_access_classes=("instance", "public"),
     )
@@ -72,7 +72,7 @@ def _verified(
     subject_content_digest: str | None = None,
 ) -> VerifiedClaimAttestationV1:
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    statement = ClaimAttestationStatement(
+    statement = ClaimAttestationStatementV1(
         instance_id=instance.descriptor.instance_id,
         referent_coordinate=coordinate,
         subject=claim.statement.subject,
@@ -128,9 +128,9 @@ def threshold_world(
     claim_type = base_type.model_copy(
         update={
             "artifact_format": "playbill-claim-type-v4",
-            "attestation_consequence_policy": ClaimAttestationConsequencePolicyV1(
+            "attestation_consequence_policy": ClaimAttestationConsequencePolicy(
                 rules=(
-                    ClaimAttestationConsequenceRuleV1(
+                    ClaimAttestationConsequenceRule(
                         rule_id="two-independent-unsure",
                         stance="unsure",
                         minimum_independent_control_components=minimum,
@@ -303,7 +303,7 @@ def test_latest_door_record_supersedes_all_legacy_for_that_principal(
             item
             for item in service_playbill_next(
                 instance,
-                request=PlaybillNextRequestV2(
+                request=PlaybillNextRequest(
                     evaluation_time=EVALUATION_TIME,
                     access_profile=_access(),
                 ),

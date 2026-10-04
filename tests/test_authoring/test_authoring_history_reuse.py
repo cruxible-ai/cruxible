@@ -13,9 +13,9 @@ import pytest
 from cruxible_client.contracts.authoring.models import (
     AUTHORING_CHANGE_SET_MEMBERSHIP_DIGEST_DOMAIN,
     AuthoringIntentV1,
-    CandidateStatusV1,
-    ChangeSetAuthoringPayloadV1,
-    SubjectAuthoringPayloadV1,
+    CandidateStatus,
+    ChangeSetAuthoringPayload,
+    SubjectAuthoringPayload,
     authoring_change_set_membership,
     authoring_create_fingerprint,
     authoring_payload_digest,
@@ -83,9 +83,7 @@ def _intent(*, token: str = "1", actor: str = "owner", value: str = "ready") -> 
         create_fingerprint=authoring_create_fingerprint(
             instance_id="history-reuse-fixture", actor_id=actor, payload=payload
         ),
-        candidate_status=CandidateStatusV1(
-            state="draft", current_accepted_coordinate=_coordinate()
-        ),
+        candidate_status=CandidateStatus(state="draft", current_accepted_coordinate=_coordinate()),
     )
 
 
@@ -536,11 +534,11 @@ def test_private_payload_sharing_preserves_mixed_historical_source_presence(
     assert len(parsed) == 6
 
 
-def _change_set(rationale: str | None) -> ChangeSetAuthoringPayloadV1:
-    members = (SubjectAuthoringPayloadV1(subject=_shell("wi-1")),)
+def _change_set(rationale: str | None) -> ChangeSetAuthoringPayload:
+    members = (SubjectAuthoringPayload(subject=_shell("wi-1")),)
     if rationale is None:
-        return ChangeSetAuthoringPayloadV1(members=members)
-    return ChangeSetAuthoringPayloadV1(members=members, rationale=rationale)
+        return ChangeSetAuthoringPayload(members=members)
+    return ChangeSetAuthoringPayload(members=members, rationale=rationale)
 
 
 def _change_set_intent(rationale: str | None, revision: int) -> AuthoringIntentV1:
@@ -564,9 +562,7 @@ def _change_set_intent(rationale: str | None, revision: int) -> AuthoringIntentV
             instance_id="history-reuse-fixture", actor_id="owner", payload=payload
         ),
         intent_revision=revision,
-        candidate_status=CandidateStatusV1(
-            state="draft", current_accepted_coordinate=_coordinate()
-        ),
+        candidate_status=CandidateStatus(state="draft", current_accepted_coordinate=_coordinate()),
     )
 
 

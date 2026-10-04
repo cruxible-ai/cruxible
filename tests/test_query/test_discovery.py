@@ -18,21 +18,21 @@ from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes
 from cruxible_client.contracts.claim_types import claim_type_path
 from cruxible_client.contracts.claims import LiteralClaimObject
 from cruxible_client.contracts.discovery import (
-    DiscoveryBudgetV1,
-    DiscoveryMatchBasis,
-    DiscoveryRequestV1,
+    DiscoveryBudget,
+    DiscoveryMatchBasisKind,
+    DiscoveryRequest,
 )
 from cruxible_client.contracts.query.definitions import (
     query_definition_path,
 )
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress
 from cruxible_client.contracts.source_references import (
-    CasSourceReferenceV1,
-    EvidenceCommitmentV1,
-    ExternalSourceReferenceV1,
-    LedgerSourceReferenceV1,
-    OpenSourceRequestV1,
-    SourceHandleV1,
+    CasSourceReference,
+    EvidenceCommitment,
+    ExternalSourceReference,
+    LedgerSourceReference,
+    OpenSourceRequest,
+    SourceHandle,
     source_handle_digest,
 )
 from cruxible_client.contracts.subjects import subject_path
@@ -124,14 +124,14 @@ def _vocabulary(fact_rows=None):
     )
 
 
-def _request(**overrides: object) -> DiscoveryRequestV1:
+def _request(**overrides: object) -> DiscoveryRequest:
     fields: dict[str, object] = {
         "at": AcceptedCoordinate.from_internal(coordinate()),
         "evaluation_time": EVALUATION_TIME,
         "profile": "all",
     }
     fields.update(overrides)
-    return DiscoveryRequestV1(**fields)  # type: ignore[arg-type]
+    return DiscoveryRequest(**fields)  # type: ignore[arg-type]
 
 
 # -- named entrypoints and compact handles --------------------------------
@@ -184,7 +184,7 @@ def test_accepted_query_definitions_are_discoverable_by_name_and_kind() -> None:
 
 
 def test_the_match_basis_set_is_closed_and_both_frozen_maps_are_total() -> None:
-    closed = frozenset(get_args(DiscoveryMatchBasis))
+    closed = frozenset(get_args(DiscoveryMatchBasisKind))
 
     assert closed == {
         "content_equivalent",
@@ -317,7 +317,7 @@ def test_budgets_clip_the_low_priority_tail_and_always_state_the_clip() -> None:
     assert len(full.hits) == 2
 
     clipped = discover(
-        _request(query="Ready Queue", budget=DiscoveryBudgetV1(max_hits=1)),
+        _request(query="Ready Queue", budget=DiscoveryBudget(max_hits=1)),
         vocabulary=vocabulary,
     )
     assert [hit.address.artifact_path for hit in clipped.hits] == [WI1_PATH]
@@ -325,7 +325,7 @@ def test_budgets_clip_the_low_priority_tail_and_always_state_the_clip() -> None:
     assert "hit_budget_exceeded" in clipped.coverage.reason_codes
 
     starved = discover(
-        _request(query="Ready Queue", budget=DiscoveryBudgetV1(max_bytes=1)),
+        _request(query="Ready Queue", budget=DiscoveryBudget(max_bytes=1)),
         vocabulary=vocabulary,
     )
     assert starved.hits == ()
@@ -389,7 +389,7 @@ class _FakeResolver:
     def read_cas(self, content_digest: str, *, access: BodyAccessContext) -> bytes | None:
         return self.cas.get(content_digest)
 
-    def read_external(self, source: ExternalSourceReferenceV1) -> object | None:
+    def read_external(self, source: ExternalSourceReference) -> object | None:
         return self.external.get(canonical_bytes(source.model_dump(mode="json")))
 
 
@@ -397,11 +397,11 @@ def _cas_handle(
     content: bytes, *, spans: tuple[ContentSpan, ...] = (), access_class: str = "instance"
 ):
     digest = Sha256Value(hashlib.sha256(content).hexdigest()).tagged
-    return SourceHandleV1(
+    return SourceHandle(
         subject=SemanticAddress.whole_artifact(WI1_PATH),
         at=AcceptedCoordinate.from_internal(coordinate()),
-        source=CasSourceReferenceV1(content_digest=digest),
-        commitment=EvidenceCommitmentV1(
+        source=CasSourceReference(content_digest=digest),
+        commitment=EvidenceCommitment(
             digest_kind="exact_bytes",
             digest=digest,
             byte_length=len(content),
@@ -429,7 +429,7 @@ def test_byte_span_dereference_returns_only_the_committed_selection() -> None:
     )
 
     result = dereference_source_handle(
-        OpenSourceRequestV1(source_handle=handle, resource_budget_bytes=4096),
+        OpenSourceRequest(source_handle=handle, resource_budget_bytes=4096),
         access=BodyAccessContext(principal_id="owner", can_read_body=True),
         resolver=_FakeResolver(cas={handle.source.content_digest: body}),
     )
@@ -449,14 +449,14 @@ def test_byte_span_dereference_returns_only_the_committed_selection() -> None:
 def test_ledger_dereference_verifies_the_accepted_artifact_bytes() -> None:
     body = b'{"artifact_format":"playbill-subject-v1"}\n'
     digest = Sha256Value(hashlib.sha256(body).hexdigest()).tagged
-    handle = SourceHandleV1(
+    handle = SourceHandle(
         subject=SemanticAddress.whole_artifact(WI1_PATH),
         at=AcceptedCoordinate.from_internal(coordinate()),
-        source=LedgerSourceReferenceV1(
+        source=LedgerSourceReference(
             address=SemanticAddress.whole_artifact(WI1_PATH),
             coordinate=AcceptedCoordinate.from_internal(coordinate()),
         ),
-        commitment=EvidenceCommitmentV1(
+        commitment=EvidenceCommitment(
             digest_kind="exact_bytes",
             digest=digest,
             byte_length=len(body),
@@ -464,7 +464,7 @@ def test_ledger_dereference_verifies_the_accepted_artifact_bytes() -> None:
         ),
         access_class="instance",
     )
-    request = OpenSourceRequestV1(source_handle=handle, resource_budget_bytes=4096)
+    request = OpenSourceRequest(source_handle=handle, resource_budget_bytes=4096)
     access = BodyAccessContext(principal_id="owner", can_read_body=True)
 
     verified = dereference_source_handle(
@@ -491,7 +491,7 @@ def test_ledger_dereference_verifies_the_accepted_artifact_bytes() -> None:
 
 
 def _external_handle(*, replayability: str, digest_kind: str, digest: str):
-    source = ExternalSourceReferenceV1(
+    source = ExternalSourceReference(
         source_identity="orders.primary",
         producer_binding_digest="sha256:" + "11" * 32,
         coordinate_type="postgres-lsn-v1",
@@ -500,11 +500,11 @@ def _external_handle(*, replayability: str, digest_kind: str, digest: str):
         selector={"key": {"order_id": "ord-482"}, "relation": "orders"},
         replayability=replayability,  # type: ignore[arg-type]
     )
-    return SourceHandleV1(
+    return SourceHandle(
         subject=SemanticAddress.whole_artifact(WI1_PATH),
         at=AcceptedCoordinate.from_internal(coordinate()),
         source=source,
-        commitment=EvidenceCommitmentV1(
+        commitment=EvidenceCommitment(
             digest_kind=digest_kind,  # type: ignore[arg-type]
             digest=digest,
             materialization="external" if replayability == "exact" else "none",
@@ -522,7 +522,7 @@ def test_external_record_and_query_dereference_state_exact_coverage() -> None:
         digest=digest,
     )
     key = canonical_bytes(handle.source.model_dump(mode="json"))
-    request = OpenSourceRequestV1(source_handle=handle, resource_budget_bytes=4096)
+    request = OpenSourceRequest(source_handle=handle, resource_budget_bytes=4096)
     access = BodyAccessContext(principal_id="owner", can_read_body=True)
 
     verified = dereference_source_handle(
@@ -553,7 +553,7 @@ def test_external_record_and_query_dereference_state_exact_coverage() -> None:
         digest=digest,
     )
     query_result = dereference_source_handle(
-        OpenSourceRequestV1(source_handle=query_handle, resource_budget_bytes=4096),
+        OpenSourceRequest(source_handle=query_handle, resource_budget_bytes=4096),
         access=access,
         resolver=_FakeResolver(
             external={canonical_bytes(query_handle.source.model_dump(mode="json")): record}
@@ -569,7 +569,7 @@ def test_attested_only_unavailable_and_denied_return_metadata_with_coverage() ->
         digest="sha256:" + "22" * 32,
     )
     result = dereference_source_handle(
-        OpenSourceRequestV1(source_handle=attested, resource_budget_bytes=4096),
+        OpenSourceRequest(source_handle=attested, resource_budget_bytes=4096),
         access=BodyAccessContext(principal_id="owner", can_read_body=True),
         resolver=_FakeResolver(),
     )
@@ -582,7 +582,7 @@ def test_attested_only_unavailable_and_denied_return_metadata_with_coverage() ->
     handle = _cas_handle(body)
     resolver = _FakeResolver(cas={handle.source.content_digest: body})
     denied = dereference_source_handle(
-        OpenSourceRequestV1(source_handle=handle, resource_budget_bytes=4096),
+        OpenSourceRequest(source_handle=handle, resource_budget_bytes=4096),
         access=BodyAccessContext(principal_id="reader", can_read_body=False),
         resolver=resolver,
     )
@@ -593,7 +593,7 @@ def test_attested_only_unavailable_and_denied_return_metadata_with_coverage() ->
 
     restricted = _cas_handle(body, access_class="restricted")
     refused = dereference_source_handle(
-        OpenSourceRequestV1(source_handle=restricted, resource_budget_bytes=4096),
+        OpenSourceRequest(source_handle=restricted, resource_budget_bytes=4096),
         access=BodyAccessContext(principal_id="reader", can_read_body=False),
         resolver=resolver,
     )
@@ -601,7 +601,7 @@ def test_attested_only_unavailable_and_denied_return_metadata_with_coverage() ->
     assert refused.coverage.reason_codes == ("restricted_access_class",)
 
     starved = dereference_source_handle(
-        OpenSourceRequestV1(
+        OpenSourceRequest(
             source_handle=handle,
             structural_context_bytes=4,
             resource_budget_bytes=8,

@@ -32,9 +32,9 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import (
-    ClaimAttestationConsequencePolicyV1,
-    ClaimEvidenceFreshnessV1,
-    ClaimFreshnessDurationV1,
+    ClaimAttestationConsequencePolicy,
+    ClaimEvidenceFreshness,
+    ClaimFreshnessDuration,
     ClaimType,
     EvidenceRequirement,
     RevisionEvidence,
@@ -48,8 +48,8 @@ from cruxible_client.contracts.claim_types import (
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.policies import (
     CAPTURE_CONTRACT_REF_ROLE,
+    ClaimEvidenceAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV2,
-    ClaimEvidenceAdmissionPolicyV3,
 )
 from cruxible_client.contracts.types import CompilerCoordinate
 from cruxible_core.compiler.compiler import AUTHORITY_VERBS_COMPILER, GOVERNED_TRIGGERS_COMPILER
@@ -86,14 +86,14 @@ _V7_INPUT_FIELDS = (
 )
 
 
-class ClaimTypeMemberDescriptionInputV1(_StrictClaimTypeInputModel):
+class ClaimTypeMemberDescriptionInput(_StrictClaimTypeInputModel):
     """What one literal enum member means; lowering normalizes and sorts these."""
 
     member: str | int | bool | None
     description: str
 
 
-class ClaimTypeInputV1(_StrictClaimTypeInputModel):
+class ClaimTypeInputRecord(_StrictClaimTypeInputModel):
     """One complete ClaimType, as authored.
 
     The five ClaimType v7 fields follow JSON merge-patch (RFC 7396) against the
@@ -140,15 +140,15 @@ class ClaimTypeInputV1(_StrictClaimTypeInputModel):
     admission_policy: dict[str, object]
     resolution_policy: dict[str, object]
     pins: tuple[dict[str, object], ...] = ()
-    evidence_freshness: ClaimEvidenceFreshnessV1 | None = Field(
+    evidence_freshness: ClaimEvidenceFreshness | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
     )
-    attestation_consequence_policy: ClaimAttestationConsequencePolicyV1 | None = Field(
+    attestation_consequence_policy: ClaimAttestationConsequencePolicy | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
     )
-    unsure_hold_for: ClaimFreshnessDurationV1 | None = Field(
+    unsure_hold_for: ClaimFreshnessDuration | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
     )
@@ -157,7 +157,7 @@ class ClaimTypeInputV1(_StrictClaimTypeInputModel):
     description: str | None = None
     #: What each literal enum member means (ClaimType v7), in any order.
     #: Omitted: kept from the predecessor. ``null`` or ``[]``: cleared.
-    member_descriptions: tuple[ClaimTypeMemberDescriptionInputV1, ...] | None = None
+    member_descriptions: tuple[ClaimTypeMemberDescriptionInput, ...] | None = None
     #: The role a write takes when it names none (ClaimType v7).
     #: Omitted: kept from the predecessor. ``null``: cleared.
     default_role: ClaimRole | None = None
@@ -170,7 +170,7 @@ class ClaimTypeInputV1(_StrictClaimTypeInputModel):
     anticipated_source_ids: tuple[str, ...] = ()
 
     @model_validator(mode="after")
-    def _stated_semantics(self) -> "ClaimTypeInputV1":
+    def _stated_semantics(self) -> "ClaimTypeInputRecord":
         for field in ("evidence_requirement", "revision_evidence"):
             if field in self.model_fields_set and getattr(self, field) is None:
                 raise ValueError(f"{field} cannot be null: name a value or leave it out")
@@ -228,12 +228,12 @@ class ClaimTypeInputProposalResultV1(_StrictClaimTypeInputModel):
     lint: ClaimTypeProposalLintV1
 
 
-def claim_type_input_template() -> ClaimTypeInputV1:
+def claim_type_input_template() -> ClaimTypeInputRecord:
     """Return the complete literal ClaimType input shown by the CLI template surface."""
 
     source_id = "repo.replace-me"
     contract = foreign_source_capture_contract(source_id)
-    return ClaimTypeInputV1(
+    return ClaimTypeInputRecord(
         predicate="project.work_item.status",
         allowed_subject_kinds=("project.work_item",),
         object_kind="literal",
@@ -388,7 +388,7 @@ class ClaimTypeDefaultRoleNotPermitted(PlaybillFormatError):
     error_code = "playbill.claim_type.default_role_not_permitted"
 
 
-def _v7_fields(value: ClaimTypeInputV1, predecessor: ClaimType | None) -> dict[str, object]:
+def _v7_fields(value: ClaimTypeInputRecord, predecessor: ClaimType | None) -> dict[str, object]:
     """The v7 fields a lowered ClaimType states: merge-patched onto its predecessor.
 
     A field the input leaves out keeps the predecessor's value, so an unrelated
@@ -453,7 +453,7 @@ def _v7_fields(value: ClaimTypeInputV1, predecessor: ClaimType | None) -> dict[s
     }
 
 
-def _refuse_v5_fallback(value: ClaimTypeInputV1, predecessor: ClaimType | None) -> None:
+def _refuse_v5_fallback(value: ClaimTypeInputRecord, predecessor: ClaimType | None) -> None:
     """A v5 ClaimType cannot say what v7 says, so lowering never silently drops it."""
 
     if predecessor is not None and predecessor.artifact_format == "playbill-claim-type-v7":
@@ -471,7 +471,7 @@ def _refuse_v5_fallback(value: ClaimTypeInputV1, predecessor: ClaimType | None) 
 
 
 def lower_claim_type_input(
-    value: ClaimTypeInputV1,
+    value: ClaimTypeInputRecord,
     *,
     tree: Mapping[str, bytes],
     identity_rules: bool = False,
@@ -504,7 +504,7 @@ def lower_claim_type_input(
         _refuse_v5_fallback(value, predecessor)
     try:
         if identity_policy is not None:
-            payload["evidence_admission_policy"] = ClaimEvidenceAdmissionPolicyV3.model_validate(
+            payload["evidence_admission_policy"] = ClaimEvidenceAdmissionPolicy.model_validate(
                 identity_policy
             ).model_dump(mode="json")
         else:
@@ -527,14 +527,14 @@ def lower_claim_type_input(
 
 def lint_claim_type_input(
     instance: PlaybillInstance,
-    value: ClaimTypeInputV1 | ClaimType,
+    value: ClaimTypeInputRecord | ClaimType,
     *,
     coordinate: AcceptedProjectionCoordinate,
     anticipated_source_ids: tuple[str, ...] = (),
 ) -> ClaimTypeProposalLintV1:
     accepted_contracts: dict[str, str] = {}
     source_ids = set(anticipated_source_ids)
-    if isinstance(value, ClaimTypeInputV1):
+    if isinstance(value, ClaimTypeInputRecord):
         source_ids.update(value.anticipated_source_ids)
     # Flow-A binding derives this exact deterministic contract and carries it in
     # the governed Claim candidate. The dormant direct-self-asserted constant has
@@ -552,7 +552,7 @@ def lint_claim_type_input(
 
     policy = (
         value.evidence_admission_policy
-        if isinstance(value, ClaimTypeInputV1)
+        if isinstance(value, ClaimTypeInputRecord)
         else value.evidence_admission_policy.model_dump(mode="json")
     )
     raw_rules = policy.get("rules", [])
@@ -636,7 +636,7 @@ def lint_claim_type_input(
         )
     consequence = (
         value.attestation_consequence_policy
-        if isinstance(value, ClaimTypeInputV1)
+        if isinstance(value, ClaimTypeInputRecord)
         else value.attestation_consequence_policy
     )
     for index, rule in enumerate(() if consequence is None else consequence.rules):
@@ -660,8 +660,8 @@ __all__ = [
     "ClaimTypeInputProposalResultV1",
     "ClaimTypeInputValidationError",
     "ClaimTypeDefaultRoleNotPermitted",
-    "ClaimTypeInputV1",
-    "ClaimTypeMemberDescriptionInputV1",
+    "ClaimTypeInputRecord",
+    "ClaimTypeMemberDescriptionInput",
     "ClaimTypeMemberDescriptionsStale",
     "ClaimTypeLintWarningV1",
     "ClaimTypeProposalLintV1",

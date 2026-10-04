@@ -13,7 +13,7 @@ from cruxible_client.authoring.examples import (
 from cruxible_client.authoring.sdk import Playbill
 from cruxible_client.authoring.sdk_types import ClaimTypeRef, PendingClaimTypeRef
 from cruxible_client.contracts.authoring.inputs import (
-    AuthoringInputV1,
+    AuthoringInput,
     lower_authoring_input,
 )
 from tests.test_client.test_playbill_sdk import _Client, _workspace
@@ -29,7 +29,7 @@ def test_typed_and_declarative_query_drafts_prepare_through_coordinator(tmp_path
     definition = example()
     draft = pb.query_definition(definition=definition)
     assert draft.payload == lower_authoring_input(
-        TypeAdapter(AuthoringInputV1).validate_json(definition.model_dump_json())
+        TypeAdapter(AuthoringInput).validate_json(definition.model_dump_json())
     )
     assert draft.payload.query_definition.pins == ()
     intent = draft.prepare()
@@ -75,22 +75,22 @@ def test_typed_definition_listing_rejects_partial_or_misbound_results():
         "definition": claim_type.model_dump(mode="json"),
     }
     from cruxible_client.contracts.query.results import (
-        ClaimQueryResultV1,
-        QueryArtifactDefinitionV2,
-        QueryResultRowV1,
-        QueryTruncationV1,
+        ClaimQueryResult,
+        QueryArtifactDefinition,
+        QueryResultRow,
+        QueryTruncation,
     )
 
-    body = ClaimQueryResultV1.model_construct(
+    body = ClaimQueryResult.model_construct(
         result_shape="artifact_definition",
         verdict="completed",
         conflicts=(),
-        truncation=QueryTruncationV1(),
+        truncation=QueryTruncation(),
         rows=(
-            QueryResultRowV1(
+            QueryResultRow(
                 tag="playbill-query-result-row-v2",
                 bindings=(),
-                artifact=QueryArtifactDefinitionV2.model_validate(artifact),
+                artifact=QueryArtifactDefinition.model_validate(artifact),
             ),
         ),
     )
@@ -98,11 +98,7 @@ def test_typed_definition_listing_rejects_partial_or_misbound_results():
     assert result.artifact_definitions[0].definition == claim_type
     for change in (
         {"verdict": "refused"},
-        {
-            "truncation": QueryTruncationV1(
-                clipped_budgets=("max_results",), candidate_result_count=1
-            )
-        },
+        {"truncation": QueryTruncation(clipped_budgets=("max_results",), candidate_result_count=1)},
         {"result_shape": "subject"},
     ):
         with pytest.raises(ValueError):
@@ -110,6 +106,6 @@ def test_typed_definition_listing_rejects_partial_or_misbound_results():
                 result=body.model_copy(update=change)
             ).artifact_definitions
     with pytest.raises(ValueError):
-        QueryArtifactDefinitionV2.model_validate(
+        QueryArtifactDefinition.model_validate(
             {**artifact, "artifact_digest": "sha256:" + "0" * 64}
         )

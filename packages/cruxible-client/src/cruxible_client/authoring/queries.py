@@ -5,14 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from cruxible_client.authoring.sdk_types import QueryRef
-from cruxible_client.contracts.query.definitions import QueryDefinitionV1, query_definition_digest
+from cruxible_client.contracts.query.definitions import QueryDefinition, query_definition_digest
 from cruxible_client.contracts.query.parameters import QueryParameters
 
 
 @dataclass(frozen=True)
 class QueryBinding:
     ref: QueryRef
-    definition: QueryDefinitionV1
+    definition: QueryDefinition
     artifact_digest: str
 
     def __post_init__(self) -> None:

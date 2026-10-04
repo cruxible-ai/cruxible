@@ -15,7 +15,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import Any
 
-from cruxible_client.contracts.triggers import CadenceScheduleV1
+from cruxible_client.contracts.triggers import CadenceSchedule
 from cruxible_core.triggers.journal import TriggerEvent, evaluate_triggers, internal_triggers
 
 # Per instance root: the instant its first test fire anchors every grid to.
@@ -27,6 +27,6 @@ def fire_internal_triggers(instance: Any, *, now: datetime) -> tuple[TriggerEven
     triggers = tuple(
         replace(item, accepted_at=started - timedelta(seconds=item.schedule.interval_seconds))
         for item in internal_triggers(instance)
-        if isinstance(item.schedule, CadenceScheduleV1)
+        if isinstance(item.schedule, CadenceSchedule)
     )
     return evaluate_triggers(instance, now=now, listening_since=now, triggers=triggers)

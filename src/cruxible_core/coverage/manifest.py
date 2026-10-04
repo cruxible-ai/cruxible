@@ -57,10 +57,10 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.query.grammar import byte_sorted
 from cruxible_core.coverage.contracts import (
-    CoverageAccessProfileV1,
+    CoverageAccessProfile,
     CoverageError,
     CoverageWatcherHealthV1,
-    LogicalSourceIdentityV1,
+    LogicalSourceIdentity,
     logical_sources_sorted,
 )
 from cruxible_core.coverage.indexes import (
@@ -109,15 +109,15 @@ class CoverageWorkingSetScopeV1(_StrictManifestModel):
     tag: Literal["playbill-coverage-working-set-scope-v1"] = (
         "playbill-coverage-working-set-scope-v1"
     )
-    sources: tuple[LogicalSourceIdentityV1, ...] = ()
+    sources: tuple[LogicalSourceIdentity, ...] = ()
     complete: bool = True
     truncation_reason_codes: tuple[str, ...] = ()
 
     @field_validator("sources")
     @classmethod
     def _sources(
-        cls, value: tuple[LogicalSourceIdentityV1, ...]
-    ) -> tuple[LogicalSourceIdentityV1, ...]:
+        cls, value: tuple[LogicalSourceIdentity, ...]
+    ) -> tuple[LogicalSourceIdentity, ...]:
         if value != logical_sources_sorted(value):
             raise ValueError("working-set scope sources must be sorted and unique")
         return value
@@ -135,7 +135,7 @@ class CoverageWorkingSetScopeV1(_StrictManifestModel):
             raise ValueError("an incomplete scope states its reasons and a complete one has none")
         return self
 
-    def covers(self, source: LogicalSourceIdentityV1) -> bool:
+    def covers(self, source: LogicalSourceIdentity) -> bool:
         key = source.sort_key
         return any(item.sort_key == key for item in self.sources)
 
@@ -158,7 +158,7 @@ class CoverageManifestBodyV1(_StrictManifestModel):
     overlay_digest: str
     scope: CoverageWorkingSetScopeV1
     sources: tuple[WorkingSourceCommitmentV1, ...] = ()
-    access_profile: CoverageAccessProfileV1
+    access_profile: CoverageAccessProfile
     epoch: int = Field(ge=0)
     watcher_health: CoverageWatcherHealthV1 = "absent"
     completeness: Literal["complete", "partial"] = "complete"
@@ -205,7 +205,7 @@ class CoverageManifestBodyV1(_StrictManifestModel):
                 raise ValueError("a manifest commitment names a source outside its declared scope")
         return self
 
-    def commitment_for(self, source: LogicalSourceIdentityV1) -> WorkingSourceCommitmentV1 | None:
+    def commitment_for(self, source: LogicalSourceIdentity) -> WorkingSourceCommitmentV1 | None:
         key = source.sort_key
         for item in self.sources:
             if item.source.sort_key == key:
@@ -268,7 +268,7 @@ def coverage_manifest_body(
     instance_id: str,
     index: EvidenceCitationIndexV1,
     overlay: WorkingOccurrenceOverlayV1 | WorkingOccurrenceOverlayV2,
-    access_profile: CoverageAccessProfileV1,
+    access_profile: CoverageAccessProfile,
     epoch: int = 0,
     watcher_health: CoverageWatcherHealthV1 = "absent",
     scope: CoverageWorkingSetScopeV1 | None = None,
@@ -328,7 +328,7 @@ def coverage_manifest_body_v2(
     instance_id: str,
     index: EvidenceCitationIndexV2,
     overlay: WorkingOccurrenceOverlayV1 | WorkingOccurrenceOverlayV2,
-    access_profile: CoverageAccessProfileV1,
+    access_profile: CoverageAccessProfile,
     epoch: int = 0,
     watcher_health: CoverageWatcherHealthV1 = "absent",
     scope: CoverageWorkingSetScopeV1 | None = None,
@@ -363,7 +363,7 @@ def advance_coverage_manifest(
     *,
     index: EvidenceCitationIndexV1,
     overlay: WorkingOccurrenceOverlayV1 | WorkingOccurrenceOverlayV2,
-    access_profile: CoverageAccessProfileV1 | None = None,
+    access_profile: CoverageAccessProfile | None = None,
     watcher_health: CoverageWatcherHealthV1 | None = None,
     scope: CoverageWorkingSetScopeV1 | None = None,
 ) -> CoverageManifestBodyV1:

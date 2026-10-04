@@ -6,9 +6,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from cruxible_client.contracts.authoring.models import (
-    ClaimAuthoringPayloadV3,
-    ClaimDependencyDraftsV1,
-    ExistingCaptureCitationSourceV1,
+    ClaimAuthoringPayload,
+    ClaimDependencyDrafts,
+    ExistingCaptureCitationSource,
 )
 from cruxible_client.contracts.captures import (
     capture_contract_digest,
@@ -207,14 +207,14 @@ def test_both_v2_producer_arms_verify_through_every_live_production_consumer(
             store=AuthoringIntentStore(instance.root / instance.descriptor.storage.exhaust),
             claim_id_factory=lambda claim_id=claim_id: claim_id,
         )
-        payload = ClaimAuthoringPayloadV3(
+        payload = ClaimAuthoringPayload(
             statement=_working_payload(occurrence_count=1).statement.model_copy(
                 update={"qualifier": f"v2-arm-{index}"}
             ),
             rationale="Exercise the exact live v2 Capture verifier chain.",
-            source=ExistingCaptureCitationSourceV1(capture_digest=capture_digest_value),
+            source=ExistingCaptureCitationSource(capture_digest=capture_digest_value),
             citation_role="evidence",
-            dependency_drafts=ClaimDependencyDraftsV1(),
+            dependency_drafts=ClaimDependencyDrafts(),
         )
         intent = coordinator.create(
             actor=actor,

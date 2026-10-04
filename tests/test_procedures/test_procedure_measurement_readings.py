@@ -17,16 +17,16 @@ import pytest
 
 from cruxible_client.contracts.acquisition_policies import (
     ACQUISITION_POLICY_PIN_ROLE,
-    IndependentCoherenceV1,
-    InputAcquisitionRuleV1,
-    SourceAcquisitionPolicyV1,
+    IndependentCoherence,
+    InputAcquisitionRule,
+    SourceAcquisitionPolicy,
     acquisition_policy_digest,
     acquisition_policy_path,
     render_acquisition_policy,
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.claim_verdicts import claim_verdict_v1_compat
 from cruxible_client.contracts.claims import (
     claim_artifact_digest,
@@ -45,8 +45,8 @@ from cruxible_client.contracts.procedure_mandates import (
     render_procedure_mandate,
 )
 from cruxible_client.contracts.procedures.artifacts import (
-    AcceptedProcedureV1,
-    ProcedureArtifactV2,
+    AcceptedProcedure,
+    ProcedureArtifact,
     procedure_artifact_digest,
     procedure_owned_contract_digest,
     procedure_path,
@@ -57,32 +57,32 @@ from cruxible_client.contracts.procedures.graph import (
     compute_procedure_node_digests_v3,
 )
 from cruxible_client.contracts.procedures.line_specs import (
-    LineSpecV6,
+    LineSpec,
     line_identity_digest,
     line_spec_path,
     render_line_spec,
 )
 from cruxible_client.contracts.procedures.measurements import (
-    AcceptedQueryProcedureMeasurementV1,
-    ClaimAttestationProcedureMeasurementV1,
-    ClaimStatementProcedureMeasurementV1,
-    ProcedureMeasurementDeclarationV1,
-    ProcedureMeasurementExpectationV1,
+    AcceptedQueryProcedureMeasurement,
+    ClaimAttestationProcedureMeasurement,
+    ClaimStatementProcedureMeasurement,
+    ProcedureMeasurementDeclaration,
+    ProcedureMeasurementExpectation,
 )
 from cruxible_client.contracts.procedures.models import (
-    GuardNodeV3,
-    GuardPredicateV1,
-    PredicateOperandV1,
-    ProcedureBudgetV3,
+    GuardNode,
+    GuardPredicate,
+    PredicateOperand,
+    ProcedureBudget,
     ProcedureDefinitionV3,
-    ProcedureHardCapsV3,
-    ProjectNodeV3,
+    ProcedureHardCaps,
+    ProjectNode,
     StateTapNodeV3,
     iter_pin_bindings,
 )
 from cruxible_client.contracts.procedures.readings import (
-    PlaybillProcedureMeasureRequestV1,
-    PlaybillProcedureReadingsRequestV1,
+    PlaybillProcedureMeasureRequest,
+    PlaybillProcedureReadingsRequest,
 )
 from cruxible_client.contracts.query.definitions import query_definition_digest
 from cruxible_core.governance.actor_context import GovernedActorContext
@@ -110,9 +110,9 @@ from cruxible_core.service.procedures.measurements import (
     service_measure_playbill_procedure,
 )
 from cruxible_core.service.procedures.procedure_runs import (
-    LineRunRequestV1,
+    LineRunRequest,
     ProcedureRunNotFound,
-    ProcedureRunRequestV2,
+    ProcedureRunRequest,
     load_playbill_procedure_run_grain,
     service_get_playbill_procedure_run,
     service_run_playbill_line,
@@ -140,8 +140,8 @@ RECORD_AT = datetime(2026, 8, 24, 16, 31, tzinfo=UTC)
 PROCEDURE_NAME = "measured-work-items"
 
 
-def _duration(seconds: int) -> CanonicalDurationV1:
-    return CanonicalDurationV1(microseconds=seconds * 1_000_000)
+def _duration(seconds: int) -> CanonicalDuration:
+    return CanonicalDuration(microseconds=seconds * 1_000_000)
 
 
 def _actor(instance, actor_id: str = "owner") -> GovernedActorContext:  # type: ignore[no-untyped-def]
@@ -167,28 +167,28 @@ def _measurements(
     *,
     statement_digest: str | None = None,
     query_options: dict[str, object] | None = None,
-) -> tuple[ProcedureMeasurementDeclarationV1, ...]:
+) -> tuple[ProcedureMeasurementDeclaration, ...]:
     path, claim = _accepted_claim(instance)
     address = claim_statement_address(path)
     digest = statement_digest or claim_statement_digest(claim.statement).tagged
-    query = AcceptedQueryProcedureMeasurementV1(
+    query = AcceptedQueryProcedureMeasurement(
         query=query_pin,
         execution_options=query_options or {},
-        expect=ProcedureMeasurementExpectationV1(min_count=1),
+        expect=ProcedureMeasurementExpectation(min_count=1),
     )
     return (
-        ProcedureMeasurementDeclarationV1(
+        ProcedureMeasurementDeclaration(
             name="rows-present",
             subject_grain="procedure_unit",
             measurement=query,
             check_after=_duration(0),
             expires_after=_duration(86_400),
         ),
-        ProcedureMeasurementDeclarationV1(
+        ProcedureMeasurementDeclaration(
             name="hot-claim",
             subject_grain="node",
             node_id="hot",
-            measurement=ClaimStatementProcedureMeasurementV1(
+            measurement=ClaimStatementProcedureMeasurement(
                 claim_statement=address,
                 claim_statement_digest=digest,
                 acceptable_verdicts=("supported",),
@@ -196,42 +196,42 @@ def _measurements(
             check_after=_duration(0),
             expires_after=_duration(86_400),
         ),
-        ProcedureMeasurementDeclarationV1(
+        ProcedureMeasurementDeclaration(
             name="hot-arm-attested",
             subject_grain="arm",
             node_id="hot",
             from_node_id="gate",
             arm_label="on_true",
-            measurement=ClaimAttestationProcedureMeasurementV1(
+            measurement=ClaimAttestationProcedureMeasurement(
                 claim_statement=address,
                 claim_statement_digest=digest,
                 stances=("support",),
-                expect=ProcedureMeasurementExpectationV1(min_count=1),
+                expect=ProcedureMeasurementExpectation(min_count=1),
             ),
             check_after=_duration(0),
             expires_after=_duration(86_400),
         ),
-        ProcedureMeasurementDeclarationV1(
+        ProcedureMeasurementDeclaration(
             name="cold-arm-empty",
             subject_grain="arm",
             node_id="cold",
             from_node_id="gate",
             arm_label="on_false",
-            measurement=AcceptedQueryProcedureMeasurementV1(
+            measurement=AcceptedQueryProcedureMeasurement(
                 query=query_pin,
-                expect=ProcedureMeasurementExpectationV1(max_count=0),
+                expect=ProcedureMeasurementExpectation(max_count=0),
             ),
             check_after=_duration(0),
             expires_after=_duration(86_400),
         ),
-        ProcedureMeasurementDeclarationV1(
+        ProcedureMeasurementDeclaration(
             name="late-check",
             subject_grain="procedure_unit",
             measurement=query,
             check_after=_duration(2 * 3600),
             expires_after=_duration(3 * 3600),
         ),
-        ProcedureMeasurementDeclarationV1(
+        ProcedureMeasurementDeclaration(
             name="expired-early",
             subject_grain="procedure_unit",
             measurement=query,
@@ -243,8 +243,8 @@ def _measurements(
 
 def _procedure(
     query_digest: str,
-    declarations: tuple[ProcedureMeasurementDeclarationV1, ...],
-) -> ProcedureArtifactV2:
+    declarations: tuple[ProcedureMeasurementDeclaration, ...],
+) -> ProcedureArtifact:
     input_contract = _contract("empty-input", {})
     output_contract = _contract("query-rows", {"rows": PropertySchema(type="json")})
     contract_in = ArtifactPin(
@@ -268,33 +268,33 @@ def _procedure(
         contract_out=contract_out,
         nodes=(
             StateTapNodeV3(node_id="read", query=query, parameters={}, as_="query", next="gate"),
-            GuardNodeV3(
+            GuardNode(
                 node_id="gate",
-                predicate=GuardPredicateV1(
-                    left=PredicateOperandV1(kind="count", alias="query"),
+                predicate=GuardPredicate(
+                    left=PredicateOperand(kind="count", alias="query"),
                     operator="gt",
-                    right=PredicateOperandV1(kind="literal", value=0),
+                    right=PredicateOperand(kind="literal", value=0),
                 ),
                 on_true="hot",
                 on_false="cold",
                 refusal_code="empty",
                 message="No rows.",
             ),
-            ProjectNodeV3(
+            ProjectNode(
                 node_id="hot",
                 fields={"rows": "$steps.query.rows"},
                 contract_out=contract_out,
                 as_="hot_result",
                 next="finish",
             ),
-            ProjectNodeV3(
+            ProjectNode(
                 node_id="cold",
                 fields={"rows": "$steps.query.rows"},
                 contract_out=contract_out,
                 as_="cold_result",
                 next="finish",
             ),
-            ProjectNodeV3(
+            ProjectNode(
                 node_id="finish",
                 fields={"rows": "$steps.query.rows"},
                 contract_out=contract_out,
@@ -303,14 +303,14 @@ def _procedure(
         ),
         returns="result",
         measurements=tuple(sorted(declarations, key=lambda item: item.name.encode())),
-        budget=ProcedureBudgetV3(
-            wall_clock=CanonicalDurationV1(microseconds=2_000_000),
+        budget=ProcedureBudget(
+            wall_clock=CanonicalDuration(microseconds=2_000_000),
             max_provider_calls=0,
             max_capture_bytes=0,
             max_items=100,
         ),
-        hard_caps=ProcedureHardCapsV3(
-            max_wall_clock=CanonicalDurationV1(microseconds=4_000_000),
+        hard_caps=ProcedureHardCaps(
+            max_wall_clock=CanonicalDuration(microseconds=4_000_000),
             max_provider_calls=0,
             max_capture_bytes=0,
             max_items=200,
@@ -332,7 +332,7 @@ def _procedure(
             ),
         )
     )
-    return ProcedureArtifactV2(
+    return ProcedureArtifact(
         identity=ArtifactIdentity(kind="Procedure", name=definition.name),
         definition=definition,
         definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
@@ -358,7 +358,7 @@ def _world(
     statement_digest: str | None = None,
     other_query: str | None = None,
     query_options: dict[str, object] | None = None,
-    declarations: tuple[ProcedureMeasurementDeclarationV1, ...] | None = None,
+    declarations: tuple[ProcedureMeasurementDeclaration, ...] | None = None,
 ):  # type: ignore[no-untyped-def]
     """``other_query``: declare the measurement over a second QueryDefinition name.
 
@@ -384,7 +384,7 @@ def _world_on(
     statement_digest: str | None = None,
     other_query: str | None = None,
     query_options: dict[str, object] | None = None,
-    declarations: tuple[ProcedureMeasurementDeclarationV1, ...] | None = None,
+    declarations: tuple[ProcedureMeasurementDeclaration, ...] | None = None,
 ):
     """Accept the query and the measured Procedure into an instance that holds the seed Claims."""
 
@@ -435,7 +435,7 @@ def _run(instance, procedure, *, at: datetime = RUN_TIME):  # type: ignore[no-un
     run = service_run_playbill_procedure(
         instance,
         name=procedure.identity.name,
-        request=ProcedureRunRequestV2(evaluation_time=at, input={}),
+        request=ProcedureRunRequest(evaluation_time=at, input={}),
         actor_context=_actor(instance),
     )
     assert run.status == "succeeded", run.terminal
@@ -485,7 +485,7 @@ def _measure(  # type: ignore[no-untyped-def]
     return service_measure_playbill_procedure(
         instance,
         name=procedure.identity.name,
-        request=PlaybillProcedureMeasureRequestV1(
+        request=PlaybillProcedureMeasureRequest(
             run_id=run_id,
             measurement_names=tuple(sorted(names)),
             evaluation_time=at,
@@ -579,7 +579,7 @@ def test_all_kinds_and_grains_resolve_from_real_evidence_and_credit_the_run(
     activation = next(
         item
         for item in derive_resolution_activations(
-            AcceptedProcedureV1(
+            AcceptedProcedure(
                 path=procedure_path(procedure.identity.name),
                 procedure=procedure,
                 artifact_digest=procedure_artifact_digest(procedure).tagged,
@@ -642,7 +642,7 @@ def test_retry_replays_the_standing_resolution_and_reading(tmp_path: Path) -> No
     listed = service_list_playbill_procedure_readings(
         instance,
         name=procedure.identity.name,
-        request=PlaybillProcedureReadingsRequestV1(measurement_names=("rows-present",)),
+        request=PlaybillProcedureReadingsRequest(measurement_names=("rows-present",)),
         evaluation_time=RECORD_AT,
     )
     assert len(listed.readings) == 1
@@ -679,7 +679,7 @@ def test_crash_between_resolution_and_reading_resumes_at_the_reading(
     listed = service_list_playbill_procedure_readings(
         instance,
         name=procedure.identity.name,
-        request=PlaybillProcedureReadingsRequestV1(),
+        request=PlaybillProcedureReadingsRequest(),
         evaluation_time=RECORD_AT,
     )
     assert [row.measurement_name for row in listed.readings] == ["rows-present"]
@@ -699,7 +699,7 @@ def test_two_runs_each_earn_one_reading_and_a_repeated_key_never_doubles(
     listed = service_list_playbill_procedure_readings(
         instance,
         name=procedure.identity.name,
-        request=PlaybillProcedureReadingsRequestV1(),
+        request=PlaybillProcedureReadingsRequest(),
         evaluation_time=RECORD_AT,
     )
     assert sorted(row.run_id for row in listed.readings) == sorted(  # type: ignore[type-var]
@@ -720,7 +720,7 @@ def test_overturn_reopens_the_contract_and_the_old_key_refuses_a_new_answer(
     ]
     assert first.resolution is not None
 
-    accepted = AcceptedProcedureV1(
+    accepted = AcceptedProcedure(
         path=procedure_path(procedure.identity.name),
         procedure=procedure,
         artifact_digest=procedure_artifact_digest(procedure).tagged,
@@ -775,7 +775,7 @@ def test_overturn_reopens_the_contract_and_the_old_key_refuses_a_new_answer(
     listed = service_list_playbill_procedure_readings(
         instance,
         name=procedure.identity.name,
-        request=PlaybillProcedureReadingsRequestV1(measurement_names=("rows-present",)),
+        request=PlaybillProcedureReadingsRequest(measurement_names=("rows-present",)),
         evaluation_time=RECORD_AT + timedelta(minutes=6),
     )
     contract = listed.contracts[0]
@@ -817,7 +817,7 @@ def test_run_not_final_and_run_mismatch_are_explicit(tmp_path: Path) -> None:
         service_measure_playbill_procedure(
             instance,
             name=procedure.identity.name,
-            request=PlaybillProcedureMeasureRequestV1(run_id="RUN-" + "0" * 64),
+            request=PlaybillProcedureMeasureRequest(run_id="RUN-" + "0" * 64),
             actor_context=_actor(instance),
             recorded_at=RECORD_AT,
         )
@@ -829,7 +829,7 @@ def test_idempotency_key_collapses_line_attempts_but_separates_direct_runs(
     instance, _owner, procedure = _world(tmp_path)
     run = _run(instance, procedure)
     grain = load_playbill_procedure_run_grain(instance, run_id=run.run_id)
-    accepted = AcceptedProcedureV1(
+    accepted = AcceptedProcedure(
         path=procedure_path(procedure.identity.name),
         procedure=procedure,
         artifact_digest=procedure_artifact_digest(procedure).tagged,
@@ -921,14 +921,14 @@ def test_readings_inspection_is_bounded_paginated_and_never_writes(tmp_path: Pat
     first = service_list_playbill_procedure_readings(
         instance,
         name=procedure.identity.name,
-        request=PlaybillProcedureReadingsRequestV1(limit=4),
+        request=PlaybillProcedureReadingsRequest(limit=4),
         evaluation_time=RECORD_AT,
     )
     assert len(first.readings) == 4 and first.truncated and first.cursor
     second = service_list_playbill_procedure_readings(
         instance,
         name=procedure.identity.name,
-        request=PlaybillProcedureReadingsRequestV1(limit=4, cursor=first.cursor),
+        request=PlaybillProcedureReadingsRequest(limit=4, cursor=first.cursor),
         evaluation_time=RECORD_AT,
     )
     assert len(second.readings) == 2 and not second.truncated
@@ -937,7 +937,7 @@ def test_readings_inspection_is_bounded_paginated_and_never_writes(tmp_path: Pat
     only_run = service_list_playbill_procedure_readings(
         instance,
         name=procedure.identity.name,
-        request=PlaybillProcedureReadingsRequestV1(run_id=runs[1].run_id),
+        request=PlaybillProcedureReadingsRequest(run_id=runs[1].run_id),
         evaluation_time=RECORD_AT,
     )
     assert {row.run_id for row in only_run.readings} == {runs[1].run_id}
@@ -946,7 +946,7 @@ def test_readings_inspection_is_bounded_paginated_and_never_writes(tmp_path: Pat
         service_list_playbill_procedure_readings(
             instance,
             name=procedure.identity.name,
-            request=PlaybillProcedureReadingsRequestV1(
+            request=PlaybillProcedureReadingsRequest(
                 run_id=runs[0].run_id, limit=4, cursor=first.cursor
             ),
             evaluation_time=RECORD_AT,
@@ -973,7 +973,7 @@ def test_no_measurement_fast_path_writes_nothing(tmp_path: Path) -> None:
 
 def test_activation_reads_exact_history_without_a_private_memo(tmp_path: Path, monkeypatch) -> None:
     instance, _owner, procedure = _world(tmp_path)
-    accepted = AcceptedProcedureV1(
+    accepted = AcceptedProcedure(
         path=procedure_path(procedure.identity.name),
         procedure=procedure,
         artifact_digest=procedure_artifact_digest(procedure).tagged,
@@ -1012,7 +1012,7 @@ def test_activation_reads_exact_history_without_a_private_memo(tmp_path: Path, m
 def _reading_records(instance, procedure):  # type: ignore[no-untyped-def]
     journal, stream = measurements._journal(instance)  # noqa: SLF001
     partition = procedure_reading_partition_id(
-        AcceptedProcedureV1(
+        AcceptedProcedure(
             path=procedure_path(procedure.identity.name),
             procedure=procedure,
             artifact_digest=procedure_artifact_digest(procedure).tagged,
@@ -1120,7 +1120,7 @@ def test_a_warm_index_never_vouches_for_a_body_cas_cannot_show(tmp_path: Path) -
     warm = service_list_playbill_procedure_readings(
         instance,
         name=procedure.identity.name,
-        request=PlaybillProcedureReadingsRequestV1(),
+        request=PlaybillProcedureReadingsRequest(),
         evaluation_time=RECORD_AT,
     )
     assert len(warm.readings) == 1
@@ -1136,7 +1136,7 @@ def test_a_warm_index_never_vouches_for_a_body_cas_cannot_show(tmp_path: Path) -
         service_list_playbill_procedure_readings(
             instance,
             name=procedure.identity.name,
-            request=PlaybillProcedureReadingsRequestV1(),
+            request=PlaybillProcedureReadingsRequest(),
             evaluation_time=RECORD_AT,
         )
     with pytest.raises(PlaybillCasError):
@@ -1147,7 +1147,7 @@ def test_a_warm_index_never_vouches_for_a_body_cas_cannot_show(tmp_path: Path) -
     restored = service_list_playbill_procedure_readings(
         instance,
         name=procedure.identity.name,
-        request=PlaybillProcedureReadingsRequestV1(),
+        request=PlaybillProcedureReadingsRequest(),
         evaluation_time=RECORD_AT,
     )
     assert [row.reading_id for row in restored.readings] == [warm.readings[0].reading_id]
@@ -1164,7 +1164,7 @@ def test_a_cursor_continues_the_first_pages_selection_under_a_moving_clock(
     first = service_list_playbill_procedure_readings(
         instance,
         name=procedure.identity.name,
-        request=PlaybillProcedureReadingsRequestV1(limit=4),
+        request=PlaybillProcedureReadingsRequest(limit=4),
         evaluation_time=RECORD_AT,
     )
     assert first.truncated and first.cursor
@@ -1173,7 +1173,7 @@ def test_a_cursor_continues_the_first_pages_selection_under_a_moving_clock(
     second = service_list_playbill_procedure_readings(
         instance,
         name=procedure.identity.name,
-        request=PlaybillProcedureReadingsRequestV1(limit=4, cursor=first.cursor),
+        request=PlaybillProcedureReadingsRequest(limit=4, cursor=first.cursor),
         evaluation_time=RECORD_AT + timedelta(hours=3),
     )
     assert second.observation_time == first.observation_time == RECORD_AT
@@ -1184,7 +1184,7 @@ def test_a_cursor_continues_the_first_pages_selection_under_a_moving_clock(
         service_list_playbill_procedure_readings(
             instance,
             name=procedure.identity.name,
-            request=PlaybillProcedureReadingsRequestV1(
+            request=PlaybillProcedureReadingsRequest(
                 run_id=runs[0].run_id, limit=4, cursor=first.cursor
             ),
             evaluation_time=RECORD_AT,
@@ -1289,14 +1289,14 @@ def test_zero_attestations_never_satisfy_a_max_count_of_zero_without_proof(
 ) -> None:
     instance, owner = seed_claims(tmp_path)
     path, claim = _accepted_claim(instance)
-    declaration = ProcedureMeasurementDeclarationV1(
+    declaration = ProcedureMeasurementDeclaration(
         name="nobody-objects",
         subject_grain="procedure_unit",
-        measurement=ClaimAttestationProcedureMeasurementV1(
+        measurement=ClaimAttestationProcedureMeasurement(
             claim_statement=claim_statement_address(path),
             claim_statement_digest=claim_statement_digest(claim.statement).tagged,
             stances=("contradict",),
-            expect=ProcedureMeasurementExpectationV1(max_count=0),
+            expect=ProcedureMeasurementExpectation(max_count=0),
         ),
         check_after=_duration(0),
         expires_after=_duration(86_400),
@@ -1324,10 +1324,10 @@ def _line_world(tmp_path: Path):  # type: ignore[no-untyped-def]
         target=procedure.identity,
         artifact_digest=procedure_artifact_digest(procedure).tagged,
     )
-    policy = SourceAcquisitionPolicyV1(
+    policy = SourceAcquisitionPolicy(
         identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="measured-reads"),
         inputs=(
-            InputAcquisitionRuleV1(
+            InputAcquisitionRule(
                 input_name="query",
                 requirement="required",
                 permitted_replayability=("attested_only", "exact"),
@@ -1338,7 +1338,7 @@ def _line_world(tmp_path: Path):  # type: ignore[no-untyped-def]
                 on_conflict="preserve",
             ),
         ),
-        coherence=IndependentCoherenceV1(),
+        coherence=IndependentCoherence(),
     )
     policy_pin = ArtifactPin(
         role=ACQUISITION_POLICY_PIN_ROLE,
@@ -1346,7 +1346,7 @@ def _line_world(tmp_path: Path):  # type: ignore[no-untyped-def]
         artifact_digest=acquisition_policy_digest(policy).tagged,
     )
     caps = procedure.definition.hard_caps
-    line = LineSpecV6(
+    line = LineSpec(
         identity=ArtifactIdentity(kind="Line", name="measured-line"),
         occurrence_epoch=1,
         procedure=procedure_pin,
@@ -1396,7 +1396,7 @@ def _run_line(instance, line, *, at: datetime):  # type: ignore[no-untyped-def]
     return service_run_playbill_line(
         instance,
         path_identity_digest=digest,
-        request=LineRunRequestV1(line_identity_digest=digest, evaluation_time=None),
+        request=LineRunRequest(line_identity_digest=digest, evaluation_time=None),
         actor_context=_actor(instance),
         caller_rung=2,
         daemon_clock=procedure_run_service._DeterministicClock(at),  # noqa: SLF001
@@ -1456,7 +1456,7 @@ def test_a_real_line_occurrence_is_credited_once_per_occurrence(tmp_path: Path) 
     listed = service_list_playbill_procedure_readings(
         instance,
         name=procedure.identity.name,
-        request=PlaybillProcedureReadingsRequestV1(run_id=second.run_id),
+        request=PlaybillProcedureReadingsRequest(run_id=second.run_id),
         evaluation_time=RECORD_AT + timedelta(minutes=31),
     )
     assert [row.run_id for row in listed.readings] == [second.run_id]
@@ -1474,7 +1474,7 @@ def _resolution_records(instance, activation):  # type: ignore[no-untyped-def]
 
 
 def _activation_for(instance, procedure, name: str):  # type: ignore[no-untyped-def]
-    accepted = AcceptedProcedureV1(
+    accepted = AcceptedProcedure(
         path=procedure_path(procedure.identity.name),
         procedure=procedure,
         artifact_digest=procedure_artifact_digest(procedure).tagged,

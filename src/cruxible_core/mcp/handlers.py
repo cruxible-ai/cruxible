@@ -26,7 +26,7 @@ from cruxible_client.authoring.attestations import (
 from cruxible_client.authoring.bind import bind_working_selection_input
 from cruxible_client.authoring.blocks import repin_projection_block, sync_projection_blocks
 from cruxible_client.authoring.examples import authoring_example, authoring_example_note
-from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
+from cruxible_client.authoring.inputs import AuthoringInput, ClaimInput
 from cruxible_client.authoring.selectors import WorkspaceSources
 from cruxible_client.authoring.signing import LocalEd25519ApprovalSigner
 from cruxible_client.authoring.sources import (
@@ -45,62 +45,62 @@ from cruxible_client.authoring.workspace import (
 from cruxible_client.authoring.write_evidence import observe_changes, observe_evidence
 from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.attestations import ApprovalAttestation, ApprovalStatement
-from cruxible_client.contracts.authoring.models import PlaybillBlockDetachResultV1
-from cruxible_client.contracts.capture_reads import CaptureReadRequestV1, CaptureReadV1
+from cruxible_client.contracts.authoring.models import PlaybillBlockDetachResult
+from cruxible_client.contracts.capture_reads import CaptureRead, CaptureReadRequest
 from cruxible_client.contracts.change_control import (
-    ChangeControlRequestV1,
-    PlaybillStateCoordinateV1,
+    ChangeControlRequest,
+    PlaybillStateCoordinate,
 )
 from cruxible_client.contracts.claim_attestations import (
-    ClaimAttestationAppendRequestV1,
-    ClaimAttestationAppendResultV1,
-    ClaimAttestationCaptureReferenceV1,
+    ClaimAttestationAppendRequest,
+    ClaimAttestationAppendResult,
+    ClaimAttestationCaptureReference,
     ClaimStance,
-    PreparedClaimAttestationRequestV1,
+    PreparedClaimAttestationRequest,
 )
 from cruxible_client.contracts.claim_type_upgrade import (
-    ClaimTypeUpgradeRequestV1,
-    ClaimTypeUpgradeResultV1,
+    ClaimTypeUpgradeRequest,
+    ClaimTypeUpgradeResult,
 )
 from cruxible_client.contracts.declared_blocks import (
     PROJECTION_STAMP_ADAPTER,
-    PlaybillBlockRepinResultV1,
+    PlaybillBlockRepinResult,
 )
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.evidence_rule_upgrade import (
-    EvidenceRuleUpgradeRequestV1,
-    EvidenceRuleUpgradeResultV1,
+    EvidenceRuleUpgradeRequest,
+    EvidenceRuleUpgradeResult,
 )
-from cruxible_client.contracts.floor import PlaybillFloorDeltaV1
+from cruxible_client.contracts.floor import PlaybillFloorDelta
 from cruxible_client.contracts.get_reads import (
-    PlaybillByteRangeV1,
-    PlaybillGetRequestV1,
-    PlaybillGetResultV1,
+    PlaybillByteRange,
+    PlaybillGetRequest,
+    PlaybillGetResult,
 )
 from cruxible_client.contracts.governance import governance_identifier
 from cruxible_client.contracts.kits import (
-    PlaybillKitAddRequestV1,
-    PlaybillKitBuildRequestV1,
-    PlaybillKitBuildResultV1,
-    PlaybillKitChangeResultV1,
-    PlaybillKitRemoveRequestV1,
-    PlaybillKitStatusV1,
+    PlaybillKitAddRequest,
+    PlaybillKitBuildRequest,
+    PlaybillKitBuildResult,
+    PlaybillKitChangeResult,
+    PlaybillKitRemoveRequest,
+    PlaybillKitStatus,
 )
 from cruxible_client.contracts.provider_installation import (
-    PlaybillProviderCatalogV1,
-    PlaybillProviderInstallRequestV1,
-    PlaybillProviderInstallResultV1,
+    PlaybillProviderCatalog,
+    PlaybillProviderInstallRequest,
+    PlaybillProviderInstallResult,
 )
-from cruxible_client.contracts.query.definitions import QueryDefinitionSpecV1
+from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
 from cruxible_client.contracts.source_catalog import SourceCompilationBundle
 from cruxible_client.contracts.temporal import parse_datetime
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_client.contracts.validation_messages import validation_lines
 from cruxible_client.contracts.write import (
     FileEvidence,
-    PlaybillRetireRequestV1,
-    PlaybillSetRequestV1,
-    PlaybillWriteRequestV1,
+    PlaybillRetireRequest,
+    PlaybillSetRequest,
+    PlaybillWriteRequest,
     WriteOutcome,
 )
 from cruxible_client.errors import DaemonOperationScopeError as ClientDaemonOperationScopeError
@@ -108,12 +108,12 @@ from cruxible_client.errors import ServerUnreachableError
 from cruxible_client.transport.http import configured_principal_id
 from cruxible_core import __version__
 from cruxible_core.claims.claim_type_inputs import (
-    ClaimTypeInputV1,
+    ClaimTypeInputRecord,
 )
-from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequest
-from cruxible_core.coverage.adapter import WorkingSourceObservationV1
-from cruxible_core.coverage.contracts import CoverageAccessProfileV1, CoverageCardBudgetV1
-from cruxible_core.coverage.indexes import CoverageScanBudgetV1
+from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequestAny
+from cruxible_core.coverage.adapter import WorkingSourceObservation
+from cruxible_core.coverage.contracts import CoverageAccessProfile, CoverageCardBudget
+from cruxible_core.coverage.indexes import CoverageScanBudget
 from cruxible_core.coverage.workspace import (
     bindings_from_mapping,
     observe_workspace,
@@ -157,19 +157,19 @@ from cruxible_core.server.playbill_request_models import (
 from cruxible_core.service.change_preview import state_change_scope
 from cruxible_core.service.discovery.since import validate_playbill_since_request
 from cruxible_core.service.procedures.procedure_runs import (
-    LineRunRequestV1,
-    ProcedureBindRequestV1,
+    LineRunRequest,
+    ProcedureBindRequest,
     ProcedureReadinessRequestV1,
-    ProcedureRunRequestV2,
+    ProcedureRunRequest,
 )
 
 _client_cache: CruxibleClient | None = None
 _client_cache_key: tuple[str | None, str | None, str | None, str | None] | None = None
 _client_cache_lock = threading.RLock()
 ResultT = TypeVar("ResultT")
-_AUTHORING_INPUT: TypeAdapter[AuthoringInputV1] = TypeAdapter(AuthoringInputV1)
-_CLAIM_TYPE_MIGRATION: TypeAdapter[ClaimTypeMigrationRequest] = TypeAdapter(
-    ClaimTypeMigrationRequest
+_AUTHORING_INPUT: TypeAdapter[AuthoringInput] = TypeAdapter(AuthoringInput)
+_CLAIM_TYPE_MIGRATION: TypeAdapter[ClaimTypeMigrationRequestAny] = TypeAdapter(
+    ClaimTypeMigrationRequestAny
 )
 
 
@@ -199,7 +199,7 @@ class _LocalFloorClient:
         at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
         base_generation: int | None = None,
         base_renderer: str | None = None,
-    ) -> PlaybillFloorDeltaV1:
+    ) -> PlaybillFloorDelta:
         return playbill_api.playbill_floor_delta(
             instance_id,
             at=None
@@ -212,16 +212,16 @@ class _LocalFloorClient:
         )
 
     def check_playbill_projection_blocks(
-        self, instance_id: str, *, request: contracts.PlaybillProjectionCheckRequestV1
-    ) -> contracts.PlaybillProjectionCheckResultV1:
+        self, instance_id: str, *, request: contracts.PlaybillProjectionCheckRequest
+    ) -> contracts.PlaybillProjectionCheckResult:
         return playbill_api.playbill_check_projection_blocks(instance_id, request=request)
 
     def read_playbill_block_sync_backing(
         self,
         instance_id: str,
         *,
-        request: contracts.PlaybillBlockSyncReadRequestV1,
-    ) -> contracts.PlaybillBlockSyncReadResultV1:
+        request: contracts.PlaybillBlockSyncReadRequest,
+    ) -> contracts.PlaybillBlockSyncReadResult:
         return playbill_api.playbill_read_block_sync_backing(instance_id, request=request)
 
 
@@ -240,16 +240,16 @@ class _LocalCoverageClient:
         return playbill_api.playbill_resolve_coverage(
             instance_id,
             observations=tuple(
-                WorkingSourceObservationV1.model_validate(item) for item in observations
+                WorkingSourceObservation.model_validate(item) for item in observations
             ),
             at=None if at is None else AcceptedCoordinate.model_validate(_json(at)),
-            budget=None if budget is None else CoverageCardBudgetV1.model_validate(budget),
+            budget=None if budget is None else CoverageCardBudget.model_validate(budget),
             scan_budget=(
-                None if scan_budget is None else CoverageScanBudgetV1.model_validate(scan_budget)
+                None if scan_budget is None else CoverageScanBudget.model_validate(scan_budget)
             ),
         )
 
-    def playbill_head(self, instance_id: str) -> contracts.PlaybillHeadV1:
+    def playbill_head(self, instance_id: str) -> contracts.PlaybillHead:
         return playbill_api.playbill_head(instance_id)
 
 
@@ -277,22 +277,20 @@ class _LocalAttestationClient:
         section: contracts.PlaybillOrientSection,
         limit: int,
         cursor: str | None = None,
-    ) -> contracts.PlaybillOrientResultV1:
+    ) -> contracts.PlaybillOrientResult:
         return playbill_api.playbill_orient(
             instance_id, section=section, limit=limit, cursor=cursor, surface="sdk"
         )
 
-    def playbill_get(
-        self, instance_id: str, *, request: PlaybillGetRequestV1
-    ) -> PlaybillGetResultV1:
+    def playbill_get(self, instance_id: str, *, request: PlaybillGetRequest) -> PlaybillGetResult:
         return playbill_api.playbill_get(instance_id, request=request)
 
     def append_playbill_claim_attestation(
         self,
         instance_id: str,
         *,
-        request: ClaimAttestationAppendRequestV1,
-    ) -> ClaimAttestationAppendResultV1:
+        request: ClaimAttestationAppendRequest,
+    ) -> ClaimAttestationAppendResult:
         return playbill_api.playbill_append_claim_attestation(instance_id, request=request)
 
     def server_info(self) -> contracts.ServerInfoResult:
@@ -349,15 +347,15 @@ def _get_client() -> CruxibleClient | None:
 #: `tests/test_architecture/test_mcp_validation_seam.py` requires every mutating
 #: operation to appear here and every entry with a model to be given a payload.
 MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
-    "cruxible_playbill_line_dispatch": TypeAdapter(contracts.LineDispatchRequestV1),
-    "cruxible_playbill_line_evaluate": TypeAdapter(contracts.LineEvaluateRequestV1),
-    "cruxible_playbill_line_arm": TypeAdapter(ChangeControlRequestV1),
-    "cruxible_playbill_line_disarm": TypeAdapter(ChangeControlRequestV1),
-    "cruxible_playbill_provider_install": TypeAdapter(PlaybillProviderInstallRequestV1),
-    "cruxible_playbill_kit_add": TypeAdapter(PlaybillKitAddRequestV1),
-    "cruxible_playbill_kit_remove": TypeAdapter(PlaybillKitRemoveRequestV1),
-    "cruxible_playbill_evidence_rules_upgrade": TypeAdapter(EvidenceRuleUpgradeRequestV1),
-    "cruxible_playbill_claim_type_upgrade": TypeAdapter(ClaimTypeUpgradeRequestV1),
+    "cruxible_playbill_line_dispatch": TypeAdapter(contracts.LineDispatchRequest),
+    "cruxible_playbill_line_evaluate": TypeAdapter(contracts.LineEvaluateRequest),
+    "cruxible_playbill_line_arm": TypeAdapter(ChangeControlRequest),
+    "cruxible_playbill_line_disarm": TypeAdapter(ChangeControlRequest),
+    "cruxible_playbill_provider_install": TypeAdapter(PlaybillProviderInstallRequest),
+    "cruxible_playbill_kit_add": TypeAdapter(PlaybillKitAddRequest),
+    "cruxible_playbill_kit_remove": TypeAdapter(PlaybillKitRemoveRequest),
+    "cruxible_playbill_evidence_rules_upgrade": TypeAdapter(EvidenceRuleUpgradeRequest),
+    "cruxible_playbill_claim_type_upgrade": TypeAdapter(ClaimTypeUpgradeRequest),
     "cruxible_playbill_activate": None,  # path only
     "cruxible_playbill_authoring_abandon_insertion": TypeAdapter(PlaybillInsertionAbandonRequest),
     "cruxible_playbill_authoring_bind": TypeAdapter(PlaybillAuthoringInputCompileRequest),
@@ -368,17 +366,17 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_playbill_authoring_submit": TypeAdapter(PlaybillAuthoringSubmitRequest),
     "cruxible_playbill_block_depublish": TypeAdapter(PlaybillBlockDepublishRequest),
     "cruxible_playbill_claim_attest": None,  # shared preparation helper builds the body
-    "cruxible_playbill_set": TypeAdapter(PlaybillSetRequestV1),
-    "cruxible_playbill_retire": TypeAdapter(PlaybillRetireRequestV1),
-    "cruxible_playbill_write": TypeAdapter(PlaybillWriteRequestV1),
-    "cruxible_playbill_claim_type_migrate": TypeAdapter(ClaimTypeMigrationRequest),
+    "cruxible_playbill_set": TypeAdapter(PlaybillSetRequest),
+    "cruxible_playbill_retire": TypeAdapter(PlaybillRetireRequest),
+    "cruxible_playbill_write": TypeAdapter(PlaybillWriteRequest),
+    "cruxible_playbill_claim_type_migrate": TypeAdapter(ClaimTypeMigrationRequestAny),
     "cruxible_playbill_curation_accept_fixed": TypeAdapter(PlaybillCurationAcceptFixedRequest),
     "cruxible_playbill_curation_overrule": TypeAdapter(PlaybillCurationOverruleRequest),
     "cruxible_playbill_curation_suppress": TypeAdapter(PlaybillCurationSuppressRequest),
-    "cruxible_playbill_read_capture": TypeAdapter(CaptureReadRequestV1),
+    "cruxible_playbill_read_capture": TypeAdapter(CaptureReadRequest),
     "cruxible_playbill_init": TypeAdapter(PlaybillInitRequest),
-    "cruxible_playbill_predict": TypeAdapter(contracts.PlaybillPredictRequestV2),
-    "cruxible_playbill_procedure_bind": TypeAdapter(ProcedureBindRequestV1),
+    "cruxible_playbill_predict": TypeAdapter(contracts.PlaybillPredictRequest),
+    "cruxible_playbill_procedure_bind": TypeAdapter(ProcedureBindRequest),
     "cruxible_playbill_proposal_readmit": TypeAdapter(PlaybillProposalReadmitRequest),
     "cruxible_playbill_proposal_withdraw": TypeAdapter(PlaybillProposalWithdrawRequest),
     "cruxible_playbill_propose_claim_type": TypeAdapter(PlaybillProposeClaimTypeInputRequest),
@@ -386,8 +384,8 @@ MCP_LOCAL_REQUEST_MODELS: dict[str, TypeAdapter[Any] | None] = {
     "cruxible_playbill_compiler_upgrade": TypeAdapter(PlaybillCompilerUpgradeRequest),
     "cruxible_playbill_propose_principal_change": TypeAdapter(PlaybillProposePrincipalRequest),
     "cruxible_playbill_propose_source_bundle": TypeAdapter(PlaybillSourceProposeRequest),
-    "cruxible_playbill_procedure_measure": TypeAdapter(contracts.PlaybillProcedureMeasureRequestV1),
-    "cruxible_playbill_settle": TypeAdapter(contracts.PlaybillSettleRequestV2),
+    "cruxible_playbill_procedure_measure": TypeAdapter(contracts.PlaybillProcedureMeasureRequest),
+    "cruxible_playbill_settle": TypeAdapter(contracts.PlaybillSettleRequest),
     "cruxible_playbill_store_body": TypeAdapter(PlaybillStoreBodyRequest),
     "cruxible_playbill_submit_approval": TypeAdapter(PlaybillApprovalRequest),
 }
@@ -537,7 +535,7 @@ def handle_playbill_store_body(
     )
 
 
-def handle_playbill_provider_catalog(instance_id: str) -> PlaybillProviderCatalogV1:
+def handle_playbill_provider_catalog(instance_id: str) -> PlaybillProviderCatalog:
     return _dispatch_remote_or_local(
         lambda client: client.list_playbill_provider_packages(instance_id),
         lambda: playbill_api.playbill_provider_catalog(instance_id),
@@ -547,8 +545,8 @@ def handle_playbill_provider_catalog(instance_id: str) -> PlaybillProviderCatalo
 
 def handle_playbill_provider_install(
     instance_id: str,
-    request: PlaybillProviderInstallRequestV1,
-) -> PlaybillProviderInstallResultV1:
+    request: PlaybillProviderInstallRequest,
+) -> PlaybillProviderInstallResult:
     return _dispatch_remote_or_local(
         lambda client: client.install_playbill_provider(instance_id, request),
         lambda: playbill_api.playbill_provider_install(instance_id, request),
@@ -558,8 +556,8 @@ def handle_playbill_provider_install(
 
 
 def handle_playbill_kit_build(
-    instance_id: str, request: PlaybillKitBuildRequestV1
-) -> PlaybillKitBuildResultV1:
+    instance_id: str, request: PlaybillKitBuildRequest
+) -> PlaybillKitBuildResult:
     return _dispatch_remote_or_local(
         lambda client: client.build_playbill_kit(instance_id, request),
         lambda: playbill_api.playbill_kit_build(instance_id, request),
@@ -567,7 +565,7 @@ def handle_playbill_kit_build(
     )
 
 
-def handle_playbill_kit_status(instance_id: str) -> PlaybillKitStatusV1:
+def handle_playbill_kit_status(instance_id: str) -> PlaybillKitStatus:
     return _dispatch_remote_or_local(
         lambda client: client.playbill_kit_status(instance_id),
         lambda: playbill_api.playbill_kit_status(instance_id),
@@ -576,8 +574,8 @@ def handle_playbill_kit_status(instance_id: str) -> PlaybillKitStatusV1:
 
 
 def handle_playbill_kit_add(
-    instance_id: str, request: PlaybillKitAddRequestV1
-) -> PlaybillKitChangeResultV1:
+    instance_id: str, request: PlaybillKitAddRequest
+) -> PlaybillKitChangeResult:
     return _dispatch_remote_or_local(
         lambda client: client.add_playbill_kit(instance_id, request),
         lambda: playbill_api.playbill_kit_add(instance_id, request),
@@ -587,8 +585,8 @@ def handle_playbill_kit_add(
 
 
 def handle_playbill_claim_type_upgrade(
-    instance_id: str, request: ClaimTypeUpgradeRequestV1
-) -> ClaimTypeUpgradeResultV1:
+    instance_id: str, request: ClaimTypeUpgradeRequest
+) -> ClaimTypeUpgradeResult:
     return _dispatch_remote_or_local(
         lambda client: client.upgrade_playbill_claim_types(instance_id, request),
         lambda: playbill_api.playbill_claim_type_upgrade(instance_id, request),
@@ -598,8 +596,8 @@ def handle_playbill_claim_type_upgrade(
 
 
 def handle_playbill_evidence_rules_upgrade(
-    instance_id: str, request: EvidenceRuleUpgradeRequestV1
-) -> EvidenceRuleUpgradeResultV1:
+    instance_id: str, request: EvidenceRuleUpgradeRequest
+) -> EvidenceRuleUpgradeResult:
     return _dispatch_remote_or_local(
         lambda client: client.upgrade_playbill_evidence_rules(instance_id, request),
         lambda: playbill_api.playbill_evidence_rules_upgrade(instance_id, request),
@@ -609,8 +607,8 @@ def handle_playbill_evidence_rules_upgrade(
 
 
 def handle_playbill_kit_remove(
-    instance_id: str, request: PlaybillKitRemoveRequestV1
-) -> PlaybillKitChangeResultV1:
+    instance_id: str, request: PlaybillKitRemoveRequest
+) -> PlaybillKitChangeResult:
     return _dispatch_remote_or_local(
         lambda client: client.remove_playbill_kit(instance_id, request),
         lambda: playbill_api.playbill_kit_remove(instance_id, request),
@@ -851,7 +849,7 @@ def handle_playbill_orient(
     cursor: str | None = None,
     at: str | contracts.PlaybillAcceptedCoordinate | None = None,
     evaluation_time: str | None = None,
-) -> contracts.PlaybillOrientResultV1:
+) -> contracts.PlaybillOrientResult:
     """The orient map, with its follow-up calls rendered as MCP tool calls."""
 
     from cruxible_core.mcp.curation import session_tool_names
@@ -949,7 +947,7 @@ def handle_playbill_withdraw_proposal(
     )
 
 
-def handle_playbill_read_capture(instance_id: str, request: CaptureReadRequestV1) -> CaptureReadV1:
+def handle_playbill_read_capture(instance_id: str, request: CaptureReadRequest) -> CaptureRead:
     return _dispatch_remote_or_local(
         lambda client: client.read_playbill_capture(instance_id, request),
         lambda: playbill_api.playbill_read_capture(instance_id, request),
@@ -1127,7 +1125,7 @@ def handle_playbill_propose_claim_type(
     dry_run: bool | None = None,
     at: str | None = None,
 ) -> contracts.PlaybillClaimTypeInputProposalResult:
-    request = ClaimTypeInputV1.model_validate(input)
+    request = ClaimTypeInputRecord.model_validate(input)
     return _dispatch_remote_or_local(
         lambda client: client.propose_playbill_claim_type_input(
             instance_id,
@@ -1172,8 +1170,8 @@ def handle_playbill_migrate_claim_type(
 def _handle_claim_attestation(
     client: Any,
     instance_id: str,
-    prepared: PreparedClaimAttestationRequestV1,
-) -> ClaimAttestationAppendResultV1:
+    prepared: PreparedClaimAttestationRequest,
+) -> ClaimAttestationAppendResult:
     signer = local_attestation_signer_from_environment(
         client,
         instance_id,
@@ -1197,7 +1195,7 @@ def handle_playbill_claim_attest(
     capture_digests: list[str] | None = None,
     referent_coordinate: Mapping[str, Any] | None = None,
     attested_at: datetime | None = None,
-) -> ClaimAttestationAppendResultV1:
+) -> ClaimAttestationAppendResult:
     """Attest the examined Claim, or a new Capture of it when capture digests are given."""
 
     if capture_digests is not None and not capture_digests:
@@ -1213,12 +1211,12 @@ def handle_playbill_claim_attest(
             "is signed at the time of the call"
         )
     try:
-        prepared = PreparedClaimAttestationRequestV1(
+        prepared = PreparedClaimAttestationRequest(
             claim_id=claim_id.removeprefix("Claim:"),
             attestation_basis="new_capture" if capture_digests else "examined_existing",
             stance=stance,
             capture_references=tuple(
-                ClaimAttestationCaptureReferenceV1(capture_digest=digest)
+                ClaimAttestationCaptureReference(capture_digest=digest)
                 for digest in sorted(set(capture_digests or ()), key=lambda d: d.encode())
             ),
             referent_coordinate=(
@@ -1438,7 +1436,7 @@ class _LocalBlockClient(_LocalFloorClient):
         instance_id: str,
         *,
         at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | str | None = None,
-    ) -> contracts.PlaybillHeadV1:
+    ) -> contracts.PlaybillHead:
         return playbill_api.playbill_head(
             instance_id,
             at=at
@@ -1446,19 +1444,17 @@ class _LocalBlockClient(_LocalFloorClient):
             else AcceptedCoordinate.model_validate(_json(at)),
         )
 
-    def playbill_get(
-        self, instance_id: str, *, request: PlaybillGetRequestV1
-    ) -> PlaybillGetResultV1:
+    def playbill_get(self, instance_id: str, *, request: PlaybillGetRequest) -> PlaybillGetResult:
         return playbill_api.playbill_get(instance_id, request=request)
 
     def query_playbill(
-        self, instance_id: str, *, request: contracts.PlaybillQueryRequestV1
+        self, instance_id: str, *, request: contracts.PlaybillQueryRequest
     ) -> contracts.PlaybillQueryResult:
         return playbill_api.playbill_query(instance_id, request=request)
 
     def declare_playbill_block(
         self, instance_id: str, stamp: Mapping[str, Any]
-    ) -> contracts.PlaybillBlockDeclareResultV1:
+    ) -> contracts.PlaybillBlockDeclareResult:
         return playbill_api.playbill_block_declare(
             instance_id, PROJECTION_STAMP_ADAPTER.validate_python(dict(stamp))
         )
@@ -1482,7 +1478,7 @@ def handle_playbill_block_repin(
     currency_policy: Literal["warn", "require_current"] | None = None,
     backing_digest: str | None = None,
     dry_run: bool | None = None,
-) -> PlaybillBlockRepinResultV1:
+) -> PlaybillBlockRepinResult:
     """Repin one projection block adapter-side: this process computes the stamp (Q17).
 
     The block is named by its page (``file``, workspace-relative) or its
@@ -1519,7 +1515,7 @@ def handle_playbill_block_repin(
         evaluation_time=datetime.now(UTC),
         dry_run=bool(dry_run),
     )
-    return PlaybillBlockRepinResultV1(
+    return PlaybillBlockRepinResult(
         status="would_repin" if dry_run else "repinned",
         source_id=source_id,
         block_id=block,
@@ -1534,7 +1530,7 @@ def handle_playbill_block_sync(
     *,
     files: Sequence[str] = (),
     all_sources: bool = False,
-) -> contracts.PlaybillBlockSyncResultV1:
+) -> contracts.PlaybillBlockSyncResult:
     """Check every block's backings adapter-side; reads only, edits no page.
 
     Detaching retired blocks edits pages, so it is its own write-tier tool
@@ -1551,10 +1547,10 @@ def handle_playbill_block_sync(
     )
 
 
-def _pages_state(root: Path, preimages: Mapping[Path, bytes]) -> PlaybillStateCoordinateV1:
+def _pages_state(root: Path, preimages: Mapping[Path, bytes]) -> PlaybillStateCoordinate:
     """The state coordinate of the pages a detach edits: each one's exact bytes."""
 
-    return PlaybillStateCoordinateV1.of(
+    return PlaybillStateCoordinate.of(
         "workspace_pages",
         {
             _workspace_relative(root, path): hashlib.sha256(content).hexdigest()
@@ -1576,7 +1572,7 @@ def handle_playbill_block_detach(
     files: Sequence[str],
     dry_run: bool | None = None,
     at: str | None = None,
-) -> PlaybillBlockDetachResultV1:
+) -> PlaybillBlockDetachResult:
     """Remove retired blocks' markers from pages, keeping their bodies (R12 previewed).
 
     A preview reports what the edit would change and edits nothing. The
@@ -1610,7 +1606,7 @@ def handle_playbill_block_detach(
             # read no bytes, and pins (and is checked against) the empty set.
             change.observe(_pages_state(root, {}))
     assert change.coordinate is not None
-    return PlaybillBlockDetachResultV1(
+    return PlaybillBlockDetachResult(
         status="would_detach" if change.previewing else "detached",
         sync=synced,
         coordinate=change.coordinate,
@@ -1624,7 +1620,7 @@ def handle_playbill_block_depublish(
     *,
     dry_run: bool | None = None,
     at: str | None = None,
-) -> contracts.PlaybillBlockDepublishResultV1:
+) -> contracts.PlaybillBlockDepublishResult:
     return _dispatch_remote_or_local(
         lambda client: client.depublish_playbill_block(
             instance_id, source_id, block_id, dry_run=dry_run, at=at
@@ -1647,14 +1643,14 @@ def handle_playbill_get(
     *,
     ref: str,
     detail: str = "summary",
-    range: PlaybillByteRangeV1 | None = None,
+    range: PlaybillByteRange | None = None,
     at: contracts.PlaybillAcceptedCoordinate | str | None = None,
     evaluation_time: str | None = None,
     limit: int | None = None,
     cursor: str | None = None,
-) -> PlaybillGetResultV1:
+) -> PlaybillGetResult:
     try:
-        request = PlaybillGetRequestV1.model_validate(
+        request = PlaybillGetRequest.model_validate(
             {
                 "ref": ref,
                 "detail": detail,
@@ -1685,9 +1681,9 @@ def handle_playbill_get(
 
 def _playbill_query_request(
     tool: str, evaluation_time: str | None, fields: Mapping[str, Any]
-) -> contracts.PlaybillQueryRequestV1:
+) -> contracts.PlaybillQueryRequest:
     try:
-        return contracts.PlaybillQueryRequestV1.model_validate(
+        return contracts.PlaybillQueryRequest.model_validate(
             {
                 **{name: value for name, value in fields.items() if value is not None},
                 "evaluation_time": parse_datetime(evaluation_time),
@@ -1731,7 +1727,7 @@ _WRITE_EXAMPLES = {
 }
 
 _WriteRequestT = TypeVar(
-    "_WriteRequestT", PlaybillSetRequestV1, PlaybillRetireRequestV1, PlaybillWriteRequestV1
+    "_WriteRequestT", PlaybillSetRequest, PlaybillRetireRequest, PlaybillWriteRequest
 )
 
 
@@ -1755,7 +1751,7 @@ def _write_request(
                 for error in exc.errors(include_url=False)
             ],
         ) from exc
-    if isinstance(request, PlaybillWriteRequestV1):
+    if isinstance(request, PlaybillWriteRequest):
         if any(
             isinstance(getattr(change, "evidence", None), FileEvidence)
             for change in request.changes
@@ -1764,7 +1760,7 @@ def _write_request(
             request = request.model_copy(
                 update={"changes": observe_changes(request.changes, workspace=workspace)}
             )
-    elif isinstance(request, PlaybillSetRequestV1) and isinstance(request.evidence, FileEvidence):
+    elif isinstance(request, PlaybillSetRequest) and isinstance(request.evidence, FileEvidence):
         request = request.model_copy(
             update={"evidence": observe_evidence(request.evidence, workspace=mcp_workspace_root())}
         )
@@ -1774,7 +1770,7 @@ def _write_request(
 def handle_playbill_set(instance_id: str, **fields: Any) -> WriteOutcome:
     """Put one value in one field of one Subject."""
 
-    request = _write_request(PlaybillSetRequestV1, "cruxible_playbill_set", fields)
+    request = _write_request(PlaybillSetRequest, "cruxible_playbill_set", fields)
     return _dispatch_remote_or_local(
         lambda client: client.playbill_set(instance_id, request=request),
         lambda: playbill_api.playbill_set(instance_id, request=request),
@@ -1786,7 +1782,7 @@ def handle_playbill_set(instance_id: str, **fields: Any) -> WriteOutcome:
 def handle_playbill_retire(instance_id: str, **fields: Any) -> WriteOutcome:
     """End one live Claim, by ID or by its Subject and field."""
 
-    request = _write_request(PlaybillRetireRequestV1, "cruxible_playbill_retire", fields)
+    request = _write_request(PlaybillRetireRequest, "cruxible_playbill_retire", fields)
     return _dispatch_remote_or_local(
         lambda client: client.playbill_retire(instance_id, request=request),
         lambda: playbill_api.playbill_retire(instance_id, request=request),
@@ -1798,7 +1794,7 @@ def handle_playbill_retire(instance_id: str, **fields: Any) -> WriteOutcome:
 def handle_playbill_write(instance_id: str, **fields: Any) -> WriteOutcome:
     """Apply set, add and retire changes as one change set."""
 
-    request = _write_request(PlaybillWriteRequestV1, "cruxible_playbill_write", fields)
+    request = _write_request(PlaybillWriteRequest, "cruxible_playbill_write", fields)
     return _dispatch_remote_or_local(
         lambda client: client.playbill_write(instance_id, request=request),
         lambda: playbill_api.playbill_write(instance_id, request=request),
@@ -1810,7 +1806,7 @@ def handle_playbill_write(instance_id: str, **fields: Any) -> WriteOutcome:
 def handle_playbill_query_spec(
     instance_id: str,
     *,
-    spec: QueryDefinitionSpecV1,
+    spec: QueryDefinitionSpec,
     evaluation_time: str | None = None,
     **fields: Any,
 ) -> contracts.PlaybillQueryResult:
@@ -1855,7 +1851,7 @@ def handle_playbill_procedure_bind(
     *,
     bindings: list[dict[str, Any]],
 ) -> contracts.PlaybillProcedureBindResult:
-    request = ProcedureBindRequestV1.model_validate({"bindings": bindings})
+    request = ProcedureBindRequest.model_validate({"bindings": bindings})
     return _dispatch_remote_or_local(
         lambda client: client.bind_playbill_procedure(
             instance_id,
@@ -1875,11 +1871,11 @@ def handle_playbill_procedure_run(
     evaluation_time: str | None,
     at: dict[str, Any] | None,
     input: Any,
-    resolution_contract: contracts.ResolutionContractReferenceV1 | None = None,
-    trigger_event: contracts.TriggerEventReferenceV1 | None = None,
+    resolution_contract: contracts.ResolutionContractReference | None = None,
+    trigger_event: contracts.TriggerEventReference | None = None,
 ) -> contracts.PlaybillProcedureRunState:
     evaluated_at = parse_datetime(evaluation_time)
-    request = ProcedureRunRequestV2.model_validate(
+    request = ProcedureRunRequest.model_validate(
         {
             "evaluation_time": evaluated_at,
             "at": at,
@@ -1919,8 +1915,8 @@ def handle_playbill_procedure_run_status(
 def handle_playbill_procedure_measure(
     instance_id: str,
     name: str,
-    request: contracts.PlaybillProcedureMeasureRequestV1,
-) -> contracts.PlaybillProcedureMeasureResultV1:
+    request: contracts.PlaybillProcedureMeasureRequest,
+) -> contracts.PlaybillProcedureMeasureResult:
     return _dispatch_remote_or_local(
         lambda client: client.measure_playbill_procedure(instance_id, name, request=request),
         lambda: playbill_api.playbill_procedure_measure(instance_id, name, request=request),
@@ -1932,8 +1928,8 @@ def handle_playbill_procedure_measure(
 def handle_playbill_procedure_readings(
     instance_id: str,
     name: str,
-    request: contracts.PlaybillProcedureReadingsRequestV1,
-) -> contracts.PlaybillProcedureReadingsResultV1:
+    request: contracts.PlaybillProcedureReadingsRequest,
+) -> contracts.PlaybillProcedureReadingsResult:
     return _dispatch_remote_or_local(
         lambda client: client.list_playbill_procedure_readings(instance_id, name, request=request),
         lambda: playbill_api.playbill_procedure_readings(instance_id, name, request=request),
@@ -1942,8 +1938,8 @@ def handle_playbill_procedure_readings(
 
 
 def handle_playbill_line_check(
-    instance_id: str, line: str, request: contracts.LineTriggerCheckRequestV1
-) -> contracts.LineTriggerCheckResultV1:
+    instance_id: str, line: str, request: contracts.LineTriggerCheckRequest
+) -> contracts.LineTriggerCheckResult:
     return _dispatch_remote_or_local(
         lambda client: client.check_playbill_line(instance_id, line, request=request),
         lambda: playbill_api.playbill_line_check(instance_id, line, request=request),
@@ -1953,7 +1949,7 @@ def handle_playbill_line_check(
 
 def handle_playbill_line_arm(
     instance_id: str, line: str, *, dry_run: bool | None = None, at: str | None = None
-) -> contracts.LineArmV1:
+) -> contracts.LineArm:
     return _dispatch_remote_or_local(
         lambda client: client.arm_playbill_line(instance_id, line, dry_run=dry_run, at=at),
         lambda: playbill_api.playbill_line_arm(instance_id, line, dry_run=dry_run, at=at),
@@ -1964,7 +1960,7 @@ def handle_playbill_line_arm(
 
 def handle_playbill_line_disarm(
     instance_id: str, line: str, *, dry_run: bool | None = None, at: str | None = None
-) -> contracts.LineArmV1:
+) -> contracts.LineArm:
     return _dispatch_remote_or_local(
         lambda client: client.disarm_playbill_line(instance_id, line, dry_run=dry_run, at=at),
         lambda: playbill_api.playbill_line_disarm(instance_id, line, dry_run=dry_run, at=at),
@@ -1973,7 +1969,7 @@ def handle_playbill_line_disarm(
     )
 
 
-def handle_playbill_line_status(instance_id: str, line: str) -> contracts.LineArmV1:
+def handle_playbill_line_status(instance_id: str, line: str) -> contracts.LineArm:
     return _dispatch_remote_or_local(
         lambda client: client.playbill_line_status(instance_id, line),
         lambda: playbill_api.playbill_line_status(instance_id, line),
@@ -1982,8 +1978,8 @@ def handle_playbill_line_status(instance_id: str, line: str) -> contracts.LineAr
 
 
 def handle_playbill_line_evaluate(
-    instance_id: str, line: str, request: contracts.LineEvaluateRequestV1
-) -> contracts.LineTriggerCheckResultV1:
+    instance_id: str, line: str, request: contracts.LineEvaluateRequest
+) -> contracts.LineTriggerCheckResult:
     return _dispatch_remote_or_local(
         lambda client: client.evaluate_playbill_line(instance_id, line, request=request),
         lambda: playbill_api.playbill_line_evaluate(instance_id, line, request=request),
@@ -1993,8 +1989,8 @@ def handle_playbill_line_evaluate(
 
 
 def handle_playbill_line_dispatch(
-    instance_id: str, line: str, request: contracts.LineDispatchRequestV1
-) -> contracts.LineDispatchResultV1:
+    instance_id: str, line: str, request: contracts.LineDispatchRequest
+) -> contracts.LineDispatchResult:
     return _dispatch_remote_or_local(
         lambda client: client.dispatch_playbill_line(instance_id, line, request=request),
         lambda: playbill_api.playbill_line_dispatch(instance_id, line, request=request),
@@ -2009,11 +2005,11 @@ def handle_playbill_line_run(
     *,
     occurrence_id: str | None,
     evaluation_time: str | None = None,
-    resolution_contract: contracts.ResolutionContractReferenceV1 | None = None,
-    trigger_event: contracts.TriggerEventReferenceV1 | None = None,
+    resolution_contract: contracts.ResolutionContractReference | None = None,
+    trigger_event: contracts.TriggerEventReference | None = None,
     trigger: str | None = None,
 ) -> contracts.PlaybillProcedureRunState:
-    request = LineRunRequestV1.model_validate(
+    request = LineRunRequest.model_validate(
         {
             "line": line,
             "trigger": trigger,
@@ -2047,8 +2043,8 @@ def handle_playbill_line_run(
 
 
 def handle_playbill_resolution_contracts(
-    instance_id: str, request: contracts.ResolutionContractsRequestV1
-) -> contracts.ResolutionContractsResultV1:
+    instance_id: str, request: contracts.ResolutionContractsRequest
+) -> contracts.ResolutionContractsResult:
     return _dispatch_remote_or_local(
         lambda client: client.resolution_contracts(instance_id, request=request),
         lambda: playbill_api.playbill_resolution_contracts(instance_id, request=request),
@@ -2058,8 +2054,8 @@ def handle_playbill_resolution_contracts(
 
 def handle_playbill_predict(
     instance_id: str,
-    request: contracts.PlaybillPredictRequestV2,
-) -> contracts.PlaybillPredictResultV2:
+    request: contracts.PlaybillPredictRequest,
+) -> contracts.PlaybillPredictResult:
     return _dispatch_remote_or_local(
         lambda client: client.predict_playbill(instance_id, request=request),
         lambda: playbill_api.playbill_predict(instance_id, request=request),
@@ -2071,8 +2067,8 @@ def handle_playbill_predict(
 def handle_playbill_settle_prediction(
     instance_id: str,
     prediction_id: str,
-    request: contracts.PlaybillSettleRequestV2,
-) -> contracts.PlaybillSettleResultV2:
+    request: contracts.PlaybillSettleRequest,
+) -> contracts.PlaybillSettleResult:
     return _dispatch_remote_or_local(
         lambda client: client.settle_playbill_prediction(
             instance_id,
@@ -2150,7 +2146,7 @@ def handle_playbill_next(
         if evaluation_time is None
         else evaluation_time
     )
-    profile = CoverageAccessProfileV1.model_validate(
+    profile = CoverageAccessProfile.model_validate(
         access_profile
         or {"profile_id": "mcp-next", "permitted_access_classes": ["instance", "public"]}
     ).model_dump(mode="json")
@@ -2488,10 +2484,10 @@ def handle_playbill_coverage(
         )
     else:
         observed = tuple(
-            WorkingSourceObservationV1.model_validate(item) for item in observations or ()
+            WorkingSourceObservation.model_validate(item) for item in observations or ()
         )
-    cards = None if budget is None else CoverageCardBudgetV1.model_validate(budget)
-    scan = None if scan_budget is None else CoverageScanBudgetV1.model_validate(scan_budget)
+    cards = None if budget is None else CoverageCardBudget.model_validate(budget)
+    scan = None if scan_budget is None else CoverageScanBudget.model_validate(scan_budget)
     return _dispatch_remote_or_local(
         lambda client: client.resolve_playbill_coverage(
             instance_id,
@@ -2561,7 +2557,7 @@ def _workspace_observations(
     ranges: tuple[str, ...],
     grep_results_path: str | None,
     whole_working_set: bool,
-) -> tuple[WorkingSourceObservationV1, ...]:
+) -> tuple[WorkingSourceObservation, ...]:
     """Read selected workspace bytes and lower them to existing coverage wire."""
 
     workspace = mcp_workspace_root()
@@ -2639,7 +2635,7 @@ def handle_playbill_floor_export(
 
     def write(
         export_floor: Callable[[], contracts.PlaybillFloorExport],
-        delivery: Callable[[], contracts.PlaybillFloorDeliveryResultV1 | None] | None = None,
+        delivery: Callable[[], contracts.PlaybillFloorDeliveryResult | None] | None = None,
     ) -> contracts.PlaybillWorkspaceFloorWriteResult:
         return write_workspace_floor(
             export_floor,

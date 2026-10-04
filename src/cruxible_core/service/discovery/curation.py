@@ -16,14 +16,14 @@ from cruxible_client.contracts import (
 from cruxible_client.contracts.artifacts import ArtifactIdentity, parse_artifact_identity
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.change_control import DryRun, PreviewAt
-from cruxible_client.contracts.declared_blocks import ProjectionMarkerSummaryV1
+from cruxible_client.contracts.declared_blocks import ProjectionMarkerSummary
 from cruxible_client.contracts.documents import document_path, parse_document
 from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_client.contracts.validation_messages import validation_summary
 from cruxible_core.claims.closure import dependency_artifacts, parse_dependency_artifact
-from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.curation.curation import (
     CurationAffectedMemberV1,
     CurationDetectorCoverageV1,
@@ -50,8 +50,8 @@ from cruxible_core.service.change_preview import change_entry, change_scope
 from cruxible_core.service.discovery.next import (
     PlaybillNextAccessProfileInvalid,
     PlaybillNextSourceObservationV3,
+    PlaybillNextWorkspaceObservation,
     PlaybillNextWorkspaceObservationInvalid,
-    PlaybillNextWorkspaceObservationV1,
 )
 from cruxible_core.service.evidence.evidence import ClaimVerdictReadContext
 from cruxible_core.service.list_pages import (
@@ -114,8 +114,8 @@ class _StrictCurationModel(BaseModel):
 class PlaybillCurationListRequestV1(_StrictCurationModel):
     tag: Literal["playbill-curation-list-request-v1"] = "playbill-curation-list-request-v1"
     evaluation_time: datetime
-    access_profile: CoverageAccessProfileV1
-    workspace_observation: PlaybillNextWorkspaceObservationV1 | None = None
+    access_profile: CoverageAccessProfile
+    workspace_observation: PlaybillNextWorkspaceObservation | None = None
     limit: int = Field(
         default=PLAYBILL_CURATION_LIST_DEFAULT_LIMIT, ge=1, le=PLAYBILL_CURATION_LIST_MAX_LIMIT
     )
@@ -216,7 +216,7 @@ class BlockObservationV1(_StrictCurationModel):
     document_identity: ArtifactIdentity
     source_id: str
     block_id: str
-    marker_summary: ProjectionMarkerSummaryV1
+    marker_summary: ProjectionMarkerSummary
     request_source_digest: str
     scan_coordinate: AcceptedCoordinate
     scan_generation: int = Field(ge=0)
@@ -332,7 +332,7 @@ def build_block_observation(
     *,
     document_identity: ArtifactIdentity,
     source: PlaybillNextSourceObservationV3,
-    marker: ProjectionMarkerSummaryV1,
+    marker: ProjectionMarkerSummary,
     scan_coordinate: AcceptedCoordinate,
     scan_generation: int,
     actor_context: GovernedActorContext,

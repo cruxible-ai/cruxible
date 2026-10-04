@@ -6,7 +6,7 @@ from cruxible_client.authoring.inputs import CarriedContractInput
 from cruxible_client.authoring.source import procedure
 from cruxible_client.contracts.authoring.inputs import lower_authoring_input
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
-from cruxible_client.contracts.procedures.source_requests import ProcedureSourcePreviewRequestV1
+from cruxible_client.contracts.procedures.source_requests import ProcedureSourcePreviewRequest
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.service.procedures.source_preview import service_preview_procedure_source
 from tests.test_authoring.test_authoring_procedures import _world_holding_a_document
@@ -50,7 +50,7 @@ def test_preview_and_prepare_accept_the_same_symbolic_source(tmp_path):
         compiler_digest=coordinate.compiler.rule_digest,
     )
     preview = service_preview_procedure_source(
-        coordinator.instance, request=ProcedureSourcePreviewRequestV1(source=request, at=at)
+        coordinator.instance, request=ProcedureSourcePreviewRequest(source=request, at=at)
     )
     assert preview.ready_for_prepare, preview.errors
     assert preview.definition.source.text == source.source
@@ -254,9 +254,9 @@ def _field_request():
 
 
 def _source_payload(request):
-    from cruxible_client.contracts.authoring.models import ProcedureAuthoringPayloadV2
+    from cruxible_client.contracts.authoring.models import ProcedureAuthoringPayload
 
-    return ProcedureAuthoringPayloadV2(
+    return ProcedureAuthoringPayload(
         activation_policy="snapshot",
         owned_contracts=(),
         definition={"name": request.name, "source_request": request.model_dump(mode="json")},
@@ -307,7 +307,7 @@ def test_source_ontology_lookup_reads_only_matching_definitions_and_preserves_am
     monkeypatch.setitem(OWNER_BY_KIND, "claim-type", replace(codec, parse=counted))
     at = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     preview = service_preview_procedure_source(
-        instance, request=ProcedureSourcePreviewRequestV1(source=_field_request(), at=at)
+        instance, request=ProcedureSourcePreviewRequest(source=_field_request(), at=at)
     )
     assert preview.ready_for_prepare, preview.errors
     assert paths == [claim_type_path(claim_type.identity.name)]
@@ -370,9 +370,9 @@ def test_source_ontology_lookup_reads_only_matching_definitions_and_preserves_am
 def test_source_prepare_uses_staged_claim_type_and_query_versions(tmp_path):
     from cruxible_client.contracts.artifacts import ArtifactLifecycle
     from cruxible_client.contracts.authoring.models import (
-        ChangeSetAuthoringPayloadV1,
-        ClaimTypeAuthoringPayloadV1,
-        QueryDefinitionAuthoringPayloadV1,
+        ChangeSetAuthoringPayload,
+        ClaimTypeAuthoringPayload,
+        QueryDefinitionAuthoringPayload,
     )
     from cruxible_client.contracts.claim_types import claim_type_digest
     from cruxible_client.contracts.procedures.artifacts import parse_procedure, procedure_path
@@ -412,11 +412,11 @@ def test_source_prepare_uses_staged_claim_type_and_query_versions(tmp_path):
                     ),
                 }
             )
-        payload = ChangeSetAuthoringPayloadV1(
+        payload = ChangeSetAuthoringPayload(
             members=(
-                *((ClaimTypeAuthoringPayloadV1(claim_type=claim_type),) if not generation else ()),
+                *((ClaimTypeAuthoringPayload(claim_type=claim_type),) if not generation else ()),
                 _source_payload(request),
-                QueryDefinitionAuthoringPayloadV1(query_definition=query),
+                QueryDefinitionAuthoringPayload(query_definition=query),
             )
         )
         before = instance.accepted_coordinate()
@@ -447,7 +447,7 @@ def test_source_prepare_uses_staged_claim_type_and_query_versions(tmp_path):
 
 
 def test_source_same_changeset_child_procedure_remains_unresolved(tmp_path):
-    from cruxible_client.contracts.authoring.models import ChangeSetAuthoringPayloadV1
+    from cruxible_client.contracts.authoring.models import ChangeSetAuthoringPayload
     from cruxible_client.contracts.procedures.source_requests import SourceProcedureSelection
     from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
     from cruxible_core.proposals.proposals import AuthenticatedActor
@@ -462,7 +462,7 @@ def test_source_same_changeset_child_procedure_remains_unresolved(tmp_path):
     )
     result = coordinator.compile(
         actor=AuthenticatedActor(actor_id="owner"),
-        payload=ChangeSetAuthoringPayloadV1(
+        payload=ChangeSetAuthoringPayload(
             members=(_source_payload(child), _source_payload(parent))
         ),
         canonical_timestamp="2026-08-21T12:00:00.000000Z",

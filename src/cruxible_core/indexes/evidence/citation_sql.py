@@ -22,9 +22,9 @@ from cruxible_client.contracts.claims import claim_citation_references, parse_cl
 from cruxible_client.contracts.errors import ProjectionFormatError
 from cruxible_client.contracts.projection_extensions import ProjectionFact
 from cruxible_client.contracts.source_references import (
-    CasSourceReferenceV1,
-    ExternalSourceReferenceV1,
-    LedgerSourceReferenceV1,
+    CasSourceReference,
+    ExternalSourceReference,
+    LedgerSourceReference,
 )
 from cruxible_core.evidence.citation_relations import (
     _conflict_group_facts,
@@ -104,9 +104,9 @@ def _insert_capture(
         # candidate selection; accepted conflict findings do not depend on CAS.
         start_decimal, end_decimal = str(start), str(end)
         start = end = None
-    external = source if isinstance(source, ExternalSourceReferenceV1) else None
-    ledger = source if isinstance(source, LedgerSourceReferenceV1) else None
-    cas = source if isinstance(source, CasSourceReferenceV1) else None
+    external = source if isinstance(source, ExternalSourceReference) else None
+    ledger = source if isinstance(source, LedgerSourceReference) else None
+    cas = source if isinstance(source, CasSourceReference) else None
     connection.execute(
         "INSERT OR IGNORE INTO source_references VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
@@ -274,7 +274,7 @@ def populate_citations(
                     ),
                 )
                 groups = [("capture", digest)]
-                if isinstance(envelope.source, ExternalSourceReferenceV1):
+                if isinstance(envelope.source, ExternalSourceReference):
                     groups.append(
                         ("exact_external", external_source_relation_subject(envelope.source))
                     )

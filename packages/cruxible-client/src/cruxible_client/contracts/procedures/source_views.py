@@ -44,7 +44,7 @@ def expanded_model_schema(model: type[BaseModel]) -> dict[str, Any]:
 
 def query_view_schema() -> ContractSchema:
     from cruxible_client.contracts.projection import AcceptedProjectionCoordinate
-    from cruxible_client.contracts.query.results import ClaimQueryResultV1, QueryExecutionReceiptV1
+    from cruxible_client.contracts.query.results import ClaimQueryResult, QueryExecutionReceipt
 
     return ContractSchema(
         fields={
@@ -54,13 +54,13 @@ def query_view_schema() -> ContractSchema:
             "definition_path": PropertySchema(type="string"),
             "definition_digest": PropertySchema(type="string"),
             "receipt": PropertySchema(
-                type="json", json_schema=expanded_model_schema(QueryExecutionReceiptV1)
+                type="json", json_schema=expanded_model_schema(QueryExecutionReceipt)
             ),
             "completed": PropertySchema(type="bool"),
             "truncated": PropertySchema(type="bool"),
             "has_conflicts": PropertySchema(type="bool"),
             "result": PropertySchema(
-                type="json", json_schema=expanded_model_schema(ClaimQueryResultV1)
+                type="json", json_schema=expanded_model_schema(ClaimQueryResult)
             ),
         }
     )

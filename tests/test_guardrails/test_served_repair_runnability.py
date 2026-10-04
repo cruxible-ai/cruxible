@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from cruxible_client.contracts.authoring.models import PlaybillBlockSyncItemV1
-from cruxible_client.contracts.procedures.results import ProcedureAdmissionRefusalV1
+from cruxible_client.contracts.authoring.models import PlaybillBlockSyncItem
+from cruxible_client.contracts.procedures.results import ProcedureAdmissionRefusal
 from cruxible_client.contracts.repairs import (
     DECLARED_HAND_EDIT_CHANGES,
     UNDECLARED_HAND_EDIT_CHANGE,
-    HandEditRepairV1,
-    RepairOperationV1,
-    ServedRepairEnvelopeV1,
+    HandEditRepair,
+    RepairOperation,
+    ServedRepairEnvelope,
 )
 from cruxible_core.cli.main import CLI_COMMANDS, LazyCommandSpec
 from cruxible_core.service.refusals import (
@@ -38,8 +38,8 @@ def test_every_registered_refusal_resolves_without_prose_parsing() -> None:
 
     for code in ALL_SERVED_REFUSAL_CODES:
         repair = repair_for_refusal(code)
-        assert ServedRepairEnvelopeV1(repair=repair).repair == repair
-        if isinstance(repair, HandEditRepairV1):
+        assert ServedRepairEnvelope(repair=repair).repair == repair
+        if isinstance(repair, HandEditRepair):
             assert repair.hand_edit.target == f"refusal/{code}"
             assert repair.hand_edit.required_change
 
@@ -51,7 +51,7 @@ def test_every_runnable_repair_names_a_command_the_cli_actually_serves() -> None
     assert "playbill.line.run" in leaves  # the map really is the served inventory
     for code, repair in RUNNABLE_REFUSAL_REPAIRS.items():
         assert code in ALL_SERVED_REFUSAL_CODES, code
-        assert isinstance(repair, RepairOperationV1)
+        assert isinstance(repair, RepairOperation)
         assert repair.operation in leaves, f"{code} names unserved command {repair.operation}"
 
 
@@ -63,12 +63,12 @@ def test_server_envelope_repairs_name_commands_the_cli_actually_serves() -> None
 
     leaves = _cli_leaves(CLI_COMMANDS)
     scope = _repair_for_error(DaemonOperationScopeError("cruxible_server_info", "inst_a"))
-    assert isinstance(scope, RepairOperationV1)
+    assert isinstance(scope, RepairOperation)
     assert scope.operation in leaves
     assert scope.arguments["refused_operation"] == "cruxible_server_info"
 
     unauthenticated = _repair_for_error(AuthenticationError("no credential"))
-    assert isinstance(unauthenticated, RepairOperationV1)
+    assert isinstance(unauthenticated, RepairOperation)
     assert unauthenticated.operation in leaves
 
     from typing import get_args
@@ -77,23 +77,23 @@ def test_server_envelope_repairs_name_commands_the_cli_actually_serves() -> None
 
     for code in get_args(BootstrapClaimRefusalCode):
         bootstrap = _repair_for_error(BootstrapClaimRefusedError(code, instance_id="inst_a"))
-        assert isinstance(bootstrap, RepairOperationV1)
+        assert isinstance(bootstrap, RepairOperation)
         assert bootstrap.operation in leaves, code
 
 
 def test_the_served_refusal_models_read_the_declared_change() -> None:
     """A producer that carries no repair still projects the declared change."""
 
-    from cruxible_client.contracts.procedures.results import ProcedureNodeRefusalV1
+    from cruxible_client.contracts.procedures.results import ProcedureNodeRefusal
 
-    refusal = ProcedureNodeRefusalV1.model_validate(
+    refusal = ProcedureNodeRefusal.model_validate(
         {
             "code": "proposal_target_paths_mismatch",
             "message": "the candidate scope differs from its admission",
             "node_id": "propose",
         }
     )
-    assert isinstance(refusal.repair, HandEditRepairV1)
+    assert isinstance(refusal.repair, HandEditRepair)
     assert (
         refusal.repair.hand_edit.required_change
         == (DECLARED_HAND_EDIT_CHANGES["proposal_target_paths_mismatch"])
@@ -118,7 +118,7 @@ def test_undeclared_repair_debt_is_pinned_and_can_only_shrink() -> None:
     assert len(undeclared) == UNDECLARED_REFUSAL_CODE_COUNT
     for code in undeclared:
         repair = repair_for_refusal(code)
-        assert isinstance(repair, HandEditRepairV1)
+        assert isinstance(repair, HandEditRepair)
         assert repair.hand_edit.required_change == UNDECLARED_HAND_EDIT_CHANGE
 
 
@@ -131,18 +131,16 @@ def test_unregistered_free_string_is_not_promoted_to_authority() -> None:
         raise AssertionError("free diagnostic prose entered the v1 refusal catalog")
 
 
-def _admission_refusal_repair(code: str) -> RepairOperationV1 | HandEditRepairV1:
+def _admission_refusal_repair(code: str) -> RepairOperation | HandEditRepair:
     """Build the served admission refusal exactly as a producer that carries none."""
 
-    return ProcedureAdmissionRefusalV1.model_validate({"code": code, "message": "refused"}).repair
+    return ProcedureAdmissionRefusal.model_validate({"code": code, "message": "refused"}).repair
 
 
-def _block_sync_repair(code: str) -> RepairOperationV1 | HandEditRepairV1:
+def _block_sync_repair(code: str) -> RepairOperation | HandEditRepair:
     """Build the served block-sync item exactly as a producer that carries none."""
 
-    item = PlaybillBlockSyncItemV1.model_validate(
-        {"path": ".", "outcome": "refused", "reason": code}
-    )
+    item = PlaybillBlockSyncItem.model_validate({"path": ".", "outcome": "refused", "reason": code})
     assert item.repair is not None
     return item.repair
 
@@ -195,12 +193,12 @@ def test_every_runnable_repair_reaches_a_live_wire_response() -> None:
             seen[code] = "block_sync"
         elif "prediction_refusal" in owners:
             built = _prediction_refusal_repair(code)
-            assert isinstance(built, RepairOperationV1), code
+            assert isinstance(built, RepairOperation), code
             assert built.operation == declared.operation, code
             seen[code] = "prediction_refusal"
         elif "procedure_measurement_refusal" in owners:
             built = _measurement_refusal_repair(code)
-            assert isinstance(built, RepairOperationV1), code
+            assert isinstance(built, RepairOperation), code
             assert built.operation == declared.operation, code
             seen[code] = "procedure_measurement_refusal"
         elif "playbill_next_refusal" in owners:

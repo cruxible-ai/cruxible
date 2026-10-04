@@ -10,11 +10,11 @@ from typing import Literal
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import CanonicalValue, canonical_bytes
 from cruxible_client.contracts.provider_interfaces import (
-    ProviderBucketClassV1,
-    ProviderBucketConformanceFixtureProofV1,
-    ProviderBucketConformanceFixtureV1,
-    ProviderBucketDimensionV1,
-    ProviderBucketVocabularyV1,
+    ProviderBucketClass,
+    ProviderBucketConformanceFixture,
+    ProviderBucketConformanceFixtureProof,
+    ProviderBucketDimension,
+    ProviderBucketVocabulary,
     ProviderInterfaceRegistrationV1,
     provider_bucket_classifier_digest,
     provider_bucket_fixture_digest,
@@ -23,10 +23,10 @@ from cruxible_client.contracts.provider_interfaces import (
     provider_external_interface_definition_digest,
 )
 from cruxible_client.contracts.providers import (
-    ProviderDistributionRefV1,
+    ProviderDistributionRef,
     ProviderImplementationManifestV1,
-    ProviderLocalDistributionPinV1,
-    ProviderLocalEnvBackendPinV1,
+    ProviderLocalDistributionPin,
+    ProviderLocalEnvBackendPin,
     ProviderRuntimeArtifactPayloadV1,
     ProviderRuntimeManifestV1,
     ProviderV2,
@@ -115,8 +115,8 @@ WORKSPACE_FILE_INTERFACE_PREIMAGE: dict[str, object] = {
 }
 
 
-def _vocabulary() -> ProviderBucketVocabularyV1:
-    return ProviderBucketVocabularyV1(
+def _vocabulary() -> ProviderBucketVocabulary:
+    return ProviderBucketVocabulary(
         interface_id=WORKSPACE_FILE_INTERFACE_ID,
         status="accepted",
         description=(
@@ -126,15 +126,15 @@ def _vocabulary() -> ProviderBucketVocabularyV1:
             "visibly a different bucket from a claim over a small one."
         ),
         dimensions=(
-            ProviderBucketDimensionV1(
+            ProviderBucketDimension(
                 name="content_kind",
                 description="whether the bytes decode as text",
                 classes=(
-                    ProviderBucketClassV1(
+                    ProviderBucketClass(
                         id="text",
                         description="strict UTF-8 with no NUL byte; an empty file is text",
                     ),
-                    ProviderBucketClassV1(
+                    ProviderBucketClass(
                         id="binary",
                         description=(
                             "anything that is not strict UTF-8, or that carries a NUL byte"
@@ -142,16 +142,14 @@ def _vocabulary() -> ProviderBucketVocabularyV1:
                     ),
                 ),
             ),
-            ProviderBucketDimensionV1(
+            ProviderBucketDimension(
                 name="byte_size",
                 description="length of the decoded bytes",
                 classes=(
-                    ProviderBucketClassV1(id="tiny", description="at most 4096 bytes (4 KiB)"),
-                    ProviderBucketClassV1(id="small", description="4097 to 65536 bytes (64 KiB)"),
-                    ProviderBucketClassV1(
-                        id="medium", description="65537 to 1048576 bytes (1 MiB)"
-                    ),
-                    ProviderBucketClassV1(
+                    ProviderBucketClass(id="tiny", description="at most 4096 bytes (4 KiB)"),
+                    ProviderBucketClass(id="small", description="4097 to 65536 bytes (64 KiB)"),
+                    ProviderBucketClass(id="medium", description="65537 to 1048576 bytes (1 MiB)"),
+                    ProviderBucketClass(
                         id="large",
                         description=("more than 1048576 bytes (1 MiB); unclaimed by the built-in"),
                     ),
@@ -209,9 +207,9 @@ def _byte_size(length: int) -> str:
     return "large"
 
 
-def _fixture(fixture_id: str, data: bytes) -> ProviderBucketConformanceFixtureV1:
+def _fixture(fixture_id: str, data: bytes) -> ProviderBucketConformanceFixture:
     bucket = f"content_kind={_content_kind(data)};byte_size={_byte_size(len(data))}"
-    return ProviderBucketConformanceFixtureV1(
+    return ProviderBucketConformanceFixture(
         fixture_id=fixture_id,
         canonical_input={
             "logical_source": f"fixtures/{fixture_id}",
@@ -232,7 +230,7 @@ WORKSPACE_FILE_FIXTURES = tuple(
 WORKSPACE_FILE_CONFORMANCE_PROOFS = tuple(
     sorted(
         (
-            ProviderBucketConformanceFixtureProofV1(
+            ProviderBucketConformanceFixtureProof(
                 selector=fixture.measured_bucket_id,
                 fixture_id=fixture.fixture_id,
                 fixture_digest=provider_bucket_fixture_digest(fixture),
@@ -357,7 +355,7 @@ def workspace_file_provider(
     )
     manifest = ProviderRuntimeManifestV1(
         provider_id=WORKSPACE_FILE_PROVIDER_ID,
-        distribution=ProviderDistributionRefV1(name="cruxible-provider-workspace", version="0.1.0"),
+        distribution=ProviderDistributionRef(name="cruxible-provider-workspace", version="0.1.0"),
         supported_protocol_majors=(1,),
         implementations=(implementation,),
     )
@@ -366,13 +364,13 @@ def workspace_file_provider(
         status="accepted",
         manifest=manifest,
         manifest_digest=provider_manifest_digest(manifest),
-        distribution=ProviderLocalDistributionPinV1(
+        distribution=ProviderLocalDistributionPin(
             name="cruxible-provider-workspace",
             version="0.1.0",
             filename="cruxible_provider_workspace-0.1.0-py3-none-any.whl",
             sha256=WORKSPACE_FILE_WHEEL_DIGEST,
         ),
-        local_env=ProviderLocalEnvBackendPinV1(
+        local_env=ProviderLocalEnvBackendPin(
             lock_sha256=WORKSPACE_FILE_LOCK_DIGEST,
             materialization_digests=dict(WORKSPACE_FILE_SEED_MANIFEST.materialization_digests),
         ),

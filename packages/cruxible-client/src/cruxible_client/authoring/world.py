@@ -61,7 +61,7 @@ from cruxible_client.contracts.claim_type_structure import (
     check_claim_type_structure,
 )
 from cruxible_client.contracts.claim_types import (
-    ClaimTypeMemberDescriptionV1,
+    ClaimTypeMemberDescription,
     EvidenceRequirement,
     RevisionEvidence,
 )
@@ -71,7 +71,7 @@ from cruxible_client.contracts.records import RecordConstructor
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from cruxible_client.authoring.compact_query import CompactQuery
     from cruxible_client.authoring.sdk import ClaimView, Playbill, SubjectDraft
-    from cruxible_client.contracts.compact_query import PlaybillQueryClaimValueV1
+    from cruxible_client.contracts.compact_query import PlaybillQueryClaimValue
     from cruxible_client.contracts.write import (
         Change,
         Evidence,
@@ -283,7 +283,7 @@ class _Meaning:
     """
 
     description: str | None = None
-    member_descriptions: tuple[ClaimTypeMemberDescriptionV1, ...] = ()
+    member_descriptions: tuple[ClaimTypeMemberDescription, ...] = ()
     default_role: ClaimRole | None = None
     evidence_requirement: EvidenceRequirement = "self"
     revision_evidence: RevisionEvidence = "accumulate"
@@ -309,7 +309,7 @@ class WorldClaimType(ClaimTypeRef):
     literal_schema: dict[str, object] | None
     #: What the predicate means (ClaimType v7), and what each enum member means.
     description: str | None
-    member_descriptions: tuple[ClaimTypeMemberDescriptionV1, ...]
+    member_descriptions: tuple[ClaimTypeMemberDescription, ...]
     #: The role a write takes when it names none.
     default_role: ClaimRole | None
     #: What backs a Claim: ``none``, ``self`` (before v7) or ``captured``.
@@ -947,12 +947,12 @@ class World:
         else changed it.
         """
 
-        from cruxible_client.contracts.write import PlaybillWriteRequestV1
+        from cruxible_client.contracts.write import PlaybillWriteRequest
 
         if not changes:
             raise TypeError("a write needs at least one field=value")
         outcome = self._playbill._write(
-            PlaybillWriteRequestV1(
+            PlaybillWriteRequest(
                 because=because,
                 changes=tuple(changes),
                 dry_run=dry_run,
@@ -1126,7 +1126,7 @@ class World:
     def _live_subject_ids(self, subject_kind: str) -> list[str]:
         from cruxible_client.contracts.compact_query import (
             PLAYBILL_QUERY_MAX_LIMIT,
-            PlaybillQueryRequestV1,
+            PlaybillQueryRequest,
         )
 
         playbill = self._playbill
@@ -1138,7 +1138,7 @@ class World:
             while True:
                 page = playbill._client.query_playbill(
                     playbill._instance_id,
-                    request=PlaybillQueryRequestV1.model_validate(
+                    request=PlaybillQueryRequest.model_validate(
                         {
                             "kind": subject_kind,
                             "select": ("subject_id",),
@@ -1212,7 +1212,7 @@ class World:
         """
         from datetime import datetime
 
-        from cruxible_client.contracts.claim_reads import ClaimReadBatchRequestV1
+        from cruxible_client.contracts.claim_reads import ClaimReadBatchRequest
 
         self._assert_current()
         if max_claims < 1:
@@ -1229,7 +1229,7 @@ class World:
         )
         paths = tuple(f"subjects/{address}.json" for address in addresses)
         names = tuple(ref.address if isinstance(ref, ClaimTypeRef) else ref for ref in predicates)
-        request = ClaimReadBatchRequestV1.model_validate(
+        request = ClaimReadBatchRequest.model_validate(
             {
                 "at": self._coordinate.model_dump(mode="json"),
                 "subject_paths": paths,
@@ -1297,7 +1297,7 @@ class World:
         *,
         subjects: Sequence[str | SubjectRef],
         predicates: Sequence[str | ClaimTypeRef] = (),
-    ) -> tuple[PlaybillQueryClaimValueV1, ...]:
+    ) -> tuple[PlaybillQueryClaimValue, ...]:
         """Each live Claim's value, verdict and status for these Subjects, through ``query``.
 
         Lighter than ``prefetch`` when only values and verdicts are wanted: one
@@ -1326,7 +1326,7 @@ class World:
         # Every page is one answer: this World's coordinate and one evaluation
         # instant, however many Subject and predicate batches it takes.
         evaluation_time = playbill._evaluation_time()
-        values: list[PlaybillQueryClaimValueV1] = []
+        values: list[PlaybillQueryClaimValue] = []
         for kind, ids in by_kind.items():
             admitted = {full for group in self._leaf_map(kind).values() for full in group}
             select = sorted(admitted & names if names else admitted)
@@ -1349,21 +1349,21 @@ class World:
         select: Sequence[str],
         *,
         evaluation_time: str,
-    ) -> list[PlaybillQueryClaimValueV1]:
+    ) -> list[PlaybillQueryClaimValue]:
         """Every Claim value of one Subject and predicate batch, every page of it."""
         from cruxible_client.contracts.compact_query import (
             PLAYBILL_QUERY_MAX_LIMIT,
-            PlaybillQueryClaimValueV1,
-            PlaybillQueryRequestV1,
+            PlaybillQueryClaimValue,
+            PlaybillQueryRequest,
         )
 
         playbill = self._playbill
-        values: list[PlaybillQueryClaimValueV1] = []
+        values: list[PlaybillQueryClaimValue] = []
         cursor: str | None = None
         while True:
             page = playbill._client.query_playbill(
                 playbill._instance_id,
-                request=PlaybillQueryRequestV1.model_validate(
+                request=PlaybillQueryRequest.model_validate(
                     {
                         "kind": kind,
                         "where": [{"field": "subject_id", "in": list(ids)}],
@@ -1390,7 +1390,7 @@ class World:
             for row in page.rows:
                 for column, entries in (row.get("claims") or {}).items():
                     values.extend(
-                        PlaybillQueryClaimValueV1.model_validate(
+                        PlaybillQueryClaimValue.model_validate(
                             {**entry, "subject": row["subject"], "predicate": predicate_of[column]}
                         )
                         for entry in entries
@@ -1481,11 +1481,11 @@ def _meaning(envelope: Mapping[str, object]) -> _Meaning:
     """Read a ClaimType's v7 meaning; anything unreadable keeps the pre-v7 meaning."""
 
     description = envelope.get("description")
-    members: list[ClaimTypeMemberDescriptionV1] = []
+    members: list[ClaimTypeMemberDescription] = []
     raw_members = envelope.get("member_descriptions")
     for item in raw_members if isinstance(raw_members, list) else ():
         try:
-            members.append(ClaimTypeMemberDescriptionV1.model_validate(item))
+            members.append(ClaimTypeMemberDescription.model_validate(item))
         except ValueError:
             continue
     role = envelope.get("default_role")

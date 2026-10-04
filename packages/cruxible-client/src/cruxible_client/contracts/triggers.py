@@ -47,9 +47,9 @@ from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.procedures.windows import (
-    CaptureEventSelectorV1,
-    CaptureEventWindowV1,
-    ObservationWindowV1,
+    CaptureEventSelector,
+    CaptureEventWindow,
+    ObservationWindow,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
 
@@ -69,14 +69,14 @@ class _StrictTriggerModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
 
 
-class CadenceScheduleV1(_StrictTriggerModel):
+class CadenceSchedule(_StrictTriggerModel):
     """Fire one interval after the last fire; a new schedule fires on its first tick."""
 
     kind: Literal["cadence"] = "cadence"
     interval_seconds: int = Field(gt=0, description="Reads VALIDITY WINDOW.")
 
 
-class CronScheduleV1(_StrictTriggerModel):
+class CronSchedule(_StrictTriggerModel):
     """Fire at each instant a standard five-field cron expression names, in UTC.
 
     ``minute hour day-of-month month day-of-week``, always read as UTC: no host
@@ -110,59 +110,59 @@ class CronScheduleV1(_StrictTriggerModel):
         return data
 
 
-class CaptureLandingScheduleV1(_StrictTriggerModel):
+class CaptureLandingSchedule(_StrictTriggerModel):
     """Fire once for each retained Capture landing under one exact CaptureContract."""
 
     kind: Literal["capture_landing"] = "capture_landing"
-    event: CaptureEventSelectorV1
+    event: CaptureEventSelector
 
 
-class WindowCloseScheduleV1(_StrictTriggerModel):
+class WindowCloseSchedule(_StrictTriggerModel):
     """Fire when a fixed window, or a window anchored on a Capture landing, closes."""
 
     kind: Literal["window_close"] = "window_close"
-    window: ObservationWindowV1
+    window: ObservationWindow
 
 
-class GenerationAcceptedScheduleV1(_StrictTriggerModel):
+class GenerationAcceptedSchedule(_StrictTriggerModel):
     """Fire once at the latest accepted head after it moves, coalescing a burst."""
 
     kind: Literal["generation_accepted"] = "generation_accepted"
 
 
-TriggerScheduleV1: TypeAlias = Annotated[
-    CadenceScheduleV1
-    | CronScheduleV1
-    | CaptureLandingScheduleV1
-    | WindowCloseScheduleV1
-    | GenerationAcceptedScheduleV1,
+TriggerSchedule: TypeAlias = Annotated[
+    CadenceSchedule
+    | CronSchedule
+    | CaptureLandingSchedule
+    | WindowCloseSchedule
+    | GenerationAcceptedSchedule,
     Field(discriminator="kind"),
 ]
 
 
-def schedule_is_timed(schedule: TriggerScheduleV1) -> bool:
+def schedule_is_timed(schedule: TriggerSchedule) -> bool:
     """Whether a schedule fires on time alone rather than on a Capture or window.
 
     Every kind is named: a kind added later fails here until it is classified,
     never falling through as one or the other.
     """
 
-    if isinstance(schedule, CadenceScheduleV1 | CronScheduleV1):
+    if isinstance(schedule, CadenceSchedule | CronSchedule):
         return True
     if isinstance(
-        schedule, CaptureLandingScheduleV1 | WindowCloseScheduleV1 | GenerationAcceptedScheduleV1
+        schedule, CaptureLandingSchedule | WindowCloseSchedule | GenerationAcceptedSchedule
     ):
         return False
     raise TriggerFormatError(f"unsupported Trigger schedule kind {schedule.kind!r}")
 
 
-class NoTriggerInputV1(_StrictTriggerModel):
+class NoTriggerInput(_StrictTriggerModel):
     """The target needs no event, so every schedule satisfies it."""
 
     kind: Literal["none"] = "none"
 
 
-class CaptureEventInputV1(_StrictTriggerModel):
+class CaptureEventInput(_StrictTriggerModel):
     """The target needs a Capture event: its Trigger's schedule must fire on one.
 
     ``event`` names the exact event when only that one is acceptable, as for a
@@ -170,11 +170,11 @@ class CaptureEventInputV1(_StrictTriggerModel):
     """
 
     kind: Literal["capture_event"] = "capture_event"
-    event: CaptureEventSelectorV1 | None = None
+    event: CaptureEventSelector | None = None
 
 
-TriggerInputV1: TypeAlias = Annotated[
-    NoTriggerInputV1 | CaptureEventInputV1,
+TriggerInputRecord: TypeAlias = Annotated[
+    NoTriggerInput | CaptureEventInput,
     Field(discriminator="kind"),
 ]
 
@@ -190,7 +190,7 @@ class InternalActionSpec:
 
     name: str
     #: The event a fire must carry; the Trigger law checks the schedule supplies it.
-    input: TriggerInputV1
+    input: TriggerInputRecord
     #: What performing the action may change, never governed state.
     effect: Literal["findings", "workspace_output"]
     #: The consumer kind and part that follow this action's fires.
@@ -204,21 +204,21 @@ INTERNAL_ACTIONS: Final[Mapping[str, InternalActionSpec]] = MappingProxyType(
         for spec in (
             InternalActionSpec(
                 name="floor.refresh",
-                input=NoTriggerInputV1(),
+                input=NoTriggerInput(),
                 effect="workspace_output",
                 consumer="floor",
                 part="deliver",
             ),
             InternalActionSpec(
                 name="evidence.sweep",
-                input=NoTriggerInputV1(),
+                input=NoTriggerInput(),
                 effect="findings",
                 consumer="next",
                 part="evidence",
             ),
             InternalActionSpec(
                 name="prediction.anchor_retry",
-                input=NoTriggerInputV1(),
+                input=NoTriggerInput(),
                 effect="findings",
                 consumer="next",
                 part="prediction",
@@ -241,53 +241,53 @@ InternalActionName: TypeAlias = Annotated[
 ]
 
 
-class LineTargetV1(_StrictTriggerModel):
+class LineTarget(_StrictTriggerModel):
     """Run one Line, whatever version of it is accepted when the Trigger fires."""
 
     kind: Literal["line"] = "line"
     line: ArtifactRef
 
     @model_validator(mode="after")
-    def _line(self) -> LineTargetV1:
+    def _line(self) -> LineTarget:
         if self.line.role != TRIGGER_LINE_REF_ROLE or self.line.target.kind != "Line":
             raise ValueError("a Line target is a role=line reference to a Line identity")
         return self
 
 
-class ActionTargetV1(_StrictTriggerModel):
+class ActionTarget(_StrictTriggerModel):
     """Fire one internal action; the worker that owns it follows its fires."""
 
     kind: Literal["action"] = "action"
     action: InternalActionName
 
 
-TriggerTargetV1: TypeAlias = Annotated[
-    LineTargetV1 | ActionTargetV1,
+TriggerTarget: TypeAlias = Annotated[
+    LineTarget | ActionTarget,
     Field(discriminator="kind"),
 ]
 
 
-def schedule_capture_selector(schedule: TriggerScheduleV1) -> CaptureEventSelectorV1 | None:
+def schedule_capture_selector(schedule: TriggerSchedule) -> CaptureEventSelector | None:
     """The exact Capture event a schedule fires on, if it fires on one."""
 
-    if isinstance(schedule, CaptureLandingScheduleV1):
+    if isinstance(schedule, CaptureLandingSchedule):
         return schedule.event
-    if isinstance(schedule, WindowCloseScheduleV1):
+    if isinstance(schedule, WindowCloseSchedule):
         window = schedule.window
-        return window.event if isinstance(window, CaptureEventWindowV1) else None
-    if schedule_is_timed(schedule) or isinstance(schedule, GenerationAcceptedScheduleV1):
+        return window.event if isinstance(window, CaptureEventWindow) else None
+    if schedule_is_timed(schedule) or isinstance(schedule, GenerationAcceptedSchedule):
         return None
     raise TriggerFormatError(f"unsupported Trigger schedule kind {schedule.kind!r}")
 
 
-def schedule_satisfies_input(schedule: TriggerScheduleV1, required: TriggerInputV1) -> bool:
+def schedule_satisfies_input(schedule: TriggerSchedule, required: TriggerInputRecord) -> bool:
     """Whether every fire of ``schedule`` carries the event ``required`` names.
 
     The one rule for every target: a Line's accepted event and an internal
     action's declared input are both judged here.
     """
 
-    if isinstance(required, NoTriggerInputV1):
+    if isinstance(required, NoTriggerInput):
         return True
     selector = schedule_capture_selector(schedule)
     return selector is not None and (required.event is None or selector == required.event)
@@ -301,7 +301,7 @@ def _pin_key(pin: ArtifactPin) -> tuple[bytes, bytes, bytes]:
     )
 
 
-def trigger_schedule_pins(schedule: TriggerScheduleV1) -> tuple[ArtifactPin, ...]:
+def trigger_schedule_pins(schedule: TriggerSchedule) -> tuple[ArtifactPin, ...]:
     """The exact pins a schedule requires: the CaptureContract an event names."""
 
     selector = schedule_capture_selector(schedule)
@@ -316,18 +316,18 @@ def trigger_schedule_pins(schedule: TriggerScheduleV1) -> tuple[ArtifactPin, ...
     )
 
 
-class TriggerV1(_StrictTriggerModel):
+class Trigger(_StrictTriggerModel):
     """One schedule and the one Line or internal action it sets off."""
 
     artifact_format: Literal["playbill-trigger-v1"] = "playbill-trigger-v1"
     identity: ArtifactIdentity
-    schedule: TriggerScheduleV1
-    target: TriggerTargetV1
+    schedule: TriggerSchedule
+    target: TriggerTarget
     pins: tuple[ArtifactPin, ...] = ()
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
 
     @model_validator(mode="after")
-    def _shape(self) -> TriggerV1:
+    def _shape(self) -> Trigger:
         if self.identity.kind != "Trigger" or not _TRIGGER_NAME_RE.fullmatch(self.identity.name):
             raise ValueError("Trigger identity must be path-addressable and kind Trigger")
         # The pins are exactly what the schedule names, so closure moves a
@@ -338,11 +338,11 @@ class TriggerV1(_StrictTriggerModel):
 
     @property
     def line(self) -> ArtifactIdentity | None:
-        return self.target.line.target if isinstance(self.target, LineTargetV1) else None
+        return self.target.line.target if isinstance(self.target, LineTarget) else None
 
     @property
     def action(self) -> str | None:
-        return self.target.action if isinstance(self.target, ActionTargetV1) else None
+        return self.target.action if isinstance(self.target, ActionTarget) else None
 
 
 def trigger_path(name: str) -> str:
@@ -351,11 +351,11 @@ def trigger_path(name: str) -> str:
     return f"triggers/{name}.json"
 
 
-def render_trigger(trigger: TriggerV1) -> bytes:
+def render_trigger(trigger: Trigger) -> bytes:
     return pretty_canonical_bytes(trigger.model_dump(mode="json"))
 
 
-def trigger_digest(trigger: TriggerV1) -> ArtifactDigest:
+def trigger_digest(trigger: Trigger) -> ArtifactDigest:
     return typed_digest(
         ArtifactDigest, "playbill-trigger-artifact-v1", trigger.model_dump(mode="json")
     )
@@ -363,9 +363,9 @@ def trigger_digest(trigger: TriggerV1) -> ArtifactDigest:
 
 def parse_trigger(
     content: bytes, *, path: str, codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC
-) -> TriggerV1:
+) -> Trigger:
     try:
-        trigger = TriggerV1.model_validate(json.loads(content))
+        trigger = Trigger.model_validate(json.loads(content))
     except (UnicodeDecodeError, ValueError) as exc:
         raise TriggerFormatError("Trigger failed strict validation") from exc
     if not artifact_path_matches(trigger_path(trigger.identity.name), path, codec=codec):
@@ -375,13 +375,13 @@ def parse_trigger(
     return trigger
 
 
-class AcceptedTriggerV1(_StrictTriggerModel):
+class AcceptedTrigger(_StrictTriggerModel):
     path: str
-    trigger: TriggerV1
+    trigger: Trigger
     artifact_digest: str
 
     @model_validator(mode="after")
-    def _binding(self) -> AcceptedTriggerV1:
+    def _binding(self) -> AcceptedTrigger:
         if self.path != trigger_path(self.trigger.identity.name):
             raise ValueError("accepted Trigger path does not reproduce")
         if self.artifact_digest != trigger_digest(self.trigger).tagged:
@@ -389,7 +389,7 @@ class AcceptedTriggerV1(_StrictTriggerModel):
         return self
 
 
-class TriggerLawResultV1(_StrictTriggerModel):
+class TriggerLawResult(_StrictTriggerModel):
     verdict: Literal["accepted", "refused"]
     artifact_digest: str | None = None
     required_tier: PermissionTier | None = None
@@ -403,8 +403,8 @@ class TriggerLawResultV1(_StrictTriggerModel):
         return value
 
 
-def _refusal(code: str, message: str, *, path: str) -> TriggerLawResultV1:
-    return TriggerLawResultV1(
+def _refusal(code: str, message: str, *, path: str) -> TriggerLawResult:
+    return TriggerLawResult(
         verdict="refused",
         diagnostics=(
             CompilerDiagnostic(
@@ -418,14 +418,14 @@ def _refusal(code: str, message: str, *, path: str) -> TriggerLawResultV1:
 
 
 def evaluate_trigger_law(
-    trigger: TriggerV1,
+    trigger: Trigger,
     *,
     path: str,
-    predecessor: AcceptedTriggerV1 | None,
+    predecessor: AcceptedTrigger | None,
     target_line_live: bool | None = None,
-    target_line_input: TriggerInputV1 | None = None,
+    target_line_input: TriggerInputRecord | None = None,
     actions: Mapping[str, InternalActionSpec] = INTERNAL_ACTIONS,
-) -> TriggerLawResultV1:
+) -> TriggerLawResult:
     """Judge one Trigger against its predecessor and what it aims at.
 
     ``target_line_live`` is whether the named Line is live in the final
@@ -469,7 +469,7 @@ def evaluate_trigger_law(
                 path=path,
             )
     if trigger.lifecycle.state == "live":
-        if isinstance(trigger.schedule, CronScheduleV1):
+        if isinstance(trigger.schedule, CronSchedule):
             try:
                 parse_cron(trigger.schedule.expression)
             except CronExpressionError as exc:
@@ -479,7 +479,7 @@ def evaluate_trigger_law(
                     "day-of-month month day-of-week) of numbers, ranges, steps or lists.",
                     path=path,
                 )
-        if isinstance(trigger.target, ActionTargetV1):
+        if isinstance(trigger.target, ActionTarget):
             spec = actions.get(trigger.target.action)
             if spec is None:
                 return _refusal(
@@ -490,7 +490,7 @@ def evaluate_trigger_law(
                 )
             if not (
                 schedule_is_timed(trigger.schedule)
-                or isinstance(trigger.schedule, GenerationAcceptedScheduleV1)
+                or isinstance(trigger.schedule, GenerationAcceptedSchedule)
             ):
                 return _refusal(
                     "playbill.trigger.schedule_unsupported_for_action",
@@ -511,9 +511,9 @@ def evaluate_trigger_law(
                     path=path,
                 )
             target = f"Line {trigger.target.line.target.qualified!r}"
-            required = target_line_input or NoTriggerInputV1()
+            required = target_line_input or NoTriggerInput()
         if not schedule_satisfies_input(trigger.schedule, required):
-            assert isinstance(required, CaptureEventInputV1)
+            assert isinstance(required, CaptureEventInput)
             needed = (
                 "its declared trigger_event exactly"
                 if required.event is not None
@@ -525,7 +525,7 @@ def evaluate_trigger_law(
                 "fire on it.",
                 path=path,
             )
-    return TriggerLawResultV1(
+    return TriggerLawResult(
         verdict="accepted",
         artifact_digest=trigger_digest(trigger).tagged,
         required_tier="governed_write",
@@ -536,28 +536,28 @@ __all__ = [
     "INTERNAL_ACTIONS",
     "TRIGGER_CAPTURE_CONTRACT_PIN_ROLE",
     "TRIGGER_LINE_REF_ROLE",
-    "AcceptedTriggerV1",
-    "ActionTargetV1",
-    "CadenceScheduleV1",
-    "CaptureEventInputV1",
-    "CaptureLandingScheduleV1",
-    "CronScheduleV1",
+    "AcceptedTrigger",
+    "ActionTarget",
+    "CadenceSchedule",
+    "CaptureEventInput",
+    "CaptureLandingSchedule",
+    "CronSchedule",
     "InternalActionName",
     "InternalActionSpec",
-    "LineTargetV1",
-    "NoTriggerInputV1",
+    "LineTarget",
+    "NoTriggerInput",
     "TriggerFormatError",
-    "TriggerInputV1",
-    "TriggerLawResultV1",
-    "TriggerScheduleV1",
-    "TriggerTargetV1",
-    "TriggerV1",
-    "WindowCloseScheduleV1",
+    "TriggerInputRecord",
+    "TriggerLawResult",
+    "TriggerSchedule",
+    "TriggerTarget",
+    "Trigger",
+    "WindowCloseSchedule",
     "evaluate_trigger_law",
     "parse_trigger",
     "render_trigger",
     "schedule_capture_selector",
-    "GenerationAcceptedScheduleV1",
+    "GenerationAcceptedSchedule",
     "schedule_is_timed",
     "schedule_satisfies_input",
     "trigger_digest",

@@ -7,10 +7,10 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from cruxible_client.contracts.procedures.models import (
-    ProcedureBudgetV3,
-    ProcedureDefinitionV6,
-    ProcedureHardCapsV3,
-    ProcedureNodeV6,
+    ProcedureBudget,
+    ProcedureDefinition,
+    ProcedureHardCaps,
+    ProcedureNode,
 )
 from cruxible_client.contracts.procedures.source_program import (
     SourceContract,
@@ -46,7 +46,7 @@ SourceSelection = Annotated[
 ]
 
 
-class ProcedureSourceRequestV1(_Closed):
+class ProcedureSourceRequest(_Closed):
     source_format: Literal["cruxible.procedure-source-request.v1"] = (
         "cruxible.procedure-source-request.v1"
     )
@@ -59,21 +59,21 @@ class ProcedureSourceRequestV1(_Closed):
     output: SourceContract
     contracts: dict[str, SourceContract]
     bindings: dict[str, SourceSelection] = Field(default_factory=dict)
-    budget: ProcedureBudgetV3
-    hard_caps: ProcedureHardCapsV3
+    budget: ProcedureBudget
+    hard_caps: ProcedureHardCaps
     description: str | None = None
 
 
-class ProcedureSourcePreviewRequestV1(_Closed):
-    source: ProcedureSourceRequestV1
+class ProcedureSourcePreviewRequest(_Closed):
+    source: ProcedureSourceRequest
     at: AcceptedCoordinate
 
 
-class ProcedureSourcePreviewV1(_Closed):
+class ProcedureSourcePreview(_Closed):
     model_config = ConfigDict(extra="forbid", frozen=True, json_schema_mode_override="validation")
     name: str
     coordinate: AcceptedCoordinate
-    definition: ProcedureDefinitionV6 | None = None
+    definition: ProcedureDefinition | None = None
     contracts: tuple[SourceContract, ...] = ()
     source_map: tuple[SourceMapEntry, ...] = ()
     errors: tuple[SourceDiagnostic, ...] = ()
@@ -87,7 +87,7 @@ class ProcedureSourcePreviewV1(_Closed):
         return self.definition is not None and not self.errors
 
     @property
-    def nodes(self) -> tuple[ProcedureNodeV6, ...]:
+    def nodes(self) -> tuple[ProcedureNode, ...]:
         return () if self.definition is None else self.definition.nodes
 
     @property

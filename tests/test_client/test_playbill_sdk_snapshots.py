@@ -9,7 +9,7 @@ import pytest
 from cruxible_client import Playbill
 from cruxible_client import contracts as api
 from cruxible_client.authoring.sdk_types import ClaimRef, ProcedureSlotRef
-from cruxible_client.contracts.claim_reads import ClaimReadBatchResultV1
+from cruxible_client.contracts.claim_reads import ClaimReadBatchResult
 from cruxible_client.contracts.projection import AcceptedCoordinate
 
 from .test_playbill_sdk_world import _COORDINATE, _MOVED_COORDINATE, _WorldClient
@@ -25,7 +25,7 @@ class _LiveClient(_WorldClient):
     def close(self) -> None:
         self.closed += 1
 
-    def read_playbill_claim_batch(self, instance: str, *, request: Any) -> ClaimReadBatchResultV1:
+    def read_playbill_claim_batch(self, instance: str, *, request: Any) -> ClaimReadBatchResult:
         self.batches.append(request)
         if request.subject_paths:
             return super().read_playbill_claim_batch(instance, request=request)
@@ -33,7 +33,7 @@ class _LiveClient(_WorldClient):
         views = tuple(self._claim_view(instance, name, at=at) for name in request.claim_ids)
         if self.corrupt_batch:
             views = (views[0].model_copy(update={"coordinate": _MOVED_COORDINATE}),)
-        return ClaimReadBatchResultV1(coordinate=at, claims=views)
+        return ClaimReadBatchResult(coordinate=at, claims=views)
 
     def activate_playbill_proposal(
         self, instance: str, proposal_id: str

@@ -24,7 +24,7 @@ from cruxible_client.contracts.principals import (
     PRINCIPAL_ID_HEADER,
     is_canonical_principal_id,
 )
-from cruxible_client.contracts.repairs import RepairOperationV1
+from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_core.errors import PrincipalRefusalCode, PrincipalRefusedError
 from cruxible_core.runtime.permissions import (
     PermissionMode,
@@ -214,7 +214,7 @@ def _operator_mac_refusal(
             cast(PrincipalRefusalCode, code),
             f"{detail}; repair: run the command on the daemon's own host with its state "
             "root, or set CRUXIBLE_SERVER_BEARER_TOKEN",
-            repair=RepairOperationV1(operation="server.status"),
+            repair=RepairOperation(operation="server.status"),
         )
 
     if bootstrap_secret is None or has_bearer or _request_has_body(request):
@@ -281,7 +281,7 @@ def _principal_claim_refusal(request: Request) -> PrincipalRefusedError | None:
         f"the configured principal ID {raw.strip()!r} is not a canonical lowercase "
         "identifier (a letter, then up to 127 of a-z 0-9 . _ -); repair: set "
         f"{PRINCIPAL_ID_ENV} or --principal-id to a registered principal ID",
-        repair=RepairOperationV1(operation="playbill.orient", arguments={"section": "principals"}),
+        repair=RepairOperation(operation="playbill.orient", arguments={"section": "principals"}),
     )
 
 
@@ -550,7 +550,7 @@ async def token_auth_middleware(
                     f"({resolved_context.principal_id or 'none'}); repair: unset "
                     f"{PRINCIPAL_ID_ENV} (or --principal-id), or use the credential "
                     "minted for that principal",
-                    repair=RepairOperationV1(operation="playbill.whoami"),
+                    repair=RepairOperation(operation="playbill.whoami"),
                 ),
             )
         # The runtime bootstrap operator acts as no principal; a claim sent

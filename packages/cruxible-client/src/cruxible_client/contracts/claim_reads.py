@@ -8,9 +8,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from cruxible_client.contracts import PlaybillAcceptedCoordinate, PlaybillClaimViewV2
+from cruxible_client.contracts import ClaimViewRecord, PlaybillAcceptedCoordinate
 from cruxible_client.contracts.claims import ClaimObject
-from cruxible_client.contracts.declared_blocks import ProjectionClaimBackingV1
+from cruxible_client.contracts.declared_blocks import ProjectionClaimBacking
 
 MAX_CLAIM_READ_BATCH = 256
 MAX_CLAIM_VALUE_SUBJECTS = 1024
@@ -18,7 +18,7 @@ MAX_CLAIM_VALUE_PREDICATES = 64
 MAX_CLAIM_VALUE_ROWS = 8192
 
 
-class ClaimReadBatchRequestV1(BaseModel):
+class ClaimReadBatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     at: PlaybillAcceptedCoordinate | None = None
     claim_ids: tuple[str, ...] = Field(default=(), max_length=MAX_CLAIM_READ_BATCH)
@@ -30,7 +30,7 @@ class ClaimReadBatchRequestV1(BaseModel):
     evaluation_time: datetime | None = None
 
     @model_validator(mode="after")
-    def selection(self) -> ClaimReadBatchRequestV1:
+    def selection(self) -> ClaimReadBatchRequest:
         if self.cursor is not None and self.at is None:
             raise ValueError("cursor continuation requires the returned accepted coordinate")
         if bool(self.claim_ids) == bool(self.subject_paths):
@@ -45,29 +45,29 @@ class ClaimReadBatchRequestV1(BaseModel):
         return self
 
 
-class ClaimReadBatchResultV1(BaseModel):
+class ClaimReadBatchResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     tag: Literal["playbill-claim-read-batch-v1"] = "playbill-claim-read-batch-v1"
     coordinate: PlaybillAcceptedCoordinate
-    claims: tuple[PlaybillClaimViewV2, ...]
+    claims: tuple[ClaimViewRecord, ...]
     truncated: bool = False
     cursor: str | None = None
 
 
-class ClaimBackingsRequestV1(BaseModel):
+class ClaimBackingsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     at: PlaybillAcceptedCoordinate
     claim_ids: tuple[str, ...] = Field(min_length=1, max_length=MAX_CLAIM_READ_BATCH)
 
 
-class ClaimBackingsResultV1(BaseModel):
+class ClaimBackingsResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     tag: Literal["playbill-claim-backings-v1"] = "playbill-claim-backings-v1"
     coordinate: PlaybillAcceptedCoordinate
-    backings: tuple[ProjectionClaimBackingV1, ...]
+    backings: tuple[ProjectionClaimBacking, ...]
 
 
-class ClaimValuesRequestV1(BaseModel):
+class ClaimValuesRequest(BaseModel):
     """Every live Claim's value and verdict for selected Subjects and predicates.
 
     Subjects are selected either by explicit paths or by one Subject kind.
@@ -81,7 +81,7 @@ class ClaimValuesRequestV1(BaseModel):
     evaluation_time: datetime | None = None
 
     @model_validator(mode="after")
-    def selection(self) -> ClaimValuesRequestV1:
+    def selection(self) -> ClaimValuesRequest:
         if bool(self.subject_paths) == (self.subject_kind is not None):
             raise ValueError("select either explicit subject paths or one subject kind")
         for values in (self.subject_paths, self.predicates):
@@ -99,7 +99,7 @@ class ClaimValuesRequestV1(BaseModel):
         subject_ids: Sequence[str] = (),
         predicates: Sequence[str] = (),
         evaluation_time: datetime | None = None,
-    ) -> ClaimValuesRequestV1:
+    ) -> ClaimValuesRequest:
         """Every Subject of one kind, or just the named IDs of that kind."""
         from cruxible_client.contracts.subjects import subject_path
 
@@ -120,7 +120,7 @@ class ClaimValuesRequestV1(BaseModel):
         )
 
 
-class ClaimValueV1(BaseModel):
+class ClaimValueRecord(BaseModel):
     """One live Claim's statement value and its verdict, without its full view."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -140,9 +140,9 @@ class ClaimValueV1(BaseModel):
     status: str
 
 
-class ClaimValuesResultV1(BaseModel):
+class ClaimValuesResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     tag: Literal["playbill-claim-values-v1"] = "playbill-claim-values-v1"
     coordinate: PlaybillAcceptedCoordinate
     evaluation_time: datetime
-    values: tuple[ClaimValueV1, ...]
+    values: tuple[ClaimValueRecord, ...]

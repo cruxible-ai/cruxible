@@ -7,14 +7,14 @@ import json
 from pathlib import Path
 
 from cruxible_client.authoring.inputs import ClaimInput, ProcedureInput
-from cruxible_client.contracts.approval_policy import ApprovalPolicyV1
+from cruxible_client.contracts.approval_policy import ApprovalPolicy
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.candidates import (
-    CandidateMemberLawEvidenceV2,
-    DependencyProofReferenceV1,
-    MemberLawEvaluationV2,
+    CandidateMemberLawEvidence,
+    DependencyProofReference,
+    MemberLawEvaluation,
     SemanticCandidate,
-    SemanticCandidateV2,
+    SemanticCandidateV1,
     candidate_digest,
     candidate_member_evidence_digest,
     member_law_evidence_digest,
@@ -46,16 +46,16 @@ from cruxible_client.contracts.merkle import (
     build_merkle_manifest,
 )
 from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicyV1,
+    ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV1,
-    ClaimResolutionPolicyV1,
+    ClaimResolutionPolicy,
 )
 from cruxible_client.contracts.query.definitions import (
-    QueryDefinitionV1,
+    QueryDefinition,
     query_definition_digest,
     render_query_definition,
 )
-from cruxible_client.contracts.source_references import SourceHandleV1, source_handle_digest
+from cruxible_client.contracts.source_references import SourceHandle, source_handle_digest
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_digest
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_core.claims.closure import (
@@ -110,8 +110,8 @@ def _query_claim_type(predicate: str, *, object_kind: str = "literal") -> ClaimT
         cardinality="one" if object_kind == "literal" else "many",
         permitted_roles=("normative",),
         evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(),
-        admission_policy=ClaimAdmissionPolicyV1(),
-        resolution_policy=ClaimResolutionPolicyV1(
+        admission_policy=ClaimAdmissionPolicy(),
+        resolution_policy=ClaimResolutionPolicy(
             cardinality="one" if object_kind == "literal" else "many",
             eligible_verdicts=("supported",),
             selector="only_contender" if object_kind == "literal" else "all",
@@ -149,7 +149,7 @@ def _update_query_golden() -> None:
     }
     for pin in raw["pins"]:
         pin["artifact_digest"] = digests[pin["target"]["name"]]
-    definition = QueryDefinitionV1.model_validate(raw)
+    definition = QueryDefinition.model_validate(raw)
     fixture["query_definition"] = definition.model_dump(mode="json")
     fixture["canonical_wire"] = render_query_definition(definition).decode("utf-8")
     fixture["artifact_digest"] = query_definition_digest(definition).tagged
@@ -181,7 +181,7 @@ def _update_semantic_genesis_golden() -> None:
         PrincipalRecord(principal_id="owner", public_key="02" * 32, kind="ordinary"),
         PrincipalRecord(principal_id="reviewer", public_key="03" * 32, kind="ordinary"),
     )
-    approval_policy = ApprovalPolicyV1(mode="self_approval_allowed")
+    approval_policy = ApprovalPolicy(mode="self_approval_allowed")
     tree = genesis_tree(principals, approval_policy=approval_policy)
     parent = bootstrap_root(
         instance_id=str(input_payload["instance_id"]),
@@ -209,12 +209,12 @@ def _update_changeset_golden() -> None:
     if not isinstance(raw, dict):
         raise TypeError("ChangeSet golden has no record object")
     raw["approval_requirements"] = []
-    candidate = SemanticCandidateV2.model_validate(raw["candidate"])
+    candidate = SemanticCandidate.model_validate(raw["candidate"])
     raw["candidate_digest"] = candidate_digest(candidate).tagged
-    law_evidence = tuple(MemberLawEvaluationV2.model_validate(item) for item in raw["law_evidence"])
+    law_evidence = tuple(MemberLawEvaluation.model_validate(item) for item in raw["law_evidence"])
     for member, evidence in zip(raw["members"], law_evidence, strict=True):
         member["law_evidence_digest"] = member_law_evidence_digest(evidence)
-    members = tuple(CandidateMemberLawEvidenceV2.model_validate(item) for item in raw["members"])
+    members = tuple(CandidateMemberLawEvidence.model_validate(item) for item in raw["members"])
     refs = tuple(item for member in members for item in member.dependency_proof_refs)
     raw["closure_proof"]["dependency_edge_root"] = build_dependency_edge_tree(refs).root.tagged
     raw["closure_proof"]["member_evidence_digest"] = candidate_member_evidence_digest(members)
@@ -241,7 +241,7 @@ def _update_changeset_golden() -> None:
 def _update_candidate_v1_golden() -> None:
     path = GOLDENS / "candidate-v1.json"
     fixture = _read(path)
-    candidate = SemanticCandidate.model_validate(fixture["candidate"])
+    candidate = SemanticCandidateV1.model_validate(fixture["candidate"])
     payload = candidate.model_dump(mode="json")
     payload.pop("tag")
     fixture["canonical_preimage"] = canonical_bytes(
@@ -254,7 +254,7 @@ def _update_candidate_v1_golden() -> None:
 def _update_source_reference_golden() -> None:
     path = GOLDENS / "source-reference-v1.json"
     fixture = _read(path)
-    handle = SourceHandleV1.model_validate(fixture["source_handle"])
+    handle = SourceHandle.model_validate(fixture["source_handle"])
     fixture["source_handle"] = handle.model_dump(mode="json")
     fixture["source_handle_digest"] = source_handle_digest(handle)
     _write(path, fixture)
@@ -288,7 +288,7 @@ def _update_p2_b0_artifact_codec_golden() -> None:
 def _update_candidate_v2_golden() -> None:
     path = GOLDENS / "candidate-v2.json"
     fixture = _read(path)
-    candidate = SemanticCandidateV2.model_validate(fixture["candidate"])
+    candidate = SemanticCandidate.model_validate(fixture["candidate"])
     payload = candidate.model_dump(mode="json")
     payload.pop("tag")
     fixture["canonical_preimage"] = canonical_bytes(
@@ -298,7 +298,7 @@ def _update_candidate_v2_golden() -> None:
     sibling = fixture["flat_rooted_v1_sibling"]
     if not isinstance(sibling, dict):
         raise TypeError("candidate-v2 golden has no flat-rooted sibling")
-    sibling_candidate = SemanticCandidate.model_validate(sibling["candidate"])
+    sibling_candidate = SemanticCandidateV1.model_validate(sibling["candidate"])
     sibling["candidate_digest"] = candidate_digest(sibling_candidate).tagged
     _write(path, fixture)
 
@@ -332,9 +332,9 @@ def _update_dependency_edge_golden() -> None:
     fixture = _read(path)
     inputs = fixture["input"]
     parent_edges = tuple(
-        DependencyProofReferenceV1.model_validate(item) for item in inputs["parent_edges"]
+        DependencyProofReference.model_validate(item) for item in inputs["parent_edges"]
     )
-    edges = tuple(DependencyProofReferenceV1.model_validate(item) for item in inputs["edges"])
+    edges = tuple(DependencyProofReference.model_validate(item) for item in inputs["edges"])
     members = dependency_edge_members(edges)
     tree = build_dependency_edge_tree(edges)
     fixture["expected"] = {
@@ -412,7 +412,7 @@ def _update_seed_bundle() -> None:
     for pin in pins:
         if pin["target"]["name"] == claim_type.identity.name:
             pin["artifact_digest"] = type_digest
-    QueryDefinitionV1.model_validate(query_payload)
+    QueryDefinition.model_validate(query_payload)
     _write(query_path, query_payload)
 
     for name in ("wi-101.json", "wi-102.json", "wi-103.json"):

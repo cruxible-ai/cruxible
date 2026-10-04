@@ -19,7 +19,7 @@ from cruxible_client.contracts.claim_verdicts import (
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
     ClaimArtifactV2,
-    ClaimBackingV2,
+    ClaimBacking,
     ClaimReferentContext,
     ClaimStatement,
     LiteralClaimObject,
@@ -29,27 +29,27 @@ from cruxible_client.contracts.claims import (
     claim_statement_digest,
 )
 from cruxible_client.contracts.query.definitions import (
-    QueryDefinitionV1,
-    QueryEvaluationPolicyV1,
+    QueryDefinition,
+    QueryEvaluationPolicy,
 )
 from cruxible_client.contracts.query.grammar import (
-    QueryBudgetsV1,
-    QueryClaimPresenceFilterV1,
-    QueryClaimValueRefV1,
-    QueryComparisonFilterV1,
-    QueryDisjunctionFilterV1,
-    QueryEntryV1,
-    QueryEvaluationTimeRefV1,
-    QueryLiteralRefV1,
-    QueryMembershipFilterV1,
-    QueryNegationFilterV1,
-    QueryOrderingV1,
-    QueryProjectionFieldV1,
-    QueryProjectionV1,
-    QuerySubjectFieldRefV1,
+    QueryBudgets,
+    QueryClaimPresenceFilter,
+    QueryClaimValueRef,
+    QueryComparisonFilter,
+    QueryDisjunctionFilter,
+    QueryEntry,
+    QueryEvaluationTimeRef,
+    QueryLiteralRef,
+    QueryMembershipFilter,
+    QueryNegationFilter,
+    QueryOrdering,
+    QueryProjection,
+    QueryProjectionField,
+    QuerySubjectFieldRef,
 )
 from cruxible_client.contracts.query.results import (
-    ClaimQueryResultV1,
+    ClaimQueryResult,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import (
@@ -151,7 +151,7 @@ def claim_fact(
             effective_from=effective_from,
             effective_until=effective_until,
         ),
-        backing=ClaimBackingV2(
+        backing=ClaimBacking(
             referent_context=ClaimReferentContext(
                 subject_content_digest=subject_row.artifact_digest,
                 observed_at=NOW,
@@ -220,13 +220,13 @@ def reviewer_claim(index: int, item: str, person: str, **overrides: object) -> C
 
 
 def run(
-    query: QueryDefinitionV1,
+    query: QueryDefinition,
     fact_rows: ClaimQueryFactsV1,
     *,
     evaluation_time: datetime = NOW,
     parameters: dict[str, object] | None = None,
-    budgets: QueryBudgetsV1 | None = None,
-) -> ClaimQueryResultV1:
+    budgets: QueryBudgets | None = None,
+) -> ClaimQueryResult:
     return evaluate_claim_query(
         accepted_query(query),
         facts=fact_rows,
@@ -237,12 +237,12 @@ def run(
     )
 
 
-def collection_status_query(**overrides: object) -> QueryDefinitionV1:
+def collection_status_query(**overrides: object) -> QueryDefinition:
     """The one-cardinality Subject read without an entry Subject pin."""
 
     return single_status_query(
         identity=ArtifactIdentity(kind="QueryDefinition", name="project.only_work_item"),
-        entry=QueryEntryV1(binding="item", subject_kinds=("project.work_item",)),
+        entry=QueryEntry(binding="item", subject_kinds=("project.work_item",)),
         parameters=(),
         **overrides,
     )
@@ -271,77 +271,77 @@ def typed_item_query(
     name: str,
     object_kind: str = "literal",
     where: object = None,
-    orderings: tuple[QueryOrderingV1, ...] = (),
-) -> QueryDefinitionV1:
+    orderings: tuple[QueryOrdering, ...] = (),
+) -> QueryDefinition:
     """One single-predicate Subject read used to exercise the typed grammar."""
 
-    return QueryDefinitionV1(
+    return QueryDefinition(
         identity=ArtifactIdentity(kind="QueryDefinition", name=name),
-        entry=QueryEntryV1(binding="item", subject_kinds=("project.work_item",)),
+        entry=QueryEntry(binding="item", subject_kinds=("project.work_item",)),
         where=where,  # type: ignore[arg-type]
         result_binding="item",
         result_shape="subject",
         result_cardinality="many",
         dedupe="subject",
-        projection=QueryProjectionV1(
+        projection=QueryProjection(
             fields=(
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="item_id",
-                    value=QuerySubjectFieldRefV1(binding="item", field="subject_id"),
+                    value=QuerySubjectFieldRef(binding="item", field="subject_id"),
                 ),
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="value",
-                    value=QueryClaimValueRefV1(binding="item", predicate=predicate),
+                    value=QueryClaimValueRef(binding="item", predicate=predicate),
                 ),
             )
         ),
         orderings=orderings,
-        evaluation_policy=QueryEvaluationPolicyV1(
+        evaluation_policy=QueryEvaluationPolicy(
             visible_verdicts=("supported",),
             visible_currency=("current",),
             conflict_behavior="surface_conflicts",
         ),
-        default_budgets=QueryBudgetsV1(max_results=10, max_traversal_depth=0),
-        maximum_budgets=QueryBudgetsV1(max_results=50, max_traversal_depth=0),
+        default_budgets=QueryBudgets(max_results=10, max_traversal_depth=0),
+        maximum_budgets=QueryBudgets(max_results=50, max_traversal_depth=0),
         pins=(claim_type_pin_for(predicate, object_kind=object_kind),),
     )
 
 
-def all_items_query(**overrides: object) -> QueryDefinitionV1:
+def all_items_query(**overrides: object) -> QueryDefinition:
     """A many-cardinality Subject read over every work item."""
 
     fields: dict[str, object] = {
         "identity": ArtifactIdentity(kind="QueryDefinition", name="project.work_items"),
-        "entry": QueryEntryV1(binding="item", subject_kinds=("project.work_item",)),
+        "entry": QueryEntry(binding="item", subject_kinds=("project.work_item",)),
         "result_binding": "item",
         "result_shape": "subject",
         "result_cardinality": "many",
         "dedupe": "subject",
-        "projection": QueryProjectionV1(
+        "projection": QueryProjection(
             fields=(
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="item_id",
-                    value=QuerySubjectFieldRefV1(binding="item", field="subject_id"),
+                    value=QuerySubjectFieldRef(binding="item", field="subject_id"),
                 ),
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="status",
-                    value=QueryClaimValueRefV1(binding="item", predicate=STATUS_PREDICATE),
+                    value=QueryClaimValueRef(binding="item", predicate=STATUS_PREDICATE),
                 ),
             )
         ),
         "orderings": (
-            QueryOrderingV1(
-                key=QuerySubjectFieldRefV1(binding="item", field="subject_id"),
+            QueryOrdering(
+                key=QuerySubjectFieldRef(binding="item", field="subject_id"),
                 value_type="string",
             ),
         ),
-        "evaluation_policy": QueryEvaluationPolicyV1(
+        "evaluation_policy": QueryEvaluationPolicy(
             visible_verdicts=("supported",),
             visible_currency=("current",),
             conflict_behavior="surface_conflicts",
         ),
-        "default_budgets": QueryBudgetsV1(max_results=10, max_traversal_depth=0),
-        "maximum_budgets": QueryBudgetsV1(max_results=50, max_traversal_depth=0),
+        "default_budgets": QueryBudgets(max_results=10, max_traversal_depth=0),
+        "maximum_budgets": QueryBudgets(max_results=50, max_traversal_depth=0),
         "pins": (
             ArtifactPin(
                 role="claim-type",
@@ -351,7 +351,7 @@ def all_items_query(**overrides: object) -> QueryDefinitionV1:
         ),
     }
     fields.update(overrides)
-    return QueryDefinitionV1(**fields)  # type: ignore[arg-type]
+    return QueryDefinition(**fields)  # type: ignore[arg-type]
 
 
 # -- scalar Claim reads ---------------------------------------------------
@@ -450,7 +450,7 @@ def test_relationship_traversal_binds_targets_filters_and_hydrates_includes() ->
 def test_reverse_traversal_reaches_the_relation_claim_subject_side() -> None:
     query = active_work_query(
         identity=ArtifactIdentity(kind="QueryDefinition", name="project.reviewer_work"),
-        entry=QueryEntryV1(binding="reviewer", subject_kinds=("project.person",)),
+        entry=QueryEntry(binding="reviewer", subject_kinds=("project.person",)),
         traversal=(
             active_work_query()
             .traversal[0]
@@ -467,11 +467,11 @@ def test_reverse_traversal_reaches_the_relation_claim_subject_side() -> None:
         orderings=(),
         includes=(),
         where=None,
-        projection=QueryProjectionV1(
+        projection=QueryProjection(
             fields=(
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="item_id",
-                    value=QuerySubjectFieldRefV1(binding="item", field="subject_id"),
+                    value=QuerySubjectFieldRef(binding="item", field="subject_id"),
                 ),
             )
         ),
@@ -613,7 +613,7 @@ def test_a_one_cardinality_query_refuses_rather_than_returning_one_of_many_rows(
 
 def test_a_surfacing_one_cardinality_query_states_the_competing_rows_and_the_clip() -> None:
     query = collection_status_query(
-        evaluation_policy=QueryEvaluationPolicyV1(
+        evaluation_policy=QueryEvaluationPolicy(
             visible_verdicts=("supported",),
             visible_currency=("current",),
             conflict_behavior="surface_conflicts",
@@ -643,7 +643,7 @@ def test_visibility_follows_the_explicit_evaluation_time_in_both_directions() ->
     early = run(all_items_query(), fact_rows, evaluation_time=NOW)
     late = run(all_items_query(), fact_rows, evaluation_time=LATER)
 
-    def status_of(result: ClaimQueryResultV1, item: str) -> tuple[str, object]:
+    def status_of(result: ClaimQueryResult, item: str) -> tuple[str, object]:
         row = next(
             entry
             for entry in result.rows
@@ -698,7 +698,7 @@ def test_a_clipped_result_budget_is_always_named_in_the_truncation_accounting() 
     result = run(
         all_items_query(),
         fact_rows,
-        budgets=QueryBudgetsV1(max_results=2, max_traversal_depth=0),
+        budgets=QueryBudgets(max_results=2, max_traversal_depth=0),
     )
 
     assert result.truncation.clipped_budgets == ("max_results",)
@@ -720,7 +720,7 @@ def test_path_budgets_clip_traversal_and_per_result_fan_out_explicitly() -> None
         active_work_query(result_binding="item", result_shape="path", includes=()),
         fact_rows,
         parameters={"status": "ready"},
-        budgets=QueryBudgetsV1(
+        budgets=QueryBudgets(
             max_results=50,
             max_traversal_depth=2,
             max_paths=200,
@@ -731,7 +731,7 @@ def test_path_budgets_clip_traversal_and_per_result_fan_out_explicitly() -> None
         active_work_query(includes=()),
         fact_rows,
         parameters={"status": "ready"},
-        budgets=QueryBudgetsV1(
+        budgets=QueryBudgets(
             max_results=50,
             max_traversal_depth=2,
             max_paths=1,
@@ -772,7 +772,7 @@ def test_a_caller_budget_above_the_declared_ceiling_refuses() -> None:
     result = run(
         all_items_query(),
         facts((status_claim(1, "wi-1", "ready"),)),
-        budgets=QueryBudgetsV1(max_results=500, max_traversal_depth=0),
+        budgets=QueryBudgets(max_results=500, max_traversal_depth=0),
     )
 
     assert result.verdict == "refused"
@@ -791,8 +791,8 @@ def test_declared_ordering_is_total_and_descending_reverses_only_present_keys() 
     descending = run(
         all_items_query(
             orderings=(
-                QueryOrderingV1(
-                    key=QueryClaimValueRefV1(binding="item", predicate=STATUS_PREDICATE),
+                QueryOrdering(
+                    key=QueryClaimValueRef(binding="item", predicate=STATUS_PREDICATE),
                     direction="descending",
                     value_type="string",
                 ),
@@ -812,15 +812,15 @@ def test_integer_comparison_and_ordering_use_numbers_not_canonical_bytes() -> No
     query = typed_item_query(
         RANK_PREDICATE,
         name="project.ranked_items",
-        where=QueryComparisonFilterV1(
-            left=QueryClaimValueRefV1(binding="item", predicate=RANK_PREDICATE),
+        where=QueryComparisonFilter(
+            left=QueryClaimValueRef(binding="item", predicate=RANK_PREDICATE),
             operator="gte",
-            right=QueryLiteralRefV1(value=2),
+            right=QueryLiteralRef(value=2),
             value_type="integer",
         ),
         orderings=(
-            QueryOrderingV1(
-                key=QueryClaimValueRefV1(binding="item", predicate=RANK_PREDICATE),
+            QueryOrdering(
+                key=QueryClaimValueRef(binding="item", predicate=RANK_PREDICATE),
                 direction="descending",
                 value_type="integer",
             ),
@@ -854,8 +854,8 @@ def test_decimal_ordering_compares_magnitudes_and_a_mistyped_object_refuses() ->
         AMOUNT_PREDICATE,
         name="project.amounts",
         orderings=(
-            QueryOrderingV1(
-                key=QueryClaimValueRefV1(binding="item", predicate=AMOUNT_PREDICATE),
+            QueryOrdering(
+                key=QueryClaimValueRef(binding="item", predicate=AMOUNT_PREDICATE),
                 direction="descending",
                 value_type="decimal",
             ),
@@ -883,10 +883,10 @@ def test_a_timestamp_filter_reads_the_explicit_evaluation_time_reference() -> No
     query = typed_item_query(
         DUE_PREDICATE,
         name="project.overdue_items",
-        where=QueryComparisonFilterV1(
-            left=QueryClaimValueRefV1(binding="item", predicate=DUE_PREDICATE),
+        where=QueryComparisonFilter(
+            left=QueryClaimValueRef(binding="item", predicate=DUE_PREDICATE),
             operator="lt",
-            right=QueryEvaluationTimeRefV1(),
+            right=QueryEvaluationTimeRef(),
             value_type="timestamp",
         ),
     )
@@ -915,23 +915,23 @@ def test_membership_negation_and_disjunction_narrow_without_widening() -> None:
     query = typed_item_query(
         STATUS_PREDICATE,
         name="project.tracked_items",
-        where=QueryDisjunctionFilterV1(
+        where=QueryDisjunctionFilter(
             filters=sorted_operands(  # type: ignore[arg-type]
-                QueryMembershipFilterV1(
-                    left=QueryClaimValueRefV1(binding="item", predicate=STATUS_PREDICATE),
+                QueryMembershipFilter(
+                    left=QueryClaimValueRef(binding="item", predicate=STATUS_PREDICATE),
                     values=tuple(
                         sorted(
                             (
-                                QueryLiteralRefV1(value="blocked"),
-                                QueryLiteralRefV1(value="ready"),
+                                QueryLiteralRef(value="blocked"),
+                                QueryLiteralRef(value="ready"),
                             ),
                             key=lambda item: canonical_bytes(item.model_dump(mode="json")),
                         )
                     ),
                     value_type="string",
                 ),
-                QueryNegationFilterV1(
-                    operand=QueryClaimPresenceFilterV1(binding="item", predicate=STATUS_PREDICATE),
+                QueryNegationFilter(
+                    operand=QueryClaimPresenceFilter(binding="item", predicate=STATUS_PREDICATE),
                 ),
             )
         ),
@@ -950,10 +950,10 @@ def test_a_subject_reference_comparison_reads_the_related_subject_identity() -> 
         REVIEWER_PREDICATE,
         name="project.ada_items",
         object_kind="subject",
-        where=QueryComparisonFilterV1(
-            left=QueryClaimValueRefV1(binding="item", predicate=REVIEWER_PREDICATE),
+        where=QueryComparisonFilter(
+            left=QueryClaimValueRef(binding="item", predicate=REVIEWER_PREDICATE),
             operator="eq",
-            right=QueryLiteralRefV1(value="Subject:project.person/ada"),
+            right=QueryLiteralRef(value="Subject:project.person/ada"),
             value_type="subject_reference",
         ),
     )
@@ -979,7 +979,7 @@ def test_the_same_inputs_produce_byte_identical_results_including_truncation() -
             reviewer_claim(5, "wi-2", "ada"),
         )
     )
-    budgets = QueryBudgetsV1(
+    budgets = QueryBudgets(
         max_results=2,
         max_traversal_depth=2,
         max_paths=200,
@@ -1030,7 +1030,7 @@ def test_the_execution_receipt_pins_definition_parameters_coordinate_and_truncat
 
 def test_a_refusal_after_binding_commits_the_resolved_parameters_it_bound() -> None:
     fact_rows = facts((status_claim(1, "wi-1", "ready"),))
-    over_ceiling = QueryBudgetsV1(max_results=500, max_traversal_depth=0)
+    over_ceiling = QueryBudgets(max_results=500, max_traversal_depth=0)
     first = run(
         single_status_query(),
         fact_rows,
@@ -1114,16 +1114,14 @@ def test_a_result_can_neither_hide_a_refusal_nor_hide_a_clipping_budget() -> Non
     clipped = run(
         all_items_query(),
         facts((status_claim(1, "wi-1", "ready"),)),
-        budgets=QueryBudgetsV1(max_results=1, max_traversal_depth=0),
+        budgets=QueryBudgets(max_results=1, max_traversal_depth=0),
     )
 
     assert clipped.truncation.clipped_budgets == ("max_results",)
     with pytest.raises(ValueError, match="refused exactly when"):
-        ClaimQueryResultV1.model_validate(
-            {**completed.model_dump(mode="json"), "verdict": "refused"}
-        )
+        ClaimQueryResult.model_validate({**completed.model_dump(mode="json"), "verdict": "refused"})
     with pytest.raises(ValueError, match="agree with the returned row count"):
-        ClaimQueryResultV1.model_validate(
+        ClaimQueryResult.model_validate(
             {
                 **clipped.model_dump(mode="json"),
                 "truncation": {
@@ -1176,7 +1174,7 @@ def test_the_result_preimage_carries_no_verdict_visibility_advisory() -> None:
     assert claim_query_result_digest(without) == claim_query_result_digest(hidden)
 
 
-def _digest_preimage(result: ClaimQueryResultV1) -> dict[str, object]:
+def _digest_preimage(result: ClaimQueryResult) -> dict[str, object]:
     payload = result.model_dump(mode="json")
     payload.pop("tag")
     payload.pop("verdict_visibility")

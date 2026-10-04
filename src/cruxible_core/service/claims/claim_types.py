@@ -15,10 +15,10 @@ from cruxible_client.contracts.claim_types import (
     render_claim_type,
 )
 from cruxible_client.contracts.errors import ClaimNotFoundError
-from cruxible_client.contracts.repairs import RepairOperationV1
+from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_core.claims.claim_type_inputs import (
     ClaimTypeInputProposalResultV1,
-    ClaimTypeInputV1,
+    ClaimTypeInputRecord,
     identity_rules_supported,
     lint_claim_type_input,
     lower_claim_type_input,
@@ -122,7 +122,7 @@ def service_propose_playbill_claim_type(
 def service_propose_playbill_claim_type_input(
     instance: PlaybillInstance,
     *,
-    input: ClaimTypeInputV1,
+    input: ClaimTypeInputRecord,
     actor_id: str,
     proposal_name: str,
     timestamp: str,
@@ -200,7 +200,7 @@ class ClaimTypeNotFoundError(ClaimNotFoundError):
     def __init__(self, predicate: str, *, nearest: tuple[str, ...]) -> None:
         self.predicate = predicate
         self.nearest = nearest
-        self.repair = RepairOperationV1(
+        self.repair = RepairOperation(
             operation="playbill.orient", arguments={"section": "claim_types"}
         )
         hint = f"; nearest: {', '.join(nearest)}" if nearest else ""

@@ -9,13 +9,13 @@ from typing import Literal, cast
 from cruxible_core.coverage.adapter import (
     WorkingPathBindingsV1,
     WorkingPathBindingV1,
-    WorkingSourceObservationV1,
+    WorkingSourceObservation,
     observe_working_source,
     parse_grep_batch,
     read_working_path,
     selection_for_lines,
 )
-from cruxible_core.coverage.contracts import CoverageError, LogicalSourceIdentityV1
+from cruxible_core.coverage.contracts import CoverageError, LogicalSourceIdentity
 
 
 class WorkspaceCoverageError(CoverageError):
@@ -33,7 +33,7 @@ def bindings_from_mapping(declared: Mapping[str, str]) -> WorkingPathBindingsV1:
         bindings.append(
             WorkingPathBindingV1(
                 path=path,
-                source=LogicalSourceIdentityV1(
+                source=LogicalSourceIdentity(
                     plane=cast(Literal["ledger", "external"], plane),
                     identity=identity,
                 ),
@@ -63,7 +63,7 @@ def observe_workspace(
     ranges: tuple[str, ...] = (),
     grep_text: str | None = None,
     whole_working_set: bool = False,
-) -> tuple[WorkingSourceObservationV1, ...]:
+) -> tuple[WorkingSourceObservation, ...]:
     """Observe each selected source once, with whole-source edits taking precedence."""
 
     whole = set(bindings.paths) if whole_working_set else set(files)
@@ -75,7 +75,7 @@ def observe_workspace(
         for path, line in parse_grep_batch(grep_text):
             windows.setdefault(path, set()).add((line, line))
 
-    observations: list[WorkingSourceObservationV1] = []
+    observations: list[WorkingSourceObservation] = []
     for path in sorted(whole | set(windows)):
         content = read_working_path(path, root=root)
         selections = (

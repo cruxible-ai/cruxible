@@ -18,10 +18,10 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationInfo, field_validator
 
-from .authoring.models import ClaimTypeSuccessionDependentV1
+from .authoring.models import ClaimTypeSuccessionDependent
 from .canonical import Sha256Value, canonical_digest
 from .change_control import DryRun, PreviewAt
-from .get_reads import PlaybillGetCoordinateV1
+from .get_reads import PlaybillGetCoordinate
 
 KIT_MANIFEST_FILE = "cruxible-kit.json"
 KIT_ARTIFACT_DIRECTORY = "artifacts"
@@ -100,7 +100,7 @@ def _sorted_unique(values: tuple[str, ...], *, label: str) -> tuple[str, ...]:
     return values
 
 
-class KitArtifactV1(_Strict):
+class KitArtifact(_Strict):
     """One artifact a kit carries, named by its accepted path and exact digest."""
 
     path: str
@@ -119,13 +119,13 @@ class KitArtifactV1(_Strict):
         return _digest(value)
 
 
-class KitManifestV1(_Strict):
+class KitManifest(_Strict):
     tag: Literal["playbill-kit-manifest-v1"] = "playbill-kit-manifest-v1"
     kit_id: str
     version: str
     # Identity prefixes this kit defines, each ending in a dot (``dev.``).
     owns: tuple[str, ...]
-    artifacts: tuple[KitArtifactV1, ...]
+    artifacts: tuple[KitArtifact, ...]
 
     @field_validator("kit_id")
     @classmethod
@@ -144,7 +144,7 @@ class KitManifestV1(_Strict):
 
     @field_validator("artifacts")
     @classmethod
-    def _artifacts(cls, value: tuple[KitArtifactV1, ...]) -> tuple[KitArtifactV1, ...]:
+    def _artifacts(cls, value: tuple[KitArtifact, ...]) -> tuple[KitArtifact, ...]:
         _sorted_unique(tuple(item.path for item in value), label="kit artifact paths")
         return value
 
@@ -162,7 +162,7 @@ class KitManifestV1(_Strict):
         return {item.path: item.artifact_digest for item in self.artifacts}
 
 
-class KitArtifactBytesV1(_Strict):
+class KitArtifactBytes(_Strict):
     path: str
     content_base64: str
 
@@ -187,22 +187,22 @@ class KitArtifactBytesV1(_Strict):
         return base64.b64decode(self.content_base64, validate=True)
 
     @classmethod
-    def of(cls, path: str, content: bytes) -> KitArtifactBytesV1:
+    def of(cls, path: str, content: bytes) -> KitArtifactBytes:
         return cls(path=path, content_base64=base64.b64encode(content).decode("ascii"))
 
 
-class KitBundleV1(_Strict):
+class KitBundle(_Strict):
     """A manifest and the exact bytes of every artifact it names."""
 
     tag: Literal["playbill-kit-bundle-v1"] = "playbill-kit-bundle-v1"
-    manifest: KitManifestV1
-    artifacts: tuple[KitArtifactBytesV1, ...]
+    manifest: KitManifest
+    artifacts: tuple[KitArtifactBytes, ...]
 
     @field_validator("artifacts")
     @classmethod
     def _same_paths(
-        cls, value: tuple[KitArtifactBytesV1, ...], info: ValidationInfo
-    ) -> tuple[KitArtifactBytesV1, ...]:
+        cls, value: tuple[KitArtifactBytes, ...], info: ValidationInfo
+    ) -> tuple[KitArtifactBytes, ...]:
         carried = tuple(item.path for item in value)
         _sorted_unique(carried, label="kit bundle paths")
         manifest = info.data.get("manifest")
@@ -214,7 +214,7 @@ class KitBundleV1(_Strict):
         return {item.path: item.content for item in self.artifacts}
 
 
-class KitInstalledArtifactV1(_Strict):
+class KitInstalledArtifact(_Strict):
     """One kit path: the release's snapshot digest and the digest this instance holds.
 
     They differ exactly when the instance already had history for the path, so
@@ -238,7 +238,7 @@ class KitInstalledArtifactV1(_Strict):
         return _digest(value)
 
 
-class KitReceiptV1(_Strict):
+class KitReceipt(_Strict):
     """The accepted record of one installed kit, carried as a Document body."""
 
     tag: Literal["playbill-kit-receipt-v1"] = "playbill-kit-receipt-v1"
@@ -247,9 +247,9 @@ class KitReceiptV1(_Strict):
     content_digest: str
     owns: tuple[str, ...]
     # Definitions the kit owns: it may replace and retire these.
-    artifacts: tuple[KitInstalledArtifactV1, ...]
+    artifacts: tuple[KitInstalledArtifact, ...]
     # Definitions it pins but does not own: never replaced or retired through it.
-    carried: tuple[KitInstalledArtifactV1, ...] = ()
+    carried: tuple[KitInstalledArtifact, ...] = ()
     source: str | None = None
 
     @field_validator("kit_id")
@@ -273,7 +273,7 @@ class KitReceiptV1(_Strict):
         return {item.path: item.installed_digest for item in self.artifacts}
 
 
-class PlaybillKitBuildRequestV1(_Strict):
+class PlaybillKitBuildRequest(_Strict):
     """Export this instance's definitions under ``owns`` as one kit release."""
 
     kit_id: str
@@ -296,25 +296,25 @@ class PlaybillKitBuildRequestV1(_Strict):
         return _owns(value)
 
 
-class PlaybillKitBuildResultV1(_Strict):
+class PlaybillKitBuildResult(_Strict):
     tag: Literal["playbill-kit-build-result-v1"] = "playbill-kit-build-result-v1"
-    bundle: KitBundleV1
+    bundle: KitBundle
 
 
-class PlaybillKitAddRequestV1(_Strict):
-    bundle: KitBundleV1
+class PlaybillKitAddRequest(_Strict):
+    bundle: KitBundle
     # Where the bundle came from, recorded in the receipt (a registry reference
     # or a directory name); never interpreted.
     source: str | None = None
     # A changed ClaimType's live dependents are carried to the successor by
     # default, as a succession would; name one here to retire it instead.
-    dependents: tuple[ClaimTypeSuccessionDependentV1, ...] = ()
+    dependents: tuple[ClaimTypeSuccessionDependent, ...] = ()
     #: A kit install is derived across many artifacts, so it previews by default.
     dry_run: DryRun = None
     at: PreviewAt = None
 
 
-class PlaybillKitRemoveRequestV1(_Strict):
+class PlaybillKitRemoveRequest(_Strict):
     kit_id: str
     #: A kit removal is derived across many artifacts, so it previews by default.
     dry_run: DryRun = None
@@ -329,13 +329,13 @@ class PlaybillKitRemoveRequestV1(_Strict):
 KitPathAction = Literal["add", "unchanged", "replace", "retire", "carry", "conflict"]
 
 
-class KitPathPlanV1(_Strict):
+class KitPathPlan(_Strict):
     path: str
     action: KitPathAction
     detail: str | None = None
 
 
-class PlaybillKitChangeResultV1(_Strict):
+class PlaybillKitChangeResult(_Strict):
     """What a kit add or remove changed, or why it changed nothing."""
 
     tag: Literal["playbill-kit-change-result-v1"] = "playbill-kit-change-result-v1"
@@ -348,13 +348,13 @@ class PlaybillKitChangeResultV1(_Strict):
     status: Literal["unchanged", "proposed", "blocked", "would_propose", "would_block"]
     proposal_id: str | None = None
     approval_required: bool = False
-    plan: tuple[KitPathPlanV1, ...] = ()
+    plan: tuple[KitPathPlan, ...] = ()
     detail: str | None = None
     #: The accepted coordinate this change was evaluated at.
-    coordinate: PlaybillGetCoordinateV1 | None = None
+    coordinate: PlaybillGetCoordinate | None = None
 
 
-class InstalledKitV1(_Strict):
+class InstalledKit(_Strict):
     kit_id: str
     version: str
     content_digest: str
@@ -363,6 +363,6 @@ class InstalledKitV1(_Strict):
     drifted: tuple[str, ...] = ()
 
 
-class PlaybillKitStatusV1(_Strict):
+class PlaybillKitStatus(_Strict):
     tag: Literal["playbill-kit-status-v1"] = "playbill-kit-status-v1"
-    kits: tuple[InstalledKitV1, ...] = ()
+    kits: tuple[InstalledKit, ...] = ()

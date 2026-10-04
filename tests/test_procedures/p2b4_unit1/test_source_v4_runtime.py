@@ -13,20 +13,20 @@ import pytest
 
 import cruxible_core.service.procedures.procedure_runs as procedure_run_service
 from cruxible_client.contracts.acquisition_policies import (
-    IndependentCoherenceV1,
-    InputAcquisitionRuleV1,
-    SourceAcquisitionPolicyV1,
+    IndependentCoherence,
+    InputAcquisitionRule,
+    SourceAcquisitionPolicy,
     acquisition_policy_digest,
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
-    CanonicalDurationV1,
-    CaptureEnvelopeV2,
+    CanonicalDuration,
+    CaptureEnvelope,
     CaptureFormatError,
-    ProviderInvocationCaptureEvidenceV1,
+    ProviderInvocationCaptureEvidence,
     ProviderProducerReceiptResolution,
-    ProviderResultToExternalCaptureV1,
+    ProviderResultToExternalCapture,
     capture_contract_digest,
     capture_digest,
     parse_capture_envelope,
@@ -39,33 +39,33 @@ from cruxible_client.contracts.errors import (
     PlaybillJournalError,
 )
 from cruxible_client.contracts.procedures.artifacts import (
-    AcceptedProcedureV1,
+    AcceptedProcedure,
     procedure_artifact_digest,
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v4
 from cruxible_client.contracts.procedures.models import (
     CaptureEgressNodeV3,
     ProcedureDefinitionV3,
-    ProviderNodeV4,
+    ProviderNode,
+    SourceNode,
     SourceNodeV3,
-    SourceNodeV4,
 )
 from cruxible_client.contracts.procedures.results import (
-    ProcedureAcquisitionPlanV2,
-    ProcedureAdmissionMaterialManifestV1,
-    ProcedureRunReceiptV6,
+    ProcedureAcquisitionPlan,
+    ProcedureAdmissionMaterialManifest,
+    ProcedureRunReceipt,
     procedure_acquisition_plan_digest,
     procedure_admission_material_digest,
     procedure_selection_decision_digest,
 )
 from cruxible_client.contracts.provider_execution import (
-    ProcedureDerivedSourceRequestV1,
-    ProviderEgressObservationV1,
-    ProviderExternalOccurrencePlanV1,
-    ProviderInvocationCompletedV1,
-    ProviderInvocationOutputDigestV1,
-    ProviderInvocationStartedV1,
-    ProviderSecretReferenceV1,
+    ProcedureDerivedSourceRequest,
+    ProviderEgressObservation,
+    ProviderExternalOccurrencePlan,
+    ProviderInvocationCompleted,
+    ProviderInvocationOutputDigest,
+    ProviderInvocationStarted,
+    ProviderSecretReference,
     provider_invocation_receipt_digest,
 )
 from cruxible_client.contracts.providers import provider_digest
@@ -159,7 +159,7 @@ class _SourceInvoker:
         self.coordinates = context.coordinates
         assert context.input == {"size": 3}
         body = canonical_bytes({"size": self.result_size})
-        output = ProviderResultToExternalCaptureV1(
+        output = ProviderResultToExternalCapture(
             source_identity="commerce.production.orders",
             coordinate_type="postgres-lsn-v1",
             coordinate={"lsn": "0/16B6C50"},
@@ -180,7 +180,7 @@ class _SourceInvoker:
             ),
             stderr="",
             duration_seconds=0.001,
-            egress=ProviderEgressObservationV1(
+            egress=ProviderEgressObservation(
                 observer_backend="test-attribution",
                 observer_grade="attribution",
             ),
@@ -191,28 +191,28 @@ class _SourceInvoker:
 def _source_fixture(
     tmp_path: Path,
     *,
-    rule: InputAcquisitionRuleV1 | None = None,
+    rule: InputAcquisitionRule | None = None,
     include_terminal: bool = False,
     capture_budget: int | None = None,
     accepted_bucket_selectors: tuple[str, ...] | None = None,
 ) -> tuple[
-    AcceptedProcedureV1,
+    AcceptedProcedure,
     PreparedProcedureRunV5,
     object,
-    SourceAcquisitionPolicyV1,
+    SourceAcquisitionPolicy,
     object,
 ]:
     provider_accepted = _accepted_one_provider()
     provider_prepared, fixture = _prepared_v5(provider_accepted, tmp_path)
     provider_node = provider_accepted.procedure.definition.nodes[0]
-    assert isinstance(provider_node, ProviderNodeV4)
+    assert isinstance(provider_node, ProviderNode)
     contract = capture_contract()
     contract_pin = ArtifactPin(
         role="capture-contract",
         target=contract.identity,
         artifact_digest=capture_contract_digest(contract).tagged,
     )
-    source_node = SourceNodeV4(
+    source_node = SourceNode(
         node_id=provider_node.node_id,
         capture_contract=contract_pin,
         provider=provider_node.provider,
@@ -255,32 +255,32 @@ def _source_fixture(
             "pins": pins,
         }
     )
-    accepted = AcceptedProcedureV1(
+    accepted = AcceptedProcedure(
         path=provider_accepted.path,
         procedure=procedure,
         artifact_digest=procedure_artifact_digest(procedure).tagged,
     )
-    policy = SourceAcquisitionPolicyV1(
+    policy = SourceAcquisitionPolicy(
         identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="runtime-source"),
         inputs=(
             rule
-            or InputAcquisitionRuleV1(
+            or InputAcquisitionRule(
                 input_name=source_node.as_,
                 requirement="required",
                 permitted_replayability=("attested_only", "exact"),
-                max_age=CanonicalDurationV1(microseconds=60_000_000),
+                max_age=CanonicalDuration(microseconds=60_000_000),
                 on_unavailable="refuse",
                 on_stale="refuse",
                 on_oversized="refuse",
                 on_conflict="preserve",
             ),
         ),
-        coherence=IndependentCoherenceV1(),
+        coherence=IndependentCoherence(),
     )
     policy_digest = acquisition_policy_digest(policy).tagged
     old_plan = provider_prepared.acquisition_plan
     old_occurrence = old_plan.external_occurrences[0]
-    occurrence = ProviderExternalOccurrencePlanV1.model_validate(
+    occurrence = ProviderExternalOccurrencePlan.model_validate(
         {
             **old_occurrence.model_dump(mode="python"),
             "occurrence_path": "source/direct",
@@ -298,7 +298,7 @@ def _source_fixture(
         }
     )
     decision = old_plan.selection_decision.model_copy(update={"policy_digest": policy_digest})
-    plan = ProcedureAcquisitionPlanV2(
+    plan = ProcedureAcquisitionPlan(
         **{
             **old_plan.model_dump(mode="python", exclude={"tag"}),
             "acquisition_policy_digest": policy_digest,
@@ -381,7 +381,7 @@ class _RefusingSourceInvoker(_SourceInvoker):
             ),
             stderr="",
             duration_seconds=0.001,
-            egress=ProviderEgressObservationV1(
+            egress=ProviderEgressObservation(
                 observer_backend="test-attribution",
                 observer_grade="attribution",
             ),
@@ -477,7 +477,7 @@ def test_live_graph_v3_source_keeps_the_frozen_produced_capture_payload(
     )
     admission = _line_admission(accepted, fixture)
     direct = _prepare(accepted, fixture, _StateReader())
-    manifest = ProcedureAdmissionMaterialManifestV1(members=())
+    manifest = ProcedureAdmissionMaterialManifest(members=())
     prepared = PreparedProcedureRunV3(
         admission=admission,
         accepted_state_materials=direct.accepted_state_materials,
@@ -536,10 +536,10 @@ def test_live_graph_v3_source_keeps_the_frozen_produced_capture_payload(
         def dereference(self, _capture_digest):  # type: ignore[no-untyped-def]
             raise AssertionError("the live acquisition path must not replay a landed Capture")
 
-    policy = SourceAcquisitionPolicyV1(
+    policy = SourceAcquisitionPolicy(
         identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="retained-v3-source"),
         inputs=(
-            InputAcquisitionRuleV1(
+            InputAcquisitionRule(
                 input_name=source.as_,
                 requirement="required",
                 permitted_replayability=("attested_only", "exact"),
@@ -549,7 +549,7 @@ def test_live_graph_v3_source_keeps_the_frozen_produced_capture_payload(
                 on_conflict="preserve",
             ),
         ),
-        coherence=IndependentCoherenceV1(),
+        coherence=IndependentCoherence(),
     )
     result = ProcedureExecutor(
         journal=fixture.journal,
@@ -640,22 +640,22 @@ def test_dynamic_source_request_is_a_pre_spawn_result_and_capture_is_post_comple
         < kinds.index("node_fired")
         < kinds.index("attempt_finalized")
     )
-    derived = ProcedureDerivedSourceRequestV1.model_validate(
+    derived = ProcedureDerivedSourceRequest.model_validate(
         payloads[kinds.index("source_request_derived")]
     )
     assert derived.admission_binding_digest == prepared.admission.admission_binding_digest
     assert derived.request == {"size": 3}
     admission_wire = canonical_bytes(prepared.admission.model_dump(mode="json")).decode("utf-8")
     assert "source_result" not in admission_wire
-    started = ProviderInvocationStartedV1.model_validate(
+    started = ProviderInvocationStarted.model_validate(
         payloads[kinds.index("provider_invocation_started")]
     )
-    completed = ProviderInvocationCompletedV1.model_validate(
+    completed = ProviderInvocationCompleted.model_validate(
         payloads[kinds.index("provider_invocation_completed")]
     )
     assert isinstance(
-        ProviderInvocationOutputDigestV1.model_validate(completed.receipt.output),
-        ProviderInvocationOutputDigestV1,
+        ProviderInvocationOutputDigest.model_validate(completed.receipt.output),
+        ProviderInvocationOutputDigest,
     )
     assert b"content_base64" not in canonical_bytes(payloads)
     assert started.invocation_id == completed.invocation_id
@@ -668,7 +668,7 @@ def test_dynamic_source_request_is_a_pre_spawn_result_and_capture_is_post_comple
             access=BodyAccessContext(principal_id="unit-test", can_read_body=True),
         )
     )
-    assert isinstance(capture, CaptureEnvelopeV2)
+    assert isinstance(capture, CaptureEnvelope)
     assert capture.producer_receipt_digest == completed.receipt_digest
     assert fixture.bodies.verify(capture.commitment.digest)
     assert reservation_observations
@@ -683,7 +683,7 @@ def test_dynamic_source_request_is_a_pre_spawn_result_and_capture_is_post_comple
     state = procedure_run_service._state_from_records(  # noqa: SLF001
         _Instance(), run_id=prepared.admission.run_id, receipt=result.receipt
     )
-    assert isinstance(state.receipt, ProcedureRunReceiptV6)
+    assert isinstance(state.receipt, ProcedureRunReceipt)
     assert state.receipt.invocation_receipt_digests == (completed.receipt_digest,)
     assert state.receipt.source_capture_associations[0].capture_digest == produced["capture_digest"]
 
@@ -717,7 +717,7 @@ def test_exact_run_id_replay_does_not_construct_an_invoker_or_spawn(
         """
         import sys
         from pathlib import Path
-        from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
+        from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
         from cruxible_core.storage.cas import ContentAddressedBodyStore
         from cruxible_core.exhaust import LocalJournalBackend
         from cruxible_core.procedures.execution import (
@@ -728,7 +728,7 @@ def test_exact_run_id_replay_does_not_construct_an_invoker_or_spawn(
         from tests.test_procedures.test_procedure_execution import _Authority, _Contracts
 
         root, accepted_path, prepared_path, marker_path = map(Path, sys.argv[1:])
-        accepted = AcceptedProcedureV1.model_validate_json(accepted_path.read_text())
+        accepted = AcceptedProcedure.model_validate_json(accepted_path.read_text())
         prepared = PreparedProcedureRunV5.model_validate_json(prepared_path.read_text())
 
         def construct_invoker():
@@ -835,11 +835,11 @@ def test_crash_after_capture_cas_before_produced_event_retains_both_reservations
 def test_only_input_attributed_provider_refusal_uses_the_declared_source_default(
     tmp_path: Path,
 ) -> None:
-    default_rule = InputAcquisitionRuleV1(
+    default_rule = InputAcquisitionRule(
         input_name="source_result",
         requirement="conservative_default",
         permitted_replayability=("attested_only", "exact"),
-        max_age=CanonicalDurationV1(microseconds=60_000_000),
+        max_age=CanonicalDuration(microseconds=60_000_000),
         on_unavailable="declared_conservative_default",
         on_stale="refuse",
         on_oversized="refuse",
@@ -932,11 +932,11 @@ def test_currency_refusal_precedes_source_closure_preflight(tmp_path: Path) -> N
 def test_local_unclaimed_bucket_uses_the_same_declared_source_default(
     tmp_path: Path,
 ) -> None:
-    default_rule = InputAcquisitionRuleV1(
+    default_rule = InputAcquisitionRule(
         input_name="source_result",
         requirement="conservative_default",
         permitted_replayability=("attested_only", "exact"),
-        max_age=CanonicalDurationV1(microseconds=60_000_000),
+        max_age=CanonicalDuration(microseconds=60_000_000),
         on_unavailable="declared_conservative_default",
         on_stale="refuse",
         on_oversized="refuse",
@@ -1092,7 +1092,7 @@ def test_live_v5_capture_terminal_uses_the_v2_topological_receipt_chain(
             access=BodyAccessContext(principal_id="unit-test", can_read_body=True),
         )
     )
-    assert isinstance(terminal_capture, CaptureEnvelopeV2)
+    assert isinstance(terminal_capture, CaptureEnvelope)
     assert terminal_capture.producer_receipt_digest == receipt.producer_receipt_digest
     scan_calls = {"partitions": 0, "records": 0}
     original_partition_ids = fixture.journal.partition_ids
@@ -1122,9 +1122,9 @@ def test_live_v5_capture_terminal_uses_the_v2_topological_receipt_chain(
             access=BodyAccessContext(principal_id="unit-test", can_read_body=True),
         )
     )
-    assert isinstance(provider_capture, CaptureEnvelopeV2)
+    assert isinstance(provider_capture, CaptureEnvelope)
     provider_evidence = provider_capture.production_evidence
-    assert isinstance(provider_evidence, ProviderInvocationCaptureEvidenceV1)
+    assert isinstance(provider_evidence, ProviderInvocationCaptureEvidence)
     provider_artifacts = {
         provider_capture.producer.qualified: prepared.acquisition_plan.external_occurrences[
             0
@@ -1150,7 +1150,7 @@ def test_live_v5_capture_terminal_uses_the_v2_topological_receipt_chain(
         == terminal_capture
     )
     forged_occurrence_digest = digest("forged-occurrence", "unit1-fix2")
-    forged_secret = ProviderSecretReferenceV1(
+    forged_secret = ProviderSecretReference(
         realm="orders",
         name="reader",
         epoch="forged-epoch",

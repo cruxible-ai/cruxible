@@ -15,11 +15,11 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.provider_contracts import read_provider_operation_contract
 from cruxible_client.contracts.provider_interfaces import (
-    ProviderBucketConformanceFixtureProofV1,
-    ProviderBucketConformanceFixtureV1,
-    ProviderBucketVocabularyV1,
-    ProviderClassifierCodeV1,
-    ProviderInterfaceRegistrationV2,
+    ProviderBucketConformanceFixture,
+    ProviderBucketConformanceFixtureProof,
+    ProviderBucketVocabulary,
+    ProviderClassifierCode,
+    ProviderInterfaceRegistration,
     provider_bucket_fixture_digest,
     provider_bucket_fixture_set_digest,
     provider_bucket_vocabulary_digest,
@@ -27,11 +27,11 @@ from cruxible_client.contracts.provider_interfaces import (
     provider_package_classifier_digest,
 )
 from cruxible_client.contracts.providers import (
-    ProviderLocalDistributionPinV1,
-    ProviderLocalEnvBackendPinV1,
-    ProviderRuntimeArtifactPayloadV2,
-    ProviderRuntimeManifestV2,
-    ProviderV3,
+    Provider,
+    ProviderLocalDistributionPin,
+    ProviderLocalEnvBackendPin,
+    ProviderRuntimeArtifactPayload,
+    ProviderRuntimeManifest,
     provider_expected_implementation_records,
     provider_manifest_digest,
 )
@@ -45,11 +45,11 @@ class PackageInterfaceExportV1(_Strict):
     interface_id: str
     interface_digest: str
     definition: dict[str, Any]
-    vocabulary: ProviderBucketVocabularyV1
+    vocabulary: ProviderBucketVocabulary
     classifier_identity: str
     classifier_version: int
-    classifier_code: ProviderClassifierCodeV1
-    fixtures: tuple[ProviderBucketConformanceFixtureV1, ...]
+    classifier_code: ProviderClassifierCode
+    fixtures: tuple[ProviderBucketConformanceFixture, ...]
 
 
 class PackageRuntimeRequirementV1(_Strict):
@@ -64,7 +64,7 @@ class PackageRegistrationDocumentV1(_Strict):
     """Data exported by the provider runtime's verified registration reader."""
 
     schema_version: Literal[1]
-    manifest: ProviderRuntimeManifestV2
+    manifest: ProviderRuntimeManifest
     interfaces: tuple[PackageInterfaceExportV1, ...]
     runtime_requirements: tuple[PackageRuntimeRequirementV1, ...] = ()
     governed_definitions: tuple[dict[str, Any], ...] = ()
@@ -84,7 +84,7 @@ class PackageRegistrationDocumentV1(_Strict):
                 raise ValueError("runtime requirement does not match a declared implementation")
         return self
 
-    def interface_registrations(self) -> tuple[ProviderInterfaceRegistrationV2, ...]:
+    def interface_registrations(self) -> tuple[ProviderInterfaceRegistration, ...]:
         result = []
         for exported in sorted(self.interfaces, key=lambda item: item.interface_id.encode()):
             implementation = next(
@@ -113,7 +113,7 @@ class PackageRegistrationDocumentV1(_Strict):
                     raise ValueError("conformance proof names a missing fixture")
                 fixture = fixtures[fixture_id]
                 proofs.append(
-                    ProviderBucketConformanceFixtureProofV1(
+                    ProviderBucketConformanceFixtureProof(
                         selector=selector,
                         fixture_id=fixture_id,
                         fixture_digest=provider_bucket_fixture_digest(fixture),
@@ -125,7 +125,7 @@ class PackageRegistrationDocumentV1(_Strict):
             vocabulary["status"] = "accepted"
             vocabulary_bytes = canonical_bytes(vocabulary).hex()
             result.append(
-                ProviderInterfaceRegistrationV2(
+                ProviderInterfaceRegistration(
                     identity=ArtifactIdentity(kind="ProviderInterface", name=exported.interface_id),
                     interface_id=exported.interface_id,
                     interface_bytes_hex=interface_bytes,
@@ -157,18 +157,18 @@ class PackageRegistrationDocumentV1(_Strict):
     def provider_definition(
         self,
         *,
-        distribution: ProviderLocalDistributionPinV1,
-        local_env: ProviderLocalEnvBackendPinV1,
+        distribution: ProviderLocalDistributionPin,
+        local_env: ProviderLocalEnvBackendPin,
         control_domain: str,
-        interfaces: tuple[ProviderInterfaceRegistrationV2, ...],
-    ) -> ProviderV3:
+        interfaces: tuple[ProviderInterfaceRegistration, ...],
+    ) -> Provider:
         expected = {item.interface_id: item.interface_digest for item in self.interfaces}
         if (
             len(interfaces) != len(expected)
             or {item.interface_id: item.interface_digest for item in interfaces} != expected
         ):
             raise ValueError("Provider must pin every exported interface exactly once")
-        payload = ProviderRuntimeArtifactPayloadV2(
+        payload = ProviderRuntimeArtifactPayload(
             provider_id=self.manifest.provider_id,
             status="accepted",
             manifest=self.manifest,
@@ -176,7 +176,7 @@ class PackageRegistrationDocumentV1(_Strict):
             distribution=distribution,
             local_env=local_env,
         )
-        return ProviderV3(
+        return Provider(
             identity=ArtifactIdentity(kind="Provider", name=payload.provider_id),
             control_domain=control_domain,
             signing_keys=(),

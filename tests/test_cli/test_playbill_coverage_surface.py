@@ -8,13 +8,13 @@ and resolve again.
 
 Two authoring inputs, two reachable answers
 -------------------------------------------
-`DirectByteSpanSelectionV1` cites CAS, and a CAS reference deliberately names no
+`DirectByteSpanSelection` cites CAS, and a CAS reference deliberately names no
 logical source, so by §11.6.1 a byte match at a *working* source is a labeled
 `content_equivalent` candidate and nothing stronger. That is the first test
 below, and it is not a gap: content-addressed evidence really does name no place
 an edit could move content within.
 
-`DirectForeignSourceSelectionV1` (PC-G-H1) cites one. It commits to exactly the
+`DirectForeignSourceSelection` (PC-G-H1) cites one. It commits to exactly the
 bytes a proposer presented and binds them to a declared *logical* external
 source under a per-source self-asserted CaptureContract, which is what makes
 `exact` and `drifted` reachable end to end from the served surface: the same

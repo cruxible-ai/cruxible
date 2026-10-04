@@ -6,7 +6,7 @@ from cruxible_client.contracts.acquisition_policies import (
     acquisition_policy_path,
     render_acquisition_policy,
 )
-from cruxible_client.contracts.candidates import CandidateRecordV3
+from cruxible_client.contracts.candidates import CandidateRecord
 from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
 from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
 from cruxible_client.contracts.providers import provider_path, render_provider
@@ -53,7 +53,7 @@ def test_evidence_artifacts_share_acceptance_closure_and_projection(tmp_path: Pa
         candidate_tree=candidate_tree,
         timestamp=TIMESTAMP,
     )
-    assert isinstance(proposed.candidate, CandidateRecordV3)
+    assert isinstance(proposed.candidate, CandidateRecord)
     assert {member.artifact_kind for member in proposed.candidate.members} == {
         "capture-contract",
         "claim-type",

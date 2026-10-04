@@ -25,7 +25,7 @@ from cruxible_client import (
 )
 from cruxible_client.authoring.signing import ApprovalSigner
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
-from cruxible_client.contracts.policies import ClaimAdmissionPolicyV1, ClaimResolutionPolicyV1
+from cruxible_client.contracts.policies import ClaimAdmissionPolicy, ClaimResolutionPolicy
 
 SUBJECT = "sdk.demo/patch-sla"
 PREDICATE = "sdk.demo.patch_sla"
@@ -66,8 +66,8 @@ def run(
         permitted_roles=(ClaimRole.NORMATIVE,),
         referent_sensitivity=ReferentSensitivity.IDENTITY,
         sources=(SOURCE,),
-        admission_policy=ClaimAdmissionPolicyV1(),
-        resolution_policy=ClaimResolutionPolicyV1(
+        admission_policy=ClaimAdmissionPolicy(),
+        resolution_policy=ClaimResolutionPolicy(
             cardinality="one", eligible_verdicts=("supported",), selector="only_contender"
         ),
         pins=(),

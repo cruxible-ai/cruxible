@@ -9,15 +9,15 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from cruxible_client.contracts.canonical import ArtifactDigest, CasDigest, Sha256Value, typed_digest
 from cruxible_client.contracts.procedures.models import (
-    ClaimTapNodeV6,
-    ExhaustTapNodeV3,
+    ClaimTapNode,
+    ExhaustTapNode,
+    SourceNode,
     SourceNodeV3,
-    SourceNodeV4,
     StateTapNodeV3,
 )
-from cruxible_client.contracts.query.grammar import QueryBudgetsV1
+from cruxible_client.contracts.query.grammar import QueryBudgets
 from cruxible_client.contracts.source_references import (
-    SemanticReadCoordinateV1,
+    SemanticReadCoordinate,
     validate_local_read_coordinate,
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
@@ -44,7 +44,7 @@ class AcceptedStateRunInputV1(_StrictInputModel):
     tag: Literal["playbill-accepted-state-run-input-v1"] = "playbill-accepted-state-run-input-v1"
     kind: Literal["accepted_state"] = "accepted_state"
     input_name: str
-    read_coordinate: SemanticReadCoordinateV1
+    read_coordinate: SemanticReadCoordinate
     query_definition_digest: str
     parameters_digest: str
     result_digest: str
@@ -64,11 +64,11 @@ class AcceptedStateRunInputV2(_StrictInputModel):
     tag: Literal["playbill-accepted-state-run-input-v2"] = "playbill-accepted-state-run-input-v2"
     kind: Literal["accepted_state_v2"] = "accepted_state_v2"
     input_name: str
-    read_coordinate: SemanticReadCoordinateV1
+    read_coordinate: SemanticReadCoordinate
     query_definition_digest: str
     parameters_digest: str
     result_digest: str
-    effective_query_budgets: QueryBudgetsV1
+    effective_query_budgets: QueryBudgets
     material_body_digest: str
 
     _query = field_validator("query_definition_digest")(_artifact_digest)
@@ -92,11 +92,11 @@ class AcceptedClaimRunInputV1(_StrictInputModel):
     tag: Literal["playbill-accepted-claim-run-input-v1"] = "playbill-accepted-claim-run-input-v1"
     kind: Literal["accepted_claim"] = "accepted_claim"
     input_name: str
-    read_coordinate: SemanticReadCoordinateV1
+    read_coordinate: SemanticReadCoordinate
     claim_type_digest: str
     parameters_digest: str
     result_digest: str
-    effective_query_budgets: QueryBudgetsV1
+    effective_query_budgets: QueryBudgets
     material_body_digest: str
 
     _claim_type = field_validator("claim_type_digest")(_artifact_digest)
@@ -235,7 +235,7 @@ def validate_run_input_vector(
 
 
 def validate_node_input_plane(
-    node: ClaimTapNodeV6 | StateTapNodeV3 | SourceNodeV3 | SourceNodeV4 | ExhaustTapNodeV3,
+    node: ClaimTapNode | StateTapNodeV3 | SourceNodeV3 | SourceNode | ExhaustTapNode,
     run_input: ProcedureRunInputV1,
 ) -> None:
     """Refuse any attempt to relabel evidence between the three input planes."""

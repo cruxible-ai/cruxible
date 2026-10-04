@@ -11,18 +11,18 @@ import pytest
 from click.testing import CliRunner
 
 from cruxible_client.contracts.get_reads import (
-    PlaybillByteRangeV1,
-    PlaybillGetBodyV1,
-    PlaybillGetClaimCardV1,
-    PlaybillGetCoordinateV1,
-    PlaybillGetRequestV1,
-    PlaybillGetResultV1,
-    PlaybillGetSubjectCardV1,
-    PlaybillGetSubjectClaimV1,
+    PlaybillByteRange,
+    PlaybillGetBody,
+    PlaybillGetClaimCard,
+    PlaybillGetCoordinate,
+    PlaybillGetRequest,
+    PlaybillGetResult,
+    PlaybillGetSubjectCard,
+    PlaybillGetSubjectClaim,
 )
 from cruxible_core.cli.main import cli
 
-COORDINATE = PlaybillGetCoordinateV1(git_oid="1" * 12, generation=7)
+COORDINATE = PlaybillGetCoordinate(git_oid="1" * 12, generation=7)
 PREFIX = ["--server-url", "http://server", "--instance-id", "inst_get"]
 WHEN = datetime(2026, 9, 1, tzinfo=UTC)
 
@@ -33,24 +33,24 @@ def _isolated_context(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 
 
 class _StubClient:
-    def __init__(self, result: PlaybillGetResultV1) -> None:
+    def __init__(self, result: PlaybillGetResult) -> None:
         self.result = result
-        self.requests: list[PlaybillGetRequestV1] = []
+        self.requests: list[PlaybillGetRequest] = []
 
-    def playbill_get(self, instance_id: str, *, request: PlaybillGetRequestV1) -> Any:
+    def playbill_get(self, instance_id: str, *, request: PlaybillGetRequest) -> Any:
         assert instance_id == "inst_get"
         self.requests.append(request)
         return self.result
 
 
-def _stub(monkeypatch: pytest.MonkeyPatch, result: PlaybillGetResultV1) -> _StubClient:
+def _stub(monkeypatch: pytest.MonkeyPatch, result: PlaybillGetResult) -> _StubClient:
     client = _StubClient(result)
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
     return client
 
 
-def _result(kind: str, **fields: Any) -> PlaybillGetResultV1:
-    return PlaybillGetResultV1(
+def _result(kind: str, **fields: Any) -> PlaybillGetResult:
+    return PlaybillGetResult(
         ref="ref",
         kind=kind,  # type: ignore[arg-type]
         detail=fields.pop("detail", "summary"),
@@ -67,15 +67,15 @@ def test_a_subject_prints_its_claims_as_an_aligned_value_table(
         monkeypatch,
         _result(
             "subject",
-            card=PlaybillGetSubjectCardV1(
+            card=PlaybillGetSubjectCard(
                 subject="dev.roadmap_item/x",
                 kind="dev.roadmap_item",
                 lifecycle="live",
                 claims=(
-                    PlaybillGetSubjectClaimV1(
+                    PlaybillGetSubjectClaim(
                         predicate="adoption_state", claim="CLM-1", value="adopted"
                     ),
-                    PlaybillGetSubjectClaimV1(
+                    PlaybillGetSubjectClaim(
                         predicate="task_title", claim="CLM-2", value="Ship it", flags=("stale",)
                     ),
                 ),
@@ -98,7 +98,7 @@ def test_a_subject_prints_its_claims_as_an_aligned_value_table(
 def test_a_claim_prints_its_value_and_verdict_and_json_carries_everything(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    card = PlaybillGetClaimCardV1(
+    card = PlaybillGetClaimCard(
         claim="CLM-" + "a" * 32,
         subject="dev.roadmap_item/x",
         predicate="adoption_state",
@@ -127,12 +127,12 @@ def test_body_takes_a_byte_range_and_prints_the_bytes(monkeypatch: pytest.Monkey
         _result(
             "document",
             detail="body",
-            body=PlaybillGetBodyV1(
+            body=PlaybillGetBody(
                 document="design",
                 media_type="text/markdown",
                 size=100,
                 body_digest="sha256:" + "a" * 64,
-                range=PlaybillByteRangeV1(start=0, end=10),
+                range=PlaybillByteRange(start=0, end=10),
                 text="# Design\n\n",
             ),
         ),
@@ -144,7 +144,7 @@ def test_body_takes_a_byte_range_and_prints_the_bytes(monkeypatch: pytest.Monkey
     )
 
     assert result.exit_code == 0, result.output
-    assert stub.requests[0].range == PlaybillByteRangeV1(start=0, end=10)
+    assert stub.requests[0].range == PlaybillByteRange(start=0, end=10)
     assert result.output.startswith("# Design\n\n")
     assert "next: --range 10:20" in result.output
 
@@ -167,21 +167,19 @@ def test_other_cards_print_names_whole_and_nested_rows_readably(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from cruxible_client.contracts.get_reads import (
-        PlaybillGetProposalCardV1,
-        PlaybillGetProposalChangeV1,
+        PlaybillGetProposalCard,
+        PlaybillGetProposalChange,
     )
 
     _stub(
         monkeypatch,
         _result(
             "proposal",
-            card=PlaybillGetProposalCardV1(
+            card=PlaybillGetProposalCard(
                 proposal="sha256:" + "1" * 64,
                 status="open",
                 verdict="candidate",
-                changes=(
-                    PlaybillGetProposalChangeV1(path="documents/design.json", change="create"),
-                ),
+                changes=(PlaybillGetProposalChange(path="documents/design.json", change="create"),),
                 next=("cruxible playbill proposal review sha256:" + "1" * 64,),
             ),
         ),
@@ -199,9 +197,9 @@ def test_history_pages_print_the_next_command_and_long_values_say_they_were_cut(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from cruxible_client.contracts.get_reads import (
-        PlaybillGetHistoryV1,
-        PlaybillGetRevisionV1,
-        PlaybillGetTruncatedTextV1,
+        PlaybillGetHistory,
+        PlaybillGetRevision,
+        PlaybillGetTruncatedText,
     )
 
     stub = _stub(
@@ -209,9 +207,9 @@ def test_history_pages_print_the_next_command_and_long_values_say_they_were_cut(
         _result(
             "claim",
             detail="history",
-            history=PlaybillGetHistoryV1(
+            history=PlaybillGetHistory(
                 revisions=(
-                    PlaybillGetRevisionV1(
+                    PlaybillGetRevision(
                         revision=3,
                         sequence=9,
                         git_oid="9" * 12,
@@ -236,16 +234,16 @@ def test_history_pages_print_the_next_command_and_long_values_say_they_were_cut(
     assert f"rev 3  seq 9 at {'9' * 12}" in paged.output
     assert "next: cruxible playbill get CLM-aaaa --detail history --cursor CURSOR" in paged.output
 
-    long_row = PlaybillGetSubjectClaimV1(
+    long_row = PlaybillGetSubjectClaim(
         predicate="note",
         claim="CLM-3",
-        value=PlaybillGetTruncatedTextV1(value="n" * 500, length=900),
+        value=PlaybillGetTruncatedText(value="n" * 500, length=900),
     )
     _stub(
         monkeypatch,
         _result(
             "subject",
-            card=PlaybillGetSubjectCardV1(
+            card=PlaybillGetSubjectCard(
                 subject="dev.roadmap_item/x",
                 kind="dev.roadmap_item",
                 lifecycle="live",
@@ -269,23 +267,23 @@ def test_exact_content_prints_as_text_and_a_marker_says_why_when_it_cannot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from cruxible_client.contracts.get_reads import (
-        PlaybillExactContentRefV1,
-        PlaybillGetEvidenceV1,
+        PlaybillExactContentRef,
+        PlaybillGetEvidence,
     )
 
     digest = "sha256:" + "ab" * 32
-    card = PlaybillGetSubjectCardV1(
+    card = PlaybillGetSubjectCard(
         subject="legal.case/c-1",
         kind="legal.case",
         lifecycle="live",
         claims=(
-            PlaybillGetSubjectClaimV1(
+            PlaybillGetSubjectClaim(
                 predicate="ruling", claim="CLM-1", value="Affirmed.", content_digest=digest
             ),
-            PlaybillGetSubjectClaimV1(
+            PlaybillGetSubjectClaim(
                 predicate="exhibit",
                 claim="CLM-2",
-                value=PlaybillExactContentRefV1(
+                value=PlaybillExactContentRef(
                     exact_content="binary", content_digest=digest, length=6
                 ),
                 content_digest=digest,
@@ -300,7 +298,7 @@ def test_exact_content_prints_as_text_and_a_marker_says_why_when_it_cannot(
     assert "  ruling   Affirmed." in text.output
     assert "  exhibit  <binary 6 bytes sha256:abababababab>" in text.output
 
-    evidence = PlaybillGetEvidenceV1(
+    evidence = PlaybillGetEvidence(
         value="Affirmed, in full.", content_digest=digest, captures=(), attestations=()
     )
     _stub(monkeypatch, _result("claim", detail="evidence", evidence=evidence))
@@ -365,7 +363,7 @@ def test_cli_value_width_boundary_and_evidence_objects_are_not_silently_cut(
     monkeypatch: pytest.MonkeyPatch,
     width: int,
 ) -> None:
-    from cruxible_client.contracts.get_reads import PlaybillGetEvidenceV1
+    from cruxible_client.contracts.get_reads import PlaybillGetEvidence
     from cruxible_core.cli.commands.playbill import _get_value_text
 
     assert _get_value_text("x" * width, width=width) == "x" * width
@@ -382,7 +380,7 @@ def test_cli_value_width_boundary_and_evidence_objects_are_not_silently_cut(
         _result(
             "claim",
             detail="evidence",
-            evidence=PlaybillGetEvidenceV1(
+            evidence=PlaybillGetEvidence(
                 value=value,
                 captures=(),
                 attestations=(),
@@ -400,9 +398,9 @@ class _RangedBodyClient:
 
     def __init__(self, content: bytes) -> None:
         self.content = content
-        self.requests: list[PlaybillGetRequestV1] = []
+        self.requests: list[PlaybillGetRequest] = []
 
-    def playbill_get(self, instance_id: str, *, request: PlaybillGetRequestV1) -> Any:
+    def playbill_get(self, instance_id: str, *, request: PlaybillGetRequest) -> Any:
         import base64
 
         self.requests.append(request)
@@ -412,12 +410,12 @@ class _RangedBodyClient:
         return _result(
             "document",
             detail="body",
-            body=PlaybillGetBodyV1(
+            body=PlaybillGetBody(
                 document="blob",
                 media_type="application/octet-stream",
                 size=len(self.content),
                 body_digest="sha256:" + "b" * 64,
-                range=PlaybillByteRangeV1(start=request.range.start, end=end),
+                range=PlaybillByteRange(start=request.range.start, end=end),
                 content_base64=base64.b64encode(chunk).decode("ascii"),
             ),
         )

@@ -12,7 +12,7 @@ import click
 
 from cruxible_client import CruxibleClient, contracts
 from cruxible_client.authoring.signing import sign_runtime_credential_mint
-from cruxible_client.contracts.runtime_credentials import RuntimeCredentialPrincipalProofV1
+from cruxible_client.contracts.runtime_credentials import RuntimeCredentialPrincipalProof
 from cruxible_core.cli.commands import _common
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.cli.principal_settings import set_principal_settings_token
@@ -52,7 +52,7 @@ def sign_principal_mint(
     permission_mode: contracts.RuntimeCredentialPermissionMode,
     label: str,
     key_dir: Path,
-) -> RuntimeCredentialPrincipalProofV1:
+) -> RuntimeCredentialPrincipalProof:
     """Sign the principal's consent with the key `playbill init`/`principal add` wrote."""
 
     private_key = key_dir.expanduser() / f"{principal_id}.ed25519"

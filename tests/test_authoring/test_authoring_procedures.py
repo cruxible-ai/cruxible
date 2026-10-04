@@ -8,19 +8,19 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.authoring.examples import procedure_example, query_claims_by_type_example
-from cruxible_client.contracts.approval_policy import ApprovalPolicyV1
+from cruxible_client.contracts.approval_policy import ApprovalPolicy
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.authoring.inputs import lower_authoring_input
 from cruxible_client.contracts.authoring.models import (
-    ApprovalPolicyAuthoringPayloadV1,
-    ChangeSetAuthoringPayloadV1,
+    ApprovalPolicyAuthoringPayload,
+    ChangeSetAuthoringPayload,
+    ProcedureAuthoringPayload,
     ProcedureAuthoringPayloadV1,
-    ProcedureAuthoringPayloadV2,
-    ProcedureRuntimePolicyAuthoringPayloadV1,
-    QueryDefinitionAuthoringPayloadV1,
+    ProcedureRuntimePolicyAuthoringPayload,
+    QueryDefinitionAuthoringPayload,
 )
 from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
-from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.documents import (
     DocumentAuthority,
     DocumentLifecycle,
@@ -28,37 +28,37 @@ from cruxible_client.contracts.documents import (
     render_document,
 )
 from cruxible_client.contracts.errors import ProjectionFormatError
-from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicyV1
+from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
 from cruxible_client.contracts.procedures.artifacts import (
-    ProcedureOwnedContractV1,
+    ProcedureOwnedContract,
     parse_procedure,
     procedure_path,
 )
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v4
 from cruxible_client.contracts.procedures.models import (
-    GuardNodeV3,
-    GuardPredicateV1,
-    HaltNodeV3,
-    PredicateOperandV1,
-    ProcedureBudgetV3,
+    GuardNode,
+    GuardPredicate,
+    HaltNode,
+    PredicateOperand,
+    ProcedureBudget,
     ProcedureDefinitionV3,
     ProcedureDefinitionV4,
-    ProcedureHardCapsV3,
-    ProcedurePinSlotRefV1,
-    ProcedurePinSlotV1,
-    ProjectNodeV3,
+    ProcedureHardCaps,
+    ProcedurePinSlot,
+    ProcedurePinSlotRef,
+    ProjectNode,
     StateTapNodeV3,
 )
 from cruxible_client.contracts.procedures.results import (
-    ProcedureHaltTerminalV1,
+    ProcedureHaltTerminal,
     ProcedureRunReceiptV3,
 )
 from cruxible_client.contracts.query.definitions import (
-    QueryDefinitionV1,
+    QueryDefinition,
     query_definition_digest,
 )
-from cruxible_client.contracts.query.grammar import QueryProjectionV1
+from cruxible_client.contracts.query.grammar import QueryProjection
 from cruxible_core.authoring import lowering
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.preflight import compute_preflight
@@ -72,7 +72,7 @@ from cruxible_core.service.authoring.documents import (
 )
 from cruxible_core.service.procedures.procedure_runs import (
     ProcedureReadinessRequestV1,
-    ProcedureRunRequestV2,
+    ProcedureRunRequest,
     service_playbill_procedure_readiness,
     service_run_playbill_procedure,
 )
@@ -88,9 +88,9 @@ def _digest(label: str) -> str:
 
 
 def _slot_definition() -> ProcedureDefinitionV3:
-    contract_in = ProcedurePinSlotRefV1(slot_name="contract-in")
-    contract_out = ProcedurePinSlotRefV1(slot_name="contract-out")
-    query = ProcedurePinSlotRefV1(slot_name="query")
+    contract_in = ProcedurePinSlotRef(slot_name="contract-in")
+    contract_out = ProcedurePinSlotRef(slot_name="contract-out")
+    query = ProcedurePinSlotRef(slot_name="query")
     return ProcedureDefinitionV3(
         name="triage",
         description="Read accepted claims and shape a bounded result.",
@@ -98,7 +98,7 @@ def _slot_definition() -> ProcedureDefinitionV3:
         contract_out=contract_out,
         nodes=(
             StateTapNodeV3(node_id="read", query=query, parameters={}, as_="rows"),
-            ProjectNodeV3(
+            ProjectNode(
                 node_id="shape",
                 fields={"rows": "$steps.rows"},
                 contract_out=contract_out,
@@ -107,33 +107,33 @@ def _slot_definition() -> ProcedureDefinitionV3:
         ),
         returns="result",
         pin_slots=(
-            ProcedurePinSlotV1(
+            ProcedurePinSlot(
                 slot_name="contract-in",
                 pin_role="contract-in",
                 artifact_kind="Contract",
                 interface_digest=_digest("contract-in-interface"),
             ),
-            ProcedurePinSlotV1(
+            ProcedurePinSlot(
                 slot_name="contract-out",
                 pin_role="contract-out",
                 artifact_kind="Contract",
                 interface_digest=_digest("contract-out-interface"),
             ),
-            ProcedurePinSlotV1(
+            ProcedurePinSlot(
                 slot_name="query",
                 pin_role="query",
                 artifact_kind="QueryDefinition",
                 interface_digest=_digest("query-interface"),
             ),
         ),
-        budget=ProcedureBudgetV3(
-            wall_clock=CanonicalDurationV1(microseconds=1_000_000),
+        budget=ProcedureBudget(
+            wall_clock=CanonicalDuration(microseconds=1_000_000),
             max_provider_calls=0,
             max_capture_bytes=0,
             max_items=100,
         ),
-        hard_caps=ProcedureHardCapsV3(
-            max_wall_clock=CanonicalDurationV1(microseconds=2_000_000),
+        hard_caps=ProcedureHardCaps(
+            max_wall_clock=CanonicalDuration(microseconds=2_000_000),
             max_provider_calls=0,
             max_capture_bytes=0,
             max_items=200,
@@ -145,8 +145,8 @@ def _slot_definition() -> ProcedureDefinitionV3:
 
 def _layout_slot_definition(*, halt_before_return: bool) -> ProcedureDefinitionV3:
     base = _slot_definition()
-    query = ProcedurePinSlotRefV1(slot_name="query")
-    contract_out = ProcedurePinSlotRefV1(slot_name="contract-out")
+    query = ProcedurePinSlotRef(slot_name="query")
+    contract_out = ProcedurePinSlotRef(slot_name="contract-out")
     read = StateTapNodeV3(
         node_id="read",
         query=query,
@@ -154,25 +154,25 @@ def _layout_slot_definition(*, halt_before_return: bool) -> ProcedureDefinitionV
         as_="rows",
         next="gate",
     )
-    gate = GuardNodeV3(
+    gate = GuardNode(
         node_id="gate",
-        predicate=GuardPredicateV1(
-            left=PredicateOperandV1(kind="count", alias="rows"),
+        predicate=GuardPredicate(
+            left=PredicateOperand(kind="count", alias="rows"),
             operator="gt",
-            right=PredicateOperandV1(kind="literal", value=0),
+            right=PredicateOperand(kind="literal", value=0),
         ),
         on_true="result",
         on_false="stop",
         refusal_code="rows.empty",
         message="No rows are available.",
     )
-    result = ProjectNodeV3(
+    result = ProjectNode(
         node_id="result",
         fields={"rows": "$steps.rows"},
         contract_out=contract_out,
         as_="result",
     )
-    stop = HaltNodeV3(node_id="stop", reason="No rows are available.")
+    stop = HaltNode(node_id="stop", reason="No rows are available.")
     tail = (stop, result) if halt_before_return else (result, stop)
     return base.model_copy(update={"nodes": (read, gate, *tail)})
 
@@ -195,8 +195,8 @@ def _payload(definition: dict[str, object]) -> ProcedureAuthoringPayloadV1:
     )
 
 
-def _carried_contract(name: str, field: PropertySchema) -> ProcedureOwnedContractV1:
-    return ProcedureOwnedContractV1(
+def _carried_contract(name: str, field: PropertySchema) -> ProcedureOwnedContract:
+    return ProcedureOwnedContract(
         identity=ArtifactIdentity(kind="Contract", name=name),
         schema=ContractSchema(fields={} if name == "empty-input" else {"rows": field}),
     )
@@ -247,18 +247,18 @@ def _carried_definition() -> dict[str, object]:
     }
 
 
-def _change_set_query() -> QueryDefinitionV1:
+def _change_set_query() -> QueryDefinition:
     example = query_claims_by_type_example().query_definition
     assert example.projection is not None
     return example.model_copy(
         update={
             "pins": (),
-            "projection": QueryProjectionV1(fields=(example.projection.fields[0],)),
+            "projection": QueryProjection(fields=(example.projection.fields[0],)),
         }
     )
 
 
-def _change_set_payload(query: QueryDefinitionV1) -> ChangeSetAuthoringPayloadV1:
+def _change_set_payload(query: QueryDefinition) -> ChangeSetAuthoringPayload:
     definition = _slot_definition().model_dump(mode="json", by_alias=True)
     definition["nodes"][0]["query"] = {  # type: ignore[index]
         "tag": "playbill-authoring-candidate-reference-v1",
@@ -271,24 +271,24 @@ def _change_set_payload(query: QueryDefinitionV1) -> ChangeSetAuthoringPayloadV1
         for slot in definition["pin_slots"]
         if slot["slot_name"] != "query"  # type: ignore[index]
     ]
-    return ChangeSetAuthoringPayloadV1(
+    return ChangeSetAuthoringPayload(
         members=(
             ProcedureAuthoringPayloadV1(
                 definition=definition,
                 activation_policy="drain",
             ),
-            QueryDefinitionAuthoringPayloadV1(query_definition=query),
+            QueryDefinitionAuthoringPayload(query_definition=query),
         )
     )
 
 
 def _with_accepted_query_reference(
-    payload: ChangeSetAuthoringPayloadV1,
-) -> ChangeSetAuthoringPayloadV1:
+    payload: ChangeSetAuthoringPayload,
+) -> ChangeSetAuthoringPayload:
     procedure = payload.members[0]
     query = payload.members[1]
-    assert isinstance(procedure, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2)
-    assert isinstance(query, QueryDefinitionAuthoringPayloadV1)
+    assert isinstance(procedure, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayload)
+    assert isinstance(query, QueryDefinitionAuthoringPayload)
     definition = dict(procedure.definition)
     nodes = [dict(node) for node in definition["nodes"]]  # type: ignore[arg-type]
     nodes[0]["query"] = {
@@ -309,10 +309,10 @@ def _with_accepted_query_reference(
 
 
 def _runnable_change_set_payload(
-    query: QueryDefinitionV1,
+    query: QueryDefinition,
     *,
     description: str,
-) -> ChangeSetAuthoringPayloadV1:
+) -> ChangeSetAuthoringPayload:
     definition: dict[str, object] = {
         "graph_format": 3,
         "name": "candidate-query-run",
@@ -367,9 +367,9 @@ def _runnable_change_set_payload(
         },
         "terminal_capability": 1,
     }
-    return ChangeSetAuthoringPayloadV1(
+    return ChangeSetAuthoringPayload(
         members=(
-            ProcedureAuthoringPayloadV2(
+            ProcedureAuthoringPayload(
                 definition=definition,
                 activation_policy="snapshot",
                 owned_contracts=(
@@ -377,7 +377,7 @@ def _runnable_change_set_payload(
                     _carried_contract("query-output", PropertySchema(type="json")),
                 ),
             ),
-            QueryDefinitionAuthoringPayloadV1(query_definition=query),
+            QueryDefinitionAuthoringPayload(query_definition=query),
         )
     )
 
@@ -387,7 +387,7 @@ def _submit_approve_activate(
     *,
     actor: AuthenticatedActor,
     owner: GeneratedKeyMaterial,
-    payload: ChangeSetAuthoringPayloadV1,
+    payload: ChangeSetAuthoringPayload,
     timestamp: str,
 ) -> None:
     created = coordinator.create(
@@ -457,8 +457,8 @@ def _world_holding_a_document(
     )
 
 
-def _list_contract_payload() -> ProcedureAuthoringPayloadV2:
-    return ProcedureAuthoringPayloadV2(
+def _list_contract_payload() -> ProcedureAuthoringPayload:
+    return ProcedureAuthoringPayload(
         definition=_carried_definition(),
         activation_policy="snapshot",
         owned_contracts=(
@@ -529,7 +529,7 @@ def test_an_unreadable_accepted_tree_refuses_typed_rather_than_faulting(
 
 def test_max_items_requires_a_referenced_list_contract(tmp_path: Path) -> None:
     coordinator, actor = _coordinator(tmp_path)
-    opaque = ProcedureAuthoringPayloadV2(
+    opaque = ProcedureAuthoringPayload(
         definition=_carried_definition(),
         activation_policy="snapshot",
         owned_contracts=(
@@ -750,7 +750,7 @@ def test_change_set_submit_activate_closure_and_run_read_exact_successor_query(
     )
     incomplete = coordinator.compile(
         actor=actor,
-        payload=QueryDefinitionAuthoringPayloadV1(query_definition=query_v2),
+        payload=QueryDefinitionAuthoringPayload(query_definition=query_v2),
         canonical_timestamp="2026-08-21T12:01:00.000000Z",
     )
     assert incomplete.verdict == "refused"
@@ -789,7 +789,7 @@ def test_change_set_submit_activate_closure_and_run_read_exact_successor_query(
     result = service_run_playbill_procedure(
         instance,
         name="candidate-query-run",
-        request=ProcedureRunRequestV2(evaluation_time=evaluation_time, input={}),
+        request=ProcedureRunRequest(evaluation_time=evaluation_time, input={}),
         actor_context=GovernedActorContext(
             actor_type="human_user",
             actor_id="owner",
@@ -810,8 +810,8 @@ def test_change_set_submit_activate_closure_and_run_read_exact_successor_query(
 
 def test_approval_policy_is_a_real_singleton_authoring_scope(tmp_path: Path) -> None:
     coordinator, actor = _coordinator(tmp_path)
-    policy_payload = ApprovalPolicyAuthoringPayloadV1(
-        approval_policy=ApprovalPolicyV1(mode="independent_approval_required")
+    policy_payload = ApprovalPolicyAuthoringPayload(
+        approval_policy=ApprovalPolicy(mode="independent_approval_required")
     )
     singleton = coordinator.compile(
         actor=actor,
@@ -829,10 +829,10 @@ def test_approval_policy_is_a_real_singleton_authoring_scope(tmp_path: Path) -> 
     )
     mixed = mixed_coordinator.compile(
         actor=actor,
-        payload=ChangeSetAuthoringPayloadV1(
+        payload=ChangeSetAuthoringPayload(
             members=(
                 policy_payload,
-                QueryDefinitionAuthoringPayloadV1(query_definition=_change_set_query()),
+                QueryDefinitionAuthoringPayload(query_definition=_change_set_query()),
             )
         ),
         canonical_timestamp="2026-08-21T12:01:00.000000Z",
@@ -846,8 +846,8 @@ def test_approval_policy_is_a_real_singleton_authoring_scope(tmp_path: Path) -> 
 
 def test_procedure_runtime_policy_is_a_real_singleton_authoring_scope(tmp_path: Path) -> None:
     coordinator, actor = _coordinator(tmp_path)
-    policy_payload = ProcedureRuntimePolicyAuthoringPayloadV1(
-        procedure_runtime_policy=ProcedureRuntimePolicyV1(provider_output_bytes_cap=2_097_152)
+    policy_payload = ProcedureRuntimePolicyAuthoringPayload(
+        procedure_runtime_policy=ProcedureRuntimePolicy(provider_output_bytes_cap=2_097_152)
     )
     singleton = coordinator.compile(
         actor=actor,
@@ -865,10 +865,10 @@ def test_procedure_runtime_policy_is_a_real_singleton_authoring_scope(tmp_path: 
     )
     mixed = mixed_coordinator.compile(
         actor=actor,
-        payload=ChangeSetAuthoringPayloadV1(
+        payload=ChangeSetAuthoringPayload(
             members=(
                 policy_payload,
-                QueryDefinitionAuthoringPayloadV1(query_definition=_change_set_query()),
+                QueryDefinitionAuthoringPayload(query_definition=_change_set_query()),
             )
         ),
         canonical_timestamp="2026-08-21T12:02:00.000000Z",
@@ -885,12 +885,12 @@ def test_change_set_membership_and_candidate_reference_refusals(tmp_path: Path) 
     # this line once pinned made the uniform builder refuse the smallest real
     # set an author writes, so a one-member set is admitted and keeps its own
     # ChangeSet identity rather than collapsing into a singleton payload.
-    single = ChangeSetAuthoringPayloadV1(
-        members=(QueryDefinitionAuthoringPayloadV1(query_definition=query),)
+    single = ChangeSetAuthoringPayload(
+        members=(QueryDefinitionAuthoringPayload(query_definition=query),)
     )
     assert len(single.members) == 1
     with pytest.raises(ValueError, match="sorted by semantic identity"):
-        ChangeSetAuthoringPayloadV1(members=tuple(reversed(_change_set_payload(query).members)))
+        ChangeSetAuthoringPayload(members=tuple(reversed(_change_set_payload(query).members)))
 
     coordinator, actor = _coordinator(tmp_path)
     created = coordinator.create(
@@ -900,7 +900,7 @@ def test_change_set_membership_and_candidate_reference_refusals(tmp_path: Path) 
     )
     renamed_values = query.model_dump(mode="json")
     renamed_values["identity"] = {"kind": "QueryDefinition", "name": "renamed"}
-    renamed = QueryDefinitionV1.model_validate(renamed_values)
+    renamed = QueryDefinition.model_validate(renamed_values)
     with pytest.raises(ValueError, match="cannot change member identity"):
         coordinator.replace_payload(
             created.intent.intent_id,
@@ -1327,7 +1327,7 @@ def test_coordinator_authored_halt_reason_reaches_terminal_and_receipt(
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     actor = AuthenticatedActor(actor_id="owner")
     reason = "No eligible work remains."
-    payload = ProcedureAuthoringPayloadV2(
+    payload = ProcedureAuthoringPayload(
         definition={
             "graph_format": 3,
             "name": "halt-with-reason",
@@ -1419,7 +1419,7 @@ def test_coordinator_authored_halt_reason_reaches_terminal_and_receipt(
     result = service_run_playbill_procedure(
         instance,
         name="halt-with-reason",
-        request=ProcedureRunRequestV2(
+        request=ProcedureRunRequest(
             evaluation_time=datetime(2026, 8, 21, 12, 5, tzinfo=UTC),
             input={},
         ),
@@ -1433,7 +1433,7 @@ def test_coordinator_authored_halt_reason_reaches_terminal_and_receipt(
     )
 
     assert result.status == "halted"
-    assert isinstance(result.terminal, ProcedureHaltTerminalV1)
+    assert isinstance(result.terminal, ProcedureHaltTerminal)
     assert result.terminal.reason == reason
     assert isinstance(result.receipt, ProcedureRunReceiptV3)
     assert result.receipt.terminal == result.terminal
@@ -1441,14 +1441,14 @@ def test_coordinator_authored_halt_reason_reaches_terminal_and_receipt(
 
 def _accepted_authoring_trio(tmp_path):
     from cruxible_client.contracts.acquisition_policies import (
-        IndependentCoherenceV1,
-        InputAcquisitionRuleV1,
-        SourceAcquisitionPolicyV1,
+        IndependentCoherence,
+        InputAcquisitionRule,
+        SourceAcquisitionPolicy,
     )
     from cruxible_client.contracts.authoring.models import (
-        LineAuthoringPayloadV1,
-        ProcedureMandateAuthoringPayloadV1,
-        SourceAcquisitionPolicyAuthoringPayloadV1,
+        LineAuthoringPayload,
+        ProcedureMandateAuthoringPayload,
+        SourceAcquisitionPolicyAuthoringPayload,
         authoring_member_identity,
     )
 
@@ -1460,11 +1460,11 @@ def _accepted_authoring_trio(tmp_path):
         update={"definition": {**procedure.definition, "graph_format": 5}}
     )
     name = procedure.definition["name"]
-    policy = SourceAcquisitionPolicyAuthoringPayloadV1(
-        acquisition_policy=SourceAcquisitionPolicyV1(
+    policy = SourceAcquisitionPolicyAuthoringPayload(
+        acquisition_policy=SourceAcquisitionPolicy(
             identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="demo"),
             inputs=(
-                InputAcquisitionRuleV1(
+                InputAcquisitionRule(
                     input_name="status",
                     requirement="optional",
                     permitted_replayability=("exact",),
@@ -1474,25 +1474,25 @@ def _accepted_authoring_trio(tmp_path):
                     on_conflict="refuse",
                 ),
             ),
-            coherence=IndependentCoherenceV1(),
+            coherence=IndependentCoherence(),
         )
     )
-    line = LineAuthoringPayloadV1(
+    line = LineAuthoringPayload(
         name=name,
         procedure_name=name,
         acquisition_policy_name="demo",
         max_authority="observe",
     )
-    mandate = ProcedureMandateAuthoringPayloadV1(
+    mandate = ProcedureMandateAuthoringPayload(
         name=name,
         procedure_name=name,
         grants="propose",
-        resource_ceiling=ProcedureHardCapsV3.model_validate(procedure.definition["hard_caps"]),
+        resource_ceiling=ProcedureHardCaps.model_validate(procedure.definition["hard_caps"]),
         namespace=("captures",),
         valid_from=datetime(2026, 1, 1, tzinfo=UTC),
         expires_at=datetime(2027, 1, 1, tzinfo=UTC),
     )
-    payload = ChangeSetAuthoringPayloadV1(
+    payload = ChangeSetAuthoringPayload(
         members=tuple(sorted((policy, procedure, line, mandate), key=authoring_member_identity))
     )
     intent = coordinator.create(actor=actor, payload=payload, canonical_timestamp=TIMESTAMP).intent

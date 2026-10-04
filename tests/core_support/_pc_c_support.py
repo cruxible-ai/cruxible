@@ -11,14 +11,14 @@ from cruxible_client.contracts.artifacts import (
 )
 from cruxible_client.contracts.canonical import ArtifactDigest, Sha256Value, typed_digest
 from cruxible_client.contracts.captures import (
-    CaptureContractV1,
-    CaptureRetentionErasurePolicyV1,
+    CaptureContract,
+    CaptureRetentionErasurePolicy,
     CaptureRunCoordinateV1,
-    CaptureSelectionBudgetV1,
+    CaptureSelectionBudget,
     capture_component_pin,
     capture_contract_digest,
 )
-from cruxible_client.contracts.providers import ProviderSigningKeyV1, ProviderV1, provider_digest
+from cruxible_client.contracts.providers import ProviderSigningKey, ProviderV1, provider_digest
 from cruxible_core.storage.cas import ContentAddressedBodyStore
 
 NOW = datetime(2026, 8, 16, 12, 0, tzinfo=UTC)
@@ -46,7 +46,7 @@ def capture_contract(
     epistemic_grade: str = "observed",
     selector_privacy: str = "direct_allowed",
     erasure: bool = False,
-) -> CaptureContractV1:
+) -> CaptureContract:
     replay_pin = capture_component_pin("replay-policy", "playbill.external.exact-replay-v1")
     provenance_pin = capture_component_pin("provenance-rule", "playbill.external.daemon-fetched-v1")
     mapping_pin = capture_component_pin(
@@ -68,7 +68,7 @@ def capture_contract(
     ]
     if erasure_pin is not None:
         registry_pins.append(erasure_pin)
-    return CaptureContractV1(
+    return CaptureContract(
         identity=ArtifactIdentity(kind="CaptureContract", name=name),
         allowed_source_kinds=("cas", "external", "ledger"),
         logical_source_identities=("commerce.production.orders",),
@@ -78,12 +78,12 @@ def capture_contract(
             "commitment-canonicalizer", "canonical-json-v1"
         ),
         allowed_materialization_modes=("cas", "external", "ledger", "none"),
-        selection_budget=CaptureSelectionBudgetV1(
+        selection_budget=CaptureSelectionBudget(
             max_bytes=4096,
             max_rows=4,
             max_items=4,
         ),
-        retention_erasure_policy=CaptureRetentionErasurePolicyV1(
+        retention_erasure_policy=CaptureRetentionErasurePolicy(
             body_retention="optional",
             erasure="authorized_by_rule" if erasure else "prohibited",
             erasure_rule_digest=erasure_rule,
@@ -99,7 +99,7 @@ def capture_contract(
 
 
 def provider(
-    contract: CaptureContractV1,
+    contract: CaptureContract,
     *,
     public_key: str = "11" * 32,
     name: str = "acme.orders",
@@ -109,7 +109,7 @@ def provider(
         identity=ArtifactIdentity(kind="Provider", name=name),
         control_domain=control_domain,
         signing_keys=(
-            ProviderSigningKeyV1(
+            ProviderSigningKey(
                 key_id="primary-2026",
                 public_key=public_key,
                 valid_from=NOW,

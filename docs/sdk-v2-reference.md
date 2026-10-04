@@ -107,7 +107,7 @@ schema-checked value shapes. They do not authorize arbitrary Python classes.
 | `QueryRef`, `ProcedureRef`, `SubjectRef`, `ClaimTypeRef`, `CaptureRef` | Existing typed references with their identity/version/coordinate assertions. |
 | `BindingValue` | `ProviderBinding \| QueryBinding \| QueryRef \| ProcedureRef`. `QueryBinding` is a schema-resolved view of a `QueryRef`. Each slot has one required reference kind determined by its use. |
 | `BindingSlot[T]` | Symbolic `bindings.<name>` reference whose selected host binding must have type `T`; not an object the author constructs inside the body. |
-| `ProcedureBudgetV3`, `ProcedureHardCapsV3` | Existing explicit budget/cap models. A nested invocation does not reset their effective limits. |
+| `ProcedureBudget`, `ProcedureHardCaps` | Existing explicit budget/cap models. A nested invocation does not reset their effective limits. |
 | `TerminalReturn[O]` | Symbolic instruction to end this invocation, carrying a declared result and/or terminal effect. Not a successful runtime receipt by itself. |
 | `SourceSpan` | Location data: filename, start/end line, start/end column. Convention: one-based lines, zero-based UTF-8 byte columns, exclusive end. |
 
@@ -204,8 +204,8 @@ Procedure[I, O].run(
     *,
     input: Record[I],
     at: AcceptedCoordinate | None = None,
-    resolution_contract: ResolutionContractReferenceV1 | None = None,
-    trigger_event: TriggerEventReferenceV1 | None = None,
+    resolution_contract: ResolutionContractReference | None = None,
+    trigger_event: TriggerEventReference | None = None,
 ) -> ProcedureRun[O]
 
 Playbill.query_binding(query: str | QueryRef) -> QueryBinding[P, R]
@@ -214,7 +214,7 @@ Playbill.run_query(
     query: QueryBinding[P, R],
     *,
     parameters: QueryParameters[P] | None = None,
-    budgets: QueryBudgetsV1 | None = None,
+    budgets: QueryBudgets | None = None,
 ) -> ProcedureQueryResult[R]
 ```
 
@@ -289,8 +289,8 @@ procedure(
     name: str,
     input: Contract,
     output: Contract,
-    budget: ProcedureBudgetV3,
-    hard_caps: ProcedureHardCapsV3,
+    budget: ProcedureBudget,
+    hard_caps: ProcedureHardCaps,
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"] = "snapshot",
     acquisition_policy: str | None = None,
     description: str | None = None,
@@ -595,7 +595,7 @@ query(
     definition: BindingSlot[QueryBinding[P, R] | QueryRef],
     *,
     parameters: Value[QueryParameters[P]] | None = None,
-    budgets: QueryBudgetsV1 | None = None,
+    budgets: QueryBudgets | None = None,
 ) -> Value[ProcedureQueryResult[R]]
 ```
 
@@ -643,7 +643,7 @@ Row types follow the QueryDefinition's declared result shape:
 | `artifact_definition` | Existing typed artifact definitions, discriminated by artifact kind/version. Retain the current completeness requirement on the `artifact_definitions` listing convenience. |
 
 For a declared projection, host `row.fields.<projection_name>` returns the existing
-`QueryProjectedFieldV1` envelope. Check `.state` (`present`, `absent`, or `conflict`)
+`QueryProjectedField` envelope. Check `.state` (`present`, `absent`, or `conflict`)
 before using its canonical `.value`. Field access does not turn missing or
 ambiguous data into a scalar. Domain value validation remains owned by the
 accepted ClaimType and query evaluator; arbitrary nested projected JSON is not
@@ -1154,10 +1154,10 @@ host code outside compiled source:
 from cruxible_client.authoring.inputs import CarriedContractInput
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_client.contracts.procedures.models import (
-    ProcedureBudgetV3,
-    ProcedureHardCapsV3,
+    ProcedureBudget,
+    ProcedureHardCaps,
 )
-from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.captures import CanonicalDuration
 
 
 def contract(name: str, **fields: PropertySchema) -> CarriedContractInput:
@@ -1211,13 +1211,13 @@ ConvertOutput = contract(
     derived=PropertySchema(type="json"),
 )
 
-BUDGET = ProcedureBudgetV3(
-    wall_clock=CanonicalDurationV1(microseconds=30_000_000),
+BUDGET = ProcedureBudget(
+    wall_clock=CanonicalDuration(microseconds=30_000_000),
     max_provider_calls=2,
     max_capture_bytes=8_388_608,
 )
-CAPS = ProcedureHardCapsV3(
-    max_wall_clock=CanonicalDurationV1(microseconds=30_000_000),
+CAPS = ProcedureHardCaps(
+    max_wall_clock=CanonicalDuration(microseconds=30_000_000),
     max_provider_calls=2,
     max_capture_bytes=8_388_608,
     max_items=1_000,
@@ -1262,35 +1262,35 @@ Claims, then filters the exposure status:
 from cruxible_client.authoring.inputs import QueryDefinitionInput
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.query.definitions import (
-    QueryDefinitionSpecV1,
-    QueryEvaluationPolicyV1,
+    QueryDefinitionSpec,
+    QueryEvaluationPolicy,
 )
 from cruxible_client.contracts.query.grammar import (
-    QueryBudgetsV1,
-    QueryEntryV1,
-    QueryTraversalStepV1,
-    QueryParameterRefV1,
-    QueryParameterDeclarationV1,
-    QueryComparisonFilterV1,
-    QueryClaimValueRefV1,
-    QueryLiteralRefV1,
+    QueryBudgets,
+    QueryEntry,
+    QueryTraversalStep,
+    QueryParameterRef,
+    QueryParameterDeclaration,
+    QueryComparisonFilter,
+    QueryClaimValueRef,
+    QueryLiteralRef,
 )
 
 open_exposures = QueryDefinitionInput(
     kind="query_definition",
-    query_definition=QueryDefinitionSpecV1(
+    query_definition=QueryDefinitionSpec(
         identity=ArtifactIdentity(
             kind="QueryDefinition",
             name="security.open_exposures",
         ),
         description="Distinct known open exposures for one asset.",
-        entry=QueryEntryV1(
+        entry=QueryEntry(
             binding="asset",
             subject_kinds=("security.asset",),
-            subject_id=QueryParameterRefV1(parameter="asset_id"),
+            subject_id=QueryParameterRef(parameter="asset_id"),
         ),
         traversal=(
-            QueryTraversalStepV1(
+            QueryTraversalStep(
                 binding="exposure",
                 from_binding="asset",
                 predicate="security.exposure.asset",
@@ -1298,13 +1298,13 @@ open_exposures = QueryDefinitionInput(
                 target_subject_kinds=("security.exposure",),
             ),
         ),
-        where=QueryComparisonFilterV1(
-            left=QueryClaimValueRefV1(
+        where=QueryComparisonFilter(
+            left=QueryClaimValueRef(
                 binding="exposure",
                 predicate="security.exposure.status",
             ),
             operator="eq",
-            right=QueryLiteralRefV1(value="open"),
+            right=QueryLiteralRef(value="open"),
             value_type="string",
         ),
         result_binding="exposure",
@@ -1312,19 +1312,19 @@ open_exposures = QueryDefinitionInput(
         result_cardinality="many",
         dedupe="subject",
         parameters=(
-            QueryParameterDeclarationV1(name="asset_id", value_type="string"),
+            QueryParameterDeclaration(name="asset_id", value_type="string"),
         ),
-        evaluation_policy=QueryEvaluationPolicyV1(
+        evaluation_policy=QueryEvaluationPolicy(
             visible_verdicts=("supported",),
             visible_currency=("current",),
             conflict_behavior="surface_conflicts",
-            result_expiry=CanonicalDurationV1(microseconds=300_000_000),
+            result_expiry=CanonicalDuration(microseconds=300_000_000),
         ),
-        default_budgets=QueryBudgetsV1(
+        default_budgets=QueryBudgets(
             max_results=1_000,
             max_traversal_depth=1,
         ),
-        maximum_budgets=QueryBudgetsV1(
+        maximum_budgets=QueryBudgets(
             max_results=1_000,
             max_traversal_depth=1,
         ),
@@ -1499,9 +1499,9 @@ Capture to the Procedure's Source alias `feed`. Every new Line authors as
 Line v6 under compiler revision 32, and declares the exact event that input
 accepts: the Source's CaptureContract. A Line runs on the Triggers aimed at it;
 `ChangeSetDraft.trigger(name=..., schedule=..., line=...)` defines one; its
-`schedule` is a `CadenceScheduleV1`, `CronScheduleV1(expression=...)`,
-`GenerationAcceptedScheduleV1`, `CaptureLandingScheduleV1` or
-`WindowCloseScheduleV1`. A cron expression is
+`schedule` is a `CadenceSchedule`, `CronSchedule(expression=...)`,
+`GenerationAcceptedSchedule`, `CaptureLandingSchedule` or
+`WindowCloseSchedule`. A cron expression is
 evaluated in UTC, always; convert local times first (09:00 New York in winter
 is 14:00 UTC). `action=` aims it at a registered internal action (cadence, cron
 or generation_accepted schedules only) instead of a Line. Every
@@ -1751,10 +1751,10 @@ source-v1 records continue to reproduce under their original compilation rules.
 
 ### Generation acceptance and workspace floor delivery
 
-`GenerationAcceptedScheduleV1()` from `cruxible_client.contracts.triggers`
+`GenerationAcceptedSchedule()` from `cruxible_client.contracts.triggers`
 coalesces accepts into one fire at latest head. It fires only after the Trigger
 version was accepted and the daemon began listening. Use it with
-`draft.trigger(name="floor-refresh", schedule=GenerationAcceptedScheduleV1(),
+`draft.trigger(name="floor-refresh", schedule=GenerationAcceptedSchedule(),
 action="floor.refresh")`; Capture-input Lines refuse it through their usual law.
 New instances already seed this ordinary live `floor-refresh` Trigger in genesis;
 it can be edited or retired through the same authoring APIs as any other Trigger.
@@ -1766,7 +1766,7 @@ workspace defaults to daemon delivery as its sole floor writer. Over a Unix-sock
 to opt out and use client delivery; `enabled=True` enables daemon delivery again.
 Detaching clears the flag; a later attachment defaults on again. `playbill_host_workspace_registration` reports `floor_delivery` and
 the local path, which the workspace adapter checks before delegating to
-`deliver_playbill_floor_now`. The latter returns a `PlaybillFloorDeliveryResultV1`
+`deliver_playbill_floor_now`. The latter returns a `PlaybillFloorDeliveryResult`
 with the delta and the ordinary `PlaybillWorkspaceFloorWriteResult` receipt.
 Host inspection and server status also show `floor_delivery`. Both client apply
 and daemon delivery create the local `.playbill/floor/.gitignore` containing `*`;

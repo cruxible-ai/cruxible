@@ -32,16 +32,16 @@ from weakref import WeakKeyDictionary
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     FOREIGN_SOURCE_COORDINATE_TYPE,
-    CaptureContractV1,
+    CaptureContract,
     capture_contract_digest,
     parse_capture_envelope,
 )
 from cruxible_client.contracts.claims import ClaimArtifactAny
 from cruxible_client.contracts.errors import PlaybillError, ProjectionIntegrityError
 from cruxible_client.contracts.source_references import (
-    CasSourceReferenceV1,
-    ExternalSourceReferenceV1,
-    LedgerSourceReferenceV1,
+    CasSourceReference,
+    ExternalSourceReference,
+    LedgerSourceReference,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.floor.floor_current import stamp_text
@@ -69,7 +69,7 @@ def document_ref(path: str) -> str:
 def _describe(contract_digest: str, source: object) -> CaptureSource:
     """A Capture's source by its name, and the locator the ledger alone gives it."""
 
-    if isinstance(source, ExternalSourceReferenceV1):
+    if isinstance(source, ExternalSourceReference):
         # A foreign source's coordinate is a content digest, which locates
         # nothing; another external source is located by its selector.
         locator = (
@@ -78,13 +78,13 @@ def _describe(contract_digest: str, source: object) -> CaptureSource:
             else f"{source.coordinate_type}/{source.selector_type}"
         )
         return CaptureSource(contract_digest, source.source_identity, locator)
-    if isinstance(source, LedgerSourceReferenceV1):
+    if isinstance(source, LedgerSourceReference):
         path = source.address.artifact_path
         if path.startswith(DOCUMENTS_PREFIX):
             ref = document_ref(path)
             return CaptureSource(contract_digest, ref.removeprefix("Document:"), ref)
         return CaptureSource(contract_digest, f"ledger:{path}", f"ledger:{path}")
-    if isinstance(source, CasSourceReferenceV1):
+    if isinstance(source, CasSourceReference):
         return CaptureSource(contract_digest, "cas", "cas")
     return CaptureSource(contract_digest, "unknown", "-")
 
@@ -150,7 +150,7 @@ def render_sources_ledger(
     *,
     claims: Iterable[ClaimArtifactAny],
     claim_latest: Mapping[str, int],
-    contracts: Mapping[str, CaptureContractV1],
+    contracts: Mapping[str, CaptureContract],
     documents: Mapping[str, int],
     changed_at: int,
 ) -> bytes:

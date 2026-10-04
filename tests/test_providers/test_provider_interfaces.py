@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
 from cruxible_client.contracts.provider_interfaces import (
-    AcceptedProviderInterfaceRegistrationV1,
+    AcceptedProviderInterfaceRegistration,
     ProviderInterfaceRegistrationV1,
     evaluate_provider_interface_law,
     parse_provider_interface,
@@ -81,7 +81,7 @@ def test_interface_law_reproduces_fixture_catalog_and_exact_succession() -> None
         == "accepted"
     )
 
-    accepted = AcceptedProviderInterfaceRegistrationV1(
+    accepted = AcceptedProviderInterfaceRegistration(
         path=path,
         registration=registration,
         artifact_digest=provider_interface_digest(registration).tagged,

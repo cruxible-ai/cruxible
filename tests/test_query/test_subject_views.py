@@ -14,28 +14,28 @@ from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_types import claim_type_digest
 from cruxible_client.contracts.claims import LiteralClaimObject
 from cruxible_client.contracts.query.definitions import (
-    QueryDefinitionV1,
-    QueryEvaluationPolicyV1,
+    QueryDefinition,
+    QueryEvaluationPolicy,
 )
 from cruxible_client.contracts.query.grammar import (
-    QueryBudgetsV1,
-    QueryClaimPresenceFilterV1,
-    QueryClaimValueRefV1,
-    QueryComparisonFilterV1,
-    QueryDisjunctionFilterV1,
-    QueryEntryV1,
-    QueryEvaluationTimeRefV1,
-    QueryLiteralRefV1,
-    QueryMembershipFilterV1,
-    QueryNegationFilterV1,
-    QueryOrderingV1,
-    QueryProjectionFieldV1,
-    QueryProjectionV1,
-    QuerySubjectFieldRefV1,
-    QueryTraversalStepV1,
+    QueryBudgets,
+    QueryClaimPresenceFilter,
+    QueryClaimValueRef,
+    QueryComparisonFilter,
+    QueryDisjunctionFilter,
+    QueryEntry,
+    QueryEvaluationTimeRef,
+    QueryLiteralRef,
+    QueryMembershipFilter,
+    QueryNegationFilter,
+    QueryOrdering,
+    QueryProjection,
+    QueryProjectionField,
+    QuerySubjectFieldRef,
+    QueryTraversalStep,
 )
 from cruxible_client.contracts.query.results import (
-    ClaimQueryResultV1,
+    ClaimQueryResult,
 )
 from cruxible_client.contracts.subjects import AcceptedSubject, subject_path
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
@@ -159,13 +159,13 @@ def window_facts() -> ClaimQueryFactsV1:
     )
 
 
-def literal_traversal_query() -> QueryDefinitionV1:
+def literal_traversal_query() -> QueryDefinition:
     """A traversal declared over a literal-object predicate, which must refuse."""
 
     return active_work_query(
         identity=ArtifactIdentity(kind="QueryDefinition", name="project.literal_traversal"),
         traversal=(
-            QueryTraversalStepV1(
+            QueryTraversalStep(
                 binding="reviewer",
                 from_binding="item",
                 predicate=STATUS_PREDICATE,
@@ -176,11 +176,11 @@ def literal_traversal_query() -> QueryDefinitionV1:
         includes=(),
         orderings=(),
         parameters=(),
-        projection=QueryProjectionV1(
+        projection=QueryProjection(
             fields=(
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="item_id",
-                    value=QuerySubjectFieldRefV1(binding="item", field="subject_id"),
+                    value=QuerySubjectFieldRef(binding="item", field="subject_id"),
                 ),
             )
         ),
@@ -188,14 +188,14 @@ def literal_traversal_query() -> QueryDefinitionV1:
     )
 
 
-def reverse_traversal_query() -> QueryDefinitionV1:
+def reverse_traversal_query() -> QueryDefinition:
     """The reviewer-to-work-item read, traversed against the relation Claim."""
 
     return active_work_query(
         identity=ArtifactIdentity(kind="QueryDefinition", name="project.reviewer_work"),
-        entry=QueryEntryV1(binding="reviewer", subject_kinds=("project.person",)),
+        entry=QueryEntry(binding="reviewer", subject_kinds=("project.person",)),
         traversal=(
-            QueryTraversalStepV1(
+            QueryTraversalStep(
                 binding="item",
                 from_binding="reviewer",
                 predicate=REVIEWER_PREDICATE,
@@ -207,11 +207,11 @@ def reverse_traversal_query() -> QueryDefinitionV1:
         orderings=(),
         includes=(),
         where=None,
-        projection=QueryProjectionV1(
+        projection=QueryProjection(
             fields=(
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="item_id",
-                    value=QuerySubjectFieldRefV1(binding="item", field="subject_id"),
+                    value=QuerySubjectFieldRef(binding="item", field="subject_id"),
                 ),
             )
         ),
@@ -228,46 +228,46 @@ def reverse_traversal_query() -> QueryDefinitionV1:
     )
 
 
-def membership_query() -> QueryDefinitionV1:
+def membership_query() -> QueryDefinition:
     return typed_item_query(
         STATUS_PREDICATE,
         name="project.tracked_items",
-        where=QueryDisjunctionFilterV1(
+        where=QueryDisjunctionFilter(
             filters=sorted_operands(  # type: ignore[arg-type]
-                QueryMembershipFilterV1(
-                    left=QueryClaimValueRefV1(binding="item", predicate=STATUS_PREDICATE),
+                QueryMembershipFilter(
+                    left=QueryClaimValueRef(binding="item", predicate=STATUS_PREDICATE),
                     values=tuple(
                         sorted(
                             (
-                                QueryLiteralRefV1(value="blocked"),
-                                QueryLiteralRefV1(value="ready"),
+                                QueryLiteralRef(value="blocked"),
+                                QueryLiteralRef(value="ready"),
                             ),
                             key=lambda item: canonical_bytes(item.model_dump(mode="json")),
                         )
                     ),
                     value_type="string",
                 ),
-                QueryNegationFilterV1(
-                    operand=QueryClaimPresenceFilterV1(binding="item", predicate=STATUS_PREDICATE),
+                QueryNegationFilter(
+                    operand=QueryClaimPresenceFilter(binding="item", predicate=STATUS_PREDICATE),
                 ),
             )
         ),
     )
 
 
-def rank_query(direction: str) -> QueryDefinitionV1:
+def rank_query(direction: str) -> QueryDefinition:
     return typed_item_query(
         RANK_PREDICATE,
         name="project.ranked_items",
-        where=QueryComparisonFilterV1(
-            left=QueryClaimValueRefV1(binding="item", predicate=RANK_PREDICATE),
+        where=QueryComparisonFilter(
+            left=QueryClaimValueRef(binding="item", predicate=RANK_PREDICATE),
             operator="gte",
-            right=QueryLiteralRefV1(value=1),
+            right=QueryLiteralRef(value=1),
             value_type="integer",
         ),
         orderings=(
-            QueryOrderingV1(
-                key=QueryClaimValueRefV1(binding="item", predicate=RANK_PREDICATE),
+            QueryOrdering(
+                key=QueryClaimValueRef(binding="item", predicate=RANK_PREDICATE),
                 direction=direction,  # type: ignore[arg-type]
                 value_type="integer",
             ),
@@ -287,14 +287,14 @@ def rank_facts() -> ClaimQueryFactsV1:
     )
 
 
-def due_query() -> QueryDefinitionV1:
+def due_query() -> QueryDefinition:
     return typed_item_query(
         DUE_PREDICATE,
         name="project.overdue_items",
-        where=QueryComparisonFilterV1(
-            left=QueryClaimValueRefV1(binding="item", predicate=DUE_PREDICATE),
+        where=QueryComparisonFilter(
+            left=QueryClaimValueRef(binding="item", predicate=DUE_PREDICATE),
             operator="lt",
-            right=QueryEvaluationTimeRefV1(),
+            right=QueryEvaluationTimeRef(),
             value_type="timestamp",
         ),
     )
@@ -324,13 +324,13 @@ def amount_facts() -> ClaimQueryFactsV1:
     )
 
 
-def amount_query() -> QueryDefinitionV1:
+def amount_query() -> QueryDefinition:
     return typed_item_query(
         AMOUNT_PREDICATE,
         name="project.amounts",
         orderings=(
-            QueryOrderingV1(
-                key=QueryClaimValueRefV1(binding="item", predicate=AMOUNT_PREDICATE),
+            QueryOrdering(
+                key=QueryClaimValueRef(binding="item", predicate=AMOUNT_PREDICATE),
                 direction="descending",
                 value_type="decimal",
             ),
@@ -338,9 +338,9 @@ def amount_query() -> QueryDefinitionV1:
     )
 
 
-def surfacing_collection_query() -> QueryDefinitionV1:
+def surfacing_collection_query() -> QueryDefinition:
     return collection_status_query(
-        evaluation_policy=QueryEvaluationPolicyV1(
+        evaluation_policy=QueryEvaluationPolicy(
             visible_verdicts=("supported",),
             visible_currency=("current",),
             conflict_behavior="surface_conflicts",
@@ -348,15 +348,15 @@ def surfacing_collection_query() -> QueryDefinitionV1:
     )
 
 
-def subject_reference_query() -> QueryDefinitionV1:
+def subject_reference_query() -> QueryDefinition:
     return typed_item_query(
         REVIEWER_PREDICATE,
         name="project.ada_items",
         object_kind="subject",
-        where=QueryComparisonFilterV1(
-            left=QueryClaimValueRefV1(binding="item", predicate=REVIEWER_PREDICATE),
+        where=QueryComparisonFilter(
+            left=QueryClaimValueRef(binding="item", predicate=REVIEWER_PREDICATE),
             operator="eq",
-            right=QueryLiteralRefV1(value="Subject:project.person/ada"),
+            right=QueryLiteralRef(value="Subject:project.person/ada"),
             value_type="subject_reference",
         ),
     )
@@ -366,14 +366,14 @@ def subject_reference_query() -> QueryDefinitionV1:
 
 
 def evaluate(
-    query: QueryDefinitionV1,
+    query: QueryDefinition,
     fact_rows: ClaimQueryFactsV1,
     *,
     backend_factory: ClaimQueryBackendFactoryV1,
     evaluation_time: datetime = NOW,
     parameters: dict[str, object] | None = None,
-    budgets: QueryBudgetsV1 | None = None,
-) -> ClaimQueryResultV1:
+    budgets: QueryBudgets | None = None,
+) -> ClaimQueryResult:
     return evaluate_claim_query(
         accepted_query(query),
         facts=fact_rows,
@@ -390,10 +390,10 @@ class ParityCell:
     """One query, fact set, and read binding evaluated through both backends."""
 
     name: str
-    query: QueryDefinitionV1
+    query: QueryDefinition
     facts: ClaimQueryFactsV1
     parameters: dict[str, object] | None = None
-    budgets: QueryBudgetsV1 | None = None
+    budgets: QueryBudgets | None = None
     evaluation_time: datetime = NOW
     expect_refusal: str | None = None
     expect_clipped: tuple[str, ...] = ()
@@ -508,7 +508,7 @@ def parity_cells() -> tuple[ParityCell, ...]:
             facts(
                 status_claim(index, item, "ready") for index, item in enumerate(WORK_ITEMS, start=1)
             ),
-            budgets=QueryBudgetsV1(max_results=2, max_traversal_depth=0),
+            budgets=QueryBudgets(max_results=2, max_traversal_depth=0),
             expect_clipped=("max_results",),
         ),
         ParityCell(
@@ -516,7 +516,7 @@ def parity_cells() -> tuple[ParityCell, ...]:
             active_work_query(includes=()),
             reviewers,
             parameters={"status": "ready"},
-            budgets=QueryBudgetsV1(
+            budgets=QueryBudgets(
                 max_results=50,
                 max_traversal_depth=2,
                 max_paths=1,
@@ -529,7 +529,7 @@ def parity_cells() -> tuple[ParityCell, ...]:
             active_work_query(result_binding="item", result_shape="path", includes=()),
             reviewers,
             parameters={"status": "ready"},
-            budgets=QueryBudgetsV1(
+            budgets=QueryBudgets(
                 max_results=50,
                 max_traversal_depth=2,
                 max_paths=200,
@@ -631,7 +631,7 @@ class RecordingFactory:
         self,
         fact_rows: ClaimQueryFactsV1,
         *,
-        definition: QueryDefinitionV1,
+        definition: QueryDefinition,
         evaluation_time: datetime,
     ) -> PrimitiveOnlyBackend:
         backend = PrimitiveOnlyBackend(

@@ -5,16 +5,16 @@ from datetime import timedelta
 import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
-from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.claim_attestations import (
-    ClaimAttestationStatement,
+    ClaimAttestationStatementV1,
     VerifiedClaimAttestationV1,
 )
 from cruxible_client.contracts.claim_types import claim_type_digest
 from cruxible_client.contracts.claim_verdicts import (
-    CaptureVerdictEvidenceV1,
+    CaptureVerdictEvidence,
     ClaimAdjudicationRuleV1,
-    ClaimVerdictResultV2,
+    ClaimVerdictResult,
     claim_adjudication_rule,
     claim_adjudication_rule_digest,
     evaluate_claim_verdict,
@@ -56,8 +56,8 @@ def _capture(
     upstream: tuple[ArtifactIdentity, ...] = (),
     observed_offset: int = 0,
     replay: bool = True,
-) -> CaptureVerdictEvidenceV1:
-    return CaptureVerdictEvidenceV1(
+) -> CaptureVerdictEvidence:
+    return CaptureVerdictEvidence(
         capture_digest=digest("capture", value),
         admission=admission,  # type: ignore[arg-type]
         basis_kind="replay_verified" if replay else "origin_only",
@@ -79,7 +79,7 @@ def _attestation(
     upstream: tuple[ArtifactIdentity, ...] = (),
     current: bool = True,
 ) -> VerifiedClaimAttestationV1:
-    statement = ClaimAttestationStatement(
+    statement = ClaimAttestationStatementV1(
         instance_id="inst-verdict",
         referent_coordinate=_coordinate(),
         subject=SemanticAddress.whole_artifact("subjects/project.work_item/wi-42.json"),
@@ -102,7 +102,7 @@ def _attestation(
     )
 
 
-def _attestation_capture(value: str, *, control_domain: str) -> CaptureVerdictEvidenceV1:
+def _attestation_capture(value: str, *, control_domain: str) -> CaptureVerdictEvidence:
     return _capture(f"attestation-{value}", control_domain=control_domain)
 
 
@@ -260,7 +260,7 @@ def test_shell_drift_gates_capture_support_only_for_shell_sensitive_claims() -> 
 
 def test_evaluation_time_reproduces_currency_without_rewriting_evidence() -> None:
     evidence = _capture("time-bound")
-    rule = _rule(max_evidence_age=CanonicalDurationV1(microseconds=5_000_000))
+    rule = _rule(max_evidence_age=CanonicalDuration(microseconds=5_000_000))
     current = evaluate_claim_verdict(
         claim_statement_digest=STATEMENT_DIGEST,
         rule=rule,
@@ -279,8 +279,8 @@ def test_evaluation_time_reproduces_currency_without_rewriting_evidence() -> Non
     )
     assert current.verdict == "supported"
     assert stale.verdict == "stale_evidence"
-    assert isinstance(current, ClaimVerdictResultV2)
-    assert isinstance(stale, ClaimVerdictResultV2)
+    assert isinstance(current, ClaimVerdictResult)
+    assert isinstance(stale, ClaimVerdictResult)
     assert stale.freshness_expirations[0].expires_at == NOW + timedelta(seconds=5)
     assert claim_adjudication_rule_digest(rule) == current.adjudication_rule_digest
     assert current.supporting_evidence_digests == stale.supporting_evidence_digests
@@ -300,7 +300,7 @@ def test_evaluation_time_reproduces_currency_without_rewriting_evidence() -> Non
 
 def test_freshness_horizon_applies_only_to_admitted_capture_evidence() -> None:
     origin = _capture("origin-freshness", admission="origin_only")
-    rule = _rule(max_evidence_age=CanonicalDurationV1(microseconds=5_000_000))
+    rule = _rule(max_evidence_age=CanonicalDuration(microseconds=5_000_000))
     result = evaluate_claim_verdict(
         claim_statement_digest=STATEMENT_DIGEST,
         rule=rule,
@@ -310,7 +310,7 @@ def test_freshness_horizon_applies_only_to_admitted_capture_evidence() -> None:
         providers={},
     )
 
-    assert isinstance(result, ClaimVerdictResultV2)
+    assert isinstance(result, ClaimVerdictResult)
     assert result.verdict == "uncovered"
     assert result.freshness_expirations == ()
 

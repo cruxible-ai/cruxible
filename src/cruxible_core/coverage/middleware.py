@@ -74,7 +74,7 @@ from cruxible_client.contracts.workspace_layout import PLAYBILL_FLOOR_PATH
 from cruxible_core.coverage.adapter import (
     WorkingPathBindingsV1,
     WorkingPathBindingV1,
-    WorkingSourceObservationV1,
+    WorkingSourceObservation,
     observe_working_source,
     parse_grep_batch,
     read_working_path,
@@ -83,10 +83,10 @@ from cruxible_core.coverage.adapter import (
 from cruxible_core.coverage.contracts import (
     CoverageError,
     CoverageResultV3,
-    CoverageSelectionV1,
-    LogicalSourceIdentityV1,
+    CoverageSelection,
+    LogicalSourceIdentity,
 )
-from cruxible_core.coverage.indexes import CoverageScanBudgetV1
+from cruxible_core.coverage.indexes import CoverageScanBudget
 from cruxible_core.coverage.render import (
     CoverageUnavailableCodeV1,
     render_coverage_result,
@@ -200,7 +200,7 @@ class CoverageWorkspaceConfigV1(_StrictMiddlewareModel):
     server_socket: str | None = None
     root: str = "."
     rules: tuple[CoveragePathRuleV1, ...] = ()
-    scan_budget: CoverageScanBudgetV1 | None = None
+    scan_budget: CoverageScanBudget | None = None
     max_observed_paths: int = Field(default=64, ge=1)
 
     @model_validator(mode="after")
@@ -217,7 +217,7 @@ class CoverageWorkspaceConfigV1(_StrictMiddlewareModel):
             raise ValueError("a path prefix may declare at most one coverage rule")
         return self
 
-    def source_for(self, path: str) -> LogicalSourceIdentityV1 | None:
+    def source_for(self, path: str) -> LogicalSourceIdentity | None:
         """Resolve one working path to a declared logical source, or to nothing.
 
         Returning ``None`` rather than raising is the §11.6.4 silence rule in
@@ -229,7 +229,7 @@ class CoverageWorkspaceConfigV1(_StrictMiddlewareModel):
             if isinstance(rule, CoverageExactPathRuleV1) and rule.path == path:
                 return _logical_source(rule.plane, rule.identity)
 
-        best: LogicalSourceIdentityV1 | None = None
+        best: LogicalSourceIdentity | None = None
         best_length = -1
         for rule in self.rules:
             if not isinstance(rule, CoveragePathPrefixRuleV1):
@@ -281,7 +281,7 @@ class CoverageWorkspaceConfigV2(_StrictMiddlewareModel):
     server_socket: str | None = None
     root: str = "."
     rules: tuple[CoveragePathRuleV1, ...] = ()
-    scan_budget: CoverageScanBudgetV1 | None = None
+    scan_budget: CoverageScanBudget | None = None
     max_observed_paths: int = Field(default=64, ge=1)
     floor_output: FloorOutputV1 | None = None
 
@@ -299,12 +299,12 @@ class CoverageWorkspaceConfigV2(_StrictMiddlewareModel):
             raise ValueError("a path prefix may declare at most one coverage rule")
         return self
 
-    def source_for(self, path: str) -> LogicalSourceIdentityV1 | None:
+    def source_for(self, path: str) -> LogicalSourceIdentity | None:
         for rule in self.rules:
             if isinstance(rule, CoverageExactPathRuleV1) and rule.path == path:
                 return _logical_source(rule.plane, rule.identity)
 
-        best: LogicalSourceIdentityV1 | None = None
+        best: LogicalSourceIdentity | None = None
         best_length = -1
         for rule in self.rules:
             if not isinstance(rule, CoveragePathPrefixRuleV1):
@@ -420,9 +420,9 @@ class FloorGenerationPairV1(_StrictMiddlewareModel):
 ResolveFloorGenerations = Callable[[AcceptedCoordinate], FloorGenerationPairV1]
 
 
-def _logical_source(plane: str, identity: str) -> LogicalSourceIdentityV1 | None:
+def _logical_source(plane: str, identity: str) -> LogicalSourceIdentity | None:
     try:
-        return LogicalSourceIdentityV1(plane=plane, identity=identity)  # type: ignore[arg-type]
+        return LogicalSourceIdentity(plane=plane, identity=identity)  # type: ignore[arg-type]
     except ValueError:
         return None
 
@@ -569,7 +569,7 @@ class CoverageDeliveryV1(_StrictMiddlewareModel):
         return self.original_output + separator + self.appended_coverage_text
 
 
-ResolveCoverage = Callable[[Sequence[WorkingSourceObservationV1]], CoverageResultV3]
+ResolveCoverage = Callable[[Sequence[WorkingSourceObservation]], CoverageResultV3]
 
 
 class CoverageMiddlewareV1:
@@ -755,7 +755,7 @@ class CoverageMiddlewareV1:
     def _observe(
         self,
         event: HarnessToolEventV1,
-    ) -> tuple[tuple[WorkingSourceObservationV1, ...], tuple[str, ...]]:
+    ) -> tuple[tuple[WorkingSourceObservation, ...], tuple[str, ...]]:
         """Reduce any of the four event kinds to observations and windows.
 
         Whole-source and windowed requests over one path collapse to a single
@@ -777,10 +777,10 @@ class CoverageMiddlewareV1:
         bindings, unbound = self._config.bindings_for(evidence_paths)
         unbound = tuple(sorted((*unbound, *floor_paths)))
 
-        observations: list[WorkingSourceObservationV1] = []
+        observations: list[WorkingSourceObservation] = []
         for path in bindings.paths:
             content = read_working_path(path, root=self._root)
-            selections: tuple[CoverageSelectionV1, ...] = (
+            selections: tuple[CoverageSelection, ...] = (
                 ()
                 if path in whole
                 else tuple(

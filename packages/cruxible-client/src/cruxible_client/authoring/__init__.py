@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from cruxible_client.authoring.approval import ApprovalReviewMismatch, ReviewedProposal
     from cruxible_client.authoring.attestations import (
-        ClaimAttestationV2Signer,
+        ClaimAttestationSigner,
         LocalEd25519ClaimAttestationSigner,
     )
     from cruxible_client.authoring.procedures import Sequence as ProcedureSequence
@@ -19,7 +19,7 @@ __all__ = [
     "ReviewedProposal",
     "ApprovalSigner",
     "LocalEd25519ApprovalSigner",
-    "ClaimAttestationV2Signer",
+    "ClaimAttestationSigner",
     "LocalEd25519ClaimAttestationSigner",
     "Playbill",
     "ProcedureSequence",
@@ -45,7 +45,7 @@ def __getattr__(name: str) -> Any:
         from cruxible_client.authoring import sdk
 
         return getattr(sdk, name)
-    if name in {"ClaimAttestationV2Signer", "LocalEd25519ClaimAttestationSigner"}:
+    if name in {"ClaimAttestationSigner", "LocalEd25519ClaimAttestationSigner"}:
         from cruxible_client.authoring import attestations
 
         return getattr(attestations, name)

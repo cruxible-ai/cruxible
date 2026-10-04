@@ -17,10 +17,10 @@ from typing import Literal, get_args
 import pytest
 
 from cruxible_client.contracts import PlaybillNextReason
-from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
-from cruxible_client.contracts.line_dispatch import LineEvaluateRequestV1
+from cruxible_client.contracts.get_reads import PlaybillGetRequest
+from cruxible_client.contracts.line_dispatch import LineEvaluateRequest
 from cruxible_core.service.discovery.get import service_playbill_get
-from cruxible_core.service.discovery.next import PlaybillNextRequestV2, service_playbill_next
+from cruxible_core.service.discovery.next import PlaybillNextRequest, service_playbill_next
 from cruxible_core.service.procedures.line_dispatch import (
     service_evaluate_line,
     service_stop_line_arm,
@@ -84,14 +84,14 @@ def _references(result) -> list[str]:  # type: ignore[no-untyped-def]
 def _assert_every_reference_resolves(instance, result) -> list[str]:  # type: ignore[no-untyped-def]
     refs = _references(result)
     for ref in refs:
-        service_playbill_get(instance, request=PlaybillGetRequestV1(ref=ref), access=_ACCESS)
+        service_playbill_get(instance, request=PlaybillGetRequest(ref=ref), access=_ACCESS)
     return refs
 
 
 def _queue(instance, when: datetime):  # type: ignore[no-untyped-def]
     return service_playbill_next(
         instance,
-        request=PlaybillNextRequestV2(evaluation_time=when, access_profile=_PROFILE),
+        request=PlaybillNextRequest(evaluation_time=when, access_profile=_PROFILE),
         caller_rung=0,
     )
 
@@ -116,7 +116,7 @@ def test_line_mandate_and_due_line_references_resolve(tmp_path: Path) -> None:
     service_evaluate_line(
         instance,
         line.identity.name,
-        LineEvaluateRequestV1(since=start, until=later),
+        LineEvaluateRequest(since=start, until=later),
         actor=_actor(instance),
         now=later,
     )

@@ -9,12 +9,12 @@ from typing import Literal
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
-    PlaybillBlockSyncReadRequestV1,
-    PlaybillBlockSyncReadResultV1,
-    PlaybillBlockSyncSuccessorCandidateV1,
-    PlaybillProjectionCheckRequestV1,
-    PlaybillProjectionCheckResultV1,
-    ProjectionDependencyIssueV1,
+    PlaybillBlockSyncReadRequest,
+    PlaybillBlockSyncReadResult,
+    PlaybillBlockSyncSuccessorCandidate,
+    PlaybillProjectionCheckRequest,
+    PlaybillProjectionCheckResult,
+    ProjectionDependencyIssue,
 )
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_types import (
@@ -30,16 +30,16 @@ from cruxible_client.contracts.claims import (
     parse_claim,
 )
 from cruxible_client.contracts.declared_blocks import (
-    ProjectionArtifactBackingV1,
-    ProjectionBackingV1,
-    ProjectionBlockStamp,
-    ProjectionClaimBackingV1,
-    ProjectionQueryBackingV1,
+    ProjectionArtifactBacking,
+    ProjectionBacking,
+    ProjectionBlockStampAny,
+    ProjectionClaimBacking,
+    ProjectionQueryBacking,
     projection_query_semantic_result_digest,
 )
 from cruxible_client.contracts.errors import PlaybillError, ProposalIntegrityError
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.query.definitions import QueryEvaluationPolicyV1
+from cruxible_client.contracts.query.definitions import QueryEvaluationPolicy
 from cruxible_client.contracts.subjects import parse_subject, subject_digest, subject_path
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
@@ -58,7 +58,7 @@ from cruxible_core.service.floor.projection_lineage import (
     read_claim_lineages,
 )
 
-PROJECTION_VISIBILITY_POLICY = QueryEvaluationPolicyV1(
+PROJECTION_VISIBILITY_POLICY = QueryEvaluationPolicy(
     visible_verdicts=("contradicted", "stale", "supported", "uncovered", "unresolved"),
     visible_currency=("current", "not_applicable", "stale"),
     conflict_behavior="surface_conflicts",
@@ -75,9 +75,9 @@ def _refusal(
     reason: str,
     detail: str,
     original_artifact_digest: str | None = None,
-    candidates: tuple[PlaybillBlockSyncSuccessorCandidateV1, ...] = (),
-) -> PlaybillBlockSyncReadResultV1:
-    return PlaybillBlockSyncReadResultV1.model_validate(
+    candidates: tuple[PlaybillBlockSyncSuccessorCandidate, ...] = (),
+) -> PlaybillBlockSyncReadResult:
+    return PlaybillBlockSyncReadResult.model_validate(
         {
             "status": status,
             "reason": reason,
@@ -103,8 +103,8 @@ def _claim_nodes(instance: PlaybillInstance, *, path: str) -> dict[str, _ClaimNo
     return nodes
 
 
-def _candidate(node: _ClaimNode) -> PlaybillBlockSyncSuccessorCandidateV1:
-    return PlaybillBlockSyncSuccessorCandidateV1(
+def _candidate(node: _ClaimNode) -> PlaybillBlockSyncSuccessorCandidate:
+    return PlaybillBlockSyncSuccessorCandidate(
         identity=node.claim.identity,
         artifact_digest=node.artifact_digest,
         coordinate=node.coordinate,
@@ -117,7 +117,7 @@ def _terminal_node(
     nodes: dict[str, _ClaimNode],
     original_digest: str,
     preferred_successor_digest: str | None,
-) -> _ClaimNode | tuple[PlaybillBlockSyncSuccessorCandidateV1, ...]:
+) -> _ClaimNode | tuple[PlaybillBlockSyncSuccessorCandidate, ...]:
     successors: dict[str, dict[str, _ClaimNode]] = {}
     for node in nodes.values():
         predecessor = node.claim.lifecycle.predecessor_digest
@@ -189,8 +189,8 @@ def _artifact_backing_state(
     *,
     stamp_coordinate: AcceptedCoordinate,
     current: AcceptedCoordinate,
-    backing: ProjectionArtifactBackingV1,
-) -> ProjectionArtifactBackingV1 | PlaybillBlockSyncReadResultV1 | None:
+    backing: ProjectionArtifactBacking,
+) -> ProjectionArtifactBacking | PlaybillBlockSyncReadResult | None:
     """The artifact backing's current spelling when it moved, ``None`` when it did not."""
 
     path = _artifact_path(backing.identity)
@@ -235,7 +235,7 @@ def _artifact_backing_state(
         )
     if current_digest == original_digest:
         return None
-    return ProjectionArtifactBackingV1(
+    return ProjectionArtifactBacking(
         identity=backing.identity,
         artifact_digest=current_digest,
     )
@@ -245,10 +245,10 @@ def _claim_backing_state(
     instance: PlaybillInstance,
     *,
     stamp_coordinate: AcceptedCoordinate,
-    backing: ProjectionClaimBackingV1,
+    backing: ProjectionClaimBacking,
     preferred_successor_digest: str | None,
     sources: Mapping[str, bytes] | None = None,
-) -> tuple[ProjectionClaimBackingV1 | None, _ClaimNode, str] | PlaybillBlockSyncReadResultV1:
+) -> tuple[ProjectionClaimBacking | None, _ClaimNode, str] | PlaybillBlockSyncReadResult:
     """The Claim backing's terminal spelling, or the typed refusal its lineage earns.
 
     ``sources``, when given, holds every backing path already read at the marker
@@ -300,7 +300,7 @@ def _claim_backing_state(
     if claim_statement_digest(terminal.claim.statement).tagged == backing.statement_digest:
         return None, terminal, original_digest
     return (
-        ProjectionClaimBackingV1(
+        ProjectionClaimBacking(
             identity=ArtifactIdentity(kind="Claim", name=terminal.claim.identity.name),
             statement_digest=claim_statement_digest(terminal.claim.statement).tagged,
         ),
@@ -318,7 +318,7 @@ class ProjectionCheckContext:
         *,
         coordinate: AcceptedProjectionCoordinate,
         evaluation_time: datetime,
-        stamps: Sequence[ProjectionBlockStamp],
+        stamps: Sequence[ProjectionBlockStampAny],
         facts_reader: _AcceptedQueryFactsRead | None = None,
         verdicts_by_identity: MutableMapping[str, ClaimVerdictResultAny] | None = None,
         resolution_statuses: Mapping[str, str] | None = None,
@@ -337,14 +337,14 @@ class ProjectionCheckContext:
         # its referenced predicates' facts, exactly as the served query does.
         self._shared_facts = facts_reader is not None
         self.verdicts = verdicts_by_identity
-        self.queries: dict[bytes, ProjectionQueryBackingV1 | PlaybillError | ValueError] = {}
+        self.queries: dict[bytes, ProjectionQueryBacking | PlaybillError | ValueError] = {}
         self.statuses: Mapping[str, str] | None = resolution_statuses
         self.visible_claim_ids: frozenset[str] | None = None
         self.claim_ids = {
             b.identity.qualified
             for stamp in stamps
             for b in stamp.backing
-            if isinstance(b, ProjectionClaimBackingV1)
+            if isinstance(b, ProjectionClaimBacking)
         }
         # History retains removed Claims; check present ownership separately,
         # at the same coordinate, without reopening each Claim body.
@@ -362,7 +362,7 @@ class ProjectionCheckContext:
                     claim_path(b.identity.name)
                     for stamp in stamps
                     for b in stamp.backing
-                    if isinstance(b, ProjectionClaimBackingV1)
+                    if isinstance(b, ProjectionClaimBacking)
                 }
             )
         )
@@ -377,7 +377,7 @@ class ProjectionCheckContext:
             paths_by_oid.setdefault(stamp.declared_coordinate.git_oid, set()).update(
                 claim_path(b.identity.name)
                 for b in stamp.backing
-                if isinstance(b, ProjectionClaimBackingV1)
+                if isinstance(b, ProjectionClaimBacking)
             )
         self.backing_sources: dict[str, Mapping[str, bytes]] = {}
         for oid, oid_paths in paths_by_oid.items():
@@ -479,7 +479,7 @@ class ProjectionCheckContext:
                 visible.add(claim.identity.qualified)
         self.visible_claim_ids = frozenset(visible)
 
-    def _query(self, backing: ProjectionQueryBackingV1) -> ProjectionQueryBackingV1:
+    def _query(self, backing: ProjectionQueryBacking) -> ProjectionQueryBacking:
         key = canonical_bytes(
             [
                 backing.identity.qualified,
@@ -515,14 +515,14 @@ class ProjectionCheckContext:
             raise value
         return value
 
-    def read(self, request: PlaybillBlockSyncReadRequestV1) -> PlaybillBlockSyncReadResultV1:
+    def read(self, request: PlaybillBlockSyncReadRequest) -> PlaybillBlockSyncReadResult:
         token = _LINEAGES.set((self.instance, self.lineages))
         try:
             return self._read(request)
         finally:
             _LINEAGES.reset(token)
 
-    def _read(self, request: PlaybillBlockSyncReadRequestV1) -> PlaybillBlockSyncReadResultV1:
+    def _read(self, request: PlaybillBlockSyncReadRequest) -> PlaybillBlockSyncReadResult:
         stamp = request.stamp
         try:
             declared = AcceptedCoordinate.from_internal(
@@ -536,16 +536,16 @@ class ProjectionCheckContext:
                 reason="block_workspace_instance_mismatch",
                 detail="the marker coordinate is not accepted by the attached instance",
             )
-        issues: list[ProjectionDependencyIssueV1] = []
-        moved: list[ProjectionBackingV1] = []
-        current: list[ProjectionBackingV1] = []
-        failures_by_identity: dict[str, PlaybillBlockSyncReadResultV1] = {}
+        issues: list[ProjectionDependencyIssue] = []
+        moved: list[ProjectionBacking] = []
+        current: list[ProjectionBacking] = []
+        failures_by_identity: dict[str, PlaybillBlockSyncReadResult] = {}
         original_digest = None
         current_digest = None
         for backing in stamp.backing:
             try:
                 failure = None
-                if isinstance(backing, ProjectionQueryBackingV1):
+                if isinstance(backing, ProjectionQueryBacking):
                     # Verify the definition binding at the origin without replaying an
                     # old observation against today's external availability.
                     origin = accepted_query_definition(
@@ -555,7 +555,7 @@ class ProjectionCheckContext:
                     )
                     if origin.artifact_digest != backing.definition_digest:
                         issues.append(
-                            ProjectionDependencyIssueV1(
+                            ProjectionDependencyIssue(
                                 identity=backing.identity,
                                 status="invalid",
                                 reason="block_backing_changed",
@@ -570,14 +570,14 @@ class ProjectionCheckContext:
                         backing.semantic_result_digest,
                     ):
                         moved.append(updated)
-                elif isinstance(backing, ProjectionArtifactBackingV1):
+                elif isinstance(backing, ProjectionArtifactBacking):
                     state = _artifact_backing_state(
                         self.instance,
                         stamp_coordinate=declared,
                         current=self.accepted,
                         backing=backing,
                     )
-                    if isinstance(state, PlaybillBlockSyncReadResultV1):
+                    if isinstance(state, PlaybillBlockSyncReadResult):
                         failure = state
                     else:
                         current.append(backing if state is None else state)
@@ -595,7 +595,7 @@ class ProjectionCheckContext:
                         preferred_successor_digest=request.preferred_successor_digest,
                         sources=self.backing_sources.get(declared.git_oid),
                     )
-                    if isinstance(state_claim, PlaybillBlockSyncReadResultV1):
+                    if isinstance(state_claim, PlaybillBlockSyncReadResult):
                         failure = state_claim
                     else:
                         updated_claim, terminal, original_digest = state_claim
@@ -609,7 +609,7 @@ class ProjectionCheckContext:
                         else:
                             if self._claim_status(terminal.claim.identity) == "overturned":
                                 issues.append(
-                                    ProjectionDependencyIssueV1(
+                                    ProjectionDependencyIssue(
                                         identity=backing.identity,
                                         status="stale",
                                         reason="block_backing_overturned",
@@ -631,7 +631,7 @@ class ProjectionCheckContext:
                         else "invalid"
                     )
                     issues.append(
-                        ProjectionDependencyIssueV1(
+                        ProjectionDependencyIssue(
                             identity=backing.identity,
                             status=kind,
                             reason=failure.reason,
@@ -641,13 +641,13 @@ class ProjectionCheckContext:
                     failures_by_identity[backing.identity.qualified] = failure
             except (PlaybillError, ValueError) as exc:
                 issues.append(
-                    ProjectionDependencyIssueV1(
+                    ProjectionDependencyIssue(
                         identity=backing.identity,
                         status="invalid"
                         if isinstance(exc, ProposalIntegrityError)
                         else "unchecked",
                         reason="block_query_unchecked"
-                        if isinstance(backing, ProjectionQueryBackingV1)
+                        if isinstance(backing, ProjectionQueryBacking)
                         else "block_backing_missing",
                         detail=str(exc),
                     )
@@ -656,7 +656,7 @@ class ProjectionCheckContext:
         if issues:
             issue = min(issues, key=lambda i: {"invalid": 0, "unchecked": 1, "stale": 2}[i.status])
             failure = failures_by_identity.get(issue.identity.qualified)
-            return PlaybillBlockSyncReadResultV1(
+            return PlaybillBlockSyncReadResult(
                 status="refused"
                 if issue.status == "invalid"
                 else "unchecked"
@@ -672,7 +672,7 @@ class ProjectionCheckContext:
                 ),
                 successor_candidates=(() if failure is None else failure.successor_candidates),
             )
-        return PlaybillBlockSyncReadResultV1(
+        return PlaybillBlockSyncReadResult(
             status="successor" if moved else "current",
             coordinate=self.accepted,
             generation=self.generation,
@@ -685,8 +685,8 @@ class ProjectionCheckContext:
 
 
 def service_read_playbill_block_sync_backing(
-    instance: PlaybillInstance, *, request: PlaybillBlockSyncReadRequestV1
-) -> PlaybillBlockSyncReadResultV1:
+    instance: PlaybillInstance, *, request: PlaybillBlockSyncReadRequest
+) -> PlaybillBlockSyncReadResult:
     context = ProjectionCheckContext(
         instance,
         coordinate=_resolve_coordinate(instance, request.at),
@@ -697,8 +697,8 @@ def service_read_playbill_block_sync_backing(
 
 
 def service_check_projection_blocks(
-    instance: PlaybillInstance, *, request: PlaybillProjectionCheckRequestV1
-) -> PlaybillProjectionCheckResultV1:
+    instance: PlaybillInstance, *, request: PlaybillProjectionCheckRequest
+) -> PlaybillProjectionCheckResult:
     instant = request.evaluation_time or datetime.now(UTC)
     context = ProjectionCheckContext(
         instance,
@@ -706,12 +706,10 @@ def service_check_projection_blocks(
         evaluation_time=instant,
         stamps=request.stamps,
     )
-    return PlaybillProjectionCheckResultV1(
+    return PlaybillProjectionCheckResult(
         coordinate=context.accepted,
         evaluation_time=instant,
-        results=tuple(
-            context.read(PlaybillBlockSyncReadRequestV1(stamp=s)) for s in request.stamps
-        ),
+        results=tuple(context.read(PlaybillBlockSyncReadRequest(stamp=s)) for s in request.stamps),
     )
 
 

@@ -90,15 +90,15 @@ def _projection(coordinate: Any) -> AcceptedCoordinate:
 def _proof_result(
     ref: str, kind: str, proof: Any, coordinate: Any, *, why: str | None = None
 ) -> Any:
-    from cruxible_client.contracts.get_reads import PlaybillGetCoordinateV1, PlaybillGetResultV1
+    from cruxible_client.contracts.get_reads import PlaybillGetCoordinate, PlaybillGetResult
 
-    return PlaybillGetResultV1(
+    return PlaybillGetResult(
         ref=ref,
         kind=kind,  # type: ignore[arg-type]
         detail="why" if why is not None else "proof",
         proof=proof,
         why=None if why is None else {"explained": why},
-        coordinate=PlaybillGetCoordinateV1(git_oid=coordinate.git_oid[:12], generation=1),
+        coordinate=PlaybillGetCoordinate(git_oid=coordinate.git_oid[:12], generation=1),
         accepted_coordinate=api.PlaybillAcceptedCoordinate.model_validate(
             coordinate.model_dump(mode="json")
         ),
@@ -170,13 +170,13 @@ class _WorldClient:
     def _claim_view(self, _instance_id: str, identity: str, **_values: Any) -> Any:
         self.claim_reads.append(identity)
         predicate = self.claim_predicates.get(identity, SEVERITY)
-        return api.PlaybillClaimViewV2(
+        return api.ClaimViewRecord(
             tag="playbill-claim-read-v2",
             coordinate_kind="canonical",
             coordinate=_values.get("at") or self.coordinate,
             envelope={"identity": identity, "revision": 1},
             admission_evaluation_time="2026-09-07T12:00:00Z",
-            statement=api.ClaimStatementCardV1(
+            statement=api.ClaimStatementCard(
                 subject={
                     "artifact_path": "subjects/sec.vulnerability/cve-2026-69247.json",
                     "selector": {"scheme": "artifact-v1", "value": ""},
@@ -214,10 +214,10 @@ class _WorldClient:
 
     # -- the read verbs the SDK calls, served from this fake's data ----------
 
-    def playbill_head(self, instance_id: str, *, at: Any = None) -> api.PlaybillHeadV1:
+    def playbill_head(self, instance_id: str, *, at: Any = None) -> api.PlaybillHead:
         self.head_reads.append(at)
         coordinate = self.coordinate if at is None else at
-        return api.PlaybillHeadV1(
+        return api.PlaybillHead(
             instance=instance_id,
             coordinate=_projection(coordinate),
             generation=1,
@@ -225,13 +225,13 @@ class _WorldClient:
 
     def orient_playbill(
         self, instance_id: str, *, section: Any = None, at: Any = None, **_values: Any
-    ) -> api.PlaybillOrientResultV1:
-        from cruxible_client.contracts.orient import PlaybillOrientPredicateV1
+    ) -> api.PlaybillOrientResult:
+        from cruxible_client.contracts.orient import PlaybillOrientPredicate
 
         assert section == "claim_types"
         listing = self._claim_type_list(instance_id, at=at)
         self._listing = listing
-        return api.PlaybillOrientResultV1(
+        return api.PlaybillOrientResult(
             instance=instance_id,
             coordinate=_projection(listing.coordinate),
             generation=1,
@@ -239,7 +239,7 @@ class _WorldClient:
             evaluation_time=datetime(2026, 9, 7, tzinfo=UTC),
             section="claim_types",
             claim_types=tuple(
-                PlaybillOrientPredicateV1(
+                PlaybillOrientPredicate(
                     name=view.predicate,
                     predicate=view.predicate,
                     cardinality="one",
@@ -251,11 +251,11 @@ class _WorldClient:
         )
 
     def playbill_get_batch(self, instance_id: str, *, request: Any) -> Any:
-        from cruxible_client.contracts.get_reads import PlaybillGetBatchResultV1
+        from cruxible_client.contracts.get_reads import PlaybillGetBatchResult
 
         by_ref = {f"ClaimType:{view.predicate}": view for view in self._listing.claim_types}
         coordinate = self._listing.coordinate
-        return PlaybillGetBatchResultV1(
+        return PlaybillGetBatchResult(
             coordinate=coordinate,
             results=tuple(
                 _proof_result(ref, "claim_type", by_ref[ref].model_dump(mode="json"), coordinate)
@@ -303,8 +303,8 @@ class _WorldClient:
             receipt=self._receipt(request),
         )
 
-    def _receipt(self, request: Any) -> api.PlaybillQueryReceiptV1:
-        return api.PlaybillQueryReceiptV1(
+    def _receipt(self, request: Any) -> api.PlaybillQueryReceipt:
+        return api.PlaybillQueryReceipt(
             mode="inline",
             spec_digest=_DIGEST,
             coordinate=request.at or _projection(self.coordinate),
@@ -319,7 +319,7 @@ class _WorldClient:
         return ["CLM-" + "9" * 32]
 
     def read_playbill_claim_batch(self, instance_id: str, *, request: Any) -> Any:
-        from cruxible_client.contracts.claim_reads import ClaimReadBatchResultV1
+        from cruxible_client.contracts.claim_reads import ClaimReadBatchResult
 
         self.batch_requests.append(request)
         identities = [
@@ -331,7 +331,7 @@ class _WorldClient:
         ]
         start = 0 if request.cursor is None else int(request.cursor)
         page, truncated, cursor = self._page(identities, start)
-        return ClaimReadBatchResultV1(
+        return ClaimReadBatchResult(
             coordinate=request.at,
             claims=tuple(
                 self._claim_view(instance_id, identity, at=request.at) for identity in page
@@ -837,15 +837,15 @@ def test_a_named_predicate_reads_its_roles_once_per_coordinate(
 
 
 def _admission_policy() -> Any:
-    from cruxible_client.contracts.policies import ClaimAdmissionPolicyV1
+    from cruxible_client.contracts.policies import ClaimAdmissionPolicy
 
-    return ClaimAdmissionPolicyV1()
+    return ClaimAdmissionPolicy()
 
 
 def _resolution_policy() -> Any:
-    from cruxible_client.contracts.policies import ClaimResolutionPolicyV1
+    from cruxible_client.contracts.policies import ClaimResolutionPolicy
 
-    return ClaimResolutionPolicyV1(
+    return ClaimResolutionPolicy(
         cardinality="one",
         eligible_verdicts=("supported",),
         selector="only_contender",

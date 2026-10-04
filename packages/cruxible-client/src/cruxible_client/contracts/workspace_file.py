@@ -30,7 +30,7 @@ class _StrictWorkspaceFileModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class WorkspaceFileSourceRequestV1(_StrictWorkspaceFileModel):
+class WorkspaceFileSourceRequest(_StrictWorkspaceFileModel):
     """Logical Source request; no canonical host root is representable."""
 
     tag: Literal["playbill-workspace-file-source-request-v1"] = (
@@ -80,7 +80,7 @@ class WorkspaceFileSourceRequestV1(_StrictWorkspaceFileModel):
         return value
 
 
-class SourceReadReceiptV1(_StrictWorkspaceFileModel):
+class SourceReadReceipt(_StrictWorkspaceFileModel):
     """Daemon receipt independently attesting one bounded authorized file read."""
 
     tag: Literal["playbill-source-read-receipt-v1"] = "playbill-source-read-receipt-v1"
@@ -130,17 +130,17 @@ class SourceReadReceiptV1(_StrictWorkspaceFileModel):
     @field_validator("relative_path")
     @classmethod
     def _relative_path(cls, value: str) -> str:
-        return WorkspaceFileSourceRequestV1._relative_path(value)
+        return WorkspaceFileSourceRequest._relative_path(value)
 
     @field_validator("requested_path")
     @classmethod
     def _requested_path(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        return WorkspaceFileSourceRequestV1._relative_path(value)
+        return WorkspaceFileSourceRequest._relative_path(value)
 
 
-def source_read_receipt_digest(receipt: SourceReadReceiptV1) -> str:
+def source_read_receipt_digest(receipt: SourceReadReceipt) -> str:
     return typed_digest(
         Sha256Value,
         "playbill-source-read-receipt-v1",
@@ -149,10 +149,10 @@ def source_read_receipt_digest(receipt: SourceReadReceiptV1) -> str:
 
 
 __all__ = [
-    "SourceReadReceiptV1",
+    "SourceReadReceipt",
     "WORKSPACE_FILE_INTERFACE_DIGEST",
     "WORKSPACE_FILE_INTERFACE_V2_DIGEST",
     "WORKSPACE_FILE_INTERFACE_DIGESTS",
-    "WorkspaceFileSourceRequestV1",
+    "WorkspaceFileSourceRequest",
     "source_read_receipt_digest",
 ]

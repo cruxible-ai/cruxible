@@ -25,12 +25,12 @@ from cruxible_client.authoring.workspace import (
     write_projection_index,
 )
 from cruxible_client.contracts.floor import (
-    PlaybillFloorHeadV1,
-    PlaybillFloorManifestV5,
+    PlaybillFloorHead,
+    PlaybillFloorManifest,
     floor_manifest_digest,
     seal_floor_delta,
 )
-from cruxible_client.contracts.repairs import RepairOperationV1
+from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_core.consumers.protocol import (
     ConsumerHealth,
     ConsumerRepair,
@@ -114,14 +114,14 @@ def _progress(instance: Any) -> tuple[int, str, str | None, str | None] | None:
         )
 
 
-def floor_outcomes(instance: Any) -> tuple[contracts.PlaybillFloorConsumerOutcomeV1, ...]:
+def floor_outcomes(instance: Any) -> tuple[contracts.PlaybillFloorConsumerOutcome, ...]:
     """The latest refresh outcome; health needs no per-generation history."""
 
     with _STATE.open(instance, create=False) as connection:
         if connection is None:
             return ()
         return tuple(
-            contracts.PlaybillFloorConsumerOutcomeV1.model_validate_json(payload)
+            contracts.PlaybillFloorConsumerOutcome.model_validate_json(payload)
             for (payload,) in connection.execute(
                 "SELECT payload FROM outcomes ORDER BY sequence DESC LIMIT 1"
             )
@@ -136,12 +136,12 @@ def _included_floor(
     files = service_export_playbill_floor(
         instance, at=AcceptedCoordinate.from_internal(head), include=include
     )
-    manifest = PlaybillFloorManifestV5.model_validate_json(files["manifest.json"])
+    manifest = PlaybillFloorManifest.model_validate_json(files["manifest.json"])
     delta = seal_floor_delta(
         {
             "kind": "full",
             "renderer": manifest.renderer,
-            "head": PlaybillFloorHeadV1(
+            "head": PlaybillFloorHead(
                 **manifest.coordinate.model_dump(mode="json", exclude={"tag"}),
                 generation=manifest.generation,
                 notes_digest=manifest.notes_digest,
@@ -182,7 +182,7 @@ def refresh_floor(
     follow_fire: bool = False,
     include: tuple[contracts.PlaybillFloorExportPart, ...] = (),
     at: contracts.PlaybillAcceptedCoordinate | None = None,
-) -> contracts.PlaybillFloorDeliveryResultV1 | None:
+) -> contracts.PlaybillFloorDeliveryResult | None:
     """Render at the current head and, when opted in, apply through the shared writer."""
 
     with FLOOR_ADMISSION.hold(instance_id):
@@ -204,7 +204,7 @@ def _refresh_floor_admitted(
     follow_fire: bool = False,
     include: tuple[contracts.PlaybillFloorExportPart, ...] = (),
     at: contracts.PlaybillAcceptedCoordinate | None = None,
-) -> contracts.PlaybillFloorDeliveryResultV1 | None:
+) -> contracts.PlaybillFloorDeliveryResult | None:
     """Refresh with floor admission already held by the caller."""
 
     record = get_registry().get(instance_id)
@@ -224,7 +224,7 @@ def _refresh_floor_admitted(
             "coordinate, use get or query with at. To write a pinned floor, turn daemon "
             "delivery off: cruxible playbill workspace floor-delivery off "
             f"--instance-id {instance_id}.",
-            repair=RepairOperationV1(
+            repair=RepairOperation(
                 operation="playbill.workspace.floor-delivery",
                 arguments={"state": "off", "instance_id": instance_id},
             ),
@@ -275,17 +275,17 @@ def _refresh_floor_admitted(
                 ),
                 file_count=applied.file_count + 1,
             )
-            written = contracts.PlaybillFloorDeliveryResultV1(
+            written = contracts.PlaybillFloorDeliveryResult(
                 delta=delta, written=receipt, export=export
             )
-        outcome = contracts.PlaybillFloorConsumerOutcomeV1(
+        outcome = contracts.PlaybillFloorConsumerOutcome(
             generation=generation,
             status="unchanged" if written is None else written.written.status,
             file_count=0 if written is None else written.written.file_count,
         )
     except Exception as exc:
         error = exc
-        outcome = contracts.PlaybillFloorConsumerOutcomeV1(
+        outcome = contracts.PlaybillFloorConsumerOutcome(
             generation=generation, status="failed", error=f"{type(exc).__name__}: {exc}"
         )
     with _STATE.open(instance) as connection:
@@ -368,7 +368,7 @@ class FloorConsumers:
         outcome = (
             None
             if row is None
-            else contracts.PlaybillFloorConsumerOutcomeV1.model_validate_json(row[0])
+            else contracts.PlaybillFloorConsumerOutcome.model_validate_json(row[0])
         )
         return (
             ConsumerHealth(

@@ -29,8 +29,8 @@ from typing import Any, Literal
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
-    CaptureContractV1,
-    CaptureRetentionErasurePolicyV1,
+    CaptureContract,
+    CaptureRetentionErasurePolicy,
     capture_contract_digest,
     foreign_source_capture_contract,
     parse_capture_contract,
@@ -164,7 +164,7 @@ _BUILT_IN_CONTRACTS = {
 
 def _retention(
     instance: Any, projection: Any, *, git_oid: str, capture_digest: str
-) -> CaptureRetentionErasurePolicyV1 | None:
+) -> CaptureRetentionErasurePolicy | None:
     row = projection.typed.connection.execute(
         "SELECT contract_digest,logical_source_id FROM captures WHERE capture_digest=?",
         (capture_digest,),
@@ -172,7 +172,7 @@ def _retention(
     if row is None:
         return None
     contract_digest, source_id = row
-    contract: CaptureContractV1 | None = _BUILT_IN_CONTRACTS.get(contract_digest)
+    contract: CaptureContract | None = _BUILT_IN_CONTRACTS.get(contract_digest)
     if contract is None and source_id is not None:
         foreign = foreign_source_capture_contract(source_id)
         if capture_contract_digest(foreign).tagged == contract_digest:
@@ -186,7 +186,7 @@ def _retention(
 
 
 def _absence_permitted(
-    policy: CaptureRetentionErasurePolicyV1 | None, *, observed_at: datetime, now: datetime
+    policy: CaptureRetentionErasurePolicy | None, *, observed_at: datetime, now: datetime
 ) -> bool:
     if policy is None:
         return False

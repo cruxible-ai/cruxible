@@ -12,7 +12,7 @@ from click.testing import CliRunner
 from fastapi.testclient import TestClient
 
 from cruxible_client import CruxibleClient, Playbill, contracts
-from cruxible_client.contracts.compact_query import PlaybillQueryRequestV1
+from cruxible_client.contracts.compact_query import PlaybillQueryRequest
 from cruxible_client.contracts.errors import ReadRefusalError
 from cruxible_core.cli.main import cli
 from cruxible_core.runtime import playbill_api
@@ -86,7 +86,7 @@ def test_every_surface_follows_a_relation_backwards(
     if surface == "transport":
         result = client.query_playbill(
             instance_id,
-            request=PlaybillQueryRequestV1.model_validate(
+            request=PlaybillQueryRequest.model_validate(
                 {
                     "kind": SUBJECT_KIND,
                     "follow": follow,
@@ -135,7 +135,7 @@ def test_every_surface_follows_a_relation_backwards(
         result = handlers.handle_playbill_query(
             instance_id,
             kind=SUBJECT_KIND,
-            follow=[contracts.QueryFollowV1.model_validate(item) for item in follow],
+            follow=[contracts.QueryFollow.model_validate(item) for item in follow],
             select=select,
             evaluation_time=EVALUATION_TIME,
         )
@@ -191,7 +191,7 @@ def test_every_surface_pages_reverse_rows_and_refuses_a_wrong_predicate(
         if surface == "transport":
             return client.query_playbill(
                 instance_id,
-                request=PlaybillQueryRequestV1.model_validate(
+                request=PlaybillQueryRequest.model_validate(
                     {
                         "kind": SUBJECT_KIND,
                         "follow": [follow],
@@ -208,7 +208,7 @@ def test_every_surface_pages_reverse_rows_and_refuses_a_wrong_predicate(
         return handlers.handle_playbill_query(
             instance_id,
             kind=SUBJECT_KIND,
-            follow=[contracts.QueryFollowV1.model_validate(follow)],
+            follow=[contracts.QueryFollow.model_validate(follow)],
             select=["batch"],
             limit=2,
             cursor=cursor,
@@ -264,7 +264,7 @@ def test_every_surface_orients_with_the_incoming_predicates(
         monkeypatch.setattr(commands, "_server_call", lambda op, **_: op(client, instance_id))
         invoked = CliRunner().invoke(cli, ["playbill", "orient", "--kind", SUBJECT_KIND, "--json"])
         assert invoked.exit_code == 0, invoked.output
-        result = contracts.PlaybillOrientResultV1.model_validate(json.loads(invoked.output))
+        result = contracts.PlaybillOrientResult.model_validate(json.loads(invoked.output))
         marker = f"--follow-in {DELIVERS}:batch"
         text = CliRunner().invoke(cli, ["playbill", "orient", "--kind", SUBJECT_KIND]).output
         assert f"Incoming (--follow-in): {DELIVERS}, {GOVERNS}, {PARENT}" in text

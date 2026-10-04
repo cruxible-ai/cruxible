@@ -99,7 +99,7 @@ class AuditBudgetV1(_StrictAuditModel):
     )
 
 
-class AuditCursorV1(_StrictAuditModel):
+class AuditCursor(_StrictAuditModel):
     tag: Literal["playbill-audit-cursor-v1"] = "playbill-audit-cursor-v1"
     coordinate: AcceptedCoordinate
     evaluation_time: datetime
@@ -122,7 +122,7 @@ class AuditCursorV1(_StrictAuditModel):
         return value
 
     @model_validator(mode="after")
-    def _reproduces(self) -> AuditCursorV1:
+    def _reproduces(self) -> AuditCursor:
         if self.cursor_digest != audit_cursor_digest(self):
             raise ValueError("audit cursor digest does not reproduce")
         return self
@@ -326,7 +326,7 @@ def audit_scope_digest(scope: AuditScopeV1) -> str:
     ).tagged
 
 
-def audit_cursor_digest(cursor: AuditCursorV1) -> str:
+def audit_cursor_digest(cursor: AuditCursor) -> str:
     payload = cursor.model_dump(mode="json")
     payload.pop("tag")
     payload.pop("cursor_digest")
@@ -340,9 +340,9 @@ def build_audit_cursor(
     operational_input_head_digest: str,
     scope_digest: str,
     next_offset: int,
-) -> AuditCursorV1:
+) -> AuditCursor:
     placeholder = "sha256:" + "0" * 64
-    draft = AuditCursorV1.model_construct(
+    draft = AuditCursor.model_construct(
         tag="playbill-audit-cursor-v1",
         coordinate=coordinate,
         evaluation_time=evaluation_time,
@@ -351,7 +351,7 @@ def build_audit_cursor(
         next_offset=next_offset,
         cursor_digest=placeholder,
     )
-    return AuditCursorV1(
+    return AuditCursor(
         coordinate=coordinate,
         evaluation_time=evaluation_time,
         operational_input_head_digest=operational_input_head_digest,
@@ -526,7 +526,7 @@ __all__ = [
     "AuditClaimRowV1",
     "AuditCoverageV1",
     "AuditCoveredClaimV1",
-    "AuditCursorV1",
+    "AuditCursor",
     "AuditDependentRefV1",
     "AuditEvidenceRefV1",
     "AuditRunV1",

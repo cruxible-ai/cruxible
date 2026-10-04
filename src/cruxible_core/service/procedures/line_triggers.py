@@ -15,25 +15,25 @@ from typing import Any
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.errors import PlaybillError, PlaybillExecutionError
 from cruxible_client.contracts.line_dispatch import (
-    LineTriggerCheckRequestV1,
-    LineTriggerCheckResultV1,
-    LineTriggerOccurrenceV1,
-    LineTriggerVersionV1,
+    LineTriggerCheckRequest,
+    LineTriggerCheckResult,
+    LineTriggerOccurrence,
+    LineTriggerVersion,
 )
 from cruxible_client.contracts.procedures.line_specs import line_identity_digest
 from cruxible_client.contracts.procedures.windows import (
     TIMED_BINDING_KINDS,
-    CaptureEventWindowV1,
-    LineTriggerBindingV1,
-    TriggerEventReferenceV1,
+    CaptureEventWindow,
+    LineTriggerBinding,
+    TriggerEventReference,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_client.contracts.triggers import (
-    AcceptedTriggerV1,
-    CaptureLandingScheduleV1,
-    GenerationAcceptedScheduleV1,
-    WindowCloseScheduleV1,
+    AcceptedTrigger,
+    CaptureLandingSchedule,
+    GenerationAcceptedSchedule,
+    WindowCloseSchedule,
     schedule_is_timed,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
@@ -55,7 +55,7 @@ from cruxible_core.service.procedures.resolution_contracts import bind_window, c
 def service_check_line_trigger(
     instance: PlaybillInstance,
     line: str,
-    request: LineTriggerCheckRequestV1,
+    request: LineTriggerCheckRequest,
     *,
     now: datetime,
     after: dict[str, Any] | None = None,
@@ -65,7 +65,7 @@ def service_check_line_trigger(
     only_trigger: str | None = None,
     generation_after: int | None = None,
     generation_cursors: dict[str, Any] | None = None,
-) -> LineTriggerCheckResultV1:
+) -> LineTriggerCheckResult:
     """Every occurrence the Line's live Triggers make eligible in one range.
 
     Triggers are evaluated in identity order. A page that stops inside one
@@ -91,7 +91,7 @@ def service_check_line_trigger(
         line_artifact_digest=accepted.artifact_digest,
         occurrence_epoch=accepted.line.occurrence_epoch,
         triggers=tuple(
-            LineTriggerVersionV1(
+            LineTriggerVersion(
                 trigger=item.trigger.identity.qualified, artifact_digest=item.artifact_digest
             )
             for item in triggers
@@ -124,7 +124,7 @@ def service_check_line_trigger(
                 "trigger cursor must retain its original Line, Triggers and range"
             ) from exc
     if not triggers:
-        return LineTriggerCheckResultV1(
+        return LineTriggerCheckResult(
             **context,
             status="not_met",
             detail=(
@@ -133,7 +133,7 @@ def service_check_line_trigger(
             ),
         )
 
-    def cursor_at(trigger: AcceptedTriggerV1, position: list[Any] | None) -> str:
+    def cursor_at(trigger: AcceptedTrigger, position: list[Any] | None) -> str:
         return base64.urlsafe_b64encode(
             canonical_bytes(
                 {
@@ -149,7 +149,7 @@ def service_check_line_trigger(
     complete = True
     generation_updates: dict[str, int] = {}
     try:
-        bindings: list[tuple[AcceptedTriggerV1, LineTriggerBindingV1, datetime]] = []
+        bindings: list[tuple[AcceptedTrigger, LineTriggerBinding, datetime]] = []
         for trigger in triggers:
             name = trigger.trigger.identity.qualified
             if resume is not None and name.encode("utf-8") < resume[0].encode("utf-8"):
@@ -157,11 +157,11 @@ def service_check_line_trigger(
             position = resume[1] if resume is not None and name == resume[0] else None
             cursor = None if position is None else (position[0], position[1], position[2])
             schedule = trigger.trigger.schedule
-            window = schedule.window if isinstance(schedule, WindowCloseScheduleV1) else None
+            window = schedule.window if isinstance(schedule, WindowCloseSchedule) else None
             selector = (
                 schedule.event
-                if isinstance(schedule, CaptureLandingScheduleV1)
-                else (window.event if isinstance(window, CaptureEventWindowV1) else None)
+                if isinstance(schedule, CaptureLandingSchedule)
+                else (window.event if isinstance(window, CaptureEventWindow) else None)
             )
             if selector is not None:
                 remaining = request.limit - len(bindings)
@@ -188,7 +188,7 @@ def service_check_line_trigger(
                 complete = complete and trigger_complete
                 for stored in records:
                     record = stored.record
-                    event = TriggerEventReferenceV1(
+                    event = TriggerEventReference(
                         run_id=record.run_id or "",
                         partition_id=record.partition_id,
                         sequence=record.sequence,
@@ -218,7 +218,7 @@ def service_check_line_trigger(
                     bindings.append(
                         (trigger, trigger_binding_for(trigger, window=bound), bound.ends_at)
                     )
-            elif isinstance(schedule, GenerationAcceptedScheduleV1):
+            elif isinstance(schedule, GenerationAcceptedSchedule):
                 from cruxible_core.triggers.journal import generation_at, trigger_generation
 
                 with instance.accepted_history_reader() as history:
@@ -294,7 +294,7 @@ def service_check_line_trigger(
                 iter(_line_admissions(instance, accepted, occurrence_id=occurrence)), None
             )
             occurrences.append(
-                LineTriggerOccurrenceV1(
+                LineTriggerOccurrence(
                     occurrence_id=occurrence,
                     binding=binding,
                     eligible_at=eligible,
@@ -302,7 +302,7 @@ def service_check_line_trigger(
                 )
             )
     except (PlaybillError, OSError, ValueError) as exc:
-        return LineTriggerCheckResultV1(**context, status="incomplete", detail=str(exc))
+        return LineTriggerCheckResult(**context, status="incomplete", detail=str(exc))
     if dispatch_root(instance).exists() and occurrences:
         states = LineDispatchStore(instance).occurrence_states(
             identity, tuple(item.occurrence_id for item in occurrences)
@@ -318,7 +318,7 @@ def service_check_line_trigger(
         ]
     if generation_cursors is not None:
         generation_cursors.update(generation_updates)
-    return LineTriggerCheckResultV1(
+    return LineTriggerCheckResult(
         **context,
         status="incomplete"
         if not complete or next_cursor

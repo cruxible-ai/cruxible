@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.governance.actor_context import GovernedActorContext
 from cruxible_core.service.discovery.curation import (
     PlaybillCurationListRequestV1,
@@ -25,7 +25,7 @@ def test_affects_package_literal_is_operational_curation_only(tmp_path: Path) ->
         instance,
         request=PlaybillCurationListRequestV1(
             evaluation_time=NOW,
-            access_profile=CoverageAccessProfileV1(profile_id="reference-literal-test"),
+            access_profile=CoverageAccessProfile(profile_id="reference-literal-test"),
         ),
         actor_context=GovernedActorContext(
             actor_type="human_user",

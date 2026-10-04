@@ -8,21 +8,21 @@ from pydantic import ValidationError
 from cruxible_client.authoring.workspace import _coverage_v3_fields
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
-from cruxible_client.contracts.claims import LegacyCitationReferenceV1
+from cruxible_client.contracts.claims import LegacyCitationReference
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.coverage.adapter import observe_working_source
 from cruxible_core.coverage.contracts import (
-    CoverageCardBudgetV1,
+    CoverageCardBudget,
     CoverageRequestV1,
     CoverageResultAny,
     CoverageResultV3,
     CoverageSpanRequestV1,
-    LogicalSourceIdentityV1,
-    PlaybillCitationWindowObservationV1,
+    LogicalSourceIdentity,
+    PlaybillCitationWindowObservation,
 )
 from cruxible_core.coverage.indexes import (
     CoverageClaimCitationV2,
-    CoverageScanBudgetV1,
+    CoverageScanBudget,
     EvidenceCitationIndexV2,
     WorkingSourceContent,
     build_working_occurrence_overlay,
@@ -32,7 +32,7 @@ from cruxible_core.coverage.resolver import resolve_coverage_v3
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.discovery.coverage import _citation_window_observations
 from cruxible_core.service.discovery.next import (
-    PlaybillNextSourceObservationV4,
+    PlaybillNextSourceObservation,
     _CitationCommitment,
     _source_citation_item,
 )
@@ -42,8 +42,8 @@ from tests.core_support._citation_index_oracle import (
 )
 from tests.core_support._coverage_support import CITED, capture, coordinate, profile, sha256
 
-SOURCE_A = LogicalSourceIdentityV1(plane="ledger", identity="documents/a.md")
-SOURCE_B = LogicalSourceIdentityV1(plane="ledger", identity="documents/b.md")
+SOURCE_A = LogicalSourceIdentity(plane="ledger", identity="documents/a.md")
+SOURCE_B = LogicalSourceIdentity(plane="ledger", identity="documents/b.md")
 
 
 def test_local_proof_stays_complete_and_exact_inside_a_partial_batch() -> None:
@@ -65,7 +65,7 @@ def test_local_proof_stays_complete_and_exact_inside_a_partial_batch() -> None:
             WorkingSourceContent(source=SOURCE_B, content=b"x" * len(CITED)),
         ),
         wanted=((sha256(CITED), len(CITED), None),),
-        budget=CoverageScanBudgetV1(max_scanned_bytes=len(CITED)),
+        budget=CoverageScanBudget(max_scanned_bytes=len(CITED)),
     )
     manifest = coverage_manifest_body_v2(
         instance_id="inst_coverage",
@@ -113,13 +113,13 @@ def test_citation_window_observation_refuses_incoherent_addressability() -> None
         "original_end": len(CITED),
     }
     with pytest.raises(ValidationError, match="addressable citation window"):
-        PlaybillCitationWindowObservationV1(
+        PlaybillCitationWindowObservation(
             **values,
             addressable=True,
             observed_window_digest=None,
         )
     with pytest.raises(ValidationError, match="addressable citation window"):
-        PlaybillCitationWindowObservationV1(
+        PlaybillCitationWindowObservation(
             **values,
             addressable=False,
             observed_window_digest=sha256(CITED),
@@ -161,7 +161,7 @@ def test_same_bytes_in_another_source_never_count_as_the_cited_source() -> None:
                 CoverageSpanRequestV1(source=SOURCE_A),
                 CoverageSpanRequestV1(source=SOURCE_B),
             ),
-            budget=CoverageCardBudgetV1(
+            budget=CoverageCardBudget(
                 max_cards_per_span=8,
                 max_candidate_cards_per_span=8,
             ),
@@ -178,7 +178,7 @@ def test_same_bytes_in_another_source_never_count_as_the_cited_source() -> None:
 
 
 def test_clipped_occurrence_enumeration_never_keeps_its_scan_proof() -> None:
-    source = LogicalSourceIdentityV1(plane="external", identity="corpus.clipped")
+    source = LogicalSourceIdentity(plane="external", identity="corpus.clipped")
     accepted = capture(source, CITED)
     index = build_evidence_citation_index_v2(
         at=coordinate(),
@@ -208,7 +208,7 @@ def test_clipped_occurrence_enumeration_never_keeps_its_scan_proof() -> None:
             instance_id="inst_coverage",
             at=coordinate(),
             spans=(CoverageSpanRequestV1(source=source),),
-            budget=CoverageCardBudgetV1(
+            budget=CoverageCardBudget(
                 max_cards_per_span=256,
                 max_candidate_cards_per_span=256,
             ),
@@ -227,11 +227,11 @@ def test_clipped_occurrence_enumeration_never_keeps_its_scan_proof() -> None:
 
 
 def test_duplicate_anchor_card_clipping_remains_ambiguous_instead_of_false_current() -> None:
-    source = LogicalSourceIdentityV1(plane="external", identity="corpus.source000")
+    source = LogicalSourceIdentity(plane="external", identity="corpus.source000")
     entries: list[CaptureCitationInputV2] = []
     for ordinal in range(250):
         accepted = capture(
-            LogicalSourceIdentityV1(plane="external", identity=f"corpus.source{ordinal:03d}"),
+            LogicalSourceIdentity(plane="external", identity=f"corpus.source{ordinal:03d}"),
             CITED,
             name=f"source-{ordinal:03d}",
         )
@@ -260,7 +260,7 @@ def test_duplicate_anchor_card_clipping_remains_ambiguous_instead_of_false_curre
             instance_id="inst_coverage",
             at=coordinate(),
             spans=(CoverageSpanRequestV1(source=source),),
-            budget=CoverageCardBudgetV1(
+            budget=CoverageCardBudget(
                 max_cards_per_span=256,
                 max_candidate_cards_per_span=256,
             ),
@@ -280,7 +280,7 @@ def test_duplicate_anchor_card_clipping_remains_ambiguous_instead_of_false_curre
         content=content,
     )
     assert len(occurrences) == 2
-    observation = PlaybillNextSourceObservationV4.model_validate(
+    observation = PlaybillNextSourceObservation.model_validate(
         {
             "source_id": source.identity,
             "observed_source_digest": sha256(content),
@@ -335,7 +335,7 @@ def test_ledger_reference_without_a_window_never_fabricates_one() -> None:
             "capture_digest": accepted.capture_digest,
         },
     ).tagged
-    reference = LegacyCitationReferenceV1(
+    reference = LegacyCitationReference(
         citation_id=citation_id,
         claim_identity=claim_identity,
         capture_digest=accepted.capture_digest,

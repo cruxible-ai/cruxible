@@ -8,7 +8,7 @@ from typing import Callable, Final, Literal
 from cruxible_client.authoring.inputs import (
     AcquisitionPolicyInput,
     ApprovalPolicyInput,
-    AuthoringInputV1,
+    AuthoringInput,
     CarriedContractInput,
     ChangeSetInput,
     ClaimInput,
@@ -20,7 +20,7 @@ from cruxible_client.authoring.inputs import (
     LineInput,
     LiteralObjectInput,
     ProcedureInput,
-    ProcedureMandateInputV1,
+    ProcedureMandateInput,
     ProcedureRuntimePolicyInput,
     QueryDefinitionInput,
     SelfSourceInput,
@@ -30,40 +30,40 @@ from cruxible_client.authoring.inputs import (
     WorkingSelectionInput,
 )
 from cruxible_client.contracts.acquisition_policies import (
-    IndependentCoherenceV1,
-    InputAcquisitionRuleV1,
-    SourceAcquisitionPolicyV1,
+    IndependentCoherence,
+    InputAcquisitionRule,
+    SourceAcquisitionPolicy,
 )
-from cruxible_client.contracts.approval_policy import ApprovalPolicyV1
+from cruxible_client.contracts.approval_policy import ApprovalPolicy
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.artifacts import ArtifactLifecycle as _ArtifactLifecycle
-from cruxible_client.contracts.authoring.models import ClaimTypeSuccessionDependentV1
+from cruxible_client.contracts.authoring.models import ClaimTypeSuccessionDependent
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.cron import CRON_UTC_HINT
 from cruxible_client.contracts.documents import DocumentLifecycle, DocumentShell
 from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicyV1,
+    ClaimAdmissionPolicy,
     ClaimEvidenceAdmissionPolicyV1,
-    ClaimResolutionPolicyV1,
+    ClaimResolutionPolicy,
 )
-from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicyV1
+from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicy
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
-from cruxible_client.contracts.procedures.models import ProcedureHardCapsV3
+from cruxible_client.contracts.procedures.models import ProcedureHardCaps
 from cruxible_client.contracts.query.definitions import (
-    QueryDefinitionSpecV1,
-    QueryEvaluationPolicyV1,
+    QueryDefinitionSpec,
+    QueryEvaluationPolicy,
 )
 from cruxible_client.contracts.query.grammar import (
-    QueryArtifactsEntryV2,
-    QueryBudgetsV1,
-    QueryClaimValueRefV1,
-    QueryEntryV1,
-    QueryProjectionFieldV1,
-    QueryProjectionV1,
-    QuerySubjectFieldRefV1,
+    QueryArtifactsEntry,
+    QueryBudgets,
+    QueryClaimValueRef,
+    QueryEntry,
+    QueryProjection,
+    QueryProjectionField,
+    QuerySubjectFieldRef,
 )
 from cruxible_client.contracts.subjects import SubjectShell
-from cruxible_client.contracts.triggers import CronScheduleV1
+from cruxible_client.contracts.triggers import CronSchedule
 
 AuthoringExampleName = Literal[
     "claim-existing-capture",
@@ -105,14 +105,14 @@ def subject_example() -> SubjectInput:
 def approval_policy_example() -> ApprovalPolicyInput:
     return ApprovalPolicyInput(
         kind="approval_policy",
-        approval_policy=ApprovalPolicyV1(mode="independent_approval_required"),
+        approval_policy=ApprovalPolicy(mode="independent_approval_required"),
     )
 
 
 def procedure_runtime_policy_example() -> ProcedureRuntimePolicyInput:
     return ProcedureRuntimePolicyInput(
         kind="procedure_runtime_policy",
-        procedure_runtime_policy=ProcedureRuntimePolicyV1(provider_output_bytes_cap=2_097_152),
+        procedure_runtime_policy=ProcedureRuntimePolicy(provider_output_bytes_cap=2_097_152),
     )
 
 
@@ -139,8 +139,8 @@ def change_set_example() -> ChangeSetInput:
                     cardinality="one",
                     permitted_roles=("normative", "observation"),
                     evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(),
-                    admission_policy=ClaimAdmissionPolicyV1(),
-                    resolution_policy=ClaimResolutionPolicyV1(
+                    admission_policy=ClaimAdmissionPolicy(),
+                    resolution_policy=ClaimResolutionPolicy(
                         cardinality="one",
                         eligible_verdicts=("supported",),
                         selector="only_contender",
@@ -190,8 +190,8 @@ def claim_type_succession_example() -> ChangeSetInput:
                     cardinality="one",
                     permitted_roles=("normative", "observation"),
                     evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(),
-                    admission_policy=ClaimAdmissionPolicyV1(),
-                    resolution_policy=ClaimResolutionPolicyV1(
+                    admission_policy=ClaimAdmissionPolicy(),
+                    resolution_policy=ClaimResolutionPolicy(
                         cardinality="one",
                         eligible_verdicts=("supported",),
                         selector="only_contender",
@@ -199,16 +199,16 @@ def claim_type_succession_example() -> ChangeSetInput:
                     lifecycle=_ArtifactLifecycle(predecessor_digest="sha256:" + "0" * 64),
                 ),
                 dependents=(
-                    ClaimTypeSuccessionDependentV1(
+                    ClaimTypeSuccessionDependent(
                         identity=ArtifactIdentity(kind="Claim", name="CLM-" + "0" * 32),
                         disposition="successor",
                     ),
-                    ClaimTypeSuccessionDependentV1(
+                    ClaimTypeSuccessionDependent(
                         identity=ArtifactIdentity(kind="Claim", name="CLM-" + "1" * 32),
                         disposition="re_author",
                         successor_claim_id="CLM-" + "1" * 32,
                     ),
-                    ClaimTypeSuccessionDependentV1(
+                    ClaimTypeSuccessionDependent(
                         identity=ArtifactIdentity(kind="Claim", name="CLM-" + "2" * 32),
                         disposition="retire",
                         claim_retirement_reason="was-rescinded",
@@ -241,19 +241,19 @@ _EXAMPLE_PROCEDURE_HARD_CAPS: Final = {
 }
 
 
-def procedure_mandate_example() -> ProcedureMandateInputV1:
+def procedure_mandate_example() -> ProcedureMandateInput:
     """A propose grant over the `--example procedure` Procedure, within its caps.
 
     Only a Line that proposes or settles needs a mandate; an observe-only Line
     (like the example Procedure's) runs without one.
     """
 
-    return ProcedureMandateInputV1(
+    return ProcedureMandateInput(
         kind="procedure_mandate",
         name="replace-me",
         procedure_name="replace-me",
         grants="propose",
-        resource_ceiling=ProcedureHardCapsV3.model_validate(_EXAMPLE_PROCEDURE_HARD_CAPS),
+        resource_ceiling=ProcedureHardCaps.model_validate(_EXAMPLE_PROCEDURE_HARD_CAPS),
         namespace=("claims",),
         valid_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
         expires_at=datetime(2030, 1, 1, tzinfo=timezone.utc),
@@ -291,7 +291,7 @@ def trigger_example() -> TriggerInput:
     return TriggerInput(
         kind="trigger",
         name="replace-me",
-        schedule=CronScheduleV1(expression="0 * * * *"),
+        schedule=CronSchedule(expression="0 * * * *"),
         line_name="replace-me",
     )
 
@@ -305,10 +305,10 @@ def acquisition_policy_example() -> AcquisitionPolicyInput:
 
     return AcquisitionPolicyInput(
         kind="acquisition_policy",
-        acquisition_policy=SourceAcquisitionPolicyV1(
+        acquisition_policy=SourceAcquisitionPolicy(
             identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="replace-me"),
             inputs=(
-                InputAcquisitionRuleV1(
+                InputAcquisitionRule(
                     input_name="replace-me",
                     requirement="required",
                     permitted_replayability=("exact",),
@@ -318,7 +318,7 @@ def acquisition_policy_example() -> AcquisitionPolicyInput:
                     on_conflict="refuse",
                 ),
             ),
-            coherence=IndependentCoherenceV1(),
+            coherence=IndependentCoherence(),
         ),
     )
 
@@ -639,39 +639,39 @@ def query_claims_by_type_example() -> QueryDefinitionInput:
 
     return QueryDefinitionInput(
         kind="query_definition",
-        query_definition=QueryDefinitionSpecV1(
+        query_definition=QueryDefinitionSpec(
             identity=ArtifactIdentity(
                 kind="QueryDefinition",
                 name="project.work_items_by_status",
             ),
             description="List supported current status Claims for project work items.",
-            entry=QueryEntryV1(binding="item", subject_kinds=("project.work_item",)),
+            entry=QueryEntry(binding="item", subject_kinds=("project.work_item",)),
             result_binding="item",
             result_shape="subject",
             result_cardinality="many",
             dedupe="subject",
-            projection=QueryProjectionV1(
+            projection=QueryProjection(
                 fields=(
-                    QueryProjectionFieldV1(
+                    QueryProjectionField(
                         name="item_id",
-                        value=QuerySubjectFieldRefV1(binding="item", field="subject_id"),
+                        value=QuerySubjectFieldRef(binding="item", field="subject_id"),
                     ),
-                    QueryProjectionFieldV1(
+                    QueryProjectionField(
                         name="status",
-                        value=QueryClaimValueRefV1(
+                        value=QueryClaimValueRef(
                             binding="item",
                             predicate="project.work_item.status",
                         ),
                     ),
                 )
             ),
-            evaluation_policy=QueryEvaluationPolicyV1(
+            evaluation_policy=QueryEvaluationPolicy(
                 visible_verdicts=("supported",),
                 visible_currency=("current",),
                 conflict_behavior="surface_conflicts",
             ),
-            default_budgets=QueryBudgetsV1(max_results=100, max_traversal_depth=0),
-            maximum_budgets=QueryBudgetsV1(max_results=1000, max_traversal_depth=0),
+            default_budgets=QueryBudgets(max_results=100, max_traversal_depth=0),
+            maximum_budgets=QueryBudgets(max_results=1000, max_traversal_depth=0),
         ),
     )
 
@@ -680,10 +680,10 @@ def query_ontology_example() -> QueryDefinitionInput:
     """An exact namespace selector retains future additions, including from empty state."""
     return QueryDefinitionInput(
         kind="query_definition",
-        query_definition=QueryDefinitionSpecV1(
+        query_definition=QueryDefinitionSpec(
             artifact_format="playbill-query-definition-v2",
             identity=ArtifactIdentity(kind="QueryDefinition", name="security.ontology"),
-            entry=QueryArtifactsEntryV2(
+            entry=QueryArtifactsEntry(
                 artifact_kind="ClaimType",
                 selection="namespaces",
                 namespaces=("security.asset", "security.service"),
@@ -693,8 +693,8 @@ def query_ontology_example() -> QueryDefinitionInput:
             result_cardinality="many",
             dedupe="artifact",
             evaluation_policy=query_claims_by_type_example().query_definition.evaluation_policy,
-            default_budgets=QueryBudgetsV1(max_results=100, max_traversal_depth=0),
-            maximum_budgets=QueryBudgetsV1(max_results=1000, max_traversal_depth=0),
+            default_budgets=QueryBudgets(max_results=100, max_traversal_depth=0),
+            maximum_budgets=QueryBudgets(max_results=1000, max_traversal_depth=0),
         ),
     )
 
@@ -702,15 +702,15 @@ def query_ontology_example() -> QueryDefinitionInput:
 def query_procedures_example() -> QueryDefinitionInput:
     query = query_ontology_example().query_definition.model_dump(mode="json")
     query["identity"] = {"kind": "QueryDefinition", "name": "security.procedures"}
-    query["entry"] = QueryArtifactsEntryV2(
+    query["entry"] = QueryArtifactsEntry(
         artifact_kind="Procedure", selection="name_prefixes", name_prefixes=("security.",)
     ).model_dump(mode="json")
     return QueryDefinitionInput(
-        kind="query_definition", query_definition=QueryDefinitionSpecV1.model_validate(query)
+        kind="query_definition", query_definition=QueryDefinitionSpec.model_validate(query)
     )
 
 
-AuthoringExample = AuthoringInputV1
+AuthoringExample = AuthoringInput
 
 AUTHORING_EXAMPLE_FACTORIES: Final[dict[AuthoringExampleName, Callable[[], AuthoringExample]]] = {
     "claim-existing-capture": claim_existing_capture_example,

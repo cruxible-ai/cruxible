@@ -16,7 +16,7 @@ import pytest
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_core.claims.claim_type_migrations import ClaimTypeDependentDispositionV2
-from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.coverage.contracts import CoverageAccessProfile
 from cruxible_core.service.discovery import next as playbill_next
 from cruxible_core.service.discovery import query as playbill_query
 from cruxible_core.service.discovery.orient import service_playbill_orient
@@ -30,7 +30,7 @@ from tests.test_claims.test_claim_type_migrations import (
 )
 
 EVALUATION_TIME = datetime(2026, 8, 26, 12, tzinfo=UTC)
-PROFILE = CoverageAccessProfileV1(
+PROFILE = CoverageAccessProfile(
     profile_id="retired-adjudication",
     permitted_access_classes=("instance", "public"),
 )
@@ -103,7 +103,7 @@ def test_short_circuit_refuses_where_the_retired_build_refuses(
             claims=claims,
         )
     # Full next and orient's bounded summary share the fold, so both refuse.
-    request = playbill_next.PlaybillNextRequestV2(
+    request = playbill_next.PlaybillNextRequest(
         evaluation_time=EVALUATION_TIME, access_profile=PROFILE
     )
     with pytest.raises(ProposalIntegrityError, match=NOT_REPRODUCED):

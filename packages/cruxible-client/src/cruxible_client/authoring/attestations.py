@@ -14,18 +14,18 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from cruxible_client.contracts.claim_attestations import (
-    ClaimAttestationAppendRequestV1,
-    ClaimAttestationAppendResultV1,
-    ClaimAttestationCaptureReferenceV1,
-    ClaimAttestationStatementV2,
-    ClaimAttestationV2,
-    PreparedClaimAttestationRequestV1,
+    ClaimAttestation,
+    ClaimAttestationAppendRequest,
+    ClaimAttestationAppendResult,
+    ClaimAttestationCaptureReference,
+    ClaimAttestationStatement,
+    PreparedClaimAttestationRequest,
     claim_attestation_v2_statement_bytes,
 )
 from cruxible_client.contracts.claims import (
+    ClaimArtifact,
     ClaimArtifactAny,
     ClaimArtifactV2,
-    ClaimArtifactV3,
     ClaimUnsupportedFormatError,
     SubjectClaimObject,
     claim_artifact_digest,
@@ -44,7 +44,7 @@ class LocalClaimAttestationKeyUnavailable(PlaybillKeyError):
     error_code = "playbill.claim_attestation.local_signing_key_unavailable"
 
 
-class ClaimAttestationV2Signer(Protocol):
+class ClaimAttestationSigner(Protocol):
     @property
     def signer(self) -> str: ...
 
@@ -52,35 +52,35 @@ class ClaimAttestationV2Signer(Protocol):
     def signing_key_id(self) -> str: ...
 
     def sign_claim_attestation_v2(
-        self, statement: ClaimAttestationStatementV2
-    ) -> ClaimAttestationV2: ...
+        self, statement: ClaimAttestationStatement
+    ) -> ClaimAttestation: ...
 
 
 def _outside_roots(path: Path, roots: Sequence[Path]) -> None:
     try:
         resolved = path.resolve(strict=True)
     except OSError as exc:
-        raise PlaybillKeyError("client ClaimAttestation key is missing or unreadable") from exc
+        raise PlaybillKeyError("client ClaimAttestationV1 key is missing or unreadable") from exc
     for root in roots:
         try:
             boundary = root.resolve(strict=True)
         except OSError:
             boundary = root.resolve()
         if resolved == boundary or boundary in resolved.parents:
-            raise PlaybillKeyError("client ClaimAttestation key is inside a forbidden root")
+            raise PlaybillKeyError("client ClaimAttestationV1 key is inside a forbidden root")
 
 
 def _load_private_key(path: Path) -> Ed25519PrivateKey:
     if path.parent.is_symlink() or path.is_symlink() or not path.is_file():
-        raise PlaybillKeyError("client ClaimAttestation key must be a regular nonsymlink file")
+        raise PlaybillKeyError("client ClaimAttestationV1 key must be a regular nonsymlink file")
     if stat.S_IMODE(path.parent.stat().st_mode) & 0o077:
         raise PlaybillKeyError(
-            "client ClaimAttestation key directory permissions must exclude group/world access"
+            "client ClaimAttestationV1 key directory permissions must exclude group/world access"
         )
     metadata = path.stat()
     if not stat.S_ISREG(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) & 0o077:
         raise PlaybillKeyError(
-            "client ClaimAttestation key permissions must exclude group/world access"
+            "client ClaimAttestationV1 key permissions must exclude group/world access"
         )
     descriptor: int | None = None
     content = bytearray()
@@ -88,11 +88,11 @@ def _load_private_key(path: Path) -> Ed25519PrivateKey:
         descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
         opened = os.fstat(descriptor)
         if opened.st_dev != metadata.st_dev or opened.st_ino != metadata.st_ino:
-            raise PlaybillKeyError("client ClaimAttestation key changed while it was opened")
+            raise PlaybillKeyError("client ClaimAttestationV1 key changed while it was opened")
         while chunk := os.read(descriptor, 64 * 1024):
             content.extend(chunk)
     except OSError as exc:
-        raise PlaybillKeyError("client ClaimAttestation key is missing or unreadable") from exc
+        raise PlaybillKeyError("client ClaimAttestationV1 key is missing or unreadable") from exc
     finally:
         if descriptor is not None:
             os.close(descriptor)
@@ -100,13 +100,13 @@ def _load_private_key(path: Path) -> Ed25519PrivateKey:
         private_key = serialization.load_ssh_private_key(bytes(content), password=None)
     except (TypeError, ValueError) as exc:
         raise PlaybillKeyError(
-            "client ClaimAttestation key is not an unencrypted OpenSSH key"
+            "client ClaimAttestationV1 key is not an unencrypted OpenSSH key"
         ) from exc
     finally:
         for index in range(len(content)):
             content[index] = 0
     if not isinstance(private_key, Ed25519PrivateKey):
-        raise PlaybillKeyError("ClaimAttestation signing requires an Ed25519 client key")
+        raise PlaybillKeyError("ClaimAttestationV1 signing requires an Ed25519 client key")
     return private_key
 
 
@@ -132,7 +132,7 @@ class LocalEd25519ClaimAttestationSigner:
         public_key = private_key.public_key().public_bytes_raw().hex()
         if public_key != expected_public_key:
             raise PlaybillKeyError(
-                "local ClaimAttestation key does not match accepted verification state"
+                "local ClaimAttestationV1 key does not match accepted verification state"
             )
         return cls(
             signer=signer,
@@ -143,17 +143,17 @@ class LocalEd25519ClaimAttestationSigner:
 
     def sign_claim_attestation_v2(
         self,
-        statement: ClaimAttestationStatementV2,
-    ) -> ClaimAttestationV2:
+        statement: ClaimAttestationStatement,
+    ) -> ClaimAttestation:
         if statement.attesting_principal_id != self.signer or (
             statement.signing_key_digest != self.signing_key_id
         ):
-            raise PlaybillKeyError("V2 ClaimAttestation names a different signer or key")
+            raise PlaybillKeyError("V2 ClaimAttestationV1 names a different signer or key")
         private_key = _load_private_key(self.private_key_path)
         if private_key.public_key().public_bytes_raw().hex() != self.public_key:
-            raise PlaybillKeyError("ClaimAttestation key changed after signer initialization")
+            raise PlaybillKeyError("ClaimAttestationV1 key changed after signer initialization")
         signature = private_key.sign(claim_attestation_v2_statement_bytes(statement)).hex()
-        return ClaimAttestationV2(statement=statement, signature=signature)
+        return ClaimAttestation(statement=statement, signature=signature)
 
 
 def local_attestation_signer_from_environment(
@@ -243,11 +243,11 @@ def accepted_proof(
     """One accepted artifact's full envelope and facts through ``get(detail="proof")``."""
 
     from cruxible_client.contracts import PlaybillAcceptedCoordinate
-    from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
+    from cruxible_client.contracts.get_reads import PlaybillGetRequest
 
     result = client.playbill_get(
         instance_id,
-        request=PlaybillGetRequestV1(
+        request=PlaybillGetRequest(
             ref=ref,
             detail="proof",
             at=(
@@ -282,9 +282,9 @@ def _claim_from_public_view(view: Any) -> ClaimArtifactAny:
     ):
         raise ValueError("Claim read lacks its complete canonical artifact")
     if artifact_format == "playbill-claim-v2":
-        model: type[ClaimArtifactV2] | type[ClaimArtifactV3] = ClaimArtifactV2
+        model: type[ClaimArtifactV2] | type[ClaimArtifact] = ClaimArtifactV2
     elif artifact_format == "playbill-claim-v3":
-        model = ClaimArtifactV3
+        model = ClaimArtifact
     else:
         raise ClaimUnsupportedFormatError(
             f"{ClaimUnsupportedFormatError.error_code}: {artifact_format!r}"
@@ -310,9 +310,9 @@ def prepare_claim_attestation(
     client: Any,
     instance_id: str,
     *,
-    prepared: PreparedClaimAttestationRequestV1,
-    signer: ClaimAttestationV2Signer,
-) -> ClaimAttestationV2:
+    prepared: PreparedClaimAttestationRequest,
+    signer: ClaimAttestationSigner,
+) -> ClaimAttestation:
     """Bind and sign an exact accepted Claim without appending or accepting it."""
 
     whoami = client.playbill_whoami(instance_id)
@@ -325,9 +325,9 @@ def prepare_claim_attestation(
         raise ValueError("Claim attestations require the active ordinary caller principal")
     if signer.signer != whoami.actor_id or signer.signing_key_id != principal.public_key_digest:
         raise ValueError("Claim attestation signer differs from the authenticated caller")
-    from cruxible_client.contracts import PlaybillClaimViewV2
+    from cruxible_client.contracts import ClaimViewRecord
 
-    view = PlaybillClaimViewV2.model_validate(
+    view = ClaimViewRecord.model_validate(
         accepted_proof(
             client,
             instance_id,
@@ -364,7 +364,7 @@ def prepare_claim_attestation(
                 key=lambda item: item.encode("ascii"),
             )
         )
-    statement = ClaimAttestationStatementV2(
+    statement = ClaimAttestationStatement(
         instance_id=instance_id,
         referent_coordinate=AcceptedCoordinate.model_validate(
             view.coordinate.model_dump(mode="json")
@@ -393,17 +393,17 @@ def append_prepared_claim_attestation(
     client: Any,
     instance_id: str,
     *,
-    prepared: PreparedClaimAttestationRequestV1,
-    signer: ClaimAttestationV2Signer,
-) -> ClaimAttestationAppendResultV1:
+    prepared: PreparedClaimAttestationRequest,
+    signer: ClaimAttestationSigner,
+) -> ClaimAttestationAppendResult:
     attestation = prepare_claim_attestation(client, instance_id, prepared=prepared, signer=signer)
     result = client.append_playbill_claim_attestation(
         instance_id,
-        request=ClaimAttestationAppendRequestV1(
+        request=ClaimAttestationAppendRequest(
             attestation=attestation,
             capture_references=(
                 tuple(
-                    ClaimAttestationCaptureReferenceV1(capture_digest=item.capture_digest)
+                    ClaimAttestationCaptureReference(capture_digest=item.capture_digest)
                     for item in prepared.capture_references
                 )
                 if prepared.attestation_basis == "new_capture"
@@ -412,11 +412,11 @@ def append_prepared_claim_attestation(
             note=prepared.note,
         ),
     )
-    return ClaimAttestationAppendResultV1.model_validate(result)
+    return ClaimAttestationAppendResult.model_validate(result)
 
 
 __all__ = [
-    "ClaimAttestationV2Signer",
+    "ClaimAttestationSigner",
     "LocalClaimAttestationKeyUnavailable",
     "LocalEd25519ClaimAttestationSigner",
     "PRINCIPAL_KEY_PATH_ENV",

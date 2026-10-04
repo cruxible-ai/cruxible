@@ -15,24 +15,24 @@ from __future__ import annotations
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.query.definitions import (
-    QueryDefinitionV1,
-    QueryEvaluationPolicyV1,
+    QueryDefinition,
+    QueryEvaluationPolicy,
 )
 from cruxible_client.contracts.query.grammar import (
-    QueryBudgetsV1,
-    QueryClaimPresenceFilterV1,
-    QueryClaimValueRefV1,
-    QueryComparisonFilterV1,
-    QueryEntryV1,
-    QueryLiteralRefV1,
-    QueryMembershipFilterV1,
-    QueryOrderingV1,
-    QueryParameterDeclarationV1,
-    QueryParameterRefV1,
-    QueryProjectionFieldV1,
-    QueryProjectionV1,
-    QuerySubjectFieldRefV1,
-    QueryTraversalStepV1,
+    QueryBudgets,
+    QueryClaimPresenceFilter,
+    QueryClaimValueRef,
+    QueryComparisonFilter,
+    QueryEntry,
+    QueryLiteralRef,
+    QueryMembershipFilter,
+    QueryOrdering,
+    QueryParameterDeclaration,
+    QueryParameterRef,
+    QueryProjection,
+    QueryProjectionField,
+    QuerySubjectFieldRef,
+    QueryTraversalStep,
 )
 from cruxible_core.query.backends import ClaimQueryFactsV1
 from tests.core_support._modeling_parity_support import (
@@ -73,12 +73,12 @@ SWI_PRIORITY = "supply.work_item.priority"
 SWI_TYPE = "supply.work_item.type"
 SWI_ADDRESSES_INCIDENT = "supply.work_item.addresses_incident"
 
-_MANY_POLICY = QueryEvaluationPolicyV1(
+_MANY_POLICY = QueryEvaluationPolicy(
     visible_verdicts=("supported",),
     visible_currency=("current",),
     conflict_behavior="surface_conflicts",
 )
-_ONE_POLICY = QueryEvaluationPolicyV1(
+_ONE_POLICY = QueryEvaluationPolicy(
     visible_verdicts=("supported",),
     visible_currency=("current",),
     conflict_behavior="refuse_on_conflict",
@@ -217,49 +217,49 @@ def agent_operation_expired_status_facts() -> ClaimQueryFactsV1:
     return facts("agent-operation", tuple(subjects), tuple(claims))
 
 
-def work_queue_query() -> QueryDefinitionV1:
+def work_queue_query() -> QueryDefinition:
     """The agent-operation ``work_queue`` read, restated over Claims."""
 
-    return QueryDefinitionV1(
+    return QueryDefinition(
         identity=ArtifactIdentity(kind="QueryDefinition", name="parity.agent_operation.work_queue"),
         description="Active work items dispatched for implementation.",
-        entry=QueryEntryV1(binding="item", subject_kinds=(WORK_ITEM,)),
-        where=QueryMembershipFilterV1(
-            left=QueryClaimValueRefV1(binding="item", predicate=WI_STATUS),
-            values=(QueryLiteralRefV1(value="active"),),
+        entry=QueryEntry(binding="item", subject_kinds=(WORK_ITEM,)),
+        where=QueryMembershipFilter(
+            left=QueryClaimValueRef(binding="item", predicate=WI_STATUS),
+            values=(QueryLiteralRef(value="active"),),
             value_type="string",
         ),
         result_binding="item",
         result_shape="subject",
         result_cardinality="many",
         dedupe="subject",
-        projection=QueryProjectionV1(
+        projection=QueryProjection(
             fields=(
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="priority",
-                    value=QueryClaimValueRefV1(binding="item", predicate=WI_PRIORITY),
+                    value=QueryClaimValueRef(binding="item", predicate=WI_PRIORITY),
                 ),
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="summary",
-                    value=QueryClaimValueRefV1(binding="item", predicate=WI_SUMMARY),
+                    value=QueryClaimValueRef(binding="item", predicate=WI_SUMMARY),
                 ),
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="title",
-                    value=QueryClaimValueRefV1(binding="item", predicate=WI_TITLE),
+                    value=QueryClaimValueRef(binding="item", predicate=WI_TITLE),
                 ),
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="type",
-                    value=QueryClaimValueRefV1(binding="item", predicate=WI_TYPE),
+                    value=QueryClaimValueRef(binding="item", predicate=WI_TYPE),
                 ),
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="work_item_id",
-                    value=QuerySubjectFieldRefV1(binding="item", field="subject_id"),
+                    value=QuerySubjectFieldRef(binding="item", field="subject_id"),
                 ),
             )
         ),
         evaluation_policy=_MANY_POLICY,
-        default_budgets=QueryBudgetsV1(max_results=100, max_traversal_depth=0),
-        maximum_budgets=QueryBudgetsV1(max_results=100, max_traversal_depth=0),
+        default_budgets=QueryBudgets(max_results=100, max_traversal_depth=0),
+        maximum_budgets=QueryBudgets(max_results=100, max_traversal_depth=0),
         pins=_work_item_pins(WI_PRIORITY, WI_STATUS, WI_SUMMARY, WI_TITLE, WI_TYPE),
     )
 
@@ -270,20 +270,20 @@ def _note_query(
     description: str,
     where,
     direction: str,
-    parameters: tuple[QueryParameterDeclarationV1, ...] = (
-        QueryParameterDeclarationV1(name="work_item_id", value_type="string"),
+    parameters: tuple[QueryParameterDeclaration, ...] = (
+        QueryParameterDeclaration(name="work_item_id", value_type="string"),
     ),
-) -> QueryDefinitionV1:
-    return QueryDefinitionV1(
+) -> QueryDefinition:
+    return QueryDefinition(
         identity=ArtifactIdentity(kind="QueryDefinition", name=name),
         description=description,
-        entry=QueryEntryV1(
+        entry=QueryEntry(
             binding="item",
             subject_kinds=(WORK_ITEM,),
-            subject_id=QueryParameterRefV1(parameter="work_item_id"),
+            subject_id=QueryParameterRef(parameter="work_item_id"),
         ),
         traversal=(
-            QueryTraversalStepV1(
+            QueryTraversalStep(
                 binding="note",
                 from_binding="item",
                 predicate=SN_ABOUT_WORK_ITEM,
@@ -296,25 +296,25 @@ def _note_query(
         result_shape="subject",
         result_cardinality="many",
         dedupe="subject",
-        projection=QueryProjectionV1(
+        projection=QueryProjection(
             fields=(
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="id",
-                    value=QuerySubjectFieldRefV1(binding="note", field="subject_id"),
+                    value=QuerySubjectFieldRef(binding="note", field="subject_id"),
                 ),
             )
         ),
         orderings=(
-            QueryOrderingV1(
-                key=QueryClaimValueRefV1(binding="note", predicate=SN_CREATED_AT),
+            QueryOrdering(
+                key=QueryClaimValueRef(binding="note", predicate=SN_CREATED_AT),
                 direction=direction,  # type: ignore[arg-type]
                 value_type="timestamp",
             ),
         ),
         parameters=parameters,
         evaluation_policy=_MANY_POLICY,
-        default_budgets=QueryBudgetsV1(max_results=200, max_traversal_depth=1),
-        maximum_budgets=QueryBudgetsV1(max_results=200, max_traversal_depth=1),
+        default_budgets=QueryBudgets(max_results=200, max_traversal_depth=1),
+        maximum_budgets=QueryBudgets(max_results=200, max_traversal_depth=1),
         pins=(
             claim_type_pin(
                 SN_ABOUT_WORK_ITEM,
@@ -327,31 +327,31 @@ def _note_query(
     )
 
 
-def work_item_scratchpad_query() -> QueryDefinitionV1:
+def work_item_scratchpad_query() -> QueryDefinition:
     """The agent-operation ``work_item_scratchpad`` read, restated over Claims."""
 
     return _note_query(
         "parity.agent_operation.work_item_scratchpad",
         description="A work item's scratchpad notes in created order.",
-        where=QueryComparisonFilterV1(
-            left=QueryClaimValueRefV1(binding="note", predicate=SN_KIND),
+        where=QueryComparisonFilter(
+            left=QueryClaimValueRef(binding="note", predicate=SN_KIND),
             operator="eq",
-            right=QueryLiteralRefV1(value="scratchpad"),
+            right=QueryLiteralRef(value="scratchpad"),
             value_type="string",
         ),
         direction="ascending",
     )
 
 
-def state_notes_for_work_item_query() -> QueryDefinitionV1:
+def state_notes_for_work_item_query() -> QueryDefinition:
     """The agent-operation ``state_notes_for_work_item`` read, restated over Claims."""
 
     return _note_query(
         "parity.agent_operation.state_notes_for_work_item",
         description="Curated state notes attached to a work item, newest first.",
-        where=QueryMembershipFilterV1(
-            left=QueryClaimValueRefV1(binding="note", predicate=SN_KIND),
-            values=(QueryLiteralRefV1(value="scratchpad"),),
+        where=QueryMembershipFilter(
+            left=QueryClaimValueRef(binding="note", predicate=SN_KIND),
+            values=(QueryLiteralRef(value="scratchpad"),),
             value_type="string",
             negated=True,
         ),
@@ -359,40 +359,40 @@ def state_notes_for_work_item_query() -> QueryDefinitionV1:
     )
 
 
-def work_item_status_query() -> QueryDefinitionV1:
+def work_item_status_query() -> QueryDefinition:
     """A one-cardinality status read that refuses rather than picking a winner."""
 
-    return QueryDefinitionV1(
+    return QueryDefinition(
         identity=ArtifactIdentity(
             kind="QueryDefinition", name="parity.agent_operation.work_item_status"
         ),
         description="The status of one work item.",
-        entry=QueryEntryV1(
+        entry=QueryEntry(
             binding="item",
             subject_kinds=(WORK_ITEM,),
-            subject_id=QueryParameterRefV1(parameter="work_item_id"),
+            subject_id=QueryParameterRef(parameter="work_item_id"),
         ),
         result_binding="item",
         result_shape="subject",
         result_cardinality="one",
         dedupe="subject",
-        projection=QueryProjectionV1(
+        projection=QueryProjection(
             fields=(
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="status",
-                    value=QueryClaimValueRefV1(binding="item", predicate=WI_STATUS),
+                    value=QueryClaimValueRef(binding="item", predicate=WI_STATUS),
                 ),
             )
         ),
-        parameters=(QueryParameterDeclarationV1(name="work_item_id", value_type="string"),),
+        parameters=(QueryParameterDeclaration(name="work_item_id", value_type="string"),),
         evaluation_policy=_ONE_POLICY,
-        default_budgets=QueryBudgetsV1(max_results=1, max_traversal_depth=0),
-        maximum_budgets=QueryBudgetsV1(max_results=1, max_traversal_depth=0),
+        default_budgets=QueryBudgets(max_results=1, max_traversal_depth=0),
+        maximum_budgets=QueryBudgets(max_results=1, max_traversal_depth=0),
         pins=_work_item_pins(WI_STATUS),
     )
 
 
-def notes_of_kind_query() -> QueryDefinitionV1:
+def notes_of_kind_query() -> QueryDefinition:
     """The Claim-native stand-in for the donor's step-constraint mini-language.
 
     ``constraint: "target.kind == $kind"`` compares one traversal candidate's
@@ -405,21 +405,21 @@ def notes_of_kind_query() -> QueryDefinitionV1:
     return _note_query(
         "parity.agent_operation.notes_of_kind",
         description="A work item's notes of one caller-supplied kind, in created order.",
-        where=QueryComparisonFilterV1(
-            left=QueryClaimValueRefV1(binding="note", predicate=SN_KIND),
+        where=QueryComparisonFilter(
+            left=QueryClaimValueRef(binding="note", predicate=SN_KIND),
             operator="eq",
-            right=QueryParameterRefV1(parameter="kind"),
+            right=QueryParameterRef(parameter="kind"),
             value_type="string",
         ),
         direction="ascending",
         parameters=(
-            QueryParameterDeclarationV1(name="kind", value_type="string"),
-            QueryParameterDeclarationV1(name="work_item_id", value_type="string"),
+            QueryParameterDeclaration(name="kind", value_type="string"),
+            QueryParameterDeclaration(name="work_item_id", value_type="string"),
         ),
     )
 
 
-def work_item_status_surfacing_query() -> QueryDefinitionV1:
+def work_item_status_surfacing_query() -> QueryDefinition:
     """The same one-cardinality status read under a surfacing conflict policy.
 
     Refusing and surfacing are the two dispositions the accepted policy allows.
@@ -439,7 +439,7 @@ def work_item_status_surfacing_query() -> QueryDefinitionV1:
     )
 
 
-def notes_without_review_query() -> QueryDefinitionV1:
+def notes_without_review_query() -> QueryDefinition:
     """The Claim-native stand-in for the donor's ``where_not_related`` anti-join.
 
     A relation edge IS a Claim on the note, so "no edge of this predicate" is a
@@ -449,18 +449,18 @@ def notes_without_review_query() -> QueryDefinitionV1:
     traversal.
     """
 
-    return QueryDefinitionV1(
+    return QueryDefinition(
         identity=ArtifactIdentity(
             kind="QueryDefinition", name="parity.agent_operation.notes_without_review"
         ),
         description="Notes about a work item that hang off no review request at all.",
-        entry=QueryEntryV1(
+        entry=QueryEntry(
             binding="item",
             subject_kinds=(WORK_ITEM,),
-            subject_id=QueryParameterRefV1(parameter="work_item_id"),
+            subject_id=QueryParameterRef(parameter="work_item_id"),
         ),
         traversal=(
-            QueryTraversalStepV1(
+            QueryTraversalStep(
                 binding="note",
                 from_binding="item",
                 predicate=SN_ABOUT_WORK_ITEM,
@@ -468,7 +468,7 @@ def notes_without_review_query() -> QueryDefinitionV1:
                 target_subject_kinds=(STATE_NOTE,),
             ),
         ),
-        where=QueryClaimPresenceFilterV1(
+        where=QueryClaimPresenceFilter(
             binding="note",
             predicate=SN_ABOUT_REVIEW_REQUEST,
             negated=True,
@@ -477,18 +477,18 @@ def notes_without_review_query() -> QueryDefinitionV1:
         result_shape="subject",
         result_cardinality="many",
         dedupe="subject",
-        projection=QueryProjectionV1(
+        projection=QueryProjection(
             fields=(
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="id",
-                    value=QuerySubjectFieldRefV1(binding="note", field="subject_id"),
+                    value=QuerySubjectFieldRef(binding="note", field="subject_id"),
                 ),
             )
         ),
-        parameters=(QueryParameterDeclarationV1(name="work_item_id", value_type="string"),),
+        parameters=(QueryParameterDeclaration(name="work_item_id", value_type="string"),),
         evaluation_policy=_MANY_POLICY,
-        default_budgets=QueryBudgetsV1(max_results=200, max_traversal_depth=1),
-        maximum_budgets=QueryBudgetsV1(max_results=200, max_traversal_depth=1),
+        default_budgets=QueryBudgets(max_results=200, max_traversal_depth=1),
+        maximum_budgets=QueryBudgets(max_results=200, max_traversal_depth=1),
         pins=(
             claim_type_pin(
                 SN_ABOUT_REVIEW_REQUEST,
@@ -504,7 +504,7 @@ def notes_without_review_query() -> QueryDefinitionV1:
     )
 
 
-def notes_on_open_review_query() -> QueryDefinitionV1:
+def notes_on_open_review_query() -> QueryDefinition:
     """The Claim-native stand-in for the donor's ``where_related`` semi-join.
 
     The donor kept a candidate when a SEPARATE edge existed, without ever
@@ -513,34 +513,34 @@ def notes_on_open_review_query() -> QueryDefinitionV1:
     fan-out back down. Same rows; a wider row shape and a spent binding.
     """
 
-    return QueryDefinitionV1(
+    return QueryDefinition(
         identity=ArtifactIdentity(
             kind="QueryDefinition", name="parity.agent_operation.notes_on_open_review"
         ),
         description="Notes about a work item that also hang off a review in one status.",
-        entry=QueryEntryV1(
+        entry=QueryEntry(
             binding="item",
             subject_kinds=(WORK_ITEM,),
-            subject_id=QueryParameterRefV1(parameter="work_item_id"),
+            subject_id=QueryParameterRef(parameter="work_item_id"),
         ),
         traversal=(
-            QueryTraversalStepV1(
+            QueryTraversalStep(
                 binding="note",
                 from_binding="item",
                 predicate=SN_ABOUT_WORK_ITEM,
                 direction="reverse",
                 target_subject_kinds=(STATE_NOTE,),
             ),
-            QueryTraversalStepV1(
+            QueryTraversalStep(
                 binding="review",
                 from_binding="note",
                 predicate=SN_ABOUT_REVIEW_REQUEST,
                 direction="forward",
                 target_subject_kinds=(REVIEW_REQUEST,),
-                where=QueryComparisonFilterV1(
-                    left=QueryClaimValueRefV1(binding="review", predicate=RR_STATUS),
+                where=QueryComparisonFilter(
+                    left=QueryClaimValueRef(binding="review", predicate=RR_STATUS),
                     operator="eq",
-                    right=QueryParameterRefV1(parameter="review_status"),
+                    right=QueryParameterRef(parameter="review_status"),
                     value_type="string",
                 ),
             ),
@@ -549,21 +549,21 @@ def notes_on_open_review_query() -> QueryDefinitionV1:
         result_shape="subject",
         result_cardinality="many",
         dedupe="subject",
-        projection=QueryProjectionV1(
+        projection=QueryProjection(
             fields=(
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="id",
-                    value=QuerySubjectFieldRefV1(binding="note", field="subject_id"),
+                    value=QuerySubjectFieldRef(binding="note", field="subject_id"),
                 ),
             )
         ),
         parameters=(
-            QueryParameterDeclarationV1(name="review_status", value_type="string"),
-            QueryParameterDeclarationV1(name="work_item_id", value_type="string"),
+            QueryParameterDeclaration(name="review_status", value_type="string"),
+            QueryParameterDeclaration(name="work_item_id", value_type="string"),
         ),
         evaluation_policy=_MANY_POLICY,
-        default_budgets=QueryBudgetsV1(max_results=200, max_traversal_depth=2),
-        maximum_budgets=QueryBudgetsV1(max_results=200, max_traversal_depth=2),
+        default_budgets=QueryBudgets(max_results=200, max_traversal_depth=2),
+        maximum_budgets=QueryBudgets(max_results=200, max_traversal_depth=2),
         pins=(
             claim_type_pin(RR_STATUS, subject_kinds=(REVIEW_REQUEST,)),
             claim_type_pin(
@@ -621,21 +621,21 @@ def project_domain_facts() -> ClaimQueryFactsV1:
     return facts("project-domain", tuple(subjects), tuple(claims))
 
 
-def work_items_for_area_query() -> QueryDefinitionV1:
+def work_items_for_area_query() -> QueryDefinition:
     """The project-domain ``work_items_for_area`` read, restated over Claims."""
 
-    return QueryDefinitionV1(
+    return QueryDefinition(
         identity=ArtifactIdentity(
             kind="QueryDefinition", name="parity.project_domain.work_items_for_area"
         ),
         description="Flat work items attached to a product area.",
-        entry=QueryEntryV1(
+        entry=QueryEntry(
             binding="area",
             subject_kinds=(PRODUCT_AREA,),
-            subject_id=QueryParameterRefV1(parameter="area_id"),
+            subject_id=QueryParameterRef(parameter="area_id"),
         ),
         traversal=(
-            QueryTraversalStepV1(
+            QueryTraversalStep(
                 binding="work",
                 from_binding="area",
                 predicate=WI_TARGETS_AREA,
@@ -647,18 +647,18 @@ def work_items_for_area_query() -> QueryDefinitionV1:
         result_shape="subject",
         result_cardinality="many",
         dedupe="subject",
-        projection=QueryProjectionV1(
+        projection=QueryProjection(
             fields=(
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="id",
-                    value=QuerySubjectFieldRefV1(binding="work", field="subject_id"),
+                    value=QuerySubjectFieldRef(binding="work", field="subject_id"),
                 ),
             )
         ),
-        parameters=(QueryParameterDeclarationV1(name="area_id", value_type="string"),),
+        parameters=(QueryParameterDeclaration(name="area_id", value_type="string"),),
         evaluation_policy=_MANY_POLICY,
-        default_budgets=QueryBudgetsV1(max_results=200, max_traversal_depth=1),
-        maximum_budgets=QueryBudgetsV1(max_results=200, max_traversal_depth=1),
+        default_budgets=QueryBudgets(max_results=200, max_traversal_depth=1),
+        maximum_budgets=QueryBudgets(max_results=200, max_traversal_depth=1),
         pins=(
             claim_type_pin(
                 WI_TARGETS_AREA,
@@ -722,29 +722,29 @@ def supply_chain_facts() -> ClaimQueryFactsV1:
     return facts("supply-chain", tuple(subjects), tuple(claims))
 
 
-def incident_work_items_query() -> QueryDefinitionV1:
+def incident_work_items_query() -> QueryDefinition:
     """The supply-chain ``incident_work_items`` read, restated over Claims."""
 
-    return QueryDefinitionV1(
+    return QueryDefinition(
         identity=ArtifactIdentity(
             kind="QueryDefinition", name="parity.supply_chain.incident_work_items"
         ),
         description="Open response work addressing this incident.",
-        entry=QueryEntryV1(
+        entry=QueryEntry(
             binding="incident",
             subject_kinds=(INCIDENT,),
-            subject_id=QueryParameterRefV1(parameter="incident_id"),
+            subject_id=QueryParameterRef(parameter="incident_id"),
         ),
         traversal=(
-            QueryTraversalStepV1(
+            QueryTraversalStep(
                 binding="work",
                 from_binding="incident",
                 predicate=SWI_ADDRESSES_INCIDENT,
                 direction="reverse",
                 target_subject_kinds=(SUPPLY_WORK_ITEM,),
-                where=QueryMembershipFilterV1(
-                    left=QueryClaimValueRefV1(binding="work", predicate=SWI_STATUS),
-                    values=(QueryLiteralRefV1(value="closed"),),
+                where=QueryMembershipFilter(
+                    left=QueryClaimValueRef(binding="work", predicate=SWI_STATUS),
+                    values=(QueryLiteralRef(value="closed"),),
                     value_type="string",
                     negated=True,
                 ),
@@ -754,34 +754,34 @@ def incident_work_items_query() -> QueryDefinitionV1:
         result_shape="subject",
         result_cardinality="many",
         dedupe="subject",
-        projection=QueryProjectionV1(
+        projection=QueryProjection(
             fields=(
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="priority",
-                    value=QueryClaimValueRefV1(binding="work", predicate=SWI_PRIORITY),
+                    value=QueryClaimValueRef(binding="work", predicate=SWI_PRIORITY),
                 ),
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="status",
-                    value=QueryClaimValueRefV1(binding="work", predicate=SWI_STATUS),
+                    value=QueryClaimValueRef(binding="work", predicate=SWI_STATUS),
                 ),
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="title",
-                    value=QueryClaimValueRefV1(binding="work", predicate=SWI_TITLE),
+                    value=QueryClaimValueRef(binding="work", predicate=SWI_TITLE),
                 ),
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="type",
-                    value=QueryClaimValueRefV1(binding="work", predicate=SWI_TYPE),
+                    value=QueryClaimValueRef(binding="work", predicate=SWI_TYPE),
                 ),
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="work_item_id",
-                    value=QuerySubjectFieldRefV1(binding="work", field="subject_id"),
+                    value=QuerySubjectFieldRef(binding="work", field="subject_id"),
                 ),
             )
         ),
-        parameters=(QueryParameterDeclarationV1(name="incident_id", value_type="string"),),
+        parameters=(QueryParameterDeclaration(name="incident_id", value_type="string"),),
         evaluation_policy=_MANY_POLICY,
-        default_budgets=QueryBudgetsV1(max_results=200, max_traversal_depth=1),
-        maximum_budgets=QueryBudgetsV1(max_results=200, max_traversal_depth=1),
+        default_budgets=QueryBudgets(max_results=200, max_traversal_depth=1),
+        maximum_budgets=QueryBudgets(max_results=200, max_traversal_depth=1),
         pins=(
             claim_type_pin(
                 SWI_ADDRESSES_INCIDENT,
@@ -796,57 +796,57 @@ def incident_work_items_query() -> QueryDefinitionV1:
     )
 
 
-def open_incidents_by_severity_query() -> QueryDefinitionV1:
+def open_incidents_by_severity_query() -> QueryDefinition:
     """The supply-chain ``open_incidents_by_severity`` read, restated over Claims.
 
     The donor ordered by the DECLARED ORDINAL of the ``incident_severity`` enum.
-    ``QueryValueTypeV1`` has no enum member, so the nearest declarable ordering
+    ``QueryValueType`` has no enum member, so the nearest declarable ordering
     is lexicographic over the severity string. The result SET is identical; the
     sequence is not, and the suite pins that divergence rather than hiding it.
     """
 
-    return QueryDefinitionV1(
+    return QueryDefinition(
         identity=ArtifactIdentity(
             kind="QueryDefinition", name="parity.supply_chain.open_incidents_by_severity"
         ),
         description="Open incidents, most severe first by lexicographic severity.",
-        entry=QueryEntryV1(binding="incident", subject_kinds=(INCIDENT,)),
-        where=QueryComparisonFilterV1(
-            left=QueryClaimValueRefV1(binding="incident", predicate=INC_STATUS),
+        entry=QueryEntry(binding="incident", subject_kinds=(INCIDENT,)),
+        where=QueryComparisonFilter(
+            left=QueryClaimValueRef(binding="incident", predicate=INC_STATUS),
             operator="eq",
-            right=QueryLiteralRefV1(value="open"),
+            right=QueryLiteralRef(value="open"),
             value_type="string",
         ),
         result_binding="incident",
         result_shape="subject",
         result_cardinality="many",
         dedupe="subject",
-        projection=QueryProjectionV1(
+        projection=QueryProjection(
             fields=(
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="incident_id",
-                    value=QuerySubjectFieldRefV1(binding="incident", field="subject_id"),
+                    value=QuerySubjectFieldRef(binding="incident", field="subject_id"),
                 ),
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="severity",
-                    value=QueryClaimValueRefV1(binding="incident", predicate=INC_SEVERITY),
+                    value=QueryClaimValueRef(binding="incident", predicate=INC_SEVERITY),
                 ),
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="title",
-                    value=QueryClaimValueRefV1(binding="incident", predicate=INC_TITLE),
+                    value=QueryClaimValueRef(binding="incident", predicate=INC_TITLE),
                 ),
             )
         ),
         orderings=(
-            QueryOrderingV1(
-                key=QueryClaimValueRefV1(binding="incident", predicate=INC_SEVERITY),
+            QueryOrdering(
+                key=QueryClaimValueRef(binding="incident", predicate=INC_SEVERITY),
                 direction="descending",
                 value_type="string",
             ),
         ),
         evaluation_policy=_MANY_POLICY,
-        default_budgets=QueryBudgetsV1(max_results=200, max_traversal_depth=0),
-        maximum_budgets=QueryBudgetsV1(max_results=200, max_traversal_depth=0),
+        default_budgets=QueryBudgets(max_results=200, max_traversal_depth=0),
+        maximum_budgets=QueryBudgets(max_results=200, max_traversal_depth=0),
         pins=(
             claim_type_pin(INC_SEVERITY, subject_kinds=(INCIDENT,)),
             claim_type_pin(INC_STATUS, subject_kinds=(INCIDENT,)),

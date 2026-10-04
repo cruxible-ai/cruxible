@@ -20,14 +20,14 @@ from cruxible_client.contracts.canonical import (
     Sha256Value,
     normalize_canonical,
 )
-from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.errors import CanonicalEncodingError
 from cruxible_client.contracts.semantic import SemanticAddress
 
 _MEASUREMENT_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
 _ARTIFACT_KIND_RE = re.compile(r"^[A-Z][A-Za-z0-9_.-]{0,63}$")
 
-ProcedureMeasurementSubjectGrainV1 = Literal["procedure_unit", "node", "arm"]
+ProcedureMeasurementSubjectGrain = Literal["procedure_unit", "node", "arm"]
 StringT = TypeVar("StringT", bound=str)
 
 
@@ -86,7 +86,7 @@ def _canonical_ratio(value: object, *, label: str) -> dict[str, str]:
     return {"$decimal": spelling}
 
 
-class ProcedureMeasurementExpectationV1(_StrictMeasurementModel):
+class ProcedureMeasurementExpectation(_StrictMeasurementModel):
     """Closed point-in-time count and property-equality expectation."""
 
     tag: Literal["playbill-procedure-measurement-expectation-v1"] = (
@@ -108,7 +108,7 @@ class ProcedureMeasurementExpectationV1(_StrictMeasurementModel):
         return normalized
 
     @model_validator(mode="after")
-    def _shape(self) -> "ProcedureMeasurementExpectationV1":
+    def _shape(self) -> "ProcedureMeasurementExpectation":
         if self.min_count is None and self.max_count is None and self.condition is None:
             raise ValueError("measurement expectation must constrain count or condition")
         if (
@@ -127,7 +127,7 @@ class ProcedureMeasurementExpectationV1(_StrictMeasurementModel):
         return self
 
 
-class AcceptedQueryProcedureMeasurementV1(_StrictMeasurementModel):
+class AcceptedQueryProcedureMeasurement(_StrictMeasurementModel):
     """Evaluate one exact accepted QueryDefinition with fixed options."""
 
     tag: Literal["playbill-procedure-accepted-query-measurement-v1"] = (
@@ -137,7 +137,7 @@ class AcceptedQueryProcedureMeasurementV1(_StrictMeasurementModel):
     query: ArtifactPin
     parameters: object = Field(default_factory=dict)
     execution_options: object = Field(default_factory=dict)
-    expect: ProcedureMeasurementExpectationV1
+    expect: ProcedureMeasurementExpectation
 
     @field_validator("parameters", "execution_options", mode="before")
     @classmethod
@@ -148,7 +148,7 @@ class AcceptedQueryProcedureMeasurementV1(_StrictMeasurementModel):
         )
 
     @model_validator(mode="after")
-    def _exact_query(self) -> "AcceptedQueryProcedureMeasurementV1":
+    def _exact_query(self) -> "AcceptedQueryProcedureMeasurement":
         if self.query.role != "query" or self.query.target.kind != "QueryDefinition":
             raise ValueError(
                 "accepted-query measurement requires an exact role='query' "
@@ -157,7 +157,7 @@ class AcceptedQueryProcedureMeasurementV1(_StrictMeasurementModel):
         return self
 
 
-class ClaimAttestationProcedureMeasurementV1(_StrictMeasurementModel):
+class ClaimAttestationProcedureMeasurement(_StrictMeasurementModel):
     """Count exact-subject ClaimAttestations with declared stances."""
 
     tag: Literal["playbill-procedure-claim-attestation-measurement-v1"] = (
@@ -167,7 +167,7 @@ class ClaimAttestationProcedureMeasurementV1(_StrictMeasurementModel):
     claim_statement: SemanticAddress
     claim_statement_digest: str
     stances: tuple[Literal["support", "contradict", "unsure"], ...]
-    expect: ProcedureMeasurementExpectationV1
+    expect: ProcedureMeasurementExpectation
 
     @field_validator("claim_statement_digest")
     @classmethod
@@ -181,16 +181,16 @@ class ClaimAttestationProcedureMeasurementV1(_StrictMeasurementModel):
         cls,
         value: tuple[Literal["support", "contradict", "unsure"], ...],
     ) -> tuple[Literal["support", "contradict", "unsure"], ...]:
-        return _sorted_unique(value, label="ClaimAttestation measurement stances")
+        return _sorted_unique(value, label="ClaimAttestationV1 measurement stances")
 
     @model_validator(mode="after")
-    def _statement_subject(self) -> "ClaimAttestationProcedureMeasurementV1":
+    def _statement_subject(self) -> "ClaimAttestationProcedureMeasurement":
         if self.claim_statement.selector.scheme != "claim-statement-v1":
-            raise ValueError("ClaimAttestation measurement requires a Claim statement address")
+            raise ValueError("ClaimAttestationV1 measurement requires a Claim statement address")
         return self
 
 
-class ClaimStatementProcedureMeasurementV1(_StrictMeasurementModel):
+class ClaimStatementProcedureMeasurement(_StrictMeasurementModel):
     """Test one exact accepted Claim statement's evidence-relative verdict."""
 
     tag: Literal["playbill-procedure-claim-statement-measurement-v1"] = (
@@ -225,21 +225,21 @@ class ClaimStatementProcedureMeasurementV1(_StrictMeasurementModel):
         return _sorted_unique(value, label="Claim statement acceptable verdicts")
 
     @model_validator(mode="after")
-    def _statement_subject(self) -> "ClaimStatementProcedureMeasurementV1":
+    def _statement_subject(self) -> "ClaimStatementProcedureMeasurement":
         if self.claim_statement.selector.scheme != "claim-statement-v1":
             raise ValueError("Claim statement measurement requires a Claim statement address")
         return self
 
 
-ProcedureMeasurementV1 = Annotated[
-    AcceptedQueryProcedureMeasurementV1
-    | ClaimAttestationProcedureMeasurementV1
-    | ClaimStatementProcedureMeasurementV1,
+ProcedureMeasurement = Annotated[
+    AcceptedQueryProcedureMeasurement
+    | ClaimAttestationProcedureMeasurement
+    | ClaimStatementProcedureMeasurement,
     Field(discriminator="kind"),
 ]
 
 
-class ProcedureMeasurementSituationShapeV1(_StrictMeasurementModel):
+class ProcedureMeasurementSituationShape(_StrictMeasurementModel):
     """Coarse reproducible context, excluding task IDs and answer content."""
 
     tag: Literal["playbill-procedure-measurement-situation-shape-v1"] = (
@@ -270,7 +270,7 @@ class ProcedureMeasurementSituationShapeV1(_StrictMeasurementModel):
         return None if value is None else _canonical_name(value, label="task_category")
 
 
-class ProcedureMeasurementReviewTriggerV1(_StrictMeasurementModel):
+class ProcedureMeasurementReviewTrigger(_StrictMeasurementModel):
     """A deterministic threshold that can later request calibration review."""
 
     tag: Literal["playbill-procedure-measurement-review-trigger-v1"] = (
@@ -281,7 +281,7 @@ class ProcedureMeasurementReviewTriggerV1(_StrictMeasurementModel):
     operator: Literal["eq", "ne", "gt", "gte", "lt", "lte"]
     threshold: object
     min_readings: int = Field(ge=1)
-    window: CanonicalDurationV1 | None = None
+    window: CanonicalDuration | None = None
 
     @field_validator("name")
     @classmethod
@@ -294,28 +294,28 @@ class ProcedureMeasurementReviewTriggerV1(_StrictMeasurementModel):
         return _canonical_ratio(value, label="measurement review threshold")
 
     @model_validator(mode="after")
-    def _window(self) -> "ProcedureMeasurementReviewTriggerV1":
+    def _window(self) -> "ProcedureMeasurementReviewTrigger":
         if self.window is not None and self.window.microseconds == 0:
             raise ValueError("measurement review window must be nonzero")
         return self
 
 
-class ProcedureMeasurementDeclarationV1(_StrictMeasurementModel):
+class ProcedureMeasurementDeclaration(_StrictMeasurementModel):
     """One digest-covered declaration from which PC-E1 may derive activation."""
 
     tag: Literal["playbill-procedure-measurement-declaration-v1"] = (
         "playbill-procedure-measurement-declaration-v1"
     )
     name: str
-    subject_grain: ProcedureMeasurementSubjectGrainV1
+    subject_grain: ProcedureMeasurementSubjectGrain
     node_id: str | None = None
     from_node_id: str | None = None
     arm_label: Literal["on_true", "on_false"] | None = None
-    measurement: ProcedureMeasurementV1
-    check_after: CanonicalDurationV1
-    expires_after: CanonicalDurationV1
-    situation_shape: ProcedureMeasurementSituationShapeV1 | None = None
-    review_when: tuple[ProcedureMeasurementReviewTriggerV1, ...] = ()
+    measurement: ProcedureMeasurement
+    check_after: CanonicalDuration
+    expires_after: CanonicalDuration
+    situation_shape: ProcedureMeasurementSituationShape | None = None
+    review_when: tuple[ProcedureMeasurementReviewTrigger, ...] = ()
 
     @model_validator(mode="before")
     @classmethod
@@ -338,15 +338,15 @@ class ProcedureMeasurementDeclarationV1(_StrictMeasurementModel):
     @classmethod
     def _review_when(
         cls,
-        value: tuple[ProcedureMeasurementReviewTriggerV1, ...],
-    ) -> tuple[ProcedureMeasurementReviewTriggerV1, ...]:
+        value: tuple[ProcedureMeasurementReviewTrigger, ...],
+    ) -> tuple[ProcedureMeasurementReviewTrigger, ...]:
         names = tuple(item.name for item in value)
         if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
             raise ValueError("measurement review triggers must be sorted and unique by name")
         return value
 
     @model_validator(mode="after")
-    def _shape(self) -> "ProcedureMeasurementDeclarationV1":
+    def _shape(self) -> "ProcedureMeasurementDeclaration":
         if self.subject_grain == "procedure_unit":
             if any(
                 value is not None for value in (self.node_id, self.from_node_id, self.arm_label)
@@ -375,13 +375,13 @@ class ProcedureMeasurementDeclarationV1(_StrictMeasurementModel):
 
 
 __all__ = [
-    "AcceptedQueryProcedureMeasurementV1",
-    "ClaimAttestationProcedureMeasurementV1",
-    "ClaimStatementProcedureMeasurementV1",
-    "ProcedureMeasurementDeclarationV1",
-    "ProcedureMeasurementExpectationV1",
-    "ProcedureMeasurementReviewTriggerV1",
-    "ProcedureMeasurementSituationShapeV1",
-    "ProcedureMeasurementSubjectGrainV1",
-    "ProcedureMeasurementV1",
+    "AcceptedQueryProcedureMeasurement",
+    "ClaimAttestationProcedureMeasurement",
+    "ClaimStatementProcedureMeasurement",
+    "ProcedureMeasurementDeclaration",
+    "ProcedureMeasurementExpectation",
+    "ProcedureMeasurementReviewTrigger",
+    "ProcedureMeasurementSituationShape",
+    "ProcedureMeasurementSubjectGrain",
+    "ProcedureMeasurement",
 ]

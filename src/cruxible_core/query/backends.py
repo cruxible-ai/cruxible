@@ -41,7 +41,7 @@ from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from cruxible_client.contracts.accepted_attestations import ClaimAttestationEvidence
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.claim_verdicts import (
-    CaptureVerdictEvidenceV1,
+    CaptureVerdictEvidence,
     ClaimAdjudicationRuleAny,
     claim_verdict_v1_compat,
     evaluate_claim_verdict,
@@ -49,11 +49,11 @@ from cruxible_client.contracts.claim_verdicts import (
 from cruxible_client.contracts.claims import AcceptedClaim, SubjectClaimObject
 from cruxible_client.contracts.providers import ProviderV1
 from cruxible_client.contracts.query.definitions import (
-    QueryDefinitionV1,
-    QueryEvaluationPolicyV1,
+    QueryDefinition,
+    QueryEvaluationPolicy,
 )
 from cruxible_client.contracts.query.grammar import byte_sorted
-from cruxible_client.contracts.query.results import QueryClaimVisibilityV1
+from cruxible_client.contracts.query.results import QueryClaimVisibility
 from cruxible_client.contracts.subjects import AcceptedSubject
 from cruxible_core.indexes.projection import AcceptedProjectionCoordinate
 
@@ -73,7 +73,7 @@ class ClaimFactRowV1(_StrictQueryBackendModel):
     tag: Literal["playbill-query-claim-fact-v1"] = "playbill-query-claim-fact-v1"
     accepted: AcceptedClaim
     rule: ClaimAdjudicationRuleAny
-    captures: tuple[CaptureVerdictEvidenceV1, ...] = ()
+    captures: tuple[CaptureVerdictEvidence, ...] = ()
     attestations: tuple[ClaimAttestationEvidence, ...] = ()
     referent_current: bool = True
     resolved_authority_basis: tuple[str, ...] = ()
@@ -141,7 +141,7 @@ class VisibleClaimRow:
     """One accepted Claim admitted by the owning query's verdict policy."""
 
     row: ClaimFactRowV1
-    visibility: QueryClaimVisibilityV1
+    visibility: QueryClaimVisibility
 
     @property
     def subject_path(self) -> str:
@@ -171,7 +171,7 @@ def claim_row_outcome(
     *,
     subject: AcceptedSubject | None,
     providers: Mapping[str, ProviderV1],
-    policy: QueryEvaluationPolicyV1,
+    policy: QueryEvaluationPolicy,
     evaluation_time: datetime,
 ) -> ClaimRowOutcomeV1:
     """Resolve one Claim row's visibility, keeping the reason it was hidden."""
@@ -203,7 +203,7 @@ def claim_row_outcome(
     return ClaimRowOutcomeV1(
         visible=VisibleClaimRow(
             row=row,
-            visibility=QueryClaimVisibilityV1(
+            visibility=QueryClaimVisibility(
                 claim_path=row.accepted.path,
                 statement_digest=row.accepted.statement_digest,
                 artifact_digest=row.accepted.artifact_digest,
@@ -221,7 +221,7 @@ def claim_row_visibility(
     *,
     subject: AcceptedSubject | None,
     providers: Mapping[str, ProviderV1],
-    policy: QueryEvaluationPolicyV1,
+    policy: QueryEvaluationPolicy,
     evaluation_time: datetime,
 ) -> VisibleClaimRow | None:
     """Return the Claim row's visibility, or None when the policy hides it.
@@ -468,7 +468,7 @@ class ClaimQueryBackendFactoryV1(Protocol):
         facts: ClaimQueryFactsV1,
         /,
         *,
-        definition: QueryDefinitionV1,
+        definition: QueryDefinition,
         evaluation_time: datetime,
     ) -> ClaimQueryBackendV1: ...
 
@@ -484,7 +484,7 @@ class DirectClaimFactIndex:
         self,
         facts: ClaimQueryFactsV1,
         *,
-        definition: QueryDefinitionV1,
+        definition: QueryDefinition,
         evaluation_time: datetime,
     ) -> None:
         self._facts = facts

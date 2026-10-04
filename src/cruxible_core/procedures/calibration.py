@@ -18,11 +18,11 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.errors import PlaybillExecutionError
 from cruxible_client.contracts.procedures.results import (
+    ProcedureRunReceipt,
     ProcedureRunReceiptV2,
     ProcedureRunReceiptV3,
     ProcedureRunReceiptV4,
     ProcedureRunReceiptV5,
-    ProcedureRunReceiptV6,
 )
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.procedures.settled_outcomes import (
@@ -196,7 +196,7 @@ ProcedureCalibrationRunReceiptV1 = (
     | ProcedureRunReceiptV3
     | ProcedureRunReceiptV4
     | ProcedureRunReceiptV5
-    | ProcedureRunReceiptV6
+    | ProcedureRunReceipt
 )
 
 

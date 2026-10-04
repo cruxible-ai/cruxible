@@ -5,12 +5,12 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
-from cruxible_client.contracts.authoring.models import ProcedureMandateAuthoringPayloadV1
+from cruxible_client.contracts.authoring.models import ProcedureMandateAuthoringPayload
 from cruxible_client.contracts.canonical import ArtifactDigest
 from cruxible_client.contracts.procedure_mandates import (
-    AcceptedProcedureMandateV1,
+    AcceptedProcedureMandate,
     ProcedureMandateError,
-    ProcedureMandateInvocationV1,
+    ProcedureMandateInvocation,
     ProcedureMandateV1,
     evaluate_procedure_mandate,
     evaluate_procedure_mandate_law,
@@ -22,11 +22,11 @@ from cruxible_client.contracts.procedure_mandates import (
     render_procedure_mandate,
 )
 from cruxible_client.contracts.procedures.artifacts import (
-    AcceptedProcedureV1,
+    AcceptedProcedure,
     procedure_artifact_digest,
     render_procedure,
 )
-from cruxible_client.contracts.procedures.models import CanonicalDurationV1, ProcedureHardCapsV3
+from cruxible_client.contracts.procedures.models import CanonicalDuration, ProcedureHardCaps
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.authoring.preflight import compute_preflight
 from cruxible_core.authoring.store import AuthoringIntentStore
@@ -38,9 +38,9 @@ from tests.test_procedures.test_procedure_artifacts import _artifact, _definitio
 _D0 = "sha256:" + "0" * 64
 
 
-def _caps(*, calls: int = 0) -> ProcedureHardCapsV3:
-    return ProcedureHardCapsV3(
-        max_wall_clock=CanonicalDurationV1(microseconds=2_000_000),
+def _caps(*, calls: int = 0) -> ProcedureHardCaps:
+    return ProcedureHardCaps(
+        max_wall_clock=CanonicalDuration(microseconds=2_000_000),
         max_provider_calls=calls,
         max_capture_bytes=0,
         max_items=200,
@@ -48,18 +48,18 @@ def _caps(*, calls: int = 0) -> ProcedureHardCapsV3:
     )
 
 
-def _procedure() -> AcceptedProcedureV1:
+def _procedure() -> AcceptedProcedure:
     artifact = _artifact(_definition(terminal_capability=3))
     from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
 
-    return AcceptedProcedureV1(
+    return AcceptedProcedure(
         path="procedures/triage.json",
         procedure=artifact,
         artifact_digest=procedure_artifact_digest(artifact).tagged,
     )
 
 
-def _mandate(*, procedure: AcceptedProcedureV1 | None = None) -> ProcedureMandateV1:
+def _mandate(*, procedure: AcceptedProcedure | None = None) -> ProcedureMandateV1:
     accepted = procedure or _procedure()
     return ProcedureMandateV1(
         identity=ArtifactIdentity(kind="ProcedureMandate", name="triage"),
@@ -113,7 +113,7 @@ def test_procedure_mandate_law_checks_exact_procedure_and_ceiling() -> None:
 def test_procedure_mandate_runtime_refusals_are_complete_and_deterministic() -> None:
     mandate = _mandate()
     digest = procedure_mandate_digest(mandate).tagged
-    invocation = ProcedureMandateInvocationV1(
+    invocation = ProcedureMandateInvocation(
         procedure_identity=mandate.procedure.target,
         procedure_artifact_digest=mandate.procedure.artifact_digest,
         requested_rung=3,
@@ -158,7 +158,7 @@ def test_procedure_mandate_runtime_refusals_are_complete_and_deterministic() -> 
 def test_procedure_mandate_successor_requires_exact_predecessor() -> None:
     procedure = _procedure()
     first = _mandate(procedure=procedure)
-    accepted = AcceptedProcedureMandateV1(
+    accepted = AcceptedProcedureMandate(
         path=procedure_mandate_path("triage"),
         mandate=first,
         artifact_digest=procedure_mandate_digest(first).tagged,
@@ -185,7 +185,7 @@ def test_procedure_and_mandate_successors_are_one_changeset_relation(tmp_path) -
     current = instance.accepted_coordinate()
     base_tree = instance.tree_at(current.git_oid)
     first_procedure = _artifact(_definition(terminal_capability=3))
-    first_accepted = AcceptedProcedureV1(
+    first_accepted = AcceptedProcedure(
         path="procedures/triage.json",
         procedure=first_procedure,
         artifact_digest=procedure_artifact_digest(first_procedure).tagged,
@@ -300,7 +300,7 @@ def test_procedure_mandate_authoring_resolves_machine_owned_digests(tmp_path) ->
             token_factory=lambda: "9" * 32,
         ),
     )
-    payload = ProcedureMandateAuthoringPayloadV1(
+    payload = ProcedureMandateAuthoringPayload(
         name="triage",
         procedure_name="triage",
         grants="propose",

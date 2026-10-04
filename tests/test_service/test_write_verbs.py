@@ -10,17 +10,17 @@ from typing import Any
 import pytest
 
 from cruxible_client.contracts.authoring.models import (
-    AuthoringClaimStatementV1,
-    ChangeSetAuthoringPayloadV1,
+    AuthoringClaimStatement,
+    ChangeSetAuthoringPayload,
     ClaimAuthoringPayloadV2,
-    ClaimDependencyDraftsV1,
-    SelfSourceBodyV1,
+    ClaimDependencyDrafts,
+    SelfSourceBody,
 )
 from cruxible_client.contracts.captures import COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
 from cruxible_client.contracts.claims import LiteralClaimObject
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import subject_path
-from cruxible_client.contracts.write import PlaybillWriteRequestV1, WriteOutcome
+from cruxible_client.contracts.write import PlaybillWriteRequest, WriteOutcome
 from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring import write_verbs
@@ -55,7 +55,7 @@ def _write(
     who: WriteCaller | None = None,
     **options: Any,
 ) -> WriteOutcome:
-    request = PlaybillWriteRequestV1.model_validate(
+    request = PlaybillWriteRequest.model_validate(
         {"because": because, "changes": list(changes), **options}
     )
     return service_playbill_write(instance, request=request, caller=who or caller())
@@ -138,18 +138,18 @@ def test_a_wrong_enum_member_refuses_listing_the_members(instance: PlaybillInsta
 
 def test_the_claim_law_names_the_enum_members_too(instance: PlaybillInstance) -> None:
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
-    payload = ChangeSetAuthoringPayloadV1(
+    payload = ChangeSetAuthoringPayload(
         members=(
             ClaimAuthoringPayloadV2(
-                statement=AuthoringClaimStatementV1(
+                statement=AuthoringClaimStatement(
                     subject=SemanticAddress.whole_artifact(subject_path(KIND, "wi-1")),
                     predicate=f"{KIND}.status",
                     object=LiteralClaimObject(value="dne"),
                     role="observation",
                 ),
                 rationale="Bypass the write verbs.",
-                source=SelfSourceBodyV1(content_base64=base64.b64encode(b"dne").decode()),
-                dependency_drafts=ClaimDependencyDraftsV1(),
+                source=SelfSourceBody(content_base64=base64.b64encode(b"dne").decode()),
+                dependency_drafts=ClaimDependencyDrafts(),
             ),
         )
     )
@@ -443,8 +443,8 @@ def _move_to_v7(instance: PlaybillInstance, field: str, **fields: object) -> Non
     )
     from cruxible_client.contracts.policies import (
         CAPTURE_CONTRACT_REF_ROLE,
-        ClaimEvidenceAdmissionPolicyV3,
-        ClaimEvidenceAdmissionRuleV3,
+        ClaimEvidenceAdmissionPolicy,
+        ClaimEvidenceAdmissionRule,
     )
     from cruxible_core.proposals.proposals import ProposalAdmissionRequest
     from cruxible_core.service.authoring.documents import service_activate_playbill_proposal
@@ -460,9 +460,9 @@ def _move_to_v7(instance: PlaybillInstance, field: str, **fields: object) -> Non
         {
             **base.model_dump(mode="python"),
             "artifact_format": "playbill-claim-type-v7",
-            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV3(
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicy(
                 rules=(
-                    ClaimEvidenceAdmissionRuleV3(
+                    ClaimEvidenceAdmissionRule(
                         rule_id=rule.rule_id,
                         claim_roles=rule.claim_roles,
                         capture_contracts=(
@@ -633,17 +633,17 @@ def test_a_capture_handle_names_a_capture_no_accepted_claim_cites_yet(
     handle = capture_handle(fresh)
     # One resolver: the handle the write verbs accept opens in get and
     # read_capture too, though no accepted Claim cites it yet.
-    from cruxible_client.contracts.capture_reads import CaptureReadRequestV1
-    from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
+    from cruxible_client.contracts.capture_reads import CaptureReadRequest
+    from cruxible_client.contracts.get_reads import PlaybillGetRequest
     from cruxible_core.service.discovery.get import service_playbill_get
     from cruxible_core.service.evidence.capture_reads import service_read_playbill_capture
     from cruxible_core.storage.cas import BodyAccessContext
 
     reader = BodyAccessContext(principal_id="reader", can_read_body=True)
-    opened = service_playbill_get(instance, request=PlaybillGetRequestV1(ref=handle), access=reader)
+    opened = service_playbill_get(instance, request=PlaybillGetRequest(ref=handle), access=reader)
     assert opened.ref == f"Capture:{fresh}"
     read = service_read_playbill_capture(
-        instance, request=CaptureReadRequestV1(capture_digest=handle), access=reader
+        instance, request=CaptureReadRequest(capture_digest=handle), access=reader
     )
     assert read.capture_digest == fresh and read.status == "verified"
     cited = _write(
@@ -908,7 +908,7 @@ def test_a_handle_matching_more_captures_than_the_verification_budget_refuses(
         instance,
         head=head,
         read_at=head,
-        request=PlaybillWriteRequestV1.model_validate(
+        request=PlaybillWriteRequest.model_validate(
             {"because": "x", "changes": [_set(WI1, "title", "x")]}
         ),
     )
@@ -1645,8 +1645,8 @@ def test_a_contest_row_offers_one_keep_option_per_contender_and_picks_none(
 
     from datetime import UTC, datetime
 
-    from cruxible_client.contracts.captures import CanonicalDurationV1
-    from cruxible_core.coverage.contracts import CoverageAccessProfileV1
+    from cruxible_client.contracts.captures import CanonicalDuration
+    from cruxible_core.coverage.contracts import CoverageAccessProfile
     from cruxible_core.indexes.projection import AcceptedCoordinate
     from cruxible_core.service.discovery.next import PlaybillNextRequestV1, service_playbill_next
 
@@ -1657,10 +1657,10 @@ def test_a_contest_row_offers_one_keep_option_per_contender_and_picks_none(
         request = PlaybillNextRequestV1(
             at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
             evaluation_time=datetime.now(UTC),
-            access_profile=CoverageAccessProfileV1(
+            access_profile=CoverageAccessProfile(
                 profile_id="write-contest", permitted_access_classes=("instance", "public")
             ),
-            expiring_within=CanonicalDurationV1(microseconds=604_800_000_000),
+            expiring_within=CanonicalDuration(microseconds=604_800_000_000),
         )
         return [
             item

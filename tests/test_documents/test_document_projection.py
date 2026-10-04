@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.candidates import SemanticCandidate, candidate_digest
+from cruxible_client.contracts.candidates import SemanticCandidateV1, candidate_digest
 from cruxible_client.contracts.canonical import (
     artifact_bytes_for_path,
     canonical_bytes,
@@ -93,7 +93,7 @@ def _candidate_coordinate(
 ) -> ProvisionalProjectionCoordinate:
     canonical = accepted_coordinate(repository).model_copy(update={"compiler": PB_C_COMPILER})
     difference, scope = semantic_diff({}, tree)
-    candidate = SemanticCandidate(
+    candidate = SemanticCandidateV1(
         parent_semantic_root=canonical.semantic_root,
         candidate_manifest_root=manifest_root(tree).tagged,
         semantic_diff_digest=difference.tagged,

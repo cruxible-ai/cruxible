@@ -71,8 +71,8 @@ _STUB_IMPORTS = (
     "    SubjectRef,",
     ")",
     "from cruxible_client.authoring.world import KindNamespace, Names, WorldClaimType",
-    "from cruxible_client.contracts.claim_types import ClaimTypeMemberDescriptionV1",
-    "from cruxible_client.contracts.compact_query import PlaybillQueryRequestV1",
+    "from cruxible_client.contracts.claim_types import ClaimTypeMemberDescription",
+    "from cruxible_client.contracts.compact_query import PlaybillQueryRequest",
     "from cruxible_client.contracts.projection import AcceptedCoordinate",
     "from cruxible_client.contracts.write import (",
     "    Evidence,",
@@ -440,7 +440,7 @@ def _query_members(world: World, kind: str, body: _Body, *, include_run: bool) -
     if include_run:
         body.declare(f"def order_by(self, *fields: str) -> {query}: ...")
         body.declare(f"def limit(self, count: int) -> {query}: ...")
-        body.declare("def request(self) -> PlaybillQueryRequestV1: ...")
+        body.declare("def request(self) -> PlaybillQueryRequest: ...")
         body.declare("def run(self) -> QueryResult: ...")
         body.declare("def __iter__(self) -> Iterator[dict[str, object]]: ...")
 
@@ -490,7 +490,7 @@ def _predicate_block(world: World, node: _Node) -> list[str]:
     body.declare("literal_schema: dict[str, object] | None")
     body.declare("members: tuple[str, ...]")
     body.declare("description: str | None")
-    body.declare("member_descriptions: tuple[ClaimTypeMemberDescriptionV1, ...]")
+    body.declare("member_descriptions: tuple[ClaimTypeMemberDescription, ...]")
     body.declare("default_role: ClaimRole | None")
     body.declare('evidence_requirement: Literal["none", "self", "captured"]')
     body.declare('revision_evidence: Literal["replace", "accumulate"]')

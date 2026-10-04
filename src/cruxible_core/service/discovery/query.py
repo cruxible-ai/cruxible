@@ -15,7 +15,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 from cruxible_client.contracts.accepted_attestations import parse_accepted_attestation
-from cruxible_client.contracts.claim_attestations import ClaimAttestationV2
+from cruxible_client.contracts.claim_attestations import ClaimAttestation
 from cruxible_client.contracts.claim_types import (
     ClaimType,
     claim_type_path,
@@ -34,12 +34,12 @@ from cruxible_client.contracts.errors import (
     ProjectionIntegrityError,
     ProposalIntegrityError,
 )
-from cruxible_client.contracts.query.definitions import AcceptedQueryDefinitionV1
-from cruxible_client.contracts.query.grammar import QueryArtifactsEntryV2, QueryBudgetsV1
+from cruxible_client.contracts.query.definitions import AcceptedQueryDefinition
+from cruxible_client.contracts.query.grammar import QueryArtifactsEntry, QueryBudgets
 from cruxible_client.contracts.query.results import (
-    ClaimQueryResultV1,
-    QueryArtifactDefinitionV2,
-    QueryExecutionReceiptV1,
+    ClaimQueryResult,
+    QueryArtifactDefinition,
+    QueryExecutionReceipt,
 )
 from cruxible_client.contracts.subjects import AcceptedSubject, parse_subject, subject_digest
 from cruxible_core.errors import DataValidationError
@@ -93,8 +93,8 @@ class PlaybillQueryRunV1(_StrictQueryRunModel):
     name: str
     definition_path: str
     definition_digest: str
-    result: ClaimQueryResultV1
-    receipt: QueryExecutionReceiptV1
+    result: ClaimQueryResult
+    receipt: QueryExecutionReceipt
     journal_record_digest: str | None = None
 
 
@@ -138,7 +138,7 @@ def _fact_row(
     history: ClaimReadHistoryIndex,
     claim: ClaimArtifactAny,
     claim_types: dict[str, ClaimType],
-    attestation_envelopes: tuple[ClaimAttestationV2, ...],
+    attestation_envelopes: tuple[ClaimAttestation, ...],
     store: Any = None,
 ) -> ClaimFactRowV1:
     """Assemble one Claim's verdict inputs exactly as the verdict service does."""
@@ -284,7 +284,7 @@ class _AcceptedQueryFactsRead:
         self._claim_paths: tuple[str, ...] = ()
         self._subject_paths: tuple[str, ...] = ()
         self._history: ClaimReadHistoryIndex | None = None
-        self._attestations: dict[tuple[str, str], list[ClaimAttestationV2]] = {}
+        self._attestations: dict[tuple[str, str], list[ClaimAttestation]] = {}
         self._claims: dict[str, ClaimArtifactAny] = {}
         self._claim_types: dict[str, ClaimType] = {}
         self._rows: dict[str, ClaimFactRowV1] = {}
@@ -552,7 +552,7 @@ class PlaybillQueryReceiptJournal:
 
     def record(
         self,
-        receipt: QueryExecutionReceiptV1,
+        receipt: QueryExecutionReceipt,
         *,
         accepted_coordinate: AcceptedCoordinate,
         recorded_at: datetime,
@@ -571,21 +571,21 @@ class PlaybillQueryReceiptJournal:
 
 def evaluate_accepted_query(
     instance: PlaybillInstance,
-    definition: AcceptedQueryDefinitionV1,
+    definition: AcceptedQueryDefinition,
     *,
     coordinate: AcceptedProjectionCoordinate,
     evaluation_time: datetime,
     parameters: Mapping[str, object] | None = None,
-    budgets: QueryBudgetsV1 | None = None,
+    budgets: QueryBudgets | None = None,
     facts: Callable[[], ClaimQueryFactsV1] | None = None,
     external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,
-) -> ClaimQueryResultV1:
+) -> ClaimQueryResult:
     """One dispatch for public reads and projection currency, with lazy Claim facts."""
-    if isinstance(definition.query.entry, QueryArtifactsEntryV2):
+    if isinstance(definition.query.entry, QueryArtifactsEntry):
 
         def read(
-            entry: QueryArtifactsEntryV2, limit: int
-        ) -> tuple[int, tuple[QueryArtifactDefinitionV2, ...]]:
+            entry: QueryArtifactsEntry, limit: int
+        ) -> tuple[int, tuple[QueryArtifactDefinition, ...]]:
             with instance.bind_accepted_projection(coordinate) as projection:
                 count, rows = projection.typed.query_artifact_definitions(
                     kind=entry.artifact_kind,
@@ -599,7 +599,7 @@ def evaluate_accepted_query(
                     if source is None:
                         raise ProjectionIntegrityError("selected definition source is absent")
                     definitions.append(
-                        QueryArtifactDefinitionV2(
+                        QueryArtifactDefinition(
                             identity=row.identity,
                             path=row.path,
                             artifact_digest=row.artifact_digest,
@@ -641,7 +641,7 @@ def service_run_playbill_query(
     evaluation_time: datetime,
     parameters: Mapping[str, object] | None = None,
     at: PlaybillAcceptedCoordinate | None = None,
-    budgets: QueryBudgetsV1 | None = None,
+    budgets: QueryBudgets | None = None,
     external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,
     receipt_journal: PlaybillQueryReceiptJournal | None = None,
 ) -> PlaybillQueryRunV1:

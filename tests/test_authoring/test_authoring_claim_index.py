@@ -11,9 +11,9 @@ import cruxible_core.authoring.lowering as lowering
 import cruxible_core.derived.derived_state as derived_state
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
-    AuthoringExistingClaimDispositionV1,
-    ClaimRetirementMemberV1,
-    ClaimTypeSuccessionMemberV1,
+    AuthoringExistingClaimDisposition,
+    ClaimRetirementMember,
+    ClaimTypeSuccessionMember,
 )
 from cruxible_client.contracts.claims import (
     ClaimArtifactV2,
@@ -293,7 +293,7 @@ def test_revised_sibling_dispositions_use_its_new_statement_and_retirement_updat
         key=lambda claim: claim.identity.name,
     )
     first, second, retired = accepted
-    observed = AuthoringExistingClaimDispositionV1(
+    observed = AuthoringExistingClaimDisposition(
         claim_id=first.identity.name, disposition="support"
     )
     intent = coordinator.create(
@@ -306,7 +306,7 @@ def test_revised_sibling_dispositions_use_its_new_statement_and_retirement_updat
                 value="blocked",
                 dispositions=(observed,),
             ),
-            ClaimRetirementMemberV1(retires=retired.identity.name, reason="was-rescinded"),
+            ClaimRetirementMember(retires=retired.identity.name, reason="was-rescinded"),
         ),
         canonical_timestamp=TIMESTAMP,
     ).intent
@@ -336,7 +336,7 @@ def test_succession_consumed_reauthor_and_retired_siblings_are_visible_to_follow
         values=(("wi-42", "ready"), ("wi-2", "blocked"), ("wi-3", "done")),
     )
     successor = _enum_successor(instance, enum=["ready"])
-    succession = ClaimTypeSuccessionMemberV1(
+    succession = ClaimTypeSuccessionMember(
         successor=successor,
         dependents=tuple(
             sorted(
@@ -357,7 +357,7 @@ def test_succession_consumed_reauthor_and_retired_siblings_are_visible_to_follow
         update={
             "statement": independent.statement.model_copy(update={"qualifier": "followup"}),
             "existing_claim_dispositions": (
-                AuthoringExistingClaimDispositionV1(claim_id=claims["wi-2"], disposition="support"),
+                AuthoringExistingClaimDisposition(claim_id=claims["wi-2"], disposition="support"),
             ),
         }
     )

@@ -8,7 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.canonical import Sha256Value, normalize_canonical, typed_digest
-from cruxible_client.contracts.provider_contracts import ProviderOperationContractV1
+from cruxible_client.contracts.provider_contracts import ProviderOperationContract
 
 
 class _StrictProviderExecutionModel(BaseModel):
@@ -21,7 +21,7 @@ def _digest(value: str | None) -> str | None:
     return value
 
 
-class ProviderSecretReferenceV1(_StrictProviderExecutionModel):
+class ProviderSecretReference(_StrictProviderExecutionModel):
     tag: Literal["playbill-provider-secret-reference-v1"] = "playbill-provider-secret-reference-v1"
     realm: str
     name: str
@@ -49,7 +49,7 @@ class ProviderSecretReferenceV1(_StrictProviderExecutionModel):
         return f"{self.realm}/{self.name}"
 
 
-class ProviderSecretBindingIdentityV1(_StrictProviderExecutionModel):
+class ProviderSecretBindingIdentity(_StrictProviderExecutionModel):
     tag: Literal["playbill-provider-secret-binding-identity-v1"] = (
         "playbill-provider-secret-binding-identity-v1"
     )
@@ -76,7 +76,7 @@ PROVIDER_SECRET_BINDING_IDENTITY_DOMAIN = "playbill-provider-secret-binding-iden
 
 
 def provider_secret_binding_identity_digest(
-    identity: ProviderSecretBindingIdentityV1,
+    identity: ProviderSecretBindingIdentity,
 ) -> str:
     payload = identity.model_dump(mode="json")
     payload.pop("tag")
@@ -87,7 +87,7 @@ def provider_secret_binding_identity_digest(
     ).tagged
 
 
-class ProviderSecretReceiptReferenceV1(_StrictProviderExecutionModel):
+class ProviderSecretReceiptReference(_StrictProviderExecutionModel):
     """Non-identifying custody reference committed by an invocation receipt."""
 
     tag: Literal["playbill-provider-secret-receipt-reference-v1"] = (
@@ -99,18 +99,18 @@ class ProviderSecretReceiptReferenceV1(_StrictProviderExecutionModel):
     _binding_digest = field_validator("binding_identity_digest")(_digest)
 
 
-class ProviderSecretResolutionPlanV1(_StrictProviderExecutionModel):
+class ProviderSecretResolutionPlan(_StrictProviderExecutionModel):
     tag: Literal["playbill-provider-secret-resolution-plan-v1"] = (
         "playbill-provider-secret-resolution-plan-v1"
     )
-    references: tuple[ProviderSecretReferenceV1, ...] = ()
+    references: tuple[ProviderSecretReference, ...] = ()
     binding_identity_digests: tuple[str, ...] = ()
 
     @field_validator("references")
     @classmethod
     def _references(
-        cls, value: tuple[ProviderSecretReferenceV1, ...]
-    ) -> tuple[ProviderSecretReferenceV1, ...]:
+        cls, value: tuple[ProviderSecretReference, ...]
+    ) -> tuple[ProviderSecretReference, ...]:
         expected = tuple(sorted(value, key=lambda item: (item.realm.encode(), item.name.encode())))
         keys = tuple((item.realm, item.name) for item in value)
         if value != expected or len(keys) != len(set(keys)):
@@ -127,12 +127,12 @@ class ProviderSecretResolutionPlanV1(_StrictProviderExecutionModel):
         return value
 
     @model_validator(mode="after")
-    def _correspondence(self) -> ProviderSecretResolutionPlanV1:
+    def _correspondence(self) -> ProviderSecretResolutionPlan:
         expected = tuple(
             sorted(
                 (
                     provider_secret_binding_identity_digest(
-                        ProviderSecretBindingIdentityV1(realm=item.realm, name=item.name)
+                        ProviderSecretBindingIdentity(realm=item.realm, name=item.name)
                     )
                     for item in self.references
                 ),
@@ -144,7 +144,7 @@ class ProviderSecretResolutionPlanV1(_StrictProviderExecutionModel):
         return self
 
 
-class ProviderBudgetTranslationV1(_StrictProviderExecutionModel):
+class ProviderBudgetTranslation(_StrictProviderExecutionModel):
     """Provider budget window selected at admission.
 
     ``remaining_wall_clock_microseconds``, ``procedure_wall_clock_microseconds``,
@@ -169,7 +169,7 @@ class ProviderBudgetTranslationV1(_StrictProviderExecutionModel):
     cost_units: None = None
 
     @model_validator(mode="after")
-    def _winning_caps(self) -> ProviderBudgetTranslationV1:
+    def _winning_caps(self) -> ProviderBudgetTranslation:
         if (
             self.runtime_wall_clock_seconds
             != min(
@@ -196,7 +196,7 @@ PROVIDER_BUDGET_TRANSLATION_DOMAIN = "playbill-provider-budget-translation-v1"
 _OBSERVER_BACKEND_RE = re.compile(r"^[a-z0-9]+(?:[.\-][a-z0-9]+)*$")
 
 
-class ProviderEgressObservationV1(_StrictProviderExecutionModel):
+class ProviderEgressObservation(_StrictProviderExecutionModel):
     tag: Literal["playbill-provider-egress-observation-v1"] = (
         "playbill-provider-egress-observation-v1"
     )
@@ -238,7 +238,7 @@ class ProviderEgressObservationV1(_StrictProviderExecutionModel):
 PROVIDER_EGRESS_OBSERVATION_DOMAIN = "playbill-provider-egress-observation-v1"
 
 
-class VerifiedProviderBindingV1(_StrictProviderExecutionModel):
+class VerifiedProviderBinding(_StrictProviderExecutionModel):
     tag: Literal["playbill-verified-provider-binding-v1"] = "playbill-verified-provider-binding-v1"
     provider_artifact_digest: str
     interface_artifact_digest: str
@@ -270,7 +270,7 @@ class VerifiedProviderBindingV1(_StrictProviderExecutionModel):
         return value
 
 
-class ProviderExternalOccurrencePlanV1(_StrictProviderExecutionModel):
+class ProviderExternalOccurrencePlan(_StrictProviderExecutionModel):
     """Complete static Provider closure for one graph-v4 external occurrence."""
 
     tag: Literal["playbill-provider-external-occurrence-plan-v1"] = (
@@ -293,11 +293,11 @@ class ProviderExternalOccurrencePlanV1(_StrictProviderExecutionModel):
     capture_contract_digest: str | None = None
     contract_input_digest: str | None = None
     contract_output_digest: str | None = None
-    local_execution: VerifiedProviderBindingV1
-    secret_plan: ProviderSecretResolutionPlanV1
-    budget_translation: ProviderBudgetTranslationV1
+    local_execution: VerifiedProviderBinding
+    secret_plan: ProviderSecretResolutionPlan
+    budget_translation: ProviderBudgetTranslation
     source_runtime_plan_digest: str | None = None
-    operation_contract: ProviderOperationContractV1 | None = Field(
+    operation_contract: ProviderOperationContract | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
 
@@ -322,7 +322,7 @@ class ProviderExternalOccurrencePlanV1(_StrictProviderExecutionModel):
         return value
 
     @model_validator(mode="after")
-    def _correspondence(self) -> ProviderExternalOccurrencePlanV1:
+    def _correspondence(self) -> ProviderExternalOccurrencePlan:
         local = self.local_execution
         for label, expected, actual in (
             ("Provider", self.provider_artifact_digest, local.provider_artifact_digest),
@@ -357,20 +357,20 @@ PROVIDER_EXTERNAL_OCCURRENCE_PLAN_DOMAIN = "playbill-provider-external-occurrenc
 
 
 def provider_external_occurrence_plan_digest(
-    plan: ProviderExternalOccurrencePlanV1,
+    plan: ProviderExternalOccurrencePlan,
 ) -> str:
     payload = plan.model_dump(mode="json")
     payload.pop("tag")
     return typed_digest(Sha256Value, PROVIDER_EXTERNAL_OCCURRENCE_PLAN_DOMAIN, payload).tagged
 
 
-ProviderInvocationOutcomeClassV1 = Literal[
+ProviderInvocationOutcomeClass = Literal[
     "ok",
     "node_refusal",
     "operational",
     "internal",
 ]
-ProviderInvocationAttributionV1 = Literal[
+ProviderInvocationAttribution = Literal[
     "none",
     "implementation",
     "governed_binding",
@@ -394,13 +394,13 @@ ProviderInvocationAttributionV1 = Literal[
 ]
 
 
-class ProviderInvocationOutcomeV1(_StrictProviderExecutionModel):
+class ProviderInvocationOutcome(_StrictProviderExecutionModel):
     tag: Literal["playbill-provider-invocation-outcome-v1"] = (
         "playbill-provider-invocation-outcome-v1"
     )
     status: Literal["ok", "refused", "error"]
-    outcome_class: ProviderInvocationOutcomeClassV1
-    attribution: ProviderInvocationAttributionV1
+    outcome_class: ProviderInvocationOutcomeClass
+    attribution: ProviderInvocationAttribution
     code: str | None = None
     message: str | None = None
     detail: object = Field(default_factory=dict)
@@ -411,7 +411,7 @@ class ProviderInvocationOutcomeV1(_StrictProviderExecutionModel):
         return normalize_canonical(value)
 
     @model_validator(mode="after")
-    def _status_correspondence(self) -> ProviderInvocationOutcomeV1:
+    def _status_correspondence(self) -> ProviderInvocationOutcome:
         if self.status == "ok":
             if (
                 self.outcome_class != "ok"
@@ -429,7 +429,7 @@ class ProviderInvocationOutcomeV1(_StrictProviderExecutionModel):
 PROVIDER_INVOCATION_OUTCOME_DOMAIN = "playbill-provider-invocation-outcome-v1"
 
 
-class ProviderInvocationReceiptV1(_StrictProviderExecutionModel):
+class ProviderInvocationReceipt(_StrictProviderExecutionModel):
     """Durable evidence for one Provider call.
 
     ``duration_microseconds`` reads VALIDITY WINDOW.  The call's start and
@@ -454,17 +454,17 @@ class ProviderInvocationReceiptV1(_StrictProviderExecutionModel):
     input_bucket: str
     capture_contract_digest: str | None = None
     input_digest: str
-    outcome: ProviderInvocationOutcomeV1
+    outcome: ProviderInvocationOutcome
     output: object | None = None
-    egress: ProviderEgressObservationV1
+    egress: ProviderEgressObservation
     fence_scope: Literal["process_group+descendant_sweep"] = Field(
         description=(
             "Process-group kill plus deterministic same-session sweep and best-effort "
             "cross-session sweep within the configured poll interval."
         )
     )
-    secret_references: tuple[ProviderSecretReceiptReferenceV1, ...] = ()
-    budget_translation: ProviderBudgetTranslationV1
+    secret_references: tuple[ProviderSecretReceiptReference, ...] = ()
+    budget_translation: ProviderBudgetTranslation
     duration_microseconds: int = Field(ge=0)
     trace: object = Field(default_factory=dict)
     stderr: str = ""
@@ -489,8 +489,8 @@ class ProviderInvocationReceiptV1(_StrictProviderExecutionModel):
     @classmethod
     def _secret_references(
         cls,
-        value: tuple[ProviderSecretReceiptReferenceV1, ...],
-    ) -> tuple[ProviderSecretReceiptReferenceV1, ...]:
+        value: tuple[ProviderSecretReceiptReference, ...],
+    ) -> tuple[ProviderSecretReceiptReference, ...]:
         expected = tuple(
             sorted(value, key=lambda item: item.binding_identity_digest.encode("ascii"))
         )
@@ -500,7 +500,7 @@ class ProviderInvocationReceiptV1(_StrictProviderExecutionModel):
         return value
 
     @model_validator(mode="after")
-    def _outcome_correspondence(self) -> ProviderInvocationReceiptV1:
+    def _outcome_correspondence(self) -> ProviderInvocationReceipt:
         if (self.output is not None) != (self.outcome.status == "ok"):
             raise ValueError("only an ok Provider invocation may carry output")
         return self
@@ -509,13 +509,13 @@ class ProviderInvocationReceiptV1(_StrictProviderExecutionModel):
 PROVIDER_INVOCATION_RECEIPT_DOMAIN = "playbill-provider-invocation-receipt-v1"
 
 
-def provider_invocation_receipt_digest(receipt: ProviderInvocationReceiptV1) -> str:
+def provider_invocation_receipt_digest(receipt: ProviderInvocationReceipt) -> str:
     payload = receipt.model_dump(mode="json")
     payload.pop("tag")
     return typed_digest(Sha256Value, PROVIDER_INVOCATION_RECEIPT_DOMAIN, payload).tagged
 
 
-class ProviderInvocationOutputDigestV1(_StrictProviderExecutionModel):
+class ProviderInvocationOutputDigest(_StrictProviderExecutionModel):
     """Erasure-safe commitment replacing Source output bytes in exhaust."""
 
     tag: Literal["playbill-provider-invocation-output-digest-v1"] = (
@@ -537,7 +537,7 @@ def provider_invocation_output_digest(output: object) -> str:
     ).tagged
 
 
-class ProcedureDerivedSourceRequestV1(_StrictProviderExecutionModel):
+class ProcedureDerivedSourceRequest(_StrictProviderExecutionModel):
     """Post-admission Source request result committed before Provider spawn."""
 
     tag: Literal["playbill-procedure-derived-source-request-v1"] = (
@@ -565,7 +565,7 @@ class ProcedureDerivedSourceRequestV1(_StrictProviderExecutionModel):
         return value
 
     @model_validator(mode="after")
-    def _correspondence(self) -> ProcedureDerivedSourceRequestV1:
+    def _correspondence(self) -> ProcedureDerivedSourceRequest:
         if self.request_digest != procedure_derived_source_request_digest(self):
             raise ValueError("derived Source request digest does not reproduce")
         return self
@@ -574,7 +574,7 @@ class ProcedureDerivedSourceRequestV1(_StrictProviderExecutionModel):
 PROCEDURE_DERIVED_SOURCE_REQUEST_DOMAIN = "playbill-procedure-derived-source-request-v1"
 
 
-def procedure_derived_source_request_digest(request: ProcedureDerivedSourceRequestV1) -> str:
+def procedure_derived_source_request_digest(request: ProcedureDerivedSourceRequest) -> str:
     payload = request.model_dump(mode="json")
     payload.pop("tag")
     payload.pop("request_digest")
@@ -593,8 +593,8 @@ def build_procedure_derived_source_request(
     node_id: str,
     input_name: str,
     request: object,
-) -> ProcedureDerivedSourceRequestV1:
-    provisional = ProcedureDerivedSourceRequestV1.model_construct(
+) -> ProcedureDerivedSourceRequest:
+    provisional = ProcedureDerivedSourceRequest.model_construct(
         run_id=run_id,
         admission_binding_digest=admission_binding_digest,
         occurrence_path=occurrence_path,
@@ -603,7 +603,7 @@ def build_procedure_derived_source_request(
         request=normalize_canonical(request),
         request_digest="sha256:" + "0" * 64,
     )
-    return ProcedureDerivedSourceRequestV1.model_validate(
+    return ProcedureDerivedSourceRequest.model_validate(
         {
             **provisional.model_dump(mode="python"),
             "request_digest": procedure_derived_source_request_digest(provisional),
@@ -611,7 +611,7 @@ def build_procedure_derived_source_request(
     )
 
 
-class ProviderInvocationStartedV1(_StrictProviderExecutionModel):
+class ProviderInvocationStarted(_StrictProviderExecutionModel):
     """Provider-start payload whose journal ``recorded_at`` reads EVALUATION INSTANT."""
 
     tag: Literal["playbill-provider-invocation-started-v1"] = (
@@ -629,20 +629,20 @@ class ProviderInvocationStartedV1(_StrictProviderExecutionModel):
     )
 
 
-class ProviderInvocationCompletedV1(_StrictProviderExecutionModel):
+class ProviderInvocationCompleted(_StrictProviderExecutionModel):
     """Provider-completion payload whose journal ``recorded_at`` reads EVALUATION INSTANT."""
 
     tag: Literal["playbill-provider-invocation-completed-v1"] = (
         "playbill-provider-invocation-completed-v1"
     )
     invocation_id: str
-    receipt: ProviderInvocationReceiptV1
+    receipt: ProviderInvocationReceipt
     receipt_digest: str
 
     _receipt_digest = field_validator("receipt_digest")(_digest)
 
     @model_validator(mode="after")
-    def _receipt_correspondence(self) -> ProviderInvocationCompletedV1:
+    def _receipt_correspondence(self) -> ProviderInvocationCompleted:
         if self.invocation_id != self.receipt.invocation_id:
             raise ValueError("completed Provider event names another invocation")
         if self.receipt_digest != provider_invocation_receipt_digest(self.receipt):
@@ -659,22 +659,22 @@ __all__ = [
     "PROVIDER_INVOCATION_OUTPUT_DOMAIN",
     "PROVIDER_INVOCATION_RECEIPT_DOMAIN",
     "PROVIDER_SECRET_BINDING_IDENTITY_DOMAIN",
-    "ProviderBudgetTranslationV1",
-    "ProviderEgressObservationV1",
-    "ProviderExternalOccurrencePlanV1",
-    "ProviderInvocationAttributionV1",
-    "ProviderInvocationCompletedV1",
-    "ProviderInvocationOutcomeClassV1",
-    "ProviderInvocationOutcomeV1",
-    "ProviderInvocationOutputDigestV1",
-    "ProviderInvocationReceiptV1",
-    "ProviderInvocationStartedV1",
-    "ProviderSecretBindingIdentityV1",
-    "ProviderSecretReceiptReferenceV1",
-    "ProviderSecretReferenceV1",
-    "ProviderSecretResolutionPlanV1",
-    "ProcedureDerivedSourceRequestV1",
-    "VerifiedProviderBindingV1",
+    "ProviderBudgetTranslation",
+    "ProviderEgressObservation",
+    "ProviderExternalOccurrencePlan",
+    "ProviderInvocationAttribution",
+    "ProviderInvocationCompleted",
+    "ProviderInvocationOutcomeClass",
+    "ProviderInvocationOutcome",
+    "ProviderInvocationOutputDigest",
+    "ProviderInvocationReceipt",
+    "ProviderInvocationStarted",
+    "ProviderSecretBindingIdentity",
+    "ProviderSecretReceiptReference",
+    "ProviderSecretReference",
+    "ProviderSecretResolutionPlan",
+    "ProcedureDerivedSourceRequest",
+    "VerifiedProviderBinding",
     "build_procedure_derived_source_request",
     "provider_external_occurrence_plan_digest",
     "provider_invocation_receipt_digest",

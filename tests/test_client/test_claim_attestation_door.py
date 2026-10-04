@@ -126,5 +126,5 @@ def test_environment_key_custody_refuses_unsafe_paths(
     if failure == "daemon_state":
         assert str(error.value) == (
             "playbill.claim_attestation.local_signing_key_unavailable: "
-            "client ClaimAttestation key is inside a forbidden root"
+            "client ClaimAttestationV1 key is inside a forbidden root"
         )

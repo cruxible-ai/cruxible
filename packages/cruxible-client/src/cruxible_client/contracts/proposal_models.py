@@ -12,7 +12,7 @@ from typing import Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.actor_types import TransportCapability
-from cruxible_client.contracts.authoring_profiles import ClaimTypeExpansionEvidenceV1
+from cruxible_client.contracts.authoring_profiles import ClaimTypeExpansionEvidence
 from cruxible_client.contracts.candidates import (
     CandidateRecordAnyVersion,
     validate_candidate_timestamp,
@@ -25,7 +25,7 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
-from cruxible_client.contracts.policies import ClaimAdmissionEvaluationAccountV1
+from cruxible_client.contracts.policies import ClaimAdmissionEvaluationAccount
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.types import GitObjectFormat
 from cruxible_client.contracts.workspace_advertisement import (
@@ -39,7 +39,7 @@ _OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 
 
 def claim_admission_account_order_key(
-    account: ClaimAdmissionEvaluationAccountV1,
+    account: ClaimAdmissionEvaluationAccount,
 ) -> bytes:
     """Return the one canonical ordering key for persisted admission accounts."""
 
@@ -135,11 +135,11 @@ class AuthenticatedActor(_StrictProposalModel):
 #: ===========================================  ==============
 #: Entry written by                             Bytes / entry
 #: ===========================================  ==============
-#: ``SubjectAuthoringPayloadV1``                         1,551
-#: ``ClaimTypeAuthoringPayloadV1``                       4,027
+#: ``SubjectAuthoringPayload``                         1,551
+#: ``ClaimTypeAuthoringPayload``                       4,027
 #: ``ClaimAuthoringPayloadV1`` (and insertion)           6,215
-#: ``ClaimRetirementMemberV1``                           8,670
-#: ``ClaimTypeSuccessionMemberV1`` dependent            10,230
+#: ``ClaimRetirementMember``                           8,670
+#: ``ClaimTypeSuccessionMember`` dependent            10,230
 #: ===========================================  ==============
 #:
 #: This is the LARGEST of those rounded up to the next kibibyte, so a projection
@@ -258,7 +258,7 @@ class ProposalAdmissionRequest(_StrictProposalModel):
     target_ref: str
     proposed_base_oid: str
     source_compilation_digest: str | None = None
-    claim_type_expansions: tuple[ClaimTypeExpansionEvidenceV1, ...] = ()
+    claim_type_expansions: tuple[ClaimTypeExpansionEvidence, ...] = ()
     # The author's own summary of the change set, if this door had one to pass
     # on. It becomes the candidate commit's subject and nothing else: it is
     # deliberately OUTSIDE the proposal-id preimage, for the same reason the
@@ -299,8 +299,8 @@ class ProposalAdmissionRequest(_StrictProposalModel):
     @classmethod
     def _claim_type_expansions(
         cls,
-        value: tuple[ClaimTypeExpansionEvidenceV1, ...],
-    ) -> tuple[ClaimTypeExpansionEvidenceV1, ...]:
+        value: tuple[ClaimTypeExpansionEvidence, ...],
+    ) -> tuple[ClaimTypeExpansionEvidence, ...]:
         encoded = tuple(canonical_bytes(item.model_dump(mode="json")) for item in value)
         if encoded != tuple(sorted(set(encoded))):
             raise ValueError("ClaimType expansion evidence must be sorted and unique")
@@ -310,7 +310,7 @@ class ProposalAdmissionRequest(_StrictProposalModel):
         return value
 
 
-class ProposalWithdrawalRecordV1(_StrictProposalModel):
+class ProposalWithdrawalRecord(_StrictProposalModel):
     """One actor's durable statement that an open proposal will never be settled.
 
     Out-of-band evidence, exactly like the admission and evaluation records it
@@ -344,7 +344,7 @@ class ProposalWithdrawalRecordV1(_StrictProposalModel):
         return value
 
 
-class ProposalSettleSubmissionV1(_StrictProposalModel):
+class ProposalSettleSubmission(_StrictProposalModel):
     """How a settle terminal submitted its proposal, retained for recovery.
 
     `delegated` asks for acceptance under the named settle mandate; `fallback`
@@ -367,13 +367,13 @@ class ProposalSettleSubmissionV1(_StrictProposalModel):
         return value
 
     @model_validator(mode="after")
-    def _reason(self) -> "ProposalSettleSubmissionV1":
+    def _reason(self) -> "ProposalSettleSubmission":
         if (self.mode == "fallback") != bool(self.fallback_reason):
             raise ValueError("exactly a settle fallback names why it fell back")
         return self
 
 
-class ProposalReadmissionLinkV1(_StrictProposalModel):
+class ProposalReadmissionLink(_StrictProposalModel):
     """The stale proposal a readmission re-admits, and the coordinate it did so at.
 
     Only the readmit service writes it. Its ``operation_digest`` is the one
@@ -417,7 +417,7 @@ class ProposalAdmissionRecord(_StrictProposalModel):
     candidate_commit_oid: str
     candidate_tree_oid: str
     source_compilation_digest: str | None
-    claim_type_expansions: tuple[ClaimTypeExpansionEvidenceV1, ...] = ()
+    claim_type_expansions: tuple[ClaimTypeExpansionEvidence, ...] = ()
     limits: ProposalReceiveLimits
     admitted_at: str
     # Persisted so the advisory review-ref projection, which rebuilds the commit
@@ -427,12 +427,12 @@ class ProposalAdmissionRecord(_StrictProposalModel):
     rationale: str | None = Field(default=None, exclude_if=lambda value: value is None)
     # A settle terminal's submission mode; absent, like `rationale`, for every
     # other proposal, so admissions already on disk keep their bytes.
-    settle_submission: ProposalSettleSubmissionV1 | None = Field(
+    settle_submission: ProposalSettleSubmission | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
     # A readmission's source; absent, like `settle_submission`, for every other
     # proposal, so admissions already on disk keep their bytes.
-    readmits: ProposalReadmissionLinkV1 | None = Field(
+    readmits: ProposalReadmissionLink | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
 
@@ -510,7 +510,7 @@ class ProposalEvaluationRecord(_StrictProposalModel):
     rebased: bool
     candidate_digest: str | None = None
     diagnostics: tuple[CompilerDiagnostic, ...] = ()
-    claim_admission_accounts: tuple[ClaimAdmissionEvaluationAccountV1, ...] = ()
+    claim_admission_accounts: tuple[ClaimAdmissionEvaluationAccount, ...] = ()
     evaluated_at: str
 
     @field_validator("proposal_id")
@@ -541,8 +541,8 @@ class ProposalEvaluationRecord(_StrictProposalModel):
     @field_validator("claim_admission_accounts")
     @classmethod
     def _claim_admission_accounts(
-        cls, value: tuple[ClaimAdmissionEvaluationAccountV1, ...]
-    ) -> tuple[ClaimAdmissionEvaluationAccountV1, ...]:
+        cls, value: tuple[ClaimAdmissionEvaluationAccount, ...]
+    ) -> tuple[ClaimAdmissionEvaluationAccount, ...]:
         keys = tuple(claim_admission_account_order_key(item) for item in value)
         if keys != tuple(sorted(set(keys))):
             raise ValueError("claim admission accounts must be canonically sorted and unique")
@@ -575,7 +575,7 @@ class ProposalResult(_StrictProposalModel):
         return self
 
 
-class ProposalPreviewEvaluationV1(_StrictProposalModel):
+class ProposalPreviewEvaluation(_StrictProposalModel):
     """A submission's evaluation, from a preview: no proposal was admitted (R12)."""
 
     tag: Literal["playbill-proposal-preview-evaluation-v1"] = (
@@ -595,15 +595,15 @@ class ProposalPreviewEvaluationV1(_StrictProposalModel):
         return value
 
 
-class ProposalPreviewV1(_StrictProposalModel):
+class ProposalPreview(_StrictProposalModel):
     """What a submission would admit: its evaluation and candidate, nothing written."""
 
     tag: Literal["playbill-proposal-preview-v1"] = "playbill-proposal-preview-v1"
-    evaluation: ProposalPreviewEvaluationV1
+    evaluation: ProposalPreviewEvaluation
     candidate: CandidateRecordAnyVersion | None = None
 
     @model_validator(mode="after")
-    def _preview_shape(self) -> "ProposalPreviewV1":
+    def _preview_shape(self) -> "ProposalPreview":
         if (self.evaluation.verdict == "candidate") != (self.candidate is not None):
             raise ValueError("proposal preview candidate shape differs from evaluation verdict")
         return self
@@ -642,17 +642,17 @@ class ProposalTransportProtocol(Protocol):
 
 __all__ = [
     "AuthenticatedActor",
-    "ProposalPreviewEvaluationV1",
-    "ProposalPreviewV1",
+    "ProposalPreviewEvaluation",
+    "ProposalPreview",
     "ProposalAdmissionRecord",
-    "ProposalReadmissionLinkV1",
-    "ProposalSettleSubmissionV1",
+    "ProposalReadmissionLink",
+    "ProposalSettleSubmission",
     "ProposalAdmissionRequest",
     "ProposalEvaluationRecord",
     "CHANGE_SET_RECORD_BYTES_PER_MEMBER",
     "PROPOSAL_RECEIVE_BOUND_KEYS",
     "ProposalReceiveLimits",
-    "ProposalWithdrawalRecordV1",
+    "ProposalWithdrawalRecord",
     "ProposalResult",
     "ProposalTransportProtocol",
     "claim_admission_account_order_key",

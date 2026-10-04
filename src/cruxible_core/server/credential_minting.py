@@ -19,10 +19,10 @@ import hashlib
 from datetime import timedelta
 
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.repairs import RepairOperationV1
+from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_client.contracts.runtime_credentials import (
     RUNTIME_CREDENTIAL_PROOF_MAX_SKEW_SECONDS,
-    RuntimeCredentialPrincipalProofV1,
+    RuntimeCredentialPrincipalProof,
     verify_runtime_credential_proof,
 )
 from cruxible_client.contracts.temporal import parse_datetime, utc_now
@@ -58,7 +58,7 @@ def _authority_required(principal_id: str, permission_mode: str) -> PrincipalRef
         f"minting a credential that acts as {principal_id!r} needs that principal's "
         "authority, and an admin credential alone is not it; repair: sign the mint with "
         f"the principal's key: `{_mint_command(principal_id, permission_mode)}`",
-        repair=RepairOperationV1(
+        repair=RepairOperation(
             operation="credential.mint",
             arguments={"principal_id": principal_id, "permission_mode": permission_mode},
         ),
@@ -70,7 +70,7 @@ def _proof_invalid(principal_id: str, permission_mode: str, reason: str) -> Prin
         "runtime_credential.principal_proof_invalid",
         f"the signed consent for {principal_id!r} is not valid: {reason}; repair: sign a "
         f"fresh one with `{_mint_command(principal_id, permission_mode)}`",
-        repair=RepairOperationV1(
+        repair=RepairOperation(
             operation="credential.mint",
             arguments={"principal_id": principal_id, "permission_mode": permission_mode},
         ),
@@ -78,7 +78,7 @@ def _proof_invalid(principal_id: str, permission_mode: str, reason: str) -> Prin
 
 
 def _verified_proof_digest(
-    proof: RuntimeCredentialPrincipalProofV1,
+    proof: RuntimeCredentialPrincipalProof,
     *,
     instance_id: str,
     principal_id: str,
@@ -107,7 +107,7 @@ def _verified_proof_digest(
     return _proof_digest(proof)
 
 
-def _proof_digest(proof: RuntimeCredentialPrincipalProofV1) -> str:
+def _proof_digest(proof: RuntimeCredentialPrincipalProof) -> str:
     """The single-use identity of one signed consent."""
 
     return "sha256:" + hashlib.sha256(canonical_bytes(proof.model_dump(mode="json"))).hexdigest()
@@ -121,7 +121,7 @@ def _require_auth_on() -> None:
             "runtime_credential.auth_off",
             "this daemon runs with auth off, so a bearer credential would authenticate "
             "nothing; repair: restart the daemon with auth: `cruxible server start --auth`",
-            repair=RepairOperationV1(operation="server.start", arguments={"auth": True}),
+            repair=RepairOperation(operation="server.start", arguments={"auth": True}),
         )
 
 
@@ -131,7 +131,7 @@ def _principal_authority(
     principal_id: str,
     mode_name: str,
     label: str,
-    principal_proof: RuntimeCredentialPrincipalProofV1 | None,
+    principal_proof: RuntimeCredentialPrincipalProof | None,
     auth_context: ResolvedAuthContext | None,
 ) -> str | None:
     """Require ``principal_id``'s authority for a credential in its name.
@@ -158,7 +158,7 @@ def _principal_authority(
             f"principal {principal_id!r} is a {registered.kind} principal, and only ordinary "
             "principals hold credentials; repair: mint for an ordinary principal "
             "(`cruxible playbill orient --section principals`)",
-            repair=RepairOperationV1(
+            repair=RepairOperation(
                 operation="playbill.orient", arguments={"section": "principals"}
             ),
         )
@@ -182,7 +182,7 @@ def mint_principal_credential(
     principal_id: str,
     permission_mode: PermissionMode,
     label: str | None,
-    principal_proof: RuntimeCredentialPrincipalProofV1 | None,
+    principal_proof: RuntimeCredentialPrincipalProof | None,
     auth_context: ResolvedAuthContext | None,
     observe: StateObserver | None = None,
 ) -> CreatedRuntimeCredential:
@@ -225,7 +225,7 @@ def rotate_principal_credential(
     *,
     instance_id: str,
     credential_id: str,
-    principal_proof: RuntimeCredentialPrincipalProofV1 | None,
+    principal_proof: RuntimeCredentialPrincipalProof | None,
     auth_context: ResolvedAuthContext | None,
     observe: StateObserver | None = None,
 ) -> CreatedRuntimeCredential:

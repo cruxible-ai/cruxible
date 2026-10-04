@@ -49,13 +49,13 @@ from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import PlaybillCasError, PlaybillFormatError
 from cruxible_client.contracts.governance import PermissionTier, governance_identifier
 from cruxible_client.contracts.provider_execution import (
-    ProviderEgressObservationV1,
-    ProviderExternalOccurrencePlanV1,
-    ProviderInvocationOutputDigestV1,
-    ProviderInvocationReceiptV1,
-    ProviderSecretBindingIdentityV1,
-    ProviderSecretReceiptReferenceV1,
-    ProviderSecretReferenceV1,
+    ProviderEgressObservation,
+    ProviderExternalOccurrencePlan,
+    ProviderInvocationOutputDigest,
+    ProviderInvocationReceipt,
+    ProviderSecretBindingIdentity,
+    ProviderSecretReceiptReference,
+    ProviderSecretReference,
     provider_external_occurrence_plan_digest,
     provider_invocation_output_digest,
     provider_invocation_receipt_digest,
@@ -63,16 +63,16 @@ from cruxible_client.contracts.provider_execution import (
 )
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress
 from cruxible_client.contracts.source_references import (
-    CasSourceReferenceV1,
-    EvidenceCommitmentV1,
-    ExternalSourceReferenceV1,
-    LedgerSourceReferenceV1,
-    SourceReferenceV1,
+    CasSourceReference,
+    EvidenceCommitment,
+    ExternalSourceReference,
+    LedgerSourceReference,
+    SourceReference,
     validate_source_commitment,
 )
 from cruxible_client.contracts.workspace_file import (
     WORKSPACE_FILE_INTERFACE_DIGESTS,
-    SourceReadReceiptV1,
+    SourceReadReceipt,
     source_read_receipt_digest,
 )
 
@@ -138,19 +138,19 @@ def _sorted_unique(
     return value
 
 
-class CanonicalDurationV1(_StrictCaptureModel):
+class CanonicalDuration(_StrictCaptureModel):
     tag: Literal["playbill-duration-v1"] = "playbill-duration-v1"
     microseconds: int = Field(ge=0)
 
 
-class CaptureSelectionBudgetV1(_StrictCaptureModel):
+class CaptureSelectionBudget(_StrictCaptureModel):
     tag: Literal["playbill-capture-selection-budget-v1"] = "playbill-capture-selection-budget-v1"
     max_bytes: int = Field(ge=1)
     max_rows: int = Field(ge=1)
     max_items: int = Field(ge=1)
 
 
-class CaptureRetentionErasurePolicyV1(_StrictCaptureModel):
+class CaptureRetentionErasurePolicy(_StrictCaptureModel):
     tag: Literal["playbill-capture-retention-erasure-policy-v1"] = (
         "playbill-capture-retention-erasure-policy-v1"
     )
@@ -159,7 +159,7 @@ class CaptureRetentionErasurePolicyV1(_StrictCaptureModel):
         "optional",
         "required_for_duration",
     ]
-    minimum_retention: CanonicalDurationV1 | None = None
+    minimum_retention: CanonicalDuration | None = None
     erasure: Literal["prohibited", "authorized_by_rule"]
     erasure_rule_digest: str | None = None
     selector_privacy: Literal["direct_allowed", "pseudonymous_required"]
@@ -172,7 +172,7 @@ class CaptureRetentionErasurePolicyV1(_StrictCaptureModel):
         return value
 
     @model_validator(mode="after")
-    def _policy_shape(self) -> "CaptureRetentionErasurePolicyV1":
+    def _policy_shape(self) -> "CaptureRetentionErasurePolicy":
         required = self.body_retention == "required_for_duration"
         if required != (self.minimum_retention is not None):
             raise ValueError("required_for_duration requires exactly one minimum_retention")
@@ -191,7 +191,7 @@ def _pin_key(pin: ArtifactPin) -> tuple[bytes, bytes]:
     return pin.role.encode("utf-8"), pin.target.qualified.encode("utf-8")
 
 
-class CaptureContractV1(_StrictCaptureModel):
+class CaptureContract(_StrictCaptureModel):
     artifact_format: Literal["playbill-capture-contract-v1"] = "playbill-capture-contract-v1"
     identity: ArtifactIdentity
     allowed_source_kinds: tuple[Literal["ledger", "cas", "external"], ...]
@@ -200,8 +200,8 @@ class CaptureContractV1(_StrictCaptureModel):
     selector_schema_pins: tuple[ArtifactPin, ...]
     commitment_canonicalizer: ArtifactPin
     allowed_materialization_modes: tuple[Literal["ledger", "cas", "external", "none"], ...]
-    selection_budget: CaptureSelectionBudgetV1
-    retention_erasure_policy: CaptureRetentionErasurePolicyV1
+    selection_budget: CaptureSelectionBudget
+    retention_erasure_policy: CaptureRetentionErasurePolicy
     replay_policy_digest: str
     epistemic_grade: Literal["observed", "derived", "predicted"]
     provenance_rule_digest: str
@@ -256,7 +256,7 @@ class CaptureContractV1(_StrictCaptureModel):
         return value
 
     @model_validator(mode="after")
-    def _contract_shape(self) -> "CaptureContractV1":
+    def _contract_shape(self) -> "CaptureContract":
         if self.identity.kind != "CaptureContract":
             raise ValueError("CaptureContract identity kind must be CaptureContract")
         if not _CONTRACT_ID_RE.fullmatch(self.identity.name):
@@ -337,7 +337,7 @@ PLAYBILL_CAPTURE_COMPONENTS = CaptureComponentRegistry(
 )
 
 
-DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT = CaptureContractV1(
+DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT = CaptureContract(
     identity=ArtifactIdentity(
         kind="CaptureContract",
         name=DIRECT_SELF_ASSERTED_CONTRACT_ID,
@@ -357,12 +357,12 @@ DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT = CaptureContractV1(
         "playbill.direct-claim-source-canonicalizer-v1",
     ),
     allowed_materialization_modes=("cas", "none"),
-    selection_budget=CaptureSelectionBudgetV1(
+    selection_budget=CaptureSelectionBudget(
         max_bytes=1024 * 1024,
         max_rows=1,
         max_items=1,
     ),
-    retention_erasure_policy=CaptureRetentionErasurePolicyV1(
+    retention_erasure_policy=CaptureRetentionErasurePolicy(
         body_retention="optional",
         erasure="prohibited",
         selector_privacy="direct_allowed",
@@ -400,7 +400,7 @@ _COORDINATOR_MAPPING_PIN = capture_component_pin(
     COORDINATOR_SELF_SOURCE_SUBJECT_MAPPING,
 )
 
-COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT = CaptureContractV1(
+COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT = CaptureContract(
     identity=ArtifactIdentity(
         kind="CaptureContract",
         name=COORDINATOR_SELF_SOURCE_CONTRACT_ID,
@@ -414,12 +414,12 @@ COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT = CaptureContractV1(
         "sha256-bytes-v1",
     ),
     allowed_materialization_modes=("cas",),
-    selection_budget=CaptureSelectionBudgetV1(
+    selection_budget=CaptureSelectionBudget(
         max_bytes=1024 * 1024,
         max_rows=1,
         max_items=1,
     ),
-    retention_erasure_policy=CaptureRetentionErasurePolicyV1(
+    retention_erasure_policy=CaptureRetentionErasurePolicy(
         body_retention="optional",
         erasure="prohibited",
         selector_privacy="direct_allowed",
@@ -462,7 +462,7 @@ def foreign_source_contract_id(logical_source_identity: str) -> str:
     return contract_id
 
 
-def foreign_source_capture_contract(logical_source_identity: str) -> CaptureContractV1:
+def foreign_source_capture_contract(logical_source_identity: str) -> CaptureContract:
     """Build the self-asserted CaptureContract governing one foreign logical source.
 
     Every component this contract names is registered in the compiler registry
@@ -478,7 +478,7 @@ def foreign_source_capture_contract(logical_source_identity: str) -> CaptureCont
     replay_pin = capture_component_pin("replay-policy", FOREIGN_SOURCE_REPLAY_POLICY)
     provenance_pin = capture_component_pin("provenance-rule", FOREIGN_SOURCE_PROVENANCE_RULE)
     mapping_pin = capture_component_pin("source-subject-mapping", FOREIGN_SOURCE_SUBJECT_MAPPING)
-    return CaptureContractV1(
+    return CaptureContract(
         identity=ArtifactIdentity(
             kind="CaptureContract",
             name=foreign_source_contract_id(logical_source_identity),
@@ -496,12 +496,12 @@ def foreign_source_capture_contract(logical_source_identity: str) -> CaptureCont
             "sha256-bytes-v1",
         ),
         allowed_materialization_modes=("cas",),
-        selection_budget=CaptureSelectionBudgetV1(
+        selection_budget=CaptureSelectionBudget(
             max_bytes=FOREIGN_SOURCE_MAX_BYTES,
             max_rows=1,
             max_items=1,
         ),
-        retention_erasure_policy=CaptureRetentionErasurePolicyV1(
+        retention_erasure_policy=CaptureRetentionErasurePolicy(
             body_retention="optional",
             erasure="prohibited",
             selector_privacy="direct_allowed",
@@ -524,7 +524,7 @@ _SELF_ASSERTED_PROVENANCE_RULE_DIGESTS: frozenset[str] = frozenset(
 )
 
 
-def capture_contract_is_self_asserted(contract: CaptureContractV1) -> bool:
+def capture_contract_is_self_asserted(contract: CaptureContract) -> bool:
     """Whether a contract's declared provenance rule is proposer-supplied.
 
     The grade follows the contract's own registered provenance rule rather than
@@ -545,7 +545,7 @@ def capture_contract_path(contract_id: str) -> str:
 
 
 def validate_capture_contract_path(
-    contract: CaptureContractV1,
+    contract: CaptureContract,
     path: str,
     *,
     codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
@@ -559,7 +559,7 @@ def validate_capture_contract_path(
     return path
 
 
-def render_capture_contract(contract: CaptureContractV1) -> bytes:
+def render_capture_contract(contract: CaptureContract) -> bytes:
     return pretty_canonical_bytes(contract.model_dump(mode="json"))
 
 
@@ -568,7 +568,7 @@ def parse_capture_contract(
     *,
     path: str,
     codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
-) -> CaptureContractV1:
+) -> CaptureContract:
     try:
         payload = json.loads(content)
     except (UnicodeDecodeError, ValueError) as exc:
@@ -579,7 +579,7 @@ def parse_capture_contract(
         declared = payload.get("artifact_format") if isinstance(payload, dict) else None
         raise CaptureFormatError(f"unsupported CaptureContract artifact format: {declared!r}")
     try:
-        contract = CaptureContractV1.model_validate(payload)
+        contract = CaptureContract.model_validate(payload)
     except ValidationError as exc:
         raise CaptureFormatError("CaptureContract failed strict v1 validation") from exc
     validate_capture_contract_path(contract, path, codec=codec)
@@ -588,7 +588,7 @@ def parse_capture_contract(
     return contract
 
 
-def capture_contract_digest(contract: CaptureContractV1) -> ArtifactDigest:
+def capture_contract_digest(contract: CaptureContract) -> ArtifactDigest:
     return typed_digest(
         ArtifactDigest,
         "playbill-envelope-v1",
@@ -598,7 +598,7 @@ def capture_contract_digest(contract: CaptureContractV1) -> ArtifactDigest:
 
 class AcceptedCaptureContract(_StrictCaptureModel):
     path: str
-    contract: CaptureContractV1
+    contract: CaptureContract
     artifact_digest: str
 
     @model_validator(mode="after")
@@ -657,8 +657,8 @@ _WIDEN_ON_SUCCESSION: tuple[str, ...] = (
 
 
 def capture_contract_successor_break(
-    previous: CaptureContractV1,
-    successor: CaptureContractV1,
+    previous: CaptureContract,
+    successor: CaptureContract,
 ) -> str | None:
     """Name the first field a live successor changes incompatibly, or None.
 
@@ -682,7 +682,7 @@ def capture_contract_successor_break(
 
 
 def evaluate_capture_contract_law(
-    contract: CaptureContractV1,
+    contract: CaptureContract,
     *,
     path: str,
     predecessor: AcceptedCaptureContract | None,
@@ -883,7 +883,7 @@ class CaptureRunCoordinateV1(_StrictCaptureModel):
         return value
 
 
-class CaptureRunCoordinateV2(_StrictCaptureModel):
+class CaptureRunCoordinate(_StrictCaptureModel):
     """Capture-v2 run coordinate with the Provider lane's widened run-id grammar."""
 
     tag: Literal["playbill-capture-run-coordinate-v2"] = "playbill-capture-run-coordinate-v2"
@@ -907,13 +907,13 @@ class CaptureRunCoordinateV2(_StrictCaptureModel):
         return value
 
 
-class SourceEffectiveTimeV1(_StrictCaptureModel):
+class SourceEffectiveTime(_StrictCaptureModel):
     tag: Literal["playbill-source-effective-time-v1"] = "playbill-source-effective-time-v1"
     effective_from: datetime
     effective_until: datetime | None = None
 
     @model_validator(mode="after")
-    def _interval(self) -> "SourceEffectiveTimeV1":
+    def _interval(self) -> "SourceEffectiveTime":
         if self.effective_from.tzinfo is None or self.effective_from.utcoffset() is None:
             raise ValueError("source effective time must be timezone-aware")
         if self.effective_until is not None:
@@ -927,14 +927,14 @@ class SourceEffectiveTimeV1(_StrictCaptureModel):
 class CaptureEnvelopeV1(_StrictCaptureModel):
     tag: Literal["playbill-capture-envelope-v1"] = "playbill-capture-envelope-v1"
     capture_contract_digest: str
-    source: SourceReferenceV1
-    commitment: EvidenceCommitmentV1
+    source: SourceReference
+    commitment: EvidenceCommitment
     run_coordinate: CaptureRunCoordinateV1
     run_receipt_digest: str
     producer: ArtifactIdentity
     producer_binding_digest: str
     observed_at: datetime
-    source_effective_time: SourceEffectiveTimeV1 | None = None
+    source_effective_time: SourceEffectiveTime | None = None
     reducer_digest: str | None = None
     input_receipt_set_manifest_digest: str | None = None
 
@@ -961,7 +961,7 @@ class CaptureEnvelopeV1(_StrictCaptureModel):
     @model_validator(mode="after")
     def _envelope_shape(self) -> "CaptureEnvelopeV1":
         validate_source_commitment(self.source, self.commitment)
-        if isinstance(self.source, ExternalSourceReferenceV1):
+        if isinstance(self.source, ExternalSourceReference):
             if self.source.producer_binding_digest != self.producer_binding_digest:
                 raise ValueError("external source and envelope producer bindings differ")
         derived = (
@@ -974,7 +974,7 @@ class CaptureEnvelopeV1(_StrictCaptureModel):
         return self
 
 
-class ProviderInvocationCaptureEvidenceV1(_StrictCaptureModel):
+class ProviderInvocationCaptureEvidence(_StrictCaptureModel):
     """Complete governed and measured evidence for one Source Provider call."""
 
     tag: Literal["playbill-capture-provider-invocation-evidence-v1"] = (
@@ -992,8 +992,8 @@ class ProviderInvocationCaptureEvidenceV1(_StrictCaptureModel):
     source_read_receipt_digest: str | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
-    secret_references: tuple[ProviderSecretReferenceV1, ...] = ()
-    egress: ProviderEgressObservationV1
+    secret_references: tuple[ProviderSecretReference, ...] = ()
+    egress: ProviderEgressObservation
 
     @field_validator(
         "provider_artifact_digest",
@@ -1016,9 +1016,9 @@ class ProviderInvocationCaptureEvidenceV1(_StrictCaptureModel):
     @classmethod
     def _secret_references(
         cls,
-        value: tuple[ProviderSecretReferenceV1, ...],
-    ) -> tuple[ProviderSecretReferenceV1, ...]:
-        def key(item: ProviderSecretReferenceV1) -> tuple[bytes, bytes, bytes, bytes]:
+        value: tuple[ProviderSecretReference, ...],
+    ) -> tuple[ProviderSecretReference, ...]:
+        def key(item: ProviderSecretReference) -> tuple[bytes, bytes, bytes, bytes]:
             return (
                 item.realm.encode("utf-8"),
                 item.name.encode("utf-8"),
@@ -1033,7 +1033,7 @@ class ProviderInvocationCaptureEvidenceV1(_StrictCaptureModel):
         return value
 
     @model_validator(mode="after")
-    def _workspace_receipt(self) -> "ProviderInvocationCaptureEvidenceV1":
+    def _workspace_receipt(self) -> "ProviderInvocationCaptureEvidence":
         if (self.interface_digest in WORKSPACE_FILE_INTERFACE_DIGESTS) != (
             self.source_read_receipt_digest is not None
         ):
@@ -1043,7 +1043,7 @@ class ProviderInvocationCaptureEvidenceV1(_StrictCaptureModel):
         return self
 
 
-class ProcedureEgressCaptureEvidenceV1(_StrictCaptureModel):
+class ProcedureEgressCaptureEvidence(_StrictCaptureModel):
     """Procedure producer-receipt evidence with no Provider-only fields."""
 
     tag: Literal["playbill-capture-procedure-egress-evidence-v1"] = (
@@ -1103,9 +1103,9 @@ class ProducerReceiptResolverProtocol(Protocol):
 class ProviderProducerReceiptResolution:
     """Daemon-resolved Provider receipt and its exact admitted occurrence."""
 
-    receipt: ProviderInvocationReceiptV1
-    occurrence: ProviderExternalOccurrencePlanV1
-    source_read_receipt: SourceReadReceiptV1 | None = None
+    receipt: ProviderInvocationReceipt
+    occurrence: ProviderExternalOccurrencePlan
+    source_read_receipt: SourceReadReceipt | None = None
 
 
 def _procedure_producer_receipt_digest(
@@ -1127,7 +1127,7 @@ def _procedure_producer_receipt_digest(
     ).tagged
 
 
-class ProviderResultToExternalCaptureV1(_StrictCaptureModel):
+class ProviderResultToExternalCapture(_StrictCaptureModel):
     """Canonical Source Provider output from which core reconstructs a Capture."""
 
     tag: Literal["playbill-provider-result-to-external-capture-v1"] = (
@@ -1144,7 +1144,7 @@ class ProviderResultToExternalCaptureV1(_StrictCaptureModel):
     byte_length: int = Field(ge=0)
     bytes_digest: str
     observed_at: datetime = Field(description="Reads EVALUATION INSTANT.")
-    source_effective_time: SourceEffectiveTimeV1 | None = Field(
+    source_effective_time: SourceEffectiveTime | None = Field(
         default=None,
         description="Nested half-open interval reads VALIDITY WINDOW.",
     )
@@ -1167,7 +1167,7 @@ class ProviderResultToExternalCaptureV1(_StrictCaptureModel):
         return value
 
     @model_validator(mode="after")
-    def _content(self) -> "ProviderResultToExternalCaptureV1":
+    def _content(self) -> "ProviderResultToExternalCapture":
         try:
             content = base64.b64decode(self.content_base64, validate=True)
         except (ValueError, binascii.Error) as exc:
@@ -1178,7 +1178,7 @@ class ProviderResultToExternalCaptureV1(_StrictCaptureModel):
             raise ValueError("Provider Capture byte length does not reproduce")
         if CasDigest(hashlib.sha256(content).hexdigest()).tagged != self.bytes_digest:
             raise ValueError("Provider Capture bytes digest does not reproduce")
-        ExternalSourceReferenceV1(
+        ExternalSourceReference(
             source_identity=self.source_identity,
             producer_binding_digest="sha256:" + "0" * 64,
             coordinate_type=self.coordinate_type,
@@ -1190,31 +1190,31 @@ class ProviderResultToExternalCaptureV1(_StrictCaptureModel):
         return self
 
 
-CaptureProductionEvidenceV1 = Annotated[
-    ProviderInvocationCaptureEvidenceV1 | ProcedureEgressCaptureEvidenceV1,
+CaptureProductionEvidence = Annotated[
+    ProviderInvocationCaptureEvidence | ProcedureEgressCaptureEvidence,
     Field(discriminator="tag"),
 ]
 
 
-class CaptureEnvelopeV2(_StrictCaptureModel):
+class CaptureEnvelope(_StrictCaptureModel):
     """Capture successor binding one exact topological producer receipt."""
 
     tag: Literal["playbill-capture-envelope-v2"] = "playbill-capture-envelope-v2"
     capture_contract_digest: str
-    source: SourceReferenceV1
-    commitment: EvidenceCommitmentV1
-    run_coordinate: CaptureRunCoordinateV2
+    source: SourceReference
+    commitment: EvidenceCommitment
+    run_coordinate: CaptureRunCoordinate
     producer_receipt_digest: str
     producer: ArtifactIdentity
     producer_binding_digest: str
     observed_at: datetime = Field(description="Reads EVALUATION INSTANT.")
-    source_effective_time: SourceEffectiveTimeV1 | None = Field(
+    source_effective_time: SourceEffectiveTime | None = Field(
         default=None,
         description="Nested half-open interval reads VALIDITY WINDOW.",
     )
     reducer_digest: str | None = None
     input_receipt_set_manifest_digest: str | None = None
-    production_evidence: CaptureProductionEvidenceV1
+    production_evidence: CaptureProductionEvidence
 
     @field_validator(
         "capture_contract_digest",
@@ -1237,9 +1237,9 @@ class CaptureEnvelopeV2(_StrictCaptureModel):
         return value
 
     @model_validator(mode="after")
-    def _envelope_shape(self) -> "CaptureEnvelopeV2":
+    def _envelope_shape(self) -> "CaptureEnvelope":
         validate_source_commitment(self.source, self.commitment)
-        if isinstance(self.source, ExternalSourceReferenceV1) and (
+        if isinstance(self.source, ExternalSourceReference) and (
             self.source.producer_binding_digest != self.producer_binding_digest
         ):
             raise ValueError("external source and envelope producer bindings differ")
@@ -1251,7 +1251,7 @@ class CaptureEnvelopeV2(_StrictCaptureModel):
         ):
             raise ValueError("derived Captures require reducer and input receipt-set together")
         evidence = self.production_evidence
-        if isinstance(evidence, ProviderInvocationCaptureEvidenceV1):
+        if isinstance(evidence, ProviderInvocationCaptureEvidence):
             if self.producer.kind != "Provider":
                 raise ValueError("provider Capture production evidence does not correspond")
             if self.run_coordinate.run_kind != "provider":
@@ -1278,21 +1278,21 @@ class CaptureEnvelopeV2(_StrictCaptureModel):
 
 
 CaptureEnvelopeAny = Annotated[
-    CaptureEnvelopeV1 | CaptureEnvelopeV2,
+    CaptureEnvelopeV1 | CaptureEnvelope,
     Field(discriminator="tag"),
 ]
-_CAPTURE_ENVELOPE_ADAPTER: TypeAdapter[CaptureEnvelopeV1 | CaptureEnvelopeV2] = TypeAdapter(
+_CAPTURE_ENVELOPE_ADAPTER: TypeAdapter[CaptureEnvelopeV1 | CaptureEnvelope] = TypeAdapter(
     CaptureEnvelopeAny
 )
 
 
-def render_capture_envelope(envelope: CaptureEnvelopeV1 | CaptureEnvelopeV2) -> bytes:
+def render_capture_envelope(envelope: CaptureEnvelopeV1 | CaptureEnvelope) -> bytes:
     """Return the exact CAS object bytes; Capture envelopes carry no newline."""
 
     return canonical_bytes(envelope.model_dump(mode="json"))
 
 
-def parse_capture_envelope(content: bytes) -> CaptureEnvelopeV1 | CaptureEnvelopeV2:
+def parse_capture_envelope(content: bytes) -> CaptureEnvelopeV1 | CaptureEnvelope:
     try:
         envelope = _CAPTURE_ENVELOPE_ADAPTER.validate_json(content)
     except ValidationError as exc:
@@ -1312,11 +1312,11 @@ def parse_capture_envelope(content: bytes) -> CaptureEnvelopeV1 | CaptureEnvelop
     return envelope
 
 
-def capture_digest(envelope: CaptureEnvelopeV1 | CaptureEnvelopeV2) -> CasDigest:
+def capture_digest(envelope: CaptureEnvelopeV1 | CaptureEnvelope) -> CasDigest:
     return CasDigest(hashlib.sha256(render_capture_envelope(envelope)).hexdigest())
 
 
-class InputReceiptSetManifestV1(_StrictCaptureModel):
+class InputReceiptSetManifest(_StrictCaptureModel):
     """Content-addressed exact inputs required by a derived Capture."""
 
     tag: Literal["playbill-input-receipt-set-manifest-v1"] = (
@@ -1340,7 +1340,7 @@ class InputReceiptSetManifestV1(_StrictCaptureModel):
         return value
 
     @model_validator(mode="after")
-    def _nonempty(self) -> "InputReceiptSetManifestV1":
+    def _nonempty(self) -> "InputReceiptSetManifest":
         if not any(
             (
                 self.input_receipt_digests,
@@ -1352,15 +1352,15 @@ class InputReceiptSetManifestV1(_StrictCaptureModel):
         return self
 
 
-def render_input_receipt_set_manifest(manifest: InputReceiptSetManifestV1) -> bytes:
+def render_input_receipt_set_manifest(manifest: InputReceiptSetManifest) -> bytes:
     return canonical_bytes(manifest.model_dump(mode="json"))
 
 
-def input_receipt_set_manifest_digest(manifest: InputReceiptSetManifestV1) -> CasDigest:
+def input_receipt_set_manifest_digest(manifest: InputReceiptSetManifest) -> CasDigest:
     return CasDigest(hashlib.sha256(render_input_receipt_set_manifest(manifest)).hexdigest())
 
 
-class DirectClaimSourceV1(_StrictCaptureModel):
+class DirectClaimSource(_StrictCaptureModel):
     tag: Literal["playbill-direct-claim-source-v1"] = "playbill-direct-claim-source-v1"
     authored_by: str
     claim_id: str
@@ -1385,7 +1385,7 @@ class DirectClaimSourceV1(_StrictCaptureModel):
         return value
 
 
-class DirectByteSpanSelectionV1(_StrictCaptureModel):
+class DirectByteSpanSelection(_StrictCaptureModel):
     """An exact span over already-retained CAS bytes; no Document is required."""
 
     tag: Literal["playbill-direct-byte-span-selection-v1"] = (
@@ -1402,7 +1402,7 @@ class DirectByteSpanSelectionV1(_StrictCaptureModel):
         return value
 
 
-class DirectExternalSelectionV1(_StrictCaptureModel):
+class DirectExternalSelection(_StrictCaptureModel):
     """Typed author-asserted external selection; PC-C adds adapter verification."""
 
     tag: Literal["playbill-direct-external-selection-v1"] = "playbill-direct-external-selection-v1"
@@ -1411,10 +1411,10 @@ class DirectExternalSelectionV1(_StrictCaptureModel):
     coordinate: object
     selector_type: str
     selector: object
-    commitment: EvidenceCommitmentV1
+    commitment: EvidenceCommitment
 
     @model_validator(mode="after")
-    def _registered_shape(self) -> "DirectExternalSelectionV1":
+    def _registered_shape(self) -> "DirectExternalSelection":
         if self.coordinate_type not in DIRECT_EXTERNAL_COORDINATE_TYPES:
             raise ValueError("direct external selection uses an unregistered coordinate type")
         if self.selector_type not in DIRECT_EXTERNAL_SELECTOR_TYPES:
@@ -1425,7 +1425,7 @@ class DirectExternalSelectionV1(_StrictCaptureModel):
             raise ValueError("an unmaterialized direct external selection cannot claim bytes")
         # Reuse the source-reference validators for logical identity, canonical values,
         # and secret/locator exclusion without accepting caller-authored bindings.
-        ExternalSourceReferenceV1(
+        ExternalSourceReference(
             source_identity=self.logical_source_identity,
             producer_binding_digest="sha256:" + "00" * 32,
             coordinate_type=self.coordinate_type,
@@ -1437,7 +1437,7 @@ class DirectExternalSelectionV1(_StrictCaptureModel):
         return self
 
 
-class DirectForeignSourceSelectionV1(_StrictCaptureModel):
+class DirectForeignSourceSelection(_StrictCaptureModel):
     """An exact span of a foreign logical source, committed exactly as presented.
 
     The proposer names the logical source, hands over the source bytes it read,
@@ -1472,14 +1472,14 @@ class DirectForeignSourceSelectionV1(_StrictCaptureModel):
         return value
 
     @model_validator(mode="after")
-    def _selection(self) -> "DirectForeignSourceSelectionV1":
+    def _selection(self) -> "DirectForeignSourceSelection":
         if self.span.end_byte <= self.span.start_byte:
             raise ValueError("a foreign source selection must cover at least one byte")
         return self
 
 
-DirectClaimSelectionV1 = Annotated[
-    DirectByteSpanSelectionV1 | DirectExternalSelectionV1 | DirectForeignSourceSelectionV1,
+DirectClaimSelection = Annotated[
+    DirectByteSpanSelection | DirectExternalSelection | DirectForeignSourceSelection,
     Field(discriminator="tag"),
 ]
 
@@ -1495,11 +1495,11 @@ class CaptureObjectStoreProtocol(Protocol):
 
 @runtime_checkable
 class LedgerMaterialResolverProtocol(Protocol):
-    def read_ledger_source(self, source: LedgerSourceReferenceV1) -> bytes: ...
+    def read_ledger_source(self, source: LedgerSourceReference) -> bytes: ...
 
 
 class DirectCaptureBuildResult(_StrictCaptureModel):
-    contract: CaptureContractV1
+    contract: CaptureContract
     contract_digest: str
     envelope: CaptureEnvelopeV1
     capture_digest: str
@@ -1510,7 +1510,7 @@ class DirectCaptureBuildResult(_StrictCaptureModel):
 def capture_is_direct_self_source(
     envelope: CaptureEnvelopeAny,
     *,
-    contract: CaptureContractV1,
+    contract: CaptureContract,
     store: CaptureObjectStoreProtocol,
     claim_id: str,
 ) -> bool:
@@ -1521,21 +1521,21 @@ def capture_is_direct_self_source(
         or envelope.run_coordinate.run_id != f"direct:{claim_id.casefold()}"
     ):
         return False
-    if isinstance(envelope.source, ExternalSourceReferenceV1):
+    if isinstance(envelope.source, ExternalSourceReference):
         return (
             envelope.source.coordinate_type == "authenticated-request-v1"
             and envelope.source.selector_type == "direct-claim-source-v1"
             and isinstance(envelope.source.selector, dict)
             and envelope.source.selector.get("claim_id") == claim_id
         )
-    if not isinstance(envelope.source, CasSourceReferenceV1):
+    if not isinstance(envelope.source, CasSourceReference):
         return False
     try:
         content = store.read(
             envelope.source.content_digest,
             access=BodyAccessContext(principal_id="playbill-compiler", can_read_body=True),
         )
-        source = DirectClaimSourceV1.model_validate_json(content)
+        source = DirectClaimSource.model_validate_json(content)
     except (PlaybillCasError, ValidationError):
         return False
     return (
@@ -1546,14 +1546,14 @@ def capture_is_direct_self_source(
 def capture_is_coordinator_self_source(
     envelope: CaptureEnvelopeAny,
     *,
-    contract: CaptureContractV1,
+    contract: CaptureContract,
     claim_id: str,
 ) -> bool:
     """Recognize the mandatory-retained coordinator profile at its Claim binding."""
 
     return (
         contract == COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
-        and isinstance(envelope.source, CasSourceReferenceV1)
+        and isinstance(envelope.source, CasSourceReference)
         and envelope.commitment.materialization == "cas"
         and envelope.run_coordinate.run_id == f"coordinator-self-source:{claim_id.casefold()}"
         and envelope.run_coordinate.executable_identity == contract.identity
@@ -1564,13 +1564,13 @@ def capture_is_coordinator_self_source(
 def capture_is_direct_selection_bound(
     envelope: CaptureEnvelopeAny,
     *,
-    contract: CaptureContractV1,
+    contract: CaptureContract,
     claim_id: str,
 ) -> bool:
     """Recognize the direct-selection builder's Claim binding.
 
     A direct-selection Capture points at the selected bytes rather than a
-    serialized DirectClaimSourceV1, so its binding lives in the frozen run
+    serialized DirectClaimSource, so its binding lives in the frozen run
     coordinate (and, for unmaterialized external selections, the selector).
     """
 
@@ -1582,10 +1582,10 @@ def capture_is_direct_selection_bound(
         or envelope.run_coordinate.executable_digest != capture_contract_digest(contract).tagged
     ):
         return False
-    if isinstance(envelope.source, ExternalSourceReferenceV1):
+    if isinstance(envelope.source, ExternalSourceReference):
         selector = envelope.source.selector
         return isinstance(selector, dict) and selector.get("claim_id") == claim_id
-    return isinstance(envelope.source, CasSourceReferenceV1)
+    return isinstance(envelope.source, CasSourceReference)
 
 
 CaptureReuseClassification = Literal[
@@ -1599,7 +1599,7 @@ CaptureReuseClassification = Literal[
 def classify_capture_reuse(
     envelope: CaptureEnvelopeAny,
     *,
-    contract: CaptureContractV1,
+    contract: CaptureContract,
     store: CaptureObjectStoreProtocol,
     claim_id: str,
 ) -> CaptureReuseClassification:
@@ -1662,13 +1662,13 @@ def classify_capture_reuse(
 
 class CaptureBuildResult(_StrictCaptureModel):
     contract_digest: str
-    envelope: CaptureEnvelopeV1 | CaptureEnvelopeV2
+    envelope: CaptureEnvelopeV1 | CaptureEnvelope
     capture_digest: str
     commitment_digest: str
     source_body_materialized: bool
 
 
-def _direct_source_bytes(source: DirectClaimSourceV1) -> bytes:
+def _direct_source_bytes(source: DirectClaimSource) -> bytes:
     return canonical_bytes(source.model_dump(mode="json"))
 
 
@@ -1696,7 +1696,7 @@ def _direct_binding_digest(
 def _store_capture_envelope(
     *,
     store: CaptureObjectStoreProtocol,
-    contract: CaptureContractV1,
+    contract: CaptureContract,
     envelope: CaptureEnvelopeV1,
     source_body_digest: str,
     source_body_materialized: bool,
@@ -1729,7 +1729,7 @@ def build_direct_claim_capture(
 ) -> DirectCaptureBuildResult:
     """Create one bounded self-asserted Capture from authenticated service inputs."""
 
-    source = DirectClaimSourceV1(
+    source = DirectClaimSource(
         authored_by=actor_id,
         claim_id=claim_id,
         value=value,
@@ -1758,17 +1758,17 @@ def build_direct_claim_capture(
         stored = store.store(source_bytes)
         if stored.digest != source_digest:
             raise PlaybillCasError("direct source CAS digest did not reproduce")
-        source_reference: CasSourceReferenceV1 | ExternalSourceReferenceV1 = CasSourceReferenceV1(
+        source_reference: CasSourceReference | ExternalSourceReference = CasSourceReference(
             content_digest=source_digest
         )
-        commitment = EvidenceCommitmentV1(
+        commitment = EvidenceCommitment(
             digest_kind="exact_bytes",
             digest=source_digest,
             byte_length=len(source_bytes),
             materialization="cas",
         )
     else:
-        source_reference = ExternalSourceReferenceV1(
+        source_reference = ExternalSourceReference(
             source_identity=DIRECT_SOURCE_IDENTITY,
             producer_binding_digest=binding_digest,
             coordinate_type="authenticated-request-v1",
@@ -1780,7 +1780,7 @@ def build_direct_claim_capture(
             selector={"claim_id": claim_id},
             replayability="attested_only",
         )
-        commitment = EvidenceCommitmentV1(
+        commitment = EvidenceCommitment(
             digest_kind="canonical_value",
             digest=source_digest,
             materialization="none",
@@ -1818,7 +1818,7 @@ def build_direct_claim_selection_capture(
     rationale: str,
     observed_at: datetime,
     accepted_coordinate: AcceptedCoordinate,
-    selection: DirectByteSpanSelectionV1 | DirectExternalSelectionV1,
+    selection: DirectByteSpanSelection | DirectExternalSelection,
 ) -> DirectCaptureBuildResult:
     """Bind one exact span or typed external selector as self-asserted evidence.
 
@@ -1828,7 +1828,7 @@ def build_direct_claim_selection_capture(
     is refused here rather than being quietly signed under this one.
     """
 
-    if not isinstance(selection, DirectByteSpanSelectionV1 | DirectExternalSelectionV1):
+    if not isinstance(selection, DirectByteSpanSelection | DirectExternalSelection):
         raise CaptureFormatError(
             "a logical-source selection is not admissible under the direct CaptureContract"
         )
@@ -1837,7 +1837,7 @@ def build_direct_claim_selection_capture(
         accepted_coordinate=accepted_coordinate,
     )
     contract_digest = capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged
-    if isinstance(selection, DirectByteSpanSelectionV1):
+    if isinstance(selection, DirectByteSpanSelection):
         if not store.verify(selection.span.content_digest):
             raise CaptureFormatError("selected span content is unavailable in CAS")
         source_bytes = store.read(
@@ -1846,10 +1846,10 @@ def build_direct_claim_selection_capture(
         )
         if selection.span.end_byte > len(source_bytes):
             raise CaptureFormatError("selected span exceeds its exact CAS body")
-        source_reference: CasSourceReferenceV1 | ExternalSourceReferenceV1 = CasSourceReferenceV1(
+        source_reference: CasSourceReference | ExternalSourceReference = CasSourceReference(
             content_digest=selection.span.content_digest
         )
-        commitment = EvidenceCommitmentV1(
+        commitment = EvidenceCommitment(
             digest_kind="exact_bytes",
             digest=selection.span.content_digest,
             byte_length=len(source_bytes),
@@ -1858,7 +1858,7 @@ def build_direct_claim_selection_capture(
         source_digest = selection.span.content_digest
         materialized = True
     else:
-        source_reference = ExternalSourceReferenceV1(
+        source_reference = ExternalSourceReference(
             source_identity=DIRECT_SOURCE_IDENTITY,
             producer_binding_digest=binding_digest,
             coordinate_type=DIRECT_EXTERNAL_COORDINATE_TYPE,
@@ -1922,7 +1922,7 @@ def build_foreign_source_capture(
     rationale: str,
     observed_at: datetime,
     accepted_coordinate: AcceptedCoordinate,
-    selection: DirectForeignSourceSelectionV1,
+    selection: DirectForeignSourceSelection,
 ) -> DirectCaptureBuildResult:
     """Commit one exact span of a foreign logical source as self-asserted evidence.
 
@@ -1968,7 +1968,7 @@ def build_foreign_source_capture(
     ).tagged
     envelope = CaptureEnvelopeV1(
         capture_contract_digest=contract_digest_value,
-        source=ExternalSourceReferenceV1(
+        source=ExternalSourceReference(
             source_identity=selection.logical_source_identity,
             producer_binding_digest=binding_digest,
             coordinate_type=FOREIGN_SOURCE_COORDINATE_TYPE,
@@ -1984,7 +1984,7 @@ def build_foreign_source_capture(
             },
             replayability="attested_only",
         ),
-        commitment=EvidenceCommitmentV1(
+        commitment=EvidenceCommitment(
             digest_kind="exact_bytes",
             digest=selection_digest,
             byte_length=len(selected),
@@ -2023,7 +2023,7 @@ def build_working_selection_capture(
     coordinate: object,
     selector: object,
     selected_content: bytes,
-    accepted_contract: CaptureContractV1 | None = None,
+    accepted_contract: CaptureContract | None = None,
 ) -> DirectCaptureBuildResult:
     """Commit the bounded bytes from one typed proposer-observed working selection.
 
@@ -2067,7 +2067,7 @@ def build_working_selection_capture(
     ).tagged
     envelope = CaptureEnvelopeV1(
         capture_contract_digest=contract_digest_value,
-        source=ExternalSourceReferenceV1(
+        source=ExternalSourceReference(
             source_identity=source_id,
             producer_binding_digest=binding_digest,
             coordinate_type=FOREIGN_SOURCE_COORDINATE_TYPE,
@@ -2076,7 +2076,7 @@ def build_working_selection_capture(
             selector={"claim_id": claim_id, "working_selection": selector},
             replayability="attested_only",
         ),
-        commitment=EvidenceCommitmentV1(
+        commitment=EvidenceCommitment(
             digest_kind="exact_bytes",
             digest=stored.digest,
             byte_length=len(selected_content),
@@ -2106,8 +2106,8 @@ def build_working_selection_capture(
 def _store_general_capture(
     *,
     store: CaptureObjectStoreProtocol,
-    contract: CaptureContractV1,
-    envelope: CaptureEnvelopeV1 | CaptureEnvelopeV2,
+    contract: CaptureContract,
+    envelope: CaptureEnvelopeV1 | CaptureEnvelope,
     source_body_materialized: bool,
 ) -> CaptureBuildResult:
     metadata = store.store(render_capture_envelope(envelope))
@@ -2124,15 +2124,15 @@ def _store_general_capture(
 
 
 def provider_capture_receipt_matches_occurrence(
-    receipt: ProviderInvocationReceiptV1,
-    occurrence: ProviderExternalOccurrencePlanV1,
+    receipt: ProviderInvocationReceipt,
+    occurrence: ProviderExternalOccurrencePlan,
 ) -> bool:
     expected_secret_receipts = tuple(
         sorted(
             (
-                ProviderSecretReceiptReferenceV1(
+                ProviderSecretReceiptReference(
                     binding_identity_digest=provider_secret_binding_identity_digest(
-                        ProviderSecretBindingIdentityV1(
+                        ProviderSecretBindingIdentity(
                             realm=reference.realm,
                             name=reference.name,
                         )
@@ -2162,13 +2162,13 @@ def provider_capture_receipt_matches_occurrence(
 def build_provider_external_capture_v2(
     *,
     store: CaptureObjectStoreProtocol,
-    contract: CaptureContractV1,
-    result: ProviderResultToExternalCaptureV1,
-    receipt: ProviderInvocationReceiptV1,
-    occurrence: ProviderExternalOccurrencePlanV1,
+    contract: CaptureContract,
+    result: ProviderResultToExternalCapture,
+    receipt: ProviderInvocationReceipt,
+    occurrence: ProviderExternalOccurrencePlan,
     producer: ArtifactIdentity,
     bound_generation: str,
-    source_read_receipt: SourceReadReceiptV1 | None = None,
+    source_read_receipt: SourceReadReceipt | None = None,
 ) -> CaptureBuildResult:
     """Validate one common-driver Source result and commit its v2 Capture."""
 
@@ -2189,7 +2189,7 @@ def build_provider_external_capture_v2(
     ):
         raise CaptureFormatError("Provider Capture conversion differs from its admitted contract")
     try:
-        output_commitment = ProviderInvocationOutputDigestV1.model_validate(receipt.output)
+        output_commitment = ProviderInvocationOutputDigest.model_validate(receipt.output)
     except ValidationError as exc:
         raise CaptureFormatError("Provider Source receipt lacks its output digest") from exc
     if result.source_identity not in contract.logical_source_identities:
@@ -2241,7 +2241,7 @@ def build_provider_external_capture_v2(
         raise PlaybillCasError("Provider Capture material CAS digest did not reproduce")
     occurrence_digest = provider_external_occurrence_plan_digest(occurrence)
     receipt_digest = provider_invocation_receipt_digest(receipt)
-    evidence = ProviderInvocationCaptureEvidenceV1(
+    evidence = ProviderInvocationCaptureEvidence(
         provider_artifact_digest=receipt.provider_artifact_digest,
         external_occurrence_plan_digest=occurrence_digest,
         interface_artifact_digest=occurrence.interface_artifact_digest,
@@ -2257,9 +2257,9 @@ def build_provider_external_capture_v2(
         secret_references=occurrence.secret_plan.references,
         egress=receipt.egress,
     )
-    envelope = CaptureEnvelopeV2(
+    envelope = CaptureEnvelope(
         capture_contract_digest=contract_digest_value,
-        source=ExternalSourceReferenceV1(
+        source=ExternalSourceReference(
             source_identity=result.source_identity,
             producer_binding_digest=occurrence_digest,
             coordinate_type=result.coordinate_type,
@@ -2268,13 +2268,13 @@ def build_provider_external_capture_v2(
             selector=result.selector,
             replayability=result.replayability,
         ),
-        commitment=EvidenceCommitmentV1(
+        commitment=EvidenceCommitment(
             digest_kind="exact_bytes",
             digest=result.bytes_digest,
             byte_length=result.byte_length,
             materialization="cas",
         ),
-        run_coordinate=CaptureRunCoordinateV2(
+        run_coordinate=CaptureRunCoordinate(
             run_kind="provider",
             run_id=receipt.run_id,
             bound_generation=bound_generation,
@@ -2299,9 +2299,9 @@ def build_provider_external_capture_v2(
 def build_procedure_capture_v2(
     *,
     store: CaptureObjectStoreProtocol,
-    contract: CaptureContractV1,
+    contract: CaptureContract,
     source_body: bytes,
-    run_coordinate: CaptureRunCoordinateV2,
+    run_coordinate: CaptureRunCoordinate,
     producer_receipt_digest: str,
     producer: ArtifactIdentity,
     producer_binding_digest: str,
@@ -2320,10 +2320,10 @@ def build_procedure_capture_v2(
     if len(source_body) > contract.selection_budget.max_bytes:
         raise CaptureFormatError("procedure Capture exceeds its contract byte budget")
     body = store.store(source_body)
-    envelope = CaptureEnvelopeV2(
+    envelope = CaptureEnvelope(
         capture_contract_digest=capture_contract_digest(contract).tagged,
-        source=CasSourceReferenceV1(content_digest=body.digest),
-        commitment=EvidenceCommitmentV1(
+        source=CasSourceReference(content_digest=body.digest),
+        commitment=EvidenceCommitment(
             digest_kind="exact_bytes",
             digest=body.digest,
             byte_length=len(source_body),
@@ -2334,7 +2334,7 @@ def build_procedure_capture_v2(
         producer=producer,
         producer_binding_digest=producer_binding_digest,
         observed_at=observed_at,
-        production_evidence=ProcedureEgressCaptureEvidenceV1(
+        production_evidence=ProcedureEgressCaptureEvidence(
             procedure_producer_receipt_digest=producer_receipt_digest,
         ),
     )
@@ -2349,14 +2349,14 @@ def build_procedure_capture_v2(
 def build_cas_capture(
     *,
     store: CaptureObjectStoreProtocol,
-    contract: CaptureContractV1,
+    contract: CaptureContract,
     source_body: bytes,
     run_coordinate: CaptureRunCoordinateV1,
     run_receipt_digest: str,
     producer: ArtifactIdentity,
     producer_binding_digest: str,
     observed_at: datetime,
-    source_effective_time: SourceEffectiveTimeV1 | None = None,
+    source_effective_time: SourceEffectiveTime | None = None,
 ) -> CaptureBuildResult:
     """Create an exact bounded CAS observation under one accepted contract."""
 
@@ -2369,8 +2369,8 @@ def build_cas_capture(
     body = store.store(source_body)
     envelope = CaptureEnvelopeV1(
         capture_contract_digest=capture_contract_digest(contract).tagged,
-        source=CasSourceReferenceV1(content_digest=body.digest),
-        commitment=EvidenceCommitmentV1(
+        source=CasSourceReference(content_digest=body.digest),
+        commitment=EvidenceCommitment(
             digest_kind="exact_bytes",
             digest=body.digest,
             byte_length=len(source_body),
@@ -2448,15 +2448,15 @@ def build_coordinator_self_source_capture(
 def build_ledger_capture(
     *,
     store: CaptureObjectStoreProtocol,
-    contract: CaptureContractV1,
-    source: LedgerSourceReferenceV1,
+    contract: CaptureContract,
+    source: LedgerSourceReference,
     source_body: bytes,
     run_coordinate: CaptureRunCoordinateV1,
     run_receipt_digest: str,
     producer: ArtifactIdentity,
     producer_binding_digest: str,
     observed_at: datetime,
-    source_effective_time: SourceEffectiveTimeV1 | None = None,
+    source_effective_time: SourceEffectiveTime | None = None,
 ) -> CaptureBuildResult:
     """Bind exact accepted ledger bytes without copying them into the body CAS."""
 
@@ -2470,7 +2470,7 @@ def build_ledger_capture(
     envelope = CaptureEnvelopeV1(
         capture_contract_digest=capture_contract_digest(contract).tagged,
         source=source,
-        commitment=EvidenceCommitmentV1(
+        commitment=EvidenceCommitment(
             digest_kind="exact_bytes",
             digest=body_digest,
             byte_length=len(source_body),
@@ -2494,16 +2494,16 @@ def build_ledger_capture(
 def build_derived_cas_capture(
     *,
     store: CaptureObjectStoreProtocol,
-    contract: CaptureContractV1,
+    contract: CaptureContract,
     output_body: bytes,
-    manifest: InputReceiptSetManifestV1,
+    manifest: InputReceiptSetManifest,
     reducer_digest: str,
     run_coordinate: CaptureRunCoordinateV1,
     run_receipt_digest: str,
     producer: ArtifactIdentity,
     producer_binding_digest: str,
     observed_at: datetime,
-    source_effective_time: SourceEffectiveTimeV1 | None = None,
+    source_effective_time: SourceEffectiveTime | None = None,
 ) -> CaptureBuildResult:
     """Create a derived Capture with an exact content-addressed input receipt set."""
 
@@ -2520,8 +2520,8 @@ def build_derived_cas_capture(
     output = store.store(output_body)
     envelope = CaptureEnvelopeV1(
         capture_contract_digest=capture_contract_digest(contract).tagged,
-        source=CasSourceReferenceV1(content_digest=output.digest),
-        commitment=EvidenceCommitmentV1(
+        source=CasSourceReference(content_digest=output.digest),
+        commitment=EvidenceCommitment(
             digest_kind="exact_bytes",
             digest=output.digest,
             byte_length=len(output_body),
@@ -2548,11 +2548,11 @@ def verify_capture(
     digest: str,
     *,
     store: CaptureObjectStoreProtocol,
-    contract: CaptureContractV1,
+    contract: CaptureContract,
     ledger_resolver: LedgerMaterialResolverProtocol | None = None,
     producer_artifact_digests: Mapping[str, str] | None = None,
     producer_receipt_resolver: ProducerReceiptResolverProtocol | None = None,
-) -> CaptureEnvelopeV1 | CaptureEnvelopeV2:
+) -> CaptureEnvelopeV1 | CaptureEnvelope:
     """Replay one envelope and every proof available for its source kind."""
 
     CasDigest.from_tagged(digest)
@@ -2590,7 +2590,7 @@ def verify_capture(
         != envelope.run_coordinate.executable_digest
     ):
         raise CaptureFormatError("Capture v2 producer does not resolve at its exact digest")
-    if isinstance(envelope, CaptureEnvelopeV2):
+    if isinstance(envelope, CaptureEnvelope):
         if producer_receipt_resolver is None:
             raise CaptureFormatError(
                 "Capture producer receipt resolver is unavailable for "
@@ -2602,7 +2602,7 @@ def verify_capture(
                 f"Capture producer receipt is unavailable: {envelope.producer_receipt_digest}"
             )
         evidence = envelope.production_evidence
-        if isinstance(evidence, ProviderInvocationCaptureEvidenceV1):
+        if isinstance(evidence, ProviderInvocationCaptureEvidence):
             if not isinstance(resolved_receipt, ProviderProducerReceiptResolution):
                 raise CaptureFormatError("provider Capture resolved a non-Provider receipt")
             receipt = resolved_receipt.receipt
@@ -2661,7 +2661,7 @@ def verify_capture(
             ):
                 raise CaptureFormatError("provider Capture source-read receipt is unavailable")
             if source_read is not None and (
-                not isinstance(envelope.source, ExternalSourceReferenceV1)
+                not isinstance(envelope.source, ExternalSourceReference)
                 or evidence.source_read_receipt_digest != source_read_receipt_digest(source_read)
                 or source_read.run_id != receipt.run_id
                 or source_read.admission_binding_digest != receipt.admission_binding_digest
@@ -2690,7 +2690,7 @@ def verify_capture(
         raise CaptureFormatError("Capture source kind is not permitted by its contract")
     if envelope.commitment.materialization not in contract.allowed_materialization_modes:
         raise CaptureFormatError("Capture materialization is not permitted by its contract")
-    if isinstance(envelope.source, ExternalSourceReferenceV1):
+    if isinstance(envelope.source, ExternalSourceReference):
         if envelope.source.source_identity not in contract.logical_source_identities:
             raise CaptureFormatError("Capture logical source is not declared by its contract")
         if contract == DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT:
@@ -2736,11 +2736,11 @@ def verify_capture(
             if len(material) > contract.selection_budget.max_bytes:
                 raise CaptureFormatError("external Capture material exceeds its contract")
             material_evidence = (
-                envelope.production_evidence if isinstance(envelope, CaptureEnvelopeV2) else None
+                envelope.production_evidence if isinstance(envelope, CaptureEnvelope) else None
             )
             if (
-                isinstance(envelope, CaptureEnvelopeV2)
-                and isinstance(material_evidence, ProviderInvocationCaptureEvidenceV1)
+                isinstance(envelope, CaptureEnvelope)
+                and isinstance(material_evidence, ProviderInvocationCaptureEvidence)
                 and material_evidence.interface_digest in WORKSPACE_FILE_INTERFACE_DIGESTS
             ):
                 if not isinstance(resolved_receipt, ProviderProducerReceiptResolution) or (
@@ -2760,7 +2760,7 @@ def verify_capture(
                 source_echo = workspace_body.get("source")
                 source_read = resolved_receipt.source_read_receipt
                 try:
-                    output_commitment = ProviderInvocationOutputDigestV1.model_validate(
+                    output_commitment = ProviderInvocationOutputDigest.model_validate(
                         resolved_receipt.receipt.output
                     )
                 except ValidationError as exc:
@@ -2780,7 +2780,7 @@ def verify_capture(
                     "byte_length": source_read.byte_length,
                 }:
                     raise CaptureFormatError("workspace.file material mixes source attempts")
-    if isinstance(envelope.source, CasSourceReferenceV1):
+    if isinstance(envelope.source, CasSourceReference):
         if envelope.source.content_digest != envelope.commitment.digest:
             raise CaptureFormatError("Capture CAS source differs from its commitment")
         if not store.verify(envelope.source.content_digest):
@@ -2793,7 +2793,7 @@ def verify_capture(
             raise CaptureFormatError("Capture source byte length does not reproduce")
         if len(source_bytes) > contract.selection_budget.max_bytes:
             raise CaptureFormatError("Capture source exceeds its contract byte budget")
-    if isinstance(envelope.source, LedgerSourceReferenceV1):
+    if isinstance(envelope.source, LedgerSourceReference):
         if ledger_resolver is None:
             raise CaptureFormatError("ledger Capture verification requires exact ledger bytes")
         source_bytes = ledger_resolver.read_ledger_source(envelope.source)
@@ -2819,7 +2819,7 @@ def verify_capture(
             access=BodyAccessContext(principal_id="playbill-compiler", can_read_body=True),
         )
         try:
-            manifest = InputReceiptSetManifestV1.model_validate_json(manifest_bytes)
+            manifest = InputReceiptSetManifest.model_validate_json(manifest_bytes)
         except ValidationError as exc:
             raise CaptureFormatError("derived Capture receipt-set manifest is invalid") from exc
         if render_input_receipt_set_manifest(manifest) != manifest_bytes or (
@@ -2831,20 +2831,20 @@ def verify_capture(
 
 __all__ = [
     "AcceptedCaptureContract",
-    "CanonicalDurationV1",
+    "CanonicalDuration",
     "CaptureContractLawResult",
-    "CaptureContractV1",
+    "CaptureContract",
     "CaptureBuildResult",
     "CaptureComponentRegistry",
     "CaptureEnvelopeAny",
     "CaptureEnvelopeV1",
-    "CaptureEnvelopeV2",
+    "CaptureEnvelope",
     "CaptureFormatError",
     "CaptureObjectStoreProtocol",
-    "CaptureRetentionErasurePolicyV1",
+    "CaptureRetentionErasurePolicy",
     "CaptureRunCoordinateV1",
-    "CaptureRunCoordinateV2",
-    "CaptureSelectionBudgetV1",
+    "CaptureRunCoordinate",
+    "CaptureSelectionBudget",
     "COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT",
     "COORDINATOR_SELF_SOURCE_CONTRACT_ID",
     "COORDINATOR_SELF_SOURCE_IDENTITY",
@@ -2860,22 +2860,22 @@ __all__ = [
     "FOREIGN_SOURCE_SELECTOR_TYPE",
     "FOREIGN_SOURCE_SUBJECT_MAPPING",
     "PLAYBILL_CAPTURE_COMPONENTS",
-    "CaptureProductionEvidenceV1",
+    "CaptureProductionEvidence",
     "DirectCaptureBuildResult",
-    "DirectByteSpanSelectionV1",
-    "DirectClaimSelectionV1",
-    "DirectClaimSourceV1",
-    "DirectExternalSelectionV1",
-    "DirectForeignSourceSelectionV1",
-    "InputReceiptSetManifestV1",
-    "ProcedureEgressCaptureEvidenceV1",
+    "DirectByteSpanSelection",
+    "DirectClaimSelection",
+    "DirectClaimSource",
+    "DirectExternalSelection",
+    "DirectForeignSourceSelection",
+    "InputReceiptSetManifest",
+    "ProcedureEgressCaptureEvidence",
     "ProcedureProducerReceiptProtocol",
     "ProducerReceiptResolverProtocol",
     "provider_capture_receipt_matches_occurrence",
-    "ProviderResultToExternalCaptureV1",
-    "ProviderInvocationCaptureEvidenceV1",
+    "ProviderResultToExternalCapture",
+    "ProviderInvocationCaptureEvidence",
     "LedgerMaterialResolverProtocol",
-    "SourceEffectiveTimeV1",
+    "SourceEffectiveTime",
     "build_direct_claim_capture",
     "build_direct_claim_selection_capture",
     "build_coordinator_self_source_capture",

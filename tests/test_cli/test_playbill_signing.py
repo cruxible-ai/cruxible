@@ -54,8 +54,8 @@ def test_cli_approval_signs_exact_challenge_without_transmitting_key(
     class StubClient:
         def resolve_playbill_proposal_selector(
             self, instance_id: str, selector: str
-        ) -> contracts.PlaybillProposalSelectorResultV1:
-            return contracts.PlaybillProposalSelectorResultV1(
+        ) -> contracts.PlaybillProposalSelectorResult:
+            return contracts.PlaybillProposalSelectorResult(
                 selector=selector,
                 proposal_id=selector,
             )
@@ -163,8 +163,8 @@ def test_cli_missing_signer_never_falls_back_to_daemon(
     class StubClient:
         def resolve_playbill_proposal_selector(
             self, instance_id: str, selector: str
-        ) -> contracts.PlaybillProposalSelectorResultV1:
-            return contracts.PlaybillProposalSelectorResultV1(
+        ) -> contracts.PlaybillProposalSelectorResult:
+            return contracts.PlaybillProposalSelectorResult(
                 selector=selector,
                 proposal_id=selector,
             )

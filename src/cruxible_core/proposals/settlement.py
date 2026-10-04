@@ -24,15 +24,15 @@ from cruxible_client.contracts.attestations import (
 )
 from cruxible_client.contracts.candidates import (
     CandidateMemberEvidence,
-    CandidateMemberLawEvidenceV2,
+    CandidateMemberLawEvidence,
+    CandidateRecord,
     CandidateRecordAnyVersion,
     CandidateRecordV2,
-    CandidateRecordV3,
+    ClosureProof,
     ClosureProofV2,
-    ClosureProofV3,
-    MemberLawEvaluationV2,
+    MemberLawEvaluation,
     SemanticCandidate,
-    SemanticCandidateV2,
+    SemanticCandidateV1,
     candidate_digest,
 )
 from cruxible_client.contracts.canonical import (
@@ -146,7 +146,7 @@ class ChangeActorBinding(_StrictSettlementModel):
         return value
 
 
-class ClosureProof(_StrictSettlementModel):
+class ClosureProofV1(_StrictSettlementModel):
     """PB-D's complete singleton-Document closure proof."""
 
     tag: Literal["playbill-closure-proof-v1"] = "playbill-closure-proof-v1"
@@ -160,11 +160,11 @@ class ChangeSetRecord(_StrictSettlementModel):
     tag: Literal["playbill-changeset-v1"] = "playbill-changeset-v1"
     sequence: int = Field(ge=1)
     members: tuple[CandidateMemberEvidence, ...]
-    closure_proof: ClosureProof
+    closure_proof: ClosureProofV1
     required_tier: PermissionTier
     approval_requirements: tuple[ApprovalRequirement, ...]
     activation_policy: ActivationPolicy
-    candidate: SemanticCandidate
+    candidate: SemanticCandidateV1
     candidate_digest: str
     law_digests: dict[str, str]
     compiler_digest: str
@@ -229,13 +229,13 @@ class ChangeSetRecordV2(_StrictSettlementModel):
 
     tag: Literal["playbill-changeset-v2"] = "playbill-changeset-v2"
     sequence: int = Field(ge=1)
-    members: tuple[CandidateMemberLawEvidenceV2, ...]
+    members: tuple[CandidateMemberLawEvidence, ...]
     closure_proof: ClosureProofV2
-    law_evidence: tuple[MemberLawEvaluationV2, ...]
+    law_evidence: tuple[MemberLawEvaluation, ...]
     required_tier: PermissionTier
     approval_requirements: tuple[ApprovalRequirement, ...]
     activation_policy: ActivationPolicy
-    candidate: SemanticCandidate
+    candidate: SemanticCandidateV1
     candidate_digest: str
     law_digests: dict[str, str]
     compiler_digest: str
@@ -302,13 +302,13 @@ class ChangeSetRecordV3(_StrictSettlementModel):
 
     tag: Literal["playbill-changeset-v3"] = "playbill-changeset-v3"
     sequence: int = Field(ge=1)
-    members: tuple[CandidateMemberLawEvidenceV2, ...]
-    closure_proof: ClosureProofV3
-    law_evidence: tuple[MemberLawEvaluationV2, ...]
+    members: tuple[CandidateMemberLawEvidence, ...]
+    closure_proof: ClosureProof
+    law_evidence: tuple[MemberLawEvaluation, ...]
     required_tier: PermissionTier
     approval_requirements: tuple[ApprovalRequirement, ...]
     activation_policy: ActivationPolicy
-    candidate: SemanticCandidateV2
+    candidate: SemanticCandidate
     candidate_digest: str
     law_digests: dict[str, str]
     compiler_digest: str
@@ -343,7 +343,7 @@ class ChangeSetRecordV3(_StrictSettlementModel):
 
     @model_validator(mode="after")
     def _complete_correspondence(self) -> "ChangeSetRecordV3":
-        CandidateRecordV3(
+        CandidateRecord(
             candidate=self.candidate,
             candidate_digest=self.candidate_digest,
             required_tier=self.required_tier,
@@ -414,10 +414,10 @@ def build_change_set_record(
     history can only travel in the receipt it originally settled in.
     """
 
-    if isinstance(candidate, CandidateRecordV2 | CandidateRecordV3):
+    if isinstance(candidate, CandidateRecordV2 | CandidateRecord):
         tag = (
             "playbill-changeset-v3"
-            if isinstance(candidate, CandidateRecordV3)
+            if isinstance(candidate, CandidateRecord)
             else "playbill-changeset-v2"
         )
         multi_member_values = {
@@ -438,13 +438,13 @@ def build_change_set_record(
         }
         digest = typed_digest(ChangeSetDigest, tag, _json_values(multi_member_values))
         record = {**multi_member_values, "changeset_digest": digest.tagged}
-        if isinstance(candidate, CandidateRecordV3):
+        if isinstance(candidate, CandidateRecord):
             return ChangeSetRecordV3.model_validate(record)
         return ChangeSetRecordV2.model_validate(record)
     values = {
         "sequence": sequence,
         "members": candidate.members,
-        "closure_proof": ClosureProof(paths=candidate.closure_paths),
+        "closure_proof": ClosureProofV1(paths=candidate.closure_paths),
         "required_tier": candidate.required_tier,
         "approval_requirements": candidate.approval_requirements,
         "activation_policy": candidate.activation_policy,
@@ -921,7 +921,7 @@ __all__ = [
     "ChangeSetRecordAnyVersion",
     "ChangeSetRecordV2",
     "ChangeSetRecordV3",
-    "ClosureProof",
+    "ClosureProofV1",
     "GENERATION_CONSTRUCTION",
     "SemanticRootDerivation",
     "SettlementBinding",

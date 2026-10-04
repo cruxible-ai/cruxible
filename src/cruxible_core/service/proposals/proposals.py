@@ -20,15 +20,15 @@ from cruxible_client.contracts.errors import (
     ProposalReadmitRequiresResubmission,
     ProposalSelectorAmbiguousError,
 )
-from cruxible_client.contracts.principals import PlaybillAuthoringRefusalV1
-from cruxible_client.contracts.proposal_models import ProposalReadmissionLinkV1
+from cruxible_client.contracts.principals import PlaybillAuthoringRefusal
+from cruxible_client.contracts.proposal_models import ProposalReadmissionLink
 from cruxible_core.authoring.id_prefixes import AmbiguousIdPrefix, resolve_id_prefix
 from cruxible_core.indexes.proposals.proposal_index import timestamp
 from cruxible_core.proposals.proposals import (
     AuthenticatedActor,
     ProposalAdmissionRequest,
     ProposalResult,
-    ProposalWithdrawalRecordV1,
+    ProposalWithdrawalRecord,
 )
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.runtime.permissions import PermissionMode
@@ -126,7 +126,7 @@ class PlaybillProposalWithdrawResultV1(_StrictOperationalReadModel):
     coordinate: PlaybillAcceptedCoordinate | None = None
 
 
-class PlaybillProposalSelectorResultV1(_StrictOperationalReadModel):
+class PlaybillProposalSelectorResult(_StrictOperationalReadModel):
     tag: Literal["playbill-proposal-selector-result-v1"] = "playbill-proposal-selector-result-v1"
     selector: str
     proposal_id: str
@@ -150,7 +150,7 @@ class PlaybillWhoAmIV1(_StrictOperationalReadModel):
     # Whether authoring create would accept this actor, and the refusal it
     # would return otherwise: the same code, detail and repair.
     can_author: bool
-    authoring_refusal: PlaybillAuthoringRefusalV1 | None
+    authoring_refusal: PlaybillAuthoringRefusal | None
 
     @model_validator(mode="after")
     def _credential_binding(self) -> "PlaybillWhoAmIV1":
@@ -409,7 +409,7 @@ class StaleProposal:
 def readmission_operation_digest(proposal_id: str, coordinate: PlaybillAcceptedCoordinate) -> str:
     """The one readmission of `proposal_id` that `coordinate` admits."""
 
-    return ProposalReadmissionLinkV1(
+    return ProposalReadmissionLink(
         source_proposal_id=proposal_id, coordinate=coordinate
     ).operation_digest
 
@@ -440,7 +440,7 @@ class ProposalReadmission:
 @dataclass(frozen=True)
 class _LinkedReadmission:
     proposal_id: str
-    link: ProposalReadmissionLinkV1
+    link: ProposalReadmissionLink
     evaluation_status: str
     withdrawn: bool
     accepted_sequence: int | None
@@ -658,7 +658,7 @@ def service_resolve_playbill_proposal_selector(
     instance: PlaybillInstance,
     *,
     selector: str,
-) -> PlaybillProposalSelectorResultV1:
+) -> PlaybillProposalSelectorResult:
     """Resolve a user selector once to immutable proposal admission evidence."""
 
     evidence = instance.proposal_evidence()
@@ -673,7 +673,7 @@ def service_resolve_playbill_proposal_selector(
         raise ProposalSelectorAmbiguousError(selector, proposal_ids) from exc
     if resolved in proposal_ids:
         evidence.read_admission(resolved)
-        return PlaybillProposalSelectorResultV1(selector=selector, proposal_id=resolved)
+        return PlaybillProposalSelectorResult(selector=selector, proposal_id=resolved)
     target_oid = instance.proposal_ref_target(selector) if selector.startswith("refs/") else None
     if target_oid is not None:
         current = evidence.index.rows(
@@ -682,7 +682,7 @@ def service_resolve_playbill_proposal_selector(
         if len(current) == 1:
             resolved = current[0]["proposal_id"]
             evidence.read_admission(resolved)
-            return PlaybillProposalSelectorResultV1(selector=selector, proposal_id=resolved)
+            return PlaybillProposalSelectorResult(selector=selector, proposal_id=resolved)
     # Only the historical ambiguity diagnostic needs every admission for a ref.
     rows = evidence.index.rows(evidence, "target_ref=?", (selector,))
     if rows:
@@ -776,7 +776,7 @@ def _readmit(
             "byte rebase would not check; run the write again at the current head"
         )
     coordinate = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    link = ProposalReadmissionLinkV1(source_proposal_id=proposal_id, coordinate=coordinate)
+    link = ProposalReadmissionLink(source_proposal_id=proposal_id, coordinate=coordinate)
     operation_digest = link.operation_digest
     matching = tuple(
         admission
@@ -846,8 +846,8 @@ def _pins_slots(instance: PlaybillInstance, *, target_ref: str, actor_id: str) -
     """
 
     from cruxible_client.contracts.authoring.models import (
-        AuthoringIntentV2,
-        AuthoringSlotExpectationV1,
+        AuthoringIntent,
+        AuthoringSlotExpectation,
     )
     from cruxible_core.authoring.coordinator import AuthoringIntentCoordinator
     from cruxible_core.authoring.preflight import authoring_intent_id_for_proposal_ref
@@ -858,8 +858,8 @@ def _pins_slots(instance: PlaybillInstance, *, target_ref: str, actor_id: str) -
     intent = AuthoringIntentCoordinator.for_instance(instance).store.get(
         intent_id, actor_id=actor_id
     )
-    return isinstance(intent, AuthoringIntentV2) and any(
-        isinstance(item, AuthoringSlotExpectationV1) for item in intent.reference_expectations
+    return isinstance(intent, AuthoringIntent) and any(
+        isinstance(item, AuthoringSlotExpectation) for item in intent.reference_expectations
     )
 
 
@@ -969,7 +969,7 @@ def _withdraw(
         raise ProposalAdmissionError(
             f"only an open or stale proposal may be withdrawn; this one is {entry.terminal_reason}"
         )
-    record = ProposalWithdrawalRecordV1(
+    record = ProposalWithdrawalRecord(
         proposal_id=admission.proposal_id,
         actor_id=actor_id,
         reason=reason,

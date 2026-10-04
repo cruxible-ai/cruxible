@@ -7,7 +7,7 @@ from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     CaptureRunCoordinateV1,
-    InputReceiptSetManifestV1,
+    InputReceiptSetManifest,
     build_cas_capture,
     build_coordinator_self_source_capture,
     build_derived_cas_capture,
@@ -20,7 +20,7 @@ from cruxible_client.contracts.captures import (
     verify_capture,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
-from cruxible_client.contracts.source_references import LedgerSourceReferenceV1
+from cruxible_client.contracts.source_references import LedgerSourceReference
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.storage.cas import BodyAccessContext
 from tests.core_support._pc_c_support import (
@@ -44,11 +44,11 @@ def _accepted_coordinate() -> AcceptedCoordinate:
 
 
 class _LedgerResolver:
-    def __init__(self, source: LedgerSourceReferenceV1, content: bytes) -> None:
+    def __init__(self, source: LedgerSourceReference, content: bytes) -> None:
         self.source = source
         self.content = content
 
-    def read_ledger_source(self, source: LedgerSourceReferenceV1) -> bytes:
+    def read_ledger_source(self, source: LedgerSourceReference) -> bytes:
         if source != self.source:
             raise AssertionError("unexpected ledger source")
         return self.content
@@ -85,7 +85,7 @@ def test_cas_and_ledger_capture_commitments_verify_without_copying_ledger_bytes(
     )
 
     ledger_body = b'{"policy":"approved"}\n'
-    ledger_source = LedgerSourceReferenceV1(
+    ledger_source = LedgerSourceReference(
         address=SemanticAddress.whole_artifact("documents/release-policy.json"),
         coordinate=_accepted_coordinate(),
     )
@@ -121,7 +121,7 @@ def test_derived_capture_requires_and_replays_exact_input_manifest(tmp_path: Pat
     contract = capture_contract(epistemic_grade="derived")
     provider_artifact = provider(contract)
     store = body_store(tmp_path)
-    manifest = InputReceiptSetManifestV1(
+    manifest = InputReceiptSetManifest(
         input_receipt_digests=(digest("receipt", "input"),),
         input_capture_digests=(digest("capture", "input"),),
         input_claim_artifact_digests=(artifact_digest("claim", "input"),),

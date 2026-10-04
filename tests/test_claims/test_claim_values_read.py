@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.claim_reads import ClaimReadBatchRequestV1, ClaimValuesRequestV1
+from cruxible_client.contracts.claim_reads import ClaimReadBatchRequest, ClaimValuesRequest
 from cruxible_core.service.claims import claim_reads
 from cruxible_core.service.claims.claim_reads import (
     service_read_claim_batch,
@@ -28,7 +28,7 @@ def test_values_match_full_views_and_slot_statuses(tmp_path: Path, monkeypatch) 
     instance, _owner = seed_claims(tmp_path)
     full = service_read_claim_batch(
         instance,
-        request=ClaimReadBatchRequestV1(subject_paths=SUBJECTS, evaluation_time=EVALUATION_TIME),
+        request=ClaimReadBatchRequest(subject_paths=SUBJECTS, evaluation_time=EVALUATION_TIME),
     )
     expected = {view.envelope["identity"].removeprefix("Claim:"): view for view in full.claims}
 
@@ -38,7 +38,7 @@ def test_values_match_full_views_and_slot_statuses(tmp_path: Path, monkeypatch) 
     monkeypatch.setattr(claim_reads, "materialize_playbill_claim_view", unused)
     result = service_read_claim_values(
         instance,
-        request=ClaimValuesRequestV1(subject_paths=SUBJECTS, evaluation_time=EVALUATION_TIME),
+        request=ClaimValuesRequest(subject_paths=SUBJECTS, evaluation_time=EVALUATION_TIME),
     )
 
     assert result.coordinate == full.coordinate
@@ -70,7 +70,7 @@ def test_values_selection_is_bounded_to_the_requested_predicates(tmp_path: Path)
     instance, _owner = seed_claims(tmp_path)
     result = service_read_claim_values(
         instance,
-        request=ClaimValuesRequestV1(
+        request=ClaimValuesRequest(
             subject_paths=SUBJECTS,
             predicates=("project.work_item.nonexistent",),
             evaluation_time=EVALUATION_TIME,
@@ -136,15 +136,15 @@ def test_values_select_every_subject_of_one_kind(tmp_path: Path) -> None:
     instance, _owner = seed_claims(tmp_path)
     by_paths = service_read_claim_values(
         instance,
-        request=ClaimValuesRequestV1(subject_paths=SUBJECTS, evaluation_time=EVALUATION_TIME),
+        request=ClaimValuesRequest(subject_paths=SUBJECTS, evaluation_time=EVALUATION_TIME),
     )
     by_kind = service_read_claim_values(
         instance,
-        request=ClaimValuesRequestV1.for_kind("project.work_item", evaluation_time=EVALUATION_TIME),
+        request=ClaimValuesRequest.for_kind("project.work_item", evaluation_time=EVALUATION_TIME),
     )
     other_kind = service_read_claim_values(
         instance,
-        request=ClaimValuesRequestV1.for_kind("project.milestone", evaluation_time=EVALUATION_TIME),
+        request=ClaimValuesRequest.for_kind("project.milestone", evaluation_time=EVALUATION_TIME),
     )
 
     assert by_kind.values == by_paths.values
@@ -157,13 +157,13 @@ def test_values_select_every_subject_of_one_kind(tmp_path: Path) -> None:
 
 
 def test_values_request_selects_paths_or_one_kind_never_both() -> None:
-    named = ClaimValuesRequestV1.for_kind("project.work_item", subject_ids=("wi-42",))
+    named = ClaimValuesRequest.for_kind("project.work_item", subject_ids=("wi-42",))
     assert named.subject_paths == (SUBJECTS[0],)
     assert named.subject_kind is None
     with pytest.raises(ValueError, match="either explicit subject paths or one subject kind"):
-        ClaimValuesRequestV1(subject_paths=SUBJECTS, subject_kind="project.work_item")
+        ClaimValuesRequest(subject_paths=SUBJECTS, subject_kind="project.work_item")
     with pytest.raises(ValueError, match="either explicit subject paths or one subject kind"):
-        ClaimValuesRequestV1()
+        ClaimValuesRequest()
 
 
 def test_claim_lists_filter_by_subject_kind(tmp_path: Path) -> None:

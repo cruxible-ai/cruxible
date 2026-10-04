@@ -12,9 +12,9 @@ from datetime import timedelta
 from pathlib import Path
 from typing import cast
 
-from cruxible_client.contracts.change_control import PlaybillStateCoordinateV1
+from cruxible_client.contracts.change_control import PlaybillStateCoordinate
 from cruxible_client.contracts.primitives import new_id
-from cruxible_client.contracts.repairs import RepairOperationV1
+from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_client.contracts.runtime_credentials import (
     RUNTIME_CREDENTIAL_PROOF_MAX_SKEW_SECONDS,
 )
@@ -52,19 +52,19 @@ _CREDENTIAL_STATE_COLUMNS = (
 
 #: Called with the state a change is about to write over, inside the write's
 #: own transaction: R12's pin check (`StateChange.observe`).
-StateObserver = Callable[[PlaybillStateCoordinateV1], None]
+StateObserver = Callable[[PlaybillStateCoordinate], None]
 
 
-def credential_state(credential_id: str, row: sqlite3.Row | None) -> PlaybillStateCoordinateV1:
+def credential_state(credential_id: str, row: sqlite3.Row | None) -> PlaybillStateCoordinate:
     """The state coordinate of one credential (its whole stored row)."""
 
     state = None if row is None else {name: row[name] for name in _CREDENTIAL_STATE_COLUMNS}
-    return PlaybillStateCoordinateV1.of(f"runtime_credential:{credential_id}", state)
+    return PlaybillStateCoordinate.of(f"runtime_credential:{credential_id}", state)
 
 
 def _credential_set_state(
     conn: sqlite3.Connection, instance_id: str, *, principal_id: str | None, scope: str
-) -> PlaybillStateCoordinateV1:
+) -> PlaybillStateCoordinate:
     """The state coordinate of the credentials a mint or recovery adds to."""
 
     rows = conn.execute(
@@ -76,7 +76,7 @@ def _credential_set_state(
         """,
         (instance_id, principal_id, principal_id),
     ).fetchall()
-    return PlaybillStateCoordinateV1.of(
+    return PlaybillStateCoordinate.of(
         f"runtime_credentials:{instance_id}/{scope}", [list(row) for row in rows]
     )
 
@@ -146,7 +146,7 @@ def _proof_replayed() -> PrincipalRefusedError:
         "runtime_credential.principal_proof_replayed",
         "this signed consent already minted a credential; repair: sign a fresh "
         "one with `cruxible credential mint --principal-id ID --key-dir DIR`",
-        repair=RepairOperationV1(operation="credential.mint"),
+        repair=RepairOperation(operation="credential.mint"),
     )
 
 
@@ -301,7 +301,7 @@ class RuntimeCredentialStore:
         )
         return self.commit_prepared_credential(created, proof_digest=proof_digest)
 
-    def mint_state(self, record: RuntimeCredentialRecord) -> PlaybillStateCoordinateV1:
+    def mint_state(self, record: RuntimeCredentialRecord) -> PlaybillStateCoordinate:
         """The state a mint of ``record`` adds to: its principal's credentials."""
 
         with self._connect() as conn:
@@ -310,7 +310,7 @@ class RuntimeCredentialStore:
     @staticmethod
     def mint_state_conn(
         conn: sqlite3.Connection, record: RuntimeCredentialRecord
-    ) -> PlaybillStateCoordinateV1:
+    ) -> PlaybillStateCoordinate:
         return _credential_set_state(
             conn,
             record.instance_id,
@@ -318,7 +318,7 @@ class RuntimeCredentialStore:
             scope=f"principal:{record.principal_id or '-'}",
         )
 
-    def credential_state(self, credential_id: str) -> PlaybillStateCoordinateV1:
+    def credential_state(self, credential_id: str) -> PlaybillStateCoordinate:
         """One credential's state coordinate, as a revoke or rotate would see it."""
 
         with self._connect() as conn:

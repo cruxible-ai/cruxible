@@ -26,10 +26,10 @@ from typing import Literal, cast
 
 from cruxible_client.contracts.canonical import canonical_digest
 from cruxible_client.contracts.claim_type_upgrade import (
-    ClaimTypeUpgradeRefusalV1,
-    ClaimTypeUpgradeRequestV1,
-    ClaimTypeUpgradeResultV1,
-    ClaimTypeUpgradeV1,
+    ClaimTypeUpgrade,
+    ClaimTypeUpgradeRefusal,
+    ClaimTypeUpgradeRequest,
+    ClaimTypeUpgradeResult,
 )
 from cruxible_client.contracts.claim_types import (
     ClaimType,
@@ -40,7 +40,7 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_core.claims.claim_type_migrations import (
-    ClaimTypeDependentDispositionV3,
+    ClaimTypeDependentDisposition,
     ClaimTypeMigrationError,
     build_dependent_closure_candidate,
     dependent_closure_inventory,
@@ -63,8 +63,8 @@ _PreV7Format = Literal[
 
 
 def _to_v7(
-    claim_type: ClaimType, lineages: _Lineages, request: ClaimTypeUpgradeRequestV1
-) -> tuple[ClaimType, ClaimTypeUpgradeV1]:
+    claim_type: ClaimType, lineages: _Lineages, request: ClaimTypeUpgradeRequest
+) -> tuple[ClaimType, ClaimTypeUpgrade]:
     widened: tuple[str, ...] = ()
     identity_ruled = claim_type
     if claim_type.artifact_format != "playbill-claim-type-v6":
@@ -80,7 +80,7 @@ def _to_v7(
         ),
     )
     successor = ClaimType.model_validate(payload)
-    return successor, ClaimTypeUpgradeV1(
+    return successor, ClaimTypeUpgrade(
         claim_type=claim_type.identity.qualified,
         # The caller only moves ClaimTypes before v7.
         from_format=cast(_PreV7Format, claim_type.artifact_format),
@@ -92,10 +92,10 @@ def _to_v7(
 def service_upgrade_claim_types(
     instance: PlaybillInstance,
     *,
-    request: ClaimTypeUpgradeRequestV1,
+    request: ClaimTypeUpgradeRequest,
     actor_id: str,
     timestamp: str,
-) -> ClaimTypeUpgradeResultV1:
+) -> ClaimTypeUpgradeResult:
     """Propose (or preview) the change set moving live ClaimTypes to v7.
 
     The change set carries every dependent Claim, so it previews unless
@@ -117,10 +117,10 @@ def _upgrade(
     instance: PlaybillInstance,
     mode: ChangeMode,
     *,
-    request: ClaimTypeUpgradeRequestV1,
+    request: ClaimTypeUpgradeRequest,
     actor_id: str,
     timestamp: str,
-) -> ClaimTypeUpgradeResultV1:
+) -> ClaimTypeUpgradeResult:
     assert mode.head is not None
     base = mode.head
     if base.compiler not in (AUTHORITY_VERBS_COMPILER, GOVERNED_TRIGGERS_COMPILER):
@@ -131,9 +131,9 @@ def _upgrade(
     lineages = _Lineages(instance, AcceptedCoordinate.from_internal(base))
     wanted = set(request.claim_types)
     changed: dict[str, bytes] = {}
-    upgraded: list[ClaimTypeUpgradeV1] = []
+    upgraded: list[ClaimTypeUpgrade] = []
     unchanged: list[str] = []
-    refused: list[ClaimTypeUpgradeRefusalV1] = []
+    refused: list[ClaimTypeUpgradeRefusal] = []
     for predicate in sorted(wanted, key=lambda item: item.encode("utf-8")):
         try:
             present = claim_type_path(predicate) in tree
@@ -141,7 +141,7 @@ def _upgrade(
             present = False
         if not present:
             refused.append(
-                ClaimTypeUpgradeRefusalV1(
+                ClaimTypeUpgradeRefusal(
                     claim_type=f"ClaimType:{predicate}", reason="no accepted ClaimType"
                 )
             )
@@ -152,7 +152,7 @@ def _upgrade(
         if claim_type.lifecycle.state != "live":
             if wanted:
                 refused.append(
-                    ClaimTypeUpgradeRefusalV1(
+                    ClaimTypeUpgradeRefusal(
                         claim_type=claim_type.identity.qualified, reason="retired"
                     )
                 )
@@ -164,16 +164,14 @@ def _upgrade(
             successor, entry = _to_v7(claim_type, lineages, request)
         except (_Refused, PlaybillFormatError, ValueError) as error:
             refused.append(
-                ClaimTypeUpgradeRefusalV1(
-                    claim_type=claim_type.identity.qualified, reason=str(error)
-                )
+                ClaimTypeUpgradeRefusal(claim_type=claim_type.identity.qualified, reason=str(error))
             )
             continue
         changed[path] = render_claim_type(successor)
         upgraded.append(entry)
     refused.sort(key=lambda item: item.claim_type.encode("utf-8"))
     if not changed:
-        return ClaimTypeUpgradeResultV1(
+        return ClaimTypeUpgradeResult(
             status="unchanged",
             unchanged=tuple(unchanged),
             refused=tuple(refused),
@@ -188,12 +186,12 @@ def _upgrade(
             changed=changed,
             inventory=inventory,
             dispositions=tuple(
-                ClaimTypeDependentDispositionV3(identity=item.identity, disposition="successor")
+                ClaimTypeDependentDisposition(identity=item.identity, disposition="successor")
                 for item in inventory
             ),
         )
     except ClaimTypeMigrationError as error:
-        return ClaimTypeUpgradeResultV1(
+        return ClaimTypeUpgradeResult(
             status="would_block" if mode.previewing else "blocked",
             upgraded=tuple(upgraded),
             unchanged=tuple(unchanged),
@@ -232,7 +230,7 @@ def _upgrade(
         candidate_tree=candidate,
         timestamp=timestamp,
     )
-    return ClaimTypeUpgradeResultV1(
+    return ClaimTypeUpgradeResult(
         status=admitted.status,
         proposal_id=admitted.proposal_id,
         upgraded=tuple(upgraded),

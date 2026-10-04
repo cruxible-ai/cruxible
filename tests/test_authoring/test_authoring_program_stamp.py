@@ -9,8 +9,8 @@ import pytest
 from cruxible_client.contracts.authoring.models import (
     AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST,
     AUTHORING_SDK_VERSION,
-    AuthoringProgramOperationV1,
-    AuthoringProgramStampV1,
+    AuthoringProgramOperation,
+    AuthoringProgramStamp,
     authoring_program_digest,
 )
 from cruxible_core.authoring.coordinator import (
@@ -27,12 +27,12 @@ from tests.test_authoring.test_authoring_preflight import (
 )
 
 
-def _stamp(operation: str = "claim") -> AuthoringProgramStampV1:
-    return AuthoringProgramStampV1(
+def _stamp(operation: str = "claim") -> AuthoringProgramStamp:
+    return AuthoringProgramStamp(
         program_digest=authoring_program_digest(
             sdk_contract_snapshot_digest=AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST,
             operations=(
-                AuthoringProgramOperationV1(
+                AuthoringProgramOperation(
                     operation=operation,
                     decisions={"subject": "project.work_item/wi-42"},
                 ),

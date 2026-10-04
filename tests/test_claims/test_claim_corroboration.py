@@ -8,14 +8,14 @@ from cruxible_client.contracts.claim_types import (
     claim_type_path,
 )
 from cruxible_client.contracts.policies import (
-    ClaimAdmissionPolicyV1,
-    CorroborationRequirementV1,
+    ClaimAdmissionPolicy,
+    CorroborationRequirement,
 )
 from cruxible_client.contracts.query.definitions import query_definition_digest
 from cruxible_client.contracts.query.grammar import (
-    QueryEntryV1,
-    QueryParameterDeclarationV1,
-    QueryParameterRefV1,
+    QueryEntry,
+    QueryParameterDeclaration,
+    QueryParameterRef,
 )
 from cruxible_core.proposals.proposals import (
     _corroboration_parameters,
@@ -47,13 +47,13 @@ def _accepted_type() -> AcceptedClaimType:
 
 def _bound_query(*, value_type: str = "string"):  # type: ignore[no-untyped-def]
     query = single_status_query(
-        entry=QueryEntryV1(
+        entry=QueryEntry(
             binding="item",
             subject_kinds=("project.work_item",),
-            subject_id=QueryParameterRefV1(parameter="claim_subject_id"),
+            subject_id=QueryParameterRef(parameter="claim_subject_id"),
         ),
         parameters=(
-            QueryParameterDeclarationV1(
+            QueryParameterDeclaration(
                 name="claim_subject_id",
                 value_type=value_type,  # type: ignore[arg-type]
             ),
@@ -62,10 +62,10 @@ def _bound_query(*, value_type: str = "string"):  # type: ignore[no-untyped-def]
     return accepted_query(query)
 
 
-def _policy(query_digest: str, *, min_count: int = 1) -> ClaimAdmissionPolicyV1:
-    return ClaimAdmissionPolicyV1(
+def _policy(query_digest: str, *, min_count: int = 1) -> ClaimAdmissionPolicy:
+    return ClaimAdmissionPolicy(
         corroboration_requirements=(
-            CorroborationRequirementV1(
+            CorroborationRequirement(
                 requirement_id="status-present",
                 query_definition_digest=query_digest,
                 min_count=min_count,

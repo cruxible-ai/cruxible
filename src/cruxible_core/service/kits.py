@@ -32,31 +32,31 @@ from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.kits import (
     KIT_ARTIFACT_PREFIXES,
     KIT_RECEIPT_DOCUMENT_KIND,
-    InstalledKitV1,
-    KitArtifactBytesV1,
-    KitArtifactV1,
-    KitBundleV1,
-    KitInstalledArtifactV1,
-    KitManifestV1,
-    KitPathPlanV1,
-    KitReceiptV1,
-    PlaybillKitAddRequestV1,
-    PlaybillKitBuildRequestV1,
-    PlaybillKitBuildResultV1,
-    PlaybillKitChangeResultV1,
-    PlaybillKitRemoveRequestV1,
-    PlaybillKitStatusV1,
+    InstalledKit,
+    KitArtifact,
+    KitArtifactBytes,
+    KitBundle,
+    KitInstalledArtifact,
+    KitManifest,
+    KitPathPlan,
+    KitReceipt,
+    PlaybillKitAddRequest,
+    PlaybillKitBuildRequest,
+    PlaybillKitBuildResult,
+    PlaybillKitChangeResult,
+    PlaybillKitRemoveRequest,
+    PlaybillKitStatus,
     kit_artifact_path_allowed,
     kit_receipt_document_id,
 )
-from cruxible_client.contracts.repairs import RepairOperationV1
+from cruxible_client.contracts.repairs import RepairOperation
 from cruxible_core.claims.artifact_references import (
     move_references,
     referenced_digests,
     referenced_identities,
 )
 from cruxible_core.claims.claim_type_migrations import (
-    ClaimTypeDependentDispositionV3,
+    ClaimTypeDependentDisposition,
     ClaimTypeMigrationError,
     build_dependent_closure_candidate,
     dependent_closure_inventory,
@@ -182,15 +182,15 @@ def _dependency_order(
 
 
 def service_build_kit(
-    instance: PlaybillInstance, request: PlaybillKitBuildRequestV1
-) -> PlaybillKitBuildResultV1:
+    instance: PlaybillInstance, request: PlaybillKitBuildRequest
+) -> PlaybillKitBuildResult:
     """Export owned definitions at the accepted head as one release of ``kit_id``."""
 
     tree = instance.immutable_tree_at(instance.accepted_coordinate().git_oid)
-    return PlaybillKitBuildResultV1(bundle=build_kit(tree, request))
+    return PlaybillKitBuildResult(bundle=build_kit(tree, request))
 
 
-def build_kit(tree: Mapping[str, bytes], request: PlaybillKitBuildRequestV1) -> KitBundleV1:
+def build_kit(tree: Mapping[str, bytes], request: PlaybillKitBuildRequest) -> KitBundle:
     """Export the owned definitions of one accepted tree as a self-contained release.
 
     Owned live definitions and everything they pin become lineage-free
@@ -231,24 +231,24 @@ def build_kit(tree: Mapping[str, bytes], request: PlaybillKitBuildRequestV1) -> 
         if digest != states[path].artifact_digest:
             remap[states[path].artifact_digest] = digest
         built[path] = content
-    manifest = KitManifestV1(
+    manifest = KitManifest(
         kit_id=request.kit_id,
         version=request.version,
         owns=request.owns,
         artifacts=tuple(
-            KitArtifactV1(
+            KitArtifact(
                 path=path, artifact_digest=_artifact_state(path, built[path]).artifact_digest
             )
             for path in sorted(built)
         ),
     )
-    return KitBundleV1(
+    return KitBundle(
         manifest=manifest,
-        artifacts=tuple(KitArtifactBytesV1.of(path, built[path]) for path in sorted(built)),
+        artifacts=tuple(KitArtifactBytes.of(path, built[path]) for path in sorted(built)),
     )
 
 
-def _verify_bundle(bundle: KitBundleV1) -> dict[str, bytes]:
+def _verify_bundle(bundle: KitBundle) -> dict[str, bytes]:
     contents = bundle.contents()
     digests = bundle.manifest.digests()
     for path, content in contents.items():
@@ -264,14 +264,14 @@ def _verify_bundle(bundle: KitBundleV1) -> dict[str, bytes]:
 
 def _receipt_at(
     instance: PlaybillInstance, path: str, raw: bytes, kit_id: str
-) -> tuple[DocumentShell, KitReceiptV1] | None:
+) -> tuple[DocumentShell, KitReceipt] | None:
     """The receipt at ``path``, or None when an ordinary Document holds that name."""
 
     shell = parse_document(raw, path=path)
     if shell.document_kind != KIT_RECEIPT_DOCUMENT_KIND:
         return None
     body = instance.body_store().read(shell.body_digest, access=_RECEIPT_ACCESS)
-    receipt = KitReceiptV1.model_validate_json(body)
+    receipt = KitReceipt.model_validate_json(body)
     if receipt.kit_id != kit_id:
         raise ProposalIntegrityError(f"{path} records kit {receipt.kit_id}, not {kit_id}")
     return shell, receipt
@@ -279,7 +279,7 @@ def _receipt_at(
 
 def _read_receipt(
     instance: PlaybillInstance, tree: Mapping[str, bytes], kit_id: str
-) -> tuple[DocumentShell, KitReceiptV1] | None:
+) -> tuple[DocumentShell, KitReceipt] | None:
     path = document_path(kit_receipt_document_id(kit_id))
     raw = tree.get(path)
     if raw is None:
@@ -292,7 +292,7 @@ def _read_receipt(
     return found
 
 
-def _receipts(instance: PlaybillInstance, tree: Mapping[str, bytes]) -> Iterator[KitReceiptV1]:
+def _receipts(instance: PlaybillInstance, tree: Mapping[str, bytes]) -> Iterator[KitReceipt]:
     for path in sorted(tree):
         if path.startswith("documents/kit-") and path.endswith(".json"):
             kit_id = path.removeprefix("documents/kit-").removesuffix(".json")
@@ -313,7 +313,7 @@ class _Diff:
     """One release diffed against one accepted tree."""
 
     def __init__(self) -> None:
-        self.plan: list[KitPathPlanV1] = []
+        self.plan: list[KitPathPlan] = []
         self.writes: dict[str, bytes] = {}
         # Release digest -> the digest this instance holds (or will) for that path.
         self.installed: dict[str, str] = {}
@@ -340,18 +340,18 @@ def _diff_release(
         current = tree.get(path)
         if current is None:
             content, digest = _render(path, payload)
-            diff.plan.append(KitPathPlanV1(path=path, action="add", detail=tag))
+            diff.plan.append(KitPathPlan(path=path, action="add", detail=tag))
             diff.writes[path] = content
             diff.installed[release_digest] = digest
             continue
         current_state = _artifact_state(path, current)
         if current_state.lifecycle.state != "live":
             diff.plan.append(
-                KitPathPlanV1(path=path, action="conflict", detail="retired in this instance")
+                KitPathPlan(path=path, action="conflict", detail="retired in this instance")
             )
             continue
         if _without_lifecycle(json.loads(current)) == _without_lifecycle(payload):
-            diff.plan.append(KitPathPlanV1(path=path, action="unchanged", detail=tag))
+            diff.plan.append(KitPathPlan(path=path, action="unchanged", detail=tag))
             diff.installed[release_digest] = current_state.artifact_digest
             continue
         if carried:
@@ -363,7 +363,7 @@ def _diff_release(
                     payload, predecessor=current_state.artifact_digest, state="live"
                 ),
             )
-            diff.plan.append(KitPathPlanV1(path=path, action="replace"))
+            diff.plan.append(KitPathPlan(path=path, action="replace"))
             diff.writes[path] = content
             diff.installed[release_digest] = digest
             continue
@@ -371,7 +371,7 @@ def _diff_release(
             detail = "edited since the kit installed it"
         else:
             detail = "already defined outside this kit"
-        diff.plan.append(KitPathPlanV1(path=path, action="conflict", detail=detail))
+        diff.plan.append(KitPathPlan(path=path, action="conflict", detail=detail))
     return diff, owned
 
 
@@ -389,7 +389,7 @@ def _retire_dropped(
         state = _artifact_state(path, current)
         if state.artifact_digest != installed_digest:
             diff.plan.append(
-                KitPathPlanV1(
+                KitPathPlan(
                     path=path, action="conflict", detail="edited since the kit installed it"
                 )
             )
@@ -400,14 +400,14 @@ def _retire_dropped(
                     json.loads(current), predecessor=state.artifact_digest, state="retired"
                 ),
             )
-            diff.plan.append(KitPathPlanV1(path=path, action="retire"))
+            diff.plan.append(KitPathPlan(path=path, action="retire"))
             diff.writes[path] = content
 
 
 def _settle_dependents(
     tree: Mapping[str, bytes],
     diff: _Diff,
-    overrides: Mapping[str, ClaimTypeDependentDispositionV3],
+    overrides: Mapping[str, ClaimTypeDependentDisposition],
 ) -> tuple[dict[str, bytes], list[str]]:
     """Every write, plus one successor for each accepted dependent they change.
 
@@ -445,9 +445,7 @@ def _settle_dependents(
             item.triggering_identity.qualified not in retired
             and "successor" in item.permitted_dispositions
         ):
-            chosen = ClaimTypeDependentDispositionV3(
-                identity=item.identity, disposition="successor"
-            )
+            chosen = ClaimTypeDependentDisposition(identity=item.identity, disposition="successor")
         if chosen is None:
             refused.append(f"{qualified} needs a disposition")
             continue
@@ -463,7 +461,7 @@ def _settle_dependents(
     paths = {item.identity.qualified: item.path for item in inventory}
     for outcome in normalized:
         diff.plan.append(
-            KitPathPlanV1(
+            KitPathPlan(
                 path=paths[outcome.identity.qualified],
                 action="carry" if outcome.disposition == "successor" else "retire",
                 detail="depends on a changed kit definition",
@@ -473,7 +471,7 @@ def _settle_dependents(
 
 
 def _ownership_conflicts(
-    instance: PlaybillInstance, tree: Mapping[str, bytes], manifest: KitManifestV1
+    instance: PlaybillInstance, tree: Mapping[str, bytes], manifest: KitManifest
 ) -> list[str]:
     conflicts = []
     for receipt in _receipts(instance, tree):
@@ -492,13 +490,13 @@ def _submit(
     *,
     kit_id: str,
     version: str | None,
-    receipt: KitReceiptV1,
+    receipt: KitReceipt,
     previous_receipt: DocumentShell | None,
     writes: Mapping[str, bytes],
-    plan: tuple[KitPathPlanV1, ...],
+    plan: tuple[KitPathPlan, ...],
     actor_id: str,
     timestamp: str,
-) -> PlaybillKitChangeResultV1:
+) -> PlaybillKitChangeResult:
     assert mode.head is not None
     base = mode.head
     body = instance.store_document_body(pretty_canonical_bytes(receipt.model_dump(mode="json")))
@@ -543,7 +541,7 @@ def _submit(
         # preview says the commit would.
         assert pending.candidate_digest is not None
         evidence = instance.proposal_evidence().read_candidate(pending.candidate_digest)
-        return PlaybillKitChangeResultV1(
+        return PlaybillKitChangeResult(
             kit_id=kit_id,
             version=version,
             status="would_propose" if mode.previewing else "proposed",
@@ -560,7 +558,7 @@ def _submit(
         candidate_tree=candidate,
         timestamp=timestamp,
     )
-    return PlaybillKitChangeResultV1(
+    return PlaybillKitChangeResult(
         kit_id=kit_id,
         version=version,
         status=admitted.status,
@@ -572,7 +570,7 @@ def _submit(
     )
 
 
-def _overrides(request: PlaybillKitAddRequestV1) -> dict[str, ClaimTypeDependentDispositionV3]:
+def _overrides(request: PlaybillKitAddRequest) -> dict[str, ClaimTypeDependentDisposition]:
     chosen = {}
     for item in request.dependents:
         disposition = item.disposition
@@ -581,7 +579,7 @@ def _overrides(request: PlaybillKitAddRequestV1) -> dict[str, ClaimTypeDependent
                 f"{item.identity.qualified}: a kit install carries or retires a dependent; "
                 f"{disposition} needs its own change set"
             )
-        chosen[item.identity.qualified] = ClaimTypeDependentDispositionV3(
+        chosen[item.identity.qualified] = ClaimTypeDependentDisposition(
             identity=ArtifactIdentity.model_validate(item.identity.model_dump()),
             disposition=disposition,
             claim_retirement_reason=item.claim_retirement_reason,
@@ -592,11 +590,11 @@ def _overrides(request: PlaybillKitAddRequestV1) -> dict[str, ClaimTypeDependent
 
 def service_add_kit(
     instance: PlaybillInstance,
-    request: PlaybillKitAddRequestV1,
+    request: PlaybillKitAddRequest,
     *,
     actor_id: str,
     timestamp: str,
-) -> PlaybillKitChangeResultV1:
+) -> PlaybillKitChangeResult:
     """Propose the diff that brings this instance to one kit release.
 
     Derived across many artifacts, so it previews unless ``dry_run`` is false.
@@ -616,11 +614,11 @@ def service_add_kit(
 def _add_kit(
     instance: PlaybillInstance,
     mode: ChangeMode,
-    request: PlaybillKitAddRequestV1,
+    request: PlaybillKitAddRequest,
     *,
     actor_id: str,
     timestamp: str,
-) -> PlaybillKitChangeResultV1:
+) -> PlaybillKitChangeResult:
     assert mode.head is not None
     bundle = request.bundle
     manifest = bundle.manifest
@@ -640,7 +638,7 @@ def _add_kit(
         blocked.append(f"{len(conflicts)} path(s) conflict")
     plan = tuple(sorted(diff.plan, key=lambda item: item.path))
     if blocked:
-        return PlaybillKitChangeResultV1(
+        return PlaybillKitChangeResult(
             kit_id=manifest.kit_id,
             version=manifest.version,
             status="would_block" if mode.previewing else "blocked",
@@ -649,7 +647,7 @@ def _add_kit(
             coordinate=mode.coordinate,
         )
     if not writes and receipt is not None and receipt.content_digest == manifest.content_digest:
-        return PlaybillKitChangeResultV1(
+        return PlaybillKitChangeResult(
             kit_id=manifest.kit_id,
             version=manifest.version,
             status="unchanged",
@@ -657,9 +655,9 @@ def _add_kit(
             coordinate=mode.coordinate,
         )
 
-    def entries(paths: set[str]) -> tuple[KitInstalledArtifactV1, ...]:
+    def entries(paths: set[str]) -> tuple[KitInstalledArtifact, ...]:
         return tuple(
-            KitInstalledArtifactV1(
+            KitInstalledArtifact(
                 path=item.path,
                 release_digest=item.artifact_digest,
                 installed_digest=diff.installed[item.artifact_digest],
@@ -668,7 +666,7 @@ def _add_kit(
             if item.path in paths
         )
 
-    receipt_body = KitReceiptV1(
+    receipt_body = KitReceipt(
         kit_id=manifest.kit_id,
         version=manifest.version,
         content_digest=manifest.content_digest,
@@ -693,11 +691,11 @@ def _add_kit(
 
 def service_remove_kit(
     instance: PlaybillInstance,
-    request: PlaybillKitRemoveRequestV1,
+    request: PlaybillKitRemoveRequest,
     *,
     actor_id: str,
     timestamp: str,
-) -> PlaybillKitChangeResultV1:
+) -> PlaybillKitChangeResult:
     """Propose retiring every definition a kit owns; carried ones stay.
 
     Derived across many artifacts, so it previews unless ``dry_run`` is false.
@@ -717,11 +715,11 @@ def service_remove_kit(
 def _remove_kit(
     instance: PlaybillInstance,
     mode: ChangeMode,
-    request: PlaybillKitRemoveRequestV1,
+    request: PlaybillKitRemoveRequest,
     *,
     actor_id: str,
     timestamp: str,
-) -> PlaybillKitChangeResultV1:
+) -> PlaybillKitChangeResult:
     assert mode.head is not None
     tree = instance.immutable_tree_at(mode.head.git_oid)
     found = _read_receipt(instance, tree, request.kit_id)
@@ -733,14 +731,14 @@ def _remove_kit(
         raise RequestRefusedError(
             "playbill.kit.not_installed",
             f"kit {request.kit_id!r} is not installed; installed: {named}",
-            repair=RepairOperationV1(operation="playbill.kit.status"),
+            repair=RepairOperation(operation="playbill.kit.status"),
         )
     shell, receipt = found
     diff = _Diff()
     _retire_dropped(tree, receipt.digests(), set(), diff)
     plan = tuple(diff.plan)
     if any(item.action == "conflict" for item in plan):
-        return PlaybillKitChangeResultV1(
+        return PlaybillKitChangeResult(
             kit_id=request.kit_id,
             version=receipt.version,
             status="would_block" if mode.previewing else "blocked",
@@ -762,7 +760,7 @@ def _remove_kit(
     )
 
 
-def service_kit_status(instance: PlaybillInstance) -> PlaybillKitStatusV1:
+def service_kit_status(instance: PlaybillInstance) -> PlaybillKitStatus:
     tree = instance.immutable_tree_at(instance.accepted_coordinate().git_oid)
     kits = []
     for receipt in _receipts(instance, tree):
@@ -774,7 +772,7 @@ def service_kit_status(instance: PlaybillInstance) -> PlaybillKitStatusV1:
             if path not in tree or _artifact_state(path, tree[path]).artifact_digest != digest
         )
         kits.append(
-            InstalledKitV1(
+            InstalledKit(
                 kit_id=receipt.kit_id,
                 version=receipt.version,
                 content_digest=receipt.content_digest,
@@ -782,4 +780,4 @@ def service_kit_status(instance: PlaybillInstance) -> PlaybillKitStatusV1:
                 drifted=drifted,
             )
         )
-    return PlaybillKitStatusV1(kits=tuple(kits))
+    return PlaybillKitStatus(kits=tuple(kits))

@@ -8,15 +8,15 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.procedures.results import (
-    ProcedureAdmissionRefusalV1,
-    ProcedureNodeRefusalV1,
+    ProcedureAdmissionRefusal,
+    ProcedureNodeRefusal,
 )
-from cruxible_client.contracts.procedures.windows import LineTriggerBindingV1
+from cruxible_client.contracts.procedures.windows import LineTriggerBinding
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import ensure_utc
 
 
-class LineTriggerCheckRequestV1(BaseModel):
+class LineTriggerCheckRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     since: datetime | None = Field(
         default=None, description="Reads VALIDITY WINDOW. inclusive eligibility bound."
@@ -38,13 +38,13 @@ class LineTriggerCheckRequestV1(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _range(self) -> LineTriggerCheckRequestV1:
+    def _range(self) -> LineTriggerCheckRequest:
         if self.since is not None and self.until is not None and self.since >= self.until:
             raise ValueError("trigger range must be increasing")
         return self
 
 
-class LineTriggerVersionV1(BaseModel):
+class LineTriggerVersion(BaseModel):
     """One exact version of a live Trigger aimed at a Line."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -52,10 +52,10 @@ class LineTriggerVersionV1(BaseModel):
     artifact_digest: str
 
 
-class LineTriggerOccurrenceV1(BaseModel):
+class LineTriggerOccurrence(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     occurrence_id: str
-    binding: LineTriggerBindingV1 | None
+    binding: LineTriggerBinding | None
     eligible_at: datetime = Field(description="Reads VALIDITY WINDOW.")
     admitted_run_id: str | None = None
     pending: bool = False
@@ -64,32 +64,32 @@ class LineTriggerOccurrenceV1(BaseModel):
     )
 
 
-class LineTriggerCheckResultV1(BaseModel):
+class LineTriggerCheckResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     line: str
     line_identity_digest: str
     line_artifact_digest: str
     occurrence_epoch: int
     #: The live Triggers aimed at the Line that this check evaluated.
-    triggers: tuple[LineTriggerVersionV1, ...] = ()
+    triggers: tuple[LineTriggerVersion, ...] = ()
     coordinate: AcceptedCoordinate
     status: Literal["met", "not_met", "incomplete"]
-    occurrences: tuple[LineTriggerOccurrenceV1, ...] = ()
+    occurrences: tuple[LineTriggerOccurrence, ...] = ()
     checked_since: datetime | None = Field(default=None, description="Reads VALIDITY WINDOW.")
     checked_until: datetime = Field(description="Reads VALIDITY WINDOW.")
     cursor: str | None = None
     detail: str | None = None
 
 
-class LineEvaluateRequestV1(LineTriggerCheckRequestV1):
+class LineEvaluateRequest(LineTriggerCheckRequest):
     @model_validator(mode="after")
-    def _explicit_range(self) -> LineEvaluateRequestV1:
+    def _explicit_range(self) -> LineEvaluateRequest:
         if self.since is None or self.until is None:
             raise ValueError("historical evaluation requires an explicit since and until")
         return self
 
 
-class LineDispatchRequestV1(BaseModel):
+class LineDispatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     occurrence_id: str | None = None
     limit: int = Field(default=1, ge=1, le=100)
@@ -103,7 +103,7 @@ class LineDispatchRequestV1(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _retry_target(self) -> LineDispatchRequestV1:
+    def _retry_target(self) -> LineDispatchRequest:
         if self.retry and (self.occurrence_id is None or self.limit != 1):
             raise ValueError("retry requires one explicit occurrence_id and limit=1")
         return self
@@ -112,7 +112,7 @@ class LineDispatchRequestV1(BaseModel):
 #: Why an arm stopped admitting work on its own. Every reason but `disarmed`
 #: is the daemon noticing that the authority, Line or Triggers the arm was
 #: bound to no longer hold; rearming is the explicit way back.
-LineArmStopReasonV1 = Literal[
+LineArmStopReason = Literal[
     "disarmed",
     "line_changed",
     "trigger_changed",
@@ -143,7 +143,7 @@ def is_current_arm_principal_record(record: object) -> bool:
 #: What one arm or disarm call did. Arming an arm that already stands with the
 #: same credential, Line version and epoch, or disarming a stopped arm, changes
 #: nothing and says so.
-LineArmOutcomeV1 = Literal[
+LineArmOutcome = Literal[
     "armed",
     "rearmed",
     "already_armed",
@@ -155,7 +155,7 @@ LineArmOutcomeV1 = Literal[
 ]
 
 
-class LineArmPrincipalV1(BaseModel):
+class LineArmPrincipal(BaseModel):
     """Who armed a Line: the authority rechecked before every automatic admission.
 
     ``runtime_credential`` retains only the credential's identifier, never a
@@ -174,13 +174,13 @@ class LineArmPrincipalV1(BaseModel):
     label: str
 
     @model_validator(mode="after")
-    def _credential(self) -> LineArmPrincipalV1:
+    def _credential(self) -> LineArmPrincipal:
         if (self.kind == "runtime_credential") != (self.credential_id is not None):
             raise ValueError("exactly a runtime-credential arm names its credential")
         return self
 
 
-class LineArmV1(BaseModel):
+class LineArm(BaseModel):
     """One Line's automatic dispatch: armed forward-only, or why it stopped.
 
     An armed Line admits the occurrences its daemon matched since it was armed
@@ -197,17 +197,17 @@ class LineArmV1(BaseModel):
     occurrence_epoch: int
     #: The Trigger versions the arm matches; any change to the Triggers aimed
     #: at the Line stops it (`trigger_changed`).
-    triggers: tuple[LineTriggerVersionV1, ...] = ()
+    triggers: tuple[LineTriggerVersion, ...] = ()
     state: Literal["armed", "stopped"]
     armed_at: datetime = Field(description="Reads VALIDITY WINDOW.")
-    armed_by: LineArmPrincipalV1
+    armed_by: LineArmPrincipal
     evaluated_until: datetime = Field(description="Reads VALIDITY WINDOW.")
     stopped_at: datetime | None = Field(default=None, description="Reads VALIDITY WINDOW.")
-    stop_reason: LineArmStopReasonV1 | None = None
+    stop_reason: LineArmStopReason | None = None
     detail: str | None = None
     pending_automatic: int = Field(default=0, ge=0)
     pending_explicit: int = Field(default=0, ge=0)
-    outcome: LineArmOutcomeV1 | None = Field(
+    outcome: LineArmOutcome | None = Field(
         default=None,
         description=(
             "What this arm or disarm call did; absent on a status read. "
@@ -223,7 +223,7 @@ class LineArmV1(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _state(self) -> LineArmV1:
+    def _state(self) -> LineArm:
         if (self.state == "stopped") != (self.stop_reason is not None):
             raise ValueError("exactly a stopped arm names why it stopped")
         if (self.state == "stopped") != (self.stopped_at is not None):
@@ -231,15 +231,15 @@ class LineArmV1(BaseModel):
         return self
 
 
-class LineDispatchItemV1(BaseModel):
+class LineDispatchItem(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     occurrence_id: str
     status: Literal["admitted", "pending", "blocked", "rejected", "superseded"]
     run_id: str | None = None
     detail: str | None = None
-    refusal: ProcedureAdmissionRefusalV1 | ProcedureNodeRefusalV1 | None = None
+    refusal: ProcedureAdmissionRefusal | ProcedureNodeRefusal | None = None
 
 
-class LineDispatchResultV1(BaseModel):
+class LineDispatchResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-    items: tuple[LineDispatchItemV1, ...] = ()
+    items: tuple[LineDispatchItem, ...] = ()

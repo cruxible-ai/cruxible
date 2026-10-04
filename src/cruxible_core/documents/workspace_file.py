@@ -26,8 +26,8 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_client.contracts.workspace_file import (
-    SourceReadReceiptV1,
-    WorkspaceFileSourceRequestV1,
+    SourceReadReceipt,
+    WorkspaceFileSourceRequest,
 )
 
 WorkspaceFilePathClass = Literal[
@@ -74,7 +74,7 @@ def workspace_binding_digest(*, instance_id: str, canonical_root: Path) -> str:
 @dataclass(frozen=True)
 class WorkspaceFileReadResultV1:
     provider_input: CanonicalValue
-    receipt: SourceReadReceiptV1
+    receipt: SourceReadReceipt
 
 
 class WorkspaceFileReader:
@@ -220,7 +220,7 @@ class WorkspaceFileReader:
 
     def read(
         self,
-        request: WorkspaceFileSourceRequestV1,
+        request: WorkspaceFileSourceRequest,
         *,
         run_id: str,
         admission_binding_digest: str,
@@ -235,7 +235,7 @@ class WorkspaceFileReader:
                 "cloud_no_mounts", "cloud profile has no daemon-local workspace mounts"
             )
         try:
-            request = WorkspaceFileSourceRequestV1.model_validate(request)
+            request = WorkspaceFileSourceRequest.model_validate(request)
         except ValueError as exc:
             raise WorkspaceFileReadRefused(
                 "path_grammar", "workspace path is not normalized relative POSIX"
@@ -322,7 +322,7 @@ class WorkspaceFileReader:
                     "changed_during_read", "workspace source path cannot be confirmed"
                 ) from exc
             try:
-                WorkspaceFileSourceRequestV1._relative_path(real_relative_path)
+                WorkspaceFileSourceRequest._relative_path(real_relative_path)
             except ValueError as exc:
                 raise WorkspaceFileReadRefused(
                     "path_grammar", "real workspace path is not normalized relative POSIX"
@@ -363,7 +363,7 @@ class WorkspaceFileReader:
             "playbill-procedure-run-provider-input-v1",
             {"value": provider_input},
         ).tagged
-        receipt = SourceReadReceiptV1(
+        receipt = SourceReadReceipt(
             run_id=run_id,
             admission_binding_digest=admission_binding_digest,
             occurrence_path=occurrence_path,

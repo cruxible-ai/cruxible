@@ -62,7 +62,7 @@ def test_cli_reports_the_new_proposal_without_hiding_its_source(monkeypatch) -> 
     class StubClient:
         def resolve_playbill_proposal_selector(self, instance_id, selector):
             assert (instance_id, selector) == ("inst_test", SOURCE_ID)
-            return contracts.PlaybillProposalSelectorResultV1(
+            return contracts.PlaybillProposalSelectorResult(
                 selector=selector, proposal_id=SOURCE_ID
             )
 
@@ -244,7 +244,7 @@ def test_withdraw_cli_resolves_the_selector_and_reports_the_recorded_reason(
     class StubClient:
         def resolve_playbill_proposal_selector(self, instance_id, selector):
             assert (instance_id, selector) == ("inst_test", "sha256:11111111")
-            return contracts.PlaybillProposalSelectorResultV1(
+            return contracts.PlaybillProposalSelectorResult(
                 selector=selector, proposal_id=SOURCE_ID
             )
 
@@ -284,7 +284,7 @@ def test_withdraw_cli_says_when_the_answer_is_the_earlier_one(
 ) -> None:
     class StubClient:
         def resolve_playbill_proposal_selector(self, _instance_id, selector):
-            return contracts.PlaybillProposalSelectorResultV1(
+            return contracts.PlaybillProposalSelectorResult(
                 selector=selector, proposal_id=SOURCE_ID
             )
 

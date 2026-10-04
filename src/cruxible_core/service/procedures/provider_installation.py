@@ -22,23 +22,23 @@ from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.provider_installation import (
-    PlaybillProviderCatalogV1,
-    PlaybillProviderInstallRequestV1,
-    PlaybillProviderInstallResultV1,
-    ProviderOperationReadinessV1,
-    ProviderPackageSummaryV1,
+    PlaybillProviderCatalog,
+    PlaybillProviderInstallRequest,
+    PlaybillProviderInstallResult,
+    ProviderOperationReadiness,
+    ProviderPackageSummary,
 )
 from cruxible_client.contracts.provider_interfaces import (
-    AcceptedProviderInterfaceRegistrationV1,
-    ProviderInterfaceRegistrationV2,
+    AcceptedProviderInterfaceRegistration,
+    ProviderInterfaceRegistration,
     parse_provider_interface,
     provider_interface_digest,
     provider_interface_path,
     render_provider_interface,
 )
 from cruxible_client.contracts.providers import (
-    ProviderLocalDistributionPinV1,
-    ProviderV3,
+    Provider,
+    ProviderLocalDistributionPin,
     parse_provider,
     provider_digest,
     provider_path,
@@ -112,7 +112,7 @@ def _repository_projects(operator: ProviderRuntimeOperator) -> dict[str, Path]:
     return result
 
 
-def service_provider_catalog(operator: ProviderRuntimeOperator) -> PlaybillProviderCatalogV1:
+def service_provider_catalog(operator: ProviderRuntimeOperator) -> PlaybillProviderCatalog:
     packages = []
     for name, path in _repository_projects(operator).items():
         descriptors = tuple(path.glob("src/*/registration.json"))
@@ -125,13 +125,13 @@ def service_provider_catalog(operator: ProviderRuntimeOperator) -> PlaybillProvi
         if bundle.manifest.distribution.name != name:
             raise ConfigError("provider catalog name differs from package manifest")
         packages.append(
-            ProviderPackageSummaryV1(
+            ProviderPackageSummary(
                 name=name,
                 version=bundle.manifest.distribution.version,
                 interfaces=tuple(sorted(bundle.definitions)),
             )
         )
-    return PlaybillProviderCatalogV1(
+    return PlaybillProviderCatalog(
         packages=tuple(sorted(packages, key=lambda item: item.name)),
         detail=None
         if operator.config.provider_repository
@@ -193,7 +193,7 @@ def _index_source_files(
 def _source_files(
     instance: PlaybillInstance,
     operator: ProviderRuntimeOperator,
-    request: PlaybillProviderInstallRequestV1,
+    request: PlaybillProviderInstallRequest,
     custody: Path,
     release: IndexRelease | None,
 ) -> tuple[Path, Path, tuple[Path, ...]]:
@@ -255,7 +255,7 @@ def _source_files(
 def _definition_changes(
     instance: PlaybillInstance,
     document: PackageRegistrationDocumentV1,
-    provider: ProviderV3,
+    provider: Provider,
     accepted_oid: str,
 ) -> tuple[Mapping[str, bytes], tuple[str, ...]]:
     tree = instance.immutable_tree_at(accepted_oid)
@@ -272,7 +272,7 @@ def _definition_changes(
             if current.model_dump(exclude={"lifecycle"}) == desired.model_dump(
                 exclude={"lifecycle"}
             ):
-                desired = ProviderInterfaceRegistrationV2.model_validate(current.model_dump())
+                desired = ProviderInterfaceRegistration.model_validate(current.model_dump())
             else:
                 desired = desired.model_copy(
                     update={
@@ -286,7 +286,7 @@ def _definition_changes(
         if raw != current_bytes:
             candidate[path] = raw
             changed.append(path)
-    assert isinstance(provider.runtime_artifact.distribution, ProviderLocalDistributionPinV1)
+    assert isinstance(provider.runtime_artifact.distribution, ProviderLocalDistributionPin)
     assert provider.runtime_artifact.local_env is not None
     desired_provider = document.provider_definition(
         distribution=provider.runtime_artifact.distribution,
@@ -312,7 +312,7 @@ def _definition_changes(
         if current_provider.model_dump(exclude={"lifecycle"}) == desired_provider.model_dump(
             exclude={"lifecycle"}
         ):
-            desired_provider = ProviderV3.model_validate(current_provider.model_dump())
+            desired_provider = Provider.model_validate(current_provider.model_dump())
         else:
             desired_provider = desired_provider.model_copy(
                 update={
@@ -372,10 +372,10 @@ def service_install_provider(
     instance: PlaybillInstance,
     *,
     operator: ProviderRuntimeOperator,
-    request: PlaybillProviderInstallRequestV1,
+    request: PlaybillProviderInstallRequest,
     actor_id: str,
     timestamp: str,
-) -> PlaybillProviderInstallResultV1:
+) -> PlaybillProviderInstallResult:
     instance.require_writable()
     enforce_customer_code_execution_supported()
     if instance.accepted_coordinate().compiler not in (
@@ -453,12 +453,12 @@ def service_install_provider(
 def _preview_installation(
     instance: PlaybillInstance,
     mode: ChangeMode,
-    request: PlaybillProviderInstallRequestV1,
+    request: PlaybillProviderInstallRequest,
     identifier: str,
     directory: Path,
     actor_id: str,
     timestamp: str,
-) -> PlaybillProviderInstallResultV1:
+) -> PlaybillProviderInstallResult:
     """What an install would do, with nothing fetched, built, registered or proposed (R12).
 
     The package's definitions come out of preparing it -- fetching its wheels
@@ -477,7 +477,7 @@ def _preview_installation(
         "coordinate": AcceptedCoordinate.from_internal(mode.head),
     }
     if not prepared_path.is_file():
-        return PlaybillProviderInstallResultV1(
+        return PlaybillProviderInstallResult(
             installation_id=identifier,
             provider_id=name,
             status="would_install",
@@ -493,10 +493,10 @@ def _preview_installation(
         )
     saved = json.loads(prepared_path.read_bytes())
     document = PackageRegistrationDocumentV1.model_validate(saved["document"])
-    provider = ProviderV3.model_validate(saved["provider"])
+    provider = Provider.model_validate(saved["provider"])
     candidate_tree, changed = _definition_changes(instance, document, provider, mode.head.git_oid)
     if not changed:
-        return PlaybillProviderInstallResultV1(
+        return PlaybillProviderInstallResult(
             installation_id=identifier,
             provider_id=provider.identity.name,
             status="would_install",
@@ -524,7 +524,7 @@ def _preview_installation(
         candidate_tree=candidate_tree,
         timestamp=timestamp,
     )
-    return PlaybillProviderInstallResultV1(
+    return PlaybillProviderInstallResult(
         installation_id=identifier,
         provider_id=provider.identity.name,
         status="would_install",
@@ -545,7 +545,7 @@ def _preview_installation(
 def _install_locked(
     instance: PlaybillInstance,
     operator: ProviderRuntimeOperator,
-    request: PlaybillProviderInstallRequestV1,
+    request: PlaybillProviderInstallRequest,
     identifier: str,
     directory: Path,
     actor_id: str,
@@ -554,13 +554,13 @@ def _install_locked(
     release: IndexRelease | None,
     *,
     confirm_head: Callable[[str], None],
-) -> PlaybillProviderInstallResultV1:
+) -> PlaybillProviderInstallResult:
     prepared_path = directory / "prepared.json"
     rewrite_prepared = False
     if prepared_path.exists():
         saved = json.loads(prepared_path.read_bytes())
         document = PackageRegistrationDocumentV1.model_validate(saved["document"])
-        provider = ProviderV3.model_validate(saved["provider"])
+        provider = Provider.model_validate(saved["provider"])
         configured = ProviderDeploymentConfigV1.model_validate(saved["deployment"])
         # If publication completed before a crash updating prepared.json, reuse
         # the newer operational proof. Never downgrade it to the cached V1 proof.
@@ -625,7 +625,7 @@ def _install_locked(
         registry = ProviderBucketClassifierRegistry()
         installations = []
         for registration in document.interface_registrations():
-            accepted = AcceptedProviderInterfaceRegistrationV1(
+            accepted = AcceptedProviderInterfaceRegistration(
                 path=provider_interface_path(registration.interface_id),
                 registration=registration,
                 artifact_digest=provider_interface_digest(registration).tagged,
@@ -711,7 +711,7 @@ def _install_locked(
                 submitted.evaluation.verdict != "candidate"
                 or submitted.evaluation.candidate_digest is None
             ):
-                return PlaybillProviderInstallResultV1(
+                return PlaybillProviderInstallResult(
                     installation_id=identifier,
                     provider_id=provider.identity.name,
                     status="blocked",
@@ -767,13 +767,13 @@ def _install_locked(
         if implementation.interface_id not in prepared_interfaces and not missing:
             missing.append("compatible local Python implementation")
         operations.append(
-            ProviderOperationReadinessV1(
+            ProviderOperationReadiness(
                 interface_id=implementation.interface_id,
                 installed=implementation.interface_id in prepared_interfaces,
                 missing_requirements=tuple(missing),
             )
         )
-    return PlaybillProviderInstallResultV1(
+    return PlaybillProviderInstallResult(
         installation_id=identifier,
         provider_id=provider.identity.name,
         status="blocked"

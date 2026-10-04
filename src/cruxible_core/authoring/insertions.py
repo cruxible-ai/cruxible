@@ -16,7 +16,7 @@ from typing import NoReturn
 
 from cruxible_client.contracts.authoring.models import (
     AuthoringIntentV1,
-    InsertionExpectationV2,
+    InsertionExpectation,
     build_insertion_terminal_tombstone_v2,
     insertion_result_key,
     update_insertion_expectation_v2,
@@ -43,10 +43,10 @@ def _raise(error: type[InsertionProtocolError], message: str) -> NoReturn:
 
 
 def mark_publication_claim_accepted(
-    expectation: InsertionExpectationV2,
+    expectation: InsertionExpectation,
     *,
     accepted_coordinate: object,
-) -> InsertionExpectationV2:
+) -> InsertionExpectation:
 
     coordinate = AcceptedCoordinate.model_validate(accepted_coordinate)
     if expectation.state == "pending":
@@ -62,12 +62,12 @@ def mark_publication_claim_accepted(
 
 def _terminal_v2(
     intent: AuthoringIntentV1,
-    expectation: InsertionExpectationV2,
+    expectation: InsertionExpectation,
     *,
     state: str,
     finalized_at: datetime,
     horizon: timedelta = DEFAULT_INSERTION_TOMBSTONE_HORIZON,
-) -> InsertionExpectationV2:
+) -> InsertionExpectation:
     finalized = ensure_utc(finalized_at)
     # The tombstone commits source bytes only for `bound`, because only a bound
     # publication asserts that the block landed. A depublication does not lose
@@ -103,11 +103,11 @@ def _terminal_v2(
 
 def mark_publication_terminal(
     intent: AuthoringIntentV1,
-    expectation: InsertionExpectationV2,
+    expectation: InsertionExpectation,
     *,
     state: str,
     finalized_at: datetime,
-) -> InsertionExpectationV2:
+) -> InsertionExpectation:
     if expectation.state == state:
         return expectation
     # `bound` is terminal for everything except being taken down. It was

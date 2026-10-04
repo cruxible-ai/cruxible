@@ -10,13 +10,13 @@ from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.captures import (
+    CaptureEnvelope,
     CaptureEnvelopeV1,
-    CaptureEnvelopeV2,
     CaptureFormatError,
+    CaptureRunCoordinate,
     CaptureRunCoordinateV1,
-    CaptureRunCoordinateV2,
-    ProcedureEgressCaptureEvidenceV1,
-    ProviderInvocationCaptureEvidenceV1,
+    ProcedureEgressCaptureEvidence,
+    ProviderInvocationCaptureEvidence,
     ProviderProducerReceiptResolution,
     build_cas_capture,
     build_provider_external_capture_v2,
@@ -27,8 +27,8 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.providers import provider_digest
 from cruxible_client.contracts.source_references import (
-    CasSourceReferenceV1,
-    EvidenceCommitmentV1,
+    CasSourceReference,
+    EvidenceCommitment,
 )
 from tests.core_support._pc_c_support import NOW, body_store, capture_contract, digest, provider
 from tests.core_support.p2b4_unit1._support import provider_capture_fixture
@@ -108,7 +108,7 @@ def test_provider_v2_round_trips_and_replays_complete_runtime_evidence(tmp_path:
 
     parsed = parse_capture_envelope(render_capture_envelope(built.envelope))
 
-    assert isinstance(parsed, CaptureEnvelopeV2)
+    assert isinstance(parsed, CaptureEnvelope)
     assert parsed == built.envelope
     assert (
         verify_capture(
@@ -161,9 +161,9 @@ def test_every_provider_evidence_edge_is_mutation_sensitive(
         producer=fixture.producer,
         bound_generation=fixture.bound_generation,
     )
-    assert isinstance(built.envelope, CaptureEnvelopeV2)
+    assert isinstance(built.envelope, CaptureEnvelope)
     evidence = built.envelope.production_evidence
-    assert isinstance(evidence, ProviderInvocationCaptureEvidenceV1)
+    assert isinstance(evidence, ProviderInvocationCaptureEvidence)
     replacement: object = digest("mutation", field)
     if field == "interface_id":
         replacement = "mutated.interface"
@@ -209,7 +209,7 @@ def test_capture_validation_refusal_exposes_only_the_law_clause(tmp_path: Path) 
         bound_generation=fixture.bound_generation,
     )
     evidence = built.envelope.production_evidence
-    assert isinstance(evidence, ProviderInvocationCaptureEvidenceV1)
+    assert isinstance(evidence, ProviderInvocationCaptureEvidence)
     mutated = built.envelope.model_copy(
         update={
             "production_evidence": evidence.model_copy(
@@ -294,7 +294,7 @@ def test_v1_and_v2_run_id_grammars_are_disjoint_successors() -> None:
 
     with pytest.raises(ValidationError, match="run_id"):
         CaptureRunCoordinateV1.model_validate(common)
-    assert CaptureRunCoordinateV2.model_validate(common).run_id == common["run_id"]
+    assert CaptureRunCoordinate.model_validate(common).run_id == common["run_id"]
 
 
 def test_provider_result_cannot_diverge_from_the_durable_invocation_receipt(
@@ -347,16 +347,16 @@ def test_invocation_receipt_cannot_be_crossed_with_another_admitted_occurrence(
 def test_procedure_evidence_arm_prohibits_provider_only_fields() -> None:
     receipt_digest = digest("producer-receipt", "procedure")
     procedure_digest = digest("procedure", "one")
-    envelope = CaptureEnvelopeV2(
+    envelope = CaptureEnvelope(
         capture_contract_digest=digest("contract", "one"),
-        source=CasSourceReferenceV1(content_digest=digest("body", "one")),
-        commitment=EvidenceCommitmentV1(
+        source=CasSourceReference(content_digest=digest("body", "one")),
+        commitment=EvidenceCommitment(
             digest_kind="exact_bytes",
             digest=digest("body", "one"),
             byte_length=1,
             materialization="cas",
         ),
-        run_coordinate=CaptureRunCoordinateV2(
+        run_coordinate=CaptureRunCoordinate(
             run_kind="procedure",
             run_id="run-procedure",
             bound_generation=digest("generation", "one"),
@@ -367,7 +367,7 @@ def test_procedure_evidence_arm_prohibits_provider_only_fields() -> None:
         producer=ArtifactIdentity(kind="Procedure", name="demo"),
         producer_binding_digest=procedure_digest,
         observed_at=NOW,
-        production_evidence=ProcedureEgressCaptureEvidenceV1(
+        production_evidence=ProcedureEgressCaptureEvidence(
             procedure_producer_receipt_digest=receipt_digest
         ),
     )
@@ -375,7 +375,7 @@ def test_procedure_evidence_arm_prohibits_provider_only_fields() -> None:
     payload["production_evidence"]["implementation_digest"] = digest("implementation", "bad")
 
     with pytest.raises(ValidationError):
-        CaptureEnvelopeV2.model_validate(payload)
+        CaptureEnvelope.model_validate(payload)
 
 
 def test_union_refuses_unknown_tags_and_noncanonical_wire(tmp_path: Path) -> None:
@@ -420,4 +420,4 @@ def test_each_workspace_interface_requires_the_host_read_receipt(tmp_path, revis
         WORKSPACE_FILE_INTERFACE_DIGEST if revision == 1 else WORKSPACE_FILE_INTERFACE_V2_DIGEST
     )
     with pytest.raises(ValidationError, match="source-read"):
-        ProviderInvocationCaptureEvidenceV1.model_validate(evidence)
+        ProviderInvocationCaptureEvidence.model_validate(evidence)

@@ -51,7 +51,7 @@ from cruxible_client.authoring.examples import (
     authoring_example_note,
     document_example,
 )
-from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
+from cruxible_client.authoring.inputs import AuthoringInput, ClaimInput
 from cruxible_client.authoring.signing import sign_runtime_credential_mint
 from cruxible_client.authoring.sources import (
     compile_client_source_context,
@@ -77,33 +77,33 @@ from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_attestations import (
     ClaimStance,
-    PreparedClaimAttestationRequestV1,
+    PreparedClaimAttestationRequest,
 )
-from cruxible_client.contracts.claim_type_upgrade import ClaimTypeUpgradeRequestV1
+from cruxible_client.contracts.claim_type_upgrade import ClaimTypeUpgradeRequest
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.errors import (
     CanonicalEncodingError,
     PlaybillKeyError,
     PlaybillSinceRequestInvalid,
 )
-from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeRequestV1
+from cruxible_client.contracts.evidence_rule_upgrade import EvidenceRuleUpgradeRequest
 from cruxible_client.contracts.get_display import (
     GET_CLI_HISTORY_VALUE_WIDTH,
     GET_CLI_VALUE_WIDTH,
     get_value_display,
 )
 from cruxible_client.contracts.kits import (
-    PlaybillKitAddRequestV1,
-    PlaybillKitBuildRequestV1,
-    PlaybillKitChangeResultV1,
-    PlaybillKitRemoveRequestV1,
+    PlaybillKitAddRequest,
+    PlaybillKitBuildRequest,
+    PlaybillKitChangeResult,
+    PlaybillKitRemoveRequest,
 )
-from cruxible_client.contracts.procedures.results import ProcedureHaltTerminalV1
-from cruxible_client.contracts.procedures.windows import TriggerEventReferenceV1
+from cruxible_client.contracts.procedures.results import ProcedureHaltTerminal
+from cruxible_client.contracts.procedures.windows import TriggerEventReference
 from cruxible_client.contracts.proposal_models import canonical_proposal_ref_name
-from cruxible_client.contracts.provider_installation import PlaybillProviderInstallRequestV1
-from cruxible_client.contracts.repairs import RepairOperationV1, render_served_repair
-from cruxible_client.contracts.resolution_contracts import ResolutionContractReferenceV1
+from cruxible_client.contracts.provider_installation import PlaybillProviderInstallRequest
+from cruxible_client.contracts.repairs import RepairOperation, render_served_repair
+from cruxible_client.contracts.resolution_contracts import ResolutionContractReference
 from cruxible_client.contracts.source_catalog import SourceCatalog, SourceCompilationBundle
 from cruxible_client.contracts.temporal import parse_datetime
 from cruxible_client.contracts.types import PrincipalKind, PrincipalRecord
@@ -111,9 +111,9 @@ from cruxible_client.contracts.validation_messages import validation_summary
 from cruxible_client.contracts.write import (
     Change,
     FileEvidence,
-    PlaybillRetireRequestV1,
-    PlaybillSetRequestV1,
-    PlaybillWriteRequestV1,
+    PlaybillRetireRequest,
+    PlaybillSetRequest,
+    PlaybillWriteRequest,
     SubjectRef,
     WriteOutcome,
 )
@@ -127,8 +127,8 @@ from cruxible_client.kits import (
     write_kit_directory,
 )
 from cruxible_client.provider_installation import install_provider_package
-from cruxible_core.claims.claim_type_inputs import ClaimTypeInputV1, claim_type_input_template
-from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequest
+from cruxible_core.claims.claim_type_inputs import ClaimTypeInputRecord, claim_type_input_template
+from cruxible_core.claims.claim_type_migrations import ClaimTypeMigrationRequestAny
 from cruxible_core.cli.commands._common import (
     _activate_server_instance,
     _dispatch_cli,
@@ -153,7 +153,7 @@ from cruxible_core.cli.principal_settings import (
 )
 from cruxible_core.coverage.adapter import (
     WorkingPathBindingsV1,
-    WorkingSourceObservationV1,
+    WorkingSourceObservation,
 )
 from cruxible_core.coverage.claude_code import (
     PostToolUseResponseError,
@@ -161,8 +161,8 @@ from cruxible_core.coverage.claude_code import (
     post_tool_use_response,
     read_post_tool_use_event,
 )
-from cruxible_core.coverage.contracts import CoverageAccessProfileV1, CoverageResultV3
-from cruxible_core.coverage.indexes import CoverageScanBudgetV1
+from cruxible_core.coverage.contracts import CoverageAccessProfile, CoverageResultV3
+from cruxible_core.coverage.indexes import CoverageScanBudget
 from cruxible_core.coverage.middleware import (
     CoverageRuleTagError,
     CoverageWorkspaceConfig,
@@ -198,8 +198,8 @@ from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.ledger.signing import LocalEd25519ApprovalSigner
 from cruxible_core.server.config import get_runtime_bearer_token
 from cruxible_core.service.procedures.procedure_runs import (
-    LineRunRequestV1,
-    ProcedureBindRequestV1,
+    LineRunRequest,
+    ProcedureBindRequest,
 )
 from cruxible_core.service.proposals.review import (
     PlaybillProposalReview,
@@ -306,14 +306,14 @@ def _read_model(path: str, model: type[ResultT]) -> ResultT:
 
 
 def _read_since_access_profile(path: str) -> dict[str, Any]:
-    """Read a CoverageAccessProfileV1 file for since, filling model defaults.
+    """Read a CoverageAccessProfile file for since, filling model defaults.
 
     A file that is not a valid profile surfaces the same typed since refusal
     the daemon would give, before any request is built.
     """
     payload = _read_mapping(path)
     try:
-        return CoverageAccessProfileV1.model_validate(payload).model_dump(mode="json")
+        return CoverageAccessProfile.model_validate(payload).model_dump(mode="json")
     except ValidationError as exc:
         raise PlaybillSinceRequestInvalid.from_validation_errors(
             [
@@ -334,9 +334,9 @@ def _read_mapping(path: str) -> dict[str, Any]:
     return cast(dict[str, Any], payload)
 
 
-_AUTHORING_INPUT_ADAPTER: TypeAdapter[AuthoringInputV1] = TypeAdapter(AuthoringInputV1)
-_CLAIM_TYPE_MIGRATION_ADAPTER: TypeAdapter[ClaimTypeMigrationRequest] = TypeAdapter(
-    ClaimTypeMigrationRequest
+_AUTHORING_INPUT_ADAPTER: TypeAdapter[AuthoringInput] = TypeAdapter(AuthoringInput)
+_CLAIM_TYPE_MIGRATION_ADAPTER: TypeAdapter[ClaimTypeMigrationRequestAny] = TypeAdapter(
+    ClaimTypeMigrationRequestAny
 )
 
 
@@ -365,7 +365,7 @@ def _validation_path(location: tuple[object, ...]) -> str:
     return rendered
 
 
-def _read_authoring_input(path: str) -> AuthoringInputV1:
+def _read_authoring_input(path: str) -> AuthoringInput:
     payload = _read_mapping(path)
     try:
         return _AUTHORING_INPUT_ADAPTER.validate_python(payload)
@@ -467,7 +467,7 @@ def _emit_git_workspace_note(resolution: _LocalGitWorkspaceResult) -> None:
     _root_ctx_obj()["git_workspace_note"] = (
         None
         if resolution.note is None
-        else contracts.GitWorkspaceNoteV1(
+        else contracts.GitWorkspaceNote(
             code=resolution.note.code,
             cwd_workspace_root=str(resolution.note.cwd_workspace_root),
             inherited_workspace_root=str(resolution.note.inherited_workspace_root),
@@ -767,7 +767,7 @@ def attach_workspace(
         allow_local=False,
         command_name="playbill workspace attach",
     )
-    assert isinstance(registration, contracts.PlaybillHostWorkspaceRegistrationV1)
+    assert isinstance(registration, contracts.PlaybillHostWorkspaceRegistration)
     registered = registration.workspace_path
     if registration.status != "registered":
         attached = _dispatch_cli(
@@ -778,7 +778,7 @@ def attach_workspace(
             allow_local=False,
             command_name="playbill workspace attach",
         )
-        assert isinstance(attached, contracts.PlaybillHostWorkspaceAttachResultV1)
+        assert isinstance(attached, contracts.PlaybillHostWorkspaceAttachResult)
         if attached.status == "would_attach":
             if output_json:
                 _emit_json(attached.model_dump(mode="json"))
@@ -817,7 +817,7 @@ def attach_workspace(
         allow_local=False,
         command_name="playbill workspace attach",
     )
-    result = contracts.PlaybillWorkspaceAttachResultV1(
+    result = contracts.PlaybillWorkspaceAttachResult(
         instance_id=selected,
         workspace_root=str(workspace),
         config_path=str(config_path),
@@ -882,7 +882,7 @@ def detach_workspace(
         allow_local=False,
         command_name="playbill workspace detach",
     )
-    assert isinstance(result, contracts.PlaybillWorkspaceDetachResultV1)
+    assert isinstance(result, contracts.PlaybillWorkspaceDetachResult)
     if output_json:
         _emit_json(_json_receipt(result))
         return
@@ -918,7 +918,7 @@ def show_host(instance_id: str, output_json: bool) -> None:
         allow_local=False,
         command_name="playbill host show",
     )
-    assert isinstance(result, contracts.PlaybillHostInspectionV1)
+    assert isinstance(result, contracts.PlaybillHostInspection)
     transport = _active_server_transport()
     if output_json:
         payload = result.model_dump(mode="json")
@@ -1478,7 +1478,7 @@ def install_provider(
         if lock_path is not None or dependencies:
             raise click.UsageError("--lock and --dependency apply to a local wheel")
         package, pinned, version = package_or_wheel.partition("==")
-        request = PlaybillProviderInstallRequestV1(
+        request = PlaybillProviderInstallRequest(
             package=package,
             version=version if pinned else None,
             extras=tuple(sorted(set(extras))),
@@ -1513,7 +1513,7 @@ def kit_group() -> None:
     """Export and import definition kits."""
 
 
-def _echo_kit_change(result: PlaybillKitChangeResultV1) -> None:
+def _echo_kit_change(result: PlaybillKitChangeResult) -> None:
     version = "" if result.version is None else f" {result.version}"
     click.echo(f"{result.kit_id}{version}: {result.status}")
     for item in result.plan:
@@ -1559,7 +1559,7 @@ def build_kit(
     """Export this instance's owned definitions as one self-contained kit release."""
     if out.exists():
         raise click.UsageError(f"{out} already exists")
-    request = PlaybillKitBuildRequestV1(
+    request = PlaybillKitBuildRequest(
         kit_id=kit_id,
         version=version,
         owns=tuple(sorted(set(owns))),
@@ -1596,9 +1596,7 @@ def add_kit(
     by default; commit the preview with ``--commit --at OID``.
     """
     bundle, origin = resolve_kit(kit)
-    request = PlaybillKitAddRequestV1(
-        bundle=bundle, source=source or origin, dry_run=dry_run, at=at
-    )
+    request = PlaybillKitAddRequest(bundle=bundle, source=source or origin, dry_run=dry_run, at=at)
     result = _server_call(
         lambda client, instance_id: client.add_playbill_kit(instance_id, request),
         command_name="playbill kit add",
@@ -1698,7 +1696,7 @@ def kit_status(output_json: bool) -> None:
 @handle_errors
 def remove_kit(kit_id: str, dry_run: bool | None, at: str | None, output_json: bool) -> None:
     """Propose retiring every artifact KIT_ID installed (previews by default)."""
-    request = PlaybillKitRemoveRequestV1(kit_id=kit_id, dry_run=dry_run, at=at)
+    request = PlaybillKitRemoveRequest(kit_id=kit_id, dry_run=dry_run, at=at)
     result = _server_call(
         lambda client, instance_id: client.remove_playbill_kit(instance_id, request),
         command_name="playbill kit remove",
@@ -1765,11 +1763,11 @@ def capture_group() -> None:
 @click.option("--max-bytes", type=click.IntRange(min=0), default=4 * 1024 * 1024, show_default=True)
 @handle_errors
 def read_capture(capture_digest: str, max_bytes: int) -> None:
-    from cruxible_client.contracts.capture_reads import CaptureReadRequestV1
+    from cruxible_client.contracts.capture_reads import CaptureReadRequest
 
     result = _server_call(
         lambda client, instance_id: client.read_playbill_capture(
-            instance_id, CaptureReadRequestV1(capture_digest=capture_digest, max_bytes=max_bytes)
+            instance_id, CaptureReadRequest(capture_digest=capture_digest, max_bytes=max_bytes)
         ),
         command_name="playbill capture read",
     )
@@ -2700,7 +2698,7 @@ def claim_type_group() -> None:
 @click.option(
     "--template",
     is_flag=True,
-    help="Print one complete model-generated ClaimTypeInputV1 without contacting the daemon.",
+    help="Print one complete model-generated ClaimTypeInputRecord without contacting the daemon.",
 )
 @click.option("--name", "proposal_name")
 @change_control_options
@@ -2741,7 +2739,7 @@ def propose_claim_type(
         return
     assert input_path is not None
     try:
-        claim_type_input = ClaimTypeInputV1.model_validate(_read_mapping(input_path))
+        claim_type_input = ClaimTypeInputRecord.model_validate(_read_mapping(input_path))
     except ValidationError as exc:
         raise click.ClickException(
             "Invalid ClaimType input: "
@@ -2749,7 +2747,7 @@ def propose_claim_type(
                 f"{_validation_path(tuple(item['loc']))}: {item['msg']}"
                 for item in exc.errors(include_url=False)
             )
-            + ". Pass a complete ClaimTypeInputV1 whose evidence_admission_policy.rules "
+            + ". Pass a complete ClaimTypeInputRecord whose evidence_admission_policy.rules "
             "match its capture contracts"
         ) from exc
     input_result = _server_call(
@@ -2867,7 +2865,7 @@ def upgrade_claim_types(
     commit the preview with ``--commit --at OID``, then approve as usual.
     """
 
-    request = ClaimTypeUpgradeRequestV1.model_validate(
+    request = ClaimTypeUpgradeRequest.model_validate(
         {
             "claim_types": claim_types,
             "revision_evidence": revision_evidence,
@@ -2915,7 +2913,7 @@ def upgrade_evidence_rules(dry_run: bool | None, at: str | None, output_json: bo
     commit the preview with ``--commit --at OID``, then approve as usual.
     """
 
-    request = EvidenceRuleUpgradeRequestV1(dry_run=dry_run, at=at)
+    request = EvidenceRuleUpgradeRequest(dry_run=dry_run, at=at)
     result = _server_call(
         lambda client, instance_id: client.upgrade_playbill_evidence_rules(instance_id, request),
         command_name="playbill claim-type upgrade-evidence-rules",
@@ -2950,7 +2948,7 @@ def claim_group() -> None:
     "--request",
     "request_file",
     type=click.Path(exists=True, dir_okay=False),
-    help="Advanced: a ResolutionContractsRequestV1 file with an exact hypothesis reference.",
+    help="Advanced: a ResolutionContractsRequest file with an exact hypothesis reference.",
 )
 @json_option
 @handle_errors
@@ -2958,14 +2956,14 @@ def resolution_contracts(claim_id: str | None, request_file: str | None, output_
     """Find accepted tests of a Claim, by Claim ID (CLM-... or Claim:CLM-...).
 
     The daemon resolves the Claim's accepted version; `--request FILE` takes an
-    exact ClaimVersionReferenceV1 hypothesis instead.
+    exact ClaimVersionReference hypothesis instead.
     """
     if (claim_id is None) == (request_file is None):
         raise click.UsageError("provide exactly one of CLAIM_ID or --request FILE")
     request = (
-        _read_model(request_file, contracts.ResolutionContractsRequestV1)
+        _read_model(request_file, contracts.ResolutionContractsRequest)
         if request_file is not None
-        else contracts.ResolutionContractsRequestV1(hypothesis=cast(str, claim_id))
+        else contracts.ResolutionContractsRequest(hypothesis=cast(str, claim_id))
     )
     result = _server_call(
         lambda client, instance_id: client.resolution_contracts(instance_id, request=request),
@@ -2992,7 +2990,7 @@ def predict(request_file: str, output_json: bool) -> None:
     """Submit a governed resolution contract for an accepted Claim."""
 
     try:
-        request = contracts.PlaybillPredictRequestV2.model_validate(_read_mapping(request_file))
+        request = contracts.PlaybillPredictRequest.model_validate(_read_mapping(request_file))
     except ValidationError as exc:
         raise click.ClickException(
             f"Invalid prediction request: {validation_summary(exc)}"
@@ -3020,7 +3018,7 @@ def predict(request_file: str, output_json: bool) -> None:
     "request_file",
     type=click.Path(exists=True, dir_okay=False),
     help=(
-        "Advanced: a PlaybillSettleRequestV2 file (exact contract reference, anchor event, "
+        "Advanced: a PlaybillSettleRequest file (exact contract reference, anchor event, "
         "or terminal evidence)."
     ),
 )
@@ -3046,9 +3044,9 @@ def settle(
         )
     try:
         request = (
-            contracts.PlaybillSettleRequestV2.model_validate(_read_mapping(request_file))
+            contracts.PlaybillSettleRequest.model_validate(_read_mapping(request_file))
             if request_file is not None
-            else contracts.PlaybillSettleRequestV2(observation=observation)
+            else contracts.PlaybillSettleRequest(observation=observation)
         )
     except ValidationError as exc:
         raise click.ClickException(
@@ -3139,7 +3137,7 @@ def attest_claim(
         return append_prepared_claim_attestation(
             client,
             instance_id,
-            prepared=PreparedClaimAttestationRequestV1(
+            prepared=PreparedClaimAttestationRequest(
                 claim_id=claim_id.removeprefix("Claim:"),
                 attestation_basis="examined_existing",
                 stance=cast(ClaimStance, stance),
@@ -3808,7 +3806,7 @@ def set_value(
     if expect_absent and expect:
         raise click.UsageError("pass --expect or --expect-absent, not both")
     request = _write_request(
-        PlaybillSetRequestV1,
+        PlaybillSetRequest,
         {
             "subject": subject,
             "field": field,
@@ -3892,7 +3890,7 @@ def add_value(
     """
 
     request = _write_request(
-        PlaybillWriteRequestV1,
+        PlaybillWriteRequest,
         {
             "changes": [
                 {
@@ -3955,7 +3953,7 @@ def retire(
     """
 
     request = _write_request(
-        PlaybillRetireRequestV1,
+        PlaybillRetireRequest,
         {
             "target": target if field is None else {"subject": target, "field": field},
             "because": because,
@@ -4028,7 +4026,7 @@ def write_changes(
     if rationale is None:
         raise click.UsageError("give the write a reason: --because, or because in FILE")
     request = _write_request(
-        PlaybillWriteRequestV1,
+        PlaybillWriteRequest,
         {
             "changes": observe_changes(parsed.changes, workspace=Path(workspace_root)),
             "subject": parsed.subject,
@@ -4107,14 +4105,14 @@ def get_by_ref(
     ResolutionContract:<name>, Mandate:<name>.
     """
 
-    from cruxible_client.contracts.get_reads import PlaybillByteRangeV1, PlaybillGetRequestV1
+    from cruxible_client.contracts.get_reads import PlaybillByteRange, PlaybillGetRequest
 
     try:
-        request = PlaybillGetRequestV1.model_validate(
+        request = PlaybillGetRequest.model_validate(
             {
                 "ref": ref,
                 "detail": detail,
-                "range": None if byte_range is None else PlaybillByteRangeV1.parse(byte_range),
+                "range": None if byte_range is None else PlaybillByteRange.parse(byte_range),
                 "at": at_oid,
                 "evaluation_time": evaluation_time,
                 "surface": "cli",
@@ -4157,7 +4155,7 @@ def _write_body(request: Any, destination: Path, *, whole: bool) -> None:
 
     import base64
 
-    from cruxible_client.contracts.get_reads import GET_BODY_RANGE_MAX_BYTES, PlaybillByteRangeV1
+    from cruxible_client.contracts.get_reads import GET_BODY_RANGE_MAX_BYTES, PlaybillByteRange
 
     def read(window: Any, at: Any) -> Any:
         ranged = request.model_copy(update={"range": window, "at": at})
@@ -4169,7 +4167,7 @@ def _write_body(request: Any, destination: Path, *, whole: bool) -> None:
         return result
 
     first = read(
-        PlaybillByteRangeV1(start=0, end=GET_BODY_RANGE_MAX_BYTES) if whole else request.range,
+        PlaybillByteRange(start=0, end=GET_BODY_RANGE_MAX_BYTES) if whole else request.range,
         request.at,
     )
     body = first.body
@@ -4184,7 +4182,7 @@ def _write_body(request: Any, destination: Path, *, whole: bool) -> None:
     chunks.append(chunk(body))
     end = 0 if body.range is None else body.range.end
     while whole and end < body.size:
-        window = PlaybillByteRangeV1(start=end, end=min(end + GET_BODY_RANGE_MAX_BYTES, body.size))
+        window = PlaybillByteRange(start=end, end=min(end + GET_BODY_RANGE_MAX_BYTES, body.size))
         part = read(window, pinned).body
         chunks.append(chunk(part))
         end = part.range.end
@@ -4700,7 +4698,7 @@ def _follow_entry(spec: str, option: str) -> dict[str, str]:
     "spec_path",
     type=click.Path(exists=True, dir_okay=False),
     default=None,
-    help="A QueryDefinitionSpecV1 file (JSON or YAML).",
+    help="A QueryDefinitionSpec file (JSON or YAML).",
 )
 @click.option(
     "--status",
@@ -4792,13 +4790,13 @@ def query_group(
             params[key] = _query_param_value(raw)
     spec: object = None
     if spec_path is not None:
-        from cruxible_client.contracts.query.definitions import QueryDefinitionSpecV1
+        from cruxible_client.contracts.query.definitions import QueryDefinitionSpec
 
         try:
-            spec = QueryDefinitionSpecV1.model_validate(_read_mapping(spec_path))
+            spec = QueryDefinitionSpec.model_validate(_read_mapping(spec_path))
         except ValidationError as exc:
             raise click.ClickException(
-                f"{spec_path} is not a QueryDefinitionSpecV1: {_validation_problems(exc)}"
+                f"{spec_path} is not a QueryDefinitionSpec: {_validation_problems(exc)}"
             ) from exc
     fields: dict[str, object] = {
         "kind": ctx.meta.get("playbill_query_kind"),
@@ -4826,7 +4824,7 @@ def query_group(
         except ValueError as exc:
             raise click.BadParameter(str(exc), param_hint="--budgets") from exc
     try:
-        request = contracts.PlaybillQueryRequestV1.model_validate(fields)
+        request = contracts.PlaybillQueryRequest.model_validate(fields)
     except ValidationError as exc:
         raise click.ClickException(f"invalid query: {_validation_problems(exc)}") from exc
     result = _server_call(
@@ -4889,7 +4887,7 @@ def procedure_readiness(name: str, evaluation_time: str, output_json: bool) -> N
 @json_option
 @handle_errors
 def bind_procedure(name: str, request_file: str, output_json: bool) -> None:
-    request = _read_model(request_file, ProcedureBindRequestV1)
+    request = _read_model(request_file, ProcedureBindRequest)
     result = _server_call(
         lambda client, instance_id: client.bind_playbill_procedure(
             instance_id,
@@ -4910,7 +4908,7 @@ _POSITIONAL_REPAIR_ARGUMENTS = frozenset(
 def _cli_repair(repair: Any) -> str:
     """Render a served repair as the CLI command that performs it."""
 
-    if not isinstance(repair, RepairOperationV1) or not repair.operation.startswith("playbill."):
+    if not isinstance(repair, RepairOperation) or not repair.operation.startswith("playbill."):
         return render_served_repair(repair)
     parts = ["cruxible", *repair.operation.split(".")]
     for key, value in repair.arguments.items():
@@ -4941,7 +4939,7 @@ def _echo_run_outcome(result: contracts.PlaybillProcedureRunState, label: str) -
             click.echo(f"Repair: {_cli_repair(repair)}")
         elif isinstance(details, dict) and isinstance(details.get("repair"), str):
             click.echo(f"Repair: {details['repair']}")
-    elif isinstance(terminal, ProcedureHaltTerminalV1) and terminal.reason:
+    elif isinstance(terminal, ProcedureHaltTerminal) and terminal.reason:
         click.echo(f"Halted at {terminal.node_id}: {terminal.reason}")
     click.echo(f"Next: {result.next_operation['kind']}")
 
@@ -5043,9 +5041,9 @@ def run_procedure(
     event_file: str | None,
 ) -> None:
     resolution_contract = (
-        None if contract_file is None else _read_model(contract_file, ResolutionContractReferenceV1)
+        None if contract_file is None else _read_model(contract_file, ResolutionContractReference)
     )
-    trigger_event = None if event_file is None else _read_model(event_file, TriggerEventReferenceV1)
+    trigger_event = None if event_file is None else _read_model(event_file, TriggerEventReference)
     at = None if at_file is None else _read_model(at_file, AcceptedCoordinate)
     result = _server_call(
         lambda client, instance_id: client.run_playbill_procedure(
@@ -5114,7 +5112,7 @@ def procedure_measure(
     """Evaluate due measurements from real evidence; retry replays, never duplicates."""
 
     at = None if at_file is None else _read_model(at_file, AcceptedCoordinate)
-    request = contracts.PlaybillProcedureMeasureRequestV1(
+    request = contracts.PlaybillProcedureMeasureRequest(
         run_id=run_id,
         measurement_names=tuple(sorted(set(measurements), key=lambda item: item.encode())),
         evaluation_time=(
@@ -5164,7 +5162,7 @@ def procedure_readings(
 ) -> None:
     """Inspect measurement standing and retained readings. Read-only."""
 
-    request = contracts.PlaybillProcedureReadingsRequestV1(
+    request = contracts.PlaybillProcedureReadingsRequest(
         run_id=run_id,
         measurement_names=tuple(sorted(set(measurements), key=lambda item: item.encode())),
         limit=limit,
@@ -5214,9 +5212,9 @@ def check_line(
     cursor: str | None,
     output_json: bool,
 ) -> None:
-    from cruxible_client.contracts.line_dispatch import LineTriggerCheckRequestV1
+    from cruxible_client.contracts.line_dispatch import LineTriggerCheckRequest
 
-    request = LineTriggerCheckRequestV1.model_validate(
+    request = LineTriggerCheckRequest.model_validate(
         dict(since=since, until=until, limit=limit, cursor=cursor)
     )
     result = _server_call(
@@ -5325,9 +5323,9 @@ def line_status(line: str, output_json: bool) -> None:
 def evaluate_line(
     line: str, since: str, until: str, limit: int, cursor: str | None, output_json: bool
 ) -> None:
-    from cruxible_client.contracts.line_dispatch import LineEvaluateRequestV1
+    from cruxible_client.contracts.line_dispatch import LineEvaluateRequest
 
-    request = LineEvaluateRequestV1.model_validate(
+    request = LineEvaluateRequest.model_validate(
         dict(since=since, until=until, limit=limit, cursor=cursor)
     )
     result = _server_call(
@@ -5362,13 +5360,13 @@ def evaluate_line(
 def dispatch_line(
     line: str, occurrence_id: str | None, limit: int, retry: bool, output_json: bool
 ) -> None:
-    from cruxible_client.contracts.line_dispatch import LineDispatchRequestV1
+    from cruxible_client.contracts.line_dispatch import LineDispatchRequest
 
     result = _server_call(
         lambda client, instance_id: client.dispatch_playbill_line(
             instance_id,
             line,
-            request=LineDispatchRequestV1(occurrence_id=occurrence_id, limit=limit, retry=retry),
+            request=LineDispatchRequest(occurrence_id=occurrence_id, limit=limit, retry=retry),
         ),
         command_name="playbill line dispatch",
     )
@@ -5419,10 +5417,10 @@ def run_line(
     event_file: str | None,
 ) -> None:
     resolution_contract = (
-        None if contract_file is None else _read_model(contract_file, ResolutionContractReferenceV1)
+        None if contract_file is None else _read_model(contract_file, ResolutionContractReference)
     )
-    trigger_event = None if event_file is None else _read_model(event_file, TriggerEventReferenceV1)
-    request = LineRunRequestV1.model_validate(
+    trigger_event = None if event_file is None else _read_model(event_file, TriggerEventReference)
+    request = LineRunRequest.model_validate(
         {
             "line": line,
             "trigger": trigger,
@@ -5514,12 +5512,12 @@ def next_work(
         else evaluation_time
     )
     profile = (
-        CoverageAccessProfileV1(
+        CoverageAccessProfile(
             profile_id="cli-next",
             permitted_access_classes=("instance", "public"),
         ).model_dump(mode="json")
         if access_profile_path is None
-        else _read_model(access_profile_path, CoverageAccessProfileV1).model_dump(mode="json")
+        else _read_model(access_profile_path, CoverageAccessProfile).model_dump(mode="json")
     )
     workspace_observation = observe_playbill_next_workspace(Path(workspace_root))
 
@@ -5700,12 +5698,12 @@ def curation_list(
 ) -> None:
     observation = observe_playbill_next_workspace(Path(workspace_root))
     profile = (
-        CoverageAccessProfileV1(
+        CoverageAccessProfile(
             profile_id="cli-curation",
             permitted_access_classes=("instance", "public"),
         ).model_dump(mode="json")
         if access_profile_path is None
-        else _read_model(access_profile_path, CoverageAccessProfileV1).model_dump(mode="json")
+        else _read_model(access_profile_path, CoverageAccessProfile).model_dump(mode="json")
     )
 
     def _curation_at_scanned_coordinate(
@@ -5904,12 +5902,12 @@ def audit(
     """Read the deterministic verification patrol without changing governed state."""
 
     profile = (
-        CoverageAccessProfileV1(
+        CoverageAccessProfile(
             profile_id="cli-audit",
             permitted_access_classes=("instance", "public"),
         ).model_dump(mode="json")
         if access_profile_path is None
-        else _read_model(access_profile_path, CoverageAccessProfileV1).model_dump(mode="json")
+        else _read_model(access_profile_path, CoverageAccessProfile).model_dump(mode="json")
     )
     cursor = (
         None if cursor_path is None else _read_model(cursor_path, contracts.PlaybillAuditCursor)
@@ -5973,7 +5971,7 @@ def since(
     output_json: bool,
 ) -> None:
     profile = (
-        CoverageAccessProfileV1(
+        CoverageAccessProfile(
             profile_id="cli-since",
             permitted_access_classes=("instance", "public"),
         ).model_dump(mode="json")
@@ -6371,7 +6369,7 @@ def _coverage_observations(
     ranges: tuple[str, ...],
     grep_path: str | None,
     whole_working_set: bool,
-) -> tuple[WorkingSourceObservationV1, ...]:
+) -> tuple[WorkingSourceObservation, ...]:
     """Read the working set locally and hand the operation observations.
 
     Whole-source and windowed requests over the same path collapse to one
@@ -6394,10 +6392,10 @@ def _coverage_observations(
 
 
 def _resolved_coverage(
-    observations: tuple[WorkingSourceObservationV1, ...],
+    observations: tuple[WorkingSourceObservation, ...],
     *,
     command_name: str,
-    scan_budget: CoverageScanBudgetV1 | None = None,
+    scan_budget: CoverageScanBudget | None = None,
     instance_id: str | None = None,
 ) -> CoverageResultV3:
     def resolve(
@@ -6533,7 +6531,7 @@ def _hook_resolver(config: CoverageWorkspaceConfig) -> ResolveCoverage:
     content is a property of the operation, not of the adapter that calls it.
     """
 
-    def resolve(observations: Sequence[WorkingSourceObservationV1]) -> CoverageResultV3:
+    def resolve(observations: Sequence[WorkingSourceObservation]) -> CoverageResultV3:
         return _resolved_coverage(
             tuple(observations),
             command_name="playbill hook post-tool-use",

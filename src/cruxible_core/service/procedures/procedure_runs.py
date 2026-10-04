@@ -18,10 +18,10 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError
 
 from cruxible_client.contracts.acquisition_policies import (
     ACQUISITION_POLICY_PIN_ROLE,
-    AcquisitionInputDecisionV1,
-    IndependentCoherenceV1,
-    InputAcquisitionRuleV1,
-    SourceAcquisitionPolicyV1,
+    AcquisitionInputDecision,
+    IndependentCoherence,
+    InputAcquisitionRule,
+    SourceAcquisitionPolicy,
 )
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import (
@@ -32,8 +32,8 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.captures import (
-    CanonicalDurationV1,
-    CaptureContractV1,
+    CanonicalDuration,
+    CaptureContract,
 )
 from cruxible_client.contracts.errors import (
     PlaybillError,
@@ -42,19 +42,19 @@ from cruxible_client.contracts.errors import (
 )
 from cruxible_client.contracts.procedure_mandates import (
     PROCEDURE_MANDATE_CLOCK_SKEW,
+    ProcedureMandate,
     ProcedureMandateAny,
     ProcedureMandateV1,
-    ProcedureMandateV2,
 )
 from cruxible_client.contracts.procedure_mandates import mandate_rung as procedure_mandate_rung
 from cruxible_client.contracts.procedure_runtime_policy import (
     PROCEDURE_RUNTIME_POLICY_IDENTITY,
     PROCEDURE_RUNTIME_POLICY_PATH,
-    ProcedureRuntimePolicyV1,
+    ProcedureRuntimePolicy,
     procedure_runtime_policy_digest,
 )
 from cruxible_client.contracts.procedures.artifacts import (
-    AcceptedProcedureV1,
+    AcceptedProcedure,
     ProcedureArtifactAny,
     check_provider_node_contract,
     procedure_artifact_digest,
@@ -62,14 +62,14 @@ from cruxible_client.contracts.procedures.artifacts import (
     render_procedure,
 )
 from cruxible_client.contracts.procedures.closure import (
-    LineSlotBindingV1,
+    LineSlotBinding,
     ProcedurePinClosureError,
     close_procedure_pin_slots,
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
 from cruxible_client.contracts.procedures.line_specs import (
-    AcceptedLineSpecV1,
-    LineSpecV6,
+    AcceptedLineSpec,
+    LineSpec,
     evaluate_line_spec_law,
     line_identity_digest,
     line_requested_rung,
@@ -77,112 +77,112 @@ from cruxible_client.contracts.procedures.line_specs import (
     parse_line_spec,
 )
 from cruxible_client.contracts.procedures.models import (
-    ExhaustTapNodeV3,
-    ProcedureBudgetV3,
+    ExhaustTapNode,
+    ProcedureBudget,
     ProcedureDefinitionV3,
     ProcedureDefinitionV4,
-    ProcedureHardCapsV3,
-    ProcedurePinSlotRefV1,
+    ProcedureHardCaps,
+    ProcedurePinSlotRef,
+    ProviderNode,
     ProviderNodeV3,
-    ProviderNodeV4,
     RepeatBodyNodeV4,
     RepeatNodeV3,
     RepeatNodeV4,
+    SourceNode,
     SourceNodeV3,
-    SourceNodeV4,
     authority_for_rung,
     iter_pin_bindings,
     required_authority,
 )
 from cruxible_client.contracts.procedures.results import (
-    ProcedureAcquisitionPlanV2,
-    ProcedureAdmissionMaterialManifestV1,
-    ProcedureAdmissionRefusalCodeV1,
-    ProcedureAdmissionRefusalV1,
-    ProcedureBudgetBoundaryObservationV1,
-    ProcedureBudgetExceededDetailV1,
-    ProcedureBudgetExhaustedV1,
-    ProcedureBudgetRefusalDetailV1,
-    ProcedureChildInvocationV1,
-    ProcedureHaltTerminalV1,
-    ProcedureInternalFailureCodeV1,
-    ProcedureInternalFailureV1,
-    ProcedureJournalCoordinateV1,
-    ProcedureNodeRefusalV1,
-    ProcedureOperationalFailureCodeV1,
-    ProcedureOperationalFailureV1,
-    ProcedurePendingSuccessorV1,
+    ProcedureAcquisitionPlan,
+    ProcedureAdmissionMaterialManifest,
+    ProcedureAdmissionRefusal,
+    ProcedureAdmissionRefusalCode,
+    ProcedureBudgetBoundaryObservation,
+    ProcedureBudgetExceededDetail,
+    ProcedureBudgetExhausted,
+    ProcedureBudgetRefusalDetail,
+    ProcedureChildInvocation,
+    ProcedureHaltTerminal,
+    ProcedureInternalFailure,
+    ProcedureInternalFailureCode,
+    ProcedureJournalCoordinate,
+    ProcedureNodeRefusal,
+    ProcedureOperationalFailure,
+    ProcedureOperationalFailureCode,
+    ProcedurePendingSuccessor,
+    ProcedureProviderBinding,
     ProcedureProviderBindingV1,
-    ProcedureProviderBindingV2,
-    ProcedureReplayInputProjectionV1,
-    ProcedureRunAttributionV1,
+    ProcedureReplayInputProjection,
+    ProcedureRunAttribution,
+    ProcedureRunBudget,
+    ProcedureRunBudgetDeclared,
     ProcedureRunBudgetDeclaredV1,
-    ProcedureRunBudgetDeclaredV2,
-    ProcedureRunBudgetObservedV1,
+    ProcedureRunBudgetObserved,
     ProcedureRunBudgetV1,
-    ProcedureRunBudgetV2,
-    ProcedureRunNodePinSetV1,
+    ProcedureRunNodePinSet,
+    ProcedureRunReceipt,
     ProcedureRunReceiptV2,
     ProcedureRunReceiptV3,
     ProcedureRunReceiptV4,
     ProcedureRunReceiptV5,
-    ProcedureRunReceiptV6,
-    ProcedureSelectionDecisionV1,
-    ProcedureSourceCaptureAssociationV1,
-    ProcedureSourceObservationV1,
-    ProcedureTerminalEgressChildV1,
-    ProcedureTerminalEgressV1,
-    ProcedureTerminalV1,
-    ProviderBucketClassificationPlanV1,
+    ProcedureSelectionDecision,
+    ProcedureSourceCaptureAssociation,
+    ProcedureSourceObservation,
+    ProcedureTerminal,
+    ProcedureTerminalEgress,
+    ProcedureTerminalEgressChild,
+    ProviderBucketClassificationPlan,
     current_refusal_code,
     procedure_acquisition_plan_digest,
     procedure_admission_material_digest,
     procedure_selection_decision_digest,
 )
 from cruxible_client.contracts.procedures.windows import (
-    BoundObservationWindowV1,
-    CaptureEventWindowV1,
-    LineTriggerBindingV1,
-    TriggerEventReferenceV1,
+    BoundObservationWindow,
+    CaptureEventWindow,
+    LineTriggerBinding,
+    TriggerEventReference,
 )
 from cruxible_client.contracts.provider_execution import (
-    ProcedureDerivedSourceRequestV1,
-    ProviderEgressObservationV1,
-    ProviderExternalOccurrencePlanV1,
-    ProviderInvocationCompletedV1,
-    ProviderInvocationOutcomeV1,
-    ProviderInvocationReceiptV1,
-    ProviderInvocationStartedV1,
-    ProviderSecretBindingIdentityV1,
-    ProviderSecretReceiptReferenceV1,
-    ProviderSecretResolutionPlanV1,
-    VerifiedProviderBindingV1,
+    ProcedureDerivedSourceRequest,
+    ProviderEgressObservation,
+    ProviderExternalOccurrencePlan,
+    ProviderInvocationCompleted,
+    ProviderInvocationOutcome,
+    ProviderInvocationReceipt,
+    ProviderInvocationStarted,
+    ProviderSecretBindingIdentity,
+    ProviderSecretReceiptReference,
+    ProviderSecretResolutionPlan,
+    VerifiedProviderBinding,
     provider_invocation_receipt_digest,
     provider_secret_binding_identity_digest,
 )
 from cruxible_client.contracts.provider_interfaces import (
-    AcceptedProviderInterfaceRegistrationV1,
+    AcceptedProviderInterfaceRegistration,
 )
 from cruxible_client.contracts.providers import (
-    AcceptedProviderV1,
+    AcceptedProvider,
     ProviderV2,
 )
 from cruxible_client.contracts.repairs import (
     RUNNABLE_REFUSAL_REPAIRS,
-    RepairOperationV1,
+    RepairOperation,
     served_repair_for_refusal,
 )
 from cruxible_client.contracts.resolution_contracts import (
-    InvestigationBindingV1,
-    ResolutionContractReferenceV1,
+    InvestigationBinding,
+    ResolutionContractReference,
 )
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 from cruxible_client.contracts.triggers import (
-    AcceptedTriggerV1,
-    CaptureLandingScheduleV1,
-    GenerationAcceptedScheduleV1,
-    TriggerV1,
-    WindowCloseScheduleV1,
+    AcceptedTrigger,
+    CaptureLandingSchedule,
+    GenerationAcceptedSchedule,
+    Trigger,
+    WindowCloseSchedule,
     schedule_is_timed,
 )
 from cruxible_client.contracts.workspace_advertisement import (
@@ -190,7 +190,7 @@ from cruxible_client.contracts.workspace_advertisement import (
     PlaybillWorkspaceAdvertisement,
 )
 from cruxible_client.contracts.workspace_file import (
-    SourceReadReceiptV1,
+    SourceReadReceipt,
     source_read_receipt_digest,
 )
 from cruxible_core.claims.closure import DEFERRED_PIN_TARGET_KINDS
@@ -418,7 +418,7 @@ class LineNeverArmed(ProcedureSurfaceError):
             f"{self.code}: Line {line!r} has never been armed; arm it with "
             f"`cruxible playbill line arm {line}`"
         )
-        self.repair = RepairOperationV1(operation="playbill.line.arm", arguments={"line": line})
+        self.repair = RepairOperation(operation="playbill.line.arm", arguments={"line": line})
 
 
 class LineMandateRequired(ProcedureSurfaceError):
@@ -493,7 +493,7 @@ def procedure_run_target_rung(
 
 def require_line_mandate(
     instance: PlaybillInstance,
-    accepted_line: AcceptedLineSpecV1,
+    accepted_line: AcceptedLineSpec,
     *,
     coordinate: AcceptedProjectionCoordinate,
     now: datetime,
@@ -563,12 +563,12 @@ class ProviderRuntimeOperatorProtocol(Protocol):
 
     def admit_line_provider(
         self,
-        accepted_provider: AcceptedProviderV1,
-        accepted_interface: AcceptedProviderInterfaceRegistrationV1,
+        accepted_provider: AcceptedProvider,
+        accepted_interface: AcceptedProviderInterfaceRegistration,
         implementation_digest: str,
         *,
         eligible_environment_pin_keys: tuple[str, ...],
-    ) -> VerifiedProviderBindingV1: ...
+    ) -> VerifiedProviderBinding: ...
 
 
 class ProcedureUnsupportedNodeV1(_StrictProcedureSurfaceModel):
@@ -605,26 +605,26 @@ class ProcedureReadinessResultV1(_StrictProcedureSurfaceModel):
     next_operation: ProcedureNextOperationV1
 
 
-class ProcedureBindingTargetV1(_StrictProcedureSurfaceModel):
+class ProcedureBindingTarget(_StrictProcedureSurfaceModel):
     kind: str
     name: str
 
 
-class ProcedureSlotBindingRequestV1(_StrictProcedureSurfaceModel):
+class ProcedureSlotBindingRequest(_StrictProcedureSurfaceModel):
     slot_name: str
-    target: ProcedureBindingTargetV1
+    target: ProcedureBindingTarget
 
 
-class ProcedureBindRequestV1(_StrictProcedureSurfaceModel):
+class ProcedureBindRequest(_StrictProcedureSurfaceModel):
     tag: Literal["playbill-procedure-bind-request-v1"] = "playbill-procedure-bind-request-v1"
-    bindings: tuple[ProcedureSlotBindingRequestV1, ...]
+    bindings: tuple[ProcedureSlotBindingRequest, ...]
 
     @field_validator("bindings")
     @classmethod
     def _bindings(
         cls,
-        value: tuple[ProcedureSlotBindingRequestV1, ...],
-    ) -> tuple[ProcedureSlotBindingRequestV1, ...]:
+        value: tuple[ProcedureSlotBindingRequest, ...],
+    ) -> tuple[ProcedureSlotBindingRequest, ...]:
         names = tuple(item.slot_name for item in value)
         if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
             raise ValueError("Procedure bindings must be byte-sorted and unique")
@@ -635,13 +635,13 @@ class ProcedureBindResultV2(_StrictProcedureSurfaceModel):
     tag: Literal["playbill-procedure-bind-result-v2"] = "playbill-procedure-bind-result-v2"
     accepted_digest: str
     accepted_readiness: ProcedureReadinessResultV1
-    pending: ProcedurePendingSuccessorV1 | None = None
+    pending: ProcedurePendingSuccessor | None = None
     workspace_advertisement: PlaybillWorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
 
 
-class ProcedureRunRequestV2(_StrictProcedureSurfaceModel):
-    resolution_contract: ResolutionContractReferenceV1 | None = None
-    trigger_event: TriggerEventReferenceV1 | None = None
+class ProcedureRunRequest(_StrictProcedureSurfaceModel):
+    resolution_contract: ResolutionContractReference | None = None
+    trigger_event: TriggerEventReference | None = None
     tag: Literal["playbill-procedure-run-request-v2"] = "playbill-procedure-run-request-v2"
     at: AcceptedCoordinate | None = None
     evaluation_time: datetime | None = None
@@ -658,12 +658,12 @@ class ProcedureRunRequestV2(_StrictProcedureSurfaceModel):
         return normalize_canonical(value)
 
 
-class LineRunRequestV1(_StrictProcedureSurfaceModel):
+class LineRunRequest(_StrictProcedureSurfaceModel):
     """An assertion against one daemon-derived accepted Line occurrence."""
 
     tag: Literal["playbill-line-run-request-v1"] = "playbill-line-run-request-v1"
-    resolution_contract: ResolutionContractReferenceV1 | None = None
-    trigger_event: TriggerEventReferenceV1 | None = None
+    resolution_contract: ResolutionContractReference | None = None
+    trigger_event: TriggerEventReference | None = None
     trigger_generation: int | None = Field(default=None, ge=0)
     line: str = Field(validation_alias=AliasChoices("line", "line_identity_digest"))
     trigger: str | None = Field(
@@ -756,7 +756,7 @@ def load_procedure_run_config(state_root: Path) -> ProcedureRunOperationalConfig
 
 
 class ProcedureRunOutcomeV1(_StrictProcedureSurfaceModel):
-    capture_event: TriggerEventReferenceV1 | None = None
+    capture_event: TriggerEventReference | None = None
     sequence: int = Field(ge=1)
     event_kind: str
     node_id: str | None = None
@@ -764,8 +764,8 @@ class ProcedureRunOutcomeV1(_StrictProcedureSurfaceModel):
 
 
 class ProcedureRunStateV2(_StrictProcedureSurfaceModel):
-    investigation: InvestigationBindingV1 | None = None
-    trigger_binding: LineTriggerBindingV1 | None = None
+    investigation: InvestigationBinding | None = None
+    trigger_binding: LineTriggerBinding | None = None
     tag: Literal["playbill-procedure-run-state-v2"] = "playbill-procedure-run-state-v2"
     run_id: str | None
     procedure_identity: ArtifactIdentity
@@ -787,7 +787,7 @@ class ProcedureRunStateV2(_StrictProcedureSurfaceModel):
     outcomes: tuple[ProcedureRunOutcomeV1, ...]
     next_operation: ProcedureNextOperationV1
     result: object | None = None
-    attribution: ProcedureRunAttributionV1 | None = None
+    attribution: ProcedureRunAttribution | None = None
     semantic_replay_key_digest: str | None = None
     semantic_result_digest: str | None = None
     receipt: (
@@ -795,14 +795,14 @@ class ProcedureRunStateV2(_StrictProcedureSurfaceModel):
         | ProcedureRunReceiptV3
         | ProcedureRunReceiptV4
         | ProcedureRunReceiptV5
-        | ProcedureRunReceiptV6
+        | ProcedureRunReceipt
         | None
     ) = None
     receipt_digest: str | None = None
-    terminal: ProcedureTerminalV1 | None = None
-    children: tuple[ProcedureChildInvocationV1, ...] = ()
-    source_observations: tuple[ProcedureSourceObservationV1, ...] = ()
-    terminal_egress: tuple[ProcedureTerminalEgressV1, ...] = ()
+    terminal: ProcedureTerminal | None = None
+    children: tuple[ProcedureChildInvocation, ...] = ()
+    source_observations: tuple[ProcedureSourceObservation, ...] = ()
+    terminal_egress: tuple[ProcedureTerminalEgress, ...] = ()
 
     @property
     def coordinate(self) -> PlaybillAcceptedCoordinate:
@@ -828,7 +828,7 @@ def _accepted_procedure(
     *,
     name: str,
     coordinate: AcceptedProjectionCoordinate,
-) -> AcceptedProcedureV1:
+) -> AcceptedProcedure:
     path = procedure_path(name)
     with instance.bind_accepted_projection(coordinate) as projection:
         envelope = projection.typed.envelope(f"Procedure:{name}")
@@ -838,7 +838,7 @@ def _accepted_procedure(
         assert procedure is not None
         if procedure.lifecycle.state == "retired":
             raise ProcedureRetired(f"{ProcedureRetired.code}: {name}")
-        return AcceptedProcedureV1(
+        return AcceptedProcedure(
             path=path,
             procedure=procedure,
             artifact_digest=envelope.artifact_digest,
@@ -847,14 +847,14 @@ def _accepted_procedure(
 
 def _accepted_runtime_policy(
     instance: PlaybillInstance, coordinate: AcceptedProjectionCoordinate
-) -> ProcedureRuntimePolicyV1:
+) -> ProcedureRuntimePolicy:
     with instance.bind_accepted_projection(coordinate) as projection:
         policy = projection.typed.source(PROCEDURE_RUNTIME_POLICY_IDENTITY)
         if policy is None:
             raise ProcedureRuntimePolicyAbsent(
                 "procedure_runtime_policy_absent: seed ProcedureRuntimePolicy before Line admission"
             )
-        if not isinstance(policy, ProcedureRuntimePolicyV1):
+        if not isinstance(policy, ProcedureRuntimePolicy):
             raise ProjectionIntegrityError("accepted ProcedureRuntimePolicy source is invalid")
         return policy
 
@@ -874,7 +874,7 @@ def _accepted_line_by_reference(
     *,
     coordinate: AcceptedProjectionCoordinate,
     reference: str,
-) -> AcceptedLineSpecV1:
+) -> AcceptedLineSpec:
     identity_digest = _line_reference_digest(reference)
     with instance.bind_accepted_projection(coordinate) as projection:
         matches = projection.typed.connection.execute(
@@ -902,21 +902,21 @@ def _accepted_line_by_reference(
         identity, path, digest = matches[0]
         line = projection.typed.source(identity)
         assert line is not None
-        if not isinstance(line, LineSpecV6):
+        if not isinstance(line, LineSpec):
             raise LineRunNotAccepted(
                 f"{LineRunNotAccepted.code}: Line {reference.removeprefix('Line:')!r} embeds "
                 f"its trigger ({line.artifact_format}), which is no longer served; upgrade to "
                 "compiler revision 32, then accept a Line v6 and Trigger artifacts aimed at it"
             )
-        return AcceptedLineSpecV1(path=path, line=line, artifact_digest=digest)
+        return AcceptedLineSpec(path=path, line=line, artifact_digest=digest)
 
 
 def line_triggers(
     instance: PlaybillInstance,
-    accepted_line: AcceptedLineSpecV1,
+    accepted_line: AcceptedLineSpec,
     *,
     coordinate: AcceptedProjectionCoordinate,
-) -> tuple[AcceptedTriggerV1, ...]:
+) -> tuple[AcceptedTrigger, ...]:
     """Every live Trigger aimed at this Line at one coordinate, in identity order."""
 
     with instance.bind_accepted_projection(coordinate) as projection:
@@ -928,8 +928,8 @@ def line_triggers(
         triggers = []
         for identity, path, digest in rows:
             trigger = projection.typed.source(identity)
-            assert isinstance(trigger, TriggerV1)
-            triggers.append(AcceptedTriggerV1(path=path, trigger=trigger, artifact_digest=digest))
+            assert isinstance(trigger, Trigger)
+            triggers.append(AcceptedTrigger(path=path, trigger=trigger, artifact_digest=digest))
     return tuple(triggers)
 
 
@@ -938,7 +938,7 @@ _TRIGGER_ACCEPTED_AT: OrderedDict[tuple[str, str], datetime] = OrderedDict()
 _TRIGGER_ACCEPTED_AT_CAPACITY = 4096
 
 
-def trigger_accepted_at(instance: PlaybillInstance, trigger: AcceptedTriggerV1) -> datetime:
+def trigger_accepted_at(instance: PlaybillInstance, trigger: AcceptedTrigger) -> datetime:
     """When this exact Trigger version was accepted: the floor of every instant it fires.
 
     No Trigger fires retroactively, so its timer starts here and a successor's
@@ -962,7 +962,7 @@ def trigger_accepted_at(instance: PlaybillInstance, trigger: AcceptedTriggerV1) 
     return accepted_at
 
 
-def line_trigger_pins(triggers: tuple[AcceptedTriggerV1, ...]) -> dict[str, str]:
+def line_trigger_pins(triggers: tuple[AcceptedTrigger, ...]) -> dict[str, str]:
     """The exact Trigger versions one arm or pending occurrence is bound to."""
 
     return {item.trigger.identity.qualified: item.artifact_digest for item in triggers}
@@ -988,7 +988,7 @@ class LineVersionChanged(PlaybillExecutionError):
 def _line_admission_head_gate(
     instance: PlaybillInstance,
     *,
-    accepted_line: AcceptedLineSpecV1,
+    accepted_line: AcceptedLineSpec,
     coordinate: AcceptedProjectionCoordinate,
     expected_line_artifact_digest: str | None,
     expected_trigger_pins: dict[str, str] | None,
@@ -1037,11 +1037,11 @@ def _line_admission_head_gate(
 
 
 def select_line_trigger(
-    triggers: tuple[AcceptedTriggerV1, ...],
+    triggers: tuple[AcceptedTrigger, ...],
     reference: str | None,
     *,
     line: ArtifactIdentity,
-) -> AcceptedTriggerV1 | None:
+) -> AcceptedTrigger | None:
     """The live Trigger a run fires on; None only for a Line no Trigger aims at."""
 
     if reference is None:
@@ -1068,9 +1068,9 @@ def select_line_trigger(
 
 def _accepted_line_predecessor(
     instance: PlaybillInstance,
-    accepted_line: AcceptedLineSpecV1,
+    accepted_line: AcceptedLineSpec,
     coordinate: AcceptedProjectionCoordinate,
-) -> AcceptedLineSpecV1 | None:
+) -> AcceptedLineSpec | None:
     digest = accepted_line.line.lifecycle.predecessor_digest
     if digest is None:
         return None
@@ -1087,7 +1087,7 @@ def _accepted_line_predecessor(
     line = parse_line_spec(raw, path=location.path)
     if line.identity != accepted_line.line.identity or line_spec_digest(line).tagged != digest:
         raise ProjectionIntegrityError("accepted Line predecessor differs from its pinned version")
-    return AcceptedLineSpecV1(path=location.path, line=line, artifact_digest=digest)
+    return AcceptedLineSpec(path=location.path, line=line, artifact_digest=digest)
 
 
 def _line_catalogs(
@@ -1095,11 +1095,11 @@ def _line_catalogs(
     coordinate: AcceptedProjectionCoordinate,
     pins: Sequence[ArtifactPin],
 ) -> tuple[
-    dict[str, AcceptedProviderV1],
-    dict[str, AcceptedProviderInterfaceRegistrationV1],
+    dict[str, AcceptedProvider],
+    dict[str, AcceptedProviderInterfaceRegistration],
 ]:
-    providers: dict[str, AcceptedProviderV1] = {}
-    interfaces: dict[str, AcceptedProviderInterfaceRegistrationV1] = {}
+    providers: dict[str, AcceptedProvider] = {}
+    interfaces: dict[str, AcceptedProviderInterfaceRegistration] = {}
     with instance.bind_accepted_projection(coordinate) as projection:
         for pin in dict.fromkeys(pins):
             if pin.target.kind not in {"Provider", "ProviderInterface"}:
@@ -1115,11 +1115,11 @@ def _line_catalogs(
             source = projection.typed.source(pin.target.qualified)
             assert source is not None
             if pin.target.kind == "Provider":
-                providers[pin.artifact_digest] = AcceptedProviderV1(
+                providers[pin.artifact_digest] = AcceptedProvider(
                     path=row[0], provider=source, artifact_digest=pin.artifact_digest
                 )
             else:
-                interfaces[pin.artifact_digest] = AcceptedProviderInterfaceRegistrationV1(
+                interfaces[pin.artifact_digest] = AcceptedProviderInterfaceRegistration(
                     path=row[0], registration=source, artifact_digest=pin.artifact_digest
                 )
     return providers, interfaces
@@ -1127,7 +1127,7 @@ def _line_catalogs(
 
 def _assert_line_closure_complete(
     instance: PlaybillInstance,
-    accepted_line: AcceptedLineSpecV1,
+    accepted_line: AcceptedLineSpec,
     coordinate: AcceptedProjectionCoordinate,
 ) -> None:
     with instance.bind_accepted_projection(coordinate) as projection:
@@ -1147,12 +1147,12 @@ def _assert_line_closure_complete(
                 )
 
 
-def _line_slot_pins(accepted_line: AcceptedLineSpecV1) -> dict[str, ArtifactPin]:
+def _line_slot_pins(accepted_line: AcceptedLineSpec) -> dict[str, ArtifactPin]:
     return {item.slot_name: item.artifact_pin for item in accepted_line.line.slot_bindings}
 
 
 def _resolve_line_pin(
-    value: ArtifactPin | ProcedurePinSlotRefV1,
+    value: ArtifactPin | ProcedurePinSlotRef,
     *,
     slot_pins: Mapping[str, ArtifactPin],
 ) -> ArtifactPin:
@@ -1198,7 +1198,7 @@ def _stored_line_admission(
 
 def _line_admissions(
     instance: PlaybillInstance,
-    accepted_line: AcceptedLineSpecV1,
+    accepted_line: AcceptedLineSpec,
     *,
     occurrence_id: str | None = None,
 ) -> tuple[ProcedureRunAdmissionV5, ...]:
@@ -1232,7 +1232,7 @@ _TRIGGER_CHAINS_CAPACITY = 4096
 
 def _trigger_admissions(
     instance: PlaybillInstance,
-    accepted_line: AcceptedLineSpecV1,
+    accepted_line: AcceptedLineSpec,
     trigger: ArtifactIdentity,
 ) -> tuple[ProcedureRunAdmissionV5, ...]:
     """The latest occurrence one Trigger fired on this Line: its cadence chain.
@@ -1264,40 +1264,40 @@ def _trigger_admissions(
 
 
 def trigger_binding_for(
-    trigger: AcceptedTriggerV1,
+    trigger: AcceptedTrigger,
     *,
-    event: TriggerEventReferenceV1 | None = None,
-    window: BoundObservationWindowV1 | None = None,
+    event: TriggerEventReference | None = None,
+    window: BoundObservationWindow | None = None,
     generation: int | None = None,
-) -> LineTriggerBindingV1:
+) -> LineTriggerBinding:
     """The semantic cause one Trigger gives an occurrence."""
 
     schedule = trigger.trigger.schedule
-    if isinstance(schedule, GenerationAcceptedScheduleV1):
-        return LineTriggerBindingV1(
+    if isinstance(schedule, GenerationAcceptedSchedule):
+        return LineTriggerBinding(
             kind="generation_accepted", trigger=trigger.trigger.identity, generation=generation
         )
     if schedule_is_timed(schedule):
-        return LineTriggerBindingV1(kind=schedule.kind, trigger=trigger.trigger.identity)
-    if isinstance(schedule, CaptureLandingScheduleV1):
-        return LineTriggerBindingV1(
+        return LineTriggerBinding(kind=schedule.kind, trigger=trigger.trigger.identity)
+    if isinstance(schedule, CaptureLandingSchedule):
+        return LineTriggerBinding(
             kind="capture_landing", trigger=trigger.trigger.identity, event=event
         )
-    if isinstance(schedule, WindowCloseScheduleV1):
+    if isinstance(schedule, WindowCloseSchedule):
         assert window is not None
-        return LineTriggerBindingV1(
+        return LineTriggerBinding(
             kind="window_close", trigger=trigger.trigger.identity, window=window, event=window.event
         )
     raise PlaybillExecutionError(f"unsupported Trigger schedule kind {schedule.kind!r}")
 
 
 def _line_occurrence(
-    accepted_line: AcceptedLineSpecV1,
+    accepted_line: AcceptedLineSpec,
     *,
     evaluation_time: datetime,
     prior: tuple[ProcedureRunAdmissionV5, ...],
-    trigger: AcceptedTriggerV1 | None = None,
-    binding: LineTriggerBindingV1 | None = None,
+    trigger: AcceptedTrigger | None = None,
+    binding: LineTriggerBinding | None = None,
     not_before: datetime | None = None,
     exact_basis: datetime | None = None,
     accepted_at: datetime | None = None,
@@ -1365,14 +1365,14 @@ def _line_occurrence(
 
 
 def _line_budget(
-    accepted_line: AcceptedLineSpecV1,
-    accepted_procedure: AcceptedProcedureV1,
-) -> ProcedureBudgetV3:
+    accepted_line: AcceptedLineSpec,
+    accepted_procedure: AcceptedProcedure,
+) -> ProcedureBudget:
     budgets = accepted_line.line.budgets
     if not isinstance(budgets, dict):
         return accepted_procedure.procedure.definition.budget
-    return ProcedureBudgetV3(
-        wall_clock=CanonicalDurationV1(microseconds=budgets["max_wall_clock_microseconds"]),
+    return ProcedureBudget(
+        wall_clock=CanonicalDuration(microseconds=budgets["max_wall_clock_microseconds"]),
         max_provider_calls=budgets["max_provider_calls"],
         max_capture_bytes=budgets["max_capture_bytes"],
         max_items=budgets.get("max_items"),
@@ -1384,7 +1384,7 @@ def _line_budget(
 
 def _line_state_materials(
     instance: PlaybillInstance,
-    accepted_procedure: AcceptedProcedureV1,
+    accepted_procedure: AcceptedProcedure,
     *,
     coordinate: AcceptedProjectionCoordinate,
     evaluation_time: datetime,
@@ -1405,10 +1405,10 @@ def _line_state_materials(
 
 def _provider_nodes(
     definition: ProcedureDefinitionV4,
-) -> tuple[tuple[ProviderNodeV4 | SourceNodeV4 | RepeatBodyNodeV4, str | None], ...]:
-    result: list[tuple[ProviderNodeV4 | SourceNodeV4 | RepeatBodyNodeV4, str | None]] = []
+) -> tuple[tuple[ProviderNode | SourceNode | RepeatBodyNodeV4, str | None], ...]:
+    result: list[tuple[ProviderNode | SourceNode | RepeatBodyNodeV4, str | None]] = []
     for node in definition.nodes:
-        if isinstance(node, ProviderNodeV4 | SourceNodeV4):
+        if isinstance(node, ProviderNode | SourceNode):
             result.append((node, None))
         elif isinstance(node, RepeatNodeV4):
             result.extend(
@@ -1420,17 +1420,17 @@ def _provider_nodes(
 
 
 def _plan_external_occurrences(
-    accepted_procedure: AcceptedProcedureV1,
+    accepted_procedure: AcceptedProcedure,
     *,
-    providers: Mapping[str, AcceptedProviderV1],
-    interfaces: Mapping[str, AcceptedProviderInterfaceRegistrationV1],
+    providers: Mapping[str, AcceptedProvider],
+    interfaces: Mapping[str, AcceptedProviderInterfaceRegistration],
     slot_pins: Mapping[str, ArtifactPin],
     provider_runtime_operator: ProviderRuntimeOperatorProtocol | None,
-    runtime_policy: ProcedureRuntimePolicyV1,
-    budget: ProcedureBudgetV3,
+    runtime_policy: ProcedureRuntimePolicy,
+    budget: ProcedureBudget,
     implementation_closures: Sequence[Any] = (),
     supplied_source_inputs: frozenset[str] = frozenset(),
-) -> tuple[ProviderExternalOccurrencePlanV1, ...]:
+) -> tuple[ProviderExternalOccurrencePlan, ...]:
     """Plan every external Provider occurrence one admitted run will invoke.
 
     Both served run lanes call THIS function. A Line supplies the accepted
@@ -1443,9 +1443,9 @@ def _plan_external_occurrences(
     definition = accepted_procedure.procedure.definition
     if not isinstance(definition, ProcedureDefinitionV4):
         return ()
-    occurrences: list[ProviderExternalOccurrencePlanV1] = []
+    occurrences: list[ProviderExternalOccurrencePlan] = []
     for node, repeat_node_id in _provider_nodes(definition):
-        if isinstance(node, SourceNodeV4) and node.as_ in supplied_source_inputs:
+        if isinstance(node, SourceNode) and node.as_ in supplied_source_inputs:
             continue
         provider_binding = node.provider
         assert provider_binding is not None
@@ -1523,7 +1523,7 @@ def _plan_external_occurrences(
             eligible_environment_pin_keys=eligible,
         )
         registration = interface.registration
-        classification = ProviderBucketClassificationPlanV1(
+        classification = ProviderBucketClassificationPlan(
             node_id=node.node_id,
             interface_artifact_digest=interface.artifact_digest,
             interface_digest=registration.interface_digest,
@@ -1536,7 +1536,7 @@ def _plan_external_occurrences(
                 )
             ),
         )
-        produces_capture = isinstance(node, SourceNodeV4)
+        produces_capture = isinstance(node, SourceNode)
         call_kind = "call" if int(definition.graph_format) >= 5 else "provider"
         translation = translate_provider_budget(
             budget=budget,
@@ -1575,12 +1575,12 @@ def _plan_external_occurrences(
             "implementation_digest": implementation_digest,
             "effect_class": registration.effect_class,
             "local_execution": local,
-            "secret_plan": ProviderSecretResolutionPlanV1(),
+            "secret_plan": ProviderSecretResolutionPlan(),
             "budget_translation": translation,
         }
-        if isinstance(node, SourceNodeV4):
+        if isinstance(node, SourceNode):
             capture_pin = _resolve_line_pin(node.capture_contract, slot_pins=slot_pins)
-            occurrence = ProviderExternalOccurrencePlanV1.model_validate(
+            occurrence = ProviderExternalOccurrencePlan.model_validate(
                 {
                     **common,
                     "input_name": node.as_,
@@ -1595,7 +1595,7 @@ def _plan_external_occurrences(
         else:
             contract_in = _resolve_line_pin(node.contract_in, slot_pins=slot_pins)
             contract_out = _resolve_line_pin(node.contract_out, slot_pins=slot_pins)
-            occurrence = ProviderExternalOccurrencePlanV1.model_validate(
+            occurrence = ProviderExternalOccurrencePlan.model_validate(
                 {
                     **common,
                     "contract_input_digest": contract_in.artifact_digest,
@@ -1607,16 +1607,16 @@ def _plan_external_occurrences(
 
 
 def _line_external_occurrences(
-    accepted_line: AcceptedLineSpecV1,
-    accepted_procedure: AcceptedProcedureV1,
+    accepted_line: AcceptedLineSpec,
+    accepted_procedure: AcceptedProcedure,
     *,
-    providers: Mapping[str, AcceptedProviderV1],
-    interfaces: Mapping[str, AcceptedProviderInterfaceRegistrationV1],
+    providers: Mapping[str, AcceptedProvider],
+    interfaces: Mapping[str, AcceptedProviderInterfaceRegistration],
     slot_pins: Mapping[str, ArtifactPin],
     provider_runtime_operator: ProviderRuntimeOperatorProtocol | None,
-    runtime_policy: ProcedureRuntimePolicyV1,
-    budget: ProcedureBudgetV3,
-) -> tuple[ProviderExternalOccurrencePlanV1, ...]:
+    runtime_policy: ProcedureRuntimePolicy,
+    budget: ProcedureBudget,
+) -> tuple[ProviderExternalOccurrencePlan, ...]:
     """Plan a Line occurrence's Provider occurrences through the shared planner."""
 
     return _plan_external_occurrences(
@@ -1630,20 +1630,20 @@ def _line_external_occurrences(
         implementation_closures=getattr(accepted_line.line, "provider_implementation_closures", ()),
         supplied_source_inputs=(
             frozenset({accepted_line.line.trigger_input})
-            if isinstance(accepted_line.line, LineSpecV6)
+            if isinstance(accepted_line.line, LineSpec)
             and accepted_line.line.trigger_input is not None
             else frozenset()
         ),
     )
 
 
-def _source_input_names(accepted: AcceptedProcedureV1) -> tuple[str, ...]:
+def _source_input_names(accepted: AcceptedProcedure) -> tuple[str, ...]:
     definition = accepted.procedure.definition
     if not isinstance(definition, ProcedureDefinitionV4):
         return ()
     return tuple(
         sorted(
-            (node.as_ for node in definition.nodes if isinstance(node, SourceNodeV4)),
+            (node.as_ for node in definition.nodes if isinstance(node, SourceNode)),
             key=lambda item: item.encode("utf-8"),
         )
     )
@@ -1653,7 +1653,7 @@ def _accepted_capture_contracts(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,
     pins: Sequence[ArtifactPin],
-) -> dict[str, CaptureContractV1]:
+) -> dict[str, CaptureContract]:
     """Resolve pinned live accepted CaptureContracts by their own artifact digests.
 
     Ruling: capture contracts come from the ACCEPTED tree, keyed by the pin
@@ -1661,7 +1661,7 @@ def _accepted_capture_contracts(
     would let the request choose the budget and grades that admit its own read.
     """
 
-    contracts: dict[str, CaptureContractV1] = {}
+    contracts: dict[str, CaptureContract] = {}
     with instance.bind_accepted_projection(coordinate) as projection:
         for pin in dict.fromkeys(pins):
             if pin.target.kind != "CaptureContract":
@@ -1675,7 +1675,7 @@ def _accepted_capture_contracts(
                 is not None
             ):
                 contract = projection.typed.source(pin.target.qualified)
-                if not isinstance(contract, CaptureContractV1):
+                if not isinstance(contract, CaptureContract):
                     raise ProjectionIntegrityError("accepted CaptureContract source is invalid")
                 contracts[pin.artifact_digest] = contract
     return contracts
@@ -1686,8 +1686,8 @@ def _accepted_acquisition_policies(
     coordinate: AcceptedProjectionCoordinate,
     *,
     pin: ArtifactPin | None = None,
-) -> tuple[tuple[str, SourceAcquisitionPolicyV1], ...]:
-    policies: list[tuple[str, SourceAcquisitionPolicyV1]] = []
+) -> tuple[tuple[str, SourceAcquisitionPolicy], ...]:
+    policies: list[tuple[str, SourceAcquisitionPolicy]] = []
     with instance.bind_accepted_projection(coordinate) as projection:
         sql = (
             "SELECT identity,artifact_digest FROM source_acquisition_policies "
@@ -1701,7 +1701,7 @@ def _accepted_acquisition_policies(
             sql + " ORDER BY artifact_digest", parameters
         ):
             policy = projection.typed.source(identity)
-            if not isinstance(policy, SourceAcquisitionPolicyV1):
+            if not isinstance(policy, SourceAcquisitionPolicy):
                 raise ProjectionIntegrityError("accepted SourceAcquisitionPolicy source is invalid")
             policies.append((digest, policy))
     return tuple(policies)
@@ -1727,7 +1727,7 @@ def _direct_acquisition_policy(
     coordinate: AcceptedProjectionCoordinate,
     procedure: ProcedureArtifactAny,
     input_names: tuple[str, ...],
-) -> tuple[str, SourceAcquisitionPolicyV1]:
+) -> tuple[str, SourceAcquisitionPolicy]:
     """Resolve the accepted policy that governs this direct run's inputs.
 
     The DURABLE binding is the Procedure envelope's own `acquisition-policy`
@@ -1796,12 +1796,12 @@ def _direct_acquisition_policy(
 
 
 def _plan_selection_decision(
-    policy: SourceAcquisitionPolicyV1,
+    policy: SourceAcquisitionPolicy,
     *,
     policy_digest: str,
-    occurrences: tuple[ProviderExternalOccurrencePlanV1, ...],
-    capture_contracts: Mapping[str, CaptureContractV1],
-) -> ProcedureSelectionDecisionV1:
+    occurrences: tuple[ProviderExternalOccurrencePlan, ...],
+    capture_contracts: Mapping[str, CaptureContract],
+) -> ProcedureSelectionDecision:
     """Evaluate the accepted policy against this plan, per PLANNED occurrence.
 
     This is a PLAN-time evaluation and it says only what a plan can say: which
@@ -1828,19 +1828,19 @@ def _plan_selection_decision(
     }
     # Produced Source captures have no cross-source proof/vector reducer yet.
     # Do not silently treat an accepted coherence requirement as independent.
-    if sources and not isinstance(policy.coherence, IndependentCoherenceV1):
-        return ProcedureSelectionDecisionV1(
+    if sources and not isinstance(policy.coherence, IndependentCoherence):
+        return ProcedureSelectionDecision(
             policy_digest=policy_digest,
             verdict="refused",
             decisions=(
-                AcquisitionInputDecisionV1(
+                AcquisitionInputDecision(
                     input_name="coherence",
                     disposition="refused",
                     reason_codes=("playbill.acquisition.coherence_unsupported",),
                 ),
             ),
         )
-    decisions: list[AcquisitionInputDecisionV1] = []
+    decisions: list[AcquisitionInputDecision] = []
     for rule in policy.inputs:
         occurrence = sources.get(rule.input_name)
         if occurrence is None:
@@ -1878,12 +1878,12 @@ def _plan_selection_decision(
             )
             continue
         decisions.append(
-            AcquisitionInputDecisionV1(input_name=rule.input_name, disposition="selected")
+            AcquisitionInputDecision(input_name=rule.input_name, disposition="selected")
         )
     ordered = tuple(
         sorted(decisions, key=lambda item: item.input_name.encode("utf-8")),
     )
-    return ProcedureSelectionDecisionV1(
+    return ProcedureSelectionDecision(
         policy_digest=policy_digest,
         verdict=(
             "refused" if any(item.disposition == "refused" for item in ordered) else "selected"
@@ -1893,27 +1893,27 @@ def _plan_selection_decision(
 
 
 def _plan_failure_decision(
-    rule: InputAcquisitionRuleV1,
+    rule: InputAcquisitionRule,
     *,
     behavior: str,
     reason: str,
-) -> AcquisitionInputDecisionV1:
+) -> AcquisitionInputDecision:
     """Apply one declared failure behaviour to a plan-time authorization miss."""
 
     if behavior == "omit_optional" and rule.requirement == "optional":
-        return AcquisitionInputDecisionV1(
+        return AcquisitionInputDecision(
             input_name=rule.input_name,
             disposition="omitted",
             reason_codes=(reason,),
         )
     if behavior == "declared_conservative_default":
-        return AcquisitionInputDecisionV1(
+        return AcquisitionInputDecision(
             input_name=rule.input_name,
             disposition="defaulted",
             default_value=rule.conservative_default,
             reason_codes=(reason,),
         )
-    return AcquisitionInputDecisionV1(
+    return AcquisitionInputDecision(
         input_name=rule.input_name,
         disposition="refused",
         reason_codes=(reason,),
@@ -1926,7 +1926,7 @@ def _required_slots(procedure: ProcedureArtifactAny) -> tuple[str, ...]:
             {
                 binding.slot_name
                 for binding in iter_pin_bindings(procedure.definition)
-                if isinstance(binding, ProcedurePinSlotRefV1)
+                if isinstance(binding, ProcedurePinSlotRef)
             },
             key=lambda item: item.encode("utf-8"),
         )
@@ -1934,7 +1934,7 @@ def _required_slots(procedure: ProcedureArtifactAny) -> tuple[str, ...]:
 
 
 def _readiness(
-    accepted: AcceptedProcedureV1,
+    accepted: AcceptedProcedure,
     *,
     coordinate: AcceptedProjectionCoordinate,
     evaluation_time: datetime,
@@ -1987,7 +1987,7 @@ def _readiness(
     )
 
 
-def _graph_v3_external_occurrences(accepted: AcceptedProcedureV1) -> tuple[str, ...]:
+def _graph_v3_external_occurrences(accepted: AcceptedProcedure) -> tuple[str, ...]:
     definition = accepted.procedure.definition
     if definition.graph_format != 3:
         return ()
@@ -2034,9 +2034,9 @@ def _replace_slots(value: object, bindings: Mapping[str, ArtifactPin]) -> object
 
 
 def _bound_successor(
-    accepted: AcceptedProcedureV1,
+    accepted: AcceptedProcedure,
     *,
-    bindings: tuple[LineSlotBindingV1, ...],
+    bindings: tuple[LineSlotBinding, ...],
     interface_digests: Mapping[str, str],
 ) -> ProcedureArtifactAny:
     try:
@@ -2081,7 +2081,7 @@ def service_bind_playbill_procedure(
     instance: PlaybillInstance,
     *,
     name: str,
-    request: ProcedureBindRequestV1,
+    request: ProcedureBindRequest,
     actor: AuthenticatedActor,
     timestamp: str,
 ) -> ProcedureBindResultV2:
@@ -2101,7 +2101,7 @@ def service_bind_playbill_procedure(
             f"{ProcedureBindingSetMismatch.code}: required={sorted(required)!r}; "
             f"supplied={sorted(requested)!r}"
         )
-    lowered: list[LineSlotBindingV1] = []
+    lowered: list[LineSlotBinding] = []
     interface_digests: dict[str, str] = {}
     for item in request.bindings:
         declaration = declarations[item.slot_name]
@@ -2133,7 +2133,7 @@ def service_bind_playbill_procedure(
                     assert registration is not None
                     interface_digests[state.artifact_digest] = registration.interface_digest
         lowered.append(
-            LineSlotBindingV1(
+            LineSlotBinding(
                 slot_name=item.slot_name,
                 artifact_pin=ArtifactPin(
                     role=declaration.pin_role,
@@ -2183,7 +2183,7 @@ def service_bind_playbill_procedure(
             coordinate=coordinate,
             evaluation_time=ensure_utc(datetime.fromisoformat(timestamp.replace("Z", "+00:00"))),
         ),
-        pending=ProcedurePendingSuccessorV1(
+        pending=ProcedurePendingSuccessor(
             proposal_id=proposal.admission.proposal_id,
             pending_successor_digest=pending_digest,
         ),
@@ -2303,9 +2303,9 @@ def _records_for_run(instance: PlaybillInstance, run_id: str):  # type: ignore[n
     return records
 
 
-def _journal_coordinate(stored) -> ProcedureJournalCoordinateV1:  # type: ignore[no-untyped-def]
+def _journal_coordinate(stored) -> ProcedureJournalCoordinate:  # type: ignore[no-untyped-def]
     record = stored.record
-    return ProcedureJournalCoordinateV1(
+    return ProcedureJournalCoordinate(
         stream_instance_id=record.stream.instance_id,
         journal_family=record.stream.journal_family,
         stream_id=record.stream.stream_id,
@@ -2316,11 +2316,11 @@ def _journal_coordinate(stored) -> ProcedureJournalCoordinateV1:  # type: ignore
 
 
 def _fold_terminal_egress(
-    current: ProcedureTerminalEgressV1 | None,
+    current: ProcedureTerminalEgress | None,
     payload: Mapping[str, object],
     *,
-    journal_coordinate: ProcedureJournalCoordinateV1,
-) -> ProcedureTerminalEgressV1:
+    journal_coordinate: ProcedureJournalCoordinate,
+) -> ProcedureTerminalEgress:
     """Fold one `terminal_egress` journal record into the node's served account.
 
     A terminal writes up to three records: the closure-bound refusal or the
@@ -2335,13 +2335,13 @@ def _fold_terminal_egress(
         return value if isinstance(value, str) else None
 
     raw_children = payload.get("children")
-    children: list[ProcedureTerminalEgressChildV1] = []
+    children: list[ProcedureTerminalEgressChild] = []
     if isinstance(raw_children, list):
         for child in raw_children:
             if not isinstance(child, dict):
                 continue
             children.append(
-                ProcedureTerminalEgressChildV1(
+                ProcedureTerminalEgressChild(
                     child_index=int(cast(int, child.get("child_index", 0))),
                     item_key=str(child.get("item_key")),
                     manifest_digest=str(child.get("manifest_digest")),
@@ -2398,7 +2398,7 @@ def _fold_terminal_egress(
         verdict = "refused_effective_authority"
     limiting_term = _string("limiting_term")
     raw_refusal_code = _string("refusal_code")
-    return ProcedureTerminalEgressV1(
+    return ProcedureTerminalEgress(
         node_id=str(payload.get("node_id")),
         kind=cast(Any, _string("kind")),
         verdict=cast(Any, verdict),
@@ -2461,13 +2461,13 @@ def _state_from_records(
     final = None
     outcomes: list[ProcedureRunOutcomeV1] = []
     invocation_receipt_digests: list[str] = []
-    source_capture_associations: tuple[ProcedureSourceCaptureAssociationV1, ...] = ()
+    source_capture_associations: tuple[ProcedureSourceCaptureAssociation, ...] = ()
     provider_invocations: dict[str, Literal["started", "completed"]] = {}
-    derived_source_requests: dict[str, ProcedureDerivedSourceRequestV1] = {}
-    source_reads: dict[str, SourceReadReceiptV1] = {}
-    produced_source_associations: list[ProcedureSourceCaptureAssociationV1] = []
-    terminal_egress: dict[str, ProcedureTerminalEgressV1] = {}
-    children: list[ProcedureChildInvocationV1] = []
+    derived_source_requests: dict[str, ProcedureDerivedSourceRequest] = {}
+    source_reads: dict[str, SourceReadReceipt] = {}
+    produced_source_associations: list[ProcedureSourceCaptureAssociation] = []
+    terminal_egress: dict[str, ProcedureTerminalEgress] = {}
+    children: list[ProcedureChildInvocation] = []
     for stored in records:
         payload = parse_journal_payload(bodies.read(stored.record.payload_digest, access=access))
         if (
@@ -2477,7 +2477,7 @@ def _state_from_records(
         ):
             child_receipt = ProcedureRunReceiptV1.model_validate(payload["receipt"])
             children.append(
-                ProcedureChildInvocationV1(
+                ProcedureChildInvocation(
                     node_id=str(payload["node_id"]),
                     run_id=child_receipt.run_id,
                     procedure=ArtifactIdentity.model_validate(payload["procedure"]),
@@ -2507,7 +2507,7 @@ def _state_from_records(
             node_id = payload.get("node_id") if isinstance(payload, dict) else None
             outcomes.append(
                 ProcedureRunOutcomeV1(
-                    capture_event=TriggerEventReferenceV1(
+                    capture_event=TriggerEventReference(
                         run_id=run_id,
                         partition_id=stored.record.partition_id,
                         sequence=stored.record.sequence,
@@ -2525,7 +2525,7 @@ def _state_from_records(
             final = payload
         if stored.record.event_kind == "source_request_derived":
             try:
-                derived = ProcedureDerivedSourceRequestV1.model_validate(payload)
+                derived = ProcedureDerivedSourceRequest.model_validate(payload)
             except (ValidationError, TypeError, ValueError) as exc:
                 raise ProcedureRunRecoveryRequired(
                     f"{ProcedureRunRecoveryRequired.code}: derived Source request is invalid"
@@ -2542,7 +2542,7 @@ def _state_from_records(
             derived_source_requests[derived.occurrence_path] = derived
         if stored.record.event_kind == "source_read" and isinstance(payload, dict):
             try:
-                read_receipt = SourceReadReceiptV1.model_validate(payload.get("receipt"))
+                read_receipt = SourceReadReceipt.model_validate(payload.get("receipt"))
             except (ValidationError, TypeError, ValueError) as exc:
                 raise ProcedureRunRecoveryRequired(
                     f"{ProcedureRunRecoveryRequired.code}: Source read receipt is invalid"
@@ -2560,7 +2560,7 @@ def _state_from_records(
             source_reads[read_receipt.occurrence_path] = read_receipt
         if stored.record.event_kind == "provider_invocation_started":
             try:
-                started = ProviderInvocationStartedV1.model_validate(payload)
+                started = ProviderInvocationStarted.model_validate(payload)
             except (ValidationError, TypeError, ValueError) as exc:
                 raise ProcedureRunRecoveryRequired(
                     f"{ProcedureRunRecoveryRequired.code}: Provider invocation start is invalid"
@@ -2610,7 +2610,7 @@ def _state_from_records(
             provider_invocations[started.invocation_id] = "started"
         if stored.record.event_kind == "provider_invocation_completed":
             try:
-                completed = ProviderInvocationCompletedV1.model_validate(payload)
+                completed = ProviderInvocationCompleted.model_validate(payload)
             except (ValidationError, TypeError, ValueError) as exc:
                 raise ProcedureRunRecoveryRequired(
                     f"{ProcedureRunRecoveryRequired.code}: Provider invocation receipt is invalid"
@@ -2639,7 +2639,7 @@ def _state_from_records(
                         invocation_receipt_digest, str
                     ):
                         raise TypeError("Source Capture association is partial")
-                    association = ProcedureSourceCaptureAssociationV1(
+                    association = ProcedureSourceCaptureAssociation(
                         occurrence_path=occurrence_path,
                         invocation_receipt_digest=invocation_receipt_digest,
                         capture_digest=str(payload.get("capture_digest")),
@@ -2689,7 +2689,7 @@ def _state_from_records(
         "halted",
     ] = "running"
     result = None
-    terminal: ProcedureTerminalV1 | None = None
+    terminal: ProcedureTerminal | None = None
     semantic_result_digest = None
     if isinstance(final, dict):
         try:
@@ -2697,8 +2697,7 @@ def _state_from_records(
             if not isinstance(raw_associations, list):
                 raise TypeError("Source Capture associations are not a list")
             source_capture_associations = tuple(
-                ProcedureSourceCaptureAssociationV1.model_validate(item)
-                for item in raw_associations
+                ProcedureSourceCaptureAssociation.model_validate(item) for item in raw_associations
             )
         except (TypeError, ValueError, ValidationError) as exc:
             raise ProcedureRunRecoveryRequired(
@@ -2762,14 +2761,14 @@ def _state_from_records(
                 refusal = raw_refusal if isinstance(raw_refusal, dict) else {}
                 raw_budget = refusal.get("budget")
                 budget = (
-                    ProcedureBudgetRefusalDetailV1.model_validate(raw_budget)
+                    ProcedureBudgetRefusalDetail.model_validate(raw_budget)
                     if isinstance(raw_budget, dict)
                     else None
                 )
                 refusal_code = str(refusal.get("code", "guard_refused"))
                 raw_detail_code = refusal.get("detail_code")
-                if refusal_code in get_args(ProcedureAdmissionRefusalCodeV1):
-                    terminal = ProcedureAdmissionRefusalV1.model_validate(
+                if refusal_code in get_args(ProcedureAdmissionRefusalCode):
+                    terminal = ProcedureAdmissionRefusal.model_validate(
                         {
                             "code": refusal_code,
                             "message": str(refusal.get("message", "Procedure admission refused.")),
@@ -2777,15 +2776,15 @@ def _state_from_records(
                         }
                     )
                 elif refusal_code == "budget_max_items_exceeded":
-                    terminal = ProcedureBudgetExhaustedV1(
+                    terminal = ProcedureBudgetExhausted(
                         node_id=str(refusal.get("node_id") or last_node_id),
                         journal_coordinate=_journal_coordinate(final_record),
-                        details=ProcedureBudgetExceededDetailV1.model_validate(
+                        details=ProcedureBudgetExceededDetail.model_validate(
                             refusal.get("details", {})
                         ),
                     )
                 else:
-                    terminal = ProcedureNodeRefusalV1.model_validate(
+                    terminal = ProcedureNodeRefusal.model_validate(
                         {
                             "code": refusal_code,
                             "message": str(
@@ -2812,14 +2811,14 @@ def _state_from_records(
                 if not isinstance(raw_halt, dict):
                     raise ValueError("halted run lacks typed halt material")
                 raw_reason = raw_halt.get("reason")
-                terminal = ProcedureHaltTerminalV1(
+                terminal = ProcedureHaltTerminal(
                     node_id=str(raw_halt.get("node_id") or last_node_id),
                     reason=raw_reason if isinstance(raw_reason, str) else None,
                     journal_coordinate=_journal_coordinate(final_record),
                 )
             elif raw_status == "failed":
                 failure_code = final.get("failure_code")
-                if failure_code in set(get_args(ProcedureOperationalFailureCodeV1)):
+                if failure_code in set(get_args(ProcedureOperationalFailureCode)):
                     status = "operational_failed"
                     messages = {
                         "cas_unavailable_at_replay": (
@@ -2842,7 +2841,7 @@ def _state_from_records(
                             "Admitted Procedure replay material fails its content address."
                         ),
                     }
-                    terminal = ProcedureOperationalFailureV1.model_validate(
+                    terminal = ProcedureOperationalFailure.model_validate(
                         {
                             "code": failure_code,
                             "message": messages.get(
@@ -2853,8 +2852,8 @@ def _state_from_records(
                             "details": final.get("failure_details", {}),
                         }
                     )
-                elif failure_code in set(get_args(ProcedureInternalFailureCodeV1)):
-                    terminal = ProcedureInternalFailureV1.model_validate(
+                elif failure_code in set(get_args(ProcedureInternalFailureCode)):
+                    terminal = ProcedureInternalFailure.model_validate(
                         {
                             "code": failure_code,
                             "message": (
@@ -2865,7 +2864,7 @@ def _state_from_records(
                         }
                     )
                 else:
-                    terminal = ProcedureInternalFailureV1(
+                    terminal = ProcedureInternalFailure(
                         code="unexpected_exception",
                         message="Procedure execution failed unexpectedly; inspect daemon logs.",
                         correlation_id=run_id,
@@ -2876,14 +2875,14 @@ def _state_from_records(
             status = "internal_failed"
             result = None
             semantic_result_digest = None
-            terminal = ProcedureInternalFailureV1(
+            terminal = ProcedureInternalFailure(
                 code="run_record_invalid",
                 message="Procedure run record is invalid; inspect daemon logs.",
                 correlation_id=run_id,
                 journal_coordinate=_journal_coordinate(final_record),
                 repair=served_repair_for_refusal("run_record_invalid"),
             )
-    attribution = ProcedureRunAttributionV1(
+    attribution = ProcedureRunAttribution(
         actor_type=admission.actor_context.actor_type,
         actor_id=admission.actor_context.actor_id,
         org_id=admission.actor_context.org_id,
@@ -2896,7 +2895,7 @@ def _state_from_records(
         | ProcedureRunReceiptV3
         | ProcedureRunReceiptV4
         | ProcedureRunReceiptV5
-        | ProcedureRunReceiptV6
+        | ProcedureRunReceipt
         | None
     ) = None
     receipt_digest = None
@@ -2977,18 +2976,18 @@ def _state_from_records(
                 occurrence_id=cast(str, admission.occurrence_id),
                 occurrence_evaluation_time=admission.occurrence_evaluation_time,
                 node_pin_sets=tuple(
-                    ProcedureRunNodePinSetV1(node_id=item.node_id, pins=item.pins)
+                    ProcedureRunNodePinSet(node_id=item.node_id, pins=item.pins)
                     for item in admission.node_pin_sets
                 ),
                 pin_set_digest=admission.pin_set_digest,
                 replay_input_vector=tuple(
-                    ProcedureReplayInputProjectionV1.model_validate(item.model_dump(mode="json"))
+                    ProcedureReplayInputProjection.model_validate(item.model_dump(mode="json"))
                     for item in procedure_replay_input_vector(admission)
                 ),
                 deployment_snapshot_digest=cast(str, admission.deployment_snapshot_digest),
                 acquisition_policy_digest=cast(str, admission.acquisition_policy_digest),
                 selection_receipt_digest=admission.selection_receipt_digest,
-                selection_decision=ProcedureSelectionDecisionV1.model_validate(
+                selection_decision=ProcedureSelectionDecision.model_validate(
                     admission.selection_decision.model_dump(mode="json")
                 ),
                 selection_decision_digest=admission.selection_decision_digest,
@@ -2998,13 +2997,13 @@ def _state_from_records(
                 taint_labels=admission.taint_labels,
                 epsilon_member=admission.epsilon_member,
                 admission_material_manifest=(
-                    ProcedureAdmissionMaterialManifestV1.model_validate(
+                    ProcedureAdmissionMaterialManifest.model_validate(
                         admission_material_manifest.model_dump(mode="json")
                     )
                 ),
                 admission_material_manifest_digest=cast(str, admission_material_manifest_digest),
-                budget=ProcedureRunBudgetV2(
-                    declared=ProcedureRunBudgetDeclaredV2(
+                budget=ProcedureRunBudget(
+                    declared=ProcedureRunBudgetDeclared(
                         budget=admission.budget,
                         hard_caps=admission.hard_caps,
                         result_bytes_cap=parsed_budget.declared.result_bytes_cap,
@@ -3018,10 +3017,10 @@ def _state_from_records(
                     raise ProcedureRunRecoveryRequired(
                         f"{ProcedureRunRecoveryRequired.code}: v5 acquisition plan is absent"
                     )
-                public_receipt = ProcedureRunReceiptV6(
+                public_receipt = ProcedureRunReceipt(
                     **shared_line_fields,
                     resolved_provider_bindings=tuple(
-                        ProcedureProviderBindingV2.model_validate(item.model_dump(mode="json"))
+                        ProcedureProviderBinding.model_validate(item.model_dump(mode="json"))
                         for item in admission.resolved_provider_bindings
                     ),
                     acquisition_plan_digest=acquisition_plan_digest,
@@ -3033,7 +3032,7 @@ def _state_from_records(
                 public_receipt = ProcedureRunReceiptV5(
                     **shared_line_fields,
                     resolved_provider_bindings=tuple(
-                        ProcedureProviderBindingV2.model_validate(item.model_dump(mode="json"))
+                        ProcedureProviderBinding.model_validate(item.model_dump(mode="json"))
                         for item in admission.resolved_provider_bindings
                     ),
                 )
@@ -3085,7 +3084,7 @@ def _state_from_records(
         for item in (source_capture_associations or tuple(produced_source_associations))
     }
     observations = tuple(
-        ProcedureSourceObservationV1(
+        ProcedureSourceObservation(
             occurrence_path=occurrence_path,
             node_id=None if derived is None else derived.node_id,
             input_name=None if derived is None else derived.input_name,
@@ -3149,12 +3148,12 @@ def _state_from_records(
 
 
 def _direct_refusal_state(
-    accepted: AcceptedProcedureV1,
+    accepted: AcceptedProcedure,
     *,
     coordinate: AcceptedProjectionCoordinate,
     head_at_admission: AcceptedProjectionCoordinate,
     evaluation_time: datetime,
-    code: ProcedureAdmissionRefusalCodeV1,
+    code: ProcedureAdmissionRefusalCode,
     message: str,
     details: object,
 ) -> ProcedureRunStateV2:
@@ -3170,7 +3169,7 @@ def _direct_refusal_state(
         pending_inputs=(),
         outcomes=(),
         next_operation=ProcedureNextOperationV1(kind="terminal"),
-        terminal=ProcedureAdmissionRefusalV1(
+        terminal=ProcedureAdmissionRefusal(
             code=code,
             message=message,
             details=details,
@@ -3181,19 +3180,19 @@ def _direct_refusal_state(
 
 def _plan_direct_external_run(
     instance: PlaybillInstance,
-    accepted: AcceptedProcedureV1,
+    accepted: AcceptedProcedure,
     *,
     coordinate: AcceptedProjectionCoordinate,
     head_at_admission: AcceptedProjectionCoordinate,
     evaluation_time: datetime,
     provider_runtime_operator: ProviderRuntimeOperatorProtocol | None,
-    budget: ProcedureBudgetV3,
+    budget: ProcedureBudget,
 ) -> (
     tuple[
-        ProcedureAcquisitionPlanV2,
-        SourceAcquisitionPolicyV1 | None,
-        Mapping[str, CaptureContractV1],
-        ProcedureRuntimePolicyV1,
+        ProcedureAcquisitionPlan,
+        SourceAcquisitionPolicy | None,
+        Mapping[str, CaptureContract],
+        ProcedureRuntimePolicy,
     ]
     | ProcedureRunStateV2
 ):
@@ -3216,7 +3215,7 @@ def _plan_direct_external_run(
             message="Served external execution requires an accepted ProcedureRuntimePolicy.",
             details={"reason": str(exc), "repair": "Seed the instance ProcedureRuntimePolicy."},
         )
-    policy: SourceAcquisitionPolicyV1 | None = None
+    policy: SourceAcquisitionPolicy | None = None
     source_names = _source_input_names(accepted)
     # Calls bind the accepted runtime output cap, with no
     # evidence-selection policy. Source occurrences additionally bind their
@@ -3283,7 +3282,7 @@ def _plan_direct_external_run(
             pending_inputs=(),
             outcomes=(),
             next_operation=ProcedureNextOperationV1(kind="terminal"),
-            terminal=ProcedureNodeRefusalV1(
+            terminal=ProcedureNodeRefusal(
                 code="provider_unavailable",
                 message="The daemon Provider lane cannot admit this direct Source run.",
                 node_id="direct-admission",
@@ -3299,7 +3298,7 @@ def _plan_direct_external_run(
             details={"reason": str(exc), "repair": "Accept the Provider closure this graph pins."},
         )
     selection = (
-        ProcedureSelectionDecisionV1(policy_digest=policy_digest, verdict="selected", decisions=())
+        ProcedureSelectionDecision(policy_digest=policy_digest, verdict="selected", decisions=())
         if policy is None
         else _plan_selection_decision(
             policy,
@@ -3327,7 +3326,7 @@ def _plan_direct_external_run(
         )
     selection_digest = procedure_selection_decision_digest(selection)
     accepted_coordinate = AcceptedCoordinate.from_internal(coordinate)
-    plan = ProcedureAcquisitionPlanV2(
+    plan = ProcedureAcquisitionPlan(
         accepted_coordinate=accepted_coordinate,
         occurrence_evaluation_time=evaluation_time,
         acquisition_policy_format=policy_format,
@@ -3341,7 +3340,7 @@ def _plan_direct_external_run(
 
 def _prepare_direct_external_run(
     instance: PlaybillInstance,
-    accepted: AcceptedProcedureV1,
+    accepted: AcceptedProcedure,
     *,
     coordinate: AcceptedProjectionCoordinate,
     head_at_admission: AcceptedProjectionCoordinate,
@@ -3352,10 +3351,10 @@ def _prepare_direct_external_run(
     journal_stream: JournalStreamIdentityV1,
     lane: Literal["current", "replay"],
     provider_runtime_operator: ProviderRuntimeOperatorProtocol | None,
-    effective_budget: ProcedureBudgetV3 | None = None,
-    effective_caps: ProcedureHardCapsV3 | None = None,
+    effective_budget: ProcedureBudget | None = None,
+    effective_caps: ProcedureHardCaps | None = None,
 ) -> (
-    tuple[PreparedProcedureRunV5, SourceAcquisitionPolicyV1 | None, Mapping[str, CaptureContractV1]]
+    tuple[PreparedProcedureRunV5, SourceAcquisitionPolicy | None, Mapping[str, CaptureContract]]
     | ProcedureRunStateV2
 ):
     """Bind state and external inputs through the same planner for root and child runs."""
@@ -3389,10 +3388,10 @@ def _prepare_direct_external_run(
     )
     node_pin_sets = procedure_node_pin_sets(accepted)
     bindings = tuple(
-        ProcedureProviderBindingV2(
+        ProcedureProviderBinding(
             node_id=item.node_id,
             provider_artifact_digest=item.provider_artifact_digest,
-            classification_plan=ProviderBucketClassificationPlanV1(
+            classification_plan=ProviderBucketClassificationPlan(
                 node_id=item.node_id,
                 interface_artifact_digest=item.interface_artifact_digest,
                 interface_digest=item.interface_digest,
@@ -3479,7 +3478,7 @@ def _prepare_direct_external_run(
             "run_id": procedure_semantic_run_id(replay_key),
         }
     )
-    manifest = ProcedureAdmissionMaterialManifestV1(members=())
+    manifest = ProcedureAdmissionMaterialManifest(members=())
     prepared = PreparedProcedureRunV5(
         admission=admission,
         accepted_state_materials=materials,
@@ -3495,7 +3494,7 @@ def service_run_playbill_procedure(
     instance: PlaybillInstance,
     *,
     name: str,
-    request: ProcedureRunRequestV2,
+    request: ProcedureRunRequest,
     actor_context: GovernedActorContext,
     provider_runtime_operator: ProviderRuntimeOperatorProtocol | None = None,
     workspace_file_reader: WorkspaceFileReader | None = None,
@@ -3543,7 +3542,7 @@ def service_run_playbill_procedure(
             pending_inputs=readiness.required_slots,
             outcomes=(),
             next_operation=ProcedureNextOperationV1(kind="bind"),
-            terminal=ProcedureAdmissionRefusalV1(
+            terminal=ProcedureAdmissionRefusal(
                 code="binding_required",
                 message="Procedure accepted bindings are incomplete.",
                 details={"required_slots": list(readiness.required_slots)},
@@ -3590,7 +3589,7 @@ def service_run_playbill_procedure(
             pending_inputs=(),
             outcomes=(),
             next_operation=ProcedureNextOperationV1(kind="terminal"),
-            terminal=ProcedureAdmissionRefusalV1(
+            terminal=ProcedureAdmissionRefusal(
                 code=refusal_code,
                 message=refusal_message,
                 details={
@@ -3625,8 +3624,8 @@ def service_run_playbill_procedure(
         evaluation_time=evaluation_time,
     )
     prepared: PreparedProcedureRunV2 | PreparedProcedureRunV5
-    acquisition_policy: SourceAcquisitionPolicyV1 | None = None
-    capture_contracts: Mapping[str, CaptureContractV1] = {}
+    acquisition_policy: SourceAcquisitionPolicy | None = None
+    capture_contracts: Mapping[str, CaptureContract] = {}
     if _source_input_names(accepted) or (
         isinstance(accepted.procedure.definition, ProcedureDefinitionV4)
         and int(accepted.procedure.definition.graph_format) >= 5
@@ -3737,8 +3736,8 @@ def service_run_playbill_procedure(
 
 
 def _line_refusal_state(
-    accepted: AcceptedProcedureV1,
-    accepted_line: AcceptedLineSpecV1,
+    accepted: AcceptedProcedure,
+    accepted_line: AcceptedLineSpec,
     *,
     coordinate: AcceptedProjectionCoordinate,
     head_at_admission: AcceptedProjectionCoordinate,
@@ -3760,7 +3759,7 @@ def _line_refusal_state(
         pending_inputs=(),
         outcomes=(),
         next_operation=ProcedureNextOperationV1(kind="terminal"),
-        terminal=ProcedureAdmissionRefusalV1.model_validate(
+        terminal=ProcedureAdmissionRefusal.model_validate(
             {
                 "code": code,
                 "retryable": retryable,
@@ -3774,7 +3773,7 @@ def _line_refusal_state(
     )
 
 
-def line_authority_rung(accepted_line: AcceptedLineSpecV1, accepted: AcceptedProcedureV1) -> int:
+def line_authority_rung(accepted_line: AcceptedLineSpec, accepted: AcceptedProcedure) -> int:
     """The most this Line's runs can do: 1 observe, 2 propose, 3 settle.
 
     It is the lower of what the Procedure's terminals reach and what the Line
@@ -3790,7 +3789,7 @@ def line_authority_rung(accepted_line: AcceptedLineSpecV1, accepted: AcceptedPro
 
 def _accepted_line_mandates(
     instance: PlaybillInstance,
-    accepted: AcceptedProcedureV1,
+    accepted: AcceptedProcedure,
     *,
     coordinate: AcceptedProjectionCoordinate,
     evaluation_time: datetime,
@@ -3805,7 +3804,7 @@ def _accepted_line_mandates(
             (accepted.procedure.identity.qualified, accepted.artifact_digest, instant, instant),
         ):
             mandate = projection.typed.source(identity)
-            if not isinstance(mandate, ProcedureMandateV1 | ProcedureMandateV2):
+            if not isinstance(mandate, ProcedureMandateV1 | ProcedureMandate):
                 raise ProjectionIntegrityError(
                     "accepted ProcedureMandate source is absent or invalid"
                 )
@@ -3845,7 +3844,7 @@ def service_run_playbill_line(
     instance: PlaybillInstance,
     *,
     path_identity_digest: str,
-    request: LineRunRequestV1,
+    request: LineRunRequest,
     actor_context: GovernedActorContext,
     caller_rung: int,
     provider_runtime_operator: ProviderRuntimeOperatorProtocol | None = None,
@@ -3888,7 +3887,7 @@ def _run_playbill_line(
     instance: PlaybillInstance,
     *,
     path_identity_digest: str,
-    request: LineRunRequestV1,
+    request: LineRunRequest,
     actor_context: GovernedActorContext,
     caller_rung: int,
     provider_runtime_operator: ProviderRuntimeOperatorProtocol | None = None,
@@ -4084,7 +4083,7 @@ def _run_playbill_line(
     # The event, or the fixed window's close, this occurrence fires on.
     anchor: datetime | None = None
     try:
-        if trigger is not None and isinstance(schedule, GenerationAcceptedScheduleV1):
+        if trigger is not None and isinstance(schedule, GenerationAcceptedSchedule):
             from cruxible_core.triggers.journal import trigger_generation
 
             with instance.accepted_history_reader() as history:
@@ -4113,7 +4112,7 @@ def _run_playbill_line(
             trigger_binding = trigger_binding_for(trigger, generation=generation)
         elif trigger is not None and schedule is not None and schedule_is_timed(schedule):
             trigger_binding = trigger_binding_for(trigger)
-        elif trigger is not None and isinstance(schedule, CaptureLandingScheduleV1):
+        elif trigger is not None and isinstance(schedule, CaptureLandingSchedule):
             if request.trigger_event is None:
                 return _line_refusal_state(
                     accepted,
@@ -4129,8 +4128,8 @@ def _run_playbill_line(
                 instance, schedule.event, request.trigger_event, now=evaluation_time
             )
             trigger_binding = trigger_binding_for(trigger, event=request.trigger_event)
-        elif trigger is not None and isinstance(schedule, WindowCloseScheduleV1):
-            if isinstance(schedule.window, CaptureEventWindowV1) and request.trigger_event is None:
+        elif trigger is not None and isinstance(schedule, WindowCloseSchedule):
+            if isinstance(schedule.window, CaptureEventWindow) and request.trigger_event is None:
                 return _line_refusal_state(
                     accepted,
                     accepted_line,
@@ -4143,7 +4142,7 @@ def _run_playbill_line(
                 )
             line_event = request.trigger_event
             if (
-                not isinstance(schedule.window, CaptureEventWindowV1)
+                not isinstance(schedule.window, CaptureEventWindow)
                 and request.resolution_contract is not None
             ):
                 line_event = None
@@ -4151,7 +4150,7 @@ def _run_playbill_line(
             trigger_binding = trigger_binding_for(trigger, window=window)
             anchor = (
                 window.starts_at
-                if isinstance(schedule.window, CaptureEventWindowV1)
+                if isinstance(schedule.window, CaptureEventWindow)
                 else window.ends_at
             )
         elif request.trigger_event is not None and request.resolution_contract is None:
@@ -4283,7 +4282,7 @@ def _run_playbill_line(
         return _state_from_records(instance, run_id=existing.run_id)
     if investigation is not None:
         require_current_investigation(instance, investigation)
-    if any(isinstance(node, ExhaustTapNodeV3) for node in accepted.procedure.definition.nodes):
+    if any(isinstance(node, ExhaustTapNode) for node in accepted.procedure.definition.nodes):
         return _line_refusal_state(
             accepted,
             accepted_line,
@@ -4315,7 +4314,7 @@ def _run_playbill_line(
     # A Source-free Line acquires nothing, so it pins no acquisition policy.
     # Its plan binds the accepted runtime policy instead, exactly as a direct
     # run of a Source-free Procedure does.
-    line_policy: SourceAcquisitionPolicyV1 | None = None
+    line_policy: SourceAcquisitionPolicy | None = None
     if line_policy_pin is None:
         policy_digest = procedure_runtime_policy_digest(runtime_policy).tagged
         policy_format: str = runtime_policy.tag
@@ -4338,7 +4337,7 @@ def _run_playbill_line(
             details={"repair": "Accept the pinned SourceAcquisitionPolicy or succeed the Line."},
         )
     landed_materials: tuple[LandedCaptureRunMaterialV1, ...] = ()
-    if isinstance(accepted_line.line, LineSpecV6) and accepted_line.line.trigger_input is not None:
+    if isinstance(accepted_line.line, LineSpec) and accepted_line.line.trigger_input is not None:
         from cruxible_core.service.procedures.trigger_inputs import bind_trigger_capture
 
         assert line_policy is not None  # a trigger input is a Source input
@@ -4403,7 +4402,7 @@ def _run_playbill_line(
             pending_inputs=(),
             outcomes=(),
             next_operation=ProcedureNextOperationV1(kind="terminal"),
-            terminal=ProcedureNodeRefusalV1(
+            terminal=ProcedureNodeRefusal(
                 code="provider_unavailable",
                 message="The daemon Provider lane cannot admit this Line occurrence.",
                 node_id="line-admission",
@@ -4413,7 +4412,7 @@ def _run_playbill_line(
             ),
         )
     selection = (
-        ProcedureSelectionDecisionV1(policy_digest=policy_digest, verdict="selected", decisions=())
+        ProcedureSelectionDecision(policy_digest=policy_digest, verdict="selected", decisions=())
         if line_policy is None
         else _plan_selection_decision(
             line_policy,
@@ -4452,7 +4451,7 @@ def _run_playbill_line(
                         (
                             *selection.decisions,
                             *(
-                                AcquisitionInputDecisionV1(
+                                AcquisitionInputDecision(
                                     input_name=item.input.input_name,
                                     disposition="selected",
                                     considered_capture_digests=(item.input.capture_digest,),
@@ -4468,7 +4467,7 @@ def _run_playbill_line(
         )
     selection_digest = procedure_selection_decision_digest(selection)
     accepted_coordinate = AcceptedCoordinate.from_internal(coordinate)
-    plan = ProcedureAcquisitionPlanV2(
+    plan = ProcedureAcquisitionPlan(
         accepted_coordinate=accepted_coordinate,
         line_identity=accepted_line.line.identity,
         line_spec_digest=accepted_line.artifact_digest,
@@ -4523,10 +4522,10 @@ def _run_playbill_line(
         },
     ).tagged
     bindings = tuple(
-        ProcedureProviderBindingV2(
+        ProcedureProviderBinding(
             node_id=item.node_id,
             provider_artifact_digest=item.provider_artifact_digest,
-            classification_plan=ProviderBucketClassificationPlanV1(
+            classification_plan=ProviderBucketClassificationPlan(
                 node_id=item.node_id,
                 interface_artifact_digest=item.interface_artifact_digest,
                 interface_digest=item.interface_digest,
@@ -4617,7 +4616,7 @@ def _run_playbill_line(
         admission=admission,
         accepted_line=accepted_line,
     )
-    if isinstance(prepared_admission, ProcedureAdmissionRefusalV1):
+    if isinstance(prepared_admission, ProcedureAdmissionRefusal):
         return _line_refusal_state(
             accepted,
             accepted_line,
@@ -4630,7 +4629,7 @@ def _run_playbill_line(
         )
     if not isinstance(prepared_admission, ProcedureRunAdmissionV5):
         raise PlaybillExecutionError("Line admission unexpectedly changed wire generation")
-    manifest = ProcedureAdmissionMaterialManifestV1(
+    manifest = ProcedureAdmissionMaterialManifest(
         members=tuple(
             capture_admission_material_member(
                 item.input,
@@ -4930,8 +4929,8 @@ def service_recover_provider_invocations(
         records = journal.all_records(stream, partition_id)
         admission: ProcedureRunAdmissionV5 | None = None
         plan = None
-        starts: dict[str, ProviderInvocationStartedV1] = {}
-        completed: dict[str, ProviderInvocationCompletedV1] = {}
+        starts: dict[str, ProviderInvocationStarted] = {}
+        completed: dict[str, ProviderInvocationCompleted] = {}
         for stored in records:
             payload = parse_journal_payload(
                 bodies.read(stored.record.payload_digest, access=access)
@@ -4943,10 +4942,10 @@ def service_recover_provider_invocations(
                     admission = bound.admission
                     plan = bound.acquisition_plan
             elif stored.record.event_kind == "provider_invocation_started":
-                started = ProviderInvocationStartedV1.model_validate(payload)
+                started = ProviderInvocationStarted.model_validate(payload)
                 starts[started.invocation_id] = started
             elif stored.record.event_kind == "provider_invocation_completed":
-                parsed_completion = ProviderInvocationCompletedV1.model_validate(payload)
+                parsed_completion = ProviderInvocationCompleted.model_validate(payload)
                 completed[parsed_completion.invocation_id] = parsed_completion
         if admission is None or plan is None:
             continue
@@ -5002,7 +5001,7 @@ def service_recover_provider_invocations(
                     message="Daemon startup terminated an incomplete Provider process group.",
                     detail={},
                 )
-                assert isinstance(outcome, ProviderInvocationOutcomeV1)
+                assert isinstance(outcome, ProviderInvocationOutcome)
                 declared = tuple(
                     endpoint
                     for endpoint in occurrence.local_execution.declared_endpoints
@@ -5016,7 +5015,7 @@ def service_recover_provider_invocations(
                         if endpoint == "dynamic:target-from-run-input"
                     ),
                 )
-                receipt = ProviderInvocationReceiptV1(
+                receipt = ProviderInvocationReceipt(
                     invocation_id=invocation_id,
                     occurrence_path=occurrence.occurrence_path,
                     run_id=admission.run_id,
@@ -5032,7 +5031,7 @@ def service_recover_provider_invocations(
                     capture_contract_digest=occurrence.capture_contract_digest,
                     input_digest=started.input_digest,
                     outcome=outcome,
-                    egress=ProviderEgressObservationV1(
+                    egress=ProviderEgressObservation(
                         declared_endpoints=declared,
                         observed_endpoints=(),
                         dynamic_endpoint_forms=dynamic,
@@ -5043,10 +5042,10 @@ def service_recover_provider_invocations(
                     secret_references=tuple(
                         sorted(
                             (
-                                ProviderSecretReceiptReferenceV1(
+                                ProviderSecretReceiptReference(
                                     binding_identity_digest=(
                                         provider_secret_binding_identity_digest(
-                                            ProviderSecretBindingIdentityV1(
+                                            ProviderSecretBindingIdentity(
                                                 realm=reference.realm,
                                                 name=reference.name,
                                             )
@@ -5064,7 +5063,7 @@ def service_recover_provider_invocations(
                     trace={},
                     stderr="",
                 )
-                completion = ProviderInvocationCompletedV1(
+                completion = ProviderInvocationCompleted(
                     invocation_id=invocation_id,
                     receipt=receipt,
                     receipt_digest=provider_invocation_receipt_digest(receipt),
@@ -5127,9 +5126,9 @@ def service_recover_provider_invocations(
                             budget=admission.budget,
                             hard_caps=admission.hard_caps,
                         ),
-                        observed=ProcedureRunBudgetObservedV1(
-                            max_items=ProcedureBudgetBoundaryObservationV1(high_water=0),
-                            result_bytes=ProcedureBudgetBoundaryObservationV1(high_water=0),
+                        observed=ProcedureRunBudgetObserved(
+                            max_items=ProcedureBudgetBoundaryObservation(high_water=0),
+                            result_bytes=ProcedureBudgetBoundaryObservation(high_water=0),
                             provider_calls=provider_calls,
                             capture_bytes=0,
                             wall_clock_microseconds=wall_clock_microseconds,
@@ -5156,19 +5155,19 @@ def service_prepare_playbill_line_admission(
     instance: PlaybillInstance,
     *,
     admission: ProcedureRunAdmissionV3 | ProcedureRunAdmissionV4 | ProcedureRunAdmissionV5,
-    accepted_line: AcceptedLineSpecV1,
+    accepted_line: AcceptedLineSpec,
 ) -> (
     ProcedureRunAdmissionV3
     | ProcedureRunAdmissionV4
     | ProcedureRunAdmissionV5
-    | ProcedureAdmissionRefusalV1
+    | ProcedureAdmissionRefusal
 ):
     """Bind the accepted runtime policy into a Line admission before publication."""
 
     if isinstance(admission, ProcedureRunAdmissionV5) and bool(admission.exhaust_inputs) != (
         admission.exhaust_access_binding_digest is not None
     ):
-        return ProcedureAdmissionRefusalV1(
+        return ProcedureAdmissionRefusal(
             code="exhaust_binding_carrier_required",
             message="Exhaust inputs require exactly one opaque access-binding carrier.",
             details={
@@ -5186,7 +5185,7 @@ def service_prepare_playbill_line_admission(
     try:
         policy = _accepted_runtime_policy(instance, coordinate)
     except ProcedureRuntimePolicyAbsent as exc:
-        return ProcedureAdmissionRefusalV1(
+        return ProcedureAdmissionRefusal(
             code="procedure_runtime_policy_absent",
             message=str(exc),
             details={"policy_path": PROCEDURE_RUNTIME_POLICY_PATH},
@@ -5196,7 +5195,7 @@ def service_prepare_playbill_line_admission(
         bound = bind_line_admission_runtime_policy(admission, policy)
         verify_line_admission_spec(bound, accepted_line)
     except PlaybillExecutionError as exc:
-        return ProcedureAdmissionRefusalV1(
+        return ProcedureAdmissionRefusal(
             code="artifact_binding_mismatch",
             message=str(exc),
             details={
@@ -5244,14 +5243,14 @@ __all__ = [
     "load_playbill_procedure_run_grain",
     "LineRunIdentityMismatch",
     "LineRunNotAccepted",
-    "LineRunRequestV1",
-    "ProcedureBindRequestV1",
+    "LineRunRequest",
+    "ProcedureBindRequest",
     "ProcedureBindResultV2",
     "ProcedureBindingGraphV4LineClosureRequired",
-    "ProcedurePendingSuccessorV1",
+    "ProcedurePendingSuccessor",
     "ProcedureReadinessRequestV1",
     "ProcedureReadinessResultV1",
-    "ProcedureRunRequestV2",
+    "ProcedureRunRequest",
     "ProcedureRunStateV2",
     "ProcedureSurfaceError",
     "service_bind_playbill_procedure",

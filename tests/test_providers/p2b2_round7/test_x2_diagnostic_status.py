@@ -33,7 +33,7 @@ def test_available_lane_detail_surfaces_the_bounded_diagnostic_summary(
     assert "retained=2" in detail
     assert "provider_process_lease_invalid" in detail
     assert "last table hiccup" in detail
-    projected = contracts.ProviderLaneStatusV1(state=state, code=code, detail=detail)
+    projected = contracts.ProviderLaneStatus(state=state, code=code, detail=detail)
     assert projected.detail == detail
 
 
@@ -55,7 +55,7 @@ def test_cli_status_renders_available_lane_diagnostics(
                 instance_count=1,
                 auth_enabled=False,
                 auth_required=False,
-                provider_lane=contracts.ProviderLaneStatusV1(
+                provider_lane=contracts.ProviderLaneStatus(
                     state="available",
                     code=None,
                     detail=detail,

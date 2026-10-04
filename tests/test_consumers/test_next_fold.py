@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-from cruxible_client.contracts.triggers import CadenceScheduleV1
+from cruxible_client.contracts.triggers import CadenceSchedule
 from cruxible_core.consumers import floor
 from cruxible_core.consumers import next as folded
 from cruxible_core.consumers.next import NEXT_QUEUE, evidence, predictions, queue
@@ -35,7 +35,7 @@ def _cadence(trigger: str, action: str, interval: timedelta) -> InternalTrigger:
     return InternalTrigger(
         trigger,
         action,
-        CadenceScheduleV1(interval_seconds=int(interval.total_seconds())),
+        CadenceSchedule(interval_seconds=int(interval.total_seconds())),
         accepted_at=EVALUATION_TIME - interval,
     )
 

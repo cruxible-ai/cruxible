@@ -71,7 +71,7 @@ from cruxible_client.authoring.seed import (  # noqa: E402
 from cruxible_core.cli.commands import _common  # noqa: E402
 from cruxible_core.cli.context import load_cli_context  # noqa: E402
 from cruxible_core.cli.main import cli  # noqa: E402
-from cruxible_core.coverage.adapter import WorkingSourceObservationV1  # noqa: E402
+from cruxible_core.coverage.adapter import WorkingSourceObservation  # noqa: E402
 from cruxible_core.coverage.contracts import CoverageResultV3  # noqa: E402
 from cruxible_core.coverage.middleware import (  # noqa: E402
     CONFIG_RELATIVE_PATH,
@@ -119,7 +119,7 @@ ARM_NUMBERS: tuple[ArmNumber, ...] = (1, 2, 3, 4)
 def _resolver(client: Any, instance_id: str) -> ResolveCoverage:
     """The embedding recipe: observations in, one frozen coverage result out."""
 
-    def resolve(observations: Sequence[WorkingSourceObservationV1]) -> CoverageResultV3:
+    def resolve(observations: Sequence[WorkingSourceObservation]) -> CoverageResultV3:
         answered = client.resolve_playbill_coverage(
             instance_id,
             observations=[item.model_dump(mode="json") for item in observations],

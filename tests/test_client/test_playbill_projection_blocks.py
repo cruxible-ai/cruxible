@@ -20,15 +20,15 @@ from cruxible_client.authoring.blocks import (
 from cruxible_client.authoring.examples import claim_self_source_example
 from cruxible_client.authoring.inputs import ClaimInput
 from cruxible_client.contracts.artifacts import ArtifactIdentity
-from cruxible_client.contracts.authoring.models import WorkingSelectionObservationV1
+from cruxible_client.contracts.authoring.models import WorkingSelectionObservation
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV1,
-    ProjectionClaimBackingV1,
+    ProjectionClaimBacking,
     ProjectionProcessingLimitExceeded,
-    ProjectionProcessingPolicyV1,
-    ProjectionQueryBackingV1,
-    ProjectionResolvedParameterBindingV1,
+    ProjectionProcessingPolicy,
+    ProjectionQueryBacking,
+    ProjectionResolvedParameterBinding,
     projection_parameter_digest,
     projection_processing_budget,
     projection_query_semantic_result_digest,
@@ -53,7 +53,7 @@ def _stamp(*, block_id: str = "summary") -> ProjectionBlockStampV1:
         declared_generation=7,
         declared_coordinate=COORDINATE,
         backing=(
-            ProjectionClaimBackingV1(
+            ProjectionClaimBacking(
                 identity=ArtifactIdentity(kind="Claim", name="CLM-example"),
                 statement_digest="sha256:" + "5" * 64,
             ),
@@ -159,7 +159,7 @@ def test_duplicate_nested_unclosed_and_excess_blocks_refuse() -> None:
     assert len(parse_projection_blocks(many, source_id="corpus.runbook")) == 129
     large = b"x" * (4 * 1024 * 1024 + 1) + b"\n" + _block()
     assert len(parse_projection_blocks(large, source_id="corpus.runbook")) == 1
-    with projection_processing_budget(ProjectionProcessingPolicyV1(max_bytes=1024)):
+    with projection_processing_budget(ProjectionProcessingPolicy(max_bytes=1024)):
         with pytest.raises(ProjectionProcessingLimitExceeded):
             parse_projection_blocks(large, source_id="corpus.runbook")
     assert len(parse_projection_blocks(large, source_id="corpus.runbook")) == 1
@@ -212,7 +212,7 @@ def test_unstamped_block_preserves_independent_evidence_and_stamped_block_refusa
 
 
 def test_query_backing_commits_existing_resolved_parameter_digest_and_semantics_only() -> None:
-    binding = ProjectionResolvedParameterBindingV1(
+    binding = ProjectionResolvedParameterBinding(
         name="status",
         value_type="string",
         value="ready",
@@ -234,7 +234,7 @@ def test_query_backing_commits_existing_resolved_parameter_digest_and_semantics_
         )
         == digest
     )
-    backing = ProjectionQueryBackingV1(
+    backing = ProjectionQueryBacking(
         identity=ArtifactIdentity(kind="QueryDefinition", name="project.items"),
         definition_digest="sha256:" + "6" * 64,
         resolved_parameter_bindings=(binding,),
@@ -244,7 +244,7 @@ def test_query_backing_commits_existing_resolved_parameter_digest_and_semantics_
     )
     assert backing.resolved_parameter_bindings[0].value == "ready"
     with pytest.raises(ValueError, match="does not reproduce"):
-        ProjectionQueryBackingV1.model_validate(
+        ProjectionQueryBacking.model_validate(
             {**backing.model_dump(mode="json"), "canonical_param_digest": "sha256:" + "7" * 64}
         )
 
@@ -284,7 +284,7 @@ def test_flow_a_bind_refuses_every_role_inside_a_stamped_block(
     assert allowed.citation_role == role
     # The page declares a block, so the observation carries the whole page for
     # the daemon to read the windows from.
-    assert isinstance(allowed.source, WorkingSelectionObservationV1)
+    assert isinstance(allowed.source, WorkingSelectionObservation)
     assert allowed.source.source_content == content
 
 
@@ -296,7 +296,7 @@ def test_a_page_with_no_stamped_block_sends_only_its_selection() -> None:
 
     bound = bind_working_selection_input(claim_input, content=content, anchor="plain prose")
 
-    assert isinstance(bound.source, WorkingSelectionObservationV1)
+    assert isinstance(bound.source, WorkingSelectionObservation)
     assert bound.source.source_content_base64 is None
 
 

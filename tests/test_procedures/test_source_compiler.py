@@ -7,9 +7,9 @@ import pytest
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.procedures.artifacts import (
-    AcceptedProcedureV1,
-    ProcedureArtifactV2,
-    ProcedureOwnedContractV1,
+    AcceptedProcedure,
+    ProcedureArtifact,
+    ProcedureOwnedContract,
     procedure_artifact_digest,
     procedure_path,
 )
@@ -17,7 +17,7 @@ from cruxible_client.contracts.procedures.contract_schema import ContractSchema,
 from cruxible_client.contracts.procedures.contracts import OwnedProcedureContractValidator
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.source_compiler import SourceCompileError, compile_source
-from cruxible_client.contracts.procedures.source_program import ProcedureSourceV1, SourceContract
+from cruxible_client.contracts.procedures.source_program import ProcedureSource, SourceContract
 from cruxible_core.procedures.execution import ProcedureExecutor
 from tests.test_procedures.test_procedure_execution import (
     _Authority,
@@ -49,7 +49,7 @@ OUTPUT = SourceContract(
 
 def compile(text, *, output=OUTPUT, bindings=None):
     return compile_source(
-        ProcedureSourceV1(
+        ProcedureSource(
             text=textwrap.dedent(text),
             filename="example.py",
             first_line=40,
@@ -68,7 +68,7 @@ def compile(text, *, output=OUTPUT, bindings=None):
 def accepted(compiled):
     definition = compiled.definition
     owned = tuple(
-        ProcedureOwnedContractV1(
+        ProcedureOwnedContract(
             identity=ArtifactIdentity(kind="Contract", name=c.name), schema=c.schema_
         )
         for c in compiled.contracts
@@ -82,7 +82,7 @@ def accepted(compiled):
             key=lambda p: (p.role.encode(), p.target.qualified.encode()),
         )
     )
-    artifact = ProcedureArtifactV2(
+    artifact = ProcedureArtifact(
         identity=ArtifactIdentity(kind="Procedure", name="example"),
         definition=definition,
         definition_digest=compute_procedure_definition_digest(definition).tagged,
@@ -92,7 +92,7 @@ def accepted(compiled):
         ),
         activation_policy="snapshot",
     )
-    return AcceptedProcedureV1(
+    return AcceptedProcedure(
         path=procedure_path("example"),
         procedure=artifact,
         artifact_digest=procedure_artifact_digest(artifact).tagged,
@@ -214,7 +214,7 @@ def test_graph_six_checks_nested_runtime_values(tmp_path):
     )
     input = SourceContract(name="input", schema=schema)
     compiled = compile_source(
-        ProcedureSourceV1(
+        ProcedureSource(
             text="def example(request):\n    return Output.value(value='ok')\n",
             filename="example.py",
             function="example",
@@ -306,7 +306,7 @@ def test_capture_terminal_has_declared_result_and_requires_material_schema():
     from cruxible_client.contracts.procedures.source_program import SourceProviderBinding
     from cruxible_client.contracts.provider_contracts import (
         ACQUISITION_RESULT,
-        ProviderOperationContractV1,
+        ProviderOperationContract,
     )
 
     provider = SourceProviderBinding(
@@ -317,7 +317,7 @@ def test_capture_terminal_has_declared_result_and_requires_material_schema():
         interface_digest="sha256:" + "3" * 64,
         implementation_digest="sha256:" + "4" * 64,
         effect_class="external_read",
-        operation=ProviderOperationContractV1(
+        operation=ProviderOperationContract(
             input=ContractSchema(fields={"url": PropertySchema(type="string")}),
             output=ACQUISITION_RESULT,
             material=ContractSchema(
@@ -335,7 +335,7 @@ def test_capture_terminal_has_declared_result_and_requires_material_schema():
             ),
         ),
     )
-    program = ProcedureSourceV1(
+    program = ProcedureSource(
         text=textwrap.dedent("""
         def example(request, bindings):
             observation = source(bindings.fetch,
@@ -382,10 +382,10 @@ def test_capture_terminal_has_declared_result_and_requires_material_schema():
 def test_field_read_is_an_admitted_selection_not_a_whole_world_query(tmp_path):
     from cruxible_client.contracts.claim_type_structure import ClaimTypeStructure
     from cruxible_client.contracts.procedures.source_program import SourceClaimType
-    from cruxible_client.contracts.query.grammar import QueryBudgetsV1
+    from cruxible_client.contracts.query.grammar import QueryBudgets
     from cruxible_core.procedures.execution import StateTapReadResultV1
 
-    program = ProcedureSourceV1(
+    program = ProcedureSource(
         text=textwrap.dedent("""
         def example(request, world):
             asset = world.security.asset['app']
@@ -432,7 +432,7 @@ def test_field_read_is_an_admitted_selection_not_a_whole_world_query(tmp_path):
             calls.append(kwargs)
             return StateTapReadResultV1(
                 value={"value": True, "verdict": "supported"},
-                effective_budgets=QueryBudgetsV1(max_results=256, max_traversal_depth=0),
+                effective_budgets=QueryBudgets(max_results=256, max_traversal_depth=0),
             )
 
     executor = ProcedureExecutor(
@@ -494,7 +494,7 @@ def test_query_defaults_and_explicit_budget_use_existing_contracts():
         def example(request, bindings):
             result = query(bindings.work,
                 parameters=bindings.work.parameters(status='ready'),
-                budgets=QueryBudgetsV1(max_results=1, max_traversal_depth=0,
+                budgets=QueryBudgets(max_results=1, max_traversal_depth=0,
                                       max_paths=1, max_paths_per_result=1))
             return Output.value(value=result.receipt.verdict)
     """
@@ -529,7 +529,7 @@ def test_checked_source_refuses_silent_mistakes_without_rewriting_history(body, 
             fields={"priority": PropertySchema(type="string", enum=["routine", "urgent"])}
         ),
     )
-    source = ProcedureSourceV1(
+    source = ProcedureSource(
         text="def example(request):\n    " + body + "\n",
         filename="checks.py",
         first_line=90,
@@ -555,7 +555,7 @@ def test_checked_source_refuses_silent_mistakes_without_rewriting_history(body, 
 
 
 def test_checked_source_has_explicit_returns_and_keeps_branch_local_bindings(tmp_path):
-    source = ProcedureSourceV1(
+    source = ProcedureSource(
         rules="cruxible.procedure-source.v2",
         text="""def example(request):
     if request.choice:

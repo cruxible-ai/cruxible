@@ -16,10 +16,10 @@ from cruxible_client.contracts.captures import (
     render_capture_contract,
 )
 from cruxible_client.contracts.claim_types import (
-    ClaimAttestationConsequencePolicyV1,
-    ClaimAttestationConsequenceRuleV1,
-    ClaimEvidenceFreshnessV1,
-    ClaimFreshnessDurationV1,
+    ClaimAttestationConsequencePolicy,
+    ClaimAttestationConsequenceRule,
+    ClaimEvidenceFreshness,
+    ClaimFreshnessDuration,
     render_claim_type,
 )
 from cruxible_client.contracts.documents import (
@@ -187,12 +187,12 @@ def complete_policy_inventory(
         return _claim_type(index).model_copy(
             update={
                 "artifact_format": "playbill-claim-type-v4",
-                "evidence_freshness": ClaimEvidenceFreshnessV1(
-                    stale_after=ClaimFreshnessDurationV1(microseconds=60_000_000)
+                "evidence_freshness": ClaimEvidenceFreshness(
+                    stale_after=ClaimFreshnessDuration(microseconds=60_000_000)
                 ),
-                "attestation_consequence_policy": ClaimAttestationConsequencePolicyV1(
+                "attestation_consequence_policy": ClaimAttestationConsequencePolicy(
                     rules=(
-                        ClaimAttestationConsequenceRuleV1(
+                        ClaimAttestationConsequenceRule(
                             rule_id="one-contradiction",
                             stance="contradict",
                             minimum_independent_control_components=1,

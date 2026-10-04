@@ -23,23 +23,23 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import (
-    ClaimTypeMemberDescriptionV1,
+    ClaimTypeMemberDescription,
     EvidenceRequirement,
     RevisionEvidence,
 )
 from cruxible_client.contracts.operational_reads import (
-    PlaybillLiveViewV1,
-    PlaybillOrientCaptureContractV1,
-    PlaybillOrientCaptureV1,
-    PlaybillOrientLineV1,
-    PlaybillOrientMandateV1,
-    PlaybillOrientPredictionV1,
-    PlaybillRunRowV1,
+    PlaybillLiveView,
+    PlaybillOrientCapture,
+    PlaybillOrientCaptureContract,
+    PlaybillOrientLine,
+    PlaybillOrientMandate,
+    PlaybillOrientPrediction,
+    PlaybillRunRow,
 )
 from cruxible_client.contracts.policy_rows import PlaybillPolicyInForce
-from cruxible_client.contracts.principals import PlaybillAuthoringRefusalV1
+from cruxible_client.contracts.principals import PlaybillAuthoringRefusal
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.provider_contracts import ProviderOperationContractV1
+from cruxible_client.contracts.provider_contracts import ProviderOperationContract
 from cruxible_client.contracts.types import PrincipalRecord
 
 PlaybillOrientSection: TypeAlias = Literal[
@@ -83,17 +83,17 @@ class _StrictOrientModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class PlaybillOrientYouV1(_StrictOrientModel):
+class PlaybillOrientYou(_StrictOrientModel):
     """The caller as the daemon resolved it, and whether it can author."""
 
     actor: str | None
     principal: str | None = Field(default=None, exclude_if=_is_none)
     can_author: bool
     # Exactly the refusal whoami reports and authoring returns: code, detail, repair.
-    authoring_refusal: PlaybillAuthoringRefusalV1 | None = Field(default=None, exclude_if=_is_none)
+    authoring_refusal: PlaybillAuthoringRefusal | None = Field(default=None, exclude_if=_is_none)
 
 
-class PlaybillOrientPredicateV1(_StrictOrientModel):
+class PlaybillOrientPredicate(_StrictOrientModel):
     """One predicate of a kind: compact by default, in full under ``orient(kind=...)``.
 
     ``name`` is the short name a query field uses against this kind; ``predicate``
@@ -129,7 +129,7 @@ class PlaybillOrientPredicateV1(_StrictOrientModel):
     subject_kinds: tuple[str, ...] | None = Field(default=None, exclude_if=_is_none)
     roles: tuple[str, ...] | None = Field(default=None, exclude_if=_is_none)
     default_role: ClaimRole | None = Field(default=None, exclude_if=_is_none)
-    member_descriptions: tuple[ClaimTypeMemberDescriptionV1, ...] = Field(
+    member_descriptions: tuple[ClaimTypeMemberDescription, ...] = Field(
         default=(), exclude_if=_is_empty
     )
     revision_evidence: RevisionEvidence | None = Field(default=None, exclude_if=_is_none)
@@ -137,7 +137,7 @@ class PlaybillOrientPredicateV1(_StrictOrientModel):
     live_claims: int | None = Field(default=None, ge=0, exclude_if=_is_none)
 
 
-class PlaybillOrientKindV1(_StrictOrientModel):
+class PlaybillOrientKind(_StrictOrientModel):
     """One Subject kind: how many live Subjects it has and its predicates.
 
     The most common admitted CaptureContract set is named once as ``evidence``.
@@ -148,10 +148,10 @@ class PlaybillOrientKindV1(_StrictOrientModel):
     kind: str
     subjects: int = Field(ge=0)
     evidence: tuple[str, ...] = Field(default=(), exclude_if=_is_empty)
-    predicates: tuple[PlaybillOrientPredicateV1, ...]
+    predicates: tuple[PlaybillOrientPredicate, ...]
 
 
-class PlaybillOrientKindDetailV1(PlaybillOrientKindV1):
+class PlaybillOrientKindDetail(PlaybillOrientKind):
     """One kind in full, with a few Subject IDs to read next.
 
     ``incoming`` names, in full, the Subject-valued predicates of other kinds
@@ -164,7 +164,7 @@ class PlaybillOrientKindDetailV1(PlaybillOrientKindV1):
     sample_subject_ids: tuple[str, ...] = ()
 
 
-class PlaybillOrientClaimCountsV1(_StrictOrientModel):
+class PlaybillOrientClaimCounts(_StrictOrientModel):
     """Every accepted Claim by its status at the coordinate.
 
     ``accepted`` Claims answer their slot; ``conflicted`` ones are contenders
@@ -181,7 +181,7 @@ class PlaybillOrientClaimCountsV1(_StrictOrientModel):
     retired: int = Field(default=0, ge=0)
 
 
-class PlaybillOrientArtifactCountsV1(_StrictOrientModel):
+class PlaybillOrientArtifactCounts(_StrictOrientModel):
     """How many of each family exist; each operational family is its own section.
 
     ``lines``, ``capture_contracts``, ``resolution_contracts`` and ``mandates``
@@ -201,10 +201,10 @@ class PlaybillOrientArtifactCountsV1(_StrictOrientModel):
     mandates: int = Field(default=0, ge=0)
     runs: int = Field(default=0, ge=0)
     running: int = Field(default=0, ge=0)
-    claims: PlaybillOrientClaimCountsV1 | None = Field(default=None, exclude_if=_is_none)
+    claims: PlaybillOrientClaimCounts | None = Field(default=None, exclude_if=_is_none)
 
 
-class PlaybillOrientQueryV1(_StrictOrientModel):
+class PlaybillOrientQuery(_StrictOrientModel):
     """One named QueryDefinition; params read ``name: type`` with ``?`` when optional."""
 
     name: str
@@ -212,27 +212,27 @@ class PlaybillOrientQueryV1(_StrictOrientModel):
     params: tuple[str, ...] = ()
 
 
-class PlaybillOrientDocumentV1(_StrictOrientModel):
+class PlaybillOrientDocument(_StrictOrientModel):
     name: str
     title: str
     document_kind: str
     media_type: str
 
 
-class PlaybillOrientProcedureV1(_StrictOrientModel):
+class PlaybillOrientProcedure(_StrictOrientModel):
     name: str
     lifecycle: Literal["live", "retired"]
     runnable: Literal["directly_runnable", "binding_required"]
 
 
-class PlaybillOrientInterfaceProviderV1(_StrictOrientModel):
+class PlaybillOrientInterfaceProvider(_StrictOrientModel):
     """One live Provider implementing an interface, and the implementation it pins."""
 
     provider: str
     implementation_digest: str
 
 
-class PlaybillOrientInterfaceV1(_StrictOrientModel):
+class PlaybillOrientInterface(_StrictOrientModel):
     """One live provider interface a Procedure node can call.
 
     ``input`` and ``output`` list the operation contract's fields as
@@ -251,14 +251,12 @@ class PlaybillOrientInterfaceV1(_StrictOrientModel):
     input: tuple[str, ...] = ()
     output: tuple[str, ...] = ()
     effect: Literal["none", "external_read", "external_mutation"]
-    providers: tuple[PlaybillOrientInterfaceProviderV1, ...] = ()
+    providers: tuple[PlaybillOrientInterfaceProvider, ...] = ()
     interface_digest: str
-    operation_contract: ProviderOperationContractV1 | None = Field(
-        default=None, exclude_if=_is_none
-    )
+    operation_contract: ProviderOperationContract | None = Field(default=None, exclude_if=_is_none)
 
 
-class PlaybillOrientArmsV1(_StrictOrientModel):
+class PlaybillOrientArms(_StrictOrientModel):
     """The instance's armed Lines as its Line consumer reports them, no daemon scope needed.
 
     ``running`` arms are admitting their own due work; ``stalled`` ones have
@@ -274,7 +272,7 @@ class PlaybillOrientArmsV1(_StrictOrientModel):
     needs_attention: tuple[str, ...] = Field(default=(), exclude_if=_is_empty)
 
 
-class PlaybillOrientAttentionV1(_StrictOrientModel):
+class PlaybillOrientAttention(_StrictOrientModel):
     """What the ``next`` queue holds, and anything else the instance needs."""
 
     next_items: int = Field(ge=0)
@@ -282,10 +280,10 @@ class PlaybillOrientAttentionV1(_StrictOrientModel):
     top: tuple[str, ...] = ()
     notes: tuple[str, ...] = Field(default=(), exclude_if=_is_empty)
     # Present when any Line was ever armed on this instance.
-    arms: PlaybillOrientArmsV1 | None = Field(default=None, exclude_if=_is_none)
+    arms: PlaybillOrientArms | None = Field(default=None, exclude_if=_is_none)
 
 
-class PlaybillOrientFloorV1(_StrictOrientModel):
+class PlaybillOrientFloor(_StrictOrientModel):
     """The workspace's greppable floor: the coordinate it is at, and how stale.
 
     Only a client that sees the workspace (CLI, MCP, SDK) fills this in, from
@@ -298,7 +296,7 @@ class PlaybillOrientFloorV1(_StrictOrientModel):
     generations_behind: int | None = Field(ge=0)
 
 
-class PlaybillHeadV1(_StrictOrientModel):
+class PlaybillHead(_StrictOrientModel):
     """The accepted head (or the coordinate ``at`` names) and its generation.
 
     The cheapest read there is: no kind, artifact or attention fold, only the
@@ -312,7 +310,7 @@ class PlaybillHeadV1(_StrictOrientModel):
     generation: int = Field(ge=0)
 
 
-class PlaybillOrientResultV1(_StrictOrientModel):
+class PlaybillOrientResult(_StrictOrientModel):
     """One orient answer; which parts are present depends on the request.
 
     - no ``kind``/``section``: ``you``, ``kinds`` (paged by ``limit``/``cursor``),
@@ -335,41 +333,39 @@ class PlaybillOrientResultV1(_StrictOrientModel):
     accepted_at: datetime
     evaluation_time: datetime
     mirror_url: str | None = Field(default=None, exclude_if=_is_none)
-    floor: PlaybillOrientFloorV1 | None = Field(default=None, exclude_if=_is_none)
-    you: PlaybillOrientYouV1 | None = Field(default=None, exclude_if=_is_none)
-    kinds: tuple[PlaybillOrientKindV1, ...] | None = Field(default=None, exclude_if=_is_none)
-    artifacts: PlaybillOrientArtifactCountsV1 | None = Field(default=None, exclude_if=_is_none)
-    attention: PlaybillOrientAttentionV1 | None = Field(default=None, exclude_if=_is_none)
-    kind_detail: PlaybillOrientKindDetailV1 | None = Field(default=None, exclude_if=_is_none)
+    floor: PlaybillOrientFloor | None = Field(default=None, exclude_if=_is_none)
+    you: PlaybillOrientYou | None = Field(default=None, exclude_if=_is_none)
+    kinds: tuple[PlaybillOrientKind, ...] | None = Field(default=None, exclude_if=_is_none)
+    artifacts: PlaybillOrientArtifactCounts | None = Field(default=None, exclude_if=_is_none)
+    attention: PlaybillOrientAttention | None = Field(default=None, exclude_if=_is_none)
+    kind_detail: PlaybillOrientKindDetail | None = Field(default=None, exclude_if=_is_none)
     section: PlaybillOrientSection | None = Field(default=None, exclude_if=_is_none)
-    documents: tuple[PlaybillOrientDocumentV1, ...] | None = Field(
+    documents: tuple[PlaybillOrientDocument, ...] | None = Field(default=None, exclude_if=_is_none)
+    procedures: tuple[PlaybillOrientProcedure, ...] | None = Field(
         default=None, exclude_if=_is_none
     )
-    procedures: tuple[PlaybillOrientProcedureV1, ...] | None = Field(
+    claim_types: tuple[PlaybillOrientPredicate, ...] | None = Field(
         default=None, exclude_if=_is_none
     )
-    claim_types: tuple[PlaybillOrientPredicateV1, ...] | None = Field(
-        default=None, exclude_if=_is_none
-    )
-    queries: tuple[PlaybillOrientQueryV1, ...] | None = Field(default=None, exclude_if=_is_none)
-    interfaces: tuple[PlaybillOrientInterfaceV1, ...] | None = Field(
+    queries: tuple[PlaybillOrientQuery, ...] | None = Field(default=None, exclude_if=_is_none)
+    interfaces: tuple[PlaybillOrientInterface, ...] | None = Field(
         default=None, exclude_if=_is_none
     )
     # Procedure runs, newest admission first (section "runs"), or only the runs
     # still running (section "running"). Runs are operational state, read live.
-    runs: tuple[PlaybillRunRowV1, ...] | None = Field(default=None, exclude_if=_is_none)
+    runs: tuple[PlaybillRunRow, ...] | None = Field(default=None, exclude_if=_is_none)
     # Accepted Lines, with each arm's state and pending counts at the head.
-    lines: tuple[PlaybillOrientLineV1, ...] | None = Field(default=None, exclude_if=_is_none)
+    lines: tuple[PlaybillOrientLine, ...] | None = Field(default=None, exclude_if=_is_none)
     # Captures accepted Claims cite, newest observation first (paged by key).
-    captures: tuple[PlaybillOrientCaptureV1, ...] | None = Field(default=None, exclude_if=_is_none)
-    capture_contracts: tuple[PlaybillOrientCaptureContractV1, ...] | None = Field(
+    captures: tuple[PlaybillOrientCapture, ...] | None = Field(default=None, exclude_if=_is_none)
+    capture_contracts: tuple[PlaybillOrientCaptureContract, ...] | None = Field(
         default=None, exclude_if=_is_none
     )
     # Live ResolutionContracts with their bound windows counted by status.
-    predictions: tuple[PlaybillOrientPredictionV1, ...] | None = Field(
+    predictions: tuple[PlaybillOrientPrediction, ...] | None = Field(
         default=None, exclude_if=_is_none
     )
-    mandates: tuple[PlaybillOrientMandateV1, ...] | None = Field(default=None, exclude_if=_is_none)
+    mandates: tuple[PlaybillOrientMandate, ...] | None = Field(default=None, exclude_if=_is_none)
     # The principal registry at the coordinate: every public record, active or
     # revoked. ``get("Principal:<id>")`` reads one.
     principals: tuple[PrincipalRecord, ...] | None = Field(default=None, exclude_if=_is_none)
@@ -381,7 +377,7 @@ class PlaybillOrientResultV1(_StrictOrientModel):
     # Present when part of the answer is operational state -- runs, Line arms and
     # pending counts, prediction windows -- read live at the current head
     # (``live.as_of``) whatever ``coordinate`` the read named.
-    live: PlaybillLiveViewV1 | None = Field(default=None, exclude_if=_is_none)
+    live: PlaybillLiveView | None = Field(default=None, exclude_if=_is_none)
     next: tuple[str, ...] = ()
 
 
@@ -391,22 +387,22 @@ __all__ = [
     "PLAYBILL_ORIENT_DEFAULT_QUERIES",
     "PLAYBILL_ORIENT_MAX_LIMIT",
     "PLAYBILL_ORIENT_SAMPLE_SUBJECTS",
-    "PlaybillHeadV1",
-    "PlaybillOrientArmsV1",
-    "PlaybillOrientArtifactCountsV1",
-    "PlaybillOrientAttentionV1",
-    "PlaybillOrientClaimCountsV1",
-    "PlaybillOrientDocumentV1",
-    "PlaybillOrientFloorV1",
-    "PlaybillOrientInterfaceProviderV1",
-    "PlaybillOrientInterfaceV1",
-    "PlaybillOrientKindDetailV1",
-    "PlaybillOrientKindV1",
-    "PlaybillOrientPredicateV1",
-    "PlaybillOrientProcedureV1",
-    "PlaybillOrientQueryV1",
-    "PlaybillOrientResultV1",
+    "PlaybillHead",
+    "PlaybillOrientArms",
+    "PlaybillOrientArtifactCounts",
+    "PlaybillOrientAttention",
+    "PlaybillOrientClaimCounts",
+    "PlaybillOrientDocument",
+    "PlaybillOrientFloor",
+    "PlaybillOrientInterfaceProvider",
+    "PlaybillOrientInterface",
+    "PlaybillOrientKindDetail",
+    "PlaybillOrientKind",
+    "PlaybillOrientPredicate",
+    "PlaybillOrientProcedure",
+    "PlaybillOrientQuery",
+    "PlaybillOrientResult",
     "PlaybillOrientSection",
     "PlaybillOrientSurface",
-    "PlaybillOrientYouV1",
+    "PlaybillOrientYou",
 ]

@@ -23,8 +23,8 @@ from cruxible_client.contracts.authoring.inputs import (
 )
 from cruxible_client.contracts.canonical import normalize_canonical
 from cruxible_client.contracts.procedures.artifacts import (
+    ProcedureArtifact,
     ProcedureArtifactAny,
-    ProcedureArtifactV2,
     procedure_owned_contract_digest,
 )
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema
@@ -37,24 +37,24 @@ from cruxible_client.contracts.procedures.models import (
     RUNG_AUTHORITY,
     TERMINAL_NODE_KINDS,
     AuthorityVerb,
-    GuardPredicateV1,
-    ProcedureBudgetV3,
+    GuardPredicate,
+    ProcedureBudget,
     ProcedureDefinitionV5,
-    ProcedureHardCapsV3,
-    ProcedureNodeV6,
-    ProcedurePinSlotRefV1,
-    ProcedureTransformSpecV1,
-    TransformKindV1,
+    ProcedureHardCaps,
+    ProcedureNode,
+    ProcedurePinSlotRef,
+    ProcedureTransformSpec,
+    TransformKind,
     derived_terminal_capability,
 )
 from cruxible_client.contracts.procedures.source_program import (
-    ProcedureSourceV1,
+    ProcedureSource,
     SourceBinding,
     SourceMapEntry,
     SourceSpan,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.provider_contracts import ProviderOperationContractV1
+from cruxible_client.contracts.provider_contracts import ProviderOperationContract
 from cruxible_client.contracts.records import RecordConstructor
 
 if TYPE_CHECKING:
@@ -71,7 +71,7 @@ def procedure_record_constructor(
         if direction == "input"
         else artifact.definition.contract_out
     )
-    if not isinstance(artifact, ProcedureArtifactV2) or not isinstance(pin, ArtifactPin):
+    if not isinstance(artifact, ProcedureArtifact) or not isinstance(pin, ArtifactPin):
         raise ValueError("Typed execution requires a resolved owner-carried Contract")
     for contract in artifact.owned_contracts:
         if (
@@ -110,7 +110,7 @@ class ProviderBinding(BaseModel):
     interface_digest: str
     implementation_digest: str
     effect_class: Literal["none", "external_read", "external_mutation"] | None = None
-    operation_contract: ProviderOperationContractV1 | None = None
+    operation_contract: ProviderOperationContract | None = None
     coordinate: AcceptedCoordinate | None = None
 
     @property
@@ -186,10 +186,10 @@ class Call(Step):
 
 @dataclass(frozen=True, kw_only=True)
 class Transform(Step):
-    transform_kind: TransformKindV1
+    transform_kind: TransformKind
     contract_in: Contract
     contract_out: Contract
-    spec: ProcedureTransformSpecV1
+    spec: ProcedureTransformSpec
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -200,7 +200,7 @@ class Project(Step):
 
 @dataclass(frozen=True, kw_only=True)
 class Guard(Step):
-    predicate: GuardPredicateV1
+    predicate: GuardPredicate
     on_true: str | None = None
     on_false: str = "$abort"
     refusal_code: str = "guard_refused"
@@ -256,7 +256,7 @@ class CompositionDiagnostic(BaseModel):
 class ProcedureStateDependency(BaseModel):
     node_id: str
     kind: Literal["claim", "query"]
-    selection: ArtifactPin | ProcedurePinSlotRefV1
+    selection: ArtifactPin | ProcedurePinSlotRef
     cardinality: Literal["one", "all", "query"]
     limit: int | None = None
     admitted_context: bool = True
@@ -275,15 +275,15 @@ class ProcedureBranchValue(BaseModel):
     node_id: str
     kind: Literal["guard", "select"]
     producers: tuple[str, ...] = ()
-    predicate: GuardPredicateV1 | None = None
-    contract: ArtifactPin | ProcedurePinSlotRefV1 | None = None
+    predicate: GuardPredicate | None = None
+    contract: ArtifactPin | ProcedurePinSlotRef | None = None
     successors: dict[str, str] = Field(default_factory=dict)
 
 
 class ProcedureReturnPath(BaseModel):
     node_id: str
     kind: Literal["pure", "capture", "proposal", "settlement", "halt"]
-    contract: ArtifactPin | ProcedurePinSlotRefV1
+    contract: ArtifactPin | ProcedurePinSlotRef
     # The authority the path's terminal needs; a pure or halting path needs none.
     required_authority: AuthorityVerb | None
 
@@ -301,20 +301,20 @@ class ProcedurePreview(BaseModel):
     name: str
     ready_for_prepare: bool
     contracts: tuple[CarriedContractInput, ...]
-    contract_in: ArtifactPin | ProcedurePinSlotRefV1 | dict[str, Any]
-    contract_out: ArtifactPin | ProcedurePinSlotRefV1 | dict[str, Any]
+    contract_in: ArtifactPin | ProcedurePinSlotRef | dict[str, Any]
+    contract_out: ArtifactPin | ProcedurePinSlotRef | dict[str, Any]
     # The most this Procedure's terminals can do: observe, propose or settle.
     authority: AuthorityVerb
     acquisition_policy: str | None
-    nodes: tuple[ProcedureNodeV6 | dict[str, Any], ...]
+    nodes: tuple[ProcedureNode | dict[str, Any], ...]
     edges: dict[str, dict[str, str]] = Field(default_factory=dict)
     providers: dict[str, ProviderBinding] = Field(default_factory=dict)
     terminals: tuple[str, ...] = ()
     returns: str | None
-    budget: ProcedureBudgetV3
-    hard_caps: ProcedureHardCapsV3
+    budget: ProcedureBudget
+    hard_caps: ProcedureHardCaps
     errors: tuple[CompositionDiagnostic, ...] = ()
-    source: ProcedureSourceV1 | None = None
+    source: ProcedureSource | None = None
     source_map: tuple[SourceMapEntry, ...] = ()
     state_dependencies: tuple[ProcedureStateDependency, ...] = ()
     binding_requirements: tuple[ProcedureBindingRequirement, ...] = ()
@@ -390,8 +390,8 @@ class Sequence:
     name: str
     contract_in: Contract
     contract_out: Contract
-    budget: ProcedureBudgetV3
-    hard_caps: ProcedureHardCapsV3
+    budget: ProcedureBudget
+    hard_caps: ProcedureHardCaps
     returns: str | None = None
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"] = "snapshot"
     acquisition_policy: str | None = None

@@ -78,7 +78,7 @@ from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.claims import ClaimStatement
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.errors import PlaybillError
-from cruxible_client.contracts.query.definitions import QueryDefinitionV1
+from cruxible_client.contracts.query.definitions import QueryDefinition
 from cruxible_client.contracts.query.grammar import byte_sorted
 from cruxible_client.contracts.subjects import SubjectShell
 
@@ -147,7 +147,7 @@ class _StrictSeedModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class SeedBundleEntryV1(_StrictSeedModel):
+class SeedBundleEntry(_StrictSeedModel):
     """One authoring JSON, named by the identity its grouping turns on."""
 
     tag: Literal["playbill-seed-bundle-entry-v1"] = "playbill-seed-bundle-entry-v1"
@@ -174,7 +174,7 @@ def proposal_slug(group_id: str) -> str:
     return trimmed if trimmed[0].isalpha() else f"g-{trimmed}"
 
 
-class SeedProposalGroupV1(_StrictSeedModel):
+class SeedProposalGroup(_StrictSeedModel):
     """One proposal the plan will submit, and the reason it is exactly one."""
 
     tag: Literal["playbill-seed-proposal-group-v1"] = "playbill-seed-proposal-group-v1"
@@ -193,7 +193,7 @@ class SeedProposalGroupV1(_StrictSeedModel):
         return value
 
 
-class SeedCarriedEntryV1(_StrictSeedModel):
+class SeedCarriedEntry(_StrictSeedModel):
     """One bundle entry that needs no proposal because a Claim already carries it."""
 
     tag: Literal["playbill-seed-carried-entry-v1"] = "playbill-seed-carried-entry-v1"
@@ -204,7 +204,7 @@ class SeedCarriedEntryV1(_StrictSeedModel):
     """The Claim authoring whose declared closure admits it."""
 
 
-class SeedPlanV1(_StrictSeedModel):
+class SeedPlan(_StrictSeedModel):
     """The whole grouping, before a byte is stored or a proposal is opened.
 
     Deterministic in the bundle's bytes alone: no clock, no accepted state, no
@@ -215,8 +215,8 @@ class SeedPlanV1(_StrictSeedModel):
     tag: Literal["playbill-seed-plan-v1"] = "playbill-seed-plan-v1"
     proposal_name: str
     body_paths: tuple[str, ...] = ()
-    groups: tuple[SeedProposalGroupV1, ...] = ()
-    carried: tuple[SeedCarriedEntryV1, ...] = ()
+    groups: tuple[SeedProposalGroup, ...] = ()
+    carried: tuple[SeedCarriedEntry, ...] = ()
 
     @field_validator("body_paths")
     @classmethod
@@ -229,7 +229,7 @@ class SeedPlanV1(_StrictSeedModel):
     def group_ids(self) -> tuple[str, ...]:
         return tuple(item.group_id for item in self.groups)
 
-    def group(self, group_id: str) -> SeedProposalGroupV1:
+    def group(self, group_id: str) -> SeedProposalGroup:
         for item in self.groups:
             if item.group_id == group_id:
                 return item
@@ -237,9 +237,9 @@ class SeedPlanV1(_StrictSeedModel):
         raise SeedBundleError(f"no seed group named {group_id}; this bundle plans: {named}")
 
 
-class SeedPlanResultV1(_StrictSeedModel):
+class SeedPlanResult(_StrictSeedModel):
     tag: Literal["playbill-seed-plan-result-v1"] = "playbill-seed-plan-result-v1"
-    plan: SeedPlanV1
+    plan: SeedPlan
     plan_digest: str
     rendered: tuple[str, ...]
 
@@ -254,7 +254,7 @@ identical bundle under different names have seeded the identical world, and a
 digest that disagreed would be measuring the wrong thing."""
 
 
-def seed_plan_digest(plan: SeedPlanV1) -> Sha256Value:
+def seed_plan_digest(plan: SeedPlan) -> Sha256Value:
     """Digest the plan, so a run manifest can pin the world it seeds."""
 
     return typed_digest(
@@ -269,8 +269,8 @@ def seed_plan_digest(plan: SeedPlanV1) -> Sha256Value:
 
 
 def seed_group_operation_digest(
-    plan: SeedPlanV1,
-    group: SeedProposalGroupV1,
+    plan: SeedPlan,
+    group: SeedProposalGroup,
 ) -> Sha256Value:
     """Bind one planned group to its exact, name-independent bundle content."""
 
@@ -284,7 +284,7 @@ def seed_group_operation_digest(
     )
 
 
-def seed_group_proposal_name(plan: SeedPlanV1, group: SeedProposalGroupV1) -> str:
+def seed_group_proposal_name(plan: SeedPlan, group: SeedProposalGroup) -> str:
     """Return the machine-owned proposal-ref leaf for one seed operation."""
 
     return f"seed-{seed_group_operation_digest(plan, group).value}"
@@ -326,7 +326,7 @@ def _identity_of(path: str, kind: SeedEntryKind, payload: Mapping[str, Any]) -> 
         if kind == "document":
             return DocumentShell.model_validate(payload).identity
         if kind == "query_definition":
-            return QueryDefinitionV1.model_validate(payload).identity.name
+            return QueryDefinition.model_validate(payload).identity.name
         if kind == "procedure":
             procedure = ProcedureInput.model_validate(payload)
             return str(procedure.definition["name"])
@@ -339,7 +339,7 @@ def _identity_of(path: str, kind: SeedEntryKind, payload: Mapping[str, Any]) -> 
     return f"{statement.subject.artifact_path}#{statement.predicate}"
 
 
-def read_seed_bundle(files: Mapping[str, bytes]) -> tuple[SeedBundleEntryV1, ...]:
+def read_seed_bundle(files: Mapping[str, bytes]) -> tuple[SeedBundleEntry, ...]:
     """Read a bundle's files into typed, byte-sorted entries.
 
     ``files`` is keyed by bundle-relative POSIX path. A file outside the known
@@ -347,7 +347,7 @@ def read_seed_bundle(files: Mapping[str, bytes]) -> tuple[SeedBundleEntryV1, ...
     bundle would make "this bundle was applied" untrue in a way nobody could see.
     """
 
-    entries: list[SeedBundleEntryV1] = []
+    entries: list[SeedBundleEntry] = []
     for path in byte_sorted(tuple(files)):
         if path.startswith(f"{SEED_BODY_DIRECTORY}/"):
             continue
@@ -362,7 +362,7 @@ def read_seed_bundle(files: Mapping[str, bytes]) -> tuple[SeedBundleEntryV1, ...
             raise SeedBundleError(f"{path} is not an authoring JSON; {directory}/ holds *.json")
         payload = _decode(path, files[path])
         entries.append(
-            SeedBundleEntryV1(
+            SeedBundleEntry(
                 path=path,
                 kind=kind,
                 identity=_identity_of(path, kind, payload),
@@ -376,7 +376,7 @@ def read_seed_bundle(files: Mapping[str, bytes]) -> tuple[SeedBundleEntryV1, ...
 
 
 def _carried_closures(
-    entries: tuple[SeedBundleEntryV1, ...],
+    entries: tuple[SeedBundleEntry, ...],
 ) -> tuple[dict[str, tuple[bytes, str]], dict[str, tuple[bytes, str]]]:
     """Index what the bundle's Claims already declare they carry.
 
@@ -427,7 +427,7 @@ def _carried_closures(
     return claim_types, subjects
 
 
-def plan_seed_bundle(files: Mapping[str, bytes], *, proposal_name: str) -> SeedPlanV1:
+def plan_seed_bundle(files: Mapping[str, bytes], *, proposal_name: str) -> SeedPlan:
     """Group one bundle into the fewest proposals its own closures allow."""
 
     if not proposal_name.strip():
@@ -448,9 +448,9 @@ def plan_seed_bundle(files: Mapping[str, bytes], *, proposal_name: str) -> SeedP
         seen[key] = entry.path
 
     carried_types, carried_subjects = _carried_closures(entries)
-    carried: list[SeedCarriedEntryV1] = []
-    grouped: dict[SeedEntryKind, list[SeedProposalGroupV1]] = {kind: [] for kind in _GROUP_ORDER}
-    input_claims: list[SeedBundleEntryV1] = []
+    carried: list[SeedCarriedEntry] = []
+    grouped: dict[SeedEntryKind, list[SeedProposalGroup]] = {kind: [] for kind in _GROUP_ORDER}
+    input_claims: list[SeedBundleEntry] = []
 
     for entry in entries:
         index = carried_types if entry.kind == "claim_type" else carried_subjects
@@ -463,7 +463,7 @@ def plan_seed_bundle(files: Mapping[str, bytes], *, proposal_name: str) -> SeedP
                     "in one change set"
                 )
             carried.append(
-                SeedCarriedEntryV1(
+                SeedCarriedEntry(
                     path=entry.path,
                     kind=entry.kind,
                     identity=entry.identity,
@@ -475,7 +475,7 @@ def plan_seed_bundle(files: Mapping[str, bytes], *, proposal_name: str) -> SeedP
             input_claims.append(entry)
             continue
         grouped[entry.kind].append(
-            SeedProposalGroupV1(
+            SeedProposalGroup(
                 group_id=f"{entry.kind}:{entry.identity}",
                 proposal_slug=proposal_slug(f"{entry.kind}:{entry.identity}"),
                 kind=entry.kind,
@@ -506,7 +506,7 @@ def plan_seed_bundle(files: Mapping[str, bytes], *, proposal_name: str) -> SeedP
         )
 
     grouped["claim"].extend(
-        SeedProposalGroupV1(
+        SeedProposalGroup(
             group_id=f"claim_input:{entry.identity}",
             proposal_slug=proposal_slug(f"claim_input:{entry.identity}"),
             kind="claim",
@@ -520,7 +520,7 @@ def plan_seed_bundle(files: Mapping[str, bytes], *, proposal_name: str) -> SeedP
         for entry in input_claims
     )
 
-    return SeedPlanV1(
+    return SeedPlan(
         proposal_name=proposal_name,
         body_paths=body_paths,
         groups=tuple(group for kind in _GROUP_ORDER for group in grouped[kind]),
@@ -528,7 +528,7 @@ def plan_seed_bundle(files: Mapping[str, bytes], *, proposal_name: str) -> SeedP
     )
 
 
-def render_seed_plan(plan: SeedPlanV1) -> tuple[str, ...]:
+def render_seed_plan(plan: SeedPlan) -> tuple[str, ...]:
     """The human rendering: what will be proposed, in order, and what rides along."""
 
     lines = [
@@ -563,12 +563,12 @@ def read_seed_bundle_files(root: Path) -> dict[str, bytes]:
     return files
 
 
-def plan_seed_directory(root: Path, *, proposal_name: str) -> SeedPlanResultV1:
+def plan_seed_directory(root: Path, *, proposal_name: str) -> SeedPlanResult:
     files = read_seed_bundle_files(root)
     plan = plan_seed_bundle(files, proposal_name=proposal_name)
     if not plan.groups:
         raise SeedBundleError(f"The seed bundle at {root} declares nothing to propose")
-    return SeedPlanResultV1(
+    return SeedPlanResult(
         plan=plan,
         plan_digest=seed_plan_digest(plan).tagged,
         rendered=render_seed_plan(plan),
@@ -581,13 +581,13 @@ __all__ = [
     "SEED_GROUP_OPERATION_DIGEST_DOMAIN",
     "SEED_ENTRY_DIRECTORIES",
     "SEED_GROUP_OPERATIONS",
-    "SeedBundleEntryV1",
+    "SeedBundleEntry",
     "SeedBundleError",
-    "SeedCarriedEntryV1",
+    "SeedCarriedEntry",
     "SeedEntryKind",
-    "SeedPlanV1",
-    "SeedPlanResultV1",
-    "SeedProposalGroupV1",
+    "SeedPlan",
+    "SeedPlanResult",
+    "SeedProposalGroup",
     "plan_seed_bundle",
     "plan_seed_directory",
     "proposal_slug",

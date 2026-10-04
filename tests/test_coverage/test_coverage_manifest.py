@@ -17,7 +17,7 @@ import pytest
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_core.coverage.contracts import CoverageWatcherHealthV1
 from cruxible_core.coverage.indexes import (
-    CoverageScanBudgetV1,
+    CoverageScanBudget,
     build_working_occurrence_overlay,
 )
 from cruxible_core.coverage.manifest import (
@@ -245,7 +245,7 @@ def test_a_truncated_scan_makes_the_manifest_partial(tmp_path: Path) -> None:
     starved = build_working_occurrence_overlay(
         (working(HANDBOOK, HANDBOOK_BODY),),
         wanted=unmaterialized_wanted(citations),
-        budget=CoverageScanBudgetV1(max_scanned_bytes=0),
+        budget=CoverageScanBudget(max_scanned_bytes=0),
     )
     body = coverage_manifest_body(
         instance_id=INSTANCE_ID,

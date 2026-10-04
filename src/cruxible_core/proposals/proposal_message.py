@@ -21,10 +21,10 @@ from collections.abc import Sequence
 
 from cruxible_client.contracts.candidates import (
     CandidateMemberEvidence,
-    CandidateMemberLawEvidenceV2,
+    CandidateMemberLawEvidence,
 )
 
-CandidateMember = CandidateMemberEvidence | CandidateMemberLawEvidenceV2
+CandidateMember = CandidateMemberEvidence | CandidateMemberLawEvidence
 """Either candidate member shape; both name a disposition, a kind and a path."""
 
 SUBJECT_LIMIT = 72

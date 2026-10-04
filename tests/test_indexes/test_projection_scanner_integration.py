@@ -10,22 +10,22 @@ import pytest
 
 from cruxible_client import contracts as api
 from cruxible_client.authoring.workspace import observe_playbill_next_workspace_with_coverage
-from cruxible_client.contracts.captures import DirectForeignSourceSelectionV1
+from cruxible_client.contracts.captures import DirectForeignSourceSelection
 from cruxible_client.contracts.semantic import ContentSpan
 from cruxible_core.coverage import adapter
-from cruxible_core.coverage.adapter import WorkingSourceObservationV1
+from cruxible_core.coverage.adapter import WorkingSourceObservation
 from cruxible_core.coverage.contracts import (
-    CoverageAccessProfileV1,
-    CoverageCardBudgetV1,
+    CoverageAccessProfile,
+    CoverageCardBudget,
 )
-from cruxible_core.coverage.indexes import CoverageScanBudgetV1
+from cruxible_core.coverage.indexes import CoverageScanBudget
 from cruxible_core.indexes.projection import AcceptedCoordinate
 from cruxible_core.runtime.instance import PlaybillInstance
 from cruxible_core.service.authoring.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.discovery.coverage import service_resolve_playbill_coverage
 from cruxible_core.service.discovery.next import (
     PlaybillNextRequestV1,
-    PlaybillNextWorkspaceObservationV1,
+    PlaybillNextWorkspaceObservation,
     service_playbill_next,
 )
 from tests.core_support._claim_authoring_support import service_propose_playbill_claim
@@ -57,15 +57,15 @@ class _DirectCoverageClient:
             self.instance,
             instance_id=instance_id,
             observations=tuple(
-                WorkingSourceObservationV1.model_validate(value) for value in values["observations"]
+                WorkingSourceObservation.model_validate(value) for value in values["observations"]
             ),
             at=(
                 None
                 if values["at"] is None
                 else PlaybillAcceptedCoordinate.model_validate(values["at"].model_dump())
             ),
-            budget=CoverageCardBudgetV1.model_validate(values["budget"]),
-            scan_budget=CoverageScanBudgetV1.model_validate(values["scan_budget"]),
+            budget=CoverageCardBudget.model_validate(values["budget"]),
+            scan_budget=CoverageScanBudget.model_validate(values["scan_budget"]),
         )
         self.last_result = result
         return api.PlaybillCoverageResult(
@@ -89,7 +89,7 @@ def _foreign_world(root: Path, *, whole_source: bool = False):  # type: ignore[n
         instance,
         authoring=authoring("wi-42", "ready", with_claim_type=True).model_copy(
             update={
-                "source_selection": DirectForeignSourceSelectionV1(
+                "source_selection": DirectForeignSourceSelection(
                     logical_source_identity="corpus.runbook",
                     span=ContentSpan(content_digest=stored.digest, start_byte=start, end_byte=end),
                     media_type="text/markdown",
@@ -109,7 +109,7 @@ def _result(
     client: _DirectCoverageClient,
     root: Path,
     *,
-    next_profile: CoverageAccessProfileV1 | None = None,
+    next_profile: CoverageAccessProfile | None = None,
 ):  # type: ignore[no-untyped-def]
     coordinate = api.PlaybillAcceptedCoordinate.model_validate(
         AcceptedCoordinate.from_internal(instance.accepted_coordinate()).model_dump()
@@ -127,8 +127,8 @@ def _result(
         request=PlaybillNextRequestV1(
             at=AcceptedCoordinate.model_validate(pinned.model_dump()),
             evaluation_time=datetime(2026, 8, 16, 21, tzinfo=UTC),
-            access_profile=next_profile or CoverageAccessProfileV1.model_validate(PROFILE),
-            workspace_observation=PlaybillNextWorkspaceObservationV1.model_validate(observed),
+            access_profile=next_profile or CoverageAccessProfile.model_validate(PROFILE),
+            workspace_observation=PlaybillNextWorkspaceObservation.model_validate(observed),
         ),
     )
     return observed, result
@@ -227,7 +227,7 @@ def _multi_source_world(
         instance,
         authoring=authoring("wi-42", "ready", with_claim_type=True).model_copy(
             update={
-                "source_selection": DirectForeignSourceSelectionV1(
+                "source_selection": DirectForeignSourceSelection(
                     logical_source_identity="corpus.scale000",
                     span=ContentSpan(
                         content_digest=stored.digest,
@@ -317,7 +317,7 @@ def test_real_client_observation_builder_closes_each_citation_liveness_row(
 def test_inaccessible_source_observation_leaks_no_liveness_detail(tmp_path: Path) -> None:
     instance, source, workspace = _foreign_world(tmp_path)
     source.write_bytes(SOURCE_CONTENT.replace(NEEDLE, b"status: blocked\n"))
-    public_only = CoverageAccessProfileV1(
+    public_only = CoverageAccessProfile(
         profile_id="integration-public-only",
         permitted_access_classes=("public",),
         disclose_restricted_existence=False,

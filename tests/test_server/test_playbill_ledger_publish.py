@@ -98,7 +98,7 @@ def test_http_publish_forwards_bounded_wait_and_returns_full_status(
     path = f"/api/v1/{instance_id}/playbill/ledger/publish"
     result = client.post(path, json={"timeout": 0})
     assert result.status_code == 200, result.text
-    assert contracts.PlaybillLedgerMirrorV1.model_validate(result.json()) == receipt
+    assert contracts.PlaybillLedgerMirror.model_validate(result.json()) == receipt
     assert calls == [(instance_id, 0)]
     assert client.post(path, json={"timeout": 61}).status_code == 422
     assert calls == [(instance_id, 0)]

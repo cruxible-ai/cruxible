@@ -45,7 +45,7 @@ def _mixed_event():
     payload = _change_set(
         _claim(subject_id="wi-42"),
         _claim(subject_id="wi-43"),
-        models.SubjectAuthoringPayloadV1(subject=_shell("wi-42")),
+        models.SubjectAuthoringPayload(subject=_shell("wi-42")),
     )
     raw = _wire_event("missing", 2)
     intent = raw["intent"]
@@ -60,7 +60,7 @@ def _mixed_event():
         ).value
     )
     intent["change_set_claim_identities"] = [
-        models.ChangeSetClaimIdentityV1(
+        models.ChangeSetClaimIdentity(
             member_identity=identity, claim_id=f"CLM-{index:032x}"
         ).model_dump(mode="json")
         for index, (kind, identity) in enumerate(membership, start=1)
@@ -75,7 +75,7 @@ def test_one_binding_dumps_and_normalizes_payload_once_and_reuses_member_identit
 ) -> None:
     raw = _mixed_event()
     calls: Counter[str] = Counter()
-    original_dump = models.ChangeSetAuthoringPayloadV1.model_dump
+    original_dump = models.ChangeSetAuthoringPayload.model_dump
     original_identity = models.authoring_member_identity
     original_normalize = models.normalize_canonical
 
@@ -92,10 +92,10 @@ def test_one_binding_dumps_and_normalizes_payload_once_and_reuses_member_identit
             calls["payload_normalize"] += 1
         return original_normalize(value, **kwargs)
 
-    monkeypatch.setattr(models.ChangeSetAuthoringPayloadV1, "model_dump", dump)
+    monkeypatch.setattr(models.ChangeSetAuthoringPayload, "model_dump", dump)
     monkeypatch.setattr(models, "authoring_member_identity", identity)
     monkeypatch.setattr(models, "normalize_canonical", normalize)
-    intent = models.AuthoringIntentV2.model_validate(raw["intent"])
+    intent = models.AuthoringIntent.model_validate(raw["intent"])
     assert intent.model_dump(mode="json") == raw["intent"]
     # Member uniqueness/sorting validation still runs, followed by membership
     # validation. The minted-Claim binding reuses that second identity table.
@@ -119,12 +119,12 @@ def test_mutated_intent_bindings_still_refuse(
     raw = _mixed_event()["intent"]
     raw[field] = replacement
     with pytest.raises(ValidationError, match=message):
-        models.AuthoringIntentV2.model_validate(raw)
+        models.AuthoringIntent.model_validate(raw)
 
 
 def test_mutated_nested_payload_is_not_remembered_by_binding_or_public_helpers() -> None:
     # Construct this deliberately mutated model without minting new commitments.
-    intent = models.AuthoringIntentV2.model_validate(_mixed_event()["intent"])
+    intent = models.AuthoringIntent.model_validate(_mixed_event()["intent"])
     member = intent.payload.members[0]
     changed_member = member.model_copy(
         update={
@@ -157,7 +157,7 @@ def test_mutated_nested_payload_is_not_remembered_by_binding_or_public_helpers()
 def test_malformed_model_values_keep_fingerprint_locations_and_payload_first_order(
     field: str,
 ) -> None:
-    intent = models.AuthoringIntentV2.model_validate(_mixed_event()["intent"])
+    intent = models.AuthoringIntent.model_validate(_mixed_event()["intent"])
     malformed = intent.model_copy(update={field: 1.5})
     with pytest.raises(CanonicalEncodingError) as previous:
         models.authoring_create_fingerprint(
@@ -181,7 +181,7 @@ def test_non_ascii_payload_and_actor_commitments_match_public_helpers() -> None:
         'Observe\u0301: \u03b1, \U0001f30d, "quoted"\n'
     )
     _commit_raw_event(raw)
-    intent = models.AuthoringIntentV2.model_validate(raw["intent"])
+    intent = models.AuthoringIntent.model_validate(raw["intent"])
     assert intent.payload_digest == models.authoring_payload_digest(intent.payload)
     assert intent.create_fingerprint == models.authoring_create_fingerprint(
         instance_id=intent.instance_id, actor_id=intent.actor_id, payload=intent.payload
@@ -197,7 +197,7 @@ def _stamp_event_digest(raw: dict[str, object]) -> None:
     raw["event_digest"] = typed_digest(Sha256Value, str(raw["tag"]), preimage).tagged
 
 
-def _change_set_identity(payload: models.ChangeSetAuthoringPayloadV1) -> str:
+def _change_set_identity(payload: models.ChangeSetAuthoringPayload) -> str:
     membership = models.authoring_change_set_membership(payload.members)
     return (
         "ChangeSet:"
@@ -223,7 +223,7 @@ def _wire_intent(payload, *, semantic_identity: str, claim_identities: tuple[str
     intent["payload"] = payload.model_dump(mode="json")
     intent["semantic_identity"] = semantic_identity
     intent["change_set_claim_identities"] = [
-        models.ChangeSetClaimIdentityV1(
+        models.ChangeSetClaimIdentity(
             member_identity=identity, claim_id=f"CLM-{index:032x}"
         ).model_dump(mode="json")
         for index, identity in enumerate(claim_identities, start=1)
@@ -236,17 +236,17 @@ def _wire_intent(payload, *, semantic_identity: str, claim_identities: tuple[str
     return raw
 
 
-def _rationale_set(rationale: str | None) -> models.ChangeSetAuthoringPayloadV1:
+def _rationale_set(rationale: str | None) -> models.ChangeSetAuthoringPayload:
     members = _change_set(
         _claim(subject_id="wi-42"),
-        models.SubjectAuthoringPayloadV1(subject=_shell("wi-42")),
+        models.SubjectAuthoringPayload(subject=_shell("wi-42")),
     ).members
     if rationale is None:
-        return models.ChangeSetAuthoringPayloadV1(members=members)
-    return models.ChangeSetAuthoringPayloadV1(members=members, rationale=rationale)
+        return models.ChangeSetAuthoringPayload(members=members)
+    return models.ChangeSetAuthoringPayload(members=members, rationale=rationale)
 
 
-def _claim_members(payload: models.ChangeSetAuthoringPayloadV1) -> tuple[str, ...]:
+def _claim_members(payload: models.ChangeSetAuthoringPayload) -> tuple[str, ...]:
     return tuple(
         identity
         for kind, identity in models.authoring_change_set_membership(payload.members)

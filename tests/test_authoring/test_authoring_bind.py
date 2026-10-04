@@ -18,9 +18,9 @@ from cruxible_client.authoring.examples import (
     AUTHORING_EXAMPLE_FACTORIES,
     claim_flow_a_example,
 )
-from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimDispositionInput, ClaimInput
+from cruxible_client.authoring.inputs import AuthoringInput, ClaimDispositionInput, ClaimInput
 from cruxible_client.authoring.sdk_types import Disposition
-from cruxible_client.contracts.authoring.models import AuthoringExistingClaimDispositionV1
+from cruxible_client.contracts.authoring.models import AuthoringExistingClaimDisposition
 
 
 def _input() -> ClaimInput:
@@ -120,7 +120,7 @@ def test_explicit_occurrence_against_zero_matches_reports_the_invalid_count() ->
 
 
 def test_every_example_is_constructed_as_a_valid_authoring_union_member() -> None:
-    adapter = TypeAdapter(AuthoringInputV1)
+    adapter = TypeAdapter(AuthoringInput)
 
     for factory in AUTHORING_EXAMPLE_FACTORIES.values():
         model = factory()
@@ -151,5 +151,5 @@ def test_supersede_is_not_a_claim_input_or_governed_disposition() -> None:
     with pytest.raises(ValidationError, match="not_tested.*support.*contradict.*unsure"):
         ClaimDispositionInput.model_validate(values)
     with pytest.raises(ValidationError, match="not_tested.*support.*contradict.*unsure"):
-        AuthoringExistingClaimDispositionV1.model_validate(values)
+        AuthoringExistingClaimDisposition.model_validate(values)
     assert "supersede" not in {member.value for member in Disposition}

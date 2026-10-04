@@ -266,7 +266,7 @@ def validate_decommission_prose(value: str) -> str:
     return value
 
 
-class PlaybillDecommissionV1(StrictModel):
+class PlaybillDecommission(StrictModel):
     """The terminal lifecycle state of one governed instance.
 
     Decommissioning ENDS an instance's governed writes without deleting a byte:
@@ -304,7 +304,7 @@ class PlaybillDescriptor(StrictModel):
     # Absent on every live instance, and absent from the canonical bytes when it
     # is: a descriptor written before this field re-renders byte-identically, so
     # existing instances keep replaying.
-    decommissioned: PlaybillDecommissionV1 | None = Field(
+    decommissioned: PlaybillDecommission | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
     # Where this ledger publishes itself, on the same terms. It is operational

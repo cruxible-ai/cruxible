@@ -9,7 +9,7 @@ from cruxible_client.contracts.claim_types import (
     claim_type_path,
 )
 from cruxible_client.contracts.claims import LiteralClaimObject, claim_path, render_claim
-from cruxible_client.contracts.policies import ClaimAdmissionPolicyV1, FreezeRequirementV1
+from cruxible_client.contracts.policies import ClaimAdmissionPolicy, FreezeRequirement
 from cruxible_client.contracts.query.definitions import query_definition_digest
 from cruxible_client.contracts.subjects import AcceptedSubject, subject_digest, subject_path
 from cruxible_core.proposals import proposals
@@ -123,9 +123,9 @@ def test_freeze_builds_complete_parent_candidate_views_once_and_preserves_cross_
     instance, _owner = initialize_local(tmp_path)
     status_type = _claim_type().model_copy(
         update={
-            "admission_policy": ClaimAdmissionPolicyV1(
+            "admission_policy": ClaimAdmissionPolicy(
                 freeze_requirements=(
-                    FreezeRequirementV1(
+                    FreezeRequirement(
                         requirement_id="done-freezes-summary",
                         while_predicate="project.work_item.status",
                         while_values=("done",),

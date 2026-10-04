@@ -9,24 +9,24 @@ from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
-from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.captures import CanonicalDuration
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifactV1,
     render_procedure,
 )
 from cruxible_client.contracts.procedures.authoring import (
-    AcceptedClaimGuardBuilderV1,
-    ExhaustGuardBuilderV1,
-    SourceCaptureGuardBuilderV1,
+    AcceptedClaimGuardBuilder,
+    ExhaustGuardBuilder,
+    SourceCaptureGuardBuilder,
     build_accepted_claim_guard,
     build_exhaust_guard,
     build_source_capture_guard,
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
 from cruxible_client.contracts.procedures.models import (
-    ExhaustTapNodeV3,
-    ProcedureBudgetV3,
-    ProcedureHardCapsV3,
+    ExhaustTapNode,
+    ProcedureBudget,
+    ProcedureHardCaps,
     SourceNodeV3,
     StateTapNodeV3,
 )
@@ -56,14 +56,14 @@ def _common() -> dict[str, object]:
         "expected_value": "released",
         "refusal_code": "release.not_ready",
         "refusal_message": "The exact accepted release status is not released.",
-        "budget": ProcedureBudgetV3(
-            wall_clock=CanonicalDurationV1(microseconds=1_000_000),
+        "budget": ProcedureBudget(
+            wall_clock=CanonicalDuration(microseconds=1_000_000),
             max_provider_calls=1,
             max_capture_bytes=1024,
             max_items=100,
         ),
-        "hard_caps": ProcedureHardCapsV3(
-            max_wall_clock=CanonicalDurationV1(microseconds=2_000_000),
+        "hard_caps": ProcedureHardCaps(
+            max_wall_clock=CanonicalDuration(microseconds=2_000_000),
             max_provider_calls=2,
             max_capture_bytes=2048,
             max_items=200,
@@ -74,7 +74,7 @@ def _common() -> dict[str, object]:
 
 
 def test_accepted_claim_builder_expands_to_complete_expert_graph_golden() -> None:
-    spec = AcceptedClaimGuardBuilderV1(
+    spec = AcceptedClaimGuardBuilder(
         **_common(),
         query=_pin("query", "QueryDefinition", "release-status"),
         claim_type=_pin("claim-type", "ClaimType", "release.status"),
@@ -85,7 +85,7 @@ def test_accepted_claim_builder_expands_to_complete_expert_graph_golden() -> Non
         compiler_rule_digest=current_compiler_coordinate().rule_digest,
     )
     second = build_accepted_claim_guard(
-        AcceptedClaimGuardBuilderV1.model_validate(spec.model_dump(mode="json")),
+        AcceptedClaimGuardBuilder.model_validate(spec.model_dump(mode="json")),
         compiler_rule_digest=current_compiler_coordinate().rule_digest,
     )
 
@@ -115,7 +115,7 @@ def test_source_and_exhaust_builders_preserve_their_distinct_planes() -> None:
         "release-inputs",
     )
     source = build_source_capture_guard(
-        SourceCaptureGuardBuilderV1(
+        SourceCaptureGuardBuilder(
             **_common(),
             capture_contract=_pin("capture-contract", "CaptureContract", "erp-release"),
             provider=_pin("provider", "Provider", "erp"),
@@ -125,7 +125,7 @@ def test_source_and_exhaust_builders_preserve_their_distinct_planes() -> None:
         compiler_rule_digest=current_compiler_coordinate().rule_digest,
     )
     exhaust = build_exhaust_guard(
-        ExhaustGuardBuilderV1(
+        ExhaustGuardBuilder(
             **_common(),
             reducer_or_query=_pin("reducer", "Reducer", "release-receipts"),
             acquisition_policy=acquisition,
@@ -135,7 +135,7 @@ def test_source_and_exhaust_builders_preserve_their_distinct_planes() -> None:
     )
 
     assert isinstance(source.definition.nodes[0], SourceNodeV3)
-    assert isinstance(exhaust.definition.nodes[0], ExhaustTapNodeV3)
+    assert isinstance(exhaust.definition.nodes[0], ExhaustTapNode)
     assert source.required_acquisition_policy == acquisition
     assert exhaust.required_acquisition_policy == acquisition
     assert source.definition.nodes[0].kind != exhaust.definition.nodes[0].kind
@@ -148,21 +148,21 @@ def test_builders_refuse_remote_state_effects_missing_budgets_and_wrong_interfac
         "claim_type": _pin("claim-type", "ClaimType", "release.status"),
     }
     with pytest.raises(ValidationError, match="literal_error"):
-        AcceptedClaimGuardBuilderV1.model_validate({**payload, "read_scope": "remote"})
+        AcceptedClaimGuardBuilder.model_validate({**payload, "read_scope": "remote"})
     with pytest.raises(ValidationError, match="extra_forbidden"):
-        AcceptedClaimGuardBuilderV1.model_validate({**payload, "effect": "dispatch"})
+        AcceptedClaimGuardBuilder.model_validate({**payload, "effect": "dispatch"})
 
     missing_budget = dict(payload)
     missing_budget.pop("budget")
     with pytest.raises(ValidationError, match="Field required"):
-        AcceptedClaimGuardBuilderV1.model_validate(missing_budget)
+        AcceptedClaimGuardBuilder.model_validate(missing_budget)
 
     wrong_query = {
         **payload,
         "query": _pin("provider", "Provider", "release-status"),
     }
     with pytest.raises(ValidationError, match="QueryDefinition"):
-        AcceptedClaimGuardBuilderV1.model_validate(wrong_query)
+        AcceptedClaimGuardBuilder.model_validate(wrong_query)
 
 
 def test_expanded_procedure_enters_only_the_ordinary_proposal_receive_path(
@@ -175,7 +175,7 @@ def test_expanded_procedure_enters_only_the_ordinary_proposal_receive_path(
         "release-inputs",
     )
     expansion = build_exhaust_guard(
-        ExhaustGuardBuilderV1(
+        ExhaustGuardBuilder(
             **_common(),
             reducer_or_query=_pin("reducer", "Reducer", "release-receipts"),
             acquisition_policy=acquisition,

@@ -26,23 +26,23 @@ from cruxible_client.contracts.procedures.line_specs import (
     render_line_spec,
 )
 from cruxible_client.contracts.procedures.windows import (
-    CaptureEventSelectorV1,
-    CaptureEventWindowV1,
-    FixedWindowV1,
+    CaptureEventSelector,
+    CaptureEventWindow,
+    FixedWindow,
 )
 from cruxible_client.contracts.triggers import (
     INTERNAL_ACTIONS,
-    AcceptedTriggerV1,
-    CadenceScheduleV1,
-    CaptureEventInputV1,
-    CaptureLandingScheduleV1,
-    CronScheduleV1,
-    GenerationAcceptedScheduleV1,
+    AcceptedTrigger,
+    CadenceSchedule,
+    CaptureEventInput,
+    CaptureLandingSchedule,
+    CronSchedule,
+    GenerationAcceptedSchedule,
     InternalActionSpec,
-    NoTriggerInputV1,
+    NoTriggerInput,
+    Trigger,
     TriggerFormatError,
-    TriggerV1,
-    WindowCloseScheduleV1,
+    WindowCloseSchedule,
     evaluate_trigger_law,
     parse_trigger,
     render_trigger,
@@ -74,21 +74,21 @@ from tests.test_server.test_playbill_line_run_refusals import (
     _served_line,
 )
 
-SELECTOR = CaptureEventSelectorV1(
+SELECTOR = CaptureEventSelector(
     capture_contract_identity=DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity,
     capture_contract_digest=capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged,
 )
 
 
-def _accepted(trigger: TriggerV1) -> AcceptedTriggerV1:
-    return AcceptedTriggerV1(
+def _accepted(trigger: Trigger) -> AcceptedTrigger:
+    return AcceptedTrigger(
         path=trigger_path(trigger.identity.name),
         trigger=trigger,
         artifact_digest=trigger_digest(trigger).tagged,
     )
 
 
-def _law(trigger: TriggerV1, **kwargs):  # type: ignore[no-untyped-def]
+def _law(trigger: Trigger, **kwargs):  # type: ignore[no-untyped-def]
     kwargs.setdefault("predecessor", None)
     return evaluate_trigger_law(trigger, path=trigger_path(trigger.identity.name), **kwargs)
 
@@ -100,7 +100,7 @@ def _code(result) -> str:  # type: ignore[no-untyped-def]
 
 def test_a_trigger_round_trips_and_pins_exactly_the_contract_its_schedule_names() -> None:
     trigger = line_trigger(
-        "on-landing", line="triage", schedule=CaptureLandingScheduleV1(event=SELECTOR)
+        "on-landing", line="triage", schedule=CaptureLandingSchedule(event=SELECTOR)
     )
     content = render_trigger(trigger)
     assert parse_trigger(content, path=trigger_path("on-landing")) == trigger
@@ -109,8 +109,8 @@ def test_a_trigger_round_trips_and_pins_exactly_the_contract_its_schedule_names(
     with pytest.raises(TriggerFormatError, match="identity/path"):
         parse_trigger(content, path=trigger_path("elsewhere"))
     with pytest.raises(ValidationError, match="exactly the CaptureContract"):
-        TriggerV1.model_validate({**json.loads(content), "pins": []})
-    ticking = line_trigger("hourly", line="triage", schedule=CadenceScheduleV1(interval_seconds=60))
+        Trigger.model_validate({**json.loads(content), "pins": []})
+    ticking = line_trigger("hourly", line="triage", schedule=CadenceSchedule(interval_seconds=60))
     assert ticking.pins == ()
     # The Line is named by identity, never by a version.
     assert json.loads(render_trigger(ticking))["target"] == {
@@ -123,30 +123,30 @@ def test_the_trigger_law_judges_targets_actions_and_accepted_events() -> None:
     sweep = action_trigger("sweep", action="evidence.sweep", interval_seconds=86400)
     assert _law(sweep).verdict == "accepted"
     nightly = action_trigger(
-        "sweep", action="evidence.sweep", schedule=CronScheduleV1(expression="0 0 * * *")
+        "sweep", action="evidence.sweep", schedule=CronSchedule(expression="0 0 * * *")
     )
     assert _law(nightly).verdict == "accepted"
     # In v1 an internal action takes a time schedule only, whatever its input.
     for schedule in (
-        WindowCloseScheduleV1(
-            window=FixedWindowV1(starts_at="2026-09-30T00:00:00Z", duration_seconds=60)
+        WindowCloseSchedule(
+            window=FixedWindow(starts_at="2026-09-30T00:00:00Z", duration_seconds=60)
         ),
-        WindowCloseScheduleV1(window=CaptureEventWindowV1(event=SELECTOR, duration_seconds=60)),
-        CaptureLandingScheduleV1(event=SELECTOR),
+        WindowCloseSchedule(window=CaptureEventWindow(event=SELECTOR, duration_seconds=60)),
+        CaptureLandingSchedule(event=SELECTOR),
     ):
         refused = _law(action_trigger("sweep", action="evidence.sweep", schedule=schedule))
         assert _code(refused) == "playbill.trigger.schedule_unsupported_for_action"
         assert "not supported yet" in refused.diagnostics[0].message
 
     landing = line_trigger(
-        "on-landing", line="triage", schedule=CaptureLandingScheduleV1(event=SELECTOR)
+        "on-landing", line="triage", schedule=CaptureLandingSchedule(event=SELECTOR)
     )
     assert (
         _code(_law(landing, target_line_live=False)) == "playbill.trigger.target_line_unavailable"
     )
     assert _law(landing, target_line_live=True).verdict == "accepted"
     # A Line that binds its triggering Capture accepts exactly its declared event.
-    exact = CaptureEventInputV1(event=SELECTOR)
+    exact = CaptureEventInput(event=SELECTOR)
     assert _law(landing, target_line_live=True, target_line_input=exact).verdict == "accepted"
     other = SELECTOR.model_copy(update={"capture_contract_digest": "sha256:" + "b" * 64})
     assert (
@@ -154,12 +154,12 @@ def test_the_trigger_law_judges_targets_actions_and_accepted_events() -> None:
             _law(
                 landing,
                 target_line_live=True,
-                target_line_input=CaptureEventInputV1(event=other),
+                target_line_input=CaptureEventInput(event=other),
             )
         )
         == "playbill.trigger.event_not_accepted"
     )
-    ticking = line_trigger("hourly", line="triage", schedule=CadenceScheduleV1(interval_seconds=60))
+    ticking = line_trigger("hourly", line="triage", schedule=CadenceSchedule(interval_seconds=60))
     assert (
         _code(_law(ticking, target_line_live=True, target_line_input=exact))
         == "playbill.trigger.event_not_accepted"
@@ -167,8 +167,8 @@ def test_the_trigger_law_judges_targets_actions_and_accepted_events() -> None:
     event_window = line_trigger(
         "window",
         line="triage",
-        schedule=WindowCloseScheduleV1(
-            window=CaptureEventWindowV1(event=SELECTOR, duration_seconds=60)
+        schedule=WindowCloseSchedule(
+            window=CaptureEventWindow(event=SELECTOR, duration_seconds=60)
         ),
     )
     assert _law(event_window, target_line_live=True, target_line_input=exact).verdict == "accepted"
@@ -180,7 +180,7 @@ def test_an_action_is_held_to_its_declared_input_by_the_line_event_rule() -> Non
     # the input rule refuses a time schedule and the v1 limit any event schedule.
     needs_capture = InternalActionSpec(
         name="test.on_capture",
-        input=CaptureEventInputV1(),
+        input=CaptureEventInput(),
         effect="findings",
         consumer="next",
         part="evidence",
@@ -191,7 +191,7 @@ def test_an_action_is_held_to_its_declared_input_by_the_line_event_rule() -> Non
     assert _code(refused) == "playbill.trigger.event_not_accepted"
     assert "needs a Capture event" in refused.diagnostics[0].message
     fires_on_event = action_trigger(
-        "probe", action="test.on_capture", schedule=CaptureLandingScheduleV1(event=SELECTOR)
+        "probe", action="test.on_capture", schedule=CaptureLandingSchedule(event=SELECTOR)
     )
     assert (
         _code(_law(fires_on_event, actions=actions))
@@ -202,20 +202,20 @@ def test_an_action_is_held_to_its_declared_input_by_the_line_event_rule() -> Non
     assert _code(_law(ticking)) == "playbill.trigger.action_unknown"
     # Needing no input, an action is satisfied by every schedule kind.
     assert all(
-        schedule_satisfies_input(item, NoTriggerInputV1())
-        for item in (ticking.schedule, CaptureLandingScheduleV1(event=SELECTOR))
+        schedule_satisfies_input(item, NoTriggerInput())
+        for item in (ticking.schedule, CaptureLandingSchedule(event=SELECTOR))
     )
 
 
 def test_the_trigger_law_refuses_a_cron_schedule_the_grammar_does_not_admit() -> None:
-    def nightly(expression: str) -> TriggerV1:
+    def nightly(expression: str) -> Trigger:
         return action_trigger(
-            "nightly", action="evidence.sweep", schedule=CronScheduleV1(expression=expression)
+            "nightly", action="evidence.sweep", schedule=CronSchedule(expression=expression)
         )
 
     assert _law(nightly("0 2 * * *")).verdict == "accepted"
     on_line = line_trigger(
-        "weekdays", line="triage", schedule=CronScheduleV1(expression="0 9 * * 1-5")
+        "weekdays", line="triage", schedule=CronSchedule(expression="0 9 * * 1-5")
     )
     assert _law(on_line, target_line_live=True).verdict == "accepted"
     for expression, reason in (
@@ -233,7 +233,7 @@ def test_the_trigger_law_refuses_a_cron_schedule_the_grammar_does_not_admit() ->
             _law(
                 on_line,
                 target_line_live=True,
-                target_line_input=CaptureEventInputV1(event=SELECTOR),
+                target_line_input=CaptureEventInput(event=SELECTOR),
             )
         )
         == "playbill.trigger.event_not_accepted"
@@ -241,7 +241,7 @@ def test_the_trigger_law_refuses_a_cron_schedule_the_grammar_does_not_admit() ->
 
 
 def test_the_trigger_law_holds_succession_and_never_revives() -> None:
-    first = line_trigger("hourly", line="triage", schedule=CadenceScheduleV1(interval_seconds=3600))
+    first = line_trigger("hourly", line="triage", schedule=CadenceSchedule(interval_seconds=3600))
     assert (
         _code(
             _law(
@@ -258,7 +258,7 @@ def test_the_trigger_law_holds_succession_and_never_revives() -> None:
         )
         == "playbill.trigger.invalid_genesis"
     )
-    changed = successor(first, schedule=CadenceScheduleV1(interval_seconds=60))
+    changed = successor(first, schedule=CadenceSchedule(interval_seconds=60))
     assert _law(changed, predecessor=_accepted(first), target_line_live=True).verdict == "accepted"
     assert (
         _code(
@@ -352,9 +352,7 @@ def _refused(result) -> tuple[str, ...]:  # type: ignore[no-untyped-def]
 
 def test_proposals_hold_triggers_to_the_line_they_aim_at_and_lines_to_their_triggers(tmp_path):
     instance, owner, line = _line_world(tmp_path)
-    stray = line_trigger(
-        "stray", line="absent-line", schedule=CadenceScheduleV1(interval_seconds=60)
-    )
+    stray = line_trigger("stray", line="absent-line", schedule=CadenceSchedule(interval_seconds=60))
     assert _refused(_submit(instance, trigger_members(stray), "stray")) == (
         "playbill.trigger.target_line_unavailable",
     )
@@ -363,17 +361,17 @@ def test_proposals_hold_triggers_to_the_line_they_aim_at_and_lines_to_their_trig
         "playbill.trigger.action_unknown",
     )
     landing_sweep = action_trigger(
-        "landing-sweep", action="evidence.sweep", schedule=CaptureLandingScheduleV1(event=SELECTOR)
+        "landing-sweep", action="evidence.sweep", schedule=CaptureLandingSchedule(event=SELECTOR)
     )
     assert _refused(_submit(instance, trigger_members(landing_sweep), "landing-sweep")) == (
         "playbill.trigger.schedule_unsupported_for_action",
     )
 
     hourly = line_trigger(
-        "hourly", line=line.identity.name, schedule=CadenceScheduleV1(interval_seconds=3600)
+        "hourly", line=line.identity.name, schedule=CadenceSchedule(interval_seconds=3600)
     )
     landing = line_trigger(
-        "on-landing", line=line.identity.name, schedule=CaptureLandingScheduleV1(event=SELECTOR)
+        "on-landing", line=line.identity.name, schedule=CaptureLandingSchedule(event=SELECTOR)
     )
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tree.update(trigger_members(hourly, landing))
@@ -442,19 +440,19 @@ def test_new_instances_start_with_the_default_internal_triggers(tmp_path):
     assert {path: (item.action, item.schedule) for path, item in defaults.items()} == {
         "triggers/evidence-sweep.json": (
             "evidence.sweep",
-            CadenceScheduleV1(interval_seconds=86400),
+            CadenceSchedule(interval_seconds=86400),
         ),
-        "triggers/floor-refresh.json": ("floor.refresh", GenerationAcceptedScheduleV1()),
+        "triggers/floor-refresh.json": ("floor.refresh", GenerationAcceptedSchedule()),
         "triggers/prediction-anchor-retry.json": (
             "prediction.anchor_retry",
-            CadenceScheduleV1(interval_seconds=3600),
+            CadenceSchedule(interval_seconds=3600),
         ),
     }
     assert all(item.lifecycle.state == "live" for item in defaults.values())
     assert [(item.action, item.schedule) for item in internal_triggers(instance)] == [
-        ("evidence.sweep", CadenceScheduleV1(interval_seconds=86400)),
-        ("floor.refresh", GenerationAcceptedScheduleV1()),
-        ("prediction.anchor_retry", CadenceScheduleV1(interval_seconds=3600)),
+        ("evidence.sweep", CadenceSchedule(interval_seconds=86400)),
+        ("floor.refresh", GenerationAcceptedSchedule()),
+        ("prediction.anchor_retry", CadenceSchedule(interval_seconds=3600)),
     ]
 
 
@@ -495,7 +493,7 @@ def test_accepted_trigger_changes_move_the_internal_timers_that_fire(tmp_path):
     changed_at = datetime(2026, 9, 30, 11, 2, tzinfo=UTC)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     daily = parse_trigger(tree["triggers/evidence-sweep.json"], path="triggers/evidence-sweep.json")
-    accept("change", changed_at, successor(daily, schedule=CadenceScheduleV1(interval_seconds=60)))
+    accept("change", changed_at, successor(daily, schedule=CadenceSchedule(interval_seconds=60)))
     assert fired(changed_at + timedelta(seconds=30)) == []
     assert fired(changed_at + timedelta(minutes=1)) == ["Trigger:evidence-sweep"]
 
@@ -512,8 +510,8 @@ def test_triggers_are_authored_lowered_and_read_like_other_definitions(tmp_path)
         AUTHORING_EXAMPLE_NAMES,
     )
     from cruxible_client.contracts.authoring.inputs import TriggerInput, lower_authoring_input
-    from cruxible_client.contracts.authoring.models import TriggerAuthoringPayloadV1
-    from cruxible_client.contracts.get_reads import PlaybillGetRequestV1
+    from cruxible_client.contracts.authoring.models import TriggerAuthoringPayload
+    from cruxible_client.contracts.get_reads import PlaybillGetRequest
     from cruxible_core.authoring.lowering import AuthoringLoweringError, _render_trigger_member
     from cruxible_core.service.discovery.get import service_playbill_get
     from cruxible_core.storage.cas import BodyAccessContext
@@ -526,11 +524,11 @@ def test_triggers_are_authored_lowered_and_read_like_other_definitions(tmp_path)
         TriggerInput(
             kind="trigger",
             name="hourly",
-            schedule=CadenceScheduleV1(interval_seconds=3600),
+            schedule=CadenceSchedule(interval_seconds=3600),
             line_name=line.identity.name,
         )
     )
-    assert isinstance(payload, TriggerAuthoringPayloadV1)
+    assert isinstance(payload, TriggerAuthoringPayload)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     path, content, digest = _render_trigger_member(payload, tree=tree)
     authored = parse_trigger(content, path=path)
@@ -554,7 +552,7 @@ def test_triggers_are_authored_lowered_and_read_like_other_definitions(tmp_path)
 
     card = service_playbill_get(
         instance,
-        request=PlaybillGetRequestV1(
+        request=PlaybillGetRequest(
             ref="Trigger:hourly", evaluation_time=datetime(2026, 9, 30, tzinfo=UTC)
         ),
         access=BodyAccessContext(principal_id="reader", can_read_body=True),
@@ -591,14 +589,14 @@ def test_an_unknown_schedule_kind_fails_loudly_everywhere_it_is_classified() -> 
         render_trigger(action_trigger("probe", action="evidence.sweep", interval_seconds=60))
     )
     with pytest.raises(ValidationError, match="query"):
-        TriggerV1.model_validate({**wire, "schedule": {"kind": "query"}})
+        Trigger.model_validate({**wire, "schedule": {"kind": "query"}})
 
 
 def test_generation_schedule_uses_the_existing_target_input_law() -> None:
-    from cruxible_client.contracts.triggers import GenerationAcceptedScheduleV1, schedule_is_timed
+    from cruxible_client.contracts.triggers import GenerationAcceptedSchedule, schedule_is_timed
     from cruxible_core.service.discovery.operational import schedule_summary
 
-    schedule = GenerationAcceptedScheduleV1()
+    schedule = GenerationAcceptedSchedule()
     refresh = action_trigger("floor", action="floor.refresh", schedule=schedule)
     assert _law(refresh).verdict == "accepted"
     assert not schedule_is_timed(schedule)
@@ -609,12 +607,12 @@ def test_generation_schedule_uses_the_existing_target_input_law() -> None:
             _law(
                 capture_line,
                 target_line_live=True,
-                target_line_input=CaptureEventInputV1(event=SELECTOR),
+                target_line_input=CaptureEventInput(event=SELECTOR),
             )
         )
         == "playbill.trigger.event_not_accepted"
     )
     capture_action = action_trigger(
-        "floor", action="floor.refresh", schedule=CaptureLandingScheduleV1(event=SELECTOR)
+        "floor", action="floor.refresh", schedule=CaptureLandingSchedule(event=SELECTOR)
     )
     assert _code(_law(capture_action)) == "playbill.trigger.schedule_unsupported_for_action"

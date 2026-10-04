@@ -9,12 +9,12 @@ import pytest
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.procedure_mandates import (
-    AcceptedProcedureMandateV1,
-    MandateClaimScopeV1,
-    MandateConditionV1,
+    AcceptedProcedureMandate,
+    MandateClaimScope,
+    MandateCondition,
+    ProcedureMandate,
     ProcedureMandateError,
-    ProcedureMandateV2,
-    ScopedClaimTypeV1,
+    ScopedClaimType,
     evaluate_procedure_mandate_v2_law,
     mandate_change_is_narrowing,
     mandate_grant,
@@ -23,28 +23,28 @@ from cruxible_client.contracts.procedure_mandates import (
     procedure_mandate_path,
     render_procedure_mandate,
 )
-from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
+from cruxible_client.contracts.procedures.artifacts import AcceptedProcedure
 from cruxible_client.contracts.query.definitions import (
-    AcceptedQueryDefinitionV1,
-    QueryDefinitionV1,
-    QueryEvaluationPolicyV1,
+    AcceptedQueryDefinition,
+    QueryDefinition,
+    QueryEvaluationPolicy,
     query_definition_digest,
     query_definition_path,
 )
 from cruxible_client.contracts.query.grammar import (
-    QueryBudgetsV1,
-    QueryClaimPresenceFilterV1,
-    QueryClaimValueRefV1,
-    QueryComparisonFilterV1,
-    QueryConjunctionFilterV1,
-    QueryEntryV1,
-    QueryLiteralRefV1,
-    QueryMembershipFilterV1,
-    QueryNegationFilterV1,
-    QueryParameterDeclarationV1,
-    QueryParameterRefV1,
-    QueryProjectionFieldV1,
-    QueryProjectionV1,
+    QueryBudgets,
+    QueryClaimPresenceFilter,
+    QueryClaimValueRef,
+    QueryComparisonFilter,
+    QueryConjunctionFilter,
+    QueryEntry,
+    QueryLiteralRef,
+    QueryMembershipFilter,
+    QueryNegationFilter,
+    QueryParameterDeclaration,
+    QueryParameterRef,
+    QueryProjection,
+    QueryProjectionField,
 )
 from tests.test_procedures.test_procedure_mandates import _caps, _mandate, _procedure
 
@@ -53,42 +53,42 @@ EXPOSURE = ArtifactIdentity(kind="ClaimType", name="sec.exposure.status")
 EXPOSURE_DIGEST = "sha256:" + "1" * 64
 
 
-def _query(*, where=None, entry_parameter: str = "asset_id") -> QueryDefinitionV1:
-    return QueryDefinitionV1(
+def _query(*, where=None, entry_parameter: str = "asset_id") -> QueryDefinition:
+    return QueryDefinition(
         identity=ArtifactIdentity(kind="QueryDefinition", name="sec.asset-settle-condition"),
-        entry=QueryEntryV1(
+        entry=QueryEntry(
             binding="asset",
             subject_kinds=(ASSET,),
-            subject_id=QueryParameterRefV1(parameter=entry_parameter),
+            subject_id=QueryParameterRef(parameter=entry_parameter),
         ),
         where=where,
         result_binding="asset",
         result_shape="subject",
         result_cardinality="one",
         dedupe="subject",
-        projection=QueryProjectionV1(
+        projection=QueryProjection(
             fields=(
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="criticality",
-                    value=QueryClaimValueRefV1(binding="asset", predicate="sec.asset.criticality"),
+                    value=QueryClaimValueRef(binding="asset", predicate="sec.asset.criticality"),
                 ),
-                QueryProjectionFieldV1(
+                QueryProjectionField(
                     name="environment",
-                    value=QueryClaimValueRefV1(binding="asset", predicate="sec.asset.environment"),
+                    value=QueryClaimValueRef(binding="asset", predicate="sec.asset.environment"),
                 ),
             )
         ),
         parameters=(
-            QueryParameterDeclarationV1(name="asset_id", value_type="string"),
-            QueryParameterDeclarationV1(name="environment", value_type="string"),
+            QueryParameterDeclaration(name="asset_id", value_type="string"),
+            QueryParameterDeclaration(name="environment", value_type="string"),
         ),
-        evaluation_policy=QueryEvaluationPolicyV1(
+        evaluation_policy=QueryEvaluationPolicy(
             visible_verdicts=("supported",),
             visible_currency=("current",),
             conflict_behavior="refuse_on_conflict",
         ),
-        default_budgets=QueryBudgetsV1(max_results=1, max_traversal_depth=0),
-        maximum_budgets=QueryBudgetsV1(max_results=1, max_traversal_depth=0),
+        default_budgets=QueryBudgets(max_results=1, max_traversal_depth=0),
+        maximum_budgets=QueryBudgets(max_results=1, max_traversal_depth=0),
         pins=tuple(
             ArtifactPin(
                 role="claim-type",
@@ -100,31 +100,31 @@ def _query(*, where=None, entry_parameter: str = "asset_id") -> QueryDefinitionV
     )
 
 
-def _accepted_query(query: QueryDefinitionV1) -> AcceptedQueryDefinitionV1:
-    return AcceptedQueryDefinitionV1(
+def _accepted_query(query: QueryDefinition) -> AcceptedQueryDefinition:
+    return AcceptedQueryDefinition(
         path=query_definition_path(query.identity.name),
         query=query,
         artifact_digest=query_definition_digest(query).tagged,
     )
 
 
-def _environment_is(value: str) -> QueryComparisonFilterV1:
-    return QueryComparisonFilterV1(
-        left=QueryClaimValueRefV1(binding="asset", predicate="sec.asset.environment"),
+def _environment_is(value: str) -> QueryComparisonFilter:
+    return QueryComparisonFilter(
+        left=QueryClaimValueRef(binding="asset", predicate="sec.asset.environment"),
         operator="eq",
-        right=QueryLiteralRefV1(value=value),
+        right=QueryLiteralRef(value=value),
         value_type="string",
     )
 
 
 def _settle(
-    query: AcceptedQueryDefinitionV1,
+    query: AcceptedQueryDefinition,
     *,
-    procedure: AcceptedProcedureV1 | None = None,
+    procedure: AcceptedProcedure | None = None,
     change_kinds: tuple[str, ...] = ("revise",),
     required_fields: tuple[str, ...] = ("criticality", "environment"),
     **updates: object,
-) -> ProcedureMandateV2:
+) -> ProcedureMandate:
     accepted = procedure or _procedure()
     values: dict[str, object] = dict(
         identity=ArtifactIdentity(kind="ProcedureMandate", name="triage"),
@@ -139,14 +139,14 @@ def _settle(
         valid_from=datetime(2026, 1, 1, tzinfo=timezone.utc),
         expires_at=datetime(2027, 1, 1, tzinfo=timezone.utc),
         scope=(
-            MandateClaimScopeV1(
+            MandateClaimScope(
                 claim_type=ArtifactPin(
                     role="claim-type", target=EXPOSURE, artifact_digest=EXPOSURE_DIGEST
                 ),
                 change_kinds=change_kinds,
             ),
         ),
-        condition=MandateConditionV1(
+        condition=MandateCondition(
             query=ArtifactPin(
                 role="condition-query",
                 target=query.query.identity,
@@ -159,12 +159,12 @@ def _settle(
         ),
     )
     values.update(updates)
-    return ProcedureMandateV2.model_validate(values)
+    return ProcedureMandate.model_validate(values)
 
 
-def _claim_types() -> dict[ArtifactIdentity, ScopedClaimTypeV1]:
+def _claim_types() -> dict[ArtifactIdentity, ScopedClaimType]:
     return {
-        EXPOSURE: ScopedClaimTypeV1(
+        EXPOSURE: ScopedClaimType(
             identity=EXPOSURE,
             artifact_digest=EXPOSURE_DIGEST,
             object_kind="literal",
@@ -173,7 +173,7 @@ def _claim_types() -> dict[ArtifactIdentity, ScopedClaimTypeV1]:
     }
 
 
-def _law(mandate: ProcedureMandateV2, query: AcceptedQueryDefinitionV1, predecessor=None):
+def _law(mandate: ProcedureMandate, query: AcceptedQueryDefinition, predecessor=None):
     return evaluate_procedure_mandate_v2_law(
         mandate,
         path=procedure_mandate_path(mandate.identity.name),
@@ -184,8 +184,8 @@ def _law(mandate: ProcedureMandateV2, query: AcceptedQueryDefinitionV1, predeces
     )
 
 
-def _accepted(mandate) -> AcceptedProcedureMandateV1:
-    return AcceptedProcedureMandateV1(
+def _accepted(mandate) -> AcceptedProcedureMandate:
+    return AcceptedProcedureMandate(
         path=procedure_mandate_path(mandate.identity.name),
         mandate=mandate,
         artifact_digest=procedure_mandate_digest(mandate).tagged,
@@ -232,7 +232,7 @@ def test_a_propose_grant_carries_no_settle_terms() -> None:
 
 def test_the_binding_parameter_is_bound_by_core_never_fixed() -> None:
     with pytest.raises(ValueError, match="bound by Core"):
-        MandateConditionV1(
+        MandateCondition(
             query=ArtifactPin(
                 role="condition-query",
                 target=ArtifactIdentity(kind="QueryDefinition", name="q"),
@@ -254,19 +254,19 @@ def test_law_accepts_an_exact_fail_closed_condition() -> None:
 @pytest.mark.parametrize(
     "where",
     [
-        QueryNegationFilterV1(operand=_environment_is("production")),
-        QueryMembershipFilterV1(
-            left=QueryClaimValueRefV1(binding="asset", predicate="sec.asset.environment"),
-            values=(QueryLiteralRefV1(value="production"),),
+        QueryNegationFilter(operand=_environment_is("production")),
+        QueryMembershipFilter(
+            left=QueryClaimValueRef(binding="asset", predicate="sec.asset.environment"),
+            values=(QueryLiteralRef(value="production"),),
             value_type="string",
             negated=True,
         ),
-        QueryConjunctionFilterV1(
+        QueryConjunctionFilter(
             filters=tuple(
                 sorted(
                     (
                         _environment_is("nonproduction"),
-                        QueryClaimPresenceFilterV1(
+                        QueryClaimPresenceFilter(
                             binding="asset", predicate="sec.asset.criticality", negated=True
                         ),
                     ),
@@ -306,7 +306,7 @@ def test_law_refuses_scope_the_condition_cannot_bind() -> None:
     wrong_digest = _settle(query).model_copy(
         update={
             "scope": (
-                MandateClaimScopeV1(
+                MandateClaimScope(
                     claim_type=ArtifactPin(
                         role="claim-type", target=EXPOSURE, artifact_digest="sha256:" + "9" * 64
                     ),
@@ -321,7 +321,7 @@ def test_law_refuses_scope_the_condition_cannot_bind() -> None:
     object_bound = _settle(query).model_copy(
         update={
             "scope": (
-                MandateClaimScopeV1(
+                MandateClaimScope(
                     claim_type=ArtifactPin(
                         role="claim-type", target=EXPOSURE, artifact_digest=EXPOSURE_DIGEST
                     ),
@@ -341,7 +341,7 @@ def test_narrowing_takes_the_fast_path_and_widening_does_not() -> None:
     base = _settle(query, change_kinds=("create", "revise"))
     predecessor = _accepted(base)
 
-    def successor(**updates: object) -> ProcedureMandateV2:
+    def successor(**updates: object) -> ProcedureMandate:
         return base.model_copy(
             update={
                 "lifecycle": ArtifactLifecycle(predecessor_digest=predecessor.artifact_digest),
@@ -417,20 +417,20 @@ def _world(tmp_path):
     query = _query().model_copy(
         update={
             "identity": ArtifactIdentity(kind="QueryDefinition", name="project.settle-condition"),
-            "entry": QueryEntryV1(
+            "entry": QueryEntry(
                 binding="item",
                 subject_kinds=tuple(claim_type.allowed_subject_kinds),
-                subject_id=QueryParameterRefV1(parameter="asset_id"),
+                subject_id=QueryParameterRef(parameter="asset_id"),
             ),
             "result_binding": "item",
-            "projection": QueryProjectionV1(
+            "projection": QueryProjection(
                 fields=(
-                    QueryProjectionFieldV1(
-                        name="status", value=QueryClaimValueRefV1(binding="item", predicate=status)
+                    QueryProjectionField(
+                        name="status", value=QueryClaimValueRef(binding="item", predicate=status)
                     ),
                 )
             ),
-            "parameters": (QueryParameterDeclarationV1(name="asset_id", value_type="string"),),
+            "parameters": (QueryParameterDeclaration(name="asset_id", value_type="string"),),
             "pins": (
                 ArtifactPin(
                     role="claim-type",
@@ -441,7 +441,7 @@ def _world(tmp_path):
         }
     )
     procedure = _artifact(_definition(terminal_capability=3))
-    accepted_procedure = AcceptedProcedureV1(
+    accepted_procedure = AcceptedProcedure(
         path="procedures/triage.json",
         procedure=procedure,
         artifact_digest=procedure_artifact_digest(procedure).tagged,
@@ -452,7 +452,7 @@ def _world(tmp_path):
         procedure=accepted_procedure,
         required_fields=("status",),
         scope=(
-            MandateClaimScopeV1(
+            MandateClaimScope(
                 claim_type=ArtifactPin(
                     role="claim-type",
                     target=claim_type.identity,
@@ -504,8 +504,8 @@ def test_a_fail_open_condition_refuses_during_proposal_evaluation(tmp_path) -> N
     instance, current, tree, grown, mandate, query = _world(tmp_path)
     negated = query.model_copy(
         update={
-            "where": QueryNegationFilterV1(
-                operand=QueryClaimPresenceFilterV1(
+            "where": QueryNegationFilter(
+                operand=QueryClaimPresenceFilter(
                     binding="item", predicate=query.pins[0].target.name
                 )
             )
@@ -637,9 +637,9 @@ def test_v2_mandates_require_compiler_revision_31(tmp_path) -> None:
 
 def test_settle_authoring_names_its_scope_and_condition_and_lowering_pins_them(tmp_path) -> None:
     from cruxible_client.contracts.authoring.models import (
-        MandateConditionAuthoringV1,
-        MandateScopeAuthoringV1,
-        ProcedureMandateAuthoringPayloadV1,
+        MandateConditionAuthoring,
+        MandateScopeAuthoring,
+        ProcedureMandateAuthoringPayload,
     )
     from cruxible_core.authoring.lowering import (
         AuthoringLoweringError,
@@ -647,7 +647,7 @@ def test_settle_authoring_names_its_scope_and_condition_and_lowering_pins_them(t
     )
 
     _instance, _current, _tree, grown, mandate, query = _world(tmp_path)
-    payload = ProcedureMandateAuthoringPayloadV1(
+    payload = ProcedureMandateAuthoringPayload(
         name="triage",
         procedure_name=mandate.procedure.target.name,
         grants="settle",
@@ -656,12 +656,12 @@ def test_settle_authoring_names_its_scope_and_condition_and_lowering_pins_them(t
         valid_from=mandate.valid_from,
         expires_at=mandate.expires_at,
         scope=(
-            MandateScopeAuthoringV1(
+            MandateScopeAuthoring(
                 claim_type=mandate.scope[0].claim_type.target.name,
                 change_kinds=("revise", "create"),
             ),
         ),
-        condition=MandateConditionAuthoringV1(
+        condition=MandateConditionAuthoring(
             query_name=query.identity.name,
             binding_parameter="asset_id",
             required_fields=("status",),
