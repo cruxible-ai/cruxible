@@ -68,12 +68,13 @@ def _target(instance: Any, record: InstanceRecord | None, head: Any = None) -> s
     )
 
 
-def _floor_directory(workspace: str) -> tuple[Path, Path]:
+def _floor_directory(workspace: str, *, state_root: Path) -> tuple[Path, Path]:
     registered = Path(workspace)
     root = registered.resolve(strict=True)
     if registered.is_symlink() or str(registered.absolute()).casefold() != str(root).casefold():
         raise WorkspaceError("floor delivery refuses a symlinked workspace root")
-    ensure_workspace_directory(root)
+    # Against this daemon's own state root, not whatever the environment names.
+    ensure_workspace_directory(root, state_root=state_root)
     floor = root / ".cruxible" / "floor"
     # Check the real on-disk spellings too: a differently cased symlink is
     # still the same path on the local case-insensitive filesystem.
@@ -246,7 +247,9 @@ def _refresh_floor_admitted(
     try:
         advance_floor_index(instance, head)
         if record is not None and record.floor_delivery and record.workspace_root is not None:
-            root, floor = _floor_directory(record.workspace_root)
+            root, floor = _floor_directory(
+                record.workspace_root, state_root=get_registry().state_root
+            )
             profile = configured_floor_output(root)
             parts = include or (() if profile is None else profile[1])
             export = None
