@@ -1,4 +1,4 @@
-"""FastMCP server for the Playbill-only agent surface."""
+"""FastMCP server for the agent surface."""
 
 from __future__ import annotations
 

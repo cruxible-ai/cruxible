@@ -1,6 +1,6 @@
 {
   "$schema": "https://context7.com/schema/context7.json",
-  "projectTitle": "Cruxible Core",
+  "projectTitle": "Cruxible",
   "description": "Hard state for AI agents: typed, governed, durable state with deterministic queries, governed writes, and receipts.",
   "folders": [
     "docs"
@@ -8,7 +8,7 @@
   "excludeFolders": [],
   "excludeFiles": [],
   "rules": [
-    "Start with cruxible_host_create, then cruxible_init to bootstrap public principals",
+    "Hosts are created on the CLI (cruxible host create); cruxible_init then bootstraps public principals",
     "Write Claims and Procedures with cruxible_authoring_compile followed by cruxible_authoring_submit; the returned status names every remaining approval and activation step",
     "A proposal is not accepted state and an approval is not activation; read accepted coordinates as state and candidate coordinates as provisional",
     "Search for an existing Subject or Claim before minting an adjacent concept",

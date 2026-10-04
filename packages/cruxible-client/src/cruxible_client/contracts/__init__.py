@@ -1,4 +1,4 @@
-"""Pydantic wire contracts for the Playbill-only public surface."""
+"""Pydantic wire contracts for the public surface."""
 
 from __future__ import annotations
 

@@ -11,6 +11,23 @@ Two kinds of change reach an instance, and they move separately:
 Most releases only need the first. A release that adds a compiler revision also
 offers the second, and `cruxible next` says when one is available.
 
+## Same name, new meaning
+
+Some names 0.3.2 shipped are used again with a different meaning. Nothing
+aliases the old meaning; a script or allowlist written for 0.3.2 fails
+closed rather than doing something else.
+
+| Name | In 0.3.2 | Now |
+|---|---|---|
+| `cruxible init` | Initialized a config-authority instance in the project's `.cruxible/` | Bootstraps governed state (principals and genesis) on a daemon host |
+| `cruxible kit` | Installed and repinned bundled config kits | Builds, adds and removes kit releases as governed proposals |
+| `cruxible instance` | Managed config-authority instances | Decommissions a daemon-hosted instance |
+| `cruxible query` | Ran a named query from the config | Runs a compact or named query over accepted state |
+| `cruxible procedure` | Showed and withdrew config procedures | Binds, runs and measures governed Procedures |
+| `cruxible_init` (MCP) | Initialized or reloaded a config instance | Bootstraps governed state |
+| `cruxible_query` (MCP) | Ran a named query | Runs a compact or named query over accepted state |
+| `.cruxible/` in a project | The 0.3 instance directory (`instance.json`, `state.db`) | The workspace directory (client custody, sources, floor); a worktree whose `.cruxible/` holds a 0.3 instance is refused until it moves aside |
+
 ## What the compiler is
 
 The compiler turns the accepted ledger (the Claims, ClaimTypes, Procedures,
@@ -53,7 +70,7 @@ it was accepted under.
    findings are complete again once it has caught up. Armed Lines keep their
    arms and watch forward from the restart; time the daemon was down needs an
    explicit `cruxible line evaluate` (see
-   [playbill line](cli-reference.md#playbill-line)).
+   [line](cli-reference.md#line)).
 
 If the `compiler` facet reads `current`, the upgrade is done.
 

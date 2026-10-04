@@ -12,7 +12,7 @@
 > This branch is an intentionally breaking development line. The former
 > config-authority, mutable graph product, bundled kits, snapshots, and state
 > distribution interfaces have been removed. Do not treat it as a compatible
-> release of the old Cruxible Core.
+> release of the old Cruxible line.
 
 Cruxible is a governed state substrate for humans and AI agents. It makes
 accepted state behave like reviewed code: proposals are deterministic,
@@ -42,7 +42,7 @@ Family 1 is implemented end to end for governed Documents:
   root, and compiler digest;
 - local source catalogs compile declared files into path-free exact-byte bundles.
 
-Claims and Playbill-native Procedures are the next implementation program. The
+Claims and native Procedures are the next implementation program. The
 old Procedure, workflow, query, graph, receipt, and SQLite modules remain only as
 an explicit donor island while their deterministic behavior and goldens are
 transplanted. They are not served by the public Cruxible API.
@@ -129,19 +129,19 @@ daemon refuses to start without `--auth`.)
 
 ~~~bash
 uv run cruxible server start \
-  --socket /tmp/cruxible-playbill-run/daemon.sock \
-  --state-root /tmp/cruxible-playbill-dev
+  --socket /tmp/cruxible-run/daemon.sock \
+  --state-root /tmp/cruxible-dev
 ~~~
 
 In another shell, allocate a host and make yourself its owner, with a
 client-held key outside the workspace. No bootstrap secret is needed locally:
 
 ~~~bash
-export CRUXIBLE_SERVER_SOCKET=/tmp/cruxible-playbill-run/daemon.sock
+export CRUXIBLE_SERVER_SOCKET=/tmp/cruxible-run/daemon.sock
 
 uv run cruxible host create --instance-id inst_demo
 uv run cruxible init \
-  --key-dir /tmp/cruxible-playbill-owner \
+  --key-dir /tmp/cruxible-owner \
   --principal-id me
 export CRUXIBLE_PRINCIPAL_ID=me
 uv run cruxible orient
@@ -176,7 +176,7 @@ Runtime bearer credentials and Cruxible principals solve different problems:
 
 Completed in the current development line:
 
-- isolated the Playbill-only served core;
+- isolated the governed served core;
 - removed legacy CLI, HTTP, MCP, and client operations;
 - removed canonical views, blueprints, bindings, decisions, feedback, installs,
   snapshots, state transport, telemetry, UI assets, and working sets;

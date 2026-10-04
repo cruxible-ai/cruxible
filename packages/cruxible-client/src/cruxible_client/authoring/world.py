@@ -792,13 +792,13 @@ class World:
 
     def __init__(
         self,
-        playbill: Cruxible,
+        cx: Cruxible,
         *,
         coordinate: AcceptedCoordinate,
         root: _Node,
         unstructured_predicates: tuple[str, ...],
     ) -> None:
-        self._playbill = playbill
+        self._playbill = cx
         self._coordinate = coordinate
         self._root = root
         self._subject_cache: dict[str, dict[str, WorldSubject]] = {}
@@ -1129,15 +1129,15 @@ class World:
             QueryRequest,
         )
 
-        playbill = self._playbill
+        cx = self._playbill
         live: list[str] = []
         after: str | None = None
         while True:
             last: str | None = None
             cursor: str | None = None
             while True:
-                page = playbill._client.query(
-                    playbill._instance_id,
+                page = cx._client.query(
+                    cx._instance_id,
                     request=QueryRequest.model_validate(
                         {
                             "kind": subject_kind,
@@ -1322,10 +1322,10 @@ class World:
         for address in dict.fromkeys(addresses):
             kind, _, subject_id = address.partition("/")
             by_kind.setdefault(kind, []).append(subject_id)
-        playbill = self._playbill
+        cx = self._playbill
         # Every page is one answer: this World's coordinate and one evaluation
         # instant, however many Subject and predicate batches it takes.
-        evaluation_time = playbill._evaluation_time()
+        evaluation_time = cx._evaluation_time()
         values: list[QueryClaimValue] = []
         for kind, ids in by_kind.items():
             admitted = {full for group in self._leaf_map(kind).values() for full in group}
@@ -1357,12 +1357,12 @@ class World:
             QueryRequest,
         )
 
-        playbill = self._playbill
+        cx = self._playbill
         values: list[QueryClaimValue] = []
         cursor: str | None = None
         while True:
-            page = playbill._client.query(
-                playbill._instance_id,
+            page = cx._client.query(
+                cx._instance_id,
                 request=QueryRequest.model_validate(
                     {
                         "kind": kind,
@@ -1509,7 +1509,7 @@ def _meaning(envelope: Mapping[str, object]) -> _Meaning:
 
 
 def build_world(
-    playbill: Cruxible,
+    cx: Cruxible,
     *,
     coordinate: AcceptedCoordinate,
     claim_type_envelopes: Sequence[Mapping[str, object]],
@@ -1560,7 +1560,7 @@ def build_world(
         _insert(root, subject_kind)
         _replace(root, subject_kind, subject_kind=True)
     return World(
-        playbill,
+        cx,
         coordinate=coordinate,
         root=root,
         unstructured_predicates=tuple(sorted(set(unstructured))),

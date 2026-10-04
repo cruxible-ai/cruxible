@@ -1,4 +1,4 @@
-"""Strict Playbill-only HTTP request contracts."""
+"""Strict HTTP request contracts."""
 
 from __future__ import annotations
 

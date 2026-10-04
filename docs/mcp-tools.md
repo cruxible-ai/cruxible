@@ -1,6 +1,6 @@
 # MCP tool reference
 
-The MCP surface is Playbill-only. All tools delegate to the same service core as
+The MCP surface is the governed tool set. All tools delegate to the same service core as
 HTTP and CLI.
 
 `CRUXIBLE_MCP_PROFILE` takes two values. `default` (or unset) advertises the

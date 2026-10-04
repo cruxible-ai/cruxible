@@ -1,4 +1,4 @@
-"""Playbill-native governed Procedure and LineSpec artifacts."""
+"""Governed Procedure and LineSpec artifacts."""
 
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedure,

@@ -1762,11 +1762,11 @@ Existing instances are unchanged.
 
 Floor refresh warms the index regardless of workspace delivery. A bound local
 workspace defaults to daemon delivery as its sole floor writer. Over a Unix-socket
-`CruxibleClient`, call `set_playbill_floor_delivery(instance_id, enabled=False)`
+`CruxibleClient`, call `set_floor_delivery(instance_id, enabled=False)`
 to opt out and use client delivery; `enabled=True` enables daemon delivery again.
-Detaching clears the flag; a later attachment defaults on again. `playbill_host_workspace_registration` reports `floor_delivery` and
+Detaching clears the flag; a later attachment defaults on again. `host_workspace_registration` reports `floor_delivery` and
 the local path, which the workspace adapter checks before delegating to
-`deliver_playbill_floor_now`. The latter returns a `FloorDeliveryResult`
+`deliver_floor_now`. The latter returns a `FloorDeliveryResult`
 with the delta and the ordinary `WorkspaceFloorWriteResult` receipt.
 Host inspection and server status also show `floor_delivery`. Both client apply
 and daemon delivery create the local `.cruxible/floor/.gitignore` containing `*`;

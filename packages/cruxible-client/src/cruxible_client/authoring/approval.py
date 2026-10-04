@@ -102,16 +102,16 @@ def _checked_review(review: api.ProposalReview, proposal_id: str) -> None:
         raise ApprovalReviewMismatch("This approval helper requires a complete, unredacted review")
 
 
-def review_proposal(playbill: Cruxible, proposal_id: str) -> ReviewedProposal:
-    raw = playbill._client.review_proposal(playbill._instance_id, proposal_id, include_body=True)
+def review_proposal(cx: Cruxible, proposal_id: str) -> ReviewedProposal:
+    raw = cx._client.review_proposal(cx._instance_id, proposal_id, include_body=True)
     review = api.ProposalReview.model_validate(raw.model_dump(mode="json"))
     try:
         _checked_review(review, proposal_id)
     except ValueError as exc:
         raise ApprovalReviewMismatch("Daemon returned an inconsistent review") from exc
     return ReviewedProposal(
-        playbill,
-        playbill._instance_id,
+        cx,
+        cx._instance_id,
         canonical_bytes(review.model_dump(mode="json")),
         review.proposal_id,
         review.candidate_digest,
@@ -119,7 +119,7 @@ def review_proposal(playbill: Cruxible, proposal_id: str) -> ReviewedProposal:
 
 
 def approve_reviewed(
-    playbill: Cruxible,
+    cx: Cruxible,
     proposal_id: str,
     *,
     signer: ApprovalSigner,
@@ -127,8 +127,8 @@ def approve_reviewed(
 ) -> api.ApprovalReceipt:
     if (
         not isinstance(reviewed, ReviewedProposal)
-        or reviewed._owner is not playbill
-        or reviewed._instance_id != playbill._instance_id
+        or reviewed._owner is not cx
+        or reviewed._instance_id != cx._instance_id
         or reviewed.proposal_id != proposal_id
     ):
         raise ApprovalReviewMismatch(
@@ -138,8 +138,8 @@ def approve_reviewed(
     if review.candidate_digest != reviewed.candidate_digest:
         raise ApprovalReviewMismatch("Review token advertises a different candidate digest")
     signer_id, public_key = signer.signer_id, signer.public_key
-    raw = playbill._client.prepare_approval(
-        playbill._instance_id, proposal_id, signer_id=signer_id, include_body=True
+    raw = cx._client.prepare_approval(
+        cx._instance_id, proposal_id, signer_id=signer_id, include_body=True
     )
     try:
         challenge = api.ApprovalChallenge.model_validate(raw.model_dump(mode="json"))
@@ -199,8 +199,8 @@ def approve_reviewed(
     except (ValueError, InvalidSignature, AttributeError) as exc:
         raise ApprovalReviewMismatch("Signer returned an invalid or substituted approval") from exc
     expected_digest = approval_digest(attestation).tagged
-    raw_receipt = playbill._client.submit_approval(
-        playbill._instance_id, proposal_id, attestation=attestation.model_dump(mode="json")
+    raw_receipt = cx._client.submit_approval(
+        cx._instance_id, proposal_id, attestation=attestation.model_dump(mode="json")
     )
     receipt = api.ApprovalReceipt.model_validate(raw_receipt.model_dump(mode="json"))
     if (

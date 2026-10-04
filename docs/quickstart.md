@@ -16,8 +16,8 @@ In shell one:
 
 ~~~bash
 uv run cruxible server start \
-  --socket /tmp/cruxible-playbill-run/daemon.sock \
-  --state-root /tmp/cruxible-playbill-dev
+  --socket /tmp/cruxible-run/daemon.sock \
+  --state-root /tmp/cruxible-dev
 ~~~
 
 A Unix-socket daemon runs with auth off and says so in one line when it starts:
@@ -31,7 +31,7 @@ directly in `/tmp` is not).
 In shell two:
 
 ~~~bash
-export CRUXIBLE_SERVER_SOCKET=/tmp/cruxible-playbill-run/daemon.sock
+export CRUXIBLE_SERVER_SOCKET=/tmp/cruxible-run/daemon.sock
 ~~~
 
 Allocate an empty daemon-owned host. The CLI remembers it as the active
@@ -47,7 +47,7 @@ the repository. The principal ID is yours to choose:
 
 ~~~bash
 uv run cruxible init \
-  --key-dir /tmp/cruxible-playbill-owner \
+  --key-dir /tmp/cruxible-owner \
   --principal-id me
 export CRUXIBLE_PRINCIPAL_ID=me
 ~~~
@@ -62,7 +62,7 @@ The private key remains in its client custody directory; the daemon receives
 only its public ordinary-principal record. Local key directories provide
 attribution and repository hygiene, not a security boundary. To opt into an
 independent in-daemon approval requirement, add both
-`--reviewer-key-dir /tmp/cruxible-playbill-reviewer` and
+`--reviewer-key-dir /tmp/cruxible-reviewer` and
 `--require-independent-approval`. Organization review normally rides the state
 repository's branch protection and CODEOWNERS policy. Real custody separation
 belongs at the parked Cloud broker/leasing seam.
@@ -129,8 +129,8 @@ with `--auth` instead:
 
 ~~~bash
 uv run cruxible server start \
-  --socket /tmp/cruxible-playbill-run/daemon.sock \
-  --state-root /tmp/cruxible-playbill-dev --auth
+  --socket /tmp/cruxible-run/daemon.sock \
+  --state-root /tmp/cruxible-dev --auth
 ~~~
 
 The daemon never prints its bootstrap secret. It writes it owner-only (0600) to
@@ -141,14 +141,14 @@ operator credential, then initialize: init makes you the owner and mints your
 own admin credential into your settings file:
 
 ~~~bash
-export CRUXIBLE_SERVER_SOCKET=/tmp/cruxible-playbill-run/daemon.sock
-SECRET_FILE=/tmp/cruxible-playbill-dev/daemon/bootstrap-secret
+export CRUXIBLE_SERVER_SOCKET=/tmp/cruxible-run/daemon.sock
+SECRET_FILE=/tmp/cruxible-dev/daemon/bootstrap-secret
 CRUXIBLE_SERVER_BEARER_TOKEN="$(cat "$SECRET_FILE")" \
   uv run cruxible host create --instance-id inst_demo
 uv run cruxible credential claim-bootstrap --secret-file "$SECRET_FILE"
 export CRUXIBLE_SERVER_BEARER_TOKEN=<the admin token it printed>
-uv run cruxible init --key-dir /tmp/cruxible-playbill-owner --principal-id me
-set -a; . /tmp/cruxible-playbill-owner/cruxible.env; set +a
+uv run cruxible init --key-dir /tmp/cruxible-owner --principal-id me
+set -a; . /tmp/cruxible-owner/cruxible.env; set +a
 ~~~
 
 Add the agent in one command. `--signer-key` defaults to your own key from the

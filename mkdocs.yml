@@ -71,6 +71,7 @@ nav:
       - SDK v2 proposal: sdk-v2-reference.md
       - CLI reference: cli-reference.md
       - MCP tools: mcp-tools.md
+      - Declared blocks: declared-blocks.md
   - Operations:
       - Upgrading: upgrading.md
       - Isolated deployment: isolated-deployment.md

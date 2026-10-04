@@ -1,4 +1,4 @@
-"""MCP registrations for the Playbill-only public surface."""
+"""MCP registrations for the public surface."""
 
 from __future__ import annotations
 

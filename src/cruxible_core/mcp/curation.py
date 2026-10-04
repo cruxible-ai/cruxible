@@ -1,4 +1,4 @@
-"""Advertised MCP curation for the Playbill-only tool set."""
+"""Advertised MCP curation for the tool set."""
 
 from __future__ import annotations
 

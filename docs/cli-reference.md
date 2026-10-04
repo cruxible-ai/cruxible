@@ -625,7 +625,7 @@ owner, reviewer, and recovery custody by default.
 
 Successful initialization remembers the initialized instance and atomically
 writes the selected workspace config before rendering either JSON or human
-output. For a daemon-registered local worktree, the advisory `playbill` remote
+output. For a daemon-registered local worktree, the advisory `cruxible-ledger` remote
 fetches accepted state as `cruxible-ledger/accepted` and open proposals as
 `cruxible-ledger/proposals/<proposal-digest>`. These are remote-tracking refs only:
 compare them, never check them out or merge them to admit governed state.
@@ -648,7 +648,7 @@ MCP `cruxible_init`.
 
 `--mirror-url` binds the ledger mirror during bootstrap, before subsequent
 proposals. An instance can publish nowhere initially; `cruxible ledger set-mirror`
-adds a destination later. See [playbill ledger](#playbill-ledger) for URL syntax.
+adds a destination later. See [ledger](#ledger) for URL syntax.
 
 Initialization creates governed state only. Install provider packages separately
 with `cruxible provider install`; initialization needs no provider checkout or
@@ -1854,7 +1854,7 @@ It uses a whole-file compare-and-swap. It does not rewrite or approve prose.
 `block depublish SOURCE_ID BLOCK_ID` releases the registration that demands a
 block's frame, whichever road declared it. Every projection block is registered
 with the instance -- a `block repin` records a declaration, and an instance that
-published under the retired road folds its bound publications -- and `playbill
+published under the retired road folds its bound publications -- and `cruxible
 next` reports a registered block whose marker is no longer in the file as
 blocking, correctly, until the block is meant to be gone. Depublishing is what
 says so, and the blocking row names this verb.
@@ -2284,7 +2284,7 @@ when there are more than `--limit`. `--at` reads an earlier accepted generation.
 generation.
 
 When the current Git worktree holds this instance's floor (see
-[playbill floor](#playbill-floor)), orient also reports
+[floor](#floor)), orient also reports
 `floor: {at, generations_behind}`: the accepted Git OID the floor was exported
 at, and how many accepted generations it is behind this answer (`null` for a
 floor exported before generations were stamped). The text output prints
@@ -2653,8 +2653,7 @@ structured read. `proposal approve` still renders the whole candidate before
 asking for a signature, because that rendering is what the signature covers.
 
 A reviewer without a workspace attachment clones the ledger mirror instead and
-runs the same diff against `origin/main`; see [playbill
-ledger](#playbill-ledger) for what the mirror carries and how to get its URL.
+runs the same diff against `origin/main`; see [ledger](#ledger) for what the mirror carries and how to get its URL.
 
 ## principal and whoami
 

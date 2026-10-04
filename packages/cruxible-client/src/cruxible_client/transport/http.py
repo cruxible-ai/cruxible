@@ -1,4 +1,4 @@
-"""Thin HTTP client for the Playbill-only daemon surface."""
+"""Thin HTTP client for the daemon surface."""
 
 from __future__ import annotations
 

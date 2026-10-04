@@ -1,4 +1,4 @@
-"""Playbill-native Capture contracts and the bounded direct-authoring path."""
+"""Capture contracts and the bounded direct-authoring path."""
 
 from __future__ import annotations
 

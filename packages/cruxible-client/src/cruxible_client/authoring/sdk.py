@@ -1459,10 +1459,8 @@ class WriteBatch:
     its own subject overrides the default.
     """
 
-    def __init__(
-        self, playbill: Cruxible, *, because: str, subject: _WriteSubject | None = None
-    ) -> None:
-        self._playbill = playbill
+    def __init__(self, cx: Cruxible, *, because: str, subject: _WriteSubject | None = None) -> None:
+        self._playbill = cx
         self.because = because
         self.subject = None if subject is None else _write_subject(subject)
         self.changes: list[Change] = []
@@ -1668,14 +1666,14 @@ class Intent:
 
     def __init__(
         self,
-        playbill: Cruxible,
+        cx: Cruxible,
         draft: _IntentDraft | None,
         raw: Mapping[str, object],
         *,
         preflight: api.AuthoringPreflightResult | None = None,
         candidate_status: api.CandidateStatusRecord | None = None,
     ) -> None:
-        self._playbill = playbill
+        self._playbill = cx
         self._draft = draft
         self._raw = dict(raw)
         self._preflight = preflight
@@ -1684,7 +1682,7 @@ class Intent:
     @classmethod
     def from_preflight(
         cls,
-        playbill: Cruxible,
+        cx: Cruxible,
         draft: _IntentDraft,
         result: api.AuthoringPreflightResult,
     ) -> Intent:
@@ -1693,8 +1691,8 @@ class Intent:
         intent_id = result.certificate.get("intent_id")
         if not isinstance(intent_id, str):
             raise ValueError("preflight certificate did not name an intent")
-        raw = playbill._client.get_authoring_intent(playbill._instance_id, intent_id).intent
-        return cls(playbill, draft, raw, preflight=result)
+        raw = cx._client.get_authoring_intent(cx._instance_id, intent_id).intent
+        return cls(cx, draft, raw, preflight=result)
 
     def __repr__(self) -> str:
         # No I/O: only what this handle last observed.
@@ -1963,17 +1961,17 @@ class Proposal:
 
     def __init__(
         self,
-        playbill: Cruxible,
+        cx: Cruxible,
         proposal_id: str,
         *,
         lint: api.ClaimTypeProposalLint | None = None,
     ) -> None:
-        self._playbill = playbill
+        self._playbill = cx
         self.proposal_id = proposal_id
         self.lint = lint
 
     @classmethod
-    def from_inspection(cls, playbill: Cruxible, inspection: api.ProposalInspection) -> Proposal:
+    def from_inspection(cls, cx: Cruxible, inspection: api.ProposalInspection) -> Proposal:
         """The handle for a proposal an inspection names. Next: ``proposal.review()``."""
 
         proposal_id = inspection.proposal.get("admission", {}).get("proposal_id")
@@ -1981,7 +1979,7 @@ class Proposal:
             proposal_id = inspection.proposal.get("proposal_id")
         if not isinstance(proposal_id, str):
             raise ValueError("proposal inspection omitted proposal_id")
-        return cls(playbill, proposal_id, lint=inspection.lint)
+        return cls(cx, proposal_id, lint=inspection.lint)
 
     def review(self) -> ReviewedProposal:
         """Fetch an immutable full review; inspect its details before approving.
@@ -4572,8 +4570,8 @@ class ProjectionBlocks:
     Next: ``cx.block.sync()`` to check every block.
     """
 
-    def __init__(self, playbill: Cruxible) -> None:
-        self._playbill = playbill
+    def __init__(self, cx: Cruxible) -> None:
+        self._playbill = cx
 
     def repin(
         self,
@@ -4725,10 +4723,8 @@ class Procedure:
     readiness and track record.
     """
 
-    def __init__(
-        self, playbill: Cruxible, name: str, coordinate: AcceptedCoordinate | None
-    ) -> None:
-        self._playbill = playbill
+    def __init__(self, cx: Cruxible, name: str, coordinate: AcceptedCoordinate | None) -> None:
+        self._playbill = cx
         self._name = name
         self._coordinate = coordinate
         self._artifact: ProcedureArtifactAny | None = None
@@ -4940,12 +4936,12 @@ class ProcedureRun:
 
     def __init__(
         self,
-        playbill: Cruxible,
+        cx: Cruxible,
         raw: api.ProcedureRunState,
         *,
         output: RecordConstructor | None = None,
     ) -> None:
-        self._playbill = playbill
+        self._playbill = cx
         self._raw = raw
         self._output = output
 

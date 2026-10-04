@@ -1,4 +1,4 @@
-"""Playbill-owned schema for Contracts carried by Procedure-v2 owners.
+"""Owned schema for Contracts carried by Procedure-v2 owners.
 
 This is intentionally the narrow, byte-compatible Contract subset, not an
 import of the legacy config schema. Owner-carried Contracts are accepted

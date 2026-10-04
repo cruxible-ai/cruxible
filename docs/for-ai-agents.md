@@ -537,7 +537,7 @@ no authority.
 
 ## MCP and CLI
 
-The MCP tool set is Playbill-only and mirrors the same service core as CLI and
+The MCP tool set mirrors the same service core as CLI and
 HTTP. Use MCP for structured agent calls and CLI for human-readable review or
 local key custody.
 

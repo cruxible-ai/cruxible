@@ -1,4 +1,4 @@
-"""Playbill-only MCP handler implementations."""
+"""MCP handler implementations."""
 
 from __future__ import annotations
 

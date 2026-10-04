@@ -19,7 +19,7 @@ SQLite and rendered files are rebuildable projections.
 ## Current status
 
 Documents, principal governance, source bundles, accepted reads, history, and
-explanation are implemented. First-class Claims and Playbill-native Procedures
+explanation are implemented. First-class Claims and native Procedures
 are the next implementation program.
 
 Legacy graph, config, kit, snapshot, state-distribution, and mutation interfaces

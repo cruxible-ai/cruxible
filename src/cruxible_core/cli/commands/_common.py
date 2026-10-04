@@ -1,4 +1,4 @@
-"""Shared dispatch and formatting helpers for the Playbill-only CLI."""
+"""Shared dispatch and formatting helpers for the CLI."""
 
 from __future__ import annotations
 

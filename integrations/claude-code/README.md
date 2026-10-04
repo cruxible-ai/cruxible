@@ -35,7 +35,7 @@ put a `.cruxible/coverage.json` at the workspace root:
   ],
   "floor_output": {
     "tag": "playbill-floor-output-v1",
-    "path": "playbill-floor",
+    "path": "cruxible-floor",
     "format": "playbill-floor-export-v2"
   }
 }

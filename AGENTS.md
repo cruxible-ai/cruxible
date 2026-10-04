@@ -6,7 +6,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 **GitHub:** https://github.com/cruxible-ai/cruxible
 
-Cruxible Core is governed state for AI agents: deterministic proposals,
+Cruxible is governed state for AI agents: deterministic proposals,
 signed approvals, provenance, reproducible accepted generations, and receipts.
 The core contains no LLM.
 
@@ -142,7 +142,7 @@ forever, including by the frozen verifiers of retired formats.
 
 ## Architecture
 
-### Four Surfaces, One Cruxible Core
+### Four Surfaces, One Service Core
 
 All interfaces delegate to the shared service layer. Never duplicate orchestration logic in handlers or transports.
 

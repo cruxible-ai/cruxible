@@ -1,4 +1,4 @@
-"""Playbill-only runtime facade shared by HTTP routes and MCP handlers.
+"""Runtime facade shared by HTTP routes and MCP handlers.
 
 This module is intentionally independent of the legacy graph/config runtime.
 Public surfaces translate transport contracts here, then delegate to the

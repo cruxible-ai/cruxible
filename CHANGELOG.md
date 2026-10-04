@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **The public name is Cruxible.** Every public surface drops the development
+  name: the CLI is one flat group (`cruxible get`, `cruxible query`,
+  `cruxible workspace attach`, `cruxible stub`), MCP tools are `cruxible_*`,
+  HTTP routes are `/api/v1/{instance_id}/...`, the SDK entry class is
+  `Cruxible` (`cx = Cruxible.connect()`; `CruxibleClient` stays the low-level
+  client), error and refusal codes are `cruxible.<family>.<name>`, and the
+  workspace directory is `.cruxible/` with the advisory git remote
+  `cruxible-ledger`. Public model names carry one name per concept with no
+  internal version suffix. Format tags keep their `playbill-*-vN` spelling in
+  stored and served bytes; MCP input schemas no longer show them and the
+  server fills them in. Records written before the rename keep their old code
+  prefix and still read. The floor format is v6, and a floor of an older
+  format is replaced whole on its next refresh. Some 0.3.2 names now mean
+  something else; see [Upgrading](docs/upgrading.md#same-name-new-meaning).
+
 - Add generation-accepted Triggers and `floor.refresh`. New instances seed an
   ordinary editable, retirable `floor-refresh` Trigger in genesis. Refreshes
   coalesce at latest head and skip accepts made before listening. Bound local workspaces
@@ -92,10 +107,10 @@
   Subject profiles) are superseded by this one.
 
 - **The SDK is discoverable from Python itself.** `World.describe()` lists the
-  verbs (`pb.orient`, `pb.query`, `pb.get`, grepping the floor, the writes)
+  verbs (`cx.orient`, `cx.query`, `cx.get`, grepping the floor, the writes)
   and every Subject kind with its fields; `w.kinds` and `w.predicates` work as
   attributes and as calls; `dir(cruxible_client)` lists the lazily loaded
-  names; every public SDK member's docstring names the next call; `Playbill`,
+  names; every public SDK member's docstring names the next call; `Cruxible`,
   `Intent` and `Proposal` print readable reprs (no I/O), and refs print short
   (`SubjectRef('sec.package/click' @ 0123456789ab)`, `CaptureRef(CAP-... )`,
   with `CaptureRef.handle`).
@@ -106,8 +121,8 @@
   holds that verifies at the coordinate. A handle the write path accepted for a
   Capture nothing cites yet used to refuse `not_found` in `get` and
   `read_capture`; it now opens there too. A prefix more Captures share than one
-  lookup examines refuses `playbill.capture.ref_scan_exhausted` on reads, as it
-  already refused `playbill.write.capture_scan_exhausted` on writes.
+  lookup examines refuses `cruxible.capture.ref_scan_exhausted` on reads, as it
+  already refused `cruxible.write.capture_scan_exhausted` on writes.
 
 - **Stale proposals stay their author's work, and leave once superseded.** A
   `proposal_stale` row in `next` now shows only to the proposal's author (the
@@ -117,9 +132,9 @@
   source whose readmission was accepted leaves the queue for good instead of
   reappearing at the next head, and one whose readmission is still live yields
   that readmission's row. `proposal readmit` now refuses
-  `playbill.proposal.readmit_already_accepted` (naming `accepted_as` when a
+  `cruxible.proposal.readmit_already_accepted` (naming `accepted_as` when a
   readmission carried the change) apart from
-  `playbill.proposal.readmit_not_stale`, where it used to say "only a settled
+  `cruxible.proposal.readmit_not_stale`, where it used to say "only a settled
   stale proposal may be readmitted" for both.
 
 - **`procedure_run_status` withholds another principal's arming credential.**
@@ -127,8 +142,8 @@
   returned that actor and the receipt carrying it to every caller. It now
   applies the Line and run cards' rule: unless the caller is an admin, the
   arming credential, or a credential bound to the same principal, the
-  attribution answers as `ProcedureRunAttributionWithheldV1` (everything but
-  the actor) and the receipt as `ProcedureRunReceiptWithheldV1`, with
+  attribution answers as `ProcedureRunAttributionWithheld` (everything but
+  the actor) and the receipt as `ProcedureRunReceiptWithheld`, with
   `receipt_digest` still naming it. `get` with `detail="proof"` uses the same
   two typed markers instead of a nulled actor and an untyped marker.
 
@@ -148,10 +163,10 @@
 
 - **`next` no longer reports `status.hidden`.** The count was always 0: since
   operational reads, a row whose repair the caller cannot run stays in the
-  queue with `repair_requires`. The field leaves `PlaybillNextStatus`, and the
+  queue with `repair_requires`. The field leaves `NextStatus`, and the
   SDK's `NextPage.hidden` property goes with it.
 
-- **The floor is the grep-first front door to accepted state.** `playbill floor
+- **The floor is the grep-first front door to accepted state.** `cruxible floor
   export` now leads with `current/<kind>/<id>.yaml`: a one-line header (ref,
   kind, `at <git_oid> gen <n>`), then each field's current value under its short
   name with the `CLM-` Claim and `CAP-` Capture handles, then the verdict flags
@@ -173,14 +188,14 @@
   and `v5` at revision 5, `v6` at revision 2) drop the vocabulary reuse check:
   a new ClaimType whose predicate leaf or structure matches an accepted one,
   such as `dev.track.title` beside `dev.batch.title`, is accepted without a
-  `semantic.distinct_from` Claim, and the `playbill.reuse.*` refusals are gone.
+  `semantic.distinct_from` Claim, and the `cruxible.reuse.*` refusals are gone.
   Generations and pending proposals judged under the previous revisions still
   settle and replay under them unchanged. The reuse models
   (`VocabularyReuseLawEvidenceV1`, `DiscoveryHintsV1` and related) and the
   unused descriptor-seed and descriptor-authority contracts leave
   `cruxible_client.contracts.discovery`.
 
-- **Kits travel as OCI artifacts.** `cruxible playbill kit push` publishes a kit
+- **Kits travel as OCI artifacts.** `cruxible kit push` publishes a kit
   as a content-addressed OCI artifact (manifest config blob, one deterministic
   tar layer) and prints its digest-pinned reference; `kit pull` fetches and
   verifies one without installing it; `kit add` now accepts a kit directory, an
@@ -190,7 +205,7 @@
   kind-independent `cruxible_client.artifacts` library, so later artifact kinds
   reuse it.
 
-- **Kits distribute definitions on demand.** `cruxible playbill kit build`
+- **Kits distribute definitions on demand.** `cruxible kit build`
   exports the live definitions under owned identity prefixes, plus everything
   they pin, as one self-contained release of lineage-free snapshots; a pin into
   authority, bindings or state refuses the build. `kit add` diffs a release
@@ -264,8 +279,8 @@
   it has no requested rung, occurrence, or mandate coordinate, and still names
   the terminal unsupported before admission.
 - **Declared measurements resolve from real evidence and credit exact grains.**
-  `playbill procedure measure` (HTTP `POST .../procedures/{name}/measurements`,
-  MCP `cruxible_playbill_procedure_measure`, SDK `Procedure.measure()`) is the
+  `cruxible procedure measure` (HTTP `POST .../procedures/{name}/measurements`,
+  MCP `cruxible_procedure_measure`, SDK `Procedure.measure()`) is the
   due/pending/resume door for a Procedure's declared measurements. Activation
   is the generation that accepted the exact revision; its signed instant plus
   `check_after`/`expires_after` is the only window, and pending or expired
@@ -286,7 +301,7 @@
   selected at the observation instant over the complete history (occurred
   events, then each principal's latest, then validity and stance), an expired
   standing word neither counts nor revives what it superseded, and an absence
-  of attestations never satisfies. `playbill procedure readings`
+  of attestations never satisfies. `cruxible procedure readings`
   inspects standing and retained readings read-only, paginated; a cursor
   carries its page's observation so a moving clock continues the same
   selection, and every served or replayed reading is re-read through its
@@ -342,7 +357,7 @@
   link pointed into: the ledger is a bare repository under the instance root
   that the daemon alone can open, so every ref the review flow projects was
   invisible to the person it exists for. An instance may now carry a
-  `mirror_url` -- `cruxible playbill ledger set-mirror URL`, or `playbill init
+  `mirror_url` -- `cruxible ledger set-mirror URL`, or `cruxible init
   --mirror-url` -- and after every ledger write (a proposal submission and its
   evaluation note, an approval note, an activation, a withdrawal) the daemon
   pushes `refs/heads/main`, whichever of the three note refs exist, one branch
@@ -354,20 +369,20 @@
   per-proposal archives; the single archive ref retains their commit OIDs.
   Withdrawal removes a proposal from that projection because it cannot
   settle. The publication is never a condition of the write that preceded it: a
-  failed push is the new `ledger_mirror_behind` WARNING row in `playbill next`,
+  failed push is the new `ledger_mirror_behind` WARNING row in `cruxible next`,
   carrying the URL and Git's own reason, because the ledger on disk is the
   record and the remote is a copy. The URL never carries a credential -- a
   userinfo URL, plain `http://`, `ext::` and a leading dash are all refused,
   since `ext::` hands Git a shell command to run -- and the daemon reads its
-  own token from `CRUXIBLE_PLAYBILL_MIRROR_TOKEN` and passes it through Git's
+  own token from `CRUXIBLE_MIRROR_TOKEN` and passes it through Git's
   environment-config protocol, so it never enters an argument vector, a config
-  file or an error message. `cruxible playbill ledger clone-url` prints what to
+  file or an error message. `cruxible ledger clone-url` prints what to
   clone, refusing typed when there is nothing to print, and the same URL rides
   `orient --json` as `orientation.mirror_url` so an agent that has just oriented
   needs no second round trip.
 
 - **A change set can say why it exists, and the commit says it.**
-  `pb.changes(rationale=...)` took a sentence and hashed it: the prose was
+  `cx.changes(rationale=...)` took a sentence and hashed it: the prose was
   folded into the SDK program digest and discarded, so the daemon could prove an
   author had written something and could never read it, and the candidate commit
   fell back to a mechanical subject naming what changed -- the one thing the
@@ -393,12 +408,12 @@
 
 - **Review is Git, because the ledger is Git.** A reviewer holding the ledger
   could see a change set's bytes but not what the daemon made of them, and the
-  commit that carried it said only "Record Playbill proposal". Three things
+  commit that carried it said only "Record Cruxible proposal". Three things
   change together. The candidate commit's message is now the change set's own
   summary -- a subject naming what it does, then one line per member as
   `<disposition> <kind> <address> [qualifier]`, with the untruncated summary
   kept in the body when it did not fit 72 columns -- and the settled generation
-  keeps `Accept Playbill generation N` over the same roll. It is prose and only
+  keeps `Accept Cruxible generation N` over the same roll. It is prose and only
   prose: a guardrail states over the whole package that nothing asks Git for a
   commit message, so no fact can migrate out of the evidence store into an
   unversioned subject line. The daemon's own records travel beside it as notes
@@ -410,13 +425,13 @@
   proposal evidence store, which stays the source of record -- activation reads
   the store for policy and refuses to settle a candidate whose note disagrees
   with it, while a note that is merely absent is repaired rather than stranding
-  a proposal admitted before the refs existed. `playbill proposal review` now
+  a proposal admitted before the refs existed. `cruxible proposal review` now
   prints that pointer and those ref names instead of a second rendering of the
   diff; `--json` is unchanged and remains the structured read, and `proposal
   approve` still renders the whole candidate, because that rendering is what a
   signature covers. `playbill review open` and `playbill review close`, which
-  materialized a detached worktree under `.playbill/review/`, are DEPRECATED in
-  favour of `git diff playbill/accepted...playbill/proposals/<proposal-id>` in
+  materialized a detached worktree under `.cruxible/review/`, are DEPRECATED in
+  favour of `git diff cruxible-ledger/accepted...cruxible-ledger/proposals/<proposal-id>` in
   the attached workspace; they still work and now emit the structured
   deprecation warning, and are removed in 0.6.0.
 
@@ -467,7 +482,7 @@
   this release keep their ids and stay readable through `procedure run status`.
 
   What the run retains is the point: per Source occurrence the run state and
-  `procedure run status` now carry the `SourceReadReceiptV1` the daemon minted
+  `procedure run status` now carry the `SourceReadReceipt` the daemon minted
   for the exact bytes it read -- real on-disk path, byte length, SHA-256 -- and
   the digest of the Capture those bytes became (additive, optional). A direct
   Source run is identified by its evaluation instant, so re-running at the same
@@ -483,14 +498,14 @@
   the SDK, gated on the evidence role, that a copy citation, any other Claim,
   and any raw wire caller walked past. It is now enforced at the daemon, at
   both doors. Lowering resolves each citation's span against the cited source's
-  own bytes and refuses `playbill.projection.evidence_from_projection` when it
+  own bytes and refuses `cruxible.projection.evidence_from_projection` when it
   touches a stamped block, whatever the role or origin; the citation gate every
   proposal evaluation runs does the same over the capture's bytes, so a
   hand-built candidate tree is refused too. A page that declares a block is
   handed over with the observation (additive, optional `source_content_base64`,
   digest-checked) and kept, so the capture is the manifest of its own windows. A
   span that cannot be proved outside the windows of a source the instance
-  registers blocks in refuses `playbill.projection.window_unverifiable` rather
+  registers blocks in refuses `cruxible.projection.window_unverifiable` rather
   than passing. Overlap with the author's own prose outside every window stays
   allowed: that is what a source block IS.
 
@@ -502,21 +517,21 @@
   discoverable road was the forbidden one. It is removed rather than deprecated,
   because a deprecation window on this shape is a window in which a page can
   still attest itself. An intent carrying `insertion_target` refuses typed as
-  `playbill.authoring.insertion_target_removed`, naming the two roads that
+  `cruxible.authoring.insertion_target_removed`, naming the two roads that
   remain: a source block (write the prose, capture the page, cite the span it
-  states) and a projection block (`playbill block repin` over accepted Claims).
+  states) and a projection block (`cruxible block repin` over accepted Claims).
   The mint, the preparation, the confirmation and their served verbs
-  (`playbill authoring prepare-publication`, `playbill authoring
+  (`cruxible authoring prepare-publication`, `cruxible authoring
   confirm-insertion`, and the two HTTP routes and MCP tools behind them) go with
   it. Registrations an instance already holds stay readable, foldable and
-  depublishable: `playbill authoring abandon-insertion` and `playbill block
+  depublishable: `cruxible authoring abandon-insertion` and `cruxible block
   depublish` are unchanged.
 
 - **A projection block is a held list and a watched query, and `block sync`
   reports instead of converging.** A stamp may now carry any number of Claim and
   artifact backings together with at most one query backing. The held list is
   what the block is accountable for; the watched query surfaces candidates for
-  it, and when its semantic result digest moves `playbill next` emits the new
+  it, and when its semantic result digest moves `cruxible next` emits the new
   `projection_candidates_changed` warning naming the rows that entered and left,
   repaired by `block repin --claim <entered>` to hold them or by `block repin`
   alone to re-stamp, which is the agent's explicit no. The ceilings that made
@@ -540,7 +555,7 @@
 
 - **Every projection block is registered with the instance, whichever road
   declared it.** `block repin` records a declaration through a new served route
-  (`POST /api/v1/{instance_id}/playbill/blocks/declare`), and the registration
+  (`POST /api/v1/{instance_id}/blocks/declare`), and the registration
   fold unions that with the bound publications an instance already holds, keyed
   on the pair the page itself names. `unregistered_projection_block` and the
   `workspace detach` refusal key on that fold instead of on whether a block id
@@ -554,7 +569,7 @@
   `self_published_source_stale` row it fed could never fire and the coverage
   renderer's "published copy" line could never print; both are removed, and no
   accepted artifact carries the origin. `projection_backing_stale` stops
-  answering `hand_edit` for a change a verb performs: `playbill.block.depublish`
+  answering `hand_edit` for a change a verb performs: `cruxible.block.depublish`
   joins the repair vocabulary and the retired- and overturned-backing rows name
   it -- but only when there is nothing left to hold. A block holds a LIST, so
   one member of up to 512 retiring is repaired by a repin that drops it, and the
@@ -571,12 +586,12 @@
   at all. Those stay in the vocabulary, unproduced, and are removed in a later
   release -- narrowing a served vocabulary is a wire removal, and
   deprecate-then-remove governs it. The same reasoning keeps
-  `PlaybillBlockSyncReadResultV1`'s body fields optional rather than forbidden:
+  `BlockSyncReadResult`'s body fields optional rather than forbidden:
   the daemon never sends one, and a payload minted before this batch still
   parses. The repairs that named `block sync --all` for a drifted block name
   `block repin`, because sync converges nothing now. One row goes with the
   one-backing gate rather than with the vocabulary:
-  `playbill.projection.backing_lineage_unreadable` was reachable only through
+  `cruxible.projection.backing_lineage_unreadable` was reachable only through
   that gate, and a block that may hold 512 backings cannot walk 512 succession
   chains on every queue read. Neither fault it named is unrefused -- a cycle in
   `predecessor_digest` is a cycle in SHA-256 and cannot be built, and more than
@@ -586,7 +601,7 @@
 
 - **An orient is a read again.** Deriving every Claim's verdict and resolution
   status crossed the client's own three-minute default timeout at a few hundred
-  Claims, so `Playbill.connect()` could fail against a healthy instance. That
+  Claims, so `Cruxible.connect()` could fail against a healthy instance. That
   derivation is memoized per process on the instance, the accepted coordinate,
   the exact Claim set, and a fingerprint of the two stores a verdict reads
   besides the accepted tree -- the content-addressed body store and the
@@ -598,7 +613,7 @@
   effective interval, a capture's observation, source expiry and freshness
   horizon, an attestation's validity window -- so the entry records the interval
   over which its answer holds and is served for any instant inside it, and
-  crossing a breakpoint re-derives. `playbill next` asks the same derivation
+  crossing a breakpoint re-derives. `cruxible next` asks the same derivation
   first, so one answer serves every fold in the request instead of the queue
   walking every live Claim itself. It is a cache and nothing else: bounded, cold
   after a restart, cleared on activation, and not a projection table. The
@@ -629,23 +644,23 @@
   log. An anchor is quoted source bytes and a URL inside it is bytes: the
   locator rule now exempts exactly that field (credential material is still
   refused there). A working selection the capture contracts refuse comes back
-  typed as `playbill.authoring.working_selection_refused` naming the selector
+  typed as `cruxible.authoring.working_selection_refused` naming the selector
   and the repair, and any other validator fault inside lowering is rendered as
-  `playbill.authoring.lowering_invalid` with the validator's own message,
+  `cruxible.authoring.lowering_invalid` with the validator's own message,
   logged server-side, rather than escaping the route as a 500.
 
 - **A published block has a way out, and a worktree has a way to move.** Two
-  verbs the lifecycle was missing. `cruxible playbill block depublish SOURCE_ID
+  verbs the lifecycle was missing. `cruxible block depublish SOURCE_ID
   BLOCK_ID` releases the publication registration that demands a block's frame:
   `bound` was terminal, so a page that had been published once carried that
-  block, with that id, forever, and removing the marker made `playbill next`
+  block, with that id, forever, and removing the marker made `cruxible next`
   emit a blocking row whose repair was to restore the block a later ruling had
   told the author to delete. Retiring a backing Claim now releases the markers
   it backs for the same reason. Depublishing is the FIRST of two steps -- it
   touches the registration and edits no page -- so until the marker leaves the
   file `next` reports it as `unregistered_projection_block` with the repair
   `remove_or_register_projection_block`, a warning rather than a blocking row.
-  `cruxible playbill workspace detach --instance-id ID` releases a governed
+  `cruxible workspace detach --instance-id ID` releases a governed
   host from the Git worktree it is attached to. A worktree belongs to exactly
   one host, and re-binding it named two repairs: "archive and rebuild that
   host", which was not a verb, and "choose another Git worktree", which splits
@@ -654,10 +669,10 @@
   refuses while the host still registers published blocks in that worktree,
   naming them and the `block depublish` repair, because detaching under them
   would leave a page carrying markers no host owns. Both verbs are served
-  (`POST /api/v1/{instance_id}/playbill/blocks/depublish`,
-  `POST /api/v1/{instance_id}/playbill/workspace-detach`) and both reach MCP
-  (`cruxible_playbill_block_depublish`,
-  `cruxible_playbill_host_workspace_detach`). `block sync --detach` also now
+  (`POST /api/v1/{instance_id}/blocks/depublish`,
+  `POST /api/v1/{instance_id}/workspace-detach`) and both reach MCP
+  (`cruxible_block_depublish`,
+  `cruxible_host_workspace_detach`). `block sync --detach` also now
   strips the markers of a host this worktree has left, instead of refusing with
   a repair that re-attaches it.
 
@@ -670,11 +685,11 @@
   routes), and is an enum widening on input only: nothing that was accepted
   before is refused now.
 
-- **The SDK carries exact content as itself.** `pb.claim(value=ExactContent(
+- **The SDK carries exact content as itself.** `cx.claim(value=ExactContent(
   ...))` builds the exact-content object the wire already carried, keeping the
   bytes rather than a rendering of them, and refuses before the wire when the
   ClaimType is not an exact-content type
-  (`playbill.sdk.exact_content_claim_type_mismatch`). The
+  (`cruxible.sdk.exact_content_claim_type_mismatch`). The
   `claim-exact-content` example is on the served example vocabulary. The
   tagless CLI and MCP input gains an optional `content_base64` beside `text`,
   exactly one of which must be given -- so `text` is no longer a required
@@ -685,8 +700,8 @@
   different Subject or assert a different predicate while claiming to be the
   same Claim's next version, which makes a lineage a Claim's history of
   something else. Both now refuse typed at preflight
-  (`playbill.claim.revision_subject_moved`,
-  `playbill.claim.revision_predicate_moved`), at the single evaluation
+  (`cruxible.claim.revision_subject_moved`,
+  `cruxible.claim.revision_predicate_moved`), at the single evaluation
   chokepoint every authoring road reaches, and the refusal names the accepted
   subject or predicate and the written one, with the repair: put the accepted
   one back, or retire this Claim and author a new lineage about the Subject you
@@ -732,7 +747,7 @@
   may be reached over MCP no longer reads an empty list for a tool that reaches
   the facade through an adapter.
 
-- **A daemon can allocate more than one Playbill host per bootstrap secret.**
+- **A daemon can allocate more than one Cruxible host per bootstrap secret.**
   Host creation was authorized only while the runtime bootstrap secret was
   UNCLAIMED, and every other credential a daemon holds is instance-scoped, so
   after the first `credential claim-bootstrap` nothing on the daemon could
@@ -746,13 +761,13 @@
 - **An open proposal that can never activate can be withdrawn.** A proposal
   refused at activation by a hard limit was admitted, evaluated, permanently
   unactivatable and permanently open, so `proposal list` accumulated tombstones
-  with no verb to retire them. `cruxible playbill proposal withdraw PROPOSAL_ID
-  --reason TEXT` (served, and `cruxible_playbill_proposal_withdraw` over MCP)
+  with no verb to retire them. `cruxible proposal withdraw PROPOSAL_ID
+  --reason TEXT` (served, and `cruxible_proposal_withdraw` over MCP)
   writes one immutable withdrawal record beside the admission and reports the
   proposal `settled` with terminal reason `withdrawn`. It touches no accepted
   state and leaves every byte of the candidate readable, and it is terminal in
   fact: approval, activation and readmission all refuse a withdrawn proposal
-  with `playbill.proposal_withdrawn`, naming who withdrew it, when, and why.
+  with `cruxible.proposal_withdrawn`, naming who withdrew it, when, and why.
   The submitting actor may withdraw, and so may a daemon-wide operator, whose
   authority already allocates and stops hosts -- otherwise a proposal whose
   author's credential label was rotated would be withdrawable by nobody. An
@@ -782,7 +797,7 @@
   a ten-minute compile that could not be reused. The admitted limits now
   advertise that ceiling and the largest measured cost of one entry across
   every member kind, and preflight refuses an oversized set typed
-  (`playbill.authoring.change_set_record_too_large`), naming the projected
+  (`cruxible.authoring.change_set_record_too_large`), naming the projected
   record size, the ceiling and the entry count that fits: before lowering when
   the entries a set already declares exceed the bound, and on the exact lowered
   count -- still before the compile -- when they do not. Every durable identity
@@ -793,7 +808,7 @@
   the authoring intents and admissions it already holds.
   Compiling was also the step that could take the daemon out under memory
   pressure: an allocation failure during lowering is now logged and refused as
-  `playbill.authoring.compile_budget_exceeded` instead of propagating untyped,
+  `cruxible.authoring.compile_budget_exceeded` instead of propagating untyped,
   and the daemon installs a fatal-fault handler writing to
   `<state-root>/daemon/logs/fatal.log`, beside its request log, so a death it
   cannot refuse is at least never silent in the log an operator follows.
@@ -841,7 +856,7 @@
 - **BEHAVIOUR CHANGE: a source block and a projection block are never the same
   block.** Publishing a projection block whose backing Claim cites bytes of that
   same source inside the body being framed is refused, typed
-  (`playbill.authoring.publication_claim_projected_as_itself`), naming the
+  (`cruxible.authoring.publication_claim_projected_as_itself`), naming the
   overlapping citations. Separately, a coordinator self-source citation is no
   longer skipped ahead of admission: a ClaimType whose evidence-admission policy
   names that contract for the Claim's role covers text authored in a governed
@@ -860,7 +875,7 @@
   citation and keeps its own row.
 
 - **`CRUXIBLE_CLIENT_CONNECT_TIMEOUT_S`** (default 900 s) gives the single
-  orientation an SDK `Playbill.connect()` runs its own read budget, separate
+  orientation an SDK `Cruxible.connect()` runs its own read budget, separate
   from `CRUXIBLE_CLIENT_TIMEOUT_S` (default 180 s) and never below it, so a
   healthy but large instance cannot read as an unreachable server. Both knobs
   are documented in the CLI reference. `CRUXIBLE_CLIENT_TIMEOUT_S` is now
@@ -868,7 +883,7 @@
   configuration error, where `0`, a negative number or unparsable text used to
   be accepted or raise an untyped error.
 
-- **The accepted world is typed Python, not strings.** `pb.world()` reads the
+- **The accepted world is typed Python, not strings.** `cx.world()` reads the
   accepted ClaimType vocabulary once and hands it back as objects: dotted kinds
   nest (`w.sec.package`, `w.dev.batch`), a Subject answers by attribute or by
   index, a predicate is a `ClaimTypeRef` carrying its own structure, and a
@@ -879,7 +894,7 @@
   coordinate the world was read at and refuses once the connection's orientation
   moves. Read-back (`subject.claims`, `subject.<predicate>`) walks every page of
   the accepted list, so a Subject with more Claims than one page still answers in
-  full. `cruxible playbill world stub [--out]` writes the whole vocabulary out as
+  full. `cruxible world stub [--out]` writes the whole vocabulary out as
   a coordinate-stamped `.pyi` whose classes are closed, so a misspelled kind,
   Subject, predicate or enum member is a type error rather than `Any`.
 
@@ -892,22 +907,22 @@
   write the two calls separately; `.claim(...)` and `.retire(...)` still return
   the draft and still chain.
 
-- **BEHAVIOUR CHANGE: a `Playbill` connection no longer demands a workspace
+- **BEHAVIOUR CHANGE: a `Cruxible` connection no longer demands a workspace
   source catalog.** The catalog is resolved the first time a surface actually
   selects from the working tree, so a read-only connection -- orientation,
   search, `world()`, the new stub leaf -- works from any directory. The refusal
-  is unchanged and still typed; it now lands on `pb.file(...)` and the other
+  is unchanged and still typed; it now lands on `cx.file(...)` and the other
   workspace-selecting surfaces rather than at connect, which also means a
   malformed catalog is reported when it is first used.
 
-- **BEHAVIOUR CHANGE: a fresh Playbill ledger is SHA-1, not SHA-256.** An
+- **BEHAVIOUR CHANGE: a fresh Cruxible ledger is SHA-1, not SHA-256.** An
   instance initialized with no attached workspace now writes a SHA-1 Git
   ledger, because common Git viewers do not recognize a SHA-256 repository and
   a ledger nobody can open is not evidence anyone can read (maintainer ruling
-  2026-09-03). An attached workspace's own format still wins. `playbill init
+  2026-09-03). An attached workspace's own format still wins. `cruxible init
   --object-format` (request field `git_object_format` on HTTP, the SDK and MCP)
   chooses explicitly; an explicit value that contradicts the attached workspace
-  refuses with the typed `playbill.init.object_format_conflict` before any state
+  refuses with the typed `cruxible.init.object_format_conflict` before any state
   is written. Instances already initialized keep their pinned format forever and
   reopen unchanged.
 
@@ -923,11 +938,11 @@
   one state root refuses with the typed `cruxible.server.state_root_locked`
   naming the holder's pid and transport; the kernel frees the lock however the
   holder died, so a stale file never blocks the next start.
-  `cruxible playbill instance decommission` (HTTP `POST
-  /api/v1/{instance_id}/playbill/instance/decommission`, MCP
-  `cruxible_playbill_instance_decommission`, ADMIN) ends one instance's governed
+  `cruxible instance decommission` (HTTP `POST
+  /api/v1/{instance_id}/instance/decommission`, MCP
+  `cruxible_instance_decommission`, ADMIN) ends one instance's governed
   writes without deleting a byte: every governed write door refuses typed
-  `playbill.instance.decommissioned`, reads keep serving at the accepted
+  `cruxible.instance.decommissioned`, reads keep serving at the accepted
   coordinate, `orient` and `next` report the terminal state, and archiving the
   directory stays the operator's own step.
 
@@ -943,12 +958,12 @@
   deprecation warning; both surfaces are registered for removal in 0.6.0 (see
   `DEPRECATIONS.md`).
 
-- **MCP `cruxible_playbill_init` carries the `seed` decision.** It gains
+- **MCP `cruxible_init` carries the `seed` decision.** It gains
   `seed: bool = True` with the same typed `unseeded` row and repair as the CLI,
   SDK and HTTP surfaces, retiring the earlier "MCP always seeds" declaration.
 
 - **Source-read receipts record the real on-disk names.**
-  `SourceReadReceiptV1.relative_path` is now the component spelling the kernel
+  `SourceReadReceipt.relative_path` is now the component spelling the kernel
   confirmed rather than the spelling that was requested, and the new
   `requested_path` carries the request alongside it. Receipts written before
   this law still verify.
@@ -962,7 +977,7 @@
   is permitted only when an isolated executor is REGISTERED in the running
   build -- registration goes through a typed seam
   (`register_isolated_executor()` / `registered_isolated_executors()` taking the
-  new additive `IsolatedExecutorRegistrationV1` contract), and core registers
+  new additive `IsolatedExecutorRegistration` contract), and core registers
   none, so the profile refuses with `customer_code_execution_unsupported` and
   the detail `isolation backend not implemented`. Naming
   `CRUXIBLE_HOSTED_ISOLATED_EXECUTION_BACKEND=docker` no longer re-enables
@@ -979,7 +994,7 @@
   daemon state-root lock file is narrowed to `0600` even when an earlier daemon
   left it wider.
 
-- **Playbill v1 is wire-frozen (P2-B5).** Governed Lines can trigger due
+- **Cruxible v1 is wire-frozen (P2-B5).** Governed Lines can trigger due
   occurrences over HTTP, the CLI, the SDK, and MCP under their accepted
   mandates; candidate review trees carry deterministic derivative cards;
   calibration readings succeed through explicit derivation; provider outputs
@@ -999,11 +1014,11 @@
 
 - **Operator and agent workflows now close their setup and selection loops.**
   Server status reports exact compiler compatibility per governed host, and
-  `playbill host show` exposes one host without acquiring authority. Proposal
+  `cruxible host show` exposes one host without acquiring authority. Proposal
   commands resolve full digests, unique prefixes, and current target refs
   through one typed read; Claim reads add a shared statement-first projection.
   A single client/daemon digest handshake now gates both CLI and SDK entry, while
-  `server install-service` and `playbill workspace attach` provide credential-free,
+  `server install-service` and `cruxible workspace attach` provide credential-free,
   atomic local setup. Inherited-Git advisories are retained in affected JSON
   receipts, subject-valued Claim authoring preserves typed Subject objects, and
   projection repair detects body-only accepted revisions.
@@ -1013,7 +1028,7 @@
 - **Workspace files enter through bounded reads and governed Provider seeds
   (P2-B4).** The daemon resolves `workspace.file` only inside attached or
   operationally allowed roots. It decides on the real on-disk name of every
-  component and denies Git metadata, Playbill control paths, custody and key
+  component and denies Git metadata, Cruxible control paths, custody and key
   files, and the whole daemon state root case-insensitively, so a capitalized
   spelling refuses on case-folding volumes exactly as it does elsewhere. Each
   authorized read commits its exact receipt alongside Provider invocation
@@ -1026,16 +1041,16 @@
   init --no-seed` (request field `seed`) is the explicit opt-out that creates the
   instance, skips the seed step, and returns a typed `unseeded` Provider-seed row
   whose `repair` names configuring `seed_materializations` and running `playbill
-  provider seed`. MCP `cruxible_playbill_init` carries no such field and always
+  provider seed`. MCP `cruxible_init` carries no such field and always
   seeds. This prerelease batch also corrects
-  `PlaybillProviderInterfaceEntry` v1 in place to match the already-served
+  `ProviderInterfaceEntry` v1 in place to match the already-served
   ProviderInterface discovery row; the generated client snapshot pins that
   reshape. Core's governed `none` effect class is the no-external-mutation
   counterpart of the adapter stub's pinned `pure` vocabulary. The governed seed
   intentionally records only its verified `local_env` launch floor even though
   the external package manifest also advertises an unseeded container backend.
   Both new wires mint semantic revision 18, whose immutable label `p2-b4-u2` is
-  what `server status` and `playbill host show` now report as the current
+  what `server status` and `cruxible host show` now report as the current
   compiler revision; revision 17 stays installed and still replays.
 
 - **Client custody follows one Git-worktree boundary.** Initialization,
@@ -1045,18 +1060,18 @@
   for that decision, with a typed advisory written to stderr when they select a
   different worktree.
 
-- **Playbill workspace context and deterministic repair move together (PC-DF3).**
+- **Cruxible workspace context and deterministic repair move together (PC-DF3).**
   Publication blocks can sync through the read-only sync-backing route while
   preserving local edits with `block_locally_modified`, `--discard-local`,
   `--check`, and `--detach`; accepted activation syncs attached workspaces last
   unless `--no-sync` is selected. Git workspaces now observe
-  `playbill/accepted` and proposal remote branches, with `review open` and
+  `cruxible-ledger/accepted` and proposal remote branches, with `review open` and
   `review close` managing detached review worktrees. Attached hosts persist
-  `.playbill/coverage.json` v2 atomically, with `--replace` required for a
+  `.cruxible/coverage.json` v2 atomically, with `--replace` required for a
   differing file, and `context show` separates config attachment from daemon
   registration. The `next` vocabulary now covers workspace attachment,
   projection repair, curation, and stale publication-block synchronization.
-  The public `PlaybillBlockSyncOutcome` enum adds `skipped` for an unattached
+  The public `BlockSyncOutcome` enum adds `skipped` for an unattached
   activation-driven sync; an explicit unattached `block sync` remains refused.
 
 - **Source execution now lands versioned Capture evidence (P2-B4).** Source
@@ -1079,10 +1094,10 @@
   compiler artifacts use pretty canonical JSON at `.json` paths while frozen
   historical compilers retain their compact `.yaml` verifier. The daemon state
   root is now `~/.cruxible` (or `CRUXIBLE_STATE_ROOT`), the workspace floor is
-  fixed at the containing worktree's `.playbill/floor`, and workspace Git refs
+  fixed at the containing worktree's `.cruxible/floor`, and workspace Git refs
   are advisory. Pre-PC-HR nested state is refused with a typed re-seed error so
   neither instances nor the auth-required latch can be silently orphaned.
-  `playbill floor export --output`, `floor_output.path`, `--state-dir`, and
+  `cruxible floor export --output`, `floor_output.path`, `--state-dir`, and
   `CRUXIBLE_SERVER_STATE_DIR` are removed; claim-type migration output is human
   readable by default with `--json` for structured output.
 
@@ -1114,7 +1129,7 @@
   instances carry the `governance/approval-policy.yaml` singleton in the signed
   genesis tree. One ordinary principal is sufficient by default; operators can
   opt into creator-excluded independent approval with a second principal and
-  `playbill init --require-independent-approval`. Tightening is an ordinary
+  `cruxible init --require-independent-approval`. Tightening is an ordinary
   governed successor while loosening must satisfy the current independent
   policy. Local key directories remain attribution/repository-hygiene
   boundaries, not security boundaries; organization review rides repository
@@ -1124,7 +1139,7 @@
   ledger records exact-Claim observations against accepted coordinates, exposes
   idempotent append through SDK, HTTP, MCP, and CLI composition, and contributes
   deterministic outstanding-evidence and attestation-threshold rows to
-  `playbill next`. An admin recovery command rolls forward the sole durable
+  `cruxible next`. An admin recovery command rolls forward the sole durable
   unpublished event after an interrupted append without rewriting governed state.
 
 - **Scheduled 0.5.0 deprecations collected.** The already-absent legacy
@@ -1154,13 +1169,13 @@
   self-signature is mandatory rather than refused. PC-C3 now derives ordinary
   candidate approval behavior from the governed approval-policy singleton.
 
-- **Playbill delegates authorization to repository ref governance (PC-G12q).**
+- **Cruxible delegates authorization to repository ref governance (PC-G12q).**
   The in-daemon approval quorum is withdrawn: candidates require no approval by
   default, creator-suffices activation remains a separate attributed act, and
   non-creators may still record verified voluntary approvals. PC-C3 supersedes
   the interim forced-independent posture with a governed opt-in approval policy.
 
-- **Playbill publication prepare retries now distinguish live persistence from
+- **Cruxible publication prepare retries now distinguish live persistence from
   terminal replay (pre-release compatibility note).** The exported
   `insertion_prepare_operation_v2_key` helper now requires the live expectation
   digest, preventing a stale source replay from serving a superseded preparation.
@@ -1170,7 +1185,7 @@
   by intermediate pre-release builds under the former preimage do not cache-hit;
   recreate any in-flight authoring intent carried across such an upgrade.
 
-- **Playbill publication confirmations now require their discriminating wire tag.**
+- **Cruxible publication confirmations now require their discriminating wire tag.**
   The confirmation endpoint accepts the explicit v1 or v2 request variants; a
   legacy v1-shaped body that omits `tag` now receives a typed request refusal
   instead of being inferred. This is an intentional pre-release behavior change
@@ -1182,13 +1197,13 @@
   or recovery, and every acceptance-law and compiler coordinate was re-pinned
   in place (pre-release: existing ledgers do not replay across this change;
   rebuild from fixtures). Creator self-approval refuses
-  `playbill.approval.creator_forbidden`. Attestation-consequence thresholds lose their
+  `cruxible.approval.creator_forbidden`. Attestation-consequence thresholds lose their
   hard-coded minimum (declared `>=0`); threshold counting uses distinct
   principal identities in the queue fold only. Revoked keys can never be
   re-armed with the same material, and dormant role bytes are immutable
   pending a future governance redesign.
 
-- **Playbill citation liveness now fails closed at every observation boundary.**
+- **Cruxible citation liveness now fails closed at every observation boundary.**
   Source-local scan proofs are withheld whenever the matching occurrence cards
   are clipped or rejected, partial scan budgets can no longer assert factual
   absence, and instance-invisible source observations disclose no liveness
@@ -1202,22 +1217,22 @@
   Callers must now disposition each retired Claim as `successor` so its stored
   adjudication evidence is re-derived against the successor ClaimType while its
   retired lifecycle is preserved. Omitting one refuses with
-  `playbill.claim_type.migration_dependent_set_mismatch` and names the missing
+  `cruxible.claim_type.migration_dependent_set_mismatch` and names the missing
   Claim; run v2 preflight to obtain the complete required dependent inventory.
 
-- Add `playbill whoami` and a deterministic open/settled proposal inventory
+- Add `cruxible whoami` and a deterministic open/settled proposal inventory
   across HTTP, client, MCP, and CLI so agents can recover their writer identity
   and pending work without reconstructing credential or proposal context.
 
-- Version the Playbill floor as `playbill-floor-export-v2`: JSON cards are now
+- Version the Cruxible floor as `playbill-floor-export-v2`: JSON cards are now
   deterministically pretty-printed, and the v2 manifest inventory and floor
   digest bind those exact grep-friendly bytes while v1 readers remain intact.
 
-- Curate the default Playbill MCP catalog around authoring and discovery, with
+- Curate the default Cruxible MCP catalog around authoring and discovery, with
   `expert`/`full` retaining the complete surface, and render one deduplicated
   orientation header on human `playbill search`, `list`, and `orient` output.
 
-- **PC-DEL3 removes the unreleased legacy Playbill wire and zero-use surfaces.**
+- **PC-DEL3 removes the unreleased legacy Cruxible wire and zero-use surfaces.**
   The unused native projection family is gone. Coverage results and source
   observations now expose only their live v3/v4 variants; publication
   authoring exposes only v2. The Claim-v1 direct write path and parser are
@@ -1230,8 +1245,8 @@
   or migrated before upgrading.
 
 - **Flow-A authoring remains the canonical Claim path after the retirement.**
-  Client-side source binding (`playbill authoring bind`), model-generated
-  authoring examples (including the `cruxible_playbill_authoring_example`
+  Client-side source binding (`cruxible authoring bind`), model-generated
+  authoring examples (including the `cruxible_authoring_example`
   MCP tool), bare and qualified Claim reads, and the actor/repair-authority
   refusal texts all continue unchanged.
 
