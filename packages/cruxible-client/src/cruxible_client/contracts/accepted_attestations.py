@@ -37,7 +37,7 @@ ATTESTATION_ARTIFACT_DOMAIN = "cruxible-accepted-claim-attestation-artifact-v1"
 
 def attestation_identity(attestation: ClaimAttestation) -> ArtifactIdentity:
     return ArtifactIdentity(
-        kind="ClaimAttestationV1", name=claim_attestation_v2_envelope_digest(attestation)
+        kind="ClaimAttestation", name=claim_attestation_v2_envelope_digest(attestation)
     )
 
 

@@ -210,7 +210,7 @@ def test_creator_cannot_satisfy_or_join_independent_approvals() -> None:
     creator = _submission(owner_private, candidate, signer_id="owner")
     with pytest.raises(
         ApprovalIntegrityError,
-        match="creator_forbidden.*playbill proposal activate",
+        match="creator_forbidden.*cruxible proposal activate",
     ):
         verify_candidate_approvals(
             candidate,

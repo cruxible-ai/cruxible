@@ -362,5 +362,5 @@ def claim_attestation_published_root_digest(root: ClaimAttestationPublishedRoot)
 __all__ = [
     name
     for name in globals()
-    if name.startswith("ClaimAttestationV1") or name.startswith("claim_attestation_")
+    if name.startswith("ClaimAttestation") or name.startswith("claim_attestation_")
 ]

@@ -26,7 +26,7 @@ def test_claim_attestation_wire_catalog_is_current_and_exhaustive() -> None:
     ):
         for name, value in vars(module).items():
             if (
-                name.startswith("ClaimAttestationV1")
+                name.startswith("ClaimAttestation")
                 and inspect.isclass(value)
                 and issubclass(value, BaseModel)
                 and value.__module__ == module.__name__

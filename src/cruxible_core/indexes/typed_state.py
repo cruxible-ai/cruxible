@@ -117,7 +117,7 @@ OWNER_CODECS = (
     ),
     OwnerCodec(
         "attestation",
-        "ClaimAttestationV1",
+        "ClaimAttestation",
         "attestations",
         parse_accepted_attestation,
         (
