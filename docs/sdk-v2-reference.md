@@ -903,7 +903,7 @@ settle_change_set(
 ```
 
 The same arguments and candidate rules as `propose_change_set`; the Procedure's
-derived authority becomes `settle`. It names no mandate. On a Line, Core selects
+derived authority becomes `settle`. It names no mandate. On a Line, Cruxible selects
 the one live settle ProcedureMandate covering every changed Claim, evaluates that
 mandate's pinned condition query for each target, and either accepts the change
 with no candidate approvals or follows the mandate's declared fallback (an
@@ -1547,7 +1547,7 @@ The rule requires the producing Procedure and exact input-Claim provenance; it
 contains no producer allowlist. The existing Procedure mandate authorizes the
 exact producer, actor, lane, and proposal scope, and ordinary governed approval
 controls acceptance. A direct-only evidence rule still refuses a derivation.
-Names and typed handles remain the authoring inputs; Core resolves every digest.
+Names and typed handles remain the authoring inputs; Cruxible resolves every digest.
 Ordinary authoring, including raw payloads and manual revisions, cannot assert
 Procedure execution. The proposal door requires the exact output bytes from the
 authorized terminal. Mechanical retirement and ClaimType succession preserve

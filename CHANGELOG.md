@@ -1045,7 +1045,7 @@
   seeds. This prerelease batch also corrects
   `ProviderInterfaceEntry` v1 in place to match the already-served
   ProviderInterface discovery row; the generated client snapshot pins that
-  reshape. Core's governed `none` effect class is the no-external-mutation
+  reshape. Cruxible's governed `none` effect class is the no-external-mutation
   counterpart of the adapter stub's pinned `pure` vocabulary. The governed seed
   intentionally records only its verified `local_env` launch floor even though
   the external package manifest also advertises an unseeded container backend.

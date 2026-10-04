@@ -180,3 +180,48 @@ def test_docs_never_say_playbill() -> None:
         for hit in _offending(line, internal_paths=True)
     ]
     assert offenders == []
+
+
+# The product is "Cruxible" in prose: never "Cruxible Core" and never "Core" as
+# the product's name. Identifiers keep their spelling (cruxible_core,
+# cruxible-core, CoreError), and released CHANGELOG sections are history.
+FORBIDDEN_PRODUCT_SPELLING = re.compile(r"\bCruxible Core\b|(?<![\w`.-])Core\b(?![\w`(-])")
+
+
+def _unreleased_changelog() -> str:
+    text = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    unreleased = text.split("## Unreleased", 1)[1]
+    return re.split(r"\n## \[?\d", unreleased, maxsplit=1)[0]
+
+
+def _prose_documents() -> list[tuple[str, str]]:
+    paths = [
+        *_docs(),
+        ROOT / "AGENTS.md",
+        ROOT / "CONTRIBUTING.md",
+        ROOT / "SECURITY.md",
+    ]
+    documents = [
+        (str(path.relative_to(ROOT)), path.read_text(encoding="utf-8"))
+        for path in paths
+        if path.is_file()
+    ]
+    documents.append(("CHANGELOG.md (Unreleased)", _unreleased_changelog()))
+    return documents
+
+
+def test_prose_never_names_the_product_core() -> None:
+    offenders = [
+        f"{name}:{number}: {line.strip()[:100]}"
+        for name, text in _prose_documents()
+        for number, line in enumerate(text.splitlines(), 1)
+        if FORBIDDEN_PRODUCT_SPELLING.search(line)
+    ]
+    assert offenders == []
+
+
+def test_the_forbidden_spelling_pattern_spares_identifiers() -> None:
+    assert FORBIDDEN_PRODUCT_SPELLING.search("Core verifies it")
+    assert FORBIDDEN_PRODUCT_SPELLING.search("the old Cruxible Core")
+    for allowed in ("cruxible_core.errors", "cruxible-core", "`CoreError`", "CoreError"):
+        assert not FORBIDDEN_PRODUCT_SPELLING.search(allowed), allowed

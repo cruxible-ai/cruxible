@@ -78,7 +78,7 @@ output before downstream nodes use it. The provider runtime protocol is shared
 by calls and acquisition.
 
 A `source` node uses the shared `playbill-provider-result-to-external-capture-v1`
-output contract. The provider returns observation material; Core verifies it and
+output contract. The provider returns observation material; Cruxible verifies it and
 constructs the Capture under the pinned CaptureContract and acquisition policy.
 Source refuses mutation interfaces. Graph-v3/v4 artifacts retain their original
 grammar and digests. Existing instances adopt graph-v5 through a governed compiler

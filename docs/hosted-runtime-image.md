@@ -194,7 +194,7 @@ goes through the typed seam in `runtime/execution_policy.py`:
 `register_isolated_executor()` takes an object publishing an
 `IsolatedExecutorRegistration` record -- a `backend_id`, the exact
 `implementation_digest` doing the isolating, and its `capabilities` -- and
-`registered_isolated_executors()` reports what this process has. Core registers
+`registered_isolated_executors()` reports what this process has. Cruxible registers
 none, so `CRUXIBLE_HOSTED_ISOLATED_EXECUTION_BACKEND` cannot re-enable execution
 today; setting it to `docker` previously unlocked spawning the Provider directly
 on the host, which is the opposite of what the name promised (maintainer ruling

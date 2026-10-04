@@ -13,9 +13,9 @@ offers the second, and `cruxible next` says when one is available.
 
 ## Same name, new meaning
 
-Some names 0.3.2 shipped are used again with a different meaning. Nothing
-aliases the old meaning; a script or allowlist written for 0.3.2 fails
-closed rather than doing something else.
+Some names 0.3.2 shipped are used again with a different meaning. These names
+are reused; review 0.3.2 scripts and allowlists against the new meanings
+before enabling them.
 
 | Name | In 0.3.2 | Now |
 |---|---|---|

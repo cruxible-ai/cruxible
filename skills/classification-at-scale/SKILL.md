@@ -26,7 +26,7 @@ You (the agent):
   - Propose groups through configured workflows or direct agent proposals
   - Run the review loop (sample, critique, refine rules, regroup)
 
-Core:
+Cruxible:
   - Stores provider identity, contracts, and workflow traces
   - Validates signals against relationship proposal policy
   - Derives review priority from signal + trust state
@@ -34,7 +34,7 @@ Core:
   - Produces receipts for every mutation
   - Gates auto-resolve on Cruxible-computed proposal signatures
 
-Core executes declared providers inside workflows, but it does not own the
+Cruxible executes declared providers inside workflows, but it does not own the
 domain-specific classification logic. The provider implementation and contract
 are the spec of record; relationship `proposal_policy.signals` decides which
 signal-source labels govern review.
@@ -270,7 +270,7 @@ proposal logic digest share a signature. This means:
 ### Seed-then-fan-out
 
 If a signature has more members than `max_group_size`, you'll need multiple
-chunks. **Do not propose all chunks at once.** Core checks for trusted prior
+chunks. **Do not propose all chunks at once.** Cruxible checks for trusted prior
 resolutions at proposal time. If no trust exists yet, every chunk lands as
 `pending_review` and you'd have to manually resolve each one — completely
 defeating the flywheel.
@@ -282,7 +282,7 @@ The right pattern:
 2. **Resolve the seeds** — review the thesis, inspect sample members, approve.
 3. **Spot-check edges across the resolved seeds**, promote to trusted
    (see Phase 7).
-4. **Then propose the remaining chunks** for that signature. Core finds the
+4. **Then propose the remaining chunks** for that signature. Cruxible finds the
    prior trusted resolution → `auto_resolved`. You just call resolve to
    write the edges.
 
@@ -308,7 +308,7 @@ cruxible_propose_group(
 )
 ```
 
-`analysis_state` is opaque to Core and is not hashed into the signature. Use it
+`analysis_state` is opaque to Cruxible and is not hashed into the signature. Use it
 to stash extraction context, LLM reasoning, and anything an agent might need
 when revisiting this group later. It is returned by `cruxible_get_group` and
 `cruxible_list_resolutions`.
@@ -318,9 +318,9 @@ relationship and attached member signals. Group-level `signal_sources_used` is
 deprecated for direct proposals because signal sources are derived from the
 member signals.
 
-### What Core does with the proposal
+### What Cruxible does with the proposal
 
-Core checks:
+Cruxible checks:
 1. All required signal-source signals present on every member
 2. `max_group_size` not exceeded
 3. No duplicate members
@@ -403,7 +403,7 @@ cruxible_update_trust_status(instance_id, resolution_id, "trusted",
     reason="Spot-checked 25 edges across 3 groups, all correct")
 ```
 
-Now propose the remaining chunks for this signature. Core finds the prior
+Now propose the remaining chunks for this signature. Cruxible finds the prior
 trusted resolution → `auto_resolved`:
 
 ```
@@ -480,7 +480,7 @@ refreshes:
 New catalog refresh arrives → refresh canonical state
 Agent runs same workflow/providers (same proposal shape) → same signal sources
 Cruxible computes same signature
-Core finds prior trusted resolution → auto_resolved
+Cruxible finds prior trusted resolution → auto_resolved
 Agent calls resolve → edges created, no human review needed
 ```
 
@@ -515,7 +515,7 @@ shape preserves the trust track.
 ## Anti-patterns
 
 - **Running LLM classification on every part** — Build deterministic rules first. LLM is for the tail, not the bulk.
-- **Putting domain extraction logic inside Core primitives** — Core governs signals and executes providers, but the classification logic should live in provider code or external services.
+- **Putting domain extraction logic inside Cruxible primitives** — Cruxible governs signals and executes providers, but the classification logic should live in provider code or external services.
 - **Grouping too coarsely** — "All interior parts → PIES Body" is too broad. Group by extracted part noun + qualifier for meaningful trust boundaries.
 - **Grouping too finely** — One part per group defeats batch review. Group by the repeatable pattern, not the individual part.
 - **Skipping `analysis_state`** — Stash your extraction context, LLM reasoning, and candidate scores. Future agents (or your future self) will need it when revisiting resolutions.

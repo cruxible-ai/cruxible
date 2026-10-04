@@ -142,7 +142,7 @@ forever, including by the frozen verifiers of retired formats.
 
 ## Architecture
 
-### Four Surfaces, One Service Core
+### Four Surfaces, One Service Layer
 
 All interfaces delegate to the shared service layer. Never duplicate orchestration logic in handlers or transports.
 

@@ -35,7 +35,7 @@ If that state has a configured default `kit`, its local files will be copied int
 - `named_queries` are the user-facing query entry points the state exposes
 - `providers` are the code or model-backed steps that `workflows` call
 
-## Core Rules
+## Key rules
 
 - edit the local `config.yaml`, not `.cruxible/upstream/current/config.yaml`
 - treat `.cruxible/composed/config.yaml` as generated output, not as the source of truth
