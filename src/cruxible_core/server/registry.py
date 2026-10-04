@@ -324,7 +324,9 @@ class InstanceRegistry:
         resolved_workspace_root: str | None = None
         if workspace_root is not None:
             resolved_workspace_root = str(
-                ensure_workspace_directory(Path(workspace_root).expanduser().resolve())
+                ensure_workspace_directory(
+                    Path(workspace_root).expanduser().resolve(), state_root=self.state_root
+                )
             )
             attached = self._get_by_backend_workspace_root(
                 GOVERNED_DAEMON_BACKEND, resolved_workspace_root
@@ -421,7 +423,9 @@ class InstanceRegistry:
         """
 
         # The registry is the last gate: no row ever names a root that is no workspace.
-        ensure_workspace_directory(Path(workspace_root).expanduser().resolve())
+        ensure_workspace_directory(
+            Path(workspace_root).expanduser().resolve(), state_root=self.state_root
+        )
         refuse_write_while_previewing("instance registry")
         _validate_instance_id(instance_id)
         try:
@@ -503,6 +507,9 @@ class InstanceRegistry:
         preferred_instance_id: str | None = None,
         observe: Callable[[StateCoordinate], None] | None = None,
     ) -> RegisteredInstance:
+        if workspace_root is not None:
+            # The last gate before a row names a workspace (as attach is).
+            ensure_workspace_directory(Path(workspace_root), state_root=self.state_root)
         refuse_write_while_previewing("instance registry")
         if Path(location).is_absolute():
             relative = self.relative_location(location)

@@ -232,7 +232,9 @@ def create_playbill_host(
                 "Unix socket"
             )
         if workspace_root is not None:
-            ensure_workspace_directory(Path(workspace_root).expanduser().resolve())
+            ensure_workspace_directory(
+                Path(workspace_root).expanduser().resolve(), state_root=registry.state_root
+            )
             try:
                 workspace_git_object_format(Path(workspace_root))
             except ValueError as exc:
@@ -333,8 +335,9 @@ def attach_workspace(
         resolved = Path(workspace_root).expanduser().resolve(strict=True)
     except OSError as exc:
         raise ConfigError("Workspace attachment requires one local Git worktree") from exc
-    # Refuse the home directory and a 0.3 instance before reading or registering.
-    ensure_workspace_directory(resolved)
+    # Refuse home, this daemon's own state root and a 0.3 instance before reading
+    # or registering.
+    ensure_workspace_directory(resolved, state_root=registry.state_root)
     try:
         workspace_format = workspace_git_object_format(resolved)
     except (OSError, ValueError) as exc:

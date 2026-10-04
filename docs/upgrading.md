@@ -26,7 +26,7 @@ before enabling them.
 | `cruxible procedure` | Showed and withdrew config procedures | Binds, runs and measures governed Procedures |
 | `cruxible_init` (MCP) | Initialized or reloaded a config instance | Bootstraps governed state |
 | `cruxible_query` (MCP) | Ran a named query | Runs a compact or named query over accepted state |
-| `.cruxible/` in a project | The 0.3 instance directory (`instance.json`, `state.db`) | The workspace directory (client custody, sources, floor); a worktree whose `.cruxible/` holds a 0.3 instance is refused until it moves aside |
+| `.cruxible/` in a project | The 0.3 instance directory (`instance.json`, `state.db`) | The workspace directory (client custody, sources, floor); a worktree whose `.cruxible/` holds a 0.3 instance is refused until it moves aside, and so is one whose `.cruxible/` is, lies inside or holds the daemon state root (`~/.cruxible` or `CRUXIBLE_STATE_ROOT`) |
 
 ## What the compiler is
 

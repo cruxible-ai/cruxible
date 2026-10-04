@@ -10,6 +10,7 @@ from typing import Iterable, Mapping
 from urllib.parse import urlsplit
 
 from cruxible_client.contracts.errors import ReseedRequired
+from cruxible_client.contracts.workspace_layout import daemon_state_root
 from cruxible_core.errors import ConfigError
 
 _VOLATILE_STATE_ROOTS = (
@@ -93,9 +94,7 @@ def get_server_state_root(environ: Mapping[str, str] | None = None) -> Path:
     if raw is not None:
         if not raw.strip():
             raise ServerStateConfigurationError("CRUXIBLE_STATE_ROOT may not be empty")
-        state_root = Path(raw).expanduser().resolve()
-    else:
-        state_root = (Path.home() / ".cruxible").resolve()
+    state_root = daemon_state_root(env)
     legacy = state_root / "server"
     for path in (
         legacy / "registry.db",

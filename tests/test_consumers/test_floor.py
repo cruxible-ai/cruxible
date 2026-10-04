@@ -187,8 +187,10 @@ def test_registry_migration_is_idempotent_and_detach_clears_delivery(tmp_path):
 
     from cruxible_core.errors import ConfigError
 
-    database = tmp_path / "daemon" / "registry.db"
-    database.parent.mkdir()
+    # The workspace sits beside the state root: a workspace inside it is refused.
+    state_root = tmp_path / "state"
+    database = state_root / "daemon" / "registry.db"
+    database.parent.mkdir(parents=True)
     # An operator migration may have already added a column before this step.
     with sqlite3.connect(database) as connection:
         connection.execute(
@@ -207,10 +209,10 @@ def test_registry_migration_is_idempotent_and_detach_clears_delivery(tmp_path):
             "CREATE TABLE registry_migrations (step TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
         )
         connection.execute("INSERT INTO registry_migrations VALUES ('operator-step','kept')")
-    registry = InstanceRegistry(tmp_path)
+    registry = InstanceRegistry(state_root)
     assert registry.get("inst_attached").floor_delivery
     registry.set_floor_delivery("inst_attached", False)
-    assert not InstanceRegistry(tmp_path).get("inst_attached").floor_delivery
+    assert not InstanceRegistry(state_root).get("inst_attached").floor_delivery
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     registry.create_governed_instance_with_id("inst_floor", workspace_root=workspace)
@@ -237,7 +239,7 @@ def test_registry_migration_is_idempotent_and_detach_clears_delivery(tmp_path):
         ]
         columns = [row[1] for row in connection.execute("PRAGMA table_info(instances)")]
         assert columns.count("floor_delivery") == 1
-    registry = InstanceRegistry(tmp_path)
+    registry = InstanceRegistry(state_root)
     assert registry.get("inst_floor").floor_delivery
     assert not registry.detach_governed_workspace(
         "inst_floor", expected_workspace_root=workspace

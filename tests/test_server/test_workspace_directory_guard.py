@@ -241,3 +241,106 @@ def test_cli_runs_without_a_workspace_from_a_conflicted_directory(
     result = CliRunner().invoke(cli, ["context", "show", "--json"])
     assert result.exit_code != 0
     assert "cruxible.workspace.directory_conflict" in result.output
+
+
+def _relocated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state_root: Path) -> None:
+    """A daemon state root moved by CRUXIBLE_STATE_ROOT, with its usual directories."""
+
+    (state_root / "daemon").mkdir(parents=True, exist_ok=True)
+    (state_root / "instances").mkdir(exist_ok=True)
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(state_root))
+
+
+def _overlapping_state_roots(tmp_path: Path) -> list[tuple[str, Path, Path]]:
+    """(label, worktree, state root): the workspace directory is, holds, or lies in the root."""
+
+    cases = []
+    for label in ("is", "holds", "inside"):
+        project = tmp_path / f"project-{label}"
+        subprocess.run(["git", "init", "-b", "main", str(project)], check=True, capture_output=True)
+        if label == "is":
+            cases.append((label, project, project / ".cruxible"))
+        elif label == "holds":
+            cases.append((label, project, project / ".cruxible" / "state"))
+        else:
+            state_root = tmp_path / f"state-{label}"
+            nested = state_root / "instances" / "worktree"
+            nested.parent.mkdir(parents=True)
+            project.rename(nested)
+            cases.append((label, nested, state_root))
+    return cases
+
+
+def test_a_relocated_daemon_state_root_is_no_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(MCP_WORKSPACE_ROOT_ENV, raising=False)
+    for label, project, state_root in _overlapping_state_roots(tmp_path):
+        _relocated(tmp_path, monkeypatch, state_root)
+        alias = project.parent / project.name.swapcase()
+        spelled = alias if alias.exists() else project
+
+        with pytest.raises(WorkspaceDirectoryConflict) as refused:
+            write_workspace_config(
+                spelled, instance_id="inst_probe", server_socket=str(tmp_path / "s.sock")
+            )
+        assert refused.value.reason == "state_root", label
+        assert refused.value.state_root == str(state_root.resolve())
+        for selected in (
+            lambda: resolve_context(environ={}, cwd=project, home=tmp_path),
+            lambda: resolve_context(workspace=spelled, environ={}, cwd=project, home=tmp_path),
+            lambda: mcp_workspace_root({MCP_WORKSPACE_ROOT_ENV: str(spelled)}),
+            lambda: mcp_git_workspace_root({MCP_WORKSPACE_ROOT_ENV: str(project)}),
+            lambda: resolve_workspace_path(".", root=project, kind="directory"),
+            lambda: WorkspaceSources(project),
+            lambda: load_coverage_config(project),
+        ):
+            with pytest.raises(WorkspaceDirectoryConflict):
+                selected()
+        assert not (project / ".cruxible" / "coverage.json").exists(), label
+        # Outside the state root the same worktree is a workspace again.
+        monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / f"elsewhere-{label}"))
+        assert resolve_context(environ={}, cwd=project, home=tmp_path).workspace == project
+
+
+def test_a_state_root_beside_the_workspace_directory_is_fine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    subprocess.run(["git", "init", "-b", "main", str(project)], check=True, capture_output=True)
+    _relocated(tmp_path, monkeypatch, project / "daemon-state")
+
+    write_workspace_config(project, instance_id="inst_probe", server_socket=str(tmp_path / "s"))
+    assert (project / ".cruxible" / "coverage.json").is_file()
+
+
+def test_the_daemon_refuses_its_own_state_root_whatever_the_client_says(
+    host_client: object,  # noqa: F811
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Create and attach compare with the registry's root, not this process's environment."""
+
+    registry = get_registry()
+    daemon_root = registry.state_root
+    project = daemon_root / "instances" / "attached-worktree"
+    subprocess.run(["git", "init", "-b", "main", str(project)], check=True, capture_output=True)
+    # The caller's environment names some other state root.
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "client-side-root"))
+
+    with pytest.raises(WorkspaceDirectoryConflict) as refused:
+        host_api.create_playbill_host(
+            instance_id="inst_state_root_create",
+            workspace_root=str(project),
+            workspace_attachment_authorized=True,
+        )
+    assert refused.value.reason == "state_root"
+    assert registry.get("inst_state_root_create") is None
+
+    host_api.create_playbill_host(instance_id="inst_state_root_attach")
+    with pytest.raises(WorkspaceDirectoryConflict):
+        host_api.attach_workspace("inst_state_root_attach", str(project))
+    with pytest.raises(WorkspaceDirectoryConflict):
+        registry.attach_governed_workspace("inst_state_root_attach", str(project))
+    record = registry.get("inst_state_root_attach")
+    assert record is not None and record.workspace_root is None
