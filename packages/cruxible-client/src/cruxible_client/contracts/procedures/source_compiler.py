@@ -47,6 +47,13 @@ from cruxible_client.contracts.records import RecordConstructor, record_field_na
 ValueType = ContractSchema | PropertySchema
 
 
+#: The spellings Procedure source may use for query budgets. ``QueryBudgetsV1``
+#: is what source written before the public rename says; accepted source is
+#: provenance and is recompiled on cold replay and verification, so the
+#: historical spelling stays in the language. Both compile to the same graph.
+QUERY_BUDGETS_SOURCE_NAMES = frozenset({"QueryBudgets", "QueryBudgetsV1"})
+
+
 @dataclass(frozen=True)
 class Value:
     wire: Any
@@ -760,7 +767,7 @@ class _Compiler:
                 if not (
                     isinstance(supplied, ast.Call)
                     and isinstance(supplied.func, ast.Name)
-                    and supplied.func.id == "QueryBudgets"
+                    and supplied.func.id in QUERY_BUDGETS_SOURCE_NAMES
                     and not supplied.args
                 ):
                     self.fail(supplied, "Use QueryBudgets with literal bounded values")
